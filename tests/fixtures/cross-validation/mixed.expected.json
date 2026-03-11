@@ -1,0 +1,77 @@
+[
+  {
+    "name": "setup",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "init",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  },
+  {
+    "name": "App",
+    "kind": "class",
+    "start_line": 4,
+    "end_line": 8,
+    "signature": null,
+    "children": [
+      {
+        "name": "run",
+        "kind": "function",
+        "start_line": 5,
+        "end_line": 7,
+        "signature": "()",
+        "children": [],
+        "calls": [
+          {
+            "name": "start",
+            "receiver": "this",
+            "kind": "attribute"
+          }
+        ]
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "teardown",
+    "kind": "function",
+    "start_line": 9,
+    "end_line": 11,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "cleanup",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  },
+  {
+    "name": "main",
+    "kind": "function",
+    "start_line": 12,
+    "end_line": 15,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "setup",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "teardown",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  }
+]

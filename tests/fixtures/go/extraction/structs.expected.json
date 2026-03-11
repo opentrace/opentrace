@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Server",
+    "kind": "class",
+    "start_line": 3,
+    "end_line": 6,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Empty",
+    "kind": "class",
+    "start_line": 8,
+    "end_line": 8,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  }
+]

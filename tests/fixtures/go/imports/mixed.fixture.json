@@ -1,0 +1,14 @@
+{
+  "description": "Mixed stdlib (skipped) and external imports",
+  "source": "package main\n\nimport (\n\t\"fmt\"\n\t\"net/http\"\n\t\"github.com/gorilla/mux\"\n\t\"github.com/sirupsen/logrus\"\n)\n",
+  "filePath": "main.go",
+  "knownFiles": ["main.go"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "github.com/gorilla/mux": "pkg:go:github.com/gorilla/mux",
+      "github.com/sirupsen/logrus": "pkg:go:github.com/sirupsen/logrus"
+    }
+  }
+}

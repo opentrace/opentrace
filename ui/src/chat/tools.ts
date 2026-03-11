@@ -1,0 +1,102 @@
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+import type { GraphStore } from "../store/types";
+
+const MAX_RESULT_CHARS = 4000;
+
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, limit) + `\n...[truncated, ${text.length} chars total]`;
+}
+
+// ---- Tool schemas ----
+
+const searchGraphSchema = z.object({
+  query: z.string().describe("Search text to match against node names and properties"),
+  limit: z.number().optional().describe("Max results (default 50, max 1000)"),
+  nodeTypes: z
+    .string()
+    .optional()
+    .describe("Comma-separated node types to filter, e.g. 'Service,Class'"),
+});
+
+const listNodesSchema = z.object({
+  type: z.string().describe("Node type to list"),
+  limit: z.number().optional().describe("Max results (default 50, max 1000)"),
+  filters: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe("Property filters as key-value pairs for AND matching"),
+});
+
+const getNodeSchema = z.object({
+  nodeId: z.string().describe("The node ID to look up"),
+});
+
+const traverseGraphSchema = z.object({
+  nodeId: z.string().describe("Starting node ID"),
+  depth: z.number().optional().describe("Max traversal depth (default 3, max 10)"),
+  direction: z
+    .enum(["outgoing", "incoming", "both"])
+    .optional()
+    .describe("Traversal direction (default 'outgoing')"),
+  relationship: z
+    .string()
+    .optional()
+    .describe("Filter by relationship type, e.g. 'CALLS', 'READS', 'DEFINES'"),
+});
+
+// ---- Tool descriptions ----
+
+const SEARCH_DESC =
+  "Full-text search across graph nodes by name or properties. " +
+  "Returns matching nodes with their types and properties.";
+
+const LIST_DESC =
+  "List nodes of a specific type. Valid types include: Service, Repo, Repository, " +
+  "Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, " +
+  "InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable.";
+
+const GET_DESC = "Get full details of a single node by its ID, including all properties.";
+
+const TRAVERSE_DESC =
+  "BFS traversal from a node to discover connected nodes and relationships. " +
+  "Use direction 'outgoing' for downstream dependencies, 'incoming' for upstream, " +
+  "or 'both' for all connections.";
+
+// ---- Factory: returns tools wired to a GraphStore ----
+
+export function makeGraphTools(store: GraphStore) {
+  return [
+    tool(
+      async ({ query, limit, nodeTypes }) => {
+        const types = nodeTypes ? nodeTypes.split(",").map((t) => t.trim()) : undefined;
+        const results = await store.searchNodes(query, limit, types);
+        return truncate(JSON.stringify({ results, count: results.length }), MAX_RESULT_CHARS);
+      },
+      { name: "search_graph", description: SEARCH_DESC, schema: searchGraphSchema },
+    ),
+    tool(
+      async ({ type, limit, filters }) => {
+        const nodes = await store.listNodes(type, limit, filters);
+        return truncate(JSON.stringify({ nodes, count: nodes.length }), MAX_RESULT_CHARS);
+      },
+      { name: "list_nodes", description: LIST_DESC, schema: listNodesSchema },
+    ),
+    tool(
+      async ({ nodeId }) => {
+        const node = await store.getNode(nodeId);
+        if (!node) return JSON.stringify({ error: "Node not found", id: nodeId });
+        return truncate(JSON.stringify(node), MAX_RESULT_CHARS);
+      },
+      { name: "get_node", description: GET_DESC, schema: getNodeSchema },
+    ),
+    tool(
+      async ({ nodeId, depth, direction, relationship }) => {
+        const results = await store.traverse(nodeId, direction, depth, relationship);
+        return truncate(JSON.stringify({ results, count: results.length }), MAX_RESULT_CHARS);
+      },
+      { name: "traverse_graph", description: TRAVERSE_DESC, schema: traverseGraphSchema },
+    ),
+  ];
+}

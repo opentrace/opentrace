@@ -1,0 +1,11 @@
+{
+  "description": "Skips standard library imports (no dot in first segment)",
+  "source": "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"net/http\"\n)\n",
+  "filePath": "main.go",
+  "knownFiles": ["main.go"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {}
+  }
+}

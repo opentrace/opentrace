@@ -1,0 +1,15 @@
+function setup() {
+  init();
+}
+class App {
+  run() {
+    this.start();
+  }
+}
+const teardown = () => {
+  cleanup();
+};
+export function main() {
+  setup();
+  teardown();
+}

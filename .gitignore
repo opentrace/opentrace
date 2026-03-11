@@ -1,0 +1,40 @@
+# Go
+api/bin/
+api/data/
+api/config.yaml
+
+# Python
+agent/.venv/
+agent/__pycache__/
+agent/src/*.egg-info/
+__pycache__/
+*.pyc
+
+# Node
+ui/node_modules/
+ui/dist/
+functions/node_modules/
+functions/lib/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Firebase
+.firebase/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+
+# Developer Files
+config.yaml

@@ -1,0 +1,55 @@
+[
+  {
+    "name": "UserService",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 6,
+    "signature": null,
+    "children": [
+      {
+        "name": "__init__",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 3,
+        "signature": "(self, db)",
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "get_user",
+        "kind": "function",
+        "start_line": 5,
+        "end_line": 6,
+        "signature": "(self, user_id: str)",
+        "children": [],
+        "calls": [
+          {
+            "name": "find",
+            "receiver": "self.db",
+            "kind": "attribute"
+          }
+        ]
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Admin",
+    "kind": "class",
+    "start_line": 8,
+    "end_line": 10,
+    "signature": null,
+    "children": [
+      {
+        "name": "promote",
+        "kind": "function",
+        "start_line": 9,
+        "end_line": 10,
+        "signature": "(self)",
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

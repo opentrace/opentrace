@@ -1,0 +1,94 @@
+syntax = "proto3";
+package opentrace.v1;
+option go_package = "github.com/opentrace/opentrace/api/pkg/gen/otv1";
+
+import "opentrace/v1/job_config.proto";
+
+// AgentService is the streaming RPC interface for indexing jobs.
+service AgentService {
+  // RunJob starts an indexing pipeline and streams progress events back.
+  rpc RunJob(RunJobRequest) returns (stream JobEvent);
+}
+
+// RunJobRequest is sent by the API server to the Python agent to start indexing.
+message RunJobRequest {
+  string mcp_url = 1;
+  string api_key = 2;
+  repeated GitIntegrationConfig git_integrations = 3;
+}
+
+// JobPhase represents the current stage of an indexing pipeline.
+// These phases are shared between browser and server indexing paths.
+enum JobPhase {
+  JOB_PHASE_UNSPECIFIED = 0;
+  JOB_PHASE_INITIALIZING = 1;
+  JOB_PHASE_FETCHING = 2;
+  JOB_PHASE_PARSING = 3;
+  JOB_PHASE_RESOLVING = 4;
+  JOB_PHASE_ENRICHING = 5;
+  JOB_PHASE_SUBMITTING = 6;
+  JOB_PHASE_DONE = 7;
+  JOB_PHASE_SUMMARIZING = 8;
+  JOB_PHASE_EMBEDDING = 9;
+}
+
+// JobEventKind discriminates the event type within a JobEvent stream.
+enum JobEventKind {
+  JOB_EVENT_KIND_UNSPECIFIED = 0;
+  JOB_EVENT_KIND_PROGRESS = 1;
+  JOB_EVENT_KIND_GRAPH_READY = 2;
+  JOB_EVENT_KIND_DONE = 3;
+  JOB_EVENT_KIND_ERROR = 4;
+  JOB_EVENT_KIND_STAGE_COMPLETE = 5;
+}
+
+// IndexedNode represents a single graph node produced during indexing.
+message IndexedNode {
+  string id = 1;
+  string type = 2;
+  string name = 3;
+  string properties_json = 4;
+}
+
+// IndexedRelationship represents a single graph relationship produced during indexing.
+message IndexedRelationship {
+  string id = 1;
+  string type = 2;
+  string source_id = 3;
+  string target_id = 4;
+  string properties_json = 5;
+}
+
+// JobEvent is a single event in a streaming indexing job.
+// The `kind` field determines which fields are meaningful:
+//   - PROGRESS:    phase, message, detail
+//   - GRAPH_READY: result (partial counts so far)
+//   - DONE:        result (final counts), errors
+//   - ERROR:       message, errors
+message JobEvent {
+  JobEventKind kind = 1;
+  JobPhase phase = 2;
+  string message = 3;
+  JobResult result = 4;
+  repeated string errors = 5;
+  ProgressDetail detail = 6;
+  // Batch payloads (for server-side streaming — nodes/rels inline with progress)
+  repeated IndexedNode nodes = 7;
+  repeated IndexedRelationship relationships = 8;
+}
+
+// ProgressDetail provides numeric progress within a phase.
+message ProgressDetail {
+  int32 current = 1;
+  int32 total = 2;
+  string file_name = 3;
+  int32 nodes_created = 4;
+  int32 relationships_created = 5;
+}
+
+// JobResult summarises the outcome of an indexing run.
+message JobResult {
+  int32 nodes_created = 1;
+  int32 relationships_created = 2;
+  int32 repos_processed = 3;
+}

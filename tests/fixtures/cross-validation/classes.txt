@@ -1,0 +1,14 @@
+class UserService {
+  constructor(private db: Database) {}
+  getUser(id: string) {
+    return this.db.find(id);
+  }
+}
+const Validator = class {
+  check(input: string) {
+    return validate(input);
+  }
+};
+abstract class BaseHandler {
+  abstract handle(): void;
+}

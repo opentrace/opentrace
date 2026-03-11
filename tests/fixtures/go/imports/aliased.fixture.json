@@ -1,0 +1,13 @@
+{
+  "description": "Handles aliased, blank (_), and dot (.) imports",
+  "source": "package main\n\nimport (\n\tmuxRouter \"github.com/gorilla/mux\"\n\t_ \"github.com/lib/pq\"\n\t. \"github.com/onsi/ginkgo\"\n)\n",
+  "filePath": "main.go",
+  "knownFiles": ["main.go"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "github.com/gorilla/mux": "pkg:go:github.com/gorilla/mux"
+    }
+  }
+}

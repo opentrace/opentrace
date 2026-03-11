@@ -1,0 +1,15 @@
+{
+  "description": "Captures external npm packages",
+  "source": "import React from 'react';\nimport express from 'express';\nimport axios from 'axios';\n",
+  "filePath": "src/main.ts",
+  "knownFiles": ["src/main.ts"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "react": "pkg:npm:react",
+      "express": "pkg:npm:express",
+      "axios": "pkg:npm:axios"
+    }
+  }
+}

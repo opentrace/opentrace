@@ -1,0 +1,14 @@
+{
+  "description": "Resolves single-dot relative import and __init__.py",
+  "source": "from .utils import helper\nfrom .models import User\n",
+  "filePath": "pkg/views.py",
+  "knownFiles": ["pkg/utils.py", "pkg/models/__init__.py", "pkg/views.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "pkg/utils.py",
+      "models": "pkg/models/__init__.py"
+    },
+    "external": {}
+  }
+}

@@ -1,0 +1,46 @@
+[
+  {
+    "name": "init",
+    "kind": "function",
+    "start_line": 3,
+    "end_line": 6,
+    "signature": "()",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": [
+      {
+        "name": "setup",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "configure",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  },
+  {
+    "name": "run",
+    "kind": "function",
+    "start_line": 8,
+    "end_line": 11,
+    "signature": "()",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": [
+      {
+        "name": "Println",
+        "receiver": "fmt",
+        "kind": "attribute"
+      },
+      {
+        "name": "Printf",
+        "receiver": "log",
+        "kind": "attribute"
+      }
+    ]
+  }
+]

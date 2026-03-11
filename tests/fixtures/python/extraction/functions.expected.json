@@ -1,0 +1,35 @@
+[
+  {
+    "name": "greet",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 2,
+    "signature": "(name)",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "add",
+    "kind": "function",
+    "start_line": 4,
+    "end_line": 5,
+    "signature": "(a: int, b: int)",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "fetch_data",
+    "kind": "function",
+    "start_line": 7,
+    "end_line": 9,
+    "signature": "(url: str)",
+    "children": [],
+    "calls": [
+      {
+        "name": "get",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  }
+]

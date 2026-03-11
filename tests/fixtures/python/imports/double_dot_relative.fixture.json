@@ -1,0 +1,11 @@
+{
+  "description": "Known limitation: double-dot relative import does not resolve (baseDir not propagated from import_prefix handler)",
+  "source": "from ..config import settings\n",
+  "filePath": "src/app/main.py",
+  "knownFiles": ["src/config.py", "src/app/main.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {}
+  }
+}

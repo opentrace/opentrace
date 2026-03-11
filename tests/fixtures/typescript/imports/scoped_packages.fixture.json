@@ -1,0 +1,14 @@
+{
+  "description": "Extracts scoped npm package names correctly",
+  "source": "import { Button } from '@grafana/ui/components';\nimport fp from 'lodash/fp';\n",
+  "filePath": "src/main.ts",
+  "knownFiles": ["src/main.ts"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "@grafana/ui": "pkg:npm:@grafana/ui",
+      "lodash": "pkg:npm:lodash"
+    }
+  }
+}

@@ -1,0 +1,144 @@
+/**
+ * Hot-swappable summarization strategy — runtime-selectable via config.
+ *
+ * The pipeline receives a SummarizationStrategy instance and calls
+ * strategy.summarize(meta) instead of importing static functions.
+ * Strategies operate on SymbolMetadata (structured data), not raw source.
+ */
+
+import type { SummarizationStrategyType, SummarizerConfig, SymbolMetadata } from "./types";
+import { summarizeFromMetadata } from "./templateSummarizer";
+
+/** Race a promise against a timeout. Rejects with a descriptive error on timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Strategy interface
+// ---------------------------------------------------------------------------
+
+export interface SummarizationStrategy {
+  readonly type: SummarizationStrategyType;
+  /** Load any required resources (model weights, etc.). No-op for template/noop. */
+  init(): Promise<void>;
+  /** Generate a one-sentence summary from structured metadata. */
+  summarize(meta: SymbolMetadata): Promise<string>;
+  /** Batch-summarize multiple items. Default impl calls summarize() in a loop. */
+  summarizeBatch(items: SymbolMetadata[]): Promise<string[]>;
+  /** Release resources. */
+  dispose(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Template strategy — wraps the existing identifier-based summarizer
+// ---------------------------------------------------------------------------
+
+class TemplateStrategy implements SummarizationStrategy {
+  readonly type = "template" as const;
+
+  async init(): Promise<void> {
+    // Templates are instant — nothing to load
+  }
+
+  async summarize(meta: SymbolMetadata): Promise<string> {
+    return summarizeFromMetadata(meta);
+  }
+
+  async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
+    return items.map(summarizeFromMetadata);
+  }
+
+  async dispose(): Promise<void> {}
+}
+
+// ---------------------------------------------------------------------------
+// ML strategy — wraps FlanT5Summarizer under the new interface
+// ---------------------------------------------------------------------------
+
+const ML_INIT_TIMEOUT_MS = 120_000;   // 2 min for model download + ONNX init
+const ML_CALL_TIMEOUT_MS = 30_000;    // 30s per inference call
+
+class MlStrategy implements SummarizationStrategy {
+  readonly type = "ml" as const;
+  private summarizer: import("./flanT5Summarizer").FlanT5Summarizer | null = null;
+  private config: SummarizerConfig;
+
+  constructor(config: SummarizerConfig) {
+    this.config = config;
+  }
+
+  async init(): Promise<void> {
+    console.log(`[MlStrategy] init: model=${this.config.model}, timeout=${ML_INIT_TIMEOUT_MS}ms`);
+    const { FlanT5Summarizer } = await import("./flanT5Summarizer");
+    this.summarizer = new FlanT5Summarizer(this.config);
+    await withTimeout(this.summarizer.init(), ML_INIT_TIMEOUT_MS, "ML summarizer init");
+    console.log("[MlStrategy] init complete");
+  }
+
+  async summarize(meta: SymbolMetadata): Promise<string> {
+    if (!this.summarizer) throw new Error("MlStrategy not initialized — call init() first");
+    const source = meta.source ?? meta.name;
+    try {
+      return await withTimeout(
+        this.summarizer.summarize(source, meta.kind),
+        ML_CALL_TIMEOUT_MS,
+        `ML summarize(${meta.name})`,
+      );
+    } catch (err) {
+      console.warn(`[MlStrategy] summarize failed for ${meta.name}:`, err);
+      throw err;
+    }
+  }
+
+  async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
+    if (!this.summarizer) throw new Error("MlStrategy not initialized — call init() first");
+    return withTimeout(
+      this.summarizer.summarizeBatch(
+        items.map((m) => ({ source: m.source ?? m.name, kind: m.kind })),
+      ),
+      ML_CALL_TIMEOUT_MS * items.length,
+      "ML summarizeBatch",
+    );
+  }
+
+  async dispose(): Promise<void> {
+    await this.summarizer?.dispose();
+    this.summarizer = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Noop strategy — returns empty strings (summarization disabled)
+// ---------------------------------------------------------------------------
+
+class NoopStrategy implements SummarizationStrategy {
+  readonly type = "none" as const;
+
+  async init(): Promise<void> {}
+  async summarize(): Promise<string> { return ""; }
+  async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
+    return items.map(() => "");
+  }
+  async dispose(): Promise<void> {}
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+/** Create the appropriate summarization strategy from config. */
+export function createStrategy(config: SummarizerConfig): SummarizationStrategy {
+  if (!config.enabled || config.strategy === "none") {
+    return new NoopStrategy();
+  }
+  if (config.strategy === "ml") {
+    return new MlStrategy(config);
+  }
+  return new TemplateStrategy();
+}

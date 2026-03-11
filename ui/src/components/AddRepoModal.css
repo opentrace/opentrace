@@ -1,0 +1,783 @@
+/* ── Backdrop ─────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+/* ── Card ─────────────────────────────────────── */
+.modal-card {
+  background: var(--card);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: calc(var(--radius) + 8px);
+  padding: 36px 32px 28px;
+  width: 460px;
+  max-width: 90vw;
+  box-shadow: var(--shadow-xl);
+  animation: modalEnter 0.25s ease-out;
+}
+
+.modal-card-wide {
+  width: 520px;
+  min-height: 340px;
+  overflow: hidden;
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-card h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* ── Form Hero (centered icon + title) ───────── */
+.form-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.hero-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+  color: var(--foreground);
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+}
+
+.hero-icon--provider {
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+  color: var(--primary);
+}
+
+.form-hero h2 {
+  margin: 0 0 6px;
+  font-size: 1.2rem;
+}
+
+.hero-subtitle {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+}
+
+/* ── Pill Inputs ─────────────────────────────── */
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-pill {
+  display: block;
+  width: 100%;
+  padding: 14px 18px;
+  font-size: 0.88rem;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  border-radius: 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+
+.input-pill:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.input-pill::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.55;
+}
+
+/* Pill row with inline icons */
+.input-pill-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-pill-row .input-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.input-pill--icon {
+  padding-left: 42px;
+  padding-right: 42px;
+}
+
+.input-toggle {
+  position: absolute;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.input-toggle:hover {
+  opacity: 0.8;
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+
+/* ── CTA Button ──────────────────────────────── */
+.btn-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 24px;
+  margin-top: 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btn-cta:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 85%, black);
+}
+
+.btn-cta:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.btn-cta:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in oklch, var(--primary-foreground) 30%, transparent);
+  border-top-color: var(--primary-foreground);
+  border-radius: 50%;
+  animation: btnSpin 0.6s linear infinite;
+}
+
+@keyframes btnSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Bottom Chips ────────────────────────────── */
+.form-chips {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chip:hover {
+  border-color: color-mix(in oklch, var(--border) 60%, transparent);
+  color: var(--foreground);
+}
+
+.chip svg {
+  opacity: 0.6;
+}
+
+.chip-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--foreground);
+  width: 90px;
+  padding: 0;
+  margin: 0;
+}
+
+.chip-input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+/* ── Chip Toggle (API / Browser) ─────────────── */
+.chip-toggle {
+  display: inline-flex;
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.chip-toggle-btn {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chip-toggle-btn + .chip-toggle-btn {
+  border-left: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+}
+
+.chip-toggle-btn:hover:not(.active) {
+  color: var(--foreground);
+}
+
+.chip-toggle-btn.active {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  font-weight: 600;
+}
+
+/* ── Source Toggle ───────────────────────────── */
+.source-toggle {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+/* ── Directory Picker ───────────────────────── */
+.directory-picker {
+  position: relative;
+}
+
+.directory-input {
+  /* Hidden native file input */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.directory-browse-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--muted-foreground);
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.directory-browse-btn:hover {
+  border-color: var(--primary);
+  color: var(--foreground);
+}
+
+.directory-browse-btn svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.directory-name {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.directory-count {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+/* ── Form Error ──────────────────────────────── */
+.form-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: var(--destructive);
+  background: color-mix(in oklch, var(--destructive) 8%, transparent);
+  border: 1px solid color-mix(in oklch, var(--destructive) 20%, transparent);
+  border-radius: 10px;
+}
+
+.form-error svg {
+  flex-shrink: 0;
+}
+
+/* ── Legacy support (used in indexing/done stages) */
+.modal-error {
+  color: var(--destructive);
+  font-size: 0.8rem;
+  margin: 8px 0;
+}
+
+.btn-cancel {
+  padding: 8px 18px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-cancel:hover {
+  background: color-mix(in oklch, var(--border) 20%, transparent);
+}
+
+.btn-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Indexing Header (icon + title) ──────────── */
+.indexing-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.indexing-header h2 {
+  margin: 0;
+}
+
+.indexing-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+  flex-shrink: 0;
+}
+
+/* ── Indexing Progress ───────────────────────── */
+.indexing-progress {
+  text-align: center;
+  padding: 12px 0;
+}
+
+.indexing-progress h2 {
+  margin-bottom: 20px;
+}
+
+.indexing-message {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  margin: 16px 0;
+}
+
+.indexing-message--truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.indexing-message--detail {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  margin-top: -8px;
+}
+
+/* ── Step Indicator ──────────────────────────── */
+.step-indicator {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 20px;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.step-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  position: relative;
+  z-index: 1;
+  transition: all 0.3s ease;
+}
+
+.step-circle.completed {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 2px solid var(--primary);
+}
+
+.step-circle.current {
+  background: transparent;
+  color: var(--primary);
+  border: 2px solid var(--primary);
+  animation: stepPulse 2s ease-in-out infinite;
+}
+
+.step-circle.future {
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 2px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+
+.step-circle.failed {
+  background: var(--destructive);
+  color: white;
+  border: 2px solid var(--destructive);
+}
+
+.step-number {
+  line-height: 1;
+}
+
+.step-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
+.step-circle.completed + .step-label,
+.step-circle.current + .step-label {
+  color: var(--foreground);
+}
+
+.step-connector {
+  position: absolute;
+  top: 14px;
+  right: calc(50% + 14px);
+  width: calc(100% - 28px);
+  height: 2px;
+  background: color-mix(in oklch, var(--border) 50%, transparent);
+  z-index: 0;
+  transition: background 0.3s ease;
+}
+
+.step-connector.completed {
+  background: var(--primary);
+}
+
+@keyframes stepPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary) 0%, transparent);
+  }
+}
+
+/* ── Stats Grid ──────────────────────────────── */
+.indexing-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 12px;
+  background: color-mix(in oklch, var(--primary) 6%, transparent);
+  border: 1px solid color-mix(in oklch, var(--primary) 15%, transparent);
+  border-radius: var(--radius);
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Failed Stage ─────────────────────────────── */
+.failed-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.failed-icon {
+  color: var(--destructive);
+  animation: doneAppear 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.failed-content h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--destructive);
+}
+
+.failed-message {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+  line-height: 1.45;
+  max-width: 360px;
+}
+
+.btn-cta--secondary {
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+  color: var(--foreground);
+}
+
+.btn-cta--secondary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+}
+
+/* ── Error Card ──────────────────────────────── */
+.indexing-error {
+  margin-top: 16px;
+  padding: 16px;
+  background: color-mix(in oklch, var(--destructive) 8%, transparent);
+  border: 1px solid color-mix(in oklch, var(--destructive) 25%, transparent);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--destructive);
+  margin-bottom: 8px;
+}
+
+.error-message {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  margin: 0 0 8px;
+}
+
+.error-list {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  margin: 0 0 12px;
+  padding-left: 18px;
+}
+
+.error-list li {
+  margin-bottom: 4px;
+}
+
+.indexing-error .btn-cancel {
+  margin-top: 4px;
+}
+
+/* ── Done Stage ──────────────────────────────── */
+.done-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.done-content h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: oklch(0.7 0.18 155);
+}
+
+.done-checkmark {
+  color: oklch(0.7 0.18 155);
+  animation: doneAppear 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.done-check-path {
+  animation: checkDraw 0.3s ease-out 0.3s both;
+}
+
+@keyframes doneAppear {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes checkDraw {
+  0% {
+    opacity: 0;
+    stroke-dasharray: 20;
+    stroke-dashoffset: 20;
+  }
+  100% {
+    opacity: 1;
+    stroke-dasharray: 20;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ── Multi-Stage Progress ────────────────────── */
+.multi-stage-progress {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.stage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 4px;
+  margin-bottom: 10px;
+  max-height: 50px;
+  opacity: 1;
+  overflow: hidden;
+  transition: opacity 0.5s ease, max-height 0.4s ease 0.15s, gap 0.4s ease 0.15s, margin 0.4s ease 0.15s;
+}
+
+.stage-row:last-child {
+  margin-bottom: 0;
+}
+
+.stage-row--completed {
+  opacity: 0.35;
+}
+
+.stage-row--removing {
+  opacity: 0;
+  max-height: 0;
+  gap: 0;
+  padding: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stage-row--active .stage-label {
+  color: var(--foreground);
+}
+
+.stage-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.stage-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.stage-count {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stage-bar {
+  height: 5px;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stage-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.stage-row--completed .stage-bar-fill {
+  background: oklch(0.7 0.18 155);
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Store",
+    "kind": "class",
+    "start_line": 3,
+    "end_line": 6,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [
+      {
+        "name": "Get",
+        "kind": "function",
+        "start_line": 4,
+        "end_line": 4,
+        "signature": "(key string)",
+        "receiver_var": null,
+        "receiver_type": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "Set",
+        "kind": "function",
+        "start_line": 5,
+        "end_line": 5,
+        "signature": "(key string, value string)",
+        "receiver_var": null,
+        "receiver_type": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Any",
+    "kind": "class",
+    "start_line": 8,
+    "end_line": 8,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  }
+]

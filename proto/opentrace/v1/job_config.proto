@@ -1,0 +1,33 @@
+syntax = "proto3";
+package opentrace.v1;
+option go_package = "github.com/opentrace/opentrace/api/pkg/gen/otv1";
+
+enum GitProvider {
+  GIT_PROVIDER_UNSPECIFIED = 0;
+  GIT_PROVIDER_GITHUB = 1;
+  GIT_PROVIDER_GITLAB = 2;
+}
+
+message GitIntegrationConfig {
+  string id = 1;
+  string repo_url = 2;
+  string ref = 3;
+  string personal_access_token = 4;
+  GitProvider provider = 5;
+  string display_name = 6;
+  int64 created_at = 7;
+}
+
+message CreateGitIntegrationRequest {
+  string repo_url = 1;
+  string ref = 2;
+  string personal_access_token = 3;
+}
+
+message CreateGitIntegrationResponse {
+  GitIntegrationConfig integration = 1;
+}
+
+message ListGitIntegrationsResponse {
+  repeated GitIntegrationConfig integrations = 1;
+}

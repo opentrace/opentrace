@@ -1,0 +1,50 @@
+[
+  {
+    "name": "greet",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "(name: string)",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "double",
+    "kind": "function",
+    "start_line": 4,
+    "end_line": 4,
+    "signature": "(n: number)",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "handler",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": "(req: Request)",
+    "children": [],
+    "calls": [
+      {
+        "name": "json",
+        "receiver": "Response",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "process",
+    "kind": "function",
+    "start_line": 8,
+    "end_line": 10,
+    "signature": "(data: string)",
+    "children": [],
+    "calls": [
+      {
+        "name": "transform",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  }
+]

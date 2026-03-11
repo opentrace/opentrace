@@ -1,0 +1,13 @@
+{
+  "description": "Resolves import matching known file directory as internal",
+  "source": "package main\n\nimport \"github.com/myorg/myapp/internal/store\"\n",
+  "filePath": "cmd/main.go",
+  "knownFiles": ["internal/store/store.go", "cmd/main.go"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "store": "internal/store/store.go"
+    },
+    "external": {}
+  }
+}

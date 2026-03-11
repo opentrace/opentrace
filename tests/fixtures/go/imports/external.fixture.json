@@ -1,0 +1,14 @@
+{
+  "description": "Captures external github.com packages and subpackage module roots",
+  "source": "package main\n\nimport (\n\t\"github.com/gorilla/mux\"\n\t\"github.com/gorilla/mux/middleware\"\n\t\"golang.org/x/text\"\n)\n",
+  "filePath": "main.go",
+  "knownFiles": ["main.go"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "github.com/gorilla/mux": "pkg:go:github.com/gorilla/mux",
+      "golang.org/x/text": "pkg:go:golang.org/x/text"
+    }
+  }
+}

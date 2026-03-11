@@ -1,0 +1,14 @@
+{
+  "description": "Resolves absolute import of internal module",
+  "source": "import utils\nimport myapp.models\n",
+  "filePath": "src/main.py",
+  "knownFiles": ["utils.py", "myapp/models.py", "src/main.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "utils.py",
+      "models": "myapp/models.py"
+    },
+    "external": {}
+  }
+}

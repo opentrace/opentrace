@@ -1,0 +1,163 @@
+/* ── Shared result styles ─────────────────── */
+
+.result-empty {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  margin: 4px 0;
+}
+
+/* ── Node card ────────────────────────────── */
+
+.result-node-card {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in oklch, var(--accent) 25%, transparent);
+  transition: background 0.15s;
+}
+
+.result-node-card:hover {
+  background: color-mix(in oklch, var(--accent) 50%, transparent);
+}
+
+.result-node-card-compact {
+  padding: 6px 8px;
+}
+
+.result-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.result-type-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid;
+  text-transform: capitalize;
+  line-height: 1.4;
+}
+
+.result-node-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.result-node-id {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Property chips (inline preview on list cards) */
+.result-node-props {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.result-prop-chip {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-prop-more {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* ── Node list (grid) ─────────────────────── */
+
+.result-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Get node (single detail) ─────────────── */
+
+.result-get-node {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.result-props-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+}
+
+.result-props-row {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.result-props-key {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  min-width: 80px;
+}
+
+.result-props-value {
+  color: var(--foreground);
+  word-break: break-all;
+}
+
+/* ── Traverse tree ────────────────────────── */
+
+.result-traverse {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-traverse-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.result-traverse-rel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  padding: 2px 0;
+}
+
+.result-traverse-rel svg {
+  flex-shrink: 0;
+}

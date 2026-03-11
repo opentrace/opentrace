@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Config",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 5,
+    "signature": null,
+    "children": [
+      {
+        "name": "value",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 4,
+        "signature": "()",
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "setup",
+    "kind": "function",
+    "start_line": 6,
+    "end_line": 9,
+    "signature": "(opts: Options)",
+    "children": [],
+    "calls": [
+      {
+        "name": "init",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "connect",
+        "receiver": "db",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "run",
+    "kind": "function",
+    "start_line": 10,
+    "end_line": 12,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "execute",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  }
+]

@@ -1,0 +1,168 @@
+/*
+ * Chat markdown styles — dark mode only.
+ * Compact subset of insight-ui's react-markdown.css for chat context.
+ */
+
+.message-content .markdown-body {
+  color: inherit;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  word-wrap: break-word;
+}
+
+/* Headings */
+.message-content .markdown-body h1,
+.message-content .markdown-body h2,
+.message-content .markdown-body h3,
+.message-content .markdown-body h4,
+.message-content .markdown-body h5,
+.message-content .markdown-body h6 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+
+.message-content .markdown-body h1 { font-size: 1.25em; }
+.message-content .markdown-body h2 { font-size: 1.1em; }
+.message-content .markdown-body h3 { font-size: 1em; }
+.message-content .markdown-body h4,
+.message-content .markdown-body h5,
+.message-content .markdown-body h6 { font-size: 0.9em; }
+
+.message-content .markdown-body h1:first-child,
+.message-content .markdown-body h2:first-child,
+.message-content .markdown-body h3:first-child {
+  margin-top: 0;
+}
+
+/* Paragraphs */
+.message-content .markdown-body p {
+  margin: 0.5em 0;
+}
+
+.message-content .markdown-body p:first-child {
+  margin-top: 0;
+}
+
+.message-content .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* Links */
+.message-content .markdown-body a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.message-content .markdown-body a:hover {
+  text-decoration: underline;
+}
+
+/* Bold / Italic */
+.message-content .markdown-body strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Inline code */
+.message-content .markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  padding: 0.15em 0.35em;
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+/* Code blocks */
+.message-content .markdown-body pre {
+  margin: 0.6em 0;
+  padding: 0.75em;
+  overflow-x: auto;
+  font-size: 0.8em;
+  line-height: 1.5;
+  background: color-mix(in oklch, var(--background) 80%, black);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: var(--radius);
+}
+
+.message-content .markdown-body pre code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-size: inherit;
+  white-space: pre;
+}
+
+/* Lists */
+.message-content .markdown-body ul,
+.message-content .markdown-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.message-content .markdown-body li {
+  margin: 0.2em 0;
+}
+
+.message-content .markdown-body li + li {
+  margin-top: 0.15em;
+}
+
+.message-content .markdown-body ul ul,
+.message-content .markdown-body ol ol,
+.message-content .markdown-body ul ol,
+.message-content .markdown-body ol ul {
+  margin: 0.1em 0;
+}
+
+/* Blockquotes */
+.message-content .markdown-body blockquote {
+  margin: 0.5em 0;
+  padding: 0.25em 0.75em;
+  border-left: 3px solid var(--primary);
+  color: var(--muted-foreground);
+}
+
+.message-content .markdown-body blockquote > p {
+  margin: 0.25em 0;
+}
+
+/* Horizontal rules */
+.message-content .markdown-body hr {
+  height: 1px;
+  margin: 0.75em 0;
+  border: 0;
+  background: color-mix(in oklch, var(--border) 40%, transparent);
+}
+
+/* Tables */
+.message-content .markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.85em;
+}
+
+.message-content .markdown-body th,
+.message-content .markdown-body td {
+  padding: 0.35em 0.6em;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  text-align: left;
+}
+
+.message-content .markdown-body th {
+  font-weight: 600;
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.message-content .markdown-body tr:nth-child(even) {
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+}
+
+/* Images */
+.message-content .markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}

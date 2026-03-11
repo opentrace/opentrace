@@ -1,0 +1,15 @@
+{
+  "description": "Captures external packages with name normalization",
+  "source": "import requests\nimport numpy as np\nimport Flask_Cors\n",
+  "filePath": "main.py",
+  "knownFiles": ["main.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {},
+    "external": {
+      "requests": "pkg:pypi:requests",
+      "numpy": "pkg:pypi:numpy",
+      "flask-cors": "pkg:pypi:flask-cors"
+    }
+  }
+}

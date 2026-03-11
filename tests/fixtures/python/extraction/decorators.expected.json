@@ -1,0 +1,26 @@
+[
+  {
+    "name": "list_users",
+    "kind": "function",
+    "start_line": 2,
+    "end_line": 3,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "get_all",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  },
+  {
+    "name": "Config",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 8,
+    "signature": null,
+    "children": [],
+    "calls": []
+  }
+]

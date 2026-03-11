@@ -1,0 +1,30 @@
+[
+  {
+    "name": "main",
+    "kind": "function",
+    "start_line": 3,
+    "end_line": 5,
+    "signature": "()",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": [
+      {
+        "name": "Println",
+        "receiver": "fmt",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "add",
+    "kind": "function",
+    "start_line": 7,
+    "end_line": 9,
+    "signature": "(a int, b int)",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  }
+]

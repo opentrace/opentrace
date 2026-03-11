@@ -1,0 +1,40 @@
+[
+  {
+    "name": "greet",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "(name: string)",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "helper",
+    "kind": "function",
+    "start_line": 4,
+    "end_line": 4,
+    "signature": "()",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "fetchData",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 8,
+    "signature": "(url: string)",
+    "children": [],
+    "calls": [
+      {
+        "name": "fetch",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "json",
+        "receiver": "resp",
+        "kind": "attribute"
+      }
+    ]
+  }
+]

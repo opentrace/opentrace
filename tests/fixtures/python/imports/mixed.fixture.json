@@ -1,0 +1,16 @@
+{
+  "description": "Mixed internal, external, and relative imports",
+  "source": "from flask import Flask\nfrom .utils import helper\nimport mylib\n",
+  "filePath": "pkg/app.py",
+  "knownFiles": ["pkg/utils.py", "mylib.py", "pkg/app.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "pkg/utils.py",
+      "mylib": "mylib.py"
+    },
+    "external": {
+      "flask": "pkg:pypi:flask"
+    }
+  }
+}

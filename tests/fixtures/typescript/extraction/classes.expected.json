@@ -1,0 +1,45 @@
+[
+  {
+    "name": "UserService",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 6,
+    "signature": null,
+    "children": [
+      {
+        "name": "constructor",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": "(private db: Database)",
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "getUser",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 5,
+        "signature": "(id: string)",
+        "children": [],
+        "calls": [
+          {
+            "name": "find",
+            "receiver": "this.db",
+            "kind": "attribute"
+          }
+        ]
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "AppModule",
+    "kind": "class",
+    "start_line": 7,
+    "end_line": 7,
+    "signature": null,
+    "children": [],
+    "calls": []
+  }
+]

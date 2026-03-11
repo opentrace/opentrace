@@ -1,0 +1,16 @@
+{
+  "description": "Handles re-exports (named and wildcard)",
+  "source": "export { Config } from './config';\nexport * from './types';\nexport { useState } from 'react';\n",
+  "filePath": "src/index.ts",
+  "knownFiles": ["src/config.ts", "src/types.ts", "src/index.ts"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "config": "src/config.ts",
+      "types": "src/types.ts"
+    },
+    "external": {
+      "react": "pkg:npm:react"
+    }
+  }
+}

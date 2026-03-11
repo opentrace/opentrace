@@ -1,0 +1,52 @@
+[
+  {
+    "name": "process",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "validate",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "transform",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "save",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
+  },
+  {
+    "name": "run",
+    "kind": "function",
+    "start_line": 6,
+    "end_line": 9,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "setup",
+        "receiver": "self",
+        "kind": "attribute"
+      },
+      {
+        "name": "connect",
+        "receiver": "db",
+        "kind": "attribute"
+      },
+      {
+        "name": "info",
+        "receiver": "logger",
+        "kind": "attribute"
+      }
+    ]
+  }
+]

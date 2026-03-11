@@ -1,0 +1,15 @@
+{
+  "description": "Resolves absolute from-import of internal module and external",
+  "source": "from utils import helper\nfrom flask import Flask, request\n",
+  "filePath": "main.py",
+  "knownFiles": ["utils.py", "main.py"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "utils.py"
+    },
+    "external": {
+      "flask": "pkg:pypi:flask"
+    }
+  }
+}

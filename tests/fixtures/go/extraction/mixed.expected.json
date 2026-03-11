@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Config",
+    "kind": "class",
+    "start_line": 3,
+    "end_line": 5,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Logger",
+    "kind": "class",
+    "start_line": 7,
+    "end_line": 9,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [
+      {
+        "name": "Log",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 8,
+        "signature": "(msg string)",
+        "receiver_var": null,
+        "receiver_type": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "NewConfig",
+    "kind": "function",
+    "start_line": 11,
+    "end_line": 13,
+    "signature": "()",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Validate",
+    "kind": "function",
+    "start_line": 15,
+    "end_line": 17,
+    "signature": "(c *Config) ()",
+    "receiver_var": "c",
+    "receiver_type": "Config",
+    "children": [],
+    "calls": []
+  }
+]

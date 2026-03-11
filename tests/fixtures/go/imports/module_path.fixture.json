@@ -1,0 +1,13 @@
+{
+  "description": "Filters own module imports when modulePath is provided",
+  "source": "package main\n\nimport (\n\t\"github.com/opentrace/opentrace/internal/graph\"\n\t\"github.com/gorilla/mux\"\n)\n",
+  "filePath": "main.go",
+  "knownFiles": ["main.go"],
+  "modulePath": "github.com/opentrace/opentrace",
+  "expected": {
+    "internal": {},
+    "external": {
+      "github.com/gorilla/mux": "pkg:go:github.com/gorilla/mux"
+    }
+  }
+}

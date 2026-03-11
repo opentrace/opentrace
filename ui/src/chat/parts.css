@@ -1,0 +1,212 @@
+/* ── Thought block ─────────────────────────── */
+
+.chat-thought {
+  border-left: 3px solid color-mix(in oklch, var(--primary) 40%, transparent);
+  border-radius: 2px;
+  margin: 6px 0;
+}
+
+.thought-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  list-style: none;
+  user-select: none;
+  transition: color 0.15s;
+}
+
+.thought-summary::-webkit-details-marker {
+  display: none;
+}
+
+.thought-summary:hover {
+  color: var(--foreground);
+}
+
+.thought-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.thought-label {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.thought-preview {
+  font-style: italic;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.chat-thought[open] .thought-preview {
+  display: none;
+}
+
+.thought-content {
+  padding: 4px 10px 10px;
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+}
+
+.thought-content p {
+  margin: 0.3em 0;
+}
+
+/* ── Tool call block ──────────────────────── */
+
+.chat-tool-call {
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  border-radius: var(--radius);
+  margin: 6px 0;
+  overflow: hidden;
+}
+
+.tool-call-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--secondary-foreground);
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.tool-call-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-call-summary:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.tool-call-icon {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.tool-call-name {
+  font-weight: 600;
+}
+
+/* Status badges */
+.tool-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tool-status-badge.active {
+  background: color-mix(in oklch, var(--ring) 15%, transparent);
+  color: var(--ring);
+}
+
+.tool-status-badge.success {
+  background: color-mix(in oklch, oklch(0.7 0.17 145) 15%, transparent);
+  color: oklch(0.7 0.17 145);
+}
+
+.tool-status-badge.error {
+  background: color-mix(in oklch, var(--destructive) 15%, transparent);
+  color: var(--destructive);
+}
+
+.tool-status-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid color-mix(in oklch, var(--ring) 30%, transparent);
+  border-top-color: var(--ring);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.tool-duration {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nested detail sections (Args / Result) */
+.tool-call-details {
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-section {
+  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  overflow: hidden;
+}
+
+.tool-section-label {
+  display: block;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  list-style: none;
+  user-select: none;
+}
+
+.tool-section-label::-webkit-details-marker {
+  display: none;
+}
+
+.tool-section-label:hover {
+  color: var(--secondary-foreground);
+}
+
+.tool-size-hint {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 0.65rem;
+  opacity: 0.6;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.tool-section-content {
+  padding: 8px 10px;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+}
+
+.tool-section-custom {
+  padding: 8px 10px;
+  max-height: 300px;
+  overflow-y: auto;
+}

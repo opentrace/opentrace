@@ -1,0 +1,14 @@
+{
+  "description": "Resolves relative TS imports to known files",
+  "source": "import { helper } from './utils';\nimport { config } from '../config';\n",
+  "filePath": "src/app/main.ts",
+  "knownFiles": ["src/app/utils.ts", "src/config.ts", "src/app/main.ts"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "src/app/utils.ts",
+      "config": "src/config.ts"
+    },
+    "external": {}
+  }
+}

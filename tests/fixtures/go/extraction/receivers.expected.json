@@ -1,0 +1,41 @@
+[
+  {
+    "name": "Server",
+    "kind": "class",
+    "start_line": 3,
+    "end_line": 3,
+    "signature": null,
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Start",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": "(s Server) ()",
+    "receiver_var": "s",
+    "receiver_type": "Server",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Stop",
+    "kind": "function",
+    "start_line": 9,
+    "end_line": 11,
+    "signature": "(s *Server) ()",
+    "receiver_var": "s",
+    "receiver_type": "Server",
+    "children": [],
+    "calls": [
+      {
+        "name": "cleanup",
+        "receiver": "s",
+        "kind": "attribute"
+      }
+    ]
+  }
+]

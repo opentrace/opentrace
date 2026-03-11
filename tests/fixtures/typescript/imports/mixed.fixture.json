@@ -1,0 +1,16 @@
+{
+  "description": "Mixed internal relative and external imports",
+  "source": "import { helper } from './utils';\nimport React from 'react';\nimport { render } from 'react-dom';\n",
+  "filePath": "src/main.ts",
+  "knownFiles": ["src/utils.ts", "src/main.ts"],
+  "modulePath": null,
+  "expected": {
+    "internal": {
+      "utils": "src/utils.ts"
+    },
+    "external": {
+      "react": "pkg:npm:react",
+      "react-dom": "pkg:npm:react-dom"
+    }
+  }
+}

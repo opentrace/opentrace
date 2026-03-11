@@ -1,0 +1,70 @@
+[
+  {
+    "name": "UserService",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 6,
+    "signature": null,
+    "children": [
+      {
+        "name": "constructor",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": "(private db: Database)",
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "getUser",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 5,
+        "signature": "(id: string)",
+        "children": [],
+        "calls": [
+          {
+            "name": "find",
+            "receiver": "this.db",
+            "kind": "attribute"
+          }
+        ]
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Validator",
+    "kind": "class",
+    "start_line": 7,
+    "end_line": 11,
+    "signature": null,
+    "children": [
+      {
+        "name": "check",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 10,
+        "signature": "(input: string)",
+        "children": [],
+        "calls": [
+          {
+            "name": "validate",
+            "receiver": null,
+            "kind": "bare"
+          }
+        ]
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "BaseHandler",
+    "kind": "class",
+    "start_line": 12,
+    "end_line": 14,
+    "signature": null,
+    "children": [],
+    "calls": []
+  }
+]

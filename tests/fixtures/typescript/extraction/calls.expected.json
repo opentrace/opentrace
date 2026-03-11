@@ -1,0 +1,47 @@
+[
+  {
+    "name": "orchestrate",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 5,
+    "signature": "()",
+    "children": [],
+    "calls": [
+      {
+        "name": "setup",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "log",
+        "receiver": "console",
+        "kind": "attribute"
+      },
+      {
+        "name": "validate",
+        "receiver": "this",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "dispatch",
+    "kind": "function",
+    "start_line": 6,
+    "end_line": 9,
+    "signature": "(event: string)",
+    "children": [],
+    "calls": [
+      {
+        "name": "emit",
+        "receiver": null,
+        "kind": "bare"
+      },
+      {
+        "name": "info",
+        "receiver": "logger",
+        "kind": "attribute"
+      }
+    ]
+  }
+]

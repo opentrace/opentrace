@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "opentrace-oss": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "description": "OpenTrace OSS knowledge graph tools."
+    }
+  }
+}
