@@ -1,8 +1,16 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'fs';
+import { execSync } from 'child_process';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
+
+let gitSha = 'unknown';
+try {
+  gitSha = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+} catch {
+  // not in a git repo
+}
 
 /**
  * Inline Vite plugin that sets Cross-Origin-Opener-Policy and
@@ -36,7 +44,7 @@ function crossOriginIsolation(): Plugin {
 export default defineConfig({
   envDir: '..',
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(`${pkg.version}+${gitSha}`),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   plugins: [react(), crossOriginIsolation()],

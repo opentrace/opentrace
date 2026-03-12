@@ -27,11 +27,20 @@ import { rrfFuse } from './search/rrf';
 
 let conn: Connection | null = null;
 let kuzu: KuzuModule | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let db: any = null;
+
+/**
+ * Track execute() calls so we can recycle the connection before the
+ * kuzu-wasm WASM heap is exhausted (~5000-6000 calls).
+ */
+let executeCount = 0;
+const RECYCLE_THRESHOLD = 800;
 
 /**
  * JS-side property cache for nodes.  Avoids querying the DB to merge
  * properties on update batches (summary-only etc.).  kuzu-wasm's WASM heap
- * exhausts after ~2000 conn.execute() calls, so we must minimise queries.
+ * exhausts after ~5000 conn.execute() calls, so we must minimise queries.
  */
 const nodePropsCache = new Map<string, Record<string, unknown>>();
 
@@ -60,13 +69,28 @@ function encodeProps(props: Record<string, unknown>): string {
   return encodeURIComponent(JSON.stringify(props));
 }
 
-async function query(cypher: string): Promise<unknown[]> {
+/**
+ * Wrapper around conn.execute() that recycles the connection periodically
+ * to prevent kuzu-wasm WASM heap exhaustion.  The Database object holds
+ * the data; the Connection is just a session handle that can be recreated.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function execute(cypher: string): Promise<any> {
   if (!conn) throw new Error('KuzuDB not initialized');
+  if (executeCount >= RECYCLE_THRESHOLD && kuzu && db) {
+    console.log(`[KuzuWorker] recycling connection after ${executeCount} executions`);
+    conn = await kuzu.Connection(db);
+    executeCount = 0;
+  }
+  executeCount++;
+  return conn.execute(cypher);
+}
+
+async function query(cypher: string): Promise<unknown[]> {
   const t0 = performance.now();
-  const res = await conn.execute(cypher);
+  const res = await execute(cypher);
   const elapsed = performance.now() - t0;
   if (!res?.table) {
-    // Log the shape of the result so we can diagnose what execute() actually returns
     const keys = res ? Object.keys(res) : 'null/undefined';
     console.warn(
       `[KuzuWorker] query returned no table (keys: ${JSON.stringify(keys)}, ${elapsed.toFixed(0)}ms): ${cypher.slice(0, 120)}`,
@@ -92,7 +116,7 @@ const SCHEMA_STATEMENTS = [
 
 async function createSchema() {
   for (const stmt of SCHEMA_STATEMENTS) {
-    await conn!.execute(stmt);
+    await execute(stmt);
   }
 }
 
@@ -100,11 +124,19 @@ async function createSchema() {
 
 async function handleInit(id: number): Promise<KuzuResponse> {
   kuzu = await kuzu_wasm();
-  const db = await kuzu.Database();
+  db = await kuzu.Database();
   conn = await kuzu.Connection(db);
+  executeCount = 0;
   await createSchema();
   return { kind: 'ready', id };
 }
+
+/**
+ * Maximum items per UNWIND batch.  Each UNWIND is a single conn.execute()
+ * call, so this controls the trade-off between Cypher string size and
+ * total number of execute() calls (which exhaust the kuzu-wasm WASM heap).
+ */
+const IMPORT_BATCH_SIZE = 100;
 
 async function handleImportBatch(
   id: number,
@@ -113,33 +145,23 @@ async function handleImportBatch(
   let nodesCreated = 0;
   let relsCreated = 0;
 
+  // ---- Phase 1: update JS-side caches and build Cypher map entries ----
+  const nodeEntries: string[] = [];
   for (const node of batch.batch.nodes) {
-    try {
-      // Merge properties with any existing ones so partial updates (e.g.
-      // summary-only batches) don't overwrite previously-set fields.
-      // Uses JS-side cache instead of querying the DB — kuzu-wasm's WASM
-      // heap exhausts after ~2000 conn.execute() calls.
-      const cached = nodePropsCache.get(node.id);
-      const mergedProps = cached
-        ? { ...cached, ...(node.properties ?? {}) }
-        : (node.properties ?? {});
+    // Merge properties with cache so partial updates (e.g. summary-only)
+    // don't overwrite previously-set fields.
+    const cached = nodePropsCache.get(node.id);
+    const mergedProps = cached
+      ? { ...cached, ...(node.properties ?? {}) }
+      : (node.properties ?? {});
+    nodePropsCache.set(node.id, mergedProps);
 
-      nodePropsCache.set(node.id, mergedProps);
+    const props = esc(encodeProps(mergedProps));
+    nodeEntries.push(
+      `{id: '${esc(node.id)}', type: '${esc(node.type)}', name: '${esc(node.name)}', props: '${props}'}`,
+    );
 
-      const props = esc(encodeProps(mergedProps));
-      await conn!.execute(
-        `MERGE (n:Node {id: '${esc(node.id)}'}) SET n.type = '${esc(node.type)}', n.name = '${esc(node.name)}', n.properties = '${props}'`,
-      );
-      nodesCreated++;
-    } catch (nodeErr) {
-      console.error(
-        `[KuzuWorker] Failed to import node: id=${node.id}, type=${node.type}, name=${node.name}`,
-        nodeErr,
-      );
-      throw nodeErr;
-    }
-
-    // Index into BM25 for text search.
+    // BM25 index (JS-only, no DB call)
     const searchParts = [node.name, node.type];
     if (node.properties) {
       if (typeof node.properties.summary === 'string')
@@ -149,38 +171,55 @@ async function handleImportBatch(
     }
     bm25Index.addDocument(node.id, searchParts.join(' '));
 
-    // Index embedding if present.
+    // Vector index (JS-only)
     if (node.embedding && node.embedding.length > 0) {
-      if (!vectorIndex) {
-        vectorIndex = new VectorIndex(node.embedding.length);
-      }
+      if (!vectorIndex) vectorIndex = new VectorIndex(node.embedding.length);
       vectorIndex.addVector(node.id, node.embedding);
     }
   }
 
-  for (const rel of batch.batch.relationships) {
+  // ---- Phase 2: batch-write nodes via UNWIND ----
+  for (let i = 0; i < nodeEntries.length; i += IMPORT_BATCH_SIZE) {
+    const chunk = nodeEntries.slice(i, i + IMPORT_BATCH_SIZE);
     try {
-      const props = rel.properties ? esc(encodeProps(rel.properties)) : '{}';
-      // Use MERGE for the relationship to avoid duplicates
-      await conn!.execute(
-        `MATCH (a:Node {id: '${esc(rel.source_id)}'}), (b:Node {id: '${esc(rel.target_id)}'}) ` +
-          `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${props}'}]->(b)`,
+      await execute(
+        `UNWIND [${chunk.join(', ')}] AS row ` +
+          `MERGE (n:Node {id: row.id}) SET n.type = row.type, n.name = row.name, n.properties = row.props`,
       );
-      relsCreated++;
-    } catch (relErr) {
-      console.error(
-        `[KuzuWorker] Failed to import rel: id=${rel.id}, type=${rel.type}, src=${rel.source_id}, tgt=${rel.target_id}`,
-        relErr,
-      );
-      throw relErr;
+      nodesCreated += chunk.length;
+    } catch (err) {
+      console.error(`[KuzuWorker] UNWIND node batch failed (offset ${i}, size ${chunk.length}):`, err);
+      throw err;
     }
   }
 
-  // Verify data actually persisted
-  const verifyRows = await query(`MATCH (n:Node) RETURN count(n) AS cnt`);
-  const dbCount = Number((verifyRows as Record<string, number>[])[0]?.cnt ?? 0);
+  // ---- Phase 3: batch-write relationships via UNWIND ----
+  const relEntries: string[] = [];
+  for (const rel of batch.batch.relationships) {
+    const props = rel.properties ? esc(encodeProps(rel.properties)) : '{}';
+    relEntries.push(
+      `{id: '${esc(rel.id)}', type: '${esc(rel.type)}', src: '${esc(rel.source_id)}', tgt: '${esc(rel.target_id)}', props: '${props}'}`,
+    );
+  }
+
+  for (let i = 0; i < relEntries.length; i += IMPORT_BATCH_SIZE) {
+    const chunk = relEntries.slice(i, i + IMPORT_BATCH_SIZE);
+    try {
+      await execute(
+        `UNWIND [${chunk.join(', ')}] AS row ` +
+          `MATCH (a:Node {id: row.src}), (b:Node {id: row.tgt}) ` +
+          `CREATE (a)-[:RELATES {id: row.id, type: row.type, properties: row.props}]->(b)`,
+      );
+      relsCreated += chunk.length;
+    } catch (err) {
+      console.error(`[KuzuWorker] UNWIND rel batch failed (offset ${i}, size ${chunk.length}):`, err);
+      throw err;
+    }
+  }
+
+  // Use cache size for verification — avoids spending an execute() call
   console.log(
-    `[KuzuWorker] importBatch done: wrote ${nodesCreated} nodes, ${relsCreated} rels — DB now has ${dbCount} nodes`,
+    `[KuzuWorker] importBatch done: wrote ${nodesCreated} nodes, ${relsCreated} rels — cache has ${nodePropsCache.size} nodes (${executeCount} execs)`,
   );
 
   const data: ImportBatchResponse = {
@@ -379,8 +418,8 @@ async function handleFetchStats(id: number): Promise<KuzuResponse> {
 
 async function handleClearGraph(id: number): Promise<KuzuResponse> {
   // Drop and recreate tables
-  await conn!.execute(`DROP TABLE IF EXISTS RELATES`);
-  await conn!.execute(`DROP TABLE IF EXISTS Node`);
+  await execute(`DROP TABLE IF EXISTS RELATES`);
+  await execute(`DROP TABLE IF EXISTS Node`);
   await createSchema();
 
   // Reset indexes and caches

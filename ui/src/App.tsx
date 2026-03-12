@@ -459,7 +459,7 @@ function App() {
         <span>Loading graph...</span>
         <footer className="version-footer">
           v{__APP_VERSION__} &middot;{' '}
-          {new Date(__BUILD_TIME__).toLocaleDateString()}
+          {new Date(__BUILD_TIME__).toLocaleString()}
         </footer>
       </div>
     );
@@ -479,7 +479,7 @@ function App() {
         </button>
         <footer className="version-footer">
           v{__APP_VERSION__} &middot;{' '}
-          {new Date(__BUILD_TIME__).toLocaleDateString()}
+          {new Date(__BUILD_TIME__).toLocaleString()}
         </footer>
       </div>
     );
@@ -539,7 +539,7 @@ function App() {
 
         <footer className="version-footer">
           v{__APP_VERSION__} &middot;{' '}
-          {new Date(__BUILD_TIME__).toLocaleDateString()}
+          {new Date(__BUILD_TIME__).toLocaleString()}
         </footer>
       </div>
     );
@@ -933,7 +933,7 @@ function App() {
 
       <footer className="version-footer">
         v{__APP_VERSION__} &middot;{' '}
-        {new Date(__BUILD_TIME__).toLocaleDateString()}
+        {new Date(__BUILD_TIME__).toLocaleString()}
       </footer>
     </div>
   );
