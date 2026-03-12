@@ -6,13 +6,13 @@
  * consumer reads via `for await (const event of stream)`.
  */
 
-import { IndexingManager } from "../runner/browser";
-import type { IndexPhase, LoaderInput } from "../runner/browser";
-import { JobEventKind, JobPhase } from "../gen/opentrace/v1/agent_service";
-import type { JobEvent } from "../gen/opentrace/v1/agent_service";
-import type { GraphStore } from "../store/types";
-import { EventChannel } from "./eventChannel";
-import type { JobMessage, JobService, JobStream } from "./types";
+import { IndexingManager } from '../runner/browser';
+import type { IndexPhase, LoaderInput } from '../runner/browser';
+import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
+import type { JobEvent } from '../gen/opentrace/v1/agent_service';
+import type { GraphStore } from '../store/types';
+import { EventChannel } from './eventChannel';
+import type { JobMessage, JobService, JobStream } from './types';
 
 /** Map IndexingManager's string phases to proto JobPhase enum values. */
 const PHASE_MAP: Record<IndexPhase, JobPhase> = {
@@ -36,7 +36,7 @@ function emptyEvent(): JobEvent {
   return {
     kind: JobEventKind.JOB_EVENT_KIND_UNSPECIFIED,
     phase: JobPhase.JOB_PHASE_UNSPECIFIED,
-    message: "",
+    message: '',
     result: undefined,
     errors: [],
     detail: undefined,
@@ -55,21 +55,23 @@ export class BrowserJobService implements JobService {
   async startJob(message: JobMessage): Promise<JobStream> {
     // Map the job message to a LoaderInput for the IndexingManager
     let input: LoaderInput;
-    if (message.type === "index-repo") {
+    if (message.type === 'index-repo') {
       input = {
-        kind: "url",
+        kind: 'url',
         url: message.repoUrl,
         token: message.token,
         ref: message.ref,
       };
-    } else if (message.type === "index-directory") {
+    } else if (message.type === 'index-directory') {
       input = {
-        kind: "directory",
+        kind: 'directory',
         files: message.files,
         name: message.name,
       };
     } else {
-      throw new Error(`Unsupported job type: ${(message as { type: string }).type}`);
+      throw new Error(
+        `Unsupported job type: ${(message as { type: string }).type}`,
+      );
     }
 
     const channel = new EventChannel<JobEvent>();
@@ -86,7 +88,7 @@ export class BrowserJobService implements JobService {
             detail: {
               current: detail.current,
               total: detail.total,
-              fileName: detail.fileName ?? "",
+              fileName: detail.fileName ?? '',
               nodesCreated: detail.nodesCreated ?? 0,
               relationshipsCreated: detail.relationshipsCreated ?? 0,
             },
@@ -134,7 +136,19 @@ export class BrowserJobService implements JobService {
       this.store,
     );
 
-    await manager.start(input);
+    // Fire-and-forget: don't await start() so the stream is returned immediately.
+    // This lets the consumer process progress events (like "Checkout") in real-time
+    // instead of receiving them all at once after the fetch completes.
+    // Errors are handled by the onError callback → channel → consumer.
+    manager.start(input).catch((err) => {
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+        message: err instanceof Error ? err.message : String(err),
+        errors: [err instanceof Error ? err.message : String(err)],
+      });
+      channel.close();
+    });
 
     return {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),

@@ -1,9 +1,12 @@
-import { useCallback, useRef, useState, useEffect } from "react";
-import { JobEventKind, JobPhase } from "../gen/opentrace/v1/agent_service";
-import type { JobResult, ProgressDetail } from "../gen/opentrace/v1/agent_service";
-import type { JobMessage, JobService, JobStream } from "./types";
+import { useCallback, useRef, useState, useEffect } from 'react';
+import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
+import type {
+  JobResult,
+  ProgressDetail,
+} from '../gen/opentrace/v1/agent_service';
+import type { JobMessage, JobService, JobStream } from './types';
 
-export type StageStatus = "pending" | "active" | "completed";
+export type StageStatus = 'pending' | 'active' | 'completed';
 
 export interface StageState {
   status: StageStatus;
@@ -14,7 +17,7 @@ export interface StageState {
 }
 
 export interface JobState {
-  status: "idle" | "running" | "persisted" | "enriching" | "done" | "error";
+  status: 'idle' | 'running' | 'persisted' | 'enriching' | 'done' | 'error';
   phase: JobPhase;
   message: string;
   detail: ProgressDetail;
@@ -28,15 +31,15 @@ export interface JobState {
 const EMPTY_DETAIL: ProgressDetail = {
   current: 0,
   total: 0,
-  fileName: "",
+  fileName: '',
   nodesCreated: 0,
   relationshipsCreated: 0,
 };
 
 const INITIAL_STATE: JobState = {
-  status: "idle",
+  status: 'idle',
   phase: JobPhase.JOB_PHASE_UNSPECIFIED,
-  message: "",
+  message: '',
   detail: EMPTY_DETAIL,
   nodesCreated: 0,
   relationshipsCreated: 0,
@@ -56,7 +59,7 @@ export function useJobStream(jobService: JobService) {
 
       setState({
         ...INITIAL_STATE,
-        status: "running",
+        status: 'running',
       });
 
       let stream: JobStream;
@@ -65,7 +68,7 @@ export function useJobStream(jobService: JobService) {
       } catch (err) {
         setState((s) => ({
           ...s,
-          status: "error",
+          status: 'error',
           error: err instanceof Error ? err.message : String(err),
         }));
         return;
@@ -83,18 +86,31 @@ export function useJobStream(jobService: JobService) {
                   // Don't reopen a completed stage with new progress events
                   // (e.g. enrichment batches fire "submitting" after parse already completed it)
                   const existing = s.stages[event.phase];
-                  const stageUpdate = existing?.status === "completed"
-                    ? { ...existing, current: d.current, total: d.total, message: event.message }
-                    : { status: "active" as StageStatus, current: d.current, total: d.total, message: event.message, fileName: d.fileName || undefined };
+                  const stageUpdate =
+                    existing?.status === 'completed'
+                      ? {
+                          ...existing,
+                          current: d.current,
+                          total: d.total,
+                          message: event.message,
+                        }
+                      : {
+                          status: 'active' as StageStatus,
+                          current: d.current,
+                          total: d.total,
+                          message: event.message,
+                          fileName: d.fileName || undefined,
+                        };
                   return {
                     ...s,
                     // Keep "enriching" status during enrichment progress updates
-                    status: s.status === "enriching" ? "enriching" : s.status,
+                    status: s.status === 'enriching' ? 'enriching' : s.status,
                     phase: event.phase,
                     message: event.message,
                     detail: d,
                     nodesCreated: d.nodesCreated || s.nodesCreated,
-                    relationshipsCreated: d.relationshipsCreated || s.relationshipsCreated,
+                    relationshipsCreated:
+                      d.relationshipsCreated || s.relationshipsCreated,
                     stages: { ...s.stages, [event.phase]: stageUpdate },
                   };
                 });
@@ -107,7 +123,7 @@ export function useJobStream(jobService: JobService) {
                     ...s.stages,
                     [event.phase]: {
                       ...s.stages[event.phase],
-                      status: "completed" as StageStatus,
+                      status: 'completed' as StageStatus,
                       message: event.message,
                     },
                   },
@@ -116,9 +132,11 @@ export function useJobStream(jobService: JobService) {
               case JobEventKind.JOB_EVENT_KIND_GRAPH_READY:
                 setState((s) => ({
                   ...s,
-                  status: "persisted",
+                  status: 'persisted',
                   nodesCreated: event.result?.nodesCreated ?? s.nodesCreated,
-                  relationshipsCreated: event.result?.relationshipsCreated ?? s.relationshipsCreated,
+                  relationshipsCreated:
+                    event.result?.relationshipsCreated ??
+                    s.relationshipsCreated,
                   result: event.result ?? null,
                 }));
                 break;
@@ -126,17 +144,24 @@ export function useJobStream(jobService: JobService) {
                 setState((s) => {
                   // Mark all remaining active stages as completed
                   const finalStages = { ...s.stages };
-                  for (const key of Object.keys(finalStages) as unknown as JobPhase[]) {
-                    if (finalStages[key]?.status === "active") {
-                      finalStages[key] = { ...finalStages[key]!, status: "completed" };
+                  for (const key of Object.keys(
+                    finalStages,
+                  ) as unknown as JobPhase[]) {
+                    if (finalStages[key]?.status === 'active') {
+                      finalStages[key] = {
+                        ...finalStages[key]!,
+                        status: 'completed',
+                      };
                     }
                   }
                   return {
                     ...s,
-                    status: "done",
+                    status: 'done',
                     phase: JobPhase.JOB_PHASE_DONE,
                     nodesCreated: event.result?.nodesCreated ?? s.nodesCreated,
-                    relationshipsCreated: event.result?.relationshipsCreated ?? s.relationshipsCreated,
+                    relationshipsCreated:
+                      event.result?.relationshipsCreated ??
+                      s.relationshipsCreated,
                     result: event.result ?? null,
                     stages: finalStages,
                   };
@@ -146,14 +171,19 @@ export function useJobStream(jobService: JobService) {
                 setState((s) => {
                   // Mark all remaining active stages as completed to stop spinners
                   const finalStages = { ...s.stages };
-                  for (const key of Object.keys(finalStages) as unknown as JobPhase[]) {
-                    if (finalStages[key]?.status === "active") {
-                      finalStages[key] = { ...finalStages[key]!, status: "completed" };
+                  for (const key of Object.keys(
+                    finalStages,
+                  ) as unknown as JobPhase[]) {
+                    if (finalStages[key]?.status === 'active') {
+                      finalStages[key] = {
+                        ...finalStages[key]!,
+                        status: 'completed',
+                      };
                     }
                   }
                   return {
                     ...s,
-                    status: "error",
+                    status: 'error',
                     error: event.message,
                     stages: finalStages,
                   };
@@ -179,7 +209,9 @@ export function useJobStream(jobService: JobService) {
 
   /** Transition persisted → enriching (auto-minimize). No-op if already moved past persisted. */
   const minimize = useCallback(() => {
-    setState((s) => (s.status === "persisted" ? { ...s, status: "enriching" } : s));
+    setState((s) =>
+      s.status === 'persisted' ? { ...s, status: 'enriching' } : s,
+    );
   }, []);
 
   /** Return to idle state (dismiss completed job). */

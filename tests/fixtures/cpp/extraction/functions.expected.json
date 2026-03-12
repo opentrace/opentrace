@@ -1,0 +1,26 @@
+[
+  {
+    "name": "add",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "(int a, int b)",
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "process",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": "(const char* name, int count)",
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

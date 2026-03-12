@@ -1,50 +1,95 @@
-import { getNodeColor } from "./nodeColors";
-import type { TraverseEntry } from "./parsers";
+import { useState } from 'react';
+import { getNodeColor } from './nodeColors';
+import type { TraverseEntry } from './parsers';
 
 interface Props {
   entries: TraverseEntry[];
+  onNodeSelect?: (nodeId: string) => void;
 }
 
-/** Hierarchical tree view with depth-based indentation and relationship labels */
-export default function TraverseResult({ entries }: Props) {
+const INITIAL_LIMIT = 30;
+
+/**
+ * Determine which entries are the last at their depth level.
+ * An entry is "last at depth" if no subsequent sibling at the same depth
+ * appears before the depth decreases or the list ends.
+ */
+function computeLastAtDepth(entries: TraverseEntry[]): Set<number> {
+  const lastSet = new Set<number>();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const depth = entries[i].depth;
+    // Check if any later entry at the same depth exists before
+    // the parent scope ends (i.e., a shallower depth appears)
+    let isLast = true;
+    for (let j = i + 1; j < entries.length; j++) {
+      if (entries[j].depth < depth) break;
+      if (entries[j].depth === depth) {
+        isLast = false;
+        break;
+      }
+    }
+    if (isLast) lastSet.add(i);
+  }
+  return lastSet;
+}
+
+/** Hierarchical tree view with CSS-based tree-line connectors */
+export default function TraverseResult({ entries, onNodeSelect }: Props) {
+  const [expanded, setExpanded] = useState(false);
+
   if (entries.length === 0) {
     return <p className="result-empty">No results found.</p>;
   }
 
+  const visible = expanded ? entries : entries.slice(0, INITIAL_LIMIT);
+  const hasMore = entries.length > INITIAL_LIMIT;
+  const lastAtDepth = computeLastAtDepth(visible);
+
   return (
     <div className="result-traverse">
-      {entries.map((entry, i) => {
+      {visible.map((entry, i) => {
         const { node, relationship, depth } = entry;
         const color = getNodeColor(node.type);
+        const isRoot = depth === 0;
+        const isLast = lastAtDepth.has(i);
+
+        const classes = [
+          'result-traverse-entry',
+          isRoot && 'root-entry',
+          isLast && 'last-at-depth',
+        ]
+          .filter(Boolean)
+          .join(' ');
 
         return (
           <div
             key={`${node.id}-${i}`}
-            className="result-traverse-entry"
-            style={{ paddingLeft: depth * 16 }}
+            className={classes}
+            style={{ paddingLeft: isRoot ? 0 : depth * 20 }}
           >
             {relationship && relationship.type && (
-              <div className="result-traverse-rel">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
-                </svg>
-                <span>{relationship.type}</span>
-              </div>
+              <span className="result-traverse-rel">{relationship.type} →</span>
             )}
-            <div className="result-node-card result-node-card-compact">
-              <div className="result-node-header">
-                <span
-                  className="result-type-badge"
-                  style={{ borderColor: color, color }}
-                >
-                  {node.type}
-                </span>
-                <span className="result-node-name">{node.name}</span>
-              </div>
+            <div
+              className="result-traverse-node"
+              onClick={() => onNodeSelect?.(node.id)}
+            >
+              <span className="result-type-badge" style={{ background: color }}>
+                {node.type}
+              </span>
+              <span className="result-node-name">{node.name}</span>
             </div>
           </div>
         );
       })}
+      {hasMore && (
+        <button
+          className="result-show-more"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Show less' : `Show all ${entries.length}`}
+        </button>
+      )}
     </div>
   );
 }

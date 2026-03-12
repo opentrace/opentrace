@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Vehicle",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 9,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "start",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 4,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "stop",
+        "kind": "function",
+        "start_line": 6,
+        "end_line": 8,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Empty",
+    "kind": "class",
+    "start_line": 11,
+    "end_line": 11,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

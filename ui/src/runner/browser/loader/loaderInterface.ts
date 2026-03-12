@@ -6,14 +6,14 @@
  * iterates a registry array and delegates to the first match.
  */
 
-import type { FetchProgress } from "./shared";
-import type { RepoTree } from "../types";
+import type { FetchProgress } from './shared';
+import type { RepoTree } from '../types';
 
 // --- Loader input discriminated union ---
 
 export type LoaderInput =
-  | { kind: "url"; url: string; token?: string; ref?: string }
-  | { kind: "directory"; files: FileList; name: string };
+  | { kind: 'url'; url: string; token?: string; ref?: string }
+  | { kind: 'directory'; files: FileList; name: string };
 
 // --- Callback options passed to every loader ---
 

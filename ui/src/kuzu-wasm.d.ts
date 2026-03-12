@@ -1,4 +1,4 @@
-declare module "@kuzu/kuzu-wasm" {
+declare module '@kuzu/kuzu-wasm' {
   export interface QueryResult {
     table: { toString(): string };
   }

@@ -47,33 +47,14 @@ api:
 agent:
 	$(MAKE) -C agent run
 
-ui: functions-emulator
+ui:
 	$(MAKE) -C ui dev
-
-ui-preview: ui-build-static functions-build
-	firebase emulators:start --only hosting,functions
 
 ## Firebase deploy
 CHANNEL ?= preview
 
 ui-build-static:
 	VITE_API_BASE="" VITE_BROWSER_ONLY=true $(MAKE) -C ui build
-
-deploy-preview: ui-build-static
-	firebase hosting:channel:deploy $(CHANNEL) --only hosting:oss --expires 7d
-
-deploy-live: ui-build-static functions-build
-	firebase deploy --only hosting:oss,functions
-
-## Cloud Functions
-functions-emulator: functions-build
-	firebase emulators:start --only functions &
-
-functions-build:
-	cd functions && npm install && npm run build
-
-functions-test:
-	cd functions && npm test
 
 ## Reload the Claude Code plugin (remove and re-add marketplace + plugin)
 plugin-reload:

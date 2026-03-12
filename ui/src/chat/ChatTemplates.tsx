@@ -4,20 +4,24 @@ interface Props {
 
 const TEMPLATES = [
   {
-    label: "Overview",
-    prompt: "Give me an overview of this system's architecture. What node types exist and how are they connected?",
+    label: 'Overview',
+    prompt:
+      "Give me an overview of this system's architecture. What node types exist and how are they connected?",
   },
   {
-    label: "List services",
-    prompt: "List all the services in this graph and briefly describe what each one does based on its connections.",
+    label: 'List services',
+    prompt:
+      'List all the services in this graph and briefly describe what each one does based on its connections.',
   },
   {
-    label: "Find dependencies",
-    prompt: "What are the most critical dependencies in this system? Which nodes have the most incoming connections?",
+    label: 'Find dependencies',
+    prompt:
+      'What are the most critical dependencies in this system? Which nodes have the most incoming connections?',
   },
   {
-    label: "Database usage",
-    prompt: "What databases exist in this graph and which services connect to them?",
+    label: 'Database usage',
+    prompt:
+      'What databases exist in this graph and which services connect to them?',
   },
 ];
 

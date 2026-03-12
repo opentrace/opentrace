@@ -1,4 +1,4 @@
-declare module "@huggingface/transformers" {
+declare module '@huggingface/transformers' {
   export function pipeline(
     task: string,
     model: string,

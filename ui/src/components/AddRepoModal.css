@@ -102,7 +102,9 @@
   border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
   border-radius: 14px;
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
   box-sizing: border-box;
 }
 
@@ -151,7 +153,9 @@
   color: var(--muted-foreground);
   opacity: 0.5;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
 }
 
 .input-toggle:hover {
@@ -175,7 +179,9 @@
   border: none;
   border-radius: 14px;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  transition:
+    background 0.15s,
+    transform 0.1s;
 }
 
 .btn-cta:hover:not(:disabled) {
@@ -194,14 +200,17 @@
 .btn-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid color-mix(in oklch, var(--primary-foreground) 30%, transparent);
+  border: 2px solid
+    color-mix(in oklch, var(--primary-foreground) 30%, transparent);
   border-top-color: var(--primary-foreground);
   border-radius: 50%;
   animation: btnSpin 0.6s linear infinite;
 }
 
 @keyframes btnSpin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ── Bottom Chips ────────────────────────────── */
@@ -314,7 +323,9 @@
   cursor: pointer;
   text-align: left;
   color: var(--muted-foreground);
-  transition: border-color 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 }
 
 .directory-browse-btn:hover {
@@ -526,7 +537,8 @@
 }
 
 @keyframes stepPulse {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 0 color-mix(in oklch, var(--primary) 40%, transparent);
   }
   50% {
@@ -717,7 +729,11 @@
   max-height: 50px;
   opacity: 1;
   overflow: hidden;
-  transition: opacity 0.5s ease, max-height 0.4s ease 0.15s, gap 0.4s ease 0.15s, margin 0.4s ease 0.15s;
+  transition:
+    opacity 0.5s ease,
+    max-height 0.4s ease 0.15s,
+    gap 0.4s ease 0.15s,
+    margin 0.4s ease 0.15s;
 }
 
 .stage-row:last-child {

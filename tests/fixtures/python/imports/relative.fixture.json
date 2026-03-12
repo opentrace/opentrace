@@ -7,7 +7,9 @@
   "expected": {
     "internal": {
       "utils": "pkg/utils.py",
-      "models": "pkg/models/__init__.py"
+      "helper": "pkg/utils.py",
+      "models": "pkg/models/__init__.py",
+      "User": "pkg/models/__init__.py"
     },
     "external": {}
   }

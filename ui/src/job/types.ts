@@ -12,23 +12,23 @@ export {
   type JobEvent,
   type JobResult,
   type ProgressDetail,
-} from "../gen/opentrace/v1/agent_service";
+} from '../gen/opentrace/v1/agent_service';
 
-import type { JobEvent } from "../gen/opentrace/v1/agent_service";
+import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 
 // --- Job messages (what to do) ---
 
 export type JobMessage = IndexRepoMessage | IndexDirectoryMessage;
 
 export interface IndexRepoMessage {
-  type: "index-repo";
+  type: 'index-repo';
   repoUrl: string;
   token?: string;
   ref?: string;
 }
 
 export interface IndexDirectoryMessage {
-  type: "index-directory";
+  type: 'index-directory';
   files: FileList;
   name: string;
 }

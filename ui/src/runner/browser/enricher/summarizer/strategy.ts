@@ -6,15 +6,26 @@
  * Strategies operate on SymbolMetadata (structured data), not raw source.
  */
 
-import type { SummarizationStrategyType, SummarizerConfig, SymbolMetadata } from "./types";
-import { summarizeFromMetadata } from "./templateSummarizer";
+import type {
+  SummarizationStrategyType,
+  SummarizerConfig,
+  SymbolMetadata,
+} from './types';
+import { summarizeFromMetadata } from './templateSummarizer';
 
 /** Race a promise against a timeout. Rejects with a descriptive error on timeout. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${ms}ms`)),
+        ms,
+      ),
     ),
   ]);
 }
@@ -40,7 +51,7 @@ export interface SummarizationStrategy {
 // ---------------------------------------------------------------------------
 
 class TemplateStrategy implements SummarizationStrategy {
-  readonly type = "template" as const;
+  readonly type = 'template' as const;
 
   async init(): Promise<void> {
     // Templates are instant — nothing to load
@@ -61,12 +72,13 @@ class TemplateStrategy implements SummarizationStrategy {
 // ML strategy — wraps FlanT5Summarizer under the new interface
 // ---------------------------------------------------------------------------
 
-const ML_INIT_TIMEOUT_MS = 120_000;   // 2 min for model download + ONNX init
-const ML_CALL_TIMEOUT_MS = 30_000;    // 30s per inference call
+const ML_INIT_TIMEOUT_MS = 120_000; // 2 min for model download + ONNX init
+const ML_CALL_TIMEOUT_MS = 30_000; // 30s per inference call
 
 class MlStrategy implements SummarizationStrategy {
-  readonly type = "ml" as const;
-  private summarizer: import("./flanT5Summarizer").FlanT5Summarizer | null = null;
+  readonly type = 'ml' as const;
+  private summarizer: import('./flanT5Summarizer').FlanT5Summarizer | null =
+    null;
   private config: SummarizerConfig;
 
   constructor(config: SummarizerConfig) {
@@ -74,15 +86,22 @@ class MlStrategy implements SummarizationStrategy {
   }
 
   async init(): Promise<void> {
-    console.log(`[MlStrategy] init: model=${this.config.model}, timeout=${ML_INIT_TIMEOUT_MS}ms`);
-    const { FlanT5Summarizer } = await import("./flanT5Summarizer");
+    console.log(
+      `[MlStrategy] init: model=${this.config.model}, timeout=${ML_INIT_TIMEOUT_MS}ms`,
+    );
+    const { FlanT5Summarizer } = await import('./flanT5Summarizer');
     this.summarizer = new FlanT5Summarizer(this.config);
-    await withTimeout(this.summarizer.init(), ML_INIT_TIMEOUT_MS, "ML summarizer init");
-    console.log("[MlStrategy] init complete");
+    await withTimeout(
+      this.summarizer.init(),
+      ML_INIT_TIMEOUT_MS,
+      'ML summarizer init',
+    );
+    console.log('[MlStrategy] init complete');
   }
 
   async summarize(meta: SymbolMetadata): Promise<string> {
-    if (!this.summarizer) throw new Error("MlStrategy not initialized — call init() first");
+    if (!this.summarizer)
+      throw new Error('MlStrategy not initialized — call init() first');
     const source = meta.source ?? meta.name;
     try {
       return await withTimeout(
@@ -97,13 +116,14 @@ class MlStrategy implements SummarizationStrategy {
   }
 
   async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
-    if (!this.summarizer) throw new Error("MlStrategy not initialized — call init() first");
+    if (!this.summarizer)
+      throw new Error('MlStrategy not initialized — call init() first');
     return withTimeout(
       this.summarizer.summarizeBatch(
         items.map((m) => ({ source: m.source ?? m.name, kind: m.kind })),
       ),
       ML_CALL_TIMEOUT_MS * items.length,
-      "ML summarizeBatch",
+      'ML summarizeBatch',
     );
   }
 
@@ -118,12 +138,14 @@ class MlStrategy implements SummarizationStrategy {
 // ---------------------------------------------------------------------------
 
 class NoopStrategy implements SummarizationStrategy {
-  readonly type = "none" as const;
+  readonly type = 'none' as const;
 
   async init(): Promise<void> {}
-  async summarize(): Promise<string> { return ""; }
+  async summarize(): Promise<string> {
+    return '';
+  }
   async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
-    return items.map(() => "");
+    return items.map(() => '');
   }
   async dispose(): Promise<void> {}
 }
@@ -133,11 +155,13 @@ class NoopStrategy implements SummarizationStrategy {
 // ---------------------------------------------------------------------------
 
 /** Create the appropriate summarization strategy from config. */
-export function createStrategy(config: SummarizerConfig): SummarizationStrategy {
-  if (!config.enabled || config.strategy === "none") {
+export function createStrategy(
+  config: SummarizerConfig,
+): SummarizationStrategy {
+  if (!config.enabled || config.strategy === 'none') {
     return new NoopStrategy();
   }
-  if (config.strategy === "ml") {
+  if (config.strategy === 'ml') {
     return new MlStrategy(config);
   }
   return new TemplateStrategy();

@@ -1,0 +1,75 @@
+[
+  {
+    "name": "Point",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": "struct",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Logger",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 10,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "log",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 8,
+        "signature": "(const char* msg)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "error",
+        "kind": "function",
+        "start_line": 9,
+        "end_line": 9,
+        "signature": "(const char* msg)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Color",
+    "kind": "class",
+    "start_line": 12,
+    "end_line": 16,
+    "signature": null,
+    "subtype": "enum",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "initialize",
+    "kind": "function",
+    "start_line": 18,
+    "end_line": 18,
+    "signature": "()",
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Calculator",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 10,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "add",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 5,
+        "signature": "(int a, int b)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "subtract",
+        "kind": "function",
+        "start_line": 7,
+        "end_line": 9,
+        "signature": "(int a, int b)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Empty",
+    "kind": "class",
+    "start_line": 12,
+    "end_line": 12,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

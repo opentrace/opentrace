@@ -1,0 +1,51 @@
+[
+  {
+    "name": "Database",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 5,
+    "signature": null,
+    "subtype": "object",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "connect",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "disconnect",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 3,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "query",
+        "kind": "function",
+        "start_line": 4,
+        "end_line": 4,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

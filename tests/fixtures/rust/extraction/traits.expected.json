@@ -1,0 +1,76 @@
+[
+  {
+    "name": "Drawable",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": "trait",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "draw",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": "(&self)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "area",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 3,
+        "signature": "(&self)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Logger",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 12,
+    "signature": null,
+    "subtype": "trait",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "log",
+        "kind": "function",
+        "start_line": 7,
+        "end_line": 9,
+        "signature": "(&self, msg: &str)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "error",
+        "kind": "function",
+        "start_line": 11,
+        "end_line": 11,
+        "signature": "(&self, msg: &str)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

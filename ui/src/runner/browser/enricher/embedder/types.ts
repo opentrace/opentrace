@@ -12,7 +12,7 @@ export interface EmbedderConfig {
 
 export const DEFAULT_EMBEDDER_CONFIG: EmbedderConfig = {
   enabled: true,
-  model: "Xenova/all-MiniLM-L6-v2",
+  model: 'Xenova/all-MiniLM-L6-v2',
 };
 
 export interface Embedder {

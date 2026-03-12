@@ -1,10 +1,10 @@
-import { JobPhase } from "../job";
-import type { JobState } from "../job";
-import "./JobMinimizedBar.css";
+import { JobPhase } from '../job';
+import type { JobState } from '../job';
+import './JobMinimizedBar.css';
 
 const PHASE_LABELS: Partial<Record<JobPhase, string>> = {
-  [JobPhase.JOB_PHASE_ENRICHING]: "Enriching",
-  [JobPhase.JOB_PHASE_SUBMITTING]: "Submitting",
+  [JobPhase.JOB_PHASE_ENRICHING]: 'Enriching',
+  [JobPhase.JOB_PHASE_SUBMITTING]: 'Submitting',
 };
 
 interface Props {
@@ -14,16 +14,29 @@ interface Props {
 }
 
 export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
-  const isDone = state.status === "done";
-  const label = isDone ? "Complete" : (PHASE_LABELS[state.phase] ?? "Enriching");
+  const isDone = state.status === 'done';
+  const label = isDone
+    ? 'Complete'
+    : (PHASE_LABELS[state.phase] ?? 'Enriching');
   const hasCount = !isDone && state.detail.total > 0;
 
   return (
-    <div className="job-minimized-bar" onClick={onClick} role="button" tabIndex={0}>
+    <div
+      className="job-minimized-bar"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+    >
       {isDone ? (
         <span className="job-minimized-bar__check">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <polyline points="3,7.5 5.5,10 11,4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <polyline
+              points="3,7.5 5.5,10 11,4"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </span>
       ) : (
@@ -41,7 +54,10 @@ export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
       {!isDone && (
         <button
           className="job-minimized-bar__cancel"
-          onClick={(e) => { e.stopPropagation(); onCancel(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
           title="Cancel enrichment"
         >
           &times;

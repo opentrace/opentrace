@@ -24,12 +24,20 @@
   color: var(--foreground);
 }
 
-.message-content .markdown-body h1 { font-size: 1.25em; }
-.message-content .markdown-body h2 { font-size: 1.1em; }
-.message-content .markdown-body h3 { font-size: 1em; }
+.message-content .markdown-body h1 {
+  font-size: 1.25em;
+}
+.message-content .markdown-body h2 {
+  font-size: 1.1em;
+}
+.message-content .markdown-body h3 {
+  font-size: 1em;
+}
 .message-content .markdown-body h4,
 .message-content .markdown-body h5,
-.message-content .markdown-body h6 { font-size: 0.9em; }
+.message-content .markdown-body h6 {
+  font-size: 0.9em;
+}
 
 .message-content .markdown-body h1:first-child,
 .message-content .markdown-body h2:first-child,

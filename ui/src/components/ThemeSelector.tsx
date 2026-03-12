@@ -1,13 +1,14 @@
-import { THEMES } from "../config/theme";
-import { useTheme } from "../hooks/useTheme";
+import { THEMES } from '../config/theme';
+import { useTheme } from '../hooks/useTheme';
 
 export default function ThemeSelector() {
-  const { theme, mode, setTheme, toggleMode, open, setOpen, dropdownRef } = useTheme();
+  const { theme, mode, setTheme, toggleMode, open, setOpen, dropdownRef } =
+    useTheme();
 
   return (
     <div className="theme-selector-wrapper" ref={dropdownRef}>
       <button
-        className={`theme-toggle-btn ${open ? "active" : ""}`}
+        className={`theme-toggle-btn ${open ? 'active' : ''}`}
         onClick={() => setOpen(!open)}
         title="Select theme"
       >
@@ -37,7 +38,7 @@ export default function ThemeSelector() {
         <div className="theme-dropdown">
           <button className="mode-toggle-row" onClick={toggleMode}>
             <span className="mode-toggle-label">
-              {mode === "dark" ? (
+              {mode === 'dark' ? (
                 <svg
                   width="14"
                   height="14"
@@ -72,11 +73,9 @@ export default function ThemeSelector() {
                   <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
                 </svg>
               )}
-              {mode === "dark" ? "Dark" : "Light"}
+              {mode === 'dark' ? 'Dark' : 'Light'}
             </span>
-            <span
-              className={`toggle-track ${mode === "light" ? "on" : ""}`}
-            >
+            <span className={`toggle-track ${mode === 'light' ? 'on' : ''}`}>
               <span className="toggle-thumb" />
             </span>
           </button>
@@ -86,7 +85,7 @@ export default function ThemeSelector() {
           {THEMES.map((t) => (
             <button
               key={t.value}
-              className={`theme-option ${theme === t.value ? "selected" : ""}`}
+              className={`theme-option ${theme === t.value ? 'selected' : ''}`}
               onClick={() => {
                 setTheme(t.value);
                 setOpen(false);

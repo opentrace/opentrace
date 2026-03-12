@@ -6,9 +6,9 @@
  * - discoverExtractionFixtures: find paired source + .expected.json files
  * - discoverImportFixtures: find .fixture.json files
  */
-import { readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import type { CodeSymbol } from "../types";
+import { readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { CodeSymbol } from '../types';
 
 /** Convert camelCase CodeSymbol to snake_case dict (excludes receiver fields). */
 export function normalizeSymbol(sym: CodeSymbol): Record<string, unknown> {
@@ -67,10 +67,28 @@ export function discoverExtractionFixtures(dir: string, ext: string): string[] {
   return names;
 }
 
+/** Convert camelCase CodeSymbol to snake_case dict with generic extractor fields. */
+export function normalizeSymbolGeneric(
+  sym: CodeSymbol,
+): Record<string, unknown> {
+  return {
+    name: sym.name,
+    kind: sym.kind,
+    start_line: sym.startLine,
+    end_line: sym.endLine,
+    signature: sym.signature,
+    subtype: sym.subtype ?? null,
+    superclasses: sym.superclasses ?? null,
+    interfaces: sym.interfaces ?? null,
+    children: sym.children.map(normalizeSymbolGeneric),
+    calls: [],
+  };
+}
+
 /** Discover import fixture files (*.fixture.json) in a directory. */
 export function discoverImportFixtures(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((f) => f.endsWith(".fixture.json"))
-    .map((f) => f.replace(".fixture.json", ""));
+    .filter((f) => f.endsWith('.fixture.json'))
+    .map((f) => f.replace('.fixture.json', ''));
 }

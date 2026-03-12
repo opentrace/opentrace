@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { applyTheme, applyMode, loadTheme, loadMode } from "../config/theme";
+import { useEffect, useRef, useState } from 'react';
+import { applyTheme, applyMode, loadTheme, loadMode } from '../config/theme';
 
 export function useTheme() {
   const [theme, setThemeState] = useState(loadTheme);
@@ -19,16 +19,20 @@ export function useTheme() {
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
   const setTheme = (t: string) => setThemeState(t);
-  const toggleMode = () => setModeState((m) => (m === "dark" ? "light" : "dark"));
+  const toggleMode = () =>
+    setModeState((m) => (m === 'dark' ? 'light' : 'dark'));
 
   return { theme, mode, setTheme, toggleMode, open, setOpen, dropdownRef };
 }

@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Dog",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 5,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "bark",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 4,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Serializable",
+    "kind": "class",
+    "start_line": 7,
+    "end_line": 11,
+    "signature": null,
+    "subtype": "module",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "serialize",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 10,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Cat",
+    "kind": "class",
+    "start_line": 13,
+    "end_line": 17,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "meow",
+        "kind": "function",
+        "start_line": 14,
+        "end_line": 16,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

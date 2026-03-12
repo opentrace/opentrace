@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "name": "range",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 5,
+    "signature": "(start: number, end: number)",
+    "children": [],
+    "calls": []
+  }
+]
