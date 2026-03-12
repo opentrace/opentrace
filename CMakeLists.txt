@@ -119,11 +119,11 @@ endif()
 # Top-level aggregate targets
 # ---------------------------------------------------------------------------
 
-# build — build all available components (proto-all runs first)
+# build — build all available components
 if(HAS_API)
-    add_custom_target(build DEPENDS proto-all api-build ui-build)
+    add_custom_target(build DEPENDS api-build ui-build)
 else()
-    add_custom_target(build DEPENDS proto-all ui-build)
+    add_custom_target(build DEPENDS ui-build)
 endif()
 
 # install-deps — install all dependencies
