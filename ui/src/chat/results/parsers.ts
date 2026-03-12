@@ -67,7 +67,10 @@ export function parseTraverseResult(raw: string): TraverseEntry[] | null {
     if (!Array.isArray(arr)) return null;
     return arr.filter(
       (e: unknown) =>
-        typeof e === "object" && e !== null && "node" in e && isNode((e as Record<string, unknown>).node),
+        typeof e === 'object' &&
+        e !== null &&
+        'node' in e &&
+        isNode((e as Record<string, unknown>).node),
     ) as TraverseEntry[];
   } catch {
     return null;
@@ -75,7 +78,11 @@ export function parseTraverseResult(raw: string): TraverseEntry[] | null {
 }
 
 function isNode(v: unknown): boolean {
-  if (typeof v !== "object" || v === null) return false;
+  if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;
-  return typeof o.id === "string" && typeof o.type === "string" && typeof o.name === "string";
+  return (
+    typeof o.id === 'string' &&
+    typeof o.type === 'string' &&
+    typeof o.name === 'string'
+  );
 }

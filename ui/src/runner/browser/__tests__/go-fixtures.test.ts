@@ -5,31 +5,45 @@
  *   Expected JSON includes receiver_var / receiver_type fields.
  * Import fixtures:     tests/fixtures/go/imports/*.fixture.json
  */
-import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { extractGo } from "../parser/extractors/go";
-import { analyzeGoImports } from "../parser/importAnalyzer";
-import { parseGo } from "./helpers";
-import { normalizeSymbolFull, discoverExtractionFixtures, discoverImportFixtures } from "./normalizers";
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { extractGo } from '../parser/extractors/go';
+import { analyzeGoImports } from '../parser/importAnalyzer';
+import { parseGo } from './helpers';
+import {
+  normalizeSymbolFull,
+  discoverExtractionFixtures,
+  discoverImportFixtures,
+} from './normalizers';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const FIXTURE_ROOT = join(__dirname, "..", "..", "..", "..", "..", "tests", "fixtures", "go");
+const FIXTURE_ROOT = join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'tests',
+  'fixtures',
+  'go',
+);
 
 // --- Extraction fixtures ---
 
-const extractionDir = join(FIXTURE_ROOT, "extraction");
-const extractionFixtures = discoverExtractionFixtures(extractionDir, ".go");
+const extractionDir = join(FIXTURE_ROOT, 'extraction');
+const extractionFixtures = discoverExtractionFixtures(extractionDir, '.go');
 
 if (extractionFixtures.length > 0) {
-  describe("go extraction fixtures", () => {
+  describe('go extraction fixtures', () => {
     for (const name of extractionFixtures) {
       it(name, async () => {
-        const source = readFileSync(join(extractionDir, `${name}.go`), "utf-8");
+        const source = readFileSync(join(extractionDir, `${name}.go`), 'utf-8');
         const expected = JSON.parse(
-          readFileSync(join(extractionDir, `${name}.expected.json`), "utf-8"),
+          readFileSync(join(extractionDir, `${name}.expected.json`), 'utf-8'),
         );
 
         const rootNode = await parseGo(source);
@@ -44,15 +58,15 @@ if (extractionFixtures.length > 0) {
 
 // --- Import fixtures ---
 
-const importsDir = join(FIXTURE_ROOT, "imports");
+const importsDir = join(FIXTURE_ROOT, 'imports');
 const importFixtures = discoverImportFixtures(importsDir);
 
 if (importFixtures.length > 0) {
-  describe("go import fixtures", () => {
+  describe('go import fixtures', () => {
     for (const name of importFixtures) {
       it(name, async () => {
         const fixture = JSON.parse(
-          readFileSync(join(importsDir, `${name}.fixture.json`), "utf-8"),
+          readFileSync(join(importsDir, `${name}.fixture.json`), 'utf-8'),
         );
 
         const rootNode = await parseGo(fixture.source);

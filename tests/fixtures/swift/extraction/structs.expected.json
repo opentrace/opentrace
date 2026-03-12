@@ -1,0 +1,39 @@
+[
+  {
+    "name": "Point",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 8,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "distance",
+        "kind": "function",
+        "start_line": 5,
+        "end_line": 7,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Size",
+    "kind": "class",
+    "start_line": 10,
+    "end_line": 13,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

@@ -37,5 +37,5 @@ export function normalizeRepoUrl(raw: string): string {
 }
 
 function stripDotGit(s: string): string {
-  return s.endsWith(".git") ? s.slice(0, -4) : s;
+  return s.endsWith('.git') ? s.slice(0, -4) : s;
 }

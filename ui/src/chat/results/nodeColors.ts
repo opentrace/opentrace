@@ -5,37 +5,37 @@
  */
 
 const PALETTE = [
-  "#6366f1", // Indigo
-  "#f59e0b", // Amber
-  "#10b981", // Emerald
-  "#8b5cf6", // Violet
-  "#ef4444", // Red
-  "#3b82f6", // Blue
-  "#ec4899", // Pink
-  "#14b8a6", // Teal
-  "#f97316", // Orange
-  "#84cc16", // Lime
-  "#a855f7", // Purple
-  "#06b6d4", // Cyan
+  '#6366f1', // Indigo
+  '#f59e0b', // Amber
+  '#10b981', // Emerald
+  '#8b5cf6', // Violet
+  '#ef4444', // Red
+  '#3b82f6', // Blue
+  '#ec4899', // Pink
+  '#14b8a6', // Teal
+  '#f97316', // Orange
+  '#84cc16', // Lime
+  '#a855f7', // Purple
+  '#06b6d4', // Cyan
 ];
 
 /** Well-known node types → fixed colors for visual consistency */
 const KNOWN: Record<string, string> = {
-  Service: "#6366f1",
-  Database: "#f59e0b",
-  DBTable: "#f59e0b",
-  Repo: "#10b981",
-  Repository: "#10b981",
-  Endpoint: "#8b5cf6",
-  Cluster: "#ef4444",
-  Class: "#3b82f6",
-  Module: "#14b8a6",
-  Function: "#a855f7",
-  File: "#84cc16",
-  Directory: "#22d3ee",
-  Namespace: "#06b6d4",
-  Deployment: "#ec4899",
-  Span: "#f97316",
+  Service: '#6366f1',
+  Database: '#f59e0b',
+  DBTable: '#f59e0b',
+  Repo: '#10b981',
+  Repository: '#10b981',
+  Endpoint: '#8b5cf6',
+  Cluster: '#ef4444',
+  Class: '#3b82f6',
+  Module: '#14b8a6',
+  Function: '#a855f7',
+  File: '#84cc16',
+  Directory: '#22d3ee',
+  Namespace: '#06b6d4',
+  Deployment: '#ec4899',
+  Span: '#f97316',
 };
 
 function djb2(str: string): number {

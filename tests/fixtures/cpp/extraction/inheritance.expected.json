@@ -1,0 +1,54 @@
+[
+  {
+    "name": "Animal",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "breathe",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 3,
+        "signature": "()",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Dog",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 9,
+    "signature": null,
+    "subtype": null,
+    "superclasses": [
+      "Animal"
+    ],
+    "interfaces": null,
+    "children": [
+      {
+        "name": "bark",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 8,
+        "signature": "()",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

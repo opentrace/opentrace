@@ -6,41 +6,51 @@
   margin: 4px 0;
 }
 
-/* ── Node card ────────────────────────────── */
+/* ── List header (count summary) ────────── */
 
-.result-node-card {
-  padding: 8px 10px;
-  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
-  border-radius: calc(var(--radius) - 2px);
-  background: color-mix(in oklch, var(--accent) 25%, transparent);
-  transition: background 0.15s;
+.result-list-header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  padding: 2px 0 4px;
+  letter-spacing: 0.02em;
 }
 
-.result-node-card:hover {
-  background: color-mix(in oklch, var(--accent) 50%, transparent);
-}
+/* ── Compact row (shared for list + traverse) ── */
 
-.result-node-card-compact {
-  padding: 6px 8px;
-}
-
-.result-node-header {
+.result-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 5px 8px;
   min-width: 0;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+  transition: background 0.12s;
 }
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-row:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+/* ── Type badge (filled pill) ────────────── */
 
 .result-type-badge {
   flex-shrink: 0;
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: calc(var(--radius) - 2px);
-  border: 1px solid;
+  padding: 1px 7px;
+  border-radius: 999px;
   text-transform: capitalize;
-  line-height: 1.4;
+  line-height: 1.5;
+  color: #fff;
 }
+
+/* ── Node name ───────────────────────────── */
 
 .result-node-name {
   font-size: 0.8rem;
@@ -50,51 +60,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  flex: 1;
 }
 
-.result-node-id {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  color: var(--muted-foreground);
-  opacity: 0.7;
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ── Inline property hints (muted, after name) ── */
 
-/* Property chips (inline preview on list cards) */
-.result-node-props {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.result-prop-chip {
+.result-prop-inline {
   font-size: 0.65rem;
   color: var(--muted-foreground);
-  background: color-mix(in oklch, var(--background) 60%, transparent);
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
-  max-width: 180px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 140px;
+  flex-shrink: 0;
 }
 
-.result-prop-more {
-  font-style: italic;
-  opacity: 0.7;
-}
-
-/* ── Node list (grid) ─────────────────────── */
+/* ── Node list container ─────────────────── */
 
 .result-node-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 /* ── Get node (single detail) ─────────────── */
@@ -102,36 +87,60 @@
 .result-get-node {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
+
+.result-get-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: calc(var(--radius) - 2px);
+  transition: background 0.12s;
+}
+
+.result-get-node-header:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.result-node-id {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Properties table (2-col grid) ─────── */
 
 .result-props-table {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 12px;
+  padding: 6px 8px;
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
   border-radius: calc(var(--radius) - 2px);
-  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
-}
-
-.result-props-row {
-  display: flex;
-  gap: 8px;
-  font-size: 0.75rem;
-  line-height: 1.5;
+  border: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
 }
 
 .result-props-key {
-  flex-shrink: 0;
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--muted-foreground);
-  min-width: 80px;
+  padding: 2px 0;
+  white-space: nowrap;
 }
 
 .result-props-value {
+  font-size: 0.72rem;
   color: var(--foreground);
+  padding: 2px 0;
   word-break: break-all;
+  min-width: 0;
 }
 
 /* ── Traverse tree ────────────────────────── */
@@ -139,25 +148,87 @@
 .result-traverse {
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
 .result-traverse-entry {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
 }
 
-.result-traverse-rel {
+/* Tree-line connector via ::before */
+.result-traverse-entry::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in oklch, var(--border) 40%, transparent);
+}
+
+/* Last entry at each depth level — cut the vertical line at midpoint */
+.result-traverse-entry.last-at-depth::before {
+  bottom: 50%;
+}
+
+/* Root entry — no connector line */
+.result-traverse-entry.root-entry::before {
+  display: none;
+}
+
+/* Horizontal branch connector */
+.result-traverse-entry:not(.root-entry) > .result-traverse-node::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: color-mix(in oklch, var(--border) 40%, transparent);
+}
+
+.result-traverse-node {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.65rem;
-  color: var(--muted-foreground);
-  opacity: 0.7;
-  padding: 2px 0;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+  border-radius: calc(var(--radius) - 2px);
 }
 
-.result-traverse-rel svg {
-  flex-shrink: 0;
+.result-traverse-node:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+/* Relationship label inline with connector */
+.result-traverse-rel {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* ── Show more / toggle button ─────────── */
+
+.result-show-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  margin-top: 2px;
+  transition: color 0.12s;
+}
+
+.result-show-more:hover {
+  color: var(--foreground);
 }

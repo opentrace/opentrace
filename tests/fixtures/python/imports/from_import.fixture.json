@@ -6,7 +6,8 @@
   "modulePath": null,
   "expected": {
     "internal": {
-      "utils": "utils.py"
+      "utils": "utils.py",
+      "helper": "utils.py"
     },
     "external": {
       "flask": "pkg:pypi:flask"

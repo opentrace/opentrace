@@ -146,6 +146,69 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Agent call variant ──────────────────── */
+
+.chat-tool-call.agent-call {
+  border-color: color-mix(in oklch, var(--primary) 25%, transparent);
+  background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+
+.chat-tool-call.agent-call .tool-call-summary:hover {
+  background: color-mix(in oklch, var(--primary) 14%, transparent);
+}
+
+.chat-tool-call.agent-call .tool-call-icon {
+  color: var(--primary);
+  opacity: 0.85;
+}
+
+.chat-tool-call.agent-call .tool-call-name {
+  color: var(--primary);
+}
+
+/* ── Agent progress steps ────────────────── */
+
+.agent-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.agent-progress-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  padding: 1px 0;
+}
+
+.agent-progress-step.current {
+  color: var(--primary);
+}
+
+.agent-step-check {
+  flex-shrink: 0;
+  color: oklch(0.7 0.17 145);
+  opacity: 0.8;
+}
+
+.agent-step-spinner {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin: 1px;
+  border: 1.5px solid color-mix(in oklch, var(--primary) 30%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+.agent-step-label {
+  font-weight: 500;
+}
+
 /* Nested detail sections (Args / Result) */
 .tool-call-details {
   padding: 0 12px 8px;

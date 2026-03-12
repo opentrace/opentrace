@@ -1,0 +1,39 @@
+[
+  {
+    "name": "Helpers",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 9,
+    "signature": null,
+    "subtype": "module",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "format",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 4,
+        "signature": "(value)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "validate",
+        "kind": "function",
+        "start_line": 6,
+        "end_line": 8,
+        "signature": "(input)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

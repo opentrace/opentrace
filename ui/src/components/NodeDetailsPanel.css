@@ -1,0 +1,270 @@
+/* Node Details Panel — detail rows, properties, enrichment, source viewer */
+
+.node-details-content {
+  padding: 20px 20px 120px;
+}
+
+/* ── Header: [type] name … [View on] ── */
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.detail-name {
+  flex: 1;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.type-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--primary-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Generic detail row (used in properties) ── */
+.detail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.detail-row .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.detail-row .value {
+  font-size: 0.9rem;
+  color: var(--secondary-foreground);
+  word-break: break-all;
+}
+
+/* ── ID footer at panel bottom ── */
+.detail-id-footer {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.detail-id-footer .label {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.id-value {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  word-break: break-all;
+  user-select: all;
+}
+
+.properties-section {
+  margin-top: 24px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding-top: 16px;
+}
+
+.properties-section h4 {
+  margin: 0 0 16px 0;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+/* Enrichment pips — sits directly below the header row */
+.enrichment-pips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.enrichment-pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.enrichment-pip--summarized {
+  background: color-mix(in oklch, oklch(0.75 0.15 160) 15%, transparent);
+  color: oklch(0.75 0.15 160);
+}
+
+.enrichment-pip--embedded {
+  background: color-mix(in oklch, oklch(0.7 0.15 260) 15%, transparent);
+  color: oklch(0.7 0.15 260);
+}
+
+.enrichment-pip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ── Source link with provider logo ── */
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.source-link:hover {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+}
+
+.source-link svg {
+  flex-shrink: 0;
+}
+
+.source-link-text {
+  white-space: nowrap;
+}
+
+/* Source code viewer */
+.source-section {
+  margin-top: 24px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding-top: 16px;
+}
+
+.source-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.source-path {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-loading {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  padding: 12px 0;
+}
+
+.source-error {
+  font-size: 0.8rem;
+  color: var(--destructive, #e55);
+  padding: 8px 12px;
+  background: color-mix(in oklch, var(--destructive, #e55) 8%, transparent);
+  border-radius: var(--radius);
+  word-break: break-word;
+}
+
+.source-viewer {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.source-line-info {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  padding: 6px 12px;
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+}
+
+.source-code {
+  margin: 0;
+  padding: 12px 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  tab-size: 4;
+  border-radius: var(--radius);
+}
+
+.source-code code {
+  display: block;
+}
+
+.source-line {
+  display: flex;
+  padding: 0 12px 0 0;
+}
+
+.source-line:hover {
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+}
+
+.source-line .line-number {
+  display: inline-block;
+  width: 3.5em;
+  padding-right: 1em;
+  text-align: right;
+  color: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.source-line .line-content {
+  flex: 1;
+  min-width: 0;
+  white-space: pre;
+}
+
+/* Image preview for binary file nodes */
+.source-image-preview {
+  text-align: center;
+  padding: 12px;
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  border-radius: var(--radius);
+}
+
+.source-image-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: calc(var(--radius) - 2px);
+}

@@ -11,17 +11,46 @@
 // ---- Tokenization ----
 
 const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
-  "if", "in", "into", "is", "it", "no", "not", "of", "on", "or",
-  "such", "that", "the", "their", "then", "there", "these", "they",
-  "this", "to", "was", "will", "with",
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'but',
+  'by',
+  'for',
+  'if',
+  'in',
+  'into',
+  'is',
+  'it',
+  'no',
+  'not',
+  'of',
+  'on',
+  'or',
+  'such',
+  'that',
+  'the',
+  'their',
+  'then',
+  'there',
+  'these',
+  'they',
+  'this',
+  'to',
+  'was',
+  'will',
+  'with',
 ]);
 
 /** Split text into lowercase tokens, stripping punctuation and stop words. */
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^a-z0-9_]/g, " ")
+    .replace(/[^a-z0-9_]/g, ' ')
     .split(/\s+/)
     .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
 }

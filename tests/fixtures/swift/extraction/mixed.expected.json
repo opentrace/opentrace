@@ -1,0 +1,63 @@
+[
+  {
+    "name": "Logger",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "log",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "createLogger",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Config",
+    "kind": "class",
+    "start_line": 9,
+    "end_line": 11,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Direction",
+    "kind": "class",
+    "start_line": 13,
+    "end_line": 18,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

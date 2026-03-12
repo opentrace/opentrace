@@ -1,11 +1,23 @@
-import type { GraphData, GraphStats } from "../types/graph";
-import type { NodeResult, TraverseResult } from "./kuzuProtocol";
+import type { GraphData, GraphStats } from '../types/graph';
+import type { NodeResult, TraverseResult } from './kuzuProtocol';
 
-export type { NodeResult, TraverseResult } from "./kuzuProtocol";
+export type { NodeResult, TraverseResult } from './kuzuProtocol';
 
 export interface ImportBatchRequest {
-  nodes: { id: string; type: string; name: string; properties?: Record<string, unknown>; embedding?: number[] }[];
-  relationships: { id: string; type: string; source_id: string; target_id: string; properties?: Record<string, unknown> }[];
+  nodes: {
+    id: string;
+    type: string;
+    name: string;
+    properties?: Record<string, unknown>;
+    embedding?: number[];
+  }[];
+  relationships: {
+    id: string;
+    type: string;
+    source_id: string;
+    target_id: string;
+    properties?: Record<string, unknown>;
+  }[];
 }
 
 export interface ImportBatchResponse {
@@ -21,12 +33,14 @@ export interface NodeSourceResponse {
   start_line?: number;
   end_line?: number;
   line_count: number;
+  binary?: boolean;
 }
 
 export interface SourceFile {
   id: string;
   path: string;
   content: string;
+  binary?: boolean;
 }
 
 export interface GraphStore {
@@ -35,11 +49,28 @@ export interface GraphStore {
   clearGraph(): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   storeSource(files: SourceFile[]): void;
-  fetchSource(nodeId: string, startLine?: number, endLine?: number): Promise<NodeSourceResponse | null>;
+  fetchSource(
+    nodeId: string,
+    startLine?: number,
+    endLine?: number,
+  ): Promise<NodeSourceResponse | null>;
 
   // Query methods (used by chat tools)
-  searchNodes(query: string, limit?: number, nodeTypes?: string[]): Promise<NodeResult[]>;
-  listNodes(type: string, limit?: number, filters?: Record<string, string>): Promise<NodeResult[]>;
+  searchNodes(
+    query: string,
+    limit?: number,
+    nodeTypes?: string[],
+  ): Promise<NodeResult[]>;
+  listNodes(
+    type: string,
+    limit?: number,
+    filters?: Record<string, string>,
+  ): Promise<NodeResult[]>;
   getNode(nodeId: string): Promise<NodeResult | null>;
-  traverse(nodeId: string, direction?: "outgoing" | "incoming" | "both", maxDepth?: number, relType?: string): Promise<TraverseResult[]>;
+  traverse(
+    nodeId: string,
+    direction?: 'outgoing' | 'incoming' | 'both',
+    maxDepth?: number,
+    relType?: string,
+  ): Promise<TraverseResult[]>;
 }

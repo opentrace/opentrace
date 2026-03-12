@@ -25,9 +25,12 @@ export class VectorIndex {
   /** Add or update a vector. The array must match the configured dimension. */
   addVector(id: string, vector: number[] | Float32Array): void {
     if (vector.length !== this.dim) {
-      throw new Error(`Vector dimension mismatch: expected ${this.dim}, got ${vector.length}`);
+      throw new Error(
+        `Vector dimension mismatch: expected ${this.dim}, got ${vector.length}`,
+      );
     }
-    const arr = vector instanceof Float32Array ? vector : new Float32Array(vector);
+    const arr =
+      vector instanceof Float32Array ? vector : new Float32Array(vector);
     // Normalize to unit vector for efficient cosine similarity (dot product of unit vectors)
     const norm = Math.sqrt(arr.reduce((sum, v) => sum + v * v, 0));
     if (norm > 0) {
@@ -46,13 +49,16 @@ export class VectorIndex {
   /** Find the k most similar vectors to the query vector using cosine similarity. */
   search(queryVector: number[] | Float32Array, limit = 50): VectorResult[] {
     if (queryVector.length !== this.dim) {
-      throw new Error(`Query dimension mismatch: expected ${this.dim}, got ${queryVector.length}`);
+      throw new Error(
+        `Query dimension mismatch: expected ${this.dim}, got ${queryVector.length}`,
+      );
     }
 
     // Normalize query vector
-    const query = queryVector instanceof Float32Array
-      ? new Float32Array(queryVector)
-      : new Float32Array(queryVector);
+    const query =
+      queryVector instanceof Float32Array
+        ? new Float32Array(queryVector)
+        : new Float32Array(queryVector);
     const qNorm = Math.sqrt(query.reduce((sum, v) => sum + v * v, 0));
     if (qNorm > 0) {
       for (let i = 0; i < query.length; i++) {
@@ -71,8 +77,6 @@ export class VectorIndex {
       results.push({ id, score: dot });
     }
 
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 }

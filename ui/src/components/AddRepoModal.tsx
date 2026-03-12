@@ -1,18 +1,18 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import type { JobMessage } from "../job";
-import "./AddRepoModal.css";
+import { type FormEvent, useEffect, useRef, useState } from 'react';
+import type { JobMessage } from '../job';
+import './AddRepoModal.css';
 
-type SourceMode = "url" | "directory";
+type SourceMode = 'url' | 'directory';
 
 interface Props {
   onClose: () => void;
   onSubmit: (message: JobMessage) => void;
 }
 
-function detectProvider(url: string): "github" | "gitlab" | null {
+function detectProvider(url: string): 'github' | 'gitlab' | null {
   const lower = url.toLowerCase();
-  if (lower.includes("github")) return "github";
-  if (lower.includes("gitlab")) return "gitlab";
+  if (lower.includes('github')) return 'github';
+  if (lower.includes('gitlab')) return 'gitlab';
   return null;
 }
 
@@ -31,11 +31,23 @@ function GitLabIconLarge() {
     <svg width="38" height="38" viewBox="0 0 380 380" fill="currentColor">
       <path d="M190 353.9L131.1 172.8h117.8L190 353.9z" opacity="0.85" />
       <path d="M190 353.9L131.1 172.8H15.6L190 353.9z" opacity="0.7" />
-      <path d="M15.6 172.8L0.4 219.5c-1.4 4.3 0.1 9 3.8 11.7L190 353.9 15.6 172.8z" opacity="0.55" />
-      <path d="M15.6 172.8h115.5L87.6 26.5c-1.6-4.9-8.5-4.9-10.1 0L15.6 172.8z" opacity="0.85" />
+      <path
+        d="M15.6 172.8L0.4 219.5c-1.4 4.3 0.1 9 3.8 11.7L190 353.9 15.6 172.8z"
+        opacity="0.55"
+      />
+      <path
+        d="M15.6 172.8h115.5L87.6 26.5c-1.6-4.9-8.5-4.9-10.1 0L15.6 172.8z"
+        opacity="0.85"
+      />
       <path d="M190 353.9l58.9-181.1h115.5L190 353.9z" opacity="0.7" />
-      <path d="M364.4 172.8l15.2 46.7c1.4 4.3-0.1 9-3.8 11.7L190 353.9l174.4-181.1z" opacity="0.55" />
-      <path d="M364.4 172.8H248.9l43.5-146.3c1.6-4.9 8.5-4.9 10.1 0l61.9 146.3z" opacity="0.85" />
+      <path
+        d="M364.4 172.8l15.2 46.7c1.4 4.3-0.1 9-3.8 11.7L190 353.9l174.4-181.1z"
+        opacity="0.55"
+      />
+      <path
+        d="M364.4 172.8H248.9l43.5-146.3c1.6-4.9 8.5-4.9 10.1 0l61.9 146.3z"
+        opacity="0.85"
+      />
     </svg>
   );
 }
@@ -60,21 +72,44 @@ function SplitProviderIcon() {
         <g transform="scale(0.1)">
           <path d="M190 353.9L131.1 172.8h117.8L190 353.9z" />
           <path d="M190 353.9L131.1 172.8H15.6L190 353.9z" opacity="0.8" />
-          <path d="M15.6 172.8L0.4 219.5c-1.4 4.3 0.1 9 3.8 11.7L190 353.9 15.6 172.8z" opacity="0.65" />
+          <path
+            d="M15.6 172.8L0.4 219.5c-1.4 4.3 0.1 9 3.8 11.7L190 353.9 15.6 172.8z"
+            opacity="0.65"
+          />
           <path d="M15.6 172.8h115.5L87.6 26.5c-1.6-4.9-8.5-4.9-10.1 0L15.6 172.8z" />
           <path d="M190 353.9l58.9-181.1h115.5L190 353.9z" opacity="0.8" />
-          <path d="M364.4 172.8l15.2 46.7c1.4 4.3-0.1 9-3.8 11.7L190 353.9l174.4-181.1z" opacity="0.65" />
+          <path
+            d="M364.4 172.8l15.2 46.7c1.4 4.3-0.1 9-3.8 11.7L190 353.9l174.4-181.1z"
+            opacity="0.65"
+          />
           <path d="M364.4 172.8H248.9l43.5-146.3c1.6-4.9 8.5-4.9 10.1 0l61.9 146.3z" />
         </g>
       </g>
-      <line x1="38" y1="0" x2="0" y2="38" stroke="currentColor" strokeWidth="1" opacity="0.2" />
+      <line
+        x1="38"
+        y1="0"
+        x2="0"
+        y2="38"
+        stroke="currentColor"
+        strokeWidth="1"
+        opacity="0.2"
+      />
     </svg>
   );
 }
 
 function FolderIcon() {
   return (
-    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="38"
+      height="38"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   );
@@ -83,11 +118,14 @@ function FolderIcon() {
 // --- Main Component ---
 
 export default function AddRepoModal({ onClose, onSubmit }: Props) {
-  const [source, setSource] = useState<SourceMode>("url");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [ref, setRef] = useState("");
-  const [pat, setPat] = useState(() =>
-    localStorage.getItem("ot_github_pat") ?? localStorage.getItem("ot_gitlab_pat") ?? "",
+  const [source, setSource] = useState<SourceMode>('url');
+  const [repoUrl, setRepoUrl] = useState('');
+  const [ref, setRef] = useState('');
+  const [pat, setPat] = useState(
+    () =>
+      localStorage.getItem('ot_github_pat') ??
+      localStorage.getItem('ot_gitlab_pat') ??
+      '',
   );
   const [showPat, setShowPat] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -95,16 +133,17 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const provider = source === "url" ? detectProvider(repoUrl) : null;
-  const isGitLab = provider === "gitlab";
+  const provider = source === 'url' ? detectProvider(repoUrl) : null;
+  const isGitLab = provider === 'gitlab';
 
   // Derive directory name from FileList
-  const directoryName = selectedFiles?.[0]?.webkitRelativePath?.split("/")[0] ?? "";
+  const directoryName =
+    selectedFiles?.[0]?.webkitRelativePath?.split('/')[0] ?? '';
 
   // Load saved PAT for the detected provider
   useEffect(() => {
     if (!provider) return;
-    const key = provider === "gitlab" ? "ot_gitlab_pat" : "ot_github_pat";
+    const key = provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
     const saved = localStorage.getItem(key);
     if (saved) setPat(saved);
   }, [provider]);
@@ -117,35 +156,35 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
 
-    if (source === "directory") {
+    if (source === 'directory') {
       if (!selectedFiles || selectedFiles.length === 0) {
-        setError("Select a directory first.");
+        setError('Select a directory first.');
         return;
       }
       setError(null);
       setLoading(true);
       onSubmit({
-        type: "index-directory",
+        type: 'index-directory',
         files: selectedFiles,
-        name: directoryName || "local",
+        name: directoryName || 'local',
       });
       return;
     }
 
     // URL mode
     if (!provider) {
-      setError("Enter a GitHub or GitLab repository URL.");
+      setError('Enter a GitHub or GitLab repository URL.');
       return;
     }
     setError(null);
     setLoading(true);
 
-    const patKey = isGitLab ? "ot_gitlab_pat" : "ot_github_pat";
+    const patKey = isGitLab ? 'ot_gitlab_pat' : 'ot_github_pat';
     if (pat) localStorage.setItem(patKey, pat);
     else localStorage.removeItem(patKey);
 
     onSubmit({
-      type: "index-repo",
+      type: 'index-repo',
       repoUrl,
       token: pat || undefined,
       ref: ref || undefined,
@@ -154,35 +193,38 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
 
   // --- Hero content based on source mode ---
 
-  const heroIcon = source === "directory" ? (
-    <div className="hero-icon hero-icon--provider">
-      <FolderIcon />
-    </div>
-  ) : (
-    <div className={`hero-icon${provider ? " hero-icon--provider" : ""}`}>
-      {provider === "github" ? (
-        <GitHubIconLarge />
-      ) : provider === "gitlab" ? (
-        <GitLabIconLarge />
-      ) : (
-        <SplitProviderIcon />
-      )}
-    </div>
-  );
+  const heroIcon =
+    source === 'directory' ? (
+      <div className="hero-icon hero-icon--provider">
+        <FolderIcon />
+      </div>
+    ) : (
+      <div className={`hero-icon${provider ? ' hero-icon--provider' : ''}`}>
+        {provider === 'github' ? (
+          <GitHubIconLarge />
+        ) : provider === 'gitlab' ? (
+          <GitLabIconLarge />
+        ) : (
+          <SplitProviderIcon />
+        )}
+      </div>
+    );
 
-  const title = source === "directory"
-    ? "Add Local Directory"
-    : provider === "github"
-      ? "Add from GitHub"
-      : provider === "gitlab"
-        ? "Add from GitLab"
-        : "Add Repository";
+  const title =
+    source === 'directory'
+      ? 'Add Local Directory'
+      : provider === 'github'
+        ? 'Add from GitHub'
+        : provider === 'gitlab'
+          ? 'Add from GitLab'
+          : 'Add Repository';
 
-  const subtitle = source === "directory"
-    ? "Select a directory to index its structure into the graph"
-    : provider
-      ? `Enter a ${provider === "github" ? "GitHub" : "GitLab"} repository URL to index`
-      : "Enter a repository URL to index its structure into the graph";
+  const subtitle =
+    source === 'directory'
+      ? 'Select a directory to index its structure into the graph'
+      : provider
+        ? `Enter a ${provider === 'github' ? 'GitHub' : 'GitLab'} repository URL to index`
+        : 'Enter a repository URL to index its structure into the graph';
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -192,15 +234,15 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
           <div className="chip-toggle">
             <button
               type="button"
-              className={`chip-toggle-btn${source === "url" ? " active" : ""}`}
-              onClick={() => setSource("url")}
+              className={`chip-toggle-btn${source === 'url' ? ' active' : ''}`}
+              onClick={() => setSource('url')}
             >
               URL
             </button>
             <button
               type="button"
-              className={`chip-toggle-btn${source === "directory" ? " active" : ""}`}
-              onClick={() => setSource("directory")}
+              className={`chip-toggle-btn${source === 'directory' ? ' active' : ''}`}
+              onClick={() => setSource('directory')}
             >
               Directory
             </button>
@@ -215,7 +257,7 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
 
         <form onSubmit={handleSubmit}>
           <div className="form-fields">
-            {source === "url" ? (
+            {source === 'url' ? (
               <>
                 <input
                   type="text"
@@ -231,12 +273,22 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                 />
 
                 <div className="input-pill-row">
-                  <svg className="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    className="input-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
                   <input
-                    type={showPat ? "text" : "password"}
+                    type={showPat ? 'text' : 'password'}
                     className="input-pill input-pill--icon"
                     placeholder="Access token (optional, for private repos)"
                     value={pat}
@@ -247,17 +299,35 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                     className="input-toggle"
                     onClick={() => setShowPat(!showPat)}
                     tabIndex={-1}
-                    aria-label={showPat ? "Hide token" : "Show token"}
+                    aria-label={showPat ? 'Hide token' : 'Show token'}
                   >
                     {showPat ? (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
                         <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
                         <line x1="1" y1="1" x2="23" y2="23" />
                         <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
                       </svg>
                     ) : (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                         <circle cx="12" cy="12" r="3" />
                       </svg>
@@ -282,13 +352,28 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                   className="input-pill directory-browse-btn"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
-                  {directoryName
-                    ? <span className="directory-name">{directoryName} <span className="directory-count">({selectedFiles?.length ?? 0} files)</span></span>
-                    : "Choose Directory..."
-                  }
+                  {directoryName ? (
+                    <span className="directory-name">
+                      {directoryName}{' '}
+                      <span className="directory-count">
+                        ({selectedFiles?.length ?? 0} files)
+                      </span>
+                    </span>
+                  ) : (
+                    'Choose Directory...'
+                  )}
                 </button>
               </div>
             )}
@@ -296,7 +381,16 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
 
           {error && (
             <div className="form-error">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <circle cx="12" cy="12" r="10" />
                 <line x1="15" y1="9" x2="9" y2="15" />
                 <line x1="9" y1="9" x2="15" y2="15" />
@@ -314,7 +408,16 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
             ) : (
               <>
                 Add & Index
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <line x1="5" y1="12" x2="19" y2="12" />
                   <polyline points="12 5 19 12 12 19" />
                 </svg>
@@ -323,9 +426,18 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
           </button>
 
           <div className="form-chips">
-            {source === "url" && (
+            {source === 'url' && (
               <div className="chip">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <line x1="6" y1="3" x2="6" y2="15" />
                   <circle cx="18" cy="6" r="3" />
                   <circle cx="6" cy="18" r="3" />

@@ -10,17 +10,26 @@
  * - Reduced max_new_tokens (32 vs 64) — halves decoder steps for one-sentence output
  */
 
-import type { Summarizer, NodeKind, SummarizerConfig } from "./types";
+import type { Summarizer, NodeKind, SummarizerConfig } from './types';
 
 const PROMPT_TEMPLATES: Record<NodeKind, string> = {
-  function: "Summarize what this function does in one sentence:\n\n",
-  class: "Summarize what this class does in one sentence:\n\n",
-  file: "Summarize what this source file does in one sentence:\n\n",
-  directory: "Describe the purpose of this directory in one sentence based on its contents:\n\n",
+  function: 'Summarize what this function does in one sentence:\n\n',
+  class: 'Summarize what this class does in one sentence:\n\n',
+  file: 'Summarize what this source file does in one sentence:\n\n',
+  directory:
+    'Describe the purpose of this directory in one sentence based on its contents:\n\n',
 };
 
 export class FlanT5Summarizer implements Summarizer {
-  private pipeline: ((text: string | string[], options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }> | Array<Array<{ generated_text: string }>>>) | null = null;
+  private pipeline:
+    | ((
+        text: string | string[],
+        options?: Record<string, unknown>,
+      ) => Promise<
+        | Array<{ generated_text: string }>
+        | Array<Array<{ generated_text: string }>>
+      >)
+    | null = null;
   private config: SummarizerConfig;
 
   constructor(config: SummarizerConfig) {
@@ -28,51 +37,69 @@ export class FlanT5Summarizer implements Summarizer {
   }
 
   async init(): Promise<void> {
-    console.log("[FlanT5] importing @huggingface/transformers...");
-    const transformers = await import("@huggingface/transformers");
-    console.log("[FlanT5] import complete");
+    console.log('[FlanT5] importing @huggingface/transformers...');
+    const transformers = await import('@huggingface/transformers');
+    console.log('[FlanT5] import complete');
 
     // Disable local model check — always fetch from HuggingFace Hub
-    if ("env" in transformers) {
+    if ('env' in transformers) {
       (transformers.env as Record<string, unknown>).allowLocalModels = false;
     }
 
     // Use WASM by default — avoids "No available adapters" browser warning
     // from WebGPU auto-detection when no GPU is present.
-    console.log(`[FlanT5] creating pipeline: model=${this.config.model}, device=wasm, dtype=q8`);
+    console.log(
+      `[FlanT5] creating pipeline: model=${this.config.model}, device=wasm, dtype=q8`,
+    );
     const t0 = performance.now();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic import type is too narrow after `"env" in` guard
     this.pipeline = (await (transformers as any).pipeline(
-      "text2text-generation",
+      'text2text-generation',
       this.config.model,
-      { dtype: "q8", device: "wasm" },
-    )) as (text: string | string[], options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }> | Array<Array<{ generated_text: string }>>>;
-    console.log(`[FlanT5] pipeline ready (${((performance.now() - t0) / 1000).toFixed(1)}s)`);
+      { dtype: 'q8', device: 'wasm' },
+    )) as (
+      text: string | string[],
+      options?: Record<string, unknown>,
+    ) => Promise<
+      | Array<{ generated_text: string }>
+      | Array<Array<{ generated_text: string }>>
+    >;
+    console.log(
+      `[FlanT5] pipeline ready (${((performance.now() - t0) / 1000).toFixed(1)}s)`,
+    );
   }
 
   private buildPrompt(source: string, kind: NodeKind): string {
     const maxChars = this.config.maxInputLength * 4;
-    const truncated = source.length > maxChars ? source.slice(0, maxChars) : source;
+    const truncated =
+      source.length > maxChars ? source.slice(0, maxChars) : source;
     return PROMPT_TEMPLATES[kind] + truncated;
   }
 
   async summarize(source: string, kind: NodeKind): Promise<string> {
     if (!this.pipeline) {
-      throw new Error("Summarizer not initialized — call init() first");
+      throw new Error('Summarizer not initialized — call init() first');
     }
 
     const prompt = this.buildPrompt(source, kind);
     console.log(`[FlanT5] summarize(${kind}, ${source.length} chars)...`);
     const t0 = performance.now();
     const result = await this.pipeline(prompt, { max_new_tokens: 32 });
-    const text = (result as Array<{ generated_text: string }>)[0]?.generated_text?.trim() ?? "";
-    console.log(`[FlanT5] summarize done (${((performance.now() - t0) / 1000).toFixed(1)}s): "${text.slice(0, 80)}"`);
+    const text =
+      (
+        result as Array<{ generated_text: string }>
+      )[0]?.generated_text?.trim() ?? '';
+    console.log(
+      `[FlanT5] summarize done (${((performance.now() - t0) / 1000).toFixed(1)}s): "${text.slice(0, 80)}"`,
+    );
     return text;
   }
 
-  async summarizeBatch(items: Array<{ source: string; kind: NodeKind }>): Promise<string[]> {
+  async summarizeBatch(
+    items: Array<{ source: string; kind: NodeKind }>,
+  ): Promise<string[]> {
     if (!this.pipeline) {
-      throw new Error("Summarizer not initialized — call init() first");
+      throw new Error('Summarizer not initialized — call init() first');
     }
 
     if (items.length === 0) return [];
@@ -81,13 +108,20 @@ export class FlanT5Summarizer implements Summarizer {
       return [s];
     }
 
-    const prompts = items.map((item) => this.buildPrompt(item.source, item.kind));
+    const prompts = items.map((item) =>
+      this.buildPrompt(item.source, item.kind),
+    );
     const result = await this.pipeline(prompts, { max_new_tokens: 32 });
 
     // When given an array, pipeline returns Array<Array<{generated_text}>>
     // Each outer element corresponds to one input prompt
     return (result as Array<Array<{ generated_text: string }>>).map(
-      (r) => (Array.isArray(r) ? r[0]?.generated_text?.trim() : (r as unknown as { generated_text: string })?.generated_text?.trim()) ?? "",
+      (r) =>
+        (Array.isArray(r)
+          ? r[0]?.generated_text?.trim()
+          : (
+              r as unknown as { generated_text: string }
+            )?.generated_text?.trim()) ?? '',
     );
   }
 

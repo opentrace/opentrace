@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Greeter",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 9,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "initialize",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 4,
+        "signature": "(name)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "greet",
+        "kind": "function",
+        "start_line": 6,
+        "end_line": 8,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "Admin",
+    "kind": "class",
+    "start_line": 11,
+    "end_line": 14,
+    "signature": null,
+    "subtype": null,
+    "superclasses": [
+      "User"
+    ],
+    "interfaces": null,
+    "children": [
+      {
+        "name": "promote",
+        "kind": "function",
+        "start_line": 12,
+        "end_line": 13,
+        "signature": null,
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

@@ -1,5 +1,8 @@
-import { defineConfig, type Plugin } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig, type Plugin } from 'vite';
+import react from '@vitejs/plugin-react';
+import { readFileSync } from 'fs';
+
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 /**
  * Inline Vite plugin that sets Cross-Origin-Opener-Policy and
@@ -11,18 +14,18 @@ import react from '@vitejs/plugin-react'
  */
 function crossOriginIsolation(): Plugin {
   return {
-    name: "cross-origin-isolation",
+    name: 'cross-origin-isolation',
     configureServer(server) {
       server.middlewares.use((_req, res, next) => {
-        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-        res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
         next();
       });
     },
     configurePreviewServer(server) {
       server.middlewares.use((_req, res, next) => {
-        res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-        res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
         next();
       });
     },
@@ -31,6 +34,11 @@ function crossOriginIsolation(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
+  envDir: '..',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [react(), crossOriginIsolation()],
   server: {
     proxy: {
@@ -50,4 +58,4 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
-})
+});

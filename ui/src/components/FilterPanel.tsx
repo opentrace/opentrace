@@ -1,5 +1,5 @@
-import { getNodeColor } from "../chat/results/nodeColors";
-import { getLinkColor } from "../chat/results/linkColors";
+import { getNodeColor } from '../chat/results/nodeColors';
+import { getLinkColor } from '../chat/results/linkColors';
 
 interface TypeEntry {
   type: string;
@@ -43,14 +43,17 @@ export default function FilterPanel({
             className="filter-toggle-all"
             onClick={allNodesHidden ? onShowAllNodes : onHideAllNodes}
           >
-            {allNodesHidden ? "Show all" : "Hide all"}
+            {allNodesHidden ? 'Show all' : 'Hide all'}
           </button>
         </div>
         <div className="filter-list">
           {nodeTypes.map(({ type, count }) => {
             const hidden = hiddenNodeTypes.has(type);
             return (
-              <label key={type} className={`filter-item ${hidden ? "hidden" : ""}`}>
+              <label
+                key={type}
+                className={`filter-item ${hidden ? 'hidden' : ''}`}
+              >
                 <input
                   type="checkbox"
                   checked={!hidden}
@@ -58,7 +61,11 @@ export default function FilterPanel({
                 />
                 <span
                   className="filter-dot"
-                  style={{ backgroundColor: hidden ? "var(--muted)" : getNodeColor(type) }}
+                  style={{
+                    backgroundColor: hidden
+                      ? 'var(--muted)'
+                      : getNodeColor(type),
+                  }}
                 />
                 <span className="filter-type-name">{type}</span>
                 <span className="filter-count">{count}</span>
@@ -75,14 +82,17 @@ export default function FilterPanel({
             className="filter-toggle-all"
             onClick={allLinksHidden ? onShowAllLinks : onHideAllLinks}
           >
-            {allLinksHidden ? "Show all" : "Hide all"}
+            {allLinksHidden ? 'Show all' : 'Hide all'}
           </button>
         </div>
         <div className="filter-list">
           {linkTypes.map(({ type, count }) => {
             const hidden = hiddenLinkTypes.has(type);
             return (
-              <label key={type} className={`filter-item ${hidden ? "hidden" : ""}`}>
+              <label
+                key={type}
+                className={`filter-item ${hidden ? 'hidden' : ''}`}
+              >
                 <input
                   type="checkbox"
                   checked={!hidden}
@@ -90,7 +100,11 @@ export default function FilterPanel({
                 />
                 <span
                   className="filter-line"
-                  style={{ backgroundColor: hidden ? "var(--muted)" : getLinkColor(type) }}
+                  style={{
+                    backgroundColor: hidden
+                      ? 'var(--muted)'
+                      : getLinkColor(type),
+                  }}
                 />
                 <span className="filter-type-name">{type.toLowerCase()}</span>
                 <span className="filter-count">{count}</span>

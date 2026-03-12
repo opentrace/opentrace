@@ -1,41 +1,42 @@
-import { useEffect, useRef, useState } from "react";
-import type { GraphNode, GraphLink } from "../types/graph";
+import { useEffect, useRef, useState } from 'react';
+import type { GraphNode, GraphLink } from '../types/graph';
 import {
   PROVIDERS,
   PROVIDER_IDS,
   type ChatMessage,
   type AssistantMessage,
   type MessagePart,
-} from "../chat/providers";
+} from '../chat/providers';
 import {
   loadApiKey,
   saveApiKey,
   loadProviderChoice,
   saveProviderChoice,
-} from "../chat/storage";
-import { buildGraphContext } from "../chat/graphContext";
-import { createChatAgent } from "../chat/agent";
-import ChatTemplates from "../chat/ChatTemplates";
-import ChatParts from "../chat/ChatParts";
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
-import type { AIMessageChunk } from "@langchain/core/messages";
-import { useStore } from "../store";
-import "../chat/markdown.css";
-import "../chat/parts.css";
-import "./ChatPanel.css";
+} from '../chat/storage';
+import { buildGraphContext } from '../chat/graphContext';
+import { createChatAgent } from '../chat/agent';
+import ChatTemplates from '../chat/ChatTemplates';
+import ChatParts from '../chat/ChatParts';
+import { HumanMessage, AIMessage } from '@langchain/core/messages';
+import type { AIMessageChunk } from '@langchain/core/messages';
+import { useStore } from '../store';
+import '../chat/markdown.css';
+import '../chat/parts.css';
+import './ChatPanel.css';
 
 interface Props {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   onClose: () => void;
+  onNodeSelect?: (nodeId: string) => void;
 }
 
-export default function ChatPanel({ graphData, onClose }: Props) {
+export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
   const { store } = useStore();
 
   const [providerId, setProviderId] = useState(loadProviderChoice);
   const [apiKey, setApiKey] = useState(() => loadApiKey(loadProviderChoice()));
   const [showSettings, setShowSettings] = useState(false);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -44,7 +45,8 @@ export default function ChatPanel({ graphData, onClose }: Props) {
 
   // Cache agent — recreate only when provider or key changes
   const agentRef = useRef<ReturnType<typeof createChatAgent> | null>(null);
-  const agentKeyRef = useRef("");
+  const agentKeyRef = useRef('');
+  type AgentHandle = ReturnType<typeof createChatAgent>;
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -65,20 +67,25 @@ export default function ChatPanel({ graphData, onClose }: Props) {
   };
 
   const handleSaveKey = () => {
-    const val = keyInputRef.current?.value.trim() ?? "";
+    const val = keyInputRef.current?.value.trim() ?? '';
     saveApiKey(providerId, val);
     setApiKey(val);
     if (val) setShowSettings(false);
   };
 
-  const getAgent = () => {
+  const getAgentHandle = (): AgentHandle => {
     const key = `${providerId}:${apiKey}`;
     if (agentKeyRef.current !== key || !agentRef.current) {
       const systemPrompt = buildGraphContext(
         graphData.nodes as GraphNode[],
         graphData.links as GraphLink[],
       );
-      agentRef.current = createChatAgent(providerId, apiKey, systemPrompt, store);
+      agentRef.current = createChatAgent(
+        providerId,
+        apiKey,
+        systemPrompt,
+        store,
+      );
       agentKeyRef.current = key;
     }
     return agentRef.current;
@@ -92,9 +99,9 @@ export default function ChatPanel({ graphData, onClose }: Props) {
       const newParts = fn([...last.parts]);
       // Recompute content from text parts for LangChain history
       const content = newParts
-        .filter((p) => p.type === "text")
+        .filter((p) => p.type === 'text')
         .map((p) => p.content)
-        .join("");
+        .join('');
       updated[updated.length - 1] = { ...last, parts: newParts, content };
       return updated;
     });
@@ -109,53 +116,89 @@ export default function ChatPanel({ graphData, onClose }: Props) {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const userMsg: ChatMessage = { role: "user", content: trimmed };
-    const assistantMsg: AssistantMessage = { role: "assistant", content: "", parts: [] };
+    const userMsg: ChatMessage = { role: 'user', content: trimmed };
+    const assistantMsg: AssistantMessage = {
+      role: 'assistant',
+      content: '',
+      parts: [],
+    };
     const newMessages: ChatMessage[] = [...messages, userMsg];
     setMessages([...newMessages, assistantMsg]);
-    setInput("");
+    setInput('');
     setStreaming(true);
 
     // Track in-flight tool calls by ID to match results later
     const pendingTools = new Map<string, number>(); // tool_call_id → parts index
+    const { agent, progress } = getAgentHandle();
+
+    // Subscribe to sub-agent progress — pushes steps into active agent ToolCallParts
+    progress.setListener((agentName, step) => {
+      updateLastParts((parts) => {
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          if (
+            p.type === 'tool_call' &&
+            p.name === agentName &&
+            p.status === 'active'
+          ) {
+            parts[i] = {
+              ...p,
+              progressSteps: [...(p.progressSteps || []), step],
+            };
+            break;
+          }
+        }
+        return parts;
+      });
+    });
 
     try {
-      const agent = getAgent();
-
       // Convert to LangChain message format (text-only for history)
       const lcMessages = newMessages.map((m) =>
-        m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content),
+        m.role === 'user'
+          ? new HumanMessage(m.content)
+          : new AIMessage(m.content),
       );
 
       const stream = await agent.stream(
         { messages: lcMessages },
-        { streamMode: "messages", signal: controller.signal },
+        {
+          streamMode: 'messages',
+          signal: controller.signal,
+          recursionLimit: 100,
+        },
       );
 
       for await (const tuple of stream) {
         if (controller.signal.aborted) break;
 
-        const [chunk, metadata] = tuple as [AIMessageChunk, Record<string, unknown>];
+        const [chunk, metadata] = tuple as [
+          AIMessageChunk,
+          Record<string, unknown>,
+        ];
         const node = metadata?.langgraph_node as string | undefined;
 
         // ── Tool results from the tools node ──
-        if (node === "tools") {
-          const toolCallId = (chunk as unknown as { tool_call_id?: string }).tool_call_id;
+        if (node === 'tools') {
+          const toolCallId = (chunk as unknown as { tool_call_id?: string })
+            .tool_call_id;
           const resultContent =
-            typeof chunk.content === "string"
+            typeof chunk.content === 'string'
               ? chunk.content
               : JSON.stringify(chunk.content);
 
           if (toolCallId && pendingTools.has(toolCallId)) {
             const partIdx = pendingTools.get(toolCallId)!;
-            const isError = resultContent.startsWith("API error") || resultContent.startsWith("Fetch failed");
+            const isError =
+              resultContent.startsWith('API error') ||
+              resultContent.startsWith('Fetch failed');
             updateLastParts((parts) => {
               const tc = parts[partIdx];
-              if (tc.type === "tool_call") {
+              if (tc.type === 'tool_call') {
                 parts[partIdx] = {
                   ...tc,
                   result: resultContent,
-                  status: isError ? "error" : "success",
+                  status: isError ? 'error' : 'success',
                   endTime: Date.now(),
                 };
               }
@@ -166,22 +209,28 @@ export default function ChatPanel({ graphData, onClose }: Props) {
         }
 
         // Only process remaining chunks from the agent (LLM) node
-        if (node !== "agent") continue;
+        if (node !== 'agent') continue;
 
         // ── Thinking content (Anthropic extended thinking) ──
         if (Array.isArray(chunk.content)) {
           const thinkingBlocks = chunk.content.filter(
-            (b): b is { type: "thinking"; thinking: string } =>
-              typeof b === "object" && b !== null && "type" in b && b.type === "thinking",
+            (b): b is { type: 'thinking'; thinking: string } =>
+              typeof b === 'object' &&
+              b !== null &&
+              'type' in b &&
+              b.type === 'thinking',
           );
           for (const block of thinkingBlocks) {
             if (block.thinking) {
               updateLastParts((parts) => {
                 const last = parts[parts.length - 1];
-                if (last?.type === "thought") {
-                  parts[parts.length - 1] = { ...last, content: last.content + block.thinking };
+                if (last?.type === 'thought') {
+                  parts[parts.length - 1] = {
+                    ...last,
+                    content: last.content + block.thinking,
+                  };
                 } else {
-                  parts.push({ type: "thought", content: block.thinking });
+                  parts.push({ type: 'thought', content: block.thinking });
                 }
                 return parts;
               });
@@ -199,11 +248,11 @@ export default function ChatPanel({ graphData, onClose }: Props) {
                 const idx = parts.length;
                 pendingTools.set(toolId, idx);
                 parts.push({
-                  type: "tool_call",
+                  type: 'tool_call',
                   id: toolId,
                   name: tc.name!,
-                  args: tc.args || "",
-                  status: "active",
+                  args: tc.args || '',
+                  status: 'active',
                   startTime: Date.now(),
                 });
                 return parts;
@@ -214,7 +263,7 @@ export default function ChatPanel({ graphData, onClose }: Props) {
                 // Find the last active tool_call part and append args
                 for (let i = parts.length - 1; i >= 0; i--) {
                   const p = parts[i];
-                  if (p.type === "tool_call" && p.status === "active") {
+                  if (p.type === 'tool_call' && p.status === 'active') {
                     parts[i] = { ...p, args: p.args + tc.args };
                     break;
                   }
@@ -228,25 +277,31 @@ export default function ChatPanel({ graphData, onClose }: Props) {
 
         // ── Text content ──
         const content =
-          typeof chunk.content === "string"
+          typeof chunk.content === 'string'
             ? chunk.content
             : Array.isArray(chunk.content)
               ? chunk.content
                   .filter(
-                    (b): b is { type: "text"; text: string } =>
-                      typeof b === "object" && b !== null && "type" in b && b.type === "text",
+                    (b): b is { type: 'text'; text: string } =>
+                      typeof b === 'object' &&
+                      b !== null &&
+                      'type' in b &&
+                      b.type === 'text',
                   )
                   .map((b) => b.text)
-                  .join("")
-              : "";
+                  .join('')
+              : '';
 
         if (content) {
           updateLastParts((parts) => {
             const last = parts[parts.length - 1];
-            if (last?.type === "text") {
-              parts[parts.length - 1] = { ...last, content: last.content + content };
+            if (last?.type === 'text') {
+              parts[parts.length - 1] = {
+                ...last,
+                content: last.content + content,
+              };
             } else {
-              parts.push({ type: "text", content });
+              parts.push({ type: 'text', content });
             }
             return parts;
           });
@@ -256,10 +311,11 @@ export default function ChatPanel({ graphData, onClose }: Props) {
       if (controller.signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       updateLastParts((parts) => {
-        parts.push({ type: "text", content: `Error: ${msg}` });
+        parts.push({ type: 'text', content: `Error: ${msg}` });
         return parts;
       });
     } finally {
+      progress.setListener(null);
       setStreaming(false);
     }
   };
@@ -278,12 +334,37 @@ export default function ChatPanel({ graphData, onClose }: Props) {
   return (
     <div className="chat-panel">
       <div className="panel-header">
-        <h3>AI Assistant</h3>
+        <div className="panel-header-title">
+          <h3>AI Assistant</h3>
+          {!showSettingsView && apiKey && (
+            <span
+              className="provider-tag"
+              onClick={() => setShowSettings(true)}
+              title="Click to change provider"
+            >
+              {PROVIDERS[providerId].name}
+            </span>
+          )}
+        </div>
         <div className="panel-header-actions">
           {messages.length > 0 && (
-            <button className="clear-chat-btn" onClick={handleClearChat} title="New chat">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20h9" /><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z" />
+            <button
+              className="clear-chat-btn"
+              onClick={handleClearChat}
+              title="New chat"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z" />
               </svg>
             </button>
           )}
@@ -299,7 +380,7 @@ export default function ChatPanel({ graphData, onClose }: Props) {
             {PROVIDER_IDS.map((id) => (
               <button
                 key={id}
-                className={id === providerId ? "active" : ""}
+                className={id === providerId ? 'active' : ''}
                 onClick={() => switchProvider(id)}
               >
                 {PROVIDERS[id].name}
@@ -313,16 +394,27 @@ export default function ChatPanel({ graphData, onClose }: Props) {
             type="password"
             placeholder="API Key..."
             defaultValue={apiKey}
-            onKeyDown={(e) => e.key === "Enter" && handleSaveKey()}
+            onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
             className="api-key-input"
           />
-          <button
-            className="api-search-btn"
-            style={{ width: "100%", padding: "8px", marginTop: "8px" }}
-            onClick={handleSaveKey}
-          >
-            Save
-          </button>
+          <div className="settings-actions">
+            <button
+              className="api-search-btn"
+              style={{ flex: 1, padding: '8px' }}
+              onClick={handleSaveKey}
+            >
+              Save
+            </button>
+            {apiKey && (
+              <button
+                className="settings-back-btn"
+                style={{ padding: '8px' }}
+                onClick={() => setShowSettings(false)}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
           <p className="hint">Your key is stored locally in your browser.</p>
         </div>
       ) : (
@@ -335,12 +427,16 @@ export default function ChatPanel({ graphData, onClose }: Props) {
               </div>
             )}
             {messages.map((m, i) => (
-              <div key={i} className={`message ${m.role === "user" ? "user" : "ai"}`}>
+              <div
+                key={i}
+                className={`message ${m.role === 'user' ? 'user' : 'ai'}`}
+              >
                 <div className="message-content">
-                  {m.role === "assistant" ? (
+                  {m.role === 'assistant' ? (
                     <ChatParts
                       parts={(m as AssistantMessage).parts}
                       streaming={streaming && i === messages.length - 1}
+                      onNodeSelect={onNodeSelect}
                     />
                   ) : (
                     m.content
@@ -355,9 +451,12 @@ export default function ChatPanel({ graphData, onClose }: Props) {
               placeholder="Ask a question..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
             />
-            <button onClick={handleSubmit} disabled={streaming || !input.trim()}>
+            <button
+              onClick={handleSubmit}
+              disabled={streaming || !input.trim()}
+            >
               Send
             </button>
             <button

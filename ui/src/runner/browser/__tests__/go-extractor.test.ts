@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { extractGo } from "../parser/extractors/go";
-import { parseGo } from "./helpers";
+import { describe, it, expect } from 'vitest';
+import { extractGo } from '../parser/extractors/go';
+import { parseGo } from './helpers';
 
-describe("extractGo", () => {
-  describe("struct types", () => {
-    it("extracts a simple struct", async () => {
+describe('extractGo', () => {
+  describe('struct types', () => {
+    it('extracts a simple struct', async () => {
       const root = await parseGo(`package main
 
 type Server struct {
@@ -13,15 +13,15 @@ type Server struct {
 }
 `);
       const result = extractGo(root);
-      expect(result.language).toBe("go");
+      expect(result.language).toBe('go');
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("Server");
-      expect(result.symbols[0].kind).toBe("class");
+      expect(result.symbols[0].name).toBe('Server');
+      expect(result.symbols[0].kind).toBe('class');
       expect(result.symbols[0].startLine).toBe(3);
       expect(result.symbols[0].children).toEqual([]);
     });
 
-    it("extracts multiple struct types", async () => {
+    it('extracts multiple struct types', async () => {
       const root = await parseGo(`package main
 
 type Request struct {
@@ -36,24 +36,24 @@ type Response struct {
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(2);
-      expect(result.symbols[0].name).toBe("Request");
-      expect(result.symbols[1].name).toBe("Response");
+      expect(result.symbols[0].name).toBe('Request');
+      expect(result.symbols[1].name).toBe('Response');
     });
 
-    it("extracts empty struct", async () => {
+    it('extracts empty struct', async () => {
       const root = await parseGo(`package main
 
 type Empty struct{}
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("Empty");
-      expect(result.symbols[0].kind).toBe("class");
+      expect(result.symbols[0].name).toBe('Empty');
+      expect(result.symbols[0].kind).toBe('class');
     });
   });
 
-  describe("interface types", () => {
-    it("extracts interface with methods", async () => {
+  describe('interface types', () => {
+    it('extracts interface with methods', async () => {
       const root = await parseGo(`package main
 
 type Store interface {
@@ -65,16 +65,16 @@ type Store interface {
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
       const iface = result.symbols[0];
-      expect(iface.name).toBe("Store");
-      expect(iface.kind).toBe("class");
+      expect(iface.name).toBe('Store');
+      expect(iface.kind).toBe('class');
       expect(iface.children).toHaveLength(3);
-      const methodNames = iface.children.map(c => c.name);
-      expect(methodNames).toContain("Get");
-      expect(methodNames).toContain("Set");
-      expect(methodNames).toContain("Delete");
+      const methodNames = iface.children.map((c) => c.name);
+      expect(methodNames).toContain('Get');
+      expect(methodNames).toContain('Set');
+      expect(methodNames).toContain('Delete');
     });
 
-    it("interface methods have correct kind", async () => {
+    it('interface methods have correct kind', async () => {
       const root = await parseGo(`package main
 
 type Reader interface {
@@ -83,24 +83,24 @@ type Reader interface {
 `);
       const result = extractGo(root);
       const readMethod = result.symbols[0].children[0];
-      expect(readMethod.kind).toBe("function");
-      expect(readMethod.name).toBe("Read");
+      expect(readMethod.kind).toBe('function');
+      expect(readMethod.name).toBe('Read');
     });
 
-    it("extracts empty interface", async () => {
+    it('extracts empty interface', async () => {
       const root = await parseGo(`package main
 
 type Any interface{}
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("Any");
+      expect(result.symbols[0].name).toBe('Any');
       expect(result.symbols[0].children).toEqual([]);
     });
   });
 
-  describe("function declarations", () => {
-    it("extracts a simple function", async () => {
+  describe('function declarations', () => {
+    it('extracts a simple function', async () => {
       const root = await parseGo(`package main
 
 func main() {
@@ -109,14 +109,14 @@ func main() {
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("main");
-      expect(result.symbols[0].kind).toBe("function");
-      expect(result.symbols[0].signature).toBe("()");
+      expect(result.symbols[0].name).toBe('main');
+      expect(result.symbols[0].kind).toBe('function');
+      expect(result.symbols[0].signature).toBe('()');
       expect(result.symbols[0].receiverVar).toBeNull();
       expect(result.symbols[0].receiverType).toBeNull();
     });
 
-    it("extracts function with parameters and return type", async () => {
+    it('extracts function with parameters and return type', async () => {
       const root = await parseGo(`package main
 
 func add(a int, b int) int {
@@ -125,11 +125,11 @@ func add(a int, b int) int {
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("add");
-      expect(result.symbols[0].signature).toContain("a int");
+      expect(result.symbols[0].name).toBe('add');
+      expect(result.symbols[0].signature).toContain('a int');
     });
 
-    it("extracts exported and unexported functions", async () => {
+    it('extracts exported and unexported functions', async () => {
       const root = await parseGo(`package main
 
 func PublicFunc() {}
@@ -137,11 +137,11 @@ func privateFunc() {}
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(2);
-      expect(result.symbols[0].name).toBe("PublicFunc");
-      expect(result.symbols[1].name).toBe("privateFunc");
+      expect(result.symbols[0].name).toBe('PublicFunc');
+      expect(result.symbols[1].name).toBe('privateFunc');
     });
 
-    it("extracts function with multiple return values", async () => {
+    it('extracts function with multiple return values', async () => {
       const root = await parseGo(`package main
 
 func divide(a, b float64) (float64, error) {
@@ -153,10 +153,10 @@ func divide(a, b float64) (float64, error) {
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(1);
-      expect(result.symbols[0].name).toBe("divide");
+      expect(result.symbols[0].name).toBe('divide');
     });
 
-    it("captures bare calls in function body", async () => {
+    it('captures bare calls in function body', async () => {
       const root = await parseGo(`package main
 
 func init() {
@@ -167,12 +167,24 @@ func init() {
 `);
       const result = extractGo(root);
       const calls = result.symbols[0].calls;
-      expect(calls).toContainEqual({ name: "setup", receiver: null, kind: "bare" });
-      expect(calls).toContainEqual({ name: "configure", receiver: null, kind: "bare" });
-      expect(calls).toContainEqual({ name: "validate", receiver: null, kind: "bare" });
+      expect(calls).toContainEqual({
+        name: 'setup',
+        receiver: null,
+        kind: 'bare',
+      });
+      expect(calls).toContainEqual({
+        name: 'configure',
+        receiver: null,
+        kind: 'bare',
+      });
+      expect(calls).toContainEqual({
+        name: 'validate',
+        receiver: null,
+        kind: 'bare',
+      });
     });
 
-    it("captures selector calls (pkg.Func) in function body", async () => {
+    it('captures selector calls (pkg.Func) in function body', async () => {
       const root = await parseGo(`package main
 
 func run() {
@@ -183,14 +195,26 @@ func run() {
 `);
       const result = extractGo(root);
       const calls = result.symbols[0].calls;
-      expect(calls).toContainEqual({ name: "Println", receiver: "fmt", kind: "attribute" });
-      expect(calls).toContainEqual({ name: "Printf", receiver: "log", kind: "attribute" });
-      expect(calls).toContainEqual({ name: "ListenAndServe", receiver: "http", kind: "attribute" });
+      expect(calls).toContainEqual({
+        name: 'Println',
+        receiver: 'fmt',
+        kind: 'attribute',
+      });
+      expect(calls).toContainEqual({
+        name: 'Printf',
+        receiver: 'log',
+        kind: 'attribute',
+      });
+      expect(calls).toContainEqual({
+        name: 'ListenAndServe',
+        receiver: 'http',
+        kind: 'attribute',
+      });
     });
   });
 
-  describe("method declarations", () => {
-    it("extracts method with value receiver", async () => {
+  describe('method declarations', () => {
+    it('extracts method with value receiver', async () => {
       const root = await parseGo(`package main
 
 type Server struct{}
@@ -201,14 +225,14 @@ func (s Server) Start() error {
 `);
       const result = extractGo(root);
       // struct + method
-      const method = result.symbols.find(s => s.name === "Start")!;
+      const method = result.symbols.find((s) => s.name === 'Start')!;
       expect(method).toBeDefined();
-      expect(method.kind).toBe("function");
-      expect(method.receiverVar).toBe("s");
-      expect(method.receiverType).toBe("Server");
+      expect(method.kind).toBe('function');
+      expect(method.receiverVar).toBe('s');
+      expect(method.receiverType).toBe('Server');
     });
 
-    it("extracts method with pointer receiver", async () => {
+    it('extracts method with pointer receiver', async () => {
       const root = await parseGo(`package main
 
 type Cache struct{}
@@ -218,13 +242,13 @@ func (c *Cache) Set(key string, val interface{}) {
 }
 `);
       const result = extractGo(root);
-      const method = result.symbols.find(s => s.name === "Set")!;
+      const method = result.symbols.find((s) => s.name === 'Set')!;
       expect(method).toBeDefined();
-      expect(method.receiverVar).toBe("c");
-      expect(method.receiverType).toBe("Cache");
+      expect(method.receiverVar).toBe('c');
+      expect(method.receiverType).toBe('Cache');
     });
 
-    it("includes receiver in method signature", async () => {
+    it('includes receiver in method signature', async () => {
       const root = await parseGo(`package main
 
 type DB struct{}
@@ -234,12 +258,12 @@ func (db *DB) Query(sql string) error {
 }
 `);
       const result = extractGo(root);
-      const method = result.symbols.find(s => s.name === "Query")!;
-      expect(method.signature).toContain("db *DB");
-      expect(method.signature).toContain("sql string");
+      const method = result.symbols.find((s) => s.name === 'Query')!;
+      expect(method.signature).toContain('db *DB');
+      expect(method.signature).toContain('sql string');
     });
 
-    it("captures calls from method bodies", async () => {
+    it('captures calls from method bodies', async () => {
       const root = await parseGo(`package main
 
 type Handler struct{}
@@ -251,12 +275,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 `);
       const result = extractGo(root);
-      const method = result.symbols.find(s => s.name === "ServeHTTP")!;
-      expect(method.calls).toContainEqual({ name: "logRequest", receiver: "h", kind: "attribute" });
-      expect(method.calls).toContainEqual({ name: "process", receiver: "h", kind: "attribute" });
+      const method = result.symbols.find((s) => s.name === 'ServeHTTP')!;
+      expect(method.calls).toContainEqual({
+        name: 'logRequest',
+        receiver: 'h',
+        kind: 'attribute',
+      });
+      expect(method.calls).toContainEqual({
+        name: 'process',
+        receiver: 'h',
+        kind: 'attribute',
+      });
     });
 
-    it("extracts multiple methods for same receiver type", async () => {
+    it('extracts multiple methods for same receiver type', async () => {
       const root = await parseGo(`package main
 
 type Stack struct{}
@@ -274,17 +306,17 @@ func (s *Stack) Len() int {
 }
 `);
       const result = extractGo(root);
-      const methods = result.symbols.filter(s => s.receiverType === "Stack");
+      const methods = result.symbols.filter((s) => s.receiverType === 'Stack');
       expect(methods).toHaveLength(3);
-      const names = methods.map(m => m.name);
-      expect(names).toContain("Push");
-      expect(names).toContain("Pop");
-      expect(names).toContain("Len");
+      const names = methods.map((m) => m.name);
+      expect(names).toContain('Push');
+      expect(names).toContain('Pop');
+      expect(names).toContain('Len');
     });
   });
 
-  describe("mixed declarations", () => {
-    it("extracts structs, interfaces, functions, and methods together", async () => {
+  describe('mixed declarations', () => {
+    it('extracts structs, interfaces, functions, and methods together', async () => {
       const root = await parseGo(`package main
 
 type Config struct {
@@ -305,11 +337,11 @@ func (c *Config) Validate() error {
 `);
       const result = extractGo(root);
       expect(result.symbols).toHaveLength(4);
-      const names = result.symbols.map(s => s.name);
-      expect(names).toEqual(["Config", "Logger", "NewConfig", "Validate"]);
+      const names = result.symbols.map((s) => s.name);
+      expect(names).toEqual(['Config', 'Logger', 'NewConfig', 'Validate']);
     });
 
-    it("preserves declaration order", async () => {
+    it('preserves declaration order', async () => {
       const root = await parseGo(`package main
 
 func first() {}
@@ -319,19 +351,91 @@ type Middle struct{}
 func last() {}
 `);
       const result = extractGo(root);
-      const names = result.symbols.map(s => s.name);
-      expect(names).toEqual(["first", "Middle", "last"]);
+      const names = result.symbols.map((s) => s.name);
+      expect(names).toEqual(['first', 'Middle', 'last']);
     });
   });
 
-  describe("edge cases", () => {
-    it("returns no symbols for package-only file", async () => {
-      const root = await parseGo("package main\n");
+  describe('subtype and embedding', () => {
+    it('sets subtype to struct', async () => {
+      const root = await parseGo(`package main
+
+type Server struct {
+    host string
+}
+`);
+      const result = extractGo(root);
+      expect(result.symbols[0].subtype).toBe('struct');
+    });
+
+    it('sets subtype to interface', async () => {
+      const root = await parseGo(`package main
+
+type Reader interface {
+    Read(p []byte) (int, error)
+}
+`);
+      const result = extractGo(root);
+      expect(result.symbols[0].subtype).toBe('interface');
+    });
+
+    it('extracts embedded struct types', async () => {
+      const root = await parseGo(`package main
+
+type Admin struct {
+    User
+    role string
+}
+`);
+      const result = extractGo(root);
+      const admin = result.symbols[0];
+      expect(admin.subtype).toBe('struct');
+      expect(admin.superclasses).toEqual(['User']);
+    });
+
+    it('extracts embedded interface types', async () => {
+      const root = await parseGo(`package main
+
+type ReadWriter interface {
+    Reader
+    Writer
+}
+`);
+      const result = extractGo(root);
+      const rw = result.symbols[0];
+      expect(rw.subtype).toBe('interface');
+      expect(rw.interfaces).toEqual(['Reader', 'Writer']);
+    });
+
+    it('no embedded types for empty struct', async () => {
+      const root = await parseGo(`package main
+
+type Empty struct{}
+`);
+      const result = extractGo(root);
+      expect(result.symbols[0].subtype).toBe('struct');
+      expect(result.symbols[0].superclasses).toBeUndefined();
+    });
+
+    it('no embedded types for empty interface', async () => {
+      const root = await parseGo(`package main
+
+type Any interface{}
+`);
+      const result = extractGo(root);
+      expect(result.symbols[0].subtype).toBe('interface');
+      expect(result.symbols[0].interfaces).toBeUndefined();
+    });
+  });
+
+  describe('edge cases', () => {
+    it('returns no symbols for package-only file', async () => {
+      const root = await parseGo('package main\n');
       const result = extractGo(root);
       expect(result.symbols).toEqual([]);
     });
 
-    it("returns no symbols for file with only imports", async () => {
+    it('returns no symbols for file with only imports', async () => {
       const root = await parseGo(`package main
 
 import (
@@ -343,7 +447,7 @@ import (
       expect(result.symbols).toEqual([]);
     });
 
-    it("preserves rootNode in result", async () => {
+    it('preserves rootNode in result', async () => {
       const root = await parseGo(`package main
 func foo() {}
 `);
@@ -351,7 +455,7 @@ func foo() {}
       expect(result.rootNode).toBe(root);
     });
 
-    it("ignores type aliases (non-struct, non-interface)", async () => {
+    it('ignores type aliases (non-struct, non-interface)', async () => {
       const root = await parseGo(`package main
 
 type ID string
@@ -363,8 +467,8 @@ type Handler func(w http.ResponseWriter, r *http.Request)
     });
   });
 
-  describe("nested calls", () => {
-    it("captures calls inside if/else blocks", async () => {
+  describe('nested calls', () => {
+    it('captures calls inside if/else blocks', async () => {
       const root = await parseGo(`package main
 
 func check(ok bool) {
@@ -376,12 +480,12 @@ func check(ok bool) {
 }
 `);
       const result = extractGo(root);
-      const callNames = result.symbols[0].calls.map(c => c.name);
-      expect(callNames).toContain("proceed");
-      expect(callNames).toContain("abort");
+      const callNames = result.symbols[0].calls.map((c) => c.name);
+      expect(callNames).toContain('proceed');
+      expect(callNames).toContain('abort');
     });
 
-    it("captures calls inside for loops", async () => {
+    it('captures calls inside for loops', async () => {
       const root = await parseGo(`package main
 
 func process(items []string) {
@@ -393,11 +497,19 @@ func process(items []string) {
 `);
       const result = extractGo(root);
       const calls = result.symbols[0].calls;
-      expect(calls).toContainEqual({ name: "transform", receiver: null, kind: "bare" });
-      expect(calls).toContainEqual({ name: "Save", receiver: "db", kind: "attribute" });
+      expect(calls).toContainEqual({
+        name: 'transform',
+        receiver: null,
+        kind: 'bare',
+      });
+      expect(calls).toContainEqual({
+        name: 'Save',
+        receiver: 'db',
+        kind: 'attribute',
+      });
     });
 
-    it("captures calls inside switch cases", async () => {
+    it('captures calls inside switch cases', async () => {
       const root = await parseGo(`package main
 
 func handle(action string) {
@@ -412,12 +524,12 @@ func handle(action string) {
 }
 `);
       const result = extractGo(root);
-      const callNames = result.symbols[0].calls.map(c => c.name);
-      expect(callNames).toContain("start");
-      expect(callNames).toContain("stop");
+      const callNames = result.symbols[0].calls.map((c) => c.name);
+      expect(callNames).toContain('start');
+      expect(callNames).toContain('stop');
     });
 
-    it("captures calls inside defer and go statements", async () => {
+    it('captures calls inside defer and go statements', async () => {
       const root = await parseGo(`package main
 
 func serve() {
@@ -427,10 +539,10 @@ func serve() {
 }
 `);
       const result = extractGo(root);
-      const callNames = result.symbols[0].calls.map(c => c.name);
-      expect(callNames).toContain("cleanup");
-      expect(callNames).toContain("handleConnection");
-      expect(callNames).toContain("listen");
+      const callNames = result.symbols[0].calls.map((c) => c.name);
+      expect(callNames).toContain('cleanup');
+      expect(callNames).toContain('handleConnection');
+      expect(callNames).toContain('listen');
     });
   });
 });

@@ -7,10 +7,10 @@
  *  - gitlabLoader before githubLoader (GitLab URLs are more specific)
  */
 
-import type { RepoLoader } from "./loaderInterface";
-import { directoryLoader } from "./directory";
-import { gitlabLoader } from "./gitlab";
-import { githubLoader } from "./github";
+import type { RepoLoader } from './loaderInterface';
+import { directoryLoader } from './directory';
+import { gitlabLoader } from './gitlab';
+import { githubLoader } from './github';
 
 export const loaderRegistry: readonly RepoLoader[] = [
   directoryLoader,

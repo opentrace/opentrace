@@ -2,10 +2,16 @@
   {
     "name": "run",
     "kind": "function",
-    "start_line": 3,
-    "end_line": 3,
+    "start_line": 1,
+    "end_line": 1,
     "signature": "()",
     "children": [],
-    "calls": []
+    "calls": [
+      {
+        "name": "execute",
+        "receiver": null,
+        "kind": "bare"
+      }
+    ]
   }
 ]

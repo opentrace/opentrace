@@ -7,6 +7,7 @@
   "expected": {
     "internal": {
       "utils": "pkg/utils.py",
+      "helper": "pkg/utils.py",
       "mylib": "mylib.py"
     },
     "external": {

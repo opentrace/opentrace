@@ -1,0 +1,64 @@
+[
+  {
+    "name": "IRepository",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": "interface",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "Save",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 2,
+        "signature": "(object item)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "FindById",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 3,
+        "signature": "(string id)",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "IDisposable",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 8,
+    "signature": null,
+    "subtype": "interface",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "Dispose",
+        "kind": "function",
+        "start_line": 7,
+        "end_line": 7,
+        "signature": "()",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  }
+]

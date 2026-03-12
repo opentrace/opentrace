@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
-} from "../config/summarization";
-import type { SummarizationStrategyType } from "../runner/browser/enricher/summarizer/types";
-import { useStore } from "../store";
-import "./SettingsDrawer.css";
+} from '../config/summarization';
+import type { SummarizationStrategyType } from '../runner/browser/enricher/summarizer/types';
+import { useStore } from '../store';
+import './SettingsDrawer.css';
 
 interface SettingsDrawerProps {
   onClose: () => void;
@@ -20,7 +20,8 @@ export default function SettingsDrawer({
   const [clearing, setClearing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summaryStrategy, setSummaryStrategy] = useState<SummarizationStrategyType>(loadSummarizerStrategy);
+  const [summaryStrategy, setSummaryStrategy] =
+    useState<SummarizationStrategyType>(loadSummarizerStrategy);
 
   const handleClear = async () => {
     setClearing(true);
@@ -30,7 +31,7 @@ export default function SettingsDrawer({
       setConfirmOpen(false);
       onGraphCleared();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to clear graph");
+      setError(err instanceof Error ? err.message : 'Failed to clear graph');
     } finally {
       setClearing(false);
     }
@@ -61,32 +62,32 @@ export default function SettingsDrawer({
             <div className="toggle-group">
               <button
                 type="button"
-                className={`toggle-btn${summaryStrategy === "template" ? " active" : ""}`}
-                onClick={() => handleStrategyChange("template")}
+                className={`toggle-btn${summaryStrategy === 'template' ? ' active' : ''}`}
+                onClick={() => handleStrategyChange('template')}
               >
                 Template (Fast)
               </button>
               <button
                 type="button"
-                className={`toggle-btn${summaryStrategy === "ml" ? " active" : ""}`}
-                onClick={() => handleStrategyChange("ml")}
+                className={`toggle-btn${summaryStrategy === 'ml' ? ' active' : ''}`}
+                onClick={() => handleStrategyChange('ml')}
               >
                 ML Model
               </button>
               <button
                 type="button"
-                className={`toggle-btn${summaryStrategy === "none" ? " active" : ""}`}
-                onClick={() => handleStrategyChange("none")}
+                className={`toggle-btn${summaryStrategy === 'none' ? ' active' : ''}`}
+                onClick={() => handleStrategyChange('none')}
               >
                 Disabled
               </button>
             </div>
             <p className="setting-hint">
-              {summaryStrategy === "template"
-                ? "Instant summaries from code naming conventions. No model download."
-                : summaryStrategy === "ml"
-                  ? "Higher quality for complex code. Downloads ~77MB model on first run."
-                  : "Nodes indexed without summaries."}
+              {summaryStrategy === 'template'
+                ? 'Instant summaries from code naming conventions. No model download.'
+                : summaryStrategy === 'ml'
+                  ? 'Higher quality for complex code. Downloads ~77MB model on first run.'
+                  : 'Nodes indexed without summaries.'}
             </p>
           </div>
         </section>
@@ -116,7 +117,7 @@ export default function SettingsDrawer({
                   onClick={handleClear}
                   disabled={clearing}
                 >
-                  {clearing ? "Clearing..." : "Yes, clear everything"}
+                  {clearing ? 'Clearing...' : 'Yes, clear everything'}
                 </button>
                 <button
                   className="cancel-btn"

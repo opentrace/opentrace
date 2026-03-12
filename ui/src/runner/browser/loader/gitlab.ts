@@ -5,14 +5,15 @@
  * Supports both gitlab.com and self-hosted instances.
  */
 
-import { unzipSync } from "fflate";
-import {
-  extractFilesFromZip,
-  type UrlLoaderOptions,
-} from "./shared";
-import type { RepoLoader, LoaderInput, LoaderCallOptions } from "./loaderInterface";
-import { normalizeRepoUrl } from "./urlNormalize";
-import type { RepoTree } from "../types";
+import { unzipSync } from 'fflate';
+import { extractFilesFromZip, type UrlLoaderOptions } from './shared';
+import type {
+  RepoLoader,
+  LoaderInput,
+  LoaderCallOptions,
+} from './loaderInterface';
+import { normalizeRepoUrl } from './urlNormalize';
+import type { RepoTree } from '../types';
 
 export interface GitLabParsed {
   host: string;
@@ -34,13 +35,13 @@ export function parseGitLabUrl(url: string): GitLabParsed | null {
   if (!match) return null;
 
   const host = match[1];
-  const fullPath = match[2].replace(/\.git$/, "");
-  const segments = fullPath.split("/");
+  const fullPath = match[2].replace(/\.git$/, '');
+  const segments = fullPath.split('/');
 
   if (segments.length < 2) return null;
 
   const project = segments[segments.length - 1];
-  const namespace = segments.slice(0, -1).join("/");
+  const namespace = segments.slice(0, -1).join('/');
 
   return {
     host,
@@ -66,18 +67,19 @@ async function fetchGitLabViaZipball(
   parsed: GitLabParsed,
   options: UrlLoaderOptions,
 ): Promise<RepoTree> {
-  const { token, ref = "HEAD", signal, onProgress } = options;
+  const { token, ref = 'HEAD', signal, onProgress } = options;
 
-  onProgress?.({ phase: "tree", current: 0, total: 1 });
+  onProgress?.({ phase: 'tree', current: 0, total: 1 });
 
   const params = new URLSearchParams({
-    provider: "gitlab",
+    provider: 'gitlab',
     owner: parsed.namespace,
     repo: parsed.project,
     ref,
     host: parsed.host,
   });
-  const zipUrl = `/fn/archive?${params}`;
+  const base = import.meta.env.VITE_ARCHIVE_URL || '/fn/archive';
+  const zipUrl = `${base}?${params}`;
   const fetchHeaders: Record<string, string> = {};
   if (token) {
     fetchHeaders.Authorization = `Bearer ${token}`;
@@ -89,7 +91,7 @@ async function fetchGitLabViaZipball(
     throw new Error(`GitLab archive fetch error ${res.status}: ${text}`);
   }
 
-  onProgress?.({ phase: "tree", current: 1, total: 1 });
+  onProgress?.({ phase: 'tree', current: 1, total: 1 });
 
   const zipBuffer = new Uint8Array(await res.arrayBuffer());
   const entries = unzipSync(zipBuffer);
@@ -101,6 +103,7 @@ async function fetchGitLabViaZipball(
     repo: parsed.project,
     ref,
     url: `https://${parsed.host}/${parsed.namespace}/${parsed.project}`,
+    provider: 'gitlab',
     files,
   };
 }
@@ -110,22 +113,26 @@ async function fetchGitLabViaZipball(
 // ---------------------------------------------------------------------------
 
 export const gitlabLoader: RepoLoader = {
-  name: "gitlab",
+  name: 'gitlab',
 
   canHandle(input: LoaderInput): boolean {
-    if (input.kind !== "url") return false;
+    if (input.kind !== 'url') return false;
     const normalized = normalizeRepoUrl(input.url);
     return parseGitLabUrl(normalized) !== null;
   },
 
-  async load(input: LoaderInput, options: LoaderCallOptions): Promise<RepoTree> {
-    if (input.kind !== "url") throw new Error("GitLab loader requires a URL input");
+  async load(
+    input: LoaderInput,
+    options: LoaderCallOptions,
+  ): Promise<RepoTree> {
+    if (input.kind !== 'url')
+      throw new Error('GitLab loader requires a URL input');
     const normalized = normalizeRepoUrl(input.url);
     const parsed = parseGitLabUrl(normalized);
-    if (!parsed) throw new Error("Not a valid GitLab URL");
+    if (!parsed) throw new Error('Not a valid GitLab URL');
     return fetchGitLabRepoTree(parsed, {
       token: input.token,
-      ref: input.ref || "HEAD",
+      ref: input.ref || 'HEAD',
       signal: options.signal,
       onProgress: options.onProgress,
     });

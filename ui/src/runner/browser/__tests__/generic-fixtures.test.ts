@@ -1,0 +1,88 @@
+/**
+ * Fixture-driven tests for the generic extractor across all supported languages.
+ *
+ * Extraction fixtures: tests/fixtures/{lang}/extraction/{name}.{ext} + {name}.expected.json
+ *
+ * Each language directory follows the same pattern as Go/TS/Python fixtures.
+ * Expected JSON uses the generic normalizer (includes subtype/superclasses/interfaces).
+ */
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { extractGeneric } from '../parser/extractors/generic';
+import {
+  parseRust,
+  parseJava,
+  parseCpp,
+  parseC,
+  parseRuby,
+  parseCsharp,
+  parseKotlin,
+  parseSwift,
+} from './helpers';
+import {
+  normalizeSymbolGeneric,
+  discoverExtractionFixtures,
+} from './normalizers';
+import type { Node as SyntaxNode } from 'web-tree-sitter';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const FIXTURE_ROOT = join(
+  __dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'tests',
+  'fixtures',
+);
+
+/** Language config: source extension, language key, and parser function. */
+const GENERIC_LANGUAGES: Array<{
+  name: string;
+  ext: string;
+  lang: string;
+  parse: (source: string) => Promise<SyntaxNode>;
+}> = [
+  { name: 'C', ext: '.c', lang: 'c', parse: parseC },
+  { name: 'C++', ext: '.cpp', lang: 'cpp', parse: parseCpp },
+  { name: 'C#', ext: '.cs', lang: 'csharp', parse: parseCsharp },
+  { name: 'Java', ext: '.java', lang: 'java', parse: parseJava },
+  { name: 'Kotlin', ext: '.kt', lang: 'kotlin', parse: parseKotlin },
+  { name: 'Ruby', ext: '.rb', lang: 'ruby', parse: parseRuby },
+  { name: 'Rust', ext: '.rs', lang: 'rust', parse: parseRust },
+  { name: 'Swift', ext: '.swift', lang: 'swift', parse: parseSwift },
+];
+
+for (const { name, ext, lang, parse } of GENERIC_LANGUAGES) {
+  const extractionDir = join(FIXTURE_ROOT, lang, 'extraction');
+  const fixtures = discoverExtractionFixtures(extractionDir, ext);
+
+  if (fixtures.length > 0) {
+    describe(`${name} extraction fixtures`, () => {
+      for (const fixtureName of fixtures) {
+        it(fixtureName, async () => {
+          const source = readFileSync(
+            join(extractionDir, `${fixtureName}${ext}`),
+            'utf-8',
+          );
+          const expected = JSON.parse(
+            readFileSync(
+              join(extractionDir, `${fixtureName}.expected.json`),
+              'utf-8',
+            ),
+          );
+
+          const rootNode = await parse(source);
+          const result = extractGeneric(rootNode, lang);
+          const actual = result.symbols.map(normalizeSymbolGeneric);
+
+          expect(actual).toEqual(expected);
+        });
+      }
+    });
+  }
+}

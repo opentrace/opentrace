@@ -1,3 +1,52 @@
+/* Provider tag in header */
+.panel-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+  color: var(--ring);
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.provider-tag:hover {
+  background: color-mix(in oklch, var(--primary) 25%, transparent);
+  border-color: var(--primary);
+}
+
+/* Settings action buttons */
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.settings-back-btn {
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: color-mix(in oklch, var(--card) 50%, transparent);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-back-btn:hover {
+  border-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  color: var(--secondary-foreground);
+}
+
 /* Provider selector buttons */
 .provider-selector {
   display: flex;
@@ -41,7 +90,9 @@
 }
 
 @keyframes cursorBlink {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Chat templates */

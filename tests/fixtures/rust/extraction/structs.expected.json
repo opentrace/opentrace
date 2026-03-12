@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Config",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": "struct",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Empty",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 6,
+    "signature": null,
+    "subtype": "struct",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

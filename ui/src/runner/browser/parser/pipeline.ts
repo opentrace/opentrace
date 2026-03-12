@@ -3,22 +3,31 @@
  * Ported from agent's SymbolAttacher.attach() two-phase pattern.
  */
 
-import type { Parser, Node as SyntaxNode } from "web-tree-sitter";
-import { EXTENSION_LANGUAGE_MAP, PARSEABLE_LANGUAGES } from "../loader/constants";
-import { extractPython } from "./extractors/python";
-import { extractTypeScript } from "./extractors/typescript";
-import { extractGo } from "./extractors/go";
-import { analyzeImports } from "./importAnalyzer";
-import { isManifestFile, parseManifest, packageId } from "./manifestParser";
+import type { Parser, Node as SyntaxNode } from 'web-tree-sitter';
+import {
+  EXTENSION_LANGUAGE_MAP,
+  PARSEABLE_LANGUAGES,
+} from '../loader/constants';
+import { extractPython } from './extractors/python';
+import { extractTypeScript } from './extractors/typescript';
+import { extractGo } from './extractors/go';
+import { extractGeneric } from './extractors/generic';
+import { analyzeImports } from './importAnalyzer';
+import {
+  isManifestFile,
+  parseManifest,
+  packageId,
+  packageSourceUrl,
+} from './manifestParser';
 import {
   resolveCalls,
   resolvedCallsToRelationships,
   type CallInfo,
   type Registries,
   type SymbolNode,
-} from "./callResolver";
-import type { NodeKind, SymbolMetadata } from "../enricher/summarizer/types";
-import type { SummarizationStrategy } from "../enricher/summarizer/strategy";
+} from './callResolver';
+import type { NodeKind, SymbolMetadata } from '../enricher/summarizer/types';
+import type { SummarizationStrategy } from '../enricher/summarizer/strategy';
 import type {
   CodeSymbol,
   EnrichItem,
@@ -28,37 +37,86 @@ import type {
   GraphRelationship,
   RepoFile,
   RepoTree,
-} from "../types";
+} from '../types';
 
 export interface PipelineCallbacks {
-  onProgress: (phase: string, message: string, current: number, total: number, fileName?: string) => void;
+  onProgress: (
+    phase: string,
+    message: string,
+    current: number,
+    total: number,
+    fileName?: string,
+  ) => void;
   onBatch: (batch: GraphBatch) => void;
   onStageComplete: (phase: string, message: string) => void;
 }
 
-interface Parsers {
-  python?: Parser;
-  typescript?: Parser;
-  tsx?: Parser;
-  go?: Parser;
-}
+/** Map from language name (e.g. "python", "tsx") to a configured Parser instance. */
+export type ParserMap = Map<string, Parser>;
 
 /** Run the full indexing pipeline on a repo tree. */
 export async function runPipeline(
   repo: RepoTree,
-  parsers: Parsers,
+  parsers: ParserMap,
   callbacks: PipelineCallbacks,
   strategy: SummarizationStrategy,
-): Promise<{ filesProcessed: number; nodesCreated: number; relationshipsCreated: number; errors: string[]; enrichItems: EnrichItem[] }> {
+): Promise<{
+  filesProcessed: number;
+  nodesCreated: number;
+  relationshipsCreated: number;
+  errors: string[];
+  enrichItems: EnrichItem[];
+}> {
   const repoId = `${repo.owner}/${repo.repo}`;
   const errors: string[] = [];
   let totalNodes = 0;
   let totalRels = 0;
 
+  // --- Source link helpers ---
+  // Build a browsable URL for a file path (+ optional line range) on the provider.
+  const repoUrl = repo.url;
+  const branch = repo.ref;
+  const provider = repo.provider;
+
+  function buildSourceUri(
+    filePath: string,
+    startLine?: number,
+    endLine?: number,
+  ): string | undefined {
+    if (!repoUrl) return undefined;
+    let blobBase: string;
+    if (provider === 'gitlab') {
+      blobBase = `${repoUrl}/-/blob/${branch}/${filePath}`;
+    } else {
+      // GitHub / default
+      blobBase = `${repoUrl}/blob/${branch}/${filePath}`;
+    }
+    if (startLine != null && endLine != null) {
+      return `${blobBase}#L${startLine}-L${endLine}`;
+    }
+    if (startLine != null) {
+      return `${blobBase}#L${startLine}`;
+    }
+    return blobBase;
+  }
+
+  /** Common source-tracking properties added to File/Directory/Class/Function nodes. */
+  function sourceProps(
+    filePath: string,
+    startLine?: number,
+    endLine?: number,
+  ): Record<string, unknown> {
+    const props: Record<string, unknown> = { branch };
+    if (provider) props.source_name = provider;
+    const uri = buildSourceUri(filePath, startLine, endLine);
+    if (uri) props.source_uri = uri;
+    return props;
+  }
+
   // Create the repo node (template summary — no ML needed)
   const repoNode: GraphNode = {
     id: repoId,
-    type: "Repository",
+    type: 'Repository',
     name: repo.repo,
     properties: {
       url: repo.url ?? `https://github.com/${repoId}`,
@@ -82,24 +140,31 @@ export async function runPipeline(
 
     // Create file node
     const fileId = `${repoId}/${file.path}`;
-    const fileName = file.path.split("/").pop()!;
+    const fileName = file.path.split('/').pop()!;
     const fileNode: GraphNode = {
       id: fileId,
-      type: "File",
+      type: 'File',
       name: fileName,
-      properties: { path: file.path, extension: ext, language: language ?? undefined },
+      properties: {
+        path: file.path,
+        extension: ext,
+        language: language ?? undefined,
+        ...sourceProps(file.path),
+      },
     };
     fileNodes.push(fileNode);
 
     // Create directory nodes and relationships
     const dirPath = parentDir(file.path);
-    ensureDirectoryChain(repoId, dirPath, dirNodes, structureRels);
+    ensureDirectoryChain(repoId, dirPath, dirNodes, structureRels, (dp) =>
+      sourceProps(dp),
+    );
 
     // Link file to parent dir (or repo): File defined_in Directory
     const parentId = dirPath ? `${repoId}/${dirPath}` : repoId;
     structureRels.push({
       id: `${fileId}->defined_in->${parentId}`,
-      type: "defined_in",
+      type: 'defined_in',
       source_id: fileId,
       target_id: parentId,
     });
@@ -132,7 +197,7 @@ export async function runPipeline(
     errors.push(...manifestResult.errors);
 
     // Extract Go module path for import resolution
-    if (file.path.endsWith("go.mod") || file.path.includes("/go.mod")) {
+    if (file.path.endsWith('go.mod') || file.path.includes('/go.mod')) {
       const moduleMatch = file.content.match(/^module\s+(\S+)/m);
       if (moduleMatch) goModulePath = moduleMatch[1];
     }
@@ -140,29 +205,54 @@ export async function runPipeline(
     for (const dep of manifestResult.dependencies) {
       const pkgId = packageId(dep.registry, dep.name);
       if (!packageNodes.has(pkgId)) {
+        const pkgUrl = packageSourceUrl(dep.registry, dep.name);
         packageNodes.set(pkgId, {
-          id: pkgId, type: "Package", name: dep.name,
-          properties: { version: dep.version, registry: dep.registry, source: dep.source, dependency_type: dep.dependencyType },
+          id: pkgId,
+          type: 'Package',
+          name: dep.name,
+          properties: {
+            version: dep.version,
+            registry: dep.registry,
+            source: dep.source,
+            dependency_type: dep.dependencyType,
+            ...(pkgUrl
+              ? { source_uri: pkgUrl, source_name: dep.registry }
+              : {}),
+          },
         });
       }
       dependencyRels.push({
         id: `${repoId}/${dep.source}->depends_on->${pkgId}`,
-        type: "depends_on", source_id: repoId, target_id: pkgId,
-        properties: { source: dep.source, dependency_type: dep.dependencyType, version: dep.version },
+        type: 'depends_on',
+        source_id: repoId,
+        target_id: pkgId,
+        properties: {
+          source: dep.source,
+          dependency_type: dep.dependencyType,
+          version: dep.version,
+        },
       });
     }
   }
 
   // Emit manifest batch
   if (packageNodes.size > 0 || dependencyRels.length > 0) {
-    callbacks.onBatch({ nodes: Array.from(packageNodes.values()), relationships: dependencyRels });
+    callbacks.onBatch({
+      nodes: Array.from(packageNodes.values()),
+      relationships: dependencyRels,
+    });
     for (const id of packageNodes.keys()) emittedPackageIds.add(id);
     totalNodes += packageNodes.size;
     totalRels += dependencyRels.length;
   }
 
   // Phase 1: Extract symbols and build registries
-  callbacks.onProgress("parsing", "Extracting symbols...", 0, parseableFiles.length);
+  callbacks.onProgress(
+    'parsing',
+    'Extracting symbols...',
+    0,
+    parseableFiles.length,
+  );
 
   const registries: Registries = {
     nameRegistry: new Map(),
@@ -173,10 +263,19 @@ export async function runPipeline(
   const allCallInfo: CallInfo[] = [];
 
   // Track line info for summarization, indexed by fileId for O(1) per-file lookup
-  const symbolLineInfo = new Map<string, Array<{
-    nodeId: string; startLine: number; endLine: number; kind: NodeKind; name: string;
-    signature?: string; childNames?: string[]; receiverType?: string;
-  }>>();
+  const symbolLineInfo = new Map<
+    string,
+    Array<{
+      nodeId: string;
+      startLine: number;
+      endLine: number;
+      kind: NodeKind;
+      name: string;
+      signature?: string;
+      childNames?: string[];
+      receiverType?: string;
+    }>
+  >();
 
   // Pre-compute known paths for import resolution
   const knownPaths = new Set(repo.files.map((f) => f.path));
@@ -187,7 +286,13 @@ export async function runPipeline(
 
   for (let i = 0; i < parseableFiles.length; i++) {
     const file = parseableFiles[i];
-    callbacks.onProgress("parsing", `Parsing ${file.path}`, i, parseableFiles.length, file.path);
+    callbacks.onProgress(
+      'parsing',
+      `Parsing ${file.path}`,
+      i,
+      parseableFiles.length,
+      file.path,
+    );
 
     try {
       const result = extractFile(file, repoId, parsers);
@@ -214,7 +319,9 @@ export async function runPipeline(
         // Internal imports (existing logic)
         if (Object.keys(importResult.internal).length > 0) {
           const idImports: Record<string, string> = {};
-          for (const [alias, targetPath] of Object.entries(importResult.internal)) {
+          for (const [alias, targetPath] of Object.entries(
+            importResult.internal,
+          )) {
             const targetId = pathToFileId.get(targetPath);
             if (targetId) idImports[alias] = targetId;
           }
@@ -226,19 +333,30 @@ export async function runPipeline(
         // External imports — collect File→Package relationships
         for (const [pkgName, pkgId] of Object.entries(importResult.external)) {
           if (!packageNodes.has(pkgId)) {
+            const reg = pkgId.split(':')[1];
+            const pkgUrl = packageSourceUrl(reg, pkgName);
             packageNodes.set(pkgId, {
-              id: pkgId, type: "Package", name: pkgName,
-              properties: { registry: pkgId.split(":")[1] },
+              id: pkgId,
+              type: 'Package',
+              name: pkgName,
+              properties: {
+                registry: reg,
+                ...(pkgUrl ? { source_uri: pkgUrl, source_name: reg } : {}),
+              },
             });
           }
           externalImportRels.push({
             id: `${fileId}->imports->${pkgId}`,
-            type: "imports", source_id: fileId, target_id: pkgId,
+            type: 'imports',
+            source_id: fileId,
+            target_id: pkgId,
           });
         }
       }
 
       // Convert symbols to graph nodes
+      const fileSourceProps = (startLine: number, endLine: number) =>
+        sourceProps(filePath, startLine, endLine);
       for (const symbol of extraction.symbols) {
         processSymbol(
           symbol,
@@ -248,10 +366,14 @@ export async function runPipeline(
           allCallInfo,
           symbolBatch,
           symbolLineInfo,
+          fileSourceProps,
         );
       }
 
-      if (symbolBatch.nodes.length > 0 || symbolBatch.relationships.length > 0) {
+      if (
+        symbolBatch.nodes.length > 0 ||
+        symbolBatch.relationships.length > 0
+      ) {
         callbacks.onBatch(symbolBatch);
         totalNodes += symbolBatch.nodes.length;
         totalRels += symbolBatch.relationships.length;
@@ -262,17 +384,22 @@ export async function runPipeline(
   }
 
   // Emit external import Package nodes + File→Package relationships
-  const newPackageNodes = Array.from(packageNodes.values()).filter(n => !emittedPackageIds.has(n.id));
+  const newPackageNodes = Array.from(packageNodes.values()).filter(
+    (n) => !emittedPackageIds.has(n.id),
+  );
   if (externalImportRels.length > 0 || newPackageNodes.length > 0) {
-    callbacks.onBatch({ nodes: newPackageNodes, relationships: externalImportRels });
+    callbacks.onBatch({
+      nodes: newPackageNodes,
+      relationships: externalImportRels,
+    });
     totalNodes += newPackageNodes.length;
     totalRels += externalImportRels.length;
   }
 
-  callbacks.onStageComplete("parsing", `Parsed ${parseableFiles.length} files`);
+  callbacks.onStageComplete('parsing', `Parsed ${parseableFiles.length} files`);
 
   // Phase 2: Resolve calls
-  callbacks.onProgress("resolving", "Resolving call relationships...", 0, 1);
+  callbacks.onProgress('resolving', 'Resolving call relationships...', 0, 1);
 
   const resolvedCalls = resolveCalls(allCallInfo, registries);
   const callRels = resolvedCallsToRelationships(resolvedCalls);
@@ -282,8 +409,16 @@ export async function runPipeline(
     totalRels += callRels.length;
   }
 
-  callbacks.onProgress("resolving", `Resolved ${callRels.length} call relationships`, 1, 1);
-  callbacks.onStageComplete("resolving", `Resolved ${callRels.length} call relationships`);
+  callbacks.onProgress(
+    'resolving',
+    `Resolved ${callRels.length} call relationships`,
+    1,
+    1,
+  );
+  callbacks.onStageComplete(
+    'resolving',
+    `Resolved ${callRels.length} call relationships`,
+  );
 
   // Collect enrichment items and generate summaries
   const enrichItems: EnrichItem[] = [];
@@ -294,28 +429,38 @@ export async function runPipeline(
   const fileTopSymbols = new Map<string, string[]>();
 
   // First pass: collect file-level symbol names and count total summarizable items
-  let totalSummarizeItems = dirNodes.size;  // directories
+  let totalSummarizeItems = dirNodes.size; // directories
   for (const file of parseableFiles) {
     const fileId = `${repoId}/${file.path}`;
     const fileSymbols = symbolLineInfo.get(fileId);
     if (fileSymbols) {
-      fileTopSymbols.set(fileId, fileSymbols.map((s) => s.name));
+      fileTopSymbols.set(
+        fileId,
+        fileSymbols.map((s) => s.name),
+      );
       totalSummarizeItems += fileSymbols.length;
     }
     // Count the file itself if it has content
-    const fileSource = file.content.split("\n").slice(0, 200).join("\n");
+    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
     if (fileSource.trim()) totalSummarizeItems++;
   }
 
   let summarizedCount = 0;
-  callbacks.onProgress("summarizing", "Generating summaries...", 0, totalSummarizeItems);
+  callbacks.onProgress(
+    'summarizing',
+    'Generating summaries...',
+    0,
+    totalSummarizeItems,
+  );
 
   for (const file of parseableFiles) {
     const fileId = `${repoId}/${file.path}`;
-    const fileName = file.path.split("/").pop()!;
+    const fileName = file.path.split('/').pop()!;
     const ext = getExtension(file.path);
     const language = EXTENSION_LANGUAGE_MAP[ext];
-    const dirPath = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+    const dirPath = file.path.includes('/')
+      ? file.path.slice(0, file.path.lastIndexOf('/'))
+      : '';
     const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
 
     // Track file names per directory
@@ -324,31 +469,44 @@ export async function runPipeline(
     dirChildNames.set(parentDirId, names);
 
     // File item (first ~200 lines for keyword extraction)
-    const fileSource = file.content.split("\n").slice(0, 200).join("\n");
+    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
     if (fileSource.trim()) {
       const fileMeta: SymbolMetadata = {
         name: fileName,
-        kind: "file",
+        kind: 'file',
         fileName: file.path,
         language: language ?? undefined,
         childNames: fileTopSymbols.get(fileId),
         source: fileSource,
       };
-      let fileSummary = "";
+      let fileSummary = '';
       try {
         fileSummary = await strategy.summarize(fileMeta);
       } catch {
         errors.push(`Failed to summarize file ${file.path}`);
       }
       summarizedCount++;
-      callbacks.onProgress("summarizing", `Summarizing ${fileName}`, summarizedCount, totalSummarizeItems, file.path);
+      callbacks.onProgress(
+        'summarizing',
+        `Summarizing ${fileName}`,
+        summarizedCount,
+        totalSummarizeItems,
+        file.path,
+      );
       enrichItems.push({
-        source: fileSource, kind: "file", nodeId: fileId, nodeType: "File",
-        nodeName: fileName, path: file.path, summary: fileSummary,
+        source: fileSource,
+        kind: 'file',
+        nodeId: fileId,
+        nodeType: 'File',
+        nodeName: fileName,
+        path: file.path,
+        summary: fileSummary,
       });
       if (fileSummary) {
         summaryUpdateNodes.push({
-          id: fileId, type: "File", name: fileName,
+          id: fileId,
+          type: 'File',
+          name: fileName,
           properties: { summary: fileSummary },
         });
       }
@@ -358,9 +516,9 @@ export async function runPipeline(
     const fileSymbols = symbolLineInfo.get(fileId);
     if (!fileSymbols) continue;
 
-    const lines = file.content.split("\n");
+    const lines = file.content.split('\n');
     for (const info of fileSymbols) {
-      const snippet = lines.slice(info.startLine - 1, info.endLine).join("\n");
+      const snippet = lines.slice(info.startLine - 1, info.endLine).join('\n');
       if (!snippet.trim()) continue;
 
       const meta: SymbolMetadata = {
@@ -373,23 +531,35 @@ export async function runPipeline(
         receiverType: info.receiverType,
         source: snippet,
       };
-      let summary = "";
+      let summary = '';
       try {
         summary = await strategy.summarize(meta);
       } catch {
         errors.push(`Failed to summarize ${info.kind} ${info.name}`);
       }
       summarizedCount++;
-      callbacks.onProgress("summarizing", `Summarizing ${info.name}`, summarizedCount, totalSummarizeItems, file.path);
-      const nodeType = info.kind === "class" ? "Class" : "Function";
+      callbacks.onProgress(
+        'summarizing',
+        `Summarizing ${info.name}`,
+        summarizedCount,
+        totalSummarizeItems,
+        file.path,
+      );
+      const nodeType = info.kind === 'class' ? 'Class' : 'Function';
 
       enrichItems.push({
-        source: snippet, kind: info.kind, nodeId: info.nodeId,
-        nodeType, nodeName: info.name, summary,
+        source: snippet,
+        kind: info.kind,
+        nodeId: info.nodeId,
+        nodeType,
+        nodeName: info.name,
+        summary,
       });
       if (summary) {
         summaryUpdateNodes.push({
-          id: info.nodeId, type: nodeType, name: info.name,
+          id: info.nodeId,
+          type: nodeType,
+          name: info.name,
           properties: { summary },
         });
       }
@@ -401,30 +571,48 @@ export async function runPipeline(
     const dirPath = (dirNode.properties?.path as string) || dirNode.name;
     const childNames = [...(dirChildNames.get(dirId) ?? [])];
     for (const [otherId, otherNode] of dirNodes) {
-      const otherPath = (otherNode.properties?.path as string) || "";
-      const otherParent = otherPath.includes("/") ? otherPath.slice(0, otherPath.lastIndexOf("/")) : "";
+      const otherPath = (otherNode.properties?.path as string) || '';
+      const otherParent = otherPath.includes('/')
+        ? otherPath.slice(0, otherPath.lastIndexOf('/'))
+        : '';
       if (otherParent === dirPath && otherId !== dirId) {
-        childNames.push(otherNode.name + "/");
+        childNames.push(otherNode.name + '/');
       }
     }
     if (childNames.length > 0) {
-      const dirMeta: SymbolMetadata = { name: dirNode.name, kind: "directory", childNames };
-      let summary = "";
+      const dirMeta: SymbolMetadata = {
+        name: dirNode.name,
+        kind: 'directory',
+        childNames,
+      };
+      let summary = '';
       try {
         summary = await strategy.summarize(dirMeta);
       } catch {
         errors.push(`Failed to summarize directory ${dirNode.name}`);
       }
       summarizedCount++;
-      callbacks.onProgress("summarizing", `Summarizing ${dirNode.name}/`, summarizedCount, totalSummarizeItems);
-      const listing = `${dirPath}/ contains: ${childNames.join(", ")}`;
+      callbacks.onProgress(
+        'summarizing',
+        `Summarizing ${dirNode.name}/`,
+        summarizedCount,
+        totalSummarizeItems,
+      );
+      const listing = `${dirPath}/ contains: ${childNames.join(', ')}`;
       enrichItems.push({
-        source: listing, kind: "directory", nodeId: dirId, nodeType: "Directory",
-        nodeName: dirNode.name, path: dirPath, summary,
+        source: listing,
+        kind: 'directory',
+        nodeId: dirId,
+        nodeType: 'Directory',
+        nodeName: dirNode.name,
+        path: dirPath,
+        summary,
       });
       if (summary) {
         summaryUpdateNodes.push({
-          id: dirId, type: "Directory", name: dirNode.name,
+          id: dirId,
+          type: 'Directory',
+          name: dirNode.name,
           properties: { summary },
         });
       }
@@ -436,8 +624,16 @@ export async function runPipeline(
     callbacks.onBatch({ nodes: summaryUpdateNodes, relationships: [] });
   }
 
-  callbacks.onProgress("summarizing", `Generated ${summaryUpdateNodes.length} summaries`, summarizedCount, totalSummarizeItems);
-  callbacks.onStageComplete("summarizing", `Generated ${summaryUpdateNodes.length} summaries`);
+  callbacks.onProgress(
+    'summarizing',
+    `Generated ${summaryUpdateNodes.length} summaries`,
+    summarizedCount,
+    totalSummarizeItems,
+  );
+  callbacks.onStageComplete(
+    'summarizing',
+    `Generated ${summaryUpdateNodes.length} summaries`,
+  );
 
   return {
     filesProcessed: parseableFiles.length,
@@ -451,34 +647,39 @@ export async function runPipeline(
 function extractFile(
   file: RepoFile,
   repoId: string,
-  parsers: Parsers,
+  parsers: ParserMap,
 ): { extraction: ExtractionResult; fileId: string } | null {
   const ext = getExtension(file.path);
   const language = EXTENSION_LANGUAGE_MAP[ext];
   const fileId = `${repoId}/${file.path}`;
 
+  if (!language || !PARSEABLE_LANGUAGES.has(language)) return null;
+
   let parser: Parser | undefined;
   let extractFn: ((rootNode: SyntaxNode) => ExtractionResult) | null = null;
 
   switch (language) {
-    case "python":
-      parser = parsers.python;
+    case 'python':
+      parser = parsers.get('python');
       extractFn = extractPython;
       break;
-    case "typescript":
-      parser = ext === ".tsx" ? parsers.tsx : parsers.typescript;
+    case 'typescript':
+      parser = ext === '.tsx' ? parsers.get('tsx') : parsers.get('typescript');
       extractFn = extractTypeScript;
       break;
-    case "javascript":
-      parser = parsers.tsx; // TSX parser handles JS/JSX as a superset
-      extractFn = (rootNode) => extractTypeScript(rootNode, "javascript");
+    case 'javascript':
+      parser = parsers.get('tsx'); // TSX parser handles JS/JSX as a superset
+      extractFn = (rootNode) => extractTypeScript(rootNode, 'javascript');
       break;
-    case "go":
-      parser = parsers.go;
+    case 'go':
+      parser = parsers.get('go');
       extractFn = extractGo;
       break;
     default:
-      return null;
+      // All other parseable languages use the generic extractor
+      parser = parsers.get(language);
+      extractFn = (rootNode) => extractGeneric(rootNode, language);
+      break;
   }
 
   if (!parser || !extractFn) return null;
@@ -496,29 +697,44 @@ function processSymbol(
   registries: Registries,
   callInfos: CallInfo[],
   batch: GraphBatch,
-  symbolLineInfo?: Map<string, Array<{
-    nodeId: string; startLine: number; endLine: number; kind: NodeKind; name: string;
-    signature?: string; childNames?: string[]; receiverType?: string;
-  }>>,
+  symbolLineInfo?: Map<
+    string,
+    Array<{
+      nodeId: string;
+      startLine: number;
+      endLine: number;
+      kind: NodeKind;
+      name: string;
+      signature?: string;
+      childNames?: string[];
+      receiverType?: string;
+    }>
+  >,
+  extraProps?: (startLine: number, endLine: number) => Record<string, unknown>,
 ): SymbolNode {
-  const fileId = parentId.split("::")[0];
+  const fileId = parentId.split('::')[0];
   const nodeId = `${parentId}::${symbol.name}`;
 
-  if (symbol.kind === "class") {
+  if (symbol.kind === 'class') {
     const graphNode: GraphNode = {
       id: nodeId,
-      type: "Class",
+      type: 'Class',
       name: symbol.name,
       properties: {
         language,
         start_line: symbol.startLine,
         end_line: symbol.endLine,
+        signature: symbol.signature ?? undefined,
+        superclasses: symbol.superclasses ?? undefined,
+        interfaces: symbol.interfaces ?? undefined,
+        subtype: symbol.subtype ?? undefined,
+        ...extraProps?.(symbol.startLine, symbol.endLine),
       },
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
       id: `${nodeId}->defined_in->${parentId}`,
-      type: "defined_in",
+      type: 'defined_in',
       source_id: nodeId,
       target_id: parentId,
     });
@@ -527,8 +743,11 @@ function processSymbol(
     if (symbolLineInfo) {
       const arr = symbolLineInfo.get(fileId) ?? [];
       arr.push({
-        nodeId, startLine: symbol.startLine, endLine: symbol.endLine,
-        kind: "class", name: symbol.name,
+        nodeId,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
+        kind: 'class',
+        name: symbol.name,
         childNames: symbol.children.map((c) => c.name),
       });
       symbolLineInfo.set(fileId, arr);
@@ -538,21 +757,29 @@ function processSymbol(
     const symbolNode: SymbolNode = {
       id: nodeId,
       name: symbol.name,
-      kind: "class",
+      kind: 'class',
       fileId,
       parentId,
       receiverVar: null,
       receiverType: null,
+      paramTypes: null,
       children: [],
     };
     addToRegistry(registries.nameRegistry, symbol.name, symbolNode);
     registries.fileRegistry.get(fileId)?.set(symbol.name, symbolNode);
-    registries.classRegistry.set(symbol.name, symbolNode);
+    addToRegistry(registries.classRegistry, symbol.name, symbolNode);
 
     // Process child methods
     for (const child of symbol.children) {
       const childSymbolNode = processSymbol(
-        child, nodeId, language, registries, callInfos, batch, symbolLineInfo,
+        child,
+        nodeId,
+        language,
+        registries,
+        callInfos,
+        batch,
+        symbolLineInfo,
+        extraProps,
       );
       symbolNode.children.push(childSymbolNode);
     }
@@ -561,19 +788,20 @@ function processSymbol(
   } else {
     const graphNode: GraphNode = {
       id: nodeId,
-      type: "Function",
+      type: 'Function',
       name: symbol.name,
       properties: {
         language,
         start_line: symbol.startLine,
         end_line: symbol.endLine,
         signature: symbol.signature ?? undefined,
+        ...extraProps?.(symbol.startLine, symbol.endLine),
       },
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
       id: `${nodeId}->defined_in->${parentId}`,
-      type: "defined_in",
+      type: 'defined_in',
       source_id: nodeId,
       target_id: parentId,
     });
@@ -582,8 +810,11 @@ function processSymbol(
     if (symbolLineInfo) {
       const arr = symbolLineInfo.get(fileId) ?? [];
       arr.push({
-        nodeId, startLine: symbol.startLine, endLine: symbol.endLine,
-        kind: "function", name: symbol.name,
+        nodeId,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
+        kind: 'function',
+        name: symbol.name,
         signature: symbol.signature ?? undefined,
         receiverType: symbol.receiverType ?? undefined,
       });
@@ -593,11 +824,12 @@ function processSymbol(
     const symbolNode: SymbolNode = {
       id: nodeId,
       name: symbol.name,
-      kind: "function",
+      kind: 'function',
       fileId,
       parentId,
       receiverVar: symbol.receiverVar,
       receiverType: symbol.receiverType,
+      paramTypes: symbol.paramTypes,
       children: [],
     };
     addToRegistry(registries.nameRegistry, symbol.name, symbolNode);
@@ -633,34 +865,35 @@ function ensureDirectoryChain(
   dirPath: string,
   dirNodes: Map<string, GraphNode>,
   rels: GraphRelationship[],
+  extraProps?: (dirPath: string) => Record<string, unknown>,
 ): void {
   if (!dirPath) return;
 
   const dirId = `${repoId}/${dirPath}`;
   if (dirNodes.has(dirId)) return;
 
-  const dirName = dirPath.split("/").pop()!;
+  const dirName = dirPath.split('/').pop()!;
   dirNodes.set(dirId, {
     id: dirId,
-    type: "Directory",
+    type: 'Directory',
     name: dirName,
-    properties: { path: dirPath },
+    properties: { path: dirPath, ...extraProps?.(dirPath) },
   });
 
   const parentPath = parentDir(dirPath);
   if (parentPath) {
-    ensureDirectoryChain(repoId, parentPath, dirNodes, rels);
+    ensureDirectoryChain(repoId, parentPath, dirNodes, rels, extraProps);
     const parentDirId = `${repoId}/${parentPath}`;
     rels.push({
       id: `${dirId}->defined_in->${parentDirId}`,
-      type: "defined_in",
+      type: 'defined_in',
       source_id: dirId,
       target_id: parentDirId,
     });
   } else {
     rels.push({
       id: `${dirId}->defined_in->${repoId}`,
-      type: "defined_in",
+      type: 'defined_in',
       source_id: dirId,
       target_id: repoId,
     });
@@ -668,13 +901,14 @@ function ensureDirectoryChain(
 }
 
 function parentDir(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx >= 0 ? path.slice(0, idx) : "";
+  const idx = path.lastIndexOf('/');
+  return idx >= 0 ? path.slice(0, idx) : '';
 }
 
 function getExtension(fileName: string): string {
-  const name = fileName.split("/").pop()!.toLowerCase();
-  if (name === "dockerfile" || name.startsWith("dockerfile.")) return ".dockerfile";
-  const dotIdx = name.lastIndexOf(".");
-  return dotIdx >= 0 ? name.slice(dotIdx) : "";
+  const name = fileName.split('/').pop()!.toLowerCase();
+  if (name === 'dockerfile' || name.startsWith('dockerfile.'))
+    return '.dockerfile';
+  const dotIdx = name.lastIndexOf('.');
+  return dotIdx >= 0 ? name.slice(dotIdx) : '';
 }

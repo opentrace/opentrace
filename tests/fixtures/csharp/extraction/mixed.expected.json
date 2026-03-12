@@ -1,0 +1,63 @@
+[
+  {
+    "name": "Point",
+    "kind": "class",
+    "start_line": 1,
+    "end_line": 4,
+    "signature": null,
+    "subtype": "struct",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "Service",
+    "kind": "class",
+    "start_line": 6,
+    "end_line": 9,
+    "signature": null,
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [
+      {
+        "name": "Start",
+        "kind": "function",
+        "start_line": 7,
+        "end_line": 7,
+        "signature": "()",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      },
+      {
+        "name": "Stop",
+        "kind": "function",
+        "start_line": 8,
+        "end_line": 8,
+        "signature": "()",
+        "subtype": null,
+        "superclasses": null,
+        "interfaces": null,
+        "children": [],
+        "calls": []
+      }
+    ],
+    "calls": []
+  },
+  {
+    "name": "LogLevel",
+    "kind": "class",
+    "start_line": 11,
+    "end_line": 16,
+    "signature": null,
+    "subtype": "enum",
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

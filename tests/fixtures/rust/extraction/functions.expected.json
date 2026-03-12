@@ -1,0 +1,26 @@
+[
+  {
+    "name": "add",
+    "kind": "function",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "(a: i32, b: i32)",
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "greet",
+    "kind": "function",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": "(name: &str)",
+    "subtype": null,
+    "superclasses": null,
+    "interfaces": null,
+    "children": [],
+    "calls": []
+  }
+]

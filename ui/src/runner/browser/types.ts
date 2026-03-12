@@ -3,19 +3,19 @@
  * Ported from agent/src/opentrace_agent/sources/code/extractors/base.py
  */
 
-import type { Node as SyntaxNode } from "web-tree-sitter";
+import type { Node as SyntaxNode } from 'web-tree-sitter';
 
 // --- Symbol extraction types ---
 
 export interface CallRef {
   name: string;
   receiver: string | null;
-  kind: "bare" | "attribute";
+  kind: 'bare' | 'attribute';
 }
 
 export interface CodeSymbol {
   name: string;
-  kind: "class" | "function";
+  kind: 'class' | 'function';
   startLine: number;
   endLine: number;
   signature: string | null;
@@ -23,6 +23,10 @@ export interface CodeSymbol {
   calls: CallRef[];
   receiverVar: string | null;
   receiverType: string | null;
+  paramTypes: Record<string, string> | null;
+  superclasses?: string[];
+  interfaces?: string[];
+  subtype?: string;
 }
 
 export interface ExtractionResult {
@@ -38,6 +42,7 @@ export interface RepoFile {
   content: string;
   sha: string;
   size: number;
+  binary?: boolean;
 }
 
 export interface RepoTree {
@@ -46,6 +51,8 @@ export interface RepoTree {
   ref: string;
   /** Full URL to the repository (e.g. https://github.com/owner/repo). */
   url?: string;
+  /** Provider name for source links (e.g. "github", "gitlab"). */
+  provider?: string;
   files: RepoFile[];
 }
 
@@ -75,15 +82,15 @@ export interface GraphBatch {
 // --- Worker message protocol ---
 
 export type IndexPhase =
-  | "initializing"
-  | "fetching"
-  | "parsing"
-  | "resolving"
-  | "enriching"
-  | "summarizing"
-  | "embedding"
-  | "submitting"
-  | "done";
+  | 'initializing'
+  | 'fetching'
+  | 'parsing'
+  | 'resolving'
+  | 'enriching'
+  | 'summarizing'
+  | 'embedding'
+  | 'submitting'
+  | 'done';
 
 export interface ProgressDetail {
   current: number;
@@ -103,7 +110,7 @@ export interface IndexSummary {
 
 export interface SummarizerWorkerConfig {
   enabled: boolean;
-  strategy: "template" | "ml" | "none";
+  strategy: 'template' | 'ml' | 'none';
   model: string;
   maxInputLength: number;
   minLines: number;
@@ -118,41 +125,57 @@ export interface EmbedderWorkerConfig {
 
 export interface EnrichItem {
   nodeId: string;
-  nodeType: string;    // "File" | "Class" | "Function" | "Directory"
+  nodeType: string; // "File" | "Class" | "Function" | "Directory"
   nodeName: string;
-  kind: "function" | "class" | "file" | "directory";
-  source: string;      // code snippet for keyword extraction
-  path?: string;       // for embedding searchText
-  summary?: string;    // pre-computed template summary (set by pipeline)
+  kind: 'function' | 'class' | 'file' | 'directory';
+  source: string; // code snippet for keyword extraction
+  path?: string; // for embedding searchText
+  summary?: string; // pre-computed template summary (set by pipeline)
 }
 
 // Main → Parse Worker messages
 export type WorkerRequest =
-  | { type: "init"; summarizerConfig?: SummarizerWorkerConfig }
-  | { type: "index"; repo: RepoTree }
-  | { type: "cancel" };
+  | { type: 'init'; summarizerConfig?: SummarizerWorkerConfig }
+  | { type: 'index'; repo: RepoTree }
+  | { type: 'cancel' };
 
 // Parse Worker → Main messages
 export type WorkerResponse =
-  | { type: "ready" }
-  | { type: "progress"; phase: IndexPhase; message: string; detail: ProgressDetail }
-  | { type: "stage-complete"; phase: IndexPhase; message: string }
-  | { type: "batch"; nodes: GraphNode[]; relationships: GraphRelationship[] }
-  | { type: "enrich-items"; items: EnrichItem[] }
-  | { type: "done"; filesProcessed: number; nodesCreated: number; relationshipsCreated: number; errors: string[] }
-  | { type: "error"; message: string };
+  | { type: 'ready' }
+  | {
+      type: 'progress';
+      phase: IndexPhase;
+      message: string;
+      detail: ProgressDetail;
+    }
+  | { type: 'stage-complete'; phase: IndexPhase; message: string }
+  | { type: 'batch'; nodes: GraphNode[]; relationships: GraphRelationship[] }
+  | { type: 'enrich-items'; items: EnrichItem[] }
+  | {
+      type: 'done';
+      filesProcessed: number;
+      nodesCreated: number;
+      relationshipsCreated: number;
+      errors: string[];
+    }
+  | { type: 'error'; message: string };
 
 // Main → Enrichment Worker messages
 export type EnrichWorkerRequest =
-  | { type: "init"; embedderConfig?: EmbedderWorkerConfig }
-  | { type: "enrich"; items: EnrichItem[] }
-  | { type: "cancel" };
+  | { type: 'init'; embedderConfig?: EmbedderWorkerConfig }
+  | { type: 'enrich'; items: EnrichItem[] }
+  | { type: 'cancel' };
 
 // Enrichment Worker → Main messages
 export type EnrichWorkerResponse =
-  | { type: "ready" }
-  | { type: "progress"; phase: IndexPhase; message: string; detail: ProgressDetail }
-  | { type: "stage-complete"; phase: IndexPhase; message: string }
-  | { type: "batch"; nodes: GraphNode[]; relationships: GraphRelationship[] }
-  | { type: "done"; enrichedCount: number }
-  | { type: "error"; message: string };
+  | { type: 'ready' }
+  | {
+      type: 'progress';
+      phase: IndexPhase;
+      message: string;
+      detail: ProgressDetail;
+    }
+  | { type: 'stage-complete'; phase: IndexPhase; message: string }
+  | { type: 'batch'; nodes: GraphNode[]; relationships: GraphRelationship[] }
+  | { type: 'done'; enrichedCount: number }
+  | { type: 'error'; message: string };

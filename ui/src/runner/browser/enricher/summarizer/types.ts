@@ -5,21 +5,21 @@
  * while the pipeline code remains agnostic.
  */
 
-export type NodeKind = "function" | "class" | "file" | "directory";
+export type NodeKind = 'function' | 'class' | 'file' | 'directory';
 
-export type SummarizationStrategyType = "template" | "ml" | "none";
+export type SummarizationStrategyType = 'template' | 'ml' | 'none';
 
 /** Structured metadata for template-based summarization (no source code needed). */
 export interface SymbolMetadata {
   name: string;
   kind: NodeKind;
-  signature?: string;       // function params
+  signature?: string; // function params
   language?: string;
   lineCount?: number;
-  childNames?: string[];    // method names (classes) or symbol names (files)
-  fileName?: string;        // file path context
-  receiverType?: string;    // Go methods
-  source?: string;          // code snippet for keyword extraction
+  childNames?: string[]; // method names (classes) or symbol names (files)
+  fileName?: string; // file path context
+  receiverType?: string; // Go methods
+  source?: string; // code snippet for keyword extraction
 }
 
 export interface SummarizerConfig {
@@ -35,8 +35,8 @@ export interface SummarizerConfig {
 
 export const DEFAULT_SUMMARIZER_CONFIG: SummarizerConfig = {
   enabled: true,
-  strategy: "template",
-  model: "Xenova/flan-t5-small",
+  strategy: 'template',
+  model: 'Xenova/flan-t5-small',
   maxInputLength: 480,
   minLines: 5,
 };
@@ -61,7 +61,9 @@ export interface Summarizer {
    * @param items - Array of {source, kind} pairs to summarize.
    * @returns Array of summary strings (same order as input).
    */
-  summarizeBatch(items: Array<{ source: string; kind: NodeKind }>): Promise<string[]>;
+  summarizeBatch(
+    items: Array<{ source: string; kind: NodeKind }>,
+  ): Promise<string[]>;
 
   /** Release model resources. */
   dispose(): Promise<void>;

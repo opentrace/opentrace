@@ -6,13 +6,13 @@
  * extraction, and bounded-concurrency fetching.
  */
 
-import { EXCLUDED_DIRS, MAX_FILE_SIZE } from "./constants";
-import type { RepoFile } from "../types";
+import { EXCLUDED_DIRS, IMAGE_EXTENSIONS, MAX_FILE_SIZE } from './constants';
+import type { RepoFile } from '../types';
 
 // --- Progress reporting ---
 
 export interface FetchProgress {
-  phase: "tree" | "blobs";
+  phase: 'tree' | 'blobs';
   current: number;
   total: number;
   fileName?: string;
@@ -26,7 +26,6 @@ export interface UrlLoaderOptions {
   signal?: AbortSignal;
   onProgress?: (progress: FetchProgress) => void;
 }
-
 
 // --- Shared constants ---
 
@@ -46,9 +45,25 @@ export function isExcludedDir(parts: string[]): boolean {
 /** Detect the top-level prefix directory inside a zip archive. */
 export function detectZipPrefix(entries: Record<string, Uint8Array>): string {
   const firstPath = Object.keys(entries)[0];
-  if (!firstPath) return "";
-  const slashIdx = firstPath.indexOf("/");
-  return slashIdx >= 0 ? firstPath.slice(0, slashIdx + 1) : "";
+  if (!firstPath) return '';
+  const slashIdx = firstPath.indexOf('/');
+  return slashIdx >= 0 ? firstPath.slice(0, slashIdx + 1) : '';
+}
+
+/**
+ * Convert a Uint8Array to a base64 string.
+ * Processes in chunks to avoid call-stack overflow with large arrays.
+ */
+function uint8ToBase64(data: Uint8Array): string {
+  const CHUNK = 0x8000; // 32 KiB — safe for String.fromCharCode.apply
+  let binary = '';
+  for (let i = 0; i < data.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(
+      null,
+      data.subarray(i, i + CHUNK) as unknown as number[],
+    );
+  }
+  return btoa(binary);
 }
 
 /**
@@ -56,6 +71,7 @@ export function detectZipPrefix(entries: Record<string, Uint8Array>): string {
  *
  * Strips the top-level prefix directory (e.g. "owner-repo-sha/"),
  * filters out excluded dirs and oversized files, and decodes content.
+ * Image files are base64-encoded and flagged as binary.
  */
 export function extractFilesFromZip(
   entries: Record<string, Uint8Array>,
@@ -67,19 +83,37 @@ export function extractFilesFromZip(
 
   for (const fullPath of allPaths) {
     const relPath = prefix ? fullPath.slice(prefix.length) : fullPath;
-    if (!relPath || relPath.endsWith("/")) continue;
+    if (!relPath || relPath.endsWith('/')) continue;
 
     const raw = entries[fullPath];
     if (raw.length > MAX_FILE_SIZE) continue;
 
-    const parts = relPath.split("/");
+    const parts = relPath.split('/');
     if (isExcludedDir(parts)) continue;
 
-    const content = new TextDecoder().decode(raw);
-    files.push({ path: relPath, content, sha: "", size: raw.length });
+    const dotIdx = relPath.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? relPath.slice(dotIdx).toLowerCase() : '';
+    const isImage = IMAGE_EXTENSIONS.has(ext) && ext !== '.svg';
+
+    if (isImage) {
+      files.push({
+        path: relPath,
+        content: uint8ToBase64(raw),
+        sha: '',
+        size: raw.length,
+        binary: true,
+      });
+    } else {
+      files.push({
+        path: relPath,
+        content: new TextDecoder().decode(raw),
+        sha: '',
+        size: raw.length,
+      });
+    }
 
     onProgress?.({
-      phase: "blobs",
+      phase: 'blobs',
       current: files.length,
       total: allPaths.length,
       fileName: relPath,

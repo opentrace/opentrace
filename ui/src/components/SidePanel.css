@@ -1,0 +1,89 @@
+/* Side Panel — collapsible left sidebar with tabs */
+
+.side-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 220px;
+  z-index: 5;
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-right: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding-top: 64px;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease;
+}
+
+.side-panel--expanded {
+  width: 480px;
+}
+
+/* Tab bar — only rendered when a node is selected */
+.side-panel-tabs {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.side-panel-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s;
+}
+
+.side-panel-tab:hover {
+  color: var(--foreground);
+}
+
+.side-panel-tab--active {
+  color: var(--primary);
+}
+
+.side-panel-tab--active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 1px 1px 0 0;
+}
+
+.side-panel-close {
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+  margin-left: auto;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+}
+
+.side-panel-close:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 50%, transparent);
+}
+
+/* Scrollable content area */
+.side-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
