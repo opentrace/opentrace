@@ -36,5 +36,8 @@ functions/lib/
 *.log
 
 
+# CMake
+build/
+
 # Developer Files
 config.yaml
