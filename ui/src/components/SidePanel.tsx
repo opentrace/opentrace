@@ -1,15 +1,22 @@
 import { useEffect, useState } from 'react';
-import type { NodeObject } from 'react-force-graph-2d';
-import type { GraphNode } from '../types/graph';
+import type { NodeObject, LinkObject } from 'react-force-graph-2d';
+import type { GraphNode, GraphLink } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import FilterPanel from './FilterPanel';
 import NodeDetailsPanel from './NodeDetailsPanel';
+import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
 
 type Node = NodeObject<GraphNode>;
+type Link = LinkObject<GraphNode, GraphLink>;
 
 interface TypeEntry {
   type: string;
+  count: number;
+}
+
+interface SubTypeEntry {
+  subType: string;
   count: number;
 }
 
@@ -19,8 +26,11 @@ interface SidePanelProps {
   linkTypes: TypeEntry[];
   hiddenNodeTypes: Set<string>;
   hiddenLinkTypes: Set<string>;
+  subTypesByNodeType: Map<string, SubTypeEntry[]>;
+  hiddenSubTypes: Set<string>;
   onToggleNodeType: (type: string) => void;
   onToggleLinkType: (type: string) => void;
+  onToggleSubType: (key: string) => void;
   onShowAllNodes: () => void;
   onHideAllNodes: () => void;
   onShowAllLinks: () => void;
@@ -32,6 +42,10 @@ interface SidePanelProps {
   sourceLoading: boolean;
   sourceError: string | null;
   onCloseDetails: () => void;
+
+  /* Edge details props */
+  selectedLink: Link | null;
+  onSelectNode?: (nodeId: string) => void;
 }
 
 export default function SidePanel({
@@ -39,8 +53,11 @@ export default function SidePanel({
   linkTypes,
   hiddenNodeTypes,
   hiddenLinkTypes,
+  subTypesByNodeType,
+  hiddenSubTypes,
   onToggleNodeType,
   onToggleLinkType,
+  onToggleSubType,
   onShowAllNodes,
   onHideAllNodes,
   onShowAllLinks,
@@ -50,19 +67,21 @@ export default function SidePanel({
   sourceLoading,
   sourceError,
   onCloseDetails,
+  selectedLink,
+  onSelectNode,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<'filters' | 'details'>('filters');
 
-  // Auto-switch tabs when node selection changes
+  // Auto-switch tabs when node or edge selection changes
   useEffect(() => {
-    if (selectedNode) {
+    if (selectedNode || selectedLink) {
       setActiveTab('details');
     } else {
       setActiveTab('filters');
     }
-  }, [selectedNode]);
+  }, [selectedNode, selectedLink]);
 
-  const expanded = selectedNode !== null;
+  const expanded = selectedNode !== null || selectedLink !== null;
 
   return (
     <div className={`side-panel ${expanded ? 'side-panel--expanded' : ''}`}>
@@ -93,8 +112,11 @@ export default function SidePanel({
             linkTypes={linkTypes}
             hiddenNodeTypes={hiddenNodeTypes}
             hiddenLinkTypes={hiddenLinkTypes}
+            subTypesByNodeType={subTypesByNodeType}
+            hiddenSubTypes={hiddenSubTypes}
             onToggleNodeType={onToggleNodeType}
             onToggleLinkType={onToggleLinkType}
+            onToggleSubType={onToggleSubType}
             onShowAllNodes={onShowAllNodes}
             onHideAllNodes={onHideAllNodes}
             onShowAllLinks={onShowAllLinks}
@@ -107,6 +129,8 @@ export default function SidePanel({
             sourceLoading={sourceLoading}
             sourceError={sourceError}
           />
+        ) : selectedLink ? (
+          <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />
         ) : null}
       </div>
     </div>

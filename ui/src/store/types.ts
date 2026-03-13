@@ -47,6 +47,7 @@ export interface GraphStore {
   fetchGraph(query?: string, hops?: number): Promise<GraphData>;
   fetchStats(): Promise<GraphStats>;
   clearGraph(): Promise<void>;
+  setLimits?(maxNodes: number, maxEdges: number): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   storeSource(files: SourceFile[]): void;
   fetchSource(

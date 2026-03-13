@@ -5,7 +5,8 @@
   margin-left: auto;
   padding: 6px 12px;
   height: 36px;
-  border-radius: 18px;
+  min-width: 240px;
+  border-radius: var(--radius);
   background: color-mix(in oklch, var(--card) 80%, transparent);
   backdrop-filter: blur(12px);
   border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
@@ -15,6 +16,16 @@
   white-space: nowrap;
   cursor: pointer;
   transition: opacity 0.15s;
+}
+
+.job-minimized-bar--done {
+  min-width: auto;
+}
+
+.job-minimized-bar--done .job-minimized-bar__phase,
+.job-minimized-bar--done .job-minimized-bar__count,
+.job-minimized-bar--done .job-minimized-bar__nodes {
+  width: auto;
 }
 
 .job-minimized-bar:hover {
@@ -43,16 +54,24 @@
 }
 
 .job-minimized-bar__phase {
+  display: inline-block;
+  width: 72px;
   font-weight: 500;
   color: var(--foreground);
 }
 
 .job-minimized-bar__count {
+  display: inline-block;
+  width: 56px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   opacity: 0.7;
 }
 
 .job-minimized-bar__nodes {
+  display: inline-block;
+  width: 72px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   opacity: 0.5;
   font-size: 0.75rem;

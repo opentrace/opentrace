@@ -53,6 +53,7 @@ export type KuzuRequest =
       filters?: Record<string, string>;
     }
   | { kind: 'getNode'; id: number; nodeId: string }
+  | { kind: 'setLimits'; id: number; maxNodes: number; maxEdges: number }
   | {
       kind: 'traverse';
       id: number;
@@ -73,5 +74,6 @@ export type KuzuResponse =
   | { kind: 'searchNodes'; id: number; data: NodeResult[] }
   | { kind: 'listNodes'; id: number; data: NodeResult[] }
   | { kind: 'getNode'; id: number; data: NodeResult | null }
+  | { kind: 'setLimits'; id: number }
   | { kind: 'traverse'; id: number; data: TraverseResult[] }
   | { kind: 'error'; id: number; message: string };

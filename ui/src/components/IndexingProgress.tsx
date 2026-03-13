@@ -50,45 +50,73 @@ function GitLabIconSmall() {
 /** Ordered list of stages and their display labels. */
 const STAGE_CONFIG: { phase: JobPhase; label: string }[] = [
   { phase: JobPhase.JOB_PHASE_INITIALIZING, label: 'Initializing' },
-  { phase: JobPhase.JOB_PHASE_FETCHING, label: 'Checkout' },
-  { phase: JobPhase.JOB_PHASE_PARSING, label: 'Parsing' },
-  { phase: JobPhase.JOB_PHASE_RESOLVING, label: 'Resolving' },
-  { phase: JobPhase.JOB_PHASE_SUMMARIZING, label: 'Summarizing' },
-  { phase: JobPhase.JOB_PHASE_SUBMITTING, label: 'Submitting' },
-  { phase: JobPhase.JOB_PHASE_EMBEDDING, label: 'Embedding' },
+  { phase: JobPhase.JOB_PHASE_FETCHING, label: 'Fetching files' },
+  { phase: JobPhase.JOB_PHASE_PARSING, label: 'Files & symbols' },
+  { phase: JobPhase.JOB_PHASE_RESOLVING, label: 'Call resolution' },
+  { phase: JobPhase.JOB_PHASE_SUMMARIZING, label: 'Directory summaries' },
+  { phase: JobPhase.JOB_PHASE_SUBMITTING, label: 'Persisting graph' },
+  { phase: JobPhase.JOB_PHASE_EMBEDDING, label: 'Generating embeddings' },
 ];
+
+/** Format a byte count as a human-readable MB string. */
+function formatMB(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
 
 function StageProgressRow({
   label,
   stage,
+  phase,
   removing,
 }: {
   label: string;
   stage: StageState;
+  phase: JobPhase;
   removing?: boolean;
 }) {
-  const pct =
-    stage.total > 0 ? Math.min(100, (stage.current / stage.total) * 100) : 0;
   const isCompleted = stage.status === 'completed';
   const isActive = stage.status === 'active';
+  const indeterminate = isActive && stage.total === 0;
+  const pct =
+    stage.total > 0 ? Math.min(100, (stage.current / stage.total) * 100) : 0;
 
   let cls = 'stage-row';
   if (removing) cls += ' stage-row--removing';
   else if (isCompleted) cls += ' stage-row--completed';
   else if (isActive) cls += ' stage-row--active';
 
+  // Show completed message or active detail
+  const detail = isCompleted
+    ? stage.message
+    : isActive && stage.message
+      ? stage.message
+      : '';
+
   return (
     <div className={cls}>
       <div className="stage-header">
         <span className="stage-label">{label}</span>
         <span className="stage-count">
-          {stage.total > 0 ? `${stage.current}/${stage.total}` : ''}
+          {stage.total > 0
+            ? phase === JobPhase.JOB_PHASE_FETCHING
+              ? `${formatMB(stage.current)} / ${formatMB(stage.total)}`
+              : `${stage.current}/${stage.total}`
+            : stage.current > 0
+              ? phase === JobPhase.JOB_PHASE_FETCHING
+                ? formatMB(stage.current)
+                : `${stage.current}`
+              : ''}
         </span>
       </div>
-      <span className="stage-bar">
+      {detail && <span className="stage-detail">{detail}</span>}
+      <span
+        className={`stage-bar${indeterminate ? ' stage-bar--indeterminate' : ''}`}
+      >
         <span
           className="stage-bar-fill"
-          style={{ width: `${isCompleted ? 100 : pct}%` }}
+          style={
+            indeterminate ? undefined : { width: `${isCompleted ? 100 : pct}%` }
+          }
         />
       </span>
     </div>
@@ -123,6 +151,7 @@ function MultiStageProgress({
           key={phase}
           label={label}
           stage={stage}
+          phase={phase}
           removing={stage.status === 'completed' && i < lastCompletedIdx}
         />
       ))}
@@ -147,7 +176,7 @@ function StatsGrid({
       </div>
       <div className="stat-card">
         <span className="stat-value">{relationships}</span>
-        <span className="stat-label">Relationships</span>
+        <span className="stat-label">Edges</span>
       </div>
     </div>
   );

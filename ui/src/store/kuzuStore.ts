@@ -61,8 +61,23 @@ export class KuzuGraphStore implements GraphStore {
       }
     };
 
-    // Auto-initialize on construction
-    this.ready = this.send({ kind: 'init', id: 0 }).then(() => {});
+    // Auto-initialize on construction, then restore saved limits
+    this.ready = this.send({ kind: 'init', id: 0 }).then(() => {
+      const savedNodes = localStorage.getItem('ot:maxVisNodes');
+      const savedEdges = localStorage.getItem('ot:maxVisEdges');
+      if (savedNodes || savedEdges) {
+        const maxNodes = savedNodes ? Number(savedNodes) : 2000;
+        const maxEdges = savedEdges ? Number(savedEdges) : 5000;
+        if (Number.isFinite(maxNodes) && Number.isFinite(maxEdges)) {
+          this.send({
+            kind: 'setLimits',
+            id: this.nextId++,
+            maxNodes,
+            maxEdges,
+          });
+        }
+      }
+    });
   }
 
   private send(msg: KuzuRequest): Promise<KuzuResponse> {
@@ -83,6 +98,16 @@ export class KuzuGraphStore implements GraphStore {
   /** Set an embedder for generating query embeddings during search. */
   setEmbedder(embedder: Embedder): void {
     this.embedder = embedder;
+  }
+
+  /** Update visualization node/edge limits in the worker. */
+  async setLimits(maxNodes: number, maxEdges: number): Promise<void> {
+    await this.rpc({
+      kind: 'setLimits',
+      id: this.nextId++,
+      maxNodes,
+      maxEdges,
+    });
   }
 
   async fetchGraph(query?: string, hops?: number): Promise<GraphData> {

@@ -6,6 +6,22 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { CallRef, CodeSymbol, ExtractionResult } from '../../types';
 
+/** Extract a Python docstring from a function/class body block.
+ *  Docstrings are the first statement if it's an `expression_statement` whose child is a `string`. */
+function extractDocstring(bodyNode: SyntaxNode | null): string | undefined {
+  if (!bodyNode) return undefined;
+  const first = bodyNode.namedChildren[0];
+  if (!first || first.type !== 'expression_statement') return undefined;
+  const strNode = first.namedChildren[0];
+  if (!strNode || strNode.type !== 'string') return undefined;
+  // Strip triple-quote delimiters and clean up
+  const raw = strNode.text;
+  const stripped = raw
+    .replace(/^("""|''')\s?/, '')
+    .replace(/\s?("""|''')$/, '');
+  return stripped.trim() || undefined;
+}
+
 export function extractPython(rootNode: SyntaxNode): ExtractionResult {
   const symbols = walkNode(rootNode);
   return { symbols, language: 'python', rootNode };
@@ -38,8 +54,10 @@ function walkNode(node: SyntaxNode): CodeSymbol[] {
 function extractClass(node: SyntaxNode): CodeSymbol | null {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return null;
+  const bodyNode = node.childForFieldName('body');
   const children = walkClassBody(node);
   const superclasses = extractBaseClasses(node);
+  const docs = extractDocstring(bodyNode);
   return {
     name: nameNode.text,
     kind: 'class',
@@ -52,6 +70,7 @@ function extractClass(node: SyntaxNode): CodeSymbol | null {
     receiverType: null,
     paramTypes: null,
     superclasses: superclasses.length > 0 ? superclasses : undefined,
+    docs,
   };
 }
 
@@ -102,6 +121,7 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
   const paramTypes = paramsNode ? extractParamTypes(paramsNode) : null;
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
+  const docs = extractDocstring(bodyNode);
   return {
     name: nameNode.text,
     kind: 'function',
@@ -113,6 +133,7 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverVar: null,
     receiverType: null,
     paramTypes,
+    docs,
   };
 }
 

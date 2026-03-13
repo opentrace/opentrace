@@ -366,6 +366,27 @@
   flex-shrink: 0;
 }
 
+/* ── Form Info (warnings / informational notices) ── */
+.form-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklch, var(--foreground) 10%, transparent);
+  border-radius: 10px;
+}
+
+.form-info svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  opacity: 0.6;
+}
+
 /* ── Legacy support (used in indexing/done stages) */
 .modal-error {
   color: var(--destructive);
@@ -726,7 +747,7 @@
   gap: 5px;
   padding: 0 4px;
   margin-bottom: 10px;
-  max-height: 50px;
+  max-height: 70px;
   opacity: 1;
   overflow: hidden;
   transition:
@@ -779,6 +800,23 @@
   white-space: nowrap;
 }
 
+.stage-detail {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
+}
+
+.stage-row--active .stage-detail {
+  color: color-mix(in oklch, var(--foreground) 65%, transparent);
+}
+
+.stage-row--completed .stage-detail {
+  font-size: 0.62rem;
+}
+
 .stage-bar {
   height: 5px;
   background: color-mix(in oklch, var(--foreground) 8%, transparent);
@@ -796,4 +834,18 @@
 
 .stage-row--completed .stage-bar-fill {
   background: oklch(0.7 0.18 155);
+}
+
+.stage-bar--indeterminate .stage-bar-fill {
+  width: 40%;
+  animation: indeterminate-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes indeterminate-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }

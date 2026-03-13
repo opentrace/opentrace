@@ -166,6 +166,24 @@
   color: var(--primary);
 }
 
+/* ── Agent query ────────────────────────── */
+
+.agent-query {
+  font-size: 0.82rem;
+  color: var(--foreground);
+  padding: 2px 0 4px;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+/* ── Agent result (rendered as markdown) ─ */
+
+.agent-result {
+  padding: 6px 0 2px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 /* ── Agent progress steps ────────────────── */
 
 .agent-progress {
@@ -173,6 +191,11 @@
   flex-direction: column;
   gap: 2px;
   padding: 4px 0;
+}
+
+.agent-progress-step.muted {
+  opacity: 0.45;
+  font-style: italic;
 }
 
 .agent-progress-step {

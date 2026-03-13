@@ -49,6 +49,7 @@ export class IndexingManager {
   private totalNodesSubmitted = 0;
   private totalRelsSubmitted = 0;
   private pendingBatches: Promise<void>[] = [];
+  private batchesSubmitted = 0;
 
   // Two-worker completion tracking
   private parseDone = false;
@@ -155,6 +156,15 @@ export class IndexingManager {
             ? 'Scanning directory...'
             : 'Downloading repository tree...';
         this.callbacks.onProgress('fetching', treeMessage, {
+          current: progress.current,
+          total: progress.total,
+        });
+      } else if (progress.phase === 'download') {
+        const mb = (n: number) => (n / 1_048_576).toFixed(1);
+        const detail = progress.total
+          ? `Downloading archive... ${mb(progress.current)} / ${mb(progress.total)} MB`
+          : `Downloading archive... ${mb(progress.current)} MB`;
+        this.callbacks.onProgress('fetching', detail, {
           current: progress.current,
           total: progress.total,
         });
@@ -403,14 +413,18 @@ export class IndexingManager {
       const result = await this.store.importBatch(batch);
       this.totalNodesSubmitted += result.nodes_created;
       this.totalRelsSubmitted += result.relationships_created;
+      this.batchesSubmitted++;
 
-      this.callbacks.onProgress('submitting', `Submitted batch`, {
-        current: this.totalNodesSubmitted,
-        total: this.totalNodesSubmitted,
-        fileName: `${result.nodes_created} nodes, ${result.relationships_created} rels`,
-        nodesCreated: this.totalNodesSubmitted,
-        relationshipsCreated: this.totalRelsSubmitted,
-      });
+      this.callbacks.onProgress(
+        'submitting',
+        `${this.totalNodesSubmitted} nodes, ${this.totalRelsSubmitted} edges`,
+        {
+          current: this.batchesSubmitted,
+          total: 0,
+          nodesCreated: this.totalNodesSubmitted,
+          relationshipsCreated: this.totalRelsSubmitted,
+        },
+      );
     } catch (err) {
       const nodeIds = batch.nodes.slice(0, 5).map((n) => `${n.type}:${n.id}`);
       const relIds = batch.relationships

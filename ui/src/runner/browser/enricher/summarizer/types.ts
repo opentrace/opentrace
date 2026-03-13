@@ -20,6 +20,7 @@ export interface SymbolMetadata {
   fileName?: string; // file path context
   receiverType?: string; // Go methods
   source?: string; // code snippet for keyword extraction
+  docs?: string; // extracted documentation comment (javadoc, pydoc, godoc, etc.)
 }
 
 export interface SummarizerConfig {

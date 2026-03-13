@@ -27,6 +27,7 @@ export interface CodeSymbol {
   superclasses?: string[];
   interfaces?: string[];
   subtype?: string;
+  docs?: string;
 }
 
 export interface ExtractionResult {

@@ -4,6 +4,7 @@ import { HumanMessage } from '@langchain/core/messages';
 import type { BaseMessage } from '@langchain/core/messages';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { z } from 'zod';
+import type { StructuredToolInterface } from '@langchain/core/tools';
 import { makeGraphTools } from './tools';
 import type { GraphStore } from '../store/types';
 
@@ -100,6 +101,73 @@ List all dependencies:
 
 Produce a clear, synthesized answer. Do NOT return raw JSON — summarize your findings in prose with structured lists.`;
 
+const CODE_REVIEWER_PROMPT = `You are a code review agent. Your job is to review code changes for quality issues, bugs, security vulnerabilities, and adherence to codebase conventions by combining source code inspection with architecture context from the OpenTrace knowledge graph.
+
+## Workflow
+
+1. **Identify scope**: If given a PR reference, use list_pull_requests / get_pull_request to find the PR and its changed files. Otherwise, use search_graph to locate the component being reviewed.
+2. **Load source**: Use load_source on each changed/relevant file to read the actual code.
+3. **Understand context**: Use traverse_graph (incoming + outgoing) to understand how changed code fits into the broader architecture — what calls it, what it depends on.
+4. **Inspect related code**: Use get_node and load_source on related components to check for consistency and convention adherence.
+5. **Synthesize review**: Produce a structured code review.
+
+## Review Categories
+
+Evaluate code across these dimensions, but only report categories where you find issues:
+
+- **Bugs & Logic Errors** — incorrect conditions, off-by-one, null/undefined risks, race conditions
+- **Security** — injection, auth bypass, secrets exposure, unsafe deserialization
+- **Performance** — N+1 queries, unnecessary allocations, missing pagination, blocking I/O
+- **Error Handling** — swallowed errors, missing validation at boundaries, unclear error messages
+- **Design & Architecture** — violations of existing patterns, tight coupling, missing abstractions
+- **Naming & Clarity** — misleading names, unclear intent, overly complex logic
+
+## Response Format
+
+### Summary
+One-paragraph overview of the changes and overall quality assessment.
+
+### Issues Found
+For each issue:
+- **[Category] Severity: High/Medium/Low** — file:location
+  Description of the issue and why it matters.
+  Suggested fix (if applicable).
+
+### Positive Observations
+Note well-written code, good patterns, or improvements over existing code.
+
+## Guidelines
+
+- Focus on substantive issues, not style nitpicks
+- Reference existing codebase patterns when suggesting changes ("the rest of the codebase does X")
+- Distinguish between must-fix (bugs, security) and nice-to-have (style, minor performance)
+- If you cannot find the relevant code, say so rather than guessing
+- When reviewing PRs, use summarize_pr_changes to understand blast radius
+
+## CRITICAL: Structured Output
+
+After your prose review, you MUST end your response with a fenced code block tagged \`json:review\` containing structured review data that can be submitted to GitHub/GitLab. Use this exact format:
+
+\`\`\`json:review
+{
+  "summary": "One-paragraph overall assessment of the changes",
+  "verdict": "APPROVE or REQUEST_CHANGES or COMMENT",
+  "comments": [
+    {
+      "path": "src/example.ts",
+      "line": 42,
+      "body": "Description of the issue or suggestion"
+    }
+  ]
+}
+\`\`\`
+
+Rules for the structured block:
+- "verdict": Use APPROVE if the code is good, REQUEST_CHANGES if there are must-fix issues, COMMENT for informational review
+- "comments": Include one entry per actionable finding. Use the exact file path and line number from the source code. Omit path/line if the comment is general.
+- "summary": A concise paragraph suitable as the PR review body on GitHub
+- Always include this block, even if there are no issues (empty comments array, APPROVE verdict)`;
+
 // ---- Helpers ----
 
 /**
@@ -183,6 +251,7 @@ export function makeSubAgentTools(
   llm: BaseChatModel,
   store: GraphStore,
   onProgress: ProgressFn,
+  prTools: StructuredToolInterface[] = [],
 ) {
   const graphTools = makeGraphTools(store);
 
@@ -196,6 +265,12 @@ export function makeSubAgentTools(
     llm,
     tools: graphTools,
     stateModifier: DEPENDENCY_ANALYZER_PROMPT,
+  });
+
+  const codeReviewerAgent = createReactAgent({
+    llm,
+    tools: [...graphTools, ...prTools],
+    stateModifier: CODE_REVIEWER_PROMPT,
   });
 
   const codeExplorer = tool(
@@ -254,5 +329,36 @@ export function makeSubAgentTools(
     },
   );
 
-  return [codeExplorer, dependencyAnalyzer];
+  const codeReviewer = tool(
+    async ({ query }) => {
+      try {
+        const response = await streamSubAgent(
+          codeReviewerAgent,
+          'code_reviewer',
+          query,
+          onProgress,
+        );
+        return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
+      } catch (err) {
+        return `Code review failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+    {
+      name: 'code_reviewer',
+      description:
+        'Delegates a code review task to a specialized sub-agent. ' +
+        'The sub-agent autonomously loads source code, checks dependencies, and inspects ' +
+        'PR changes to produce a structured review with bugs, security issues, and quality feedback. ' +
+        "Use this for questions like 'review PR #42' or 'review the authentication module for security issues'.",
+      schema: z.object({
+        query: z
+          .string()
+          .describe(
+            'The code review request — what to review and any focus areas',
+          ),
+      }),
+    },
+  );
+
+  return [codeExplorer, dependencyAnalyzer, codeReviewer];
 }

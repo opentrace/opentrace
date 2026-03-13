@@ -1,6 +1,10 @@
 /**
  * Full indexing pipeline: parse files → build registries → resolve calls → emit graph batches.
  * Ported from agent's SymbolAttacher.attach() two-phase pattern.
+ *
+ * Architecture: streaming per-file pipeline where each file flows through
+ * extract → register → summarize → emit in a single pass, so nodes with
+ * summaries appear incrementally in the UI.
  */
 
 import type { Parser, Node as SyntaxNode } from 'web-tree-sitter';
@@ -53,6 +57,19 @@ export interface PipelineCallbacks {
 
 /** Map from language name (e.g. "python", "tsx") to a configured Parser instance. */
 export type ParserMap = Map<string, Parser>;
+
+/** Symbol info collected during processSymbol for inline summarization. */
+interface SymbolInfo {
+  nodeId: string;
+  startLine: number;
+  endLine: number;
+  kind: NodeKind;
+  name: string;
+  signature?: string;
+  childNames?: string[];
+  receiverType?: string;
+  docs?: string;
+}
 
 /** Run the full indexing pipeline on a repo tree. */
 export async function runPipeline(
@@ -160,11 +177,11 @@ export async function runPipeline(
       sourceProps(dp),
     );
 
-    // Link file to parent dir (or repo): File defined_in Directory
+    // Link file to parent dir (or repo): File DEFINED_IN Directory
     const parentId = dirPath ? `${repoId}/${dirPath}` : repoId;
     structureRels.push({
-      id: `${fileId}->defined_in->${parentId}`,
-      type: 'defined_in',
+      id: `${fileId}->DEFINED_IN->${parentId}`,
+      type: 'DEFINED_IN',
       source_id: fileId,
       target_id: parentId,
     });
@@ -222,8 +239,8 @@ export async function runPipeline(
         });
       }
       dependencyRels.push({
-        id: `${repoId}/${dep.source}->depends_on->${pkgId}`,
-        type: 'depends_on',
+        id: `${repoId}/${dep.source}->DEPENDS_ON->${pkgId}`,
+        type: 'DEPENDS_ON',
         source_id: repoId,
         target_id: pkgId,
         properties: {
@@ -246,7 +263,7 @@ export async function runPipeline(
     totalRels += dependencyRels.length;
   }
 
-  // Phase 1: Extract symbols and build registries
+  // --- Streaming per-file loop: extract → register → summarize → emit ---
   callbacks.onProgress(
     'parsing',
     'Extracting symbols...',
@@ -261,21 +278,13 @@ export async function runPipeline(
     importRegistry: new Map(),
   };
   const allCallInfo: CallInfo[] = [];
+  const enrichItems: EnrichItem[] = [];
+  const dirChildNames = new Map<string, string[]>();
 
-  // Track line info for summarization, indexed by fileId for O(1) per-file lookup
-  const symbolLineInfo = new Map<
-    string,
-    Array<{
-      nodeId: string;
-      startLine: number;
-      endLine: number;
-      kind: NodeKind;
-      name: string;
-      signature?: string;
-      childNames?: string[];
-      receiverType?: string;
-    }>
-  >();
+  // Aggregate counts for stage-complete messages
+  let totalClasses = 0;
+  let totalFunctions = 0;
+  let totalFileSummaries = 0;
 
   // Pre-compute known paths for import resolution
   const knownPaths = new Set(repo.files.map((f) => f.path));
@@ -286,9 +295,10 @@ export async function runPipeline(
 
   for (let i = 0; i < parseableFiles.length; i++) {
     const file = parseableFiles[i];
+    const shortName = file.path.split('/').pop()!;
     callbacks.onProgress(
       'parsing',
-      `Parsing ${file.path}`,
+      `Extracting symbols from ${shortName}`,
       i,
       parseableFiles.length,
       file.path,
@@ -300,13 +310,19 @@ export async function runPipeline(
 
       const { extraction, fileId } = result;
       const filePath = file.path;
+      const fileName = file.path.split('/').pop()!;
+      const ext = getExtension(file.path);
+      const language = EXTENSION_LANGUAGE_MAP[ext];
 
-      // Build symbol nodes and graph nodes for this file
-      const symbolBatch: GraphBatch = { nodes: [], relationships: [] };
+      // Per-file batch: symbol nodes + DEFINED_IN rels + summary update nodes
+      const fileBatch: GraphBatch = { nodes: [], relationships: [] };
+
+      // Local array replaces the old symbolLineInfo map
+      const symbolInfoOut: SymbolInfo[] = [];
 
       registries.fileRegistry.set(fileId, new Map());
 
-      // Analyze imports
+      // (a) Analyze imports
       if (extraction.rootNode) {
         const importResult = analyzeImports(
           extraction.rootNode,
@@ -316,7 +332,7 @@ export async function runPipeline(
           goModulePath,
         );
 
-        // Internal imports (existing logic)
+        // Internal imports
         if (Object.keys(importResult.internal).length > 0) {
           const idImports: Record<string, string> = {};
           for (const [alias, targetPath] of Object.entries(
@@ -346,15 +362,15 @@ export async function runPipeline(
             });
           }
           externalImportRels.push({
-            id: `${fileId}->imports->${pkgId}`,
-            type: 'imports',
+            id: `${fileId}->IMPORTS->${pkgId}`,
+            type: 'IMPORTS',
             source_id: fileId,
             target_id: pkgId,
           });
         }
       }
 
-      // Convert symbols to graph nodes
+      // (b) Convert symbols to graph nodes, collect into symbolInfoOut
       const fileSourceProps = (startLine: number, endLine: number) =>
         sourceProps(filePath, startLine, endLine);
       for (const symbol of extraction.symbols) {
@@ -364,24 +380,144 @@ export async function runPipeline(
           extraction.language,
           registries,
           allCallInfo,
-          symbolBatch,
-          symbolLineInfo,
+          fileBatch,
+          symbolInfoOut,
           fileSourceProps,
         );
       }
 
-      if (
-        symbolBatch.nodes.length > 0 ||
-        symbolBatch.relationships.length > 0
-      ) {
-        callbacks.onBatch(symbolBatch);
-        totalNodes += symbolBatch.nodes.length;
-        totalRels += symbolBatch.relationships.length;
+      // Count symbols for this file
+      const fileClasses = symbolInfoOut.filter(
+        (s) => s.kind === 'class',
+      ).length;
+      const fileFunctions = symbolInfoOut.filter(
+        (s) => s.kind === 'function',
+      ).length;
+      totalClasses += fileClasses;
+      totalFunctions += fileFunctions;
+
+      // Update progress with extraction results
+      if (symbolInfoOut.length > 0) {
+        const parts: string[] = [];
+        if (fileClasses > 0)
+          parts.push(`${fileClasses} class${fileClasses > 1 ? 'es' : ''}`);
+        if (fileFunctions > 0)
+          parts.push(
+            `${fileFunctions} function${fileFunctions > 1 ? 's' : ''}`,
+          );
+        callbacks.onProgress(
+          'parsing',
+          `${fileName}: ${parts.join(', ')}`,
+          i,
+          parseableFiles.length,
+          file.path,
+        );
       }
+
+      // (c) Summarize each symbol inline (using symbolInfoOut + file content lines)
+      const lines = file.content.split('\n');
+      const symbolNames: string[] = [];
+      for (const info of symbolInfoOut) {
+        symbolNames.push(info.name);
+        const snippet = lines
+          .slice(info.startLine - 1, info.endLine)
+          .join('\n');
+        if (!snippet.trim()) continue;
+
+        const meta: SymbolMetadata = {
+          name: info.name,
+          kind: info.kind,
+          signature: info.signature,
+          language: language ?? undefined,
+          lineCount: info.endLine - info.startLine + 1,
+          childNames: info.childNames,
+          receiverType: info.receiverType,
+          source: snippet,
+          docs: info.docs,
+        };
+        let summary = '';
+        try {
+          summary = await strategy.summarize(meta);
+        } catch {
+          errors.push(`Failed to summarize ${info.kind} ${info.name}`);
+        }
+        const nodeType = info.kind === 'class' ? 'Class' : 'Function';
+        enrichItems.push({
+          source: snippet,
+          kind: info.kind,
+          nodeId: info.nodeId,
+          nodeType,
+          nodeName: info.name,
+          summary,
+        });
+        if (summary) {
+          fileBatch.nodes.push({
+            id: info.nodeId,
+            type: nodeType,
+            name: info.name,
+            properties: { summary },
+          });
+        }
+      }
+
+      // (d) Summarize the file itself (first 200 lines + symbol names)
+      const fileSource = lines.slice(0, 200).join('\n');
+      if (fileSource.trim()) {
+        const fileMeta: SymbolMetadata = {
+          name: fileName,
+          kind: 'file',
+          fileName: filePath,
+          language: language ?? undefined,
+          childNames: symbolNames.length > 0 ? symbolNames : undefined,
+          source: fileSource,
+        };
+        let fileSummary = '';
+        try {
+          fileSummary = await strategy.summarize(fileMeta);
+        } catch {
+          errors.push(`Failed to summarize file ${filePath}`);
+        }
+        enrichItems.push({
+          source: fileSource,
+          kind: 'file',
+          nodeId: fileId,
+          nodeType: 'File',
+          nodeName: fileName,
+          path: filePath,
+          summary: fileSummary,
+        });
+        if (fileSummary) {
+          totalFileSummaries++;
+          fileBatch.nodes.push({
+            id: fileId,
+            type: 'File',
+            name: fileName,
+            properties: { summary: fileSummary },
+          });
+        }
+      }
+
+      // (e) Emit per-file batch
+      if (fileBatch.nodes.length > 0 || fileBatch.relationships.length > 0) {
+        callbacks.onBatch(fileBatch);
+        totalNodes += fileBatch.nodes.length;
+        totalRels += fileBatch.relationships.length;
+      }
+
+      // (f) Track directory child names for directory summaries later
+      const dirPath = filePath.includes('/')
+        ? filePath.slice(0, filePath.lastIndexOf('/'))
+        : '';
+      const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
+      const names = dirChildNames.get(parentDirId) ?? [];
+      names.push(fileName);
+      dirChildNames.set(parentDirId, names);
     } catch (err) {
       errors.push(`Failed to parse ${file.path}: ${err}`);
     }
   }
+
+  // --- Post-loop: external imports, call resolution, directory summaries ---
 
   // Emit external import Package nodes + File→Package relationships
   const newPackageNodes = Array.from(packageNodes.values()).filter(
@@ -396,7 +532,10 @@ export async function runPipeline(
     totalRels += externalImportRels.length;
   }
 
-  callbacks.onStageComplete('parsing', `Parsed ${parseableFiles.length} files`);
+  const parseParts = [`${parseableFiles.length} files`];
+  if (totalClasses > 0) parseParts.push(`${totalClasses} classes`);
+  if (totalFunctions > 0) parseParts.push(`${totalFunctions} functions`);
+  callbacks.onStageComplete('parsing', `Parsed ${parseParts.join(', ')}`);
 
   // Phase 2: Resolve calls
   callbacks.onProgress('resolving', 'Resolving call relationships...', 0, 1);
@@ -420,154 +559,21 @@ export async function runPipeline(
     `Resolved ${callRels.length} call relationships`,
   );
 
-  // Collect enrichment items and generate summaries
-  const enrichItems: EnrichItem[] = [];
-  const summaryUpdateNodes: GraphNode[] = [];
+  // Phase 3: Directory summaries (needs all children known)
+  const dirSummaryNodes: GraphNode[] = [];
+  const dirEntries = Array.from(dirNodes.entries());
 
-  // Track file names and symbol names per directory/file for composing summaries
-  const dirChildNames = new Map<string, string[]>();
-  const fileTopSymbols = new Map<string, string[]>();
-
-  // First pass: collect file-level symbol names and count total summarizable items
-  let totalSummarizeItems = dirNodes.size; // directories
-  for (const file of parseableFiles) {
-    const fileId = `${repoId}/${file.path}`;
-    const fileSymbols = symbolLineInfo.get(fileId);
-    if (fileSymbols) {
-      fileTopSymbols.set(
-        fileId,
-        fileSymbols.map((s) => s.name),
-      );
-      totalSummarizeItems += fileSymbols.length;
-    }
-    // Count the file itself if it has content
-    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
-    if (fileSource.trim()) totalSummarizeItems++;
+  if (dirEntries.length > 0) {
+    callbacks.onProgress(
+      'summarizing',
+      'Summarizing directories...',
+      0,
+      dirEntries.length,
+    );
   }
 
-  let summarizedCount = 0;
-  callbacks.onProgress(
-    'summarizing',
-    'Generating summaries...',
-    0,
-    totalSummarizeItems,
-  );
-
-  for (const file of parseableFiles) {
-    const fileId = `${repoId}/${file.path}`;
-    const fileName = file.path.split('/').pop()!;
-    const ext = getExtension(file.path);
-    const language = EXTENSION_LANGUAGE_MAP[ext];
-    const dirPath = file.path.includes('/')
-      ? file.path.slice(0, file.path.lastIndexOf('/'))
-      : '';
-    const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
-
-    // Track file names per directory
-    const names = dirChildNames.get(parentDirId) ?? [];
-    names.push(fileName);
-    dirChildNames.set(parentDirId, names);
-
-    // File item (first ~200 lines for keyword extraction)
-    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
-    if (fileSource.trim()) {
-      const fileMeta: SymbolMetadata = {
-        name: fileName,
-        kind: 'file',
-        fileName: file.path,
-        language: language ?? undefined,
-        childNames: fileTopSymbols.get(fileId),
-        source: fileSource,
-      };
-      let fileSummary = '';
-      try {
-        fileSummary = await strategy.summarize(fileMeta);
-      } catch {
-        errors.push(`Failed to summarize file ${file.path}`);
-      }
-      summarizedCount++;
-      callbacks.onProgress(
-        'summarizing',
-        `Summarizing ${fileName}`,
-        summarizedCount,
-        totalSummarizeItems,
-        file.path,
-      );
-      enrichItems.push({
-        source: fileSource,
-        kind: 'file',
-        nodeId: fileId,
-        nodeType: 'File',
-        nodeName: fileName,
-        path: file.path,
-        summary: fileSummary,
-      });
-      if (fileSummary) {
-        summaryUpdateNodes.push({
-          id: fileId,
-          type: 'File',
-          name: fileName,
-          properties: { summary: fileSummary },
-        });
-      }
-    }
-
-    // Symbol items
-    const fileSymbols = symbolLineInfo.get(fileId);
-    if (!fileSymbols) continue;
-
-    const lines = file.content.split('\n');
-    for (const info of fileSymbols) {
-      const snippet = lines.slice(info.startLine - 1, info.endLine).join('\n');
-      if (!snippet.trim()) continue;
-
-      const meta: SymbolMetadata = {
-        name: info.name,
-        kind: info.kind,
-        signature: info.signature,
-        language: language ?? undefined,
-        lineCount: info.endLine - info.startLine + 1,
-        childNames: info.childNames,
-        receiverType: info.receiverType,
-        source: snippet,
-      };
-      let summary = '';
-      try {
-        summary = await strategy.summarize(meta);
-      } catch {
-        errors.push(`Failed to summarize ${info.kind} ${info.name}`);
-      }
-      summarizedCount++;
-      callbacks.onProgress(
-        'summarizing',
-        `Summarizing ${info.name}`,
-        summarizedCount,
-        totalSummarizeItems,
-        file.path,
-      );
-      const nodeType = info.kind === 'class' ? 'Class' : 'Function';
-
-      enrichItems.push({
-        source: snippet,
-        kind: info.kind,
-        nodeId: info.nodeId,
-        nodeType,
-        nodeName: info.name,
-        summary,
-      });
-      if (summary) {
-        summaryUpdateNodes.push({
-          id: info.nodeId,
-          type: nodeType,
-          name: info.name,
-          properties: { summary },
-        });
-      }
-    }
-  }
-
-  // Directory items
-  for (const [dirId, dirNode] of dirNodes) {
+  for (let di = 0; di < dirEntries.length; di++) {
+    const [dirId, dirNode] = dirEntries[di];
     const dirPath = (dirNode.properties?.path as string) || dirNode.name;
     const childNames = [...(dirChildNames.get(dirId) ?? [])];
     for (const [otherId, otherNode] of dirNodes) {
@@ -580,6 +586,12 @@ export async function runPipeline(
       }
     }
     if (childNames.length > 0) {
+      callbacks.onProgress(
+        'summarizing',
+        `Summarizing ${dirNode.name}/ (${childNames.length} items)`,
+        di,
+        dirEntries.length,
+      );
       const dirMeta: SymbolMetadata = {
         name: dirNode.name,
         kind: 'directory',
@@ -591,13 +603,6 @@ export async function runPipeline(
       } catch {
         errors.push(`Failed to summarize directory ${dirNode.name}`);
       }
-      summarizedCount++;
-      callbacks.onProgress(
-        'summarizing',
-        `Summarizing ${dirNode.name}/`,
-        summarizedCount,
-        totalSummarizeItems,
-      );
       const listing = `${dirPath}/ contains: ${childNames.join(', ')}`;
       enrichItems.push({
         source: listing,
@@ -609,7 +614,7 @@ export async function runPipeline(
         summary,
       });
       if (summary) {
-        summaryUpdateNodes.push({
+        dirSummaryNodes.push({
           id: dirId,
           type: 'Directory',
           name: dirNode.name,
@@ -619,20 +624,19 @@ export async function runPipeline(
     }
   }
 
-  // Emit all template summaries as a graph update batch (summaries appear immediately)
-  if (summaryUpdateNodes.length > 0) {
-    callbacks.onBatch({ nodes: summaryUpdateNodes, relationships: [] });
+  if (dirSummaryNodes.length > 0) {
+    callbacks.onBatch({ nodes: dirSummaryNodes, relationships: [] });
   }
 
-  callbacks.onProgress(
-    'summarizing',
-    `Generated ${summaryUpdateNodes.length} summaries`,
-    summarizedCount,
-    totalSummarizeItems,
-  );
+  const summaryParts: string[] = [];
+  if (totalFileSummaries > 0) summaryParts.push(`${totalFileSummaries} files`);
+  if (totalClasses > 0) summaryParts.push(`${totalClasses} classes`);
+  if (totalFunctions > 0) summaryParts.push(`${totalFunctions} functions`);
+  if (dirSummaryNodes.length > 0)
+    summaryParts.push(`${dirSummaryNodes.length} directories`);
   callbacks.onStageComplete(
     'summarizing',
-    `Generated ${summaryUpdateNodes.length} summaries`,
+    `Summarized ${summaryParts.join(', ')}`,
   );
 
   return {
@@ -697,23 +701,14 @@ function processSymbol(
   registries: Registries,
   callInfos: CallInfo[],
   batch: GraphBatch,
-  symbolLineInfo?: Map<
-    string,
-    Array<{
-      nodeId: string;
-      startLine: number;
-      endLine: number;
-      kind: NodeKind;
-      name: string;
-      signature?: string;
-      childNames?: string[];
-      receiverType?: string;
-    }>
-  >,
+  symbolInfoOut: SymbolInfo[],
   extraProps?: (startLine: number, endLine: number) => Record<string, unknown>,
 ): SymbolNode {
   const fileId = parentId.split('::')[0];
-  const nodeId = `${parentId}::${symbol.name}`;
+  const namePart = symbol.receiverType
+    ? `${symbol.receiverType}.${symbol.name}`
+    : symbol.name;
+  const nodeId = `${parentId}::${namePart}`;
 
   if (symbol.kind === 'class') {
     const graphNode: GraphNode = {
@@ -728,30 +723,28 @@ function processSymbol(
         superclasses: symbol.superclasses ?? undefined,
         interfaces: symbol.interfaces ?? undefined,
         subtype: symbol.subtype ?? undefined,
+        docs: symbol.docs ?? undefined,
         ...extraProps?.(symbol.startLine, symbol.endLine),
       },
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->defined_in->${parentId}`,
-      type: 'defined_in',
+      id: `${nodeId}->DEFINED_IN->${parentId}`,
+      type: 'DEFINED_IN',
       source_id: nodeId,
       target_id: parentId,
     });
 
-    // Track line info for summarization (indexed by fileId)
-    if (symbolLineInfo) {
-      const arr = symbolLineInfo.get(fileId) ?? [];
-      arr.push({
-        nodeId,
-        startLine: symbol.startLine,
-        endLine: symbol.endLine,
-        kind: 'class',
-        name: symbol.name,
-        childNames: symbol.children.map((c) => c.name),
-      });
-      symbolLineInfo.set(fileId, arr);
-    }
+    // Collect symbol info for inline summarization
+    symbolInfoOut.push({
+      nodeId,
+      startLine: symbol.startLine,
+      endLine: symbol.endLine,
+      kind: 'class',
+      name: symbol.name,
+      childNames: symbol.children.map((c) => c.name),
+      docs: symbol.docs,
+    });
 
     // Register in registries
     const symbolNode: SymbolNode = {
@@ -778,7 +771,7 @@ function processSymbol(
         registries,
         callInfos,
         batch,
-        symbolLineInfo,
+        symbolInfoOut,
         extraProps,
       );
       symbolNode.children.push(childSymbolNode);
@@ -795,31 +788,29 @@ function processSymbol(
         start_line: symbol.startLine,
         end_line: symbol.endLine,
         signature: symbol.signature ?? undefined,
+        docs: symbol.docs ?? undefined,
         ...extraProps?.(symbol.startLine, symbol.endLine),
       },
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->defined_in->${parentId}`,
-      type: 'defined_in',
+      id: `${nodeId}->DEFINED_IN->${parentId}`,
+      type: 'DEFINED_IN',
       source_id: nodeId,
       target_id: parentId,
     });
 
-    // Track line info for summarization (indexed by fileId)
-    if (symbolLineInfo) {
-      const arr = symbolLineInfo.get(fileId) ?? [];
-      arr.push({
-        nodeId,
-        startLine: symbol.startLine,
-        endLine: symbol.endLine,
-        kind: 'function',
-        name: symbol.name,
-        signature: symbol.signature ?? undefined,
-        receiverType: symbol.receiverType ?? undefined,
-      });
-      symbolLineInfo.set(fileId, arr);
-    }
+    // Collect symbol info for inline summarization
+    symbolInfoOut.push({
+      nodeId,
+      startLine: symbol.startLine,
+      endLine: symbol.endLine,
+      kind: 'function',
+      name: symbol.name,
+      signature: symbol.signature ?? undefined,
+      receiverType: symbol.receiverType ?? undefined,
+      docs: symbol.docs,
+    });
 
     const symbolNode: SymbolNode = {
       id: nodeId,
@@ -885,15 +876,15 @@ function ensureDirectoryChain(
     ensureDirectoryChain(repoId, parentPath, dirNodes, rels, extraProps);
     const parentDirId = `${repoId}/${parentPath}`;
     rels.push({
-      id: `${dirId}->defined_in->${parentDirId}`,
-      type: 'defined_in',
+      id: `${dirId}->DEFINED_IN->${parentDirId}`,
+      type: 'DEFINED_IN',
       source_id: dirId,
       target_id: parentDirId,
     });
   } else {
     rels.push({
-      id: `${dirId}->defined_in->${repoId}`,
-      type: 'defined_in',
+      id: `${dirId}->DEFINED_IN->${repoId}`,
+      type: 'DEFINED_IN',
       source_id: dirId,
       target_id: repoId,
     });

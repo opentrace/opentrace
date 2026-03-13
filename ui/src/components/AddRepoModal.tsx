@@ -7,6 +7,8 @@ type SourceMode = 'url' | 'directory';
 interface Props {
   onClose: () => void;
   onSubmit: (message: JobMessage) => void;
+  /** When false, the backdrop click and Cancel button are hidden (e.g. empty-graph state). */
+  dismissable?: boolean;
 }
 
 function detectProvider(url: string): 'github' | 'gitlab' | null {
@@ -117,21 +119,28 @@ function FolderIcon() {
 
 // --- Main Component ---
 
-export default function AddRepoModal({ onClose, onSubmit }: Props) {
+export default function AddRepoModal({
+  onClose,
+  onSubmit,
+  dismissable = true,
+}: Props) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
   const [ref, setRef] = useState('');
-  const [pat, setPat] = useState(
-    () =>
-      localStorage.getItem('ot_github_pat') ??
-      localStorage.getItem('ot_gitlab_pat') ??
-      '',
-  );
+  const [pat, setPat] = useState('');
   const [showPat, setShowPat] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
+
+  // Reliably focus the URL input when the modal mounts
+  useEffect(() => {
+    if (source === 'url') {
+      urlInputRef.current?.focus();
+    }
+  }, [source]);
 
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
   const isGitLab = provider === 'gitlab';
@@ -146,6 +155,7 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
     const key = provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
     const saved = localStorage.getItem(key);
     if (saved) setPat(saved);
+    else setPat('');
   }, [provider]);
 
   // Clear errors when switching source mode
@@ -227,7 +237,7 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
         : 'Enter a repository URL to index its structure into the graph';
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={dismissable ? onClose : undefined}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         {/* Source mode toggle */}
         <div className="source-toggle">
@@ -260,6 +270,7 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
             {source === 'url' ? (
               <>
                 <input
+                  ref={urlInputRef}
                   type="text"
                   required
                   className="input-pill"
@@ -270,13 +281,13 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                   autoComplete="off"
                   data-1p-ignore
                   data-lpignore="true"
+                  data-testid="repo-url-input"
                 />
 
-                <div className="input-pill-row">
+                <div className="form-info">
                   <svg
-                    className="input-icon"
-                    width="16"
-                    height="16"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -284,56 +295,81 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
-                  <input
-                    type={showPat ? 'text' : 'password'}
-                    className="input-pill input-pill--icon"
-                    placeholder="Access token (optional, for private repos)"
-                    value={pat}
-                    onChange={(e) => setPat(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="input-toggle"
-                    onClick={() => setShowPat(!showPat)}
-                    tabIndex={-1}
-                    aria-label={showPat ? 'Hide token' : 'Show token'}
-                  >
-                    {showPat ? (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                      </svg>
-                    ) : (
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    )}
-                  </button>
+                  <span>
+                    Repository archives are fetched through the OpenTrace API
+                    server to avoid browser CORS restrictions. Your access token
+                    (if provided) is forwarded but never stored on the server.
+                  </span>
                 </div>
+
+                {provider && (
+                  <div className="input-pill-row">
+                    <svg
+                      className="input-icon"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                    <input
+                      type={showPat ? 'text' : 'password'}
+                      className="input-pill input-pill--icon"
+                      placeholder={`${provider === 'gitlab' ? 'GitLab' : 'GitHub'} access token (optional, for private repos)`}
+                      value={pat}
+                      onChange={(e) => setPat(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="input-toggle"
+                      onClick={() => setShowPat(!showPat)}
+                      tabIndex={-1}
+                      aria-label={showPat ? 'Hide token' : 'Show token'}
+                    >
+                      {showPat ? (
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               <div className="directory-picker">
@@ -455,9 +491,11 @@ export default function AddRepoModal({ onClose, onSubmit }: Props) {
                 />
               </div>
             )}
-            <button type="button" className="chip" onClick={onClose}>
-              Cancel
-            </button>
+            {dismissable && (
+              <button type="button" className="chip" onClick={onClose}>
+                Cancel
+              </button>
+            )}
           </div>
         </form>
       </div>

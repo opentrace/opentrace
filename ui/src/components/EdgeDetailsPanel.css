@@ -1,0 +1,175 @@
+/* Edge Details Panel — relationship detail view */
+
+.edge-details-content {
+  padding: 20px 20px 120px;
+}
+
+/* ── Header ── */
+.edge-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.edge-type-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--primary-foreground);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.edge-detail-label {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* ── Direction diagram: source → target ── */
+.edge-direction {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+}
+
+.edge-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--background) 80%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.edge-endpoint:hover {
+  background: color-mix(in oklch, var(--primary) 8%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.edge-endpoint-type {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--primary-foreground);
+  font-size: 0.65rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.edge-endpoint-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.edge-arrow svg {
+  transform: rotate(90deg);
+  opacity: 0.7;
+}
+
+.edge-arrow-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* ── Edge properties ── */
+.edge-props-section {
+  margin-top: 20px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding-top: 16px;
+}
+
+.edge-props-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.edge-patch {
+  margin-top: 12px;
+}
+
+.edge-patch-code {
+  margin: 8px 0 0;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  background: color-mix(in oklch, var(--background) 90%, var(--foreground));
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* ── Node property sections ── */
+.edge-node-section {
+  margin-top: 20px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  padding-top: 16px;
+}
+
+.edge-node-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.edge-node-section-name {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── IDs footer ── */
+.edge-ids-footer {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.edge-ids-footer .detail-row {
+  margin-bottom: 8px;
+}
