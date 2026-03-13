@@ -6,13 +6,18 @@
  * extraction, and bounded-concurrency fetching.
  */
 
-import { EXCLUDED_DIRS, IMAGE_EXTENSIONS, MAX_FILE_SIZE } from './constants';
+import {
+  BINARY_EXTENSIONS,
+  EXCLUDED_DIRS,
+  IMAGE_EXTENSIONS,
+  MAX_FILE_SIZE,
+} from './constants';
 import type { RepoFile } from '../types';
 
 // --- Progress reporting ---
 
 export interface FetchProgress {
-  phase: 'tree' | 'blobs';
+  phase: 'tree' | 'download' | 'blobs';
   current: number;
   total: number;
   fileName?: string;
@@ -51,6 +56,18 @@ export function detectZipPrefix(entries: Record<string, Uint8Array>): string {
 }
 
 /**
+ * Detect binary content by scanning for null bytes in the first 8 KiB.
+ * This is the same heuristic git uses for binary detection.
+ */
+export function isBinaryData(data: Uint8Array): boolean {
+  const limit = Math.min(data.length, 8192);
+  for (let i = 0; i < limit; i++) {
+    if (data[i] === 0) return true;
+  }
+  return false;
+}
+
+/**
  * Convert a Uint8Array to a base64 string.
  * Processes in chunks to avoid call-stack overflow with large arrays.
  */
@@ -79,6 +96,7 @@ export function extractFilesFromZip(
 ): RepoFile[] {
   const prefix = detectZipPrefix(entries);
   const allPaths = Object.keys(entries);
+  const eligibleTotal = allPaths.filter((p) => !p.endsWith('/')).length;
   const files: RepoFile[] = [];
 
   for (const fullPath of allPaths) {
@@ -103,6 +121,9 @@ export function extractFilesFromZip(
         size: raw.length,
         binary: true,
       });
+    } else if (BINARY_EXTENSIONS.has(ext) || isBinaryData(raw)) {
+      // Skip non-image binary files — they can't be parsed or displayed
+      continue;
     } else {
       files.push({
         path: relPath,
@@ -115,12 +136,75 @@ export function extractFilesFromZip(
     onProgress?.({
       phase: 'blobs',
       current: files.length,
-      total: allPaths.length,
+      total: eligibleTotal,
       fileName: relPath,
     });
   }
 
   return files;
+}
+
+/** Response from the archive resolve endpoint. */
+interface ResolveResult {
+  url: string;
+  contentLength: number;
+}
+
+/**
+ * Two-step archive fetch: resolve the download URL, then stream the zip
+ * with progress reporting based on the known content length.
+ */
+export async function fetchResolvedArchive(
+  resolveUrl: string,
+  headers: Record<string, string>,
+  signal: AbortSignal | undefined,
+  onProgress?: (progress: FetchProgress) => void,
+): Promise<Uint8Array> {
+  // Step 1: resolve → { url, contentLength }
+  const resolveRes = await fetch(resolveUrl, { headers, signal });
+  if (!resolveRes.ok) {
+    const text = await resolveRes.text();
+    throw new Error(`Archive resolve error ${resolveRes.status}: ${text}`);
+  }
+  const { url, contentLength } = (await resolveRes.json()) as ResolveResult;
+
+  // Step 2: fetch the actual zip, streaming for progress
+  const zipRes = await fetch(url, { headers, signal });
+  if (!zipRes.ok) {
+    const text = await zipRes.text();
+    throw new Error(`Archive download error ${zipRes.status}: ${text}`);
+  }
+
+  const total = contentLength || 0;
+
+  // If no ReadableStream body (unlikely in modern browsers), fall back
+  if (!zipRes.body) {
+    const buf = new Uint8Array(await zipRes.arrayBuffer());
+    onProgress?.({ phase: 'download', current: buf.length, total: buf.length });
+    return buf;
+  }
+
+  // Stream with progress
+  const reader = zipRes.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    onProgress?.({ phase: 'download', current: received, total });
+  }
+
+  // Concatenate chunks
+  const result = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
 }
 
 /**
@@ -140,8 +224,9 @@ export async function runWithConcurrency<T>(
   while (queue.length > 0 || active.length > 0) {
     while (active.length < concurrency && queue.length > 0) {
       const item = queue.shift()!;
-      const p = fn(item).then(() => {
-        active.splice(active.indexOf(p), 1);
+      const p: Promise<void> = fn(item).then(() => {
+        const idx = active.indexOf(p);
+        if (idx >= 0) active.splice(idx, 1);
       });
       active.push(p);
     }

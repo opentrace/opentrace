@@ -9,6 +9,7 @@ export interface GraphLink {
   source: string;
   target: string;
   label: string;
+  properties?: Record<string, unknown>;
 }
 
 export interface GraphData {

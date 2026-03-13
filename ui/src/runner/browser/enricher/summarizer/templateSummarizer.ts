@@ -917,8 +917,21 @@ export function summarizeDirectory(
 // Unified summarizer (from structured metadata)
 // ---------------------------------------------------------------------------
 
-/** Generate a summary from structured symbol metadata — no source code parsing needed. */
+/** Generate a summary from structured symbol metadata — no source code parsing needed.
+ *  If the symbol has an extracted doc comment (javadoc, pydoc, godoc, etc.), use its
+ *  first sentence as the summary — the author's own description beats heuristics. */
 export function summarizeFromMetadata(meta: SymbolMetadata): string {
+  if (meta.docs) {
+    // Use the first sentence (or first line) of the doc comment
+    const firstSentence = meta.docs.split(/\.\s|\n/)[0].trim();
+    if (firstSentence) {
+      // Ensure it ends cleanly
+      return firstSentence.endsWith('.')
+        ? firstSentence.slice(0, -1)
+        : firstSentence;
+    }
+  }
+
   switch (meta.kind) {
     case 'function':
       return summarizeFunction(

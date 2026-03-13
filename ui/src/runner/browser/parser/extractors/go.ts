@@ -6,6 +6,25 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { CallRef, CodeSymbol, ExtractionResult } from '../../types';
 
+/** Extract GoDoc comments from consecutive preceding `comment` siblings.
+ *  Go convention: `// Comment` lines immediately above a declaration. */
+function extractGoDoc(node: SyntaxNode): string | undefined {
+  const comments: string[] = [];
+  let prev = node.previousNamedSibling;
+  while (prev && prev.type === 'comment') {
+    comments.push(prev.text);
+    prev = prev.previousNamedSibling;
+  }
+  if (comments.length === 0) return undefined;
+  // Reverse (we collected bottom-up) and strip `// ` prefix
+  const cleaned = comments
+    .reverse()
+    .map((line) => line.replace(/^\/\/\s?/, ''))
+    .join('\n')
+    .trim();
+  return cleaned || undefined;
+}
+
 export function extractGo(rootNode: SyntaxNode): ExtractionResult {
   const symbols = walkNode(rootNode);
   return { symbols, language: 'go', rootNode };
@@ -14,15 +33,17 @@ export function extractGo(rootNode: SyntaxNode): ExtractionResult {
 function walkNode(node: SyntaxNode): CodeSymbol[] {
   const symbols: CodeSymbol[] = [];
   for (const child of node.children) {
+    let sym: CodeSymbol | null = null;
     if (child.type === 'type_declaration') {
-      const sym = extractTypeDecl(child);
-      if (sym) symbols.push(sym);
+      sym = extractTypeDecl(child);
     } else if (child.type === 'function_declaration') {
-      const sym = extractFunction(child);
-      if (sym) symbols.push(sym);
+      sym = extractFunction(child);
     } else if (child.type === 'method_declaration') {
-      const sym = extractMethod(child);
-      if (sym) symbols.push(sym);
+      sym = extractMethod(child);
+    }
+    if (sym) {
+      sym.docs = extractGoDoc(child);
+      symbols.push(sym);
     }
   }
   return symbols;

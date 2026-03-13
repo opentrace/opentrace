@@ -286,8 +286,8 @@ export function resolvedCallsToRelationships(
   resolvedCalls: ResolvedCall[],
 ): GraphRelationship[] {
   return resolvedCalls.map((call) => ({
-    id: `${call.sourceId}->calls->${call.targetId}`,
-    type: 'calls',
+    id: `${call.sourceId}->CALLS->${call.targetId}`,
+    type: 'CALLS',
     source_id: call.sourceId,
     target_id: call.targetId,
     properties: { confidence: call.confidence },

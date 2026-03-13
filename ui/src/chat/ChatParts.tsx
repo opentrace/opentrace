@@ -4,14 +4,23 @@ import ChatThought from './ChatThought';
 import ChatToolCall from './ChatToolCall';
 import { markdownComponents } from './markdownComponents';
 import type { MessagePart } from './types';
+import type { ReviewData } from './results/ReviewResult';
 
 interface Props {
   parts: MessagePart[];
   streaming?: boolean;
   onNodeSelect?: (nodeId: string) => void;
+  onSubmitReview?: (data: ReviewData) => Promise<void>;
+  onPostComment?: (number: number, body: string) => Promise<void>;
 }
 
-export default function ChatParts({ parts, streaming, onNodeSelect }: Props) {
+export default function ChatParts({
+  parts,
+  streaming,
+  onNodeSelect,
+  onSubmitReview,
+  onPostComment,
+}: Props) {
   return (
     <>
       {parts.map((part, i) => {
@@ -24,6 +33,8 @@ export default function ChatParts({ parts, streaming, onNodeSelect }: Props) {
                 key={part.id}
                 part={part}
                 onNodeSelect={onNodeSelect}
+                onSubmitReview={onSubmitReview}
+                onPostComment={onPostComment}
               />
             );
           case 'text':

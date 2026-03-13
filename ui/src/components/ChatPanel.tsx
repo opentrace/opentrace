@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphNode, GraphLink } from '../types/graph';
 import {
   PROVIDERS,
@@ -12,45 +12,86 @@ import {
   saveApiKey,
   loadProviderChoice,
   saveProviderChoice,
+  loadModelChoice,
+  saveModelChoice,
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
-import { createChatAgent } from '../chat/agent';
+import { createChatAgent, createLLM } from '../chat/agent';
 import ChatTemplates from '../chat/ChatTemplates';
 import ChatParts from '../chat/ChatParts';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
+import { PRClient, parseRepoUrl } from '../pr/client';
+import PRListPanel from './PRListPanel';
 import '../chat/markdown.css';
 import '../chat/parts.css';
 import './ChatPanel.css';
+
+type TabId = 'chat' | 'prs';
 
 interface Props {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   onClose: () => void;
   onNodeSelect?: (nodeId: string) => void;
+  onGraphChange?: (focusNodeId?: string) => Promise<void>;
+  repoUrl?: string;
 }
 
-export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
+export default function ChatPanel({
+  graphData,
+  onClose,
+  onNodeSelect,
+  onGraphChange,
+  repoUrl,
+}: Props) {
   const { store } = useStore();
 
   const [providerId, setProviderId] = useState(loadProviderChoice);
+  const [modelId, setModelId] = useState(() => {
+    const pid = loadProviderChoice();
+    return loadModelChoice(pid) ?? PROVIDERS[pid].defaultModel;
+  });
   const [apiKey, setApiKey] = useState(() => loadApiKey(loadProviderChoice()));
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>('chat');
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
+
+  // Build PRClient from repoUrl
+  const prClient = useMemo(() => {
+    if (!repoUrl) return null;
+    const meta = parseRepoUrl(repoUrl);
+    if (!meta) return null;
+    // Use the same localStorage keys as AddRepoModal
+    const tokenKey =
+      meta.provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
+    const token = localStorage.getItem(tokenKey) ?? undefined;
+    return new PRClient(meta, token);
+  }, [repoUrl]);
 
   // Cache agent — recreate only when provider or key changes
   const agentRef = useRef<ReturnType<typeof createChatAgent> | null>(null);
   const agentKeyRef = useRef('');
   type AgentHandle = ReturnType<typeof createChatAgent>;
 
-  // Auto-scroll on new content
+  // Auto-scroll only when the user is near the bottom
+  const isNearBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const threshold = 80;
+    isNearBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
+
   useEffect(() => {
-    if (scrollRef.current) {
+    if (isNearBottomRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -64,6 +105,13 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
     setProviderId(id);
     saveProviderChoice(id);
     setApiKey(loadApiKey(id));
+    const savedModel = loadModelChoice(id);
+    setModelId(savedModel ?? PROVIDERS[id].defaultModel);
+  };
+
+  const switchModel = (model: string) => {
+    setModelId(model);
+    saveModelChoice(providerId, model);
   };
 
   const handleSaveKey = () => {
@@ -74,7 +122,7 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
   };
 
   const getAgentHandle = (): AgentHandle => {
-    const key = `${providerId}:${apiKey}`;
+    const key = `${providerId}:${modelId}:${apiKey}:${repoUrl ?? ''}`;
     if (agentKeyRef.current !== key || !agentRef.current) {
       const systemPrompt = buildGraphContext(
         graphData.nodes as GraphNode[],
@@ -82,9 +130,11 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
       );
       agentRef.current = createChatAgent(
         providerId,
+        modelId,
         apiKey,
         systemPrompt,
         store,
+        prClient,
       );
       agentKeyRef.current = key;
     }
@@ -328,8 +378,32 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
     setStreaming(false);
   };
 
+  /** Switch to chat tab and send a pre-seeded prompt (used by PR panel) */
+  const handleChatWithPR = (prompt: string) => {
+    setActiveTab('chat');
+    abortRef.current?.abort();
+    sendMessage(prompt);
+  };
+
+  /** Post a comment on a PR (used by SuggestCommentResult widget) */
+  const handlePostComment = async (number: number, body: string) => {
+    if (!prClient) throw new Error('No PR client configured');
+    await prClient.postComment(number, body);
+  };
+
+  // LLM instance for PR reviews (run directly, not through chat)
+  const llm = useMemo(() => {
+    if (!apiKey) return null;
+    try {
+      return createLLM(providerId, modelId, apiKey);
+    } catch {
+      return null;
+    }
+  }, [providerId, modelId, apiKey]);
+
   const needsKey = !apiKey;
   const showSettingsView = showSettings || needsKey;
+  const hasPRTab = !!prClient;
 
   return (
     <div className="chat-panel">
@@ -340,9 +414,10 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
             <span
               className="provider-tag"
               onClick={() => setShowSettings(true)}
-              title="Click to change provider"
+              title="Click to change provider or model"
             >
-              {PROVIDERS[providerId].name}
+              {PROVIDERS[providerId].models.find((m) => m.id === modelId)
+                ?.name ?? modelId}
             </span>
           )}
         </div>
@@ -352,6 +427,7 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
               className="clear-chat-btn"
               onClick={handleClearChat}
               title="New chat"
+              data-testid="new-chat-btn"
             >
               <svg
                 width="16"
@@ -374,6 +450,23 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
         </div>
       </div>
 
+      {hasPRTab && !showSettingsView && (
+        <div className="chat-tab-bar">
+          <button
+            className={`chat-tab ${activeTab === 'chat' ? 'active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            Chat
+          </button>
+          <button
+            className={`chat-tab ${activeTab === 'prs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('prs')}
+          >
+            Pull Requests
+          </button>
+        </div>
+      )}
+
       {showSettingsView ? (
         <div className="api-key-config">
           <div className="provider-selector">
@@ -386,6 +479,20 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
                 {PROVIDERS[id].name}
               </button>
             ))}
+          </div>
+          <div className="model-selector">
+            <label htmlFor="model-select">Model</label>
+            <select
+              id="model-select"
+              value={modelId}
+              onChange={(e) => switchModel(e.target.value)}
+            >
+              {PROVIDERS[providerId].models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
           </div>
           <p>Enter your {PROVIDERS[providerId].name} API key:</p>
           <input
@@ -417,9 +524,17 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
           </div>
           <p className="hint">Your key is stored locally in your browser.</p>
         </div>
+      ) : activeTab === 'prs' && prClient ? (
+        <PRListPanel
+          prClient={prClient}
+          store={store}
+          onGraphChange={onGraphChange}
+          llm={llm}
+          onChatWithPR={handleChatWithPR}
+        />
       ) : (
         <>
-          <div className="messages" ref={scrollRef}>
+          <div className="messages" ref={scrollRef} onScroll={handleScroll}>
             {messages.length === 0 && (
               <div className="empty-chat">
                 <p>Ask me anything about your graph!</p>
@@ -430,6 +545,11 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
               <div
                 key={i}
                 className={`message ${m.role === 'user' ? 'user' : 'ai'}`}
+                {...(m.role === 'assistant' &&
+                i === messages.length - 1 &&
+                !streaming
+                  ? { 'data-testid': 'chat-response-done' }
+                  : {})}
               >
                 <div className="message-content">
                   {m.role === 'assistant' ? (
@@ -437,6 +557,7 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
                       parts={(m as AssistantMessage).parts}
                       streaming={streaming && i === messages.length - 1}
                       onNodeSelect={onNodeSelect}
+                      onPostComment={prClient ? handlePostComment : undefined}
                     />
                   ) : (
                     m.content
@@ -456,6 +577,7 @@ export default function ChatPanel({ graphData, onClose, onNodeSelect }: Props) {
             <button
               onClick={handleSubmit}
               disabled={streaming || !input.trim()}
+              data-testid="chat-send-btn"
             >
               Send
             </button>

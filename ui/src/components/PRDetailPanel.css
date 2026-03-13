@@ -1,0 +1,413 @@
+.pr-detail-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 40px;
+}
+
+.pr-detail-nav {
+  padding: 12px 20px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.pr-back-btn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 4px 0;
+  transition: opacity 0.15s;
+}
+
+.pr-back-btn:hover {
+  opacity: 0.7;
+}
+
+.pr-detail-header {
+  padding: 16px 20px 12px;
+}
+
+.pr-detail-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--foreground);
+  line-height: 1.35;
+}
+
+.pr-detail-number {
+  color: var(--muted-foreground);
+  font-weight: 400;
+  margin-right: 8px;
+}
+
+.pr-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.pr-detail-author {
+  font-weight: 500;
+}
+
+.pr-detail-branches {
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 50%, transparent);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.7rem;
+}
+
+.pr-detail-stats {
+  display: flex;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-detail-file-count {
+  color: var(--muted-foreground);
+}
+
+.pr-detail-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.pr-action-btn {
+  padding: 7px 14px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pr-action-index {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+}
+
+.pr-action-index:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 85%, black);
+}
+
+.pr-action-index:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pr-action-indexed {
+  background: color-mix(in oklch, var(--success, #22c55e) 20%, transparent);
+  color: var(--success, #22c55e);
+  border: 1px solid
+    color-mix(in oklch, var(--success, #22c55e) 30%, transparent);
+}
+
+.pr-action-indexed:hover {
+  background: color-mix(in oklch, var(--success, #22c55e) 30%, transparent);
+}
+
+.pr-action-review {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.pr-action-review:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.pr-action-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  text-decoration: none;
+}
+
+.pr-action-open:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+/* ── Review action buttons ── */
+
+.pr-action-review:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pr-action-cancel {
+  background: transparent;
+  color: var(--muted-foreground);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+}
+
+.pr-action-cancel:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+.pr-action-chat {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.pr-action-chat:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.pr-chat-with-review-btn {
+  margin: 12px 14px;
+  width: calc(100% - 28px);
+  text-align: center;
+}
+
+/* ── Review progress ── */
+
+.pr-review-progress {
+  padding: 14px 20px;
+  margin: 0 20px 16px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 20%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+}
+
+.pr-review-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 8px;
+}
+
+.pr-review-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in oklch, var(--primary) 25%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: pr-spin 0.8s linear infinite;
+}
+
+@keyframes pr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pr-review-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pr-review-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.pr-review-step.current {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.pr-review-step-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in oklch, var(--primary) 25%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: pr-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.pr-review-step-check {
+  flex-shrink: 0;
+  color: var(--success, #22c55e);
+}
+
+/* ── Review error ── */
+
+.pr-review-error {
+  margin: 0 20px 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--destructive, #ef4444) 10%, transparent);
+  color: var(--destructive, #ef4444);
+  font-size: 0.78rem;
+}
+
+/* ── Review result ── */
+
+.pr-review-result {
+  margin: 0 20px 16px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.pr-review-result-header {
+  padding: 10px 14px;
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+}
+
+.pr-review-result-header h4 {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.pr-review-result-body {
+  padding: 14px;
+  max-height: 500px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+
+.pr-detail-body {
+  padding: 0 20px 16px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
+}
+
+.pr-body-content {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--card-foreground);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px;
+  background: color-mix(in oklch, var(--accent) 25%, transparent);
+  border-radius: var(--radius);
+}
+
+.pr-body-content > :first-child {
+  margin-top: 0;
+}
+
+.pr-body-content > :last-child {
+  margin-bottom: 0;
+}
+
+.pr-detail-files {
+  flex: 1;
+}
+
+.pr-files-header {
+  padding: 10px 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+}
+
+.pr-file-row {
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 10%, transparent);
+}
+
+.pr-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.78rem;
+  color: var(--foreground);
+  transition: background 0.1s;
+}
+
+.pr-file-header:hover {
+  background: color-mix(in oklch, var(--accent) 25%, transparent);
+}
+
+.pr-file-status {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.pr-file-status-added {
+  background: color-mix(in oklch, #22c55e 15%, transparent);
+  color: #22c55e;
+}
+
+.pr-file-status-modified {
+  background: color-mix(in oklch, #f59e0b 15%, transparent);
+  color: #f59e0b;
+}
+
+.pr-file-status-removed {
+  background: color-mix(in oklch, #ef4444 15%, transparent);
+  color: #ef4444;
+}
+
+.pr-file-status-renamed {
+  background: color-mix(in oklch, #8b5cf6 15%, transparent);
+  color: #8b5cf6;
+}
+
+.pr-file-path {
+  flex: 1;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-file-stats {
+  display: flex;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-file-expand {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.pr-file-patch {
+  margin: 0;
+  padding: 12px 20px;
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--card-foreground);
+  max-height: 400px;
+  overflow-y: auto;
+}

@@ -45,7 +45,7 @@ const RECYCLE_THRESHOLD = 800;
 const nodePropsCache = new Map<string, Record<string, unknown>>();
 
 /** In-memory BM25 index for text search (kuzu-wasm lacks FTS extension). */
-const bm25Index = new BM25Index();
+let bm25Index = new BM25Index();
 
 /** In-memory vector index for embedding search (kuzu-wasm lacks vector extension). */
 let vectorIndex: VectorIndex | null = null;
@@ -78,7 +78,9 @@ function encodeProps(props: Record<string, unknown>): string {
 async function execute(cypher: string): Promise<any> {
   if (!conn) throw new Error('KuzuDB not initialized');
   if (executeCount >= RECYCLE_THRESHOLD && kuzu && db) {
-    console.log(`[KuzuWorker] recycling connection after ${executeCount} executions`);
+    console.log(
+      `[KuzuWorker] recycling connection after ${executeCount} executions`,
+    );
     conn = await kuzu.Connection(db);
     executeCount = 0;
   }
@@ -104,8 +106,8 @@ async function query(cypher: string): Promise<unknown[]> {
 
 // ---- Limits for graph visualization (force-directed layout chokes on large graphs) ----
 
-const MAX_VIS_NODES = 2000;
-const MAX_VIS_EDGES = 5000;
+let MAX_VIS_NODES = 2000;
+let MAX_VIS_EDGES = 5000;
 
 // ---- Schema ----
 
@@ -188,7 +190,10 @@ async function handleImportBatch(
       );
       nodesCreated += chunk.length;
     } catch (err) {
-      console.error(`[KuzuWorker] UNWIND node batch failed (offset ${i}, size ${chunk.length}):`, err);
+      console.error(
+        `[KuzuWorker] UNWIND node batch failed (offset ${i}, size ${chunk.length}):`,
+        err,
+      );
       throw err;
     }
   }
@@ -208,11 +213,14 @@ async function handleImportBatch(
       await execute(
         `UNWIND [${chunk.join(', ')}] AS row ` +
           `MATCH (a:Node {id: row.src}), (b:Node {id: row.tgt}) ` +
-          `CREATE (a)-[:RELATES {id: row.id, type: row.type, properties: row.props}]->(b)`,
+          `MERGE (a)-[r:RELATES {id: row.id}]->(b) SET r.type = row.type, r.properties = row.props`,
       );
       relsCreated += chunk.length;
     } catch (err) {
-      console.error(`[KuzuWorker] UNWIND rel batch failed (offset ${i}, size ${chunk.length}):`, err);
+      console.error(
+        `[KuzuWorker] UNWIND rel batch failed (offset ${i}, size ${chunk.length}):`,
+        err,
+      );
       throw err;
     }
   }
@@ -289,7 +297,7 @@ async function getAllGraph(): Promise<GraphData> {
   // Only fetch edges between the returned nodes
   const nodeIdSet = new Set(nodes.map((n) => n.id));
   const relRows = await query(
-    `MATCH (a:Node)-[r:RELATES]->(b:Node) RETURN a.id AS source, b.id AS target, r.type AS type LIMIT ${MAX_VIS_EDGES}`,
+    `MATCH (a:Node)-[r:RELATES]->(b:Node) RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties LIMIT ${MAX_VIS_EDGES}`,
   );
   const links: GraphLink[] = (relRows as Record<string, string>[])
     .filter((r) => nodeIdSet.has(r.source) && nodeIdSet.has(r.target))
@@ -297,6 +305,7 @@ async function getAllGraph(): Promise<GraphData> {
       source: r.source,
       target: r.target,
       label: r.type,
+      properties: parseProps(r.properties),
     }));
 
   return { nodes, links };
@@ -307,43 +316,51 @@ async function searchGraph(
   hops: number,
   queryEmbedding?: number[],
 ): Promise<GraphData> {
-  // --- Hybrid search: BM25 + optional vector, fused with RRF ---
-  const rankedLists: { id: string; score: number }[][] = [];
-
-  // BM25 text search
-  const bm25Results = bm25Index.search(search, 50);
-  if (bm25Results.length > 0) {
-    rankedLists.push(bm25Results);
-  }
-
-  // Vector search (if embedding provided and vector index populated)
-  if (queryEmbedding && vectorIndex && vectorIndex.size > 0) {
-    const vecResults = vectorIndex.search(queryEmbedding, 50);
-    if (vecResults.length > 0) {
-      rankedLists.push(vecResults);
-    }
-  }
-
   let seedIds: Set<string>;
 
-  if (rankedLists.length > 0) {
-    // Fuse results via RRF
-    const fused = rrfFuse(rankedLists, 50);
-    seedIds = new Set(fused.map((r) => r.id));
+  // Fast path: if the search string matches an exact node ID, use it directly.
+  // This lets callers like the PR indexer reload by ID without relying on text search.
+  if (nodePropsCache.has(search)) {
+    seedIds = new Set([search]);
   } else {
-    // Fallback to old substring search if no BM25/vector results
-    const q = esc(search.toLowerCase());
-    const seedRows = await query(
-      `MATCH (n:Node) WHERE lower(n.name) CONTAINS '${q}' RETURN n.id AS id`,
-    );
-    seedIds = new Set((seedRows as Record<string, string>[]).map((r) => r.id));
+    // --- Hybrid search: BM25 + optional vector, fused with RRF ---
+    const rankedLists: { id: string; score: number }[][] = [];
+
+    // BM25 text search
+    const bm25Results = bm25Index.search(search, 50);
+    if (bm25Results.length > 0) {
+      rankedLists.push(bm25Results);
+    }
+
+    // Vector search (if embedding provided and vector index populated)
+    if (queryEmbedding && vectorIndex && vectorIndex.size > 0) {
+      const vecResults = vectorIndex.search(queryEmbedding, 50);
+      if (vecResults.length > 0) {
+        rankedLists.push(vecResults);
+      }
+    }
+
+    if (rankedLists.length > 0) {
+      // Fuse results via RRF
+      const fused = rrfFuse(rankedLists, 50);
+      seedIds = new Set(fused.map((r) => r.id));
+    } else {
+      // Fallback to old substring search if no BM25/vector results
+      const q = esc(search.toLowerCase());
+      const seedRows = await query(
+        `MATCH (n:Node) WHERE lower(n.name) CONTAINS '${q}' RETURN n.id AS id`,
+      );
+      seedIds = new Set(
+        (seedRows as Record<string, string>[]).map((r) => r.id),
+      );
+    }
   }
 
   if (seedIds.size === 0) {
     return { nodes: [], links: [] };
   }
 
-  // BFS: expand hops
+  // BFS: expand hops (capped to prevent explosion on hub nodes)
   const visitedNodes = new Set(seedIds);
   let frontier = new Set(seedIds);
 
@@ -351,6 +368,7 @@ async function searchGraph(
     const nextFrontier = new Set<string>();
 
     for (const nodeId of frontier) {
+      if (visitedNodes.size >= MAX_VIS_NODES) break;
       const neighbors = await query(
         `MATCH (a:Node {id: '${esc(nodeId)}'})-[r:RELATES]-(b:Node) RETURN b.id AS id`,
       );
@@ -358,11 +376,18 @@ async function searchGraph(
         if (!visitedNodes.has(row.id)) {
           visitedNodes.add(row.id);
           nextFrontier.add(row.id);
+          if (visitedNodes.size >= MAX_VIS_NODES) break;
         }
       }
     }
 
     frontier = nextFrontier;
+    if (visitedNodes.size >= MAX_VIS_NODES) {
+      console.warn(
+        `[KuzuWorker] searchGraph: BFS capped at ${MAX_VIS_NODES} nodes (hop ${d + 1}/${hops})`,
+      );
+      break;
+    }
   }
 
   // Fetch full node data for visited nodes
@@ -382,12 +407,13 @@ async function searchGraph(
   // Fetch relationships between visited nodes
   const relRows = await query(
     `MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE a.id IN [${nodeList}] AND b.id IN [${nodeList}] ` +
-      `RETURN a.id AS source, b.id AS target, r.type AS type`,
+      `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,
   );
   const links: GraphLink[] = (relRows as Record<string, string>[]).map((r) => ({
     source: r.source,
     target: r.target,
     label: r.type,
+    properties: parseProps(r.properties),
   }));
 
   return { nodes, links };
@@ -424,6 +450,7 @@ async function handleClearGraph(id: number): Promise<KuzuResponse> {
 
   // Reset indexes and caches
   vectorIndex = null;
+  bm25Index = new BM25Index();
   nodePropsCache.clear();
 
   return { kind: 'clearGraph', id };
@@ -693,6 +720,11 @@ self.onmessage = (e: MessageEvent<KuzuRequest>) => {
             break;
           case 'getNode':
             response = await handleGetNode(msg.id, msg.nodeId);
+            break;
+          case 'setLimits':
+            MAX_VIS_NODES = msg.maxNodes;
+            MAX_VIS_EDGES = msg.maxEdges;
+            response = { kind: 'setLimits', id: msg.id };
             break;
           case 'traverse':
             response = await handleTraverse(

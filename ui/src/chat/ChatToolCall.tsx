@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ToolCallPart } from './types';
 import {
   parseSearchResult,
@@ -6,14 +8,25 @@ import {
   parseGetNodeResult,
   parseTraverseResult,
 } from './results/parsers';
+import { markdownComponents } from './markdownComponents';
 import NodeListResult from './results/NodeListResult';
 import GetNodeResultView from './results/GetNodeResult';
 import TraverseResultView from './results/TraverseResult';
+import ReviewResult, {
+  parseReviewResult,
+  stripReviewBlock,
+  type ReviewData,
+} from './results/ReviewResult';
+import SuggestCommentResult, {
+  parseSuggestComment,
+} from './results/SuggestCommentResult';
 import './results/results.css';
 
 interface Props {
   part: ToolCallPart;
   onNodeSelect?: (nodeId: string) => void;
+  onSubmitReview?: (data: ReviewData) => Promise<void>;
+  onPostComment?: (number: number, body: string) => Promise<void>;
 }
 
 /** User-friendly display names */
@@ -25,10 +38,17 @@ const TOOL_NAMES: Record<string, string> = {
   load_source: 'Load Source',
   code_explorer: 'Code Explorer',
   dependency_analyzer: 'Dependency Analyzer',
+  code_reviewer: 'Code Reviewer',
+  suggest_comment: 'Suggest Comment',
+  comment_on_pr: 'Comment on PR',
 };
 
 /** Tools that are actually sub-agents — rendered with distinct styling */
-const AGENT_TOOLS = new Set(['code_explorer', 'dependency_analyzer']);
+const AGENT_TOOLS = new Set([
+  'code_explorer',
+  'dependency_analyzer',
+  'code_reviewer',
+]);
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -61,13 +81,38 @@ function RawResult({ result }: { result: string }) {
   return <pre className="tool-section-content">{display}</pre>;
 }
 
-export default function ChatToolCall({ part, onNodeSelect }: Props) {
+/** For agent tools, pull out the top-level "query" arg for inline display */
+function extractQuery(argsJson: string): string | null {
+  try {
+    const parsed = JSON.parse(argsJson);
+    if (typeof parsed.query === 'string') return parsed.query;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Keep only the active step + up to N most-recent completed steps */
+function trimSteps(steps: string[], isActive: boolean): string[] {
+  const MAX_OLD = 3;
+  if (steps.length <= MAX_OLD + (isActive ? 1 : 0)) return steps;
+  // Active step is always the last element
+  return isActive ? steps.slice(-(MAX_OLD + 1)) : steps.slice(-MAX_OLD);
+}
+
+export default function ChatToolCall({
+  part,
+  onNodeSelect,
+  onSubmitReview,
+  onPostComment,
+}: Props) {
   const displayName = TOOL_NAMES[part.name] ?? part.name;
   const isAgent = AGENT_TOOLS.has(part.name);
   const duration = part.endTime
     ? formatDuration(part.endTime - part.startTime)
     : null;
   const prettyArgs = part.args ? tryPrettyJson(part.args) : '';
+  const agentQuery = isAgent ? extractQuery(part.args) : null;
 
   // Attempt structured parsing per tool type
   const customResult = useMemo(() => {
@@ -96,6 +141,13 @@ export default function ChatToolCall({ part, onNodeSelect }: Props) {
         const entries = parseTraverseResult(part.result);
         return entries ? (
           <TraverseResultView entries={entries} onNodeSelect={onNodeSelect} />
+        ) : null;
+      }
+      case 'suggest_comment':
+      case 'comment_on_pr': {
+        const comment = parseSuggestComment(part.result);
+        return comment ? (
+          <SuggestCommentResult comment={comment} onPost={onPostComment} />
         ) : null;
       }
       default:
@@ -138,7 +190,7 @@ export default function ChatToolCall({ part, onNodeSelect }: Props) {
   return (
     <details
       className={`chat-tool-call${isAgent ? ' agent-call' : ''}`}
-      open={part.status === 'active' || !!customResult}
+      open={isAgent || part.status === 'active' || !!customResult}
     >
       <summary className="tool-call-summary">
         {icon}
@@ -189,47 +241,110 @@ export default function ChatToolCall({ part, onNodeSelect }: Props) {
         {duration && <span className="tool-duration">{duration}</span>}
       </summary>
       <div className="tool-call-details">
-        {/* Agent progress steps — shown while agent is active */}
-        {isAgent && part.progressSteps && part.progressSteps.length > 0 && (
-          <div className="agent-progress">
-            {part.progressSteps.map((step, i) => {
-              const isLast = i === part.progressSteps!.length - 1;
-              const isActive = isLast && part.status === 'active';
-              return (
-                <div
-                  key={i}
-                  className={`agent-progress-step${isActive ? ' current' : ''}`}
-                >
-                  {isActive ? (
-                    <span className="agent-step-spinner" />
-                  ) : (
-                    <svg
-                      className="agent-step-check"
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  )}
-                  <span className="agent-step-label">{step}</span>
-                </div>
-              );
-            })}
-          </div>
+        {/* Agent: show query inline */}
+        {isAgent && agentQuery && (
+          <div className="agent-query">{agentQuery}</div>
         )}
-        {prettyArgs && (
+        {/* Agent progress steps — active + up to 3 recent */}
+        {isAgent &&
+          part.progressSteps &&
+          part.progressSteps.length > 0 &&
+          (() => {
+            const visible = trimSteps(
+              part.progressSteps,
+              part.status === 'active',
+            );
+            const hidden = part.progressSteps.length - visible.length;
+            return (
+              <div className="agent-progress">
+                {hidden > 0 && (
+                  <div className="agent-progress-step muted">
+                    <span className="agent-step-label">
+                      +{hidden} earlier step{hidden > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                )}
+                {visible.map((step, i) => {
+                  const isLast = i === visible.length - 1;
+                  const isCurrent = isLast && part.status === 'active';
+                  return (
+                    <div
+                      key={i}
+                      className={`agent-progress-step${isCurrent ? ' current' : ''}`}
+                    >
+                      {isCurrent ? (
+                        <span className="agent-step-spinner" />
+                      ) : (
+                        <svg
+                          className="agent-step-check"
+                          width="10"
+                          height="10"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                      <span className="agent-step-label">{step}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        {/* Agent: show result as rendered markdown when complete */}
+        {isAgent &&
+          part.status !== 'active' &&
+          part.result &&
+          (() => {
+            // For code_reviewer: parse structured review and render with submit button
+            if (part.name === 'code_reviewer') {
+              const reviewData = parseReviewResult(part.result);
+              const strippedText = reviewData
+                ? stripReviewBlock(part.result)
+                : part.result;
+              return (
+                <>
+                  <div className="agent-result markdown-body">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownComponents}
+                    >
+                      {strippedText}
+                    </ReactMarkdown>
+                  </div>
+                  {reviewData && (
+                    <ReviewResult
+                      review={reviewData}
+                      onSubmit={onSubmitReview}
+                    />
+                  )}
+                </>
+              );
+            }
+            return (
+              <div className="agent-result markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {part.result}
+                </ReactMarkdown>
+              </div>
+            );
+          })()}
+        {/* Non-agent tools: keep existing collapsible sections */}
+        {!isAgent && prettyArgs && (
           <details className="tool-section">
             <summary className="tool-section-label">Arguments</summary>
             <pre className="tool-section-content">{prettyArgs}</pre>
           </details>
         )}
-        {part.result && (
+        {!isAgent && part.result && (
           <details className="tool-section" open={!!customResult}>
             <summary className="tool-section-label">
               Result

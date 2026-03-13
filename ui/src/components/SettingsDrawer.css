@@ -96,6 +96,37 @@
   font-style: italic;
 }
 
+/* Limit inputs */
+.limit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.limit-label {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.limit-input {
+  width: 100px;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  border-radius: var(--radius);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
 .settings-section + .settings-section {
   margin-top: 28px;
 }

@@ -6,9 +6,10 @@
  * contents with bounded concurrency for memory safety.
  */
 
-import { MAX_FILE_SIZE } from './constants';
+import { BINARY_EXTENSIONS, MAX_FILE_SIZE } from './constants';
 import {
   BLOB_CONCURRENCY,
+  isBinaryData,
   isExcludedDir,
   runWithConcurrency,
   type FetchProgress,
@@ -71,6 +72,11 @@ export async function readDirectoryFiles(
     const parts = relPath.split('/');
     if (isExcludedDir(parts)) continue;
 
+    // Skip known binary extensions
+    const dotIdx = relPath.lastIndexOf('.');
+    const ext = dotIdx >= 0 ? relPath.slice(dotIdx).toLowerCase() : '';
+    if (BINARY_EXTENSIONS.has(ext)) continue;
+
     eligible.push({ file, relPath });
   }
 
@@ -85,6 +91,11 @@ export async function readDirectoryFiles(
     BLOB_CONCURRENCY,
     async ({ file, relPath }) => {
       if (signal?.aborted) return;
+
+      // Check a small slice for null bytes to catch binary files
+      // with unrecognized extensions
+      const probe = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
+      if (isBinaryData(probe)) return;
 
       const content = await file.text();
       result.push({

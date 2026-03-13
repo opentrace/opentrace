@@ -22,10 +22,11 @@ export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
 
   return (
     <div
-      className="job-minimized-bar"
+      className={`job-minimized-bar${isDone ? ' job-minimized-bar--done' : ''}`}
       onClick={onClick}
       role="button"
       tabIndex={0}
+      {...(isDone ? { 'data-testid': 'indexing-complete' } : {})}
     >
       {isDone ? (
         <span className="job-minimized-bar__check">
@@ -43,11 +44,9 @@ export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
         <div className="job-minimized-bar__spinner" />
       )}
       <span className="job-minimized-bar__phase">{label}</span>
-      {hasCount && (
-        <span className="job-minimized-bar__count">
-          {state.detail.current}/{state.detail.total}
-        </span>
-      )}
+      <span className="job-minimized-bar__count">
+        {hasCount ? `${state.detail.current}/${state.detail.total}` : ''}
+      </span>
       <span className="job-minimized-bar__nodes">
         {state.nodesCreated} nodes
       </span>

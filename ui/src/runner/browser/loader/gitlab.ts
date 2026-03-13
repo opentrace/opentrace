@@ -6,7 +6,11 @@
  */
 
 import { unzipSync } from 'fflate';
-import { extractFilesFromZip, type UrlLoaderOptions } from './shared';
+import {
+  extractFilesFromZip,
+  fetchResolvedArchive,
+  type UrlLoaderOptions,
+} from './shared';
 import type {
   RepoLoader,
   LoaderInput,
@@ -69,31 +73,27 @@ async function fetchGitLabViaZipball(
 ): Promise<RepoTree> {
   const { token, ref = 'HEAD', signal, onProgress } = options;
 
-  onProgress?.({ phase: 'tree', current: 0, total: 1 });
-
   const params = new URLSearchParams({
     provider: 'gitlab',
     owner: parsed.namespace,
     repo: parsed.project,
     ref,
     host: parsed.host,
+    mode: 'resolve',
   });
   const base = import.meta.env.VITE_ARCHIVE_URL || '/fn/archive';
-  const zipUrl = `${base}?${params}`;
+  const resolveUrl = `${base}?${params}`;
   const fetchHeaders: Record<string, string> = {};
   if (token) {
     fetchHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(zipUrl, { headers: fetchHeaders, signal });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitLab archive fetch error ${res.status}: ${text}`);
-  }
-
-  onProgress?.({ phase: 'tree', current: 1, total: 1 });
-
-  const zipBuffer = new Uint8Array(await res.arrayBuffer());
+  const zipBuffer = await fetchResolvedArchive(
+    resolveUrl,
+    fetchHeaders,
+    signal,
+    onProgress,
+  );
   const entries = unzipSync(zipBuffer);
 
   const files = extractFilesFromZip(entries, onProgress);

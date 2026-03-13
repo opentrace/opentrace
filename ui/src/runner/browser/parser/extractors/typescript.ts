@@ -16,6 +16,31 @@ const FUNCTION_TYPES = new Set([
 ]);
 const METHOD_TYPES = new Set(['method_definition', 'public_field_definition']);
 
+/** Extract a JSDoc/TSDoc comment from the preceding sibling of an AST node.
+ *  Checks both the node itself and its parent (for `export_statement` wrapping). */
+function extractJSDoc(node: SyntaxNode): string | undefined {
+  let prev = node.previousNamedSibling;
+  // If no JSDoc on the node itself, check the parent (handles `export function ...`)
+  if (
+    (!prev || prev.type !== 'comment') &&
+    node.parent?.type === 'export_statement'
+  ) {
+    prev = node.parent.previousNamedSibling;
+  }
+  if (!prev || prev.type !== 'comment') return undefined;
+  const text = prev.text;
+  if (!text.startsWith('/**')) return undefined;
+  // Strip /** ... */ delimiters and leading ` * ` prefixes
+  const cleaned = text
+    .replace(/^\/\*\*\s*/, '')
+    .replace(/\s*\*\/$/, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\*\s?/, ''))
+    .join('\n')
+    .trim();
+  return cleaned || undefined;
+}
+
 export function extractTypeScript(
   rootNode: SyntaxNode,
   language = 'typescript',
@@ -48,6 +73,7 @@ function extractClass(node: SyntaxNode): CodeSymbol | null {
   if (!nameNode) return null;
   const children = walkClassBody(node);
   const { superclasses, interfaces } = extractClassHeritage(node);
+  const docs = extractJSDoc(node);
   return {
     name: nameNode.text,
     kind: 'class',
@@ -61,6 +87,7 @@ function extractClass(node: SyntaxNode): CodeSymbol | null {
     paramTypes: null,
     superclasses: superclasses.length > 0 ? superclasses : undefined,
     interfaces: interfaces.length > 0 ? interfaces : undefined,
+    docs,
   };
 }
 
@@ -120,6 +147,7 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
   const signature = paramsNode ? paramsNode.text : null;
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
+  const docs = extractJSDoc(node);
   return {
     name: nameNode.text,
     kind: 'function',
@@ -131,6 +159,7 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverVar: null,
     receiverType: null,
     paramTypes: null,
+    docs,
   };
 }
 
@@ -141,6 +170,7 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
   const signature = paramsNode ? paramsNode.text : null;
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
+  const docs = extractJSDoc(node);
   return {
     name: nameNode.text,
     kind: 'function',
@@ -152,6 +182,7 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
     receiverVar: null,
     receiverType: null,
     paramTypes: null,
+    docs,
   };
 }
 
@@ -187,6 +218,7 @@ function extractArrowFunction(
   const signature = paramsNode ? paramsNode.text : null;
   const bodyNode = valueNode.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
+  const docs = extractJSDoc(declNode);
   return {
     name,
     kind: 'function',
@@ -198,6 +230,7 @@ function extractArrowFunction(
     receiverVar: null,
     receiverType: null,
     paramTypes: null,
+    docs,
   };
 }
 
@@ -208,6 +241,7 @@ function extractClassExpression(
 ): CodeSymbol {
   const children = walkClassBody(valueNode);
   const { superclasses, interfaces } = extractClassHeritage(valueNode);
+  const docs = extractJSDoc(declNode);
   return {
     name,
     kind: 'class',
@@ -221,6 +255,7 @@ function extractClassExpression(
     paramTypes: null,
     superclasses: superclasses.length > 0 ? superclasses : undefined,
     interfaces: interfaces.length > 0 ? interfaces : undefined,
+    docs,
   };
 }
 

@@ -121,5 +121,75 @@ export const IMAGE_MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
+/**
+ * Known binary file extensions that should never be decoded as text.
+ * Used as a fast-path skip before content-based heuristics.
+ */
+export const BINARY_EXTENSIONS = new Set([
+  // Archives & packages
+  '.jar',
+  '.war',
+  '.ear',
+  '.zip',
+  '.gz',
+  '.tar',
+  '.bz2',
+  '.xz',
+  '.7z',
+  '.rar',
+  '.zst',
+  '.tgz',
+  // Compiled / executables
+  '.exe',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.bin',
+  '.out',
+  '.elf',
+  '.class',
+  '.pyc',
+  '.pyo',
+  '.o',
+  '.obj',
+  '.a',
+  '.lib',
+  // WASM
+  '.wasm',
+  // Fonts
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.otf',
+  '.eot',
+  // Media (non-image, handled separately)
+  '.mp3',
+  '.mp4',
+  '.wav',
+  '.ogg',
+  '.flac',
+  '.avi',
+  '.mov',
+  '.mkv',
+  '.webm',
+  // Data / DB
+  '.sqlite',
+  '.db',
+  '.dat',
+  '.pkl',
+  '.parquet',
+  '.arrow',
+  // Documents
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  // Misc
+  '.lock',
+]);
+
 /** Max file size (bytes) to attempt parsing. Files larger are skipped. */
 export const MAX_FILE_SIZE = 1_000_000;

@@ -1,16 +1,25 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import type { NodeObject } from 'react-force-graph-2d';
 import type { GraphNode } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import { IMAGE_MIME_TYPES } from '../runner/browser/loader/constants';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { Highlight, themes } from 'prism-react-renderer';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { markdownComponents } from '../chat/markdownComponents';
 import './NodeDetailsPanel.css';
 
 type Node = NodeObject<GraphNode>;
 
 /** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'Module']);
+const SOURCE_TYPES = new Set([
+  'File',
+  'Function',
+  'Class',
+  'Module',
+  'PullRequest',
+]);
 
 /** Map file extensions → Prism language identifiers. */
 const EXT_TO_LANG: Record<string, string> = {
@@ -171,12 +180,25 @@ interface NodeDetailsPanelProps {
   sourceError: string | null;
 }
 
+type PreviewTab = 'rendered' | 'raw';
+
+/** Decode SVG content to a raw XML string regardless of encoding. */
+function decodeSvgContent(source: NodeSourceResponse): string {
+  if (!source.binary) return source.content;
+  try {
+    return atob(source.content);
+  } catch {
+    return source.content;
+  }
+}
+
 export default function NodeDetailsPanel({
   node,
   nodeSource,
   sourceLoading,
   sourceError,
 }: NodeDetailsPanelProps) {
+  const [previewTab, setPreviewTab] = useState<PreviewTab>('rendered');
   const color = getNodeColor(node.type);
   const isLight = document.documentElement.dataset.mode === 'light';
   const prismTheme = isLight ? themes.oneLight : themes.oneDark;
@@ -270,12 +292,12 @@ export default function NodeDetailsPanel({
         </div>
       )}
 
-      {/* ── Source code viewer ── */}
+      {/* ── Source / body viewer ── */}
       {SOURCE_TYPES.has(node.type) && (
         <div className="source-section">
           <h4>
-            Source
-            {nodeSource && (
+            {node.type === 'PullRequest' ? 'Description' : 'Source'}
+            {nodeSource && node.type !== 'PullRequest' && (
               <span className="source-path">{nodeSource.path}</span>
             )}
           </h4>
@@ -283,12 +305,165 @@ export default function NodeDetailsPanel({
             <div className="source-loading">Loading source...</div>
           )}
           {sourceError && <div className="source-error">{sourceError}</div>}
+          {nodeSource && node.type === 'PullRequest' && (
+            <div className="pr-body-content message-content">
+              <div className="markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {nodeSource.content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
           {nodeSource &&
+            node.type !== 'PullRequest' &&
             (() => {
               const dotIdx = nodeSource.path.lastIndexOf('.');
               const ext =
                 dotIdx >= 0 ? nodeSource.path.slice(dotIdx).toLowerCase() : '';
               const mime = IMAGE_MIME_TYPES[ext];
+              const isSvg = ext === '.svg';
+
+              // SVG files: tabbed Rendered / Raw view
+              if (isSvg) {
+                const rawXml = decodeSvgContent(nodeSource);
+                const imgSrc = nodeSource.binary
+                  ? `data:image/svg+xml;base64,${nodeSource.content}`
+                  : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(rawXml)}`;
+                return (
+                  <div className="preview-viewer">
+                    <div className="preview-tab-bar">
+                      <button
+                        className={`preview-tab ${previewTab === 'rendered' ? 'active' : ''}`}
+                        onClick={() => setPreviewTab('rendered')}
+                      >
+                        Rendered
+                      </button>
+                      <button
+                        className={`preview-tab ${previewTab === 'raw' ? 'active' : ''}`}
+                        onClick={() => setPreviewTab('raw')}
+                      >
+                        Raw
+                      </button>
+                    </div>
+                    {previewTab === 'rendered' ? (
+                      <div className="source-image-preview">
+                        <img src={imgSrc} alt={nodeSource.path} />
+                      </div>
+                    ) : (
+                      <div className="source-viewer">
+                        <Highlight
+                          theme={prismTheme}
+                          code={rawXml}
+                          language="markup"
+                        >
+                          {({ tokens, getLineProps, getTokenProps, style }) => (
+                            <pre className="source-code" style={style}>
+                              <code>
+                                {tokens.map((line, i) => {
+                                  const lineProps = getLineProps({ line });
+                                  return (
+                                    <div
+                                      {...lineProps}
+                                      key={i}
+                                      className="source-line"
+                                    >
+                                      <span className="line-number">
+                                        {i + 1}
+                                      </span>
+                                      <span className="line-content">
+                                        {line.map((token, j) => (
+                                          <span
+                                            key={j}
+                                            {...getTokenProps({ token })}
+                                          />
+                                        ))}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </code>
+                            </pre>
+                          )}
+                        </Highlight>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // Markdown files: tabbed Rendered / Raw view
+              if (ext === '.md' || ext === '.mdx') {
+                return (
+                  <div className="preview-viewer">
+                    <div className="preview-tab-bar">
+                      <button
+                        className={`preview-tab ${previewTab === 'rendered' ? 'active' : ''}`}
+                        onClick={() => setPreviewTab('rendered')}
+                      >
+                        Rendered
+                      </button>
+                      <button
+                        className={`preview-tab ${previewTab === 'raw' ? 'active' : ''}`}
+                        onClick={() => setPreviewTab('raw')}
+                      >
+                        Raw
+                      </button>
+                    </div>
+                    {previewTab === 'rendered' ? (
+                      <div className="pr-body-content message-content">
+                        <div className="markdown-body">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={markdownComponents}
+                          >
+                            {nodeSource.content}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="source-viewer">
+                        <Highlight
+                          theme={prismTheme}
+                          code={nodeSource.content}
+                          language="markdown"
+                        >
+                          {({ tokens, getLineProps, getTokenProps, style }) => (
+                            <pre className="source-code" style={style}>
+                              <code>
+                                {tokens.map((line, i) => {
+                                  const lineProps = getLineProps({ line });
+                                  return (
+                                    <div
+                                      {...lineProps}
+                                      key={i}
+                                      className="source-line"
+                                    >
+                                      <span className="line-number">
+                                        {i + 1}
+                                      </span>
+                                      <span className="line-content">
+                                        {line.map((token, j) => (
+                                          <span
+                                            key={j}
+                                            {...getTokenProps({ token })}
+                                          />
+                                        ))}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </code>
+                            </pre>
+                          )}
+                        </Highlight>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
 
               if (nodeSource.binary && mime) {
                 return (
@@ -297,6 +472,15 @@ export default function NodeDetailsPanel({
                       src={`data:${mime};base64,${nodeSource.content}`}
                       alt={nodeSource.path}
                     />
+                  </div>
+                );
+              }
+
+              // Non-image binary file — show a placeholder instead of garbled bytes
+              if (nodeSource.binary || nodeSource.content.includes('\0')) {
+                return (
+                  <div className="source-binary-notice">
+                    Binary file &mdash; cannot display preview
                   </div>
                 );
               }

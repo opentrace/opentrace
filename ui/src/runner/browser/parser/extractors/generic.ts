@@ -112,6 +112,46 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   },
 };
 
+/** Extract documentation comment from the preceding sibling(s) of an AST node.
+ *  Handles both block comments (Javadoc `/** ... *​/`) and consecutive line comments (`// ...` or `/// ...`). */
+function extractPrecedingDoc(node: SyntaxNode): string | undefined {
+  const prev = node.previousNamedSibling;
+  if (!prev) return undefined;
+
+  // Block comment (Java/C/C++/Kotlin Javadoc): single `comment` or `block_comment` node starting with `/**`
+  if (
+    (prev.type === 'comment' || prev.type === 'block_comment') &&
+    prev.text.startsWith('/**')
+  ) {
+    const cleaned = prev.text
+      .replace(/^\/\*\*\s*/, '')
+      .replace(/\s*\*\/$/, '')
+      .split('\n')
+      .map((line) => line.replace(/^\s*\*\s?/, ''))
+      .join('\n')
+      .trim();
+    return cleaned || undefined;
+  }
+
+  // Consecutive line comments (C#, Rust, Swift, etc.): `//` or `///`
+  if (prev.type === 'comment' || prev.type === 'line_comment') {
+    const comments: string[] = [];
+    let cur: SyntaxNode | null = prev;
+    while (cur && (cur.type === 'comment' || cur.type === 'line_comment')) {
+      comments.push(cur.text);
+      cur = cur.previousNamedSibling;
+    }
+    const cleaned = comments
+      .reverse()
+      .map((line) => line.replace(/^\/\/\/?\s?/, ''))
+      .join('\n')
+      .trim();
+    return cleaned || undefined;
+  }
+
+  return undefined;
+}
+
 export function extractGeneric(
   rootNode: SyntaxNode,
   language: string,
@@ -149,13 +189,16 @@ function extractNode(
   node: SyntaxNode,
   config: LanguageConfig,
 ): CodeSymbol | null {
+  let sym: CodeSymbol | null = null;
   if (config.classTypes.has(node.type)) {
-    return extractClass(node, config);
+    sym = extractClass(node, config);
+  } else if (config.functionTypes.has(node.type)) {
+    sym = extractFunction(node);
   }
-  if (config.functionTypes.has(node.type)) {
-    return extractFunction(node);
+  if (sym) {
+    sym.docs = extractPrecedingDoc(node);
   }
-  return null;
+  return sym;
 }
 
 function extractClass(

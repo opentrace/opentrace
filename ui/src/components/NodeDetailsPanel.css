@@ -268,3 +268,50 @@
   height: auto;
   border-radius: calc(var(--radius) - 2px);
 }
+
+/* Tabbed preview viewer (SVG, Markdown) — Rendered / Raw toggle */
+.preview-viewer {
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.preview-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  margin-bottom: 0;
+}
+
+.preview-tab {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.preview-tab:hover {
+  color: var(--foreground);
+}
+
+.preview-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Non-image binary file notice */
+.source-binary-notice {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-style: italic;
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  border-radius: var(--radius);
+  border: 1px dashed color-mix(in oklch, var(--border) 60%, transparent);
+}

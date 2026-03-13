@@ -306,6 +306,14 @@ header h1 {
   opacity: 0.6;
 }
 
+.filter-item.partial {
+  opacity: 0.8;
+}
+
+.filter-item.partial .filter-dot {
+  opacity: 0.45;
+}
+
 .filter-item input[type='checkbox'] {
   display: none;
 }
@@ -347,7 +355,90 @@ header h1 {
   font-style: italic;
 }
 
+/* Sub-type filter styles */
+
+.filter-type-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.filter-expand-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  transition:
+    color 0.15s,
+    background 0.1s;
+}
+
+.filter-expand-btn:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.filter-expand-icon {
+  transition: transform 0.15s ease;
+}
+
+.filter-expand-icon--open {
+  transform: rotate(90deg);
+}
+
+.filter-expand-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.filter-subtypes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 22px;
+}
+
+.filter-subitem {
+  font-size: 0.72rem !important;
+}
+
+.filter-dot--small {
+  width: 6px !important;
+  height: 6px !important;
+}
+
 /* Empty state overlay */
+.empty-state-header {
+  position: fixed;
+  top: 16px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 1100;
+}
+
+.empty-state-header-logo {
+  height: 32px;
+  width: auto;
+  opacity: 0.8;
+}
+
+.empty-state-header-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.02em;
+  opacity: 0.8;
+}
+
 .empty-state-overlay {
   position: fixed;
   inset: 0;
@@ -728,7 +819,7 @@ header h1 {
 }
 
 .chat-input-area {
-  padding: 16px 20px;
+  padding: 16px 20px 24px;
   border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
   display: flex;
   gap: 8px;
@@ -967,4 +1058,15 @@ header h1 {
   opacity: 0.5;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
+}
+
+.copyright-footer {
+  position: fixed;
+  bottom: 8px;
+  left: 12px;
+  z-index: 1001;
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  pointer-events: none;
 }

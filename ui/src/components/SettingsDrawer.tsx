@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
@@ -7,14 +7,28 @@ import type { SummarizationStrategyType } from '../runner/browser/enricher/summa
 import { useStore } from '../store';
 import './SettingsDrawer.css';
 
+const DEFAULT_MAX_NODES = 2000;
+const DEFAULT_MAX_EDGES = 5000;
+const LS_KEY_NODES = 'ot:maxVisNodes';
+const LS_KEY_EDGES = 'ot:maxVisEdges';
+
+function loadLimit(key: string, fallback: number): number {
+  const v = localStorage.getItem(key);
+  if (v == null) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 interface SettingsDrawerProps {
   onClose: () => void;
   onGraphCleared: () => void;
+  onLimitsChanged?: () => void;
 }
 
 export default function SettingsDrawer({
   onClose,
   onGraphCleared,
+  onLimitsChanged,
 }: SettingsDrawerProps) {
   const { store } = useStore();
   const [clearing, setClearing] = useState(false);
@@ -22,6 +36,12 @@ export default function SettingsDrawer({
   const [error, setError] = useState<string | null>(null);
   const [summaryStrategy, setSummaryStrategy] =
     useState<SummarizationStrategyType>(loadSummarizerStrategy);
+  const [maxNodes, setMaxNodes] = useState(() =>
+    loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES),
+  );
+  const [maxEdges, setMaxEdges] = useState(() =>
+    loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES),
+  );
 
   const handleClear = async () => {
     setClearing(true);
@@ -40,6 +60,19 @@ export default function SettingsDrawer({
   const handleStrategyChange = (strategy: SummarizationStrategyType) => {
     setSummaryStrategy(strategy);
     saveSummarizerStrategy(strategy);
+  };
+
+  const limitsTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const debouncedLimitsChanged = useCallback(() => {
+    clearTimeout(limitsTimer.current);
+    limitsTimer.current = setTimeout(() => onLimitsChanged?.(), 400);
+  }, [onLimitsChanged]);
+
+  const applyLimits = async (nodes: number, edges: number) => {
+    localStorage.setItem(LS_KEY_NODES, String(nodes));
+    localStorage.setItem(LS_KEY_EDGES, String(edges));
+    await store.setLimits?.(nodes, edges);
+    debouncedLimitsChanged();
   };
 
   return (
@@ -92,14 +125,76 @@ export default function SettingsDrawer({
           </div>
         </section>
 
+        <section className="settings-section">
+          <h4>Graph Limits</h4>
+          <div className="setting-card">
+            <div className="setting-info">
+              <strong>Visualization limits</strong>
+              <p>
+                Maximum nodes and edges rendered in the graph view. Higher
+                values let you visualize larger graphs but may slow down the
+                force layout.
+              </p>
+            </div>
+            <div className="limit-row">
+              <label className="limit-label" htmlFor="max-nodes">
+                Max nodes
+              </label>
+              <input
+                id="max-nodes"
+                type="number"
+                className="limit-input"
+                min={100}
+                max={50000}
+                step={500}
+                value={maxNodes}
+                onChange={(e) => {
+                  const v = Math.max(
+                    100,
+                    Number(e.target.value) || DEFAULT_MAX_NODES,
+                  );
+                  setMaxNodes(v);
+                  applyLimits(v, maxEdges);
+                }}
+              />
+            </div>
+            <div className="limit-row">
+              <label className="limit-label" htmlFor="max-edges">
+                Max edges
+              </label>
+              <input
+                id="max-edges"
+                type="number"
+                className="limit-input"
+                min={100}
+                max={100000}
+                step={1000}
+                value={maxEdges}
+                onChange={(e) => {
+                  const v = Math.max(
+                    100,
+                    Number(e.target.value) || DEFAULT_MAX_EDGES,
+                  );
+                  setMaxEdges(v);
+                  applyLimits(maxNodes, v);
+                }}
+              />
+            </div>
+            <p className="setting-hint">
+              Defaults: {DEFAULT_MAX_NODES.toLocaleString()} nodes /{' '}
+              {DEFAULT_MAX_EDGES.toLocaleString()} edges.
+            </p>
+          </div>
+        </section>
+
         <section className="settings-section danger-zone">
           <h4>Danger Zone</h4>
           <div className="danger-card">
             <div className="danger-info">
               <strong>Clear graph database</strong>
               <p>
-                Remove all nodes and relationships from KuzuDB. This action
-                cannot be undone.
+                Remove all nodes and edges from KuzuDB. This action cannot be
+                undone.
               </p>
             </div>
             {!confirmOpen ? (
