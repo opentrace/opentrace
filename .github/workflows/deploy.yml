@@ -1,0 +1,18 @@
+name: Trigger Deployment
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger-deploy:
+    name: Trigger Deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployment
+        run: |
+          gh api repos/opentrace/opentrace-deployment/dispatches \
+            -f event_type=submodule-release \
+            -f 'client_payload[tag]=${{ github.ref_name }}'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
