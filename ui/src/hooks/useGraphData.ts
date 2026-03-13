@@ -8,6 +8,8 @@ export interface GraphDataState {
   error: string | null;
   stats: GraphStats | null;
   lastSearchQuery: string;
+  /** Monotonically increasing counter — bumps after each successful loadGraph */
+  graphVersion: number;
   loadGraph: (query?: string, hops?: number) => Promise<void>;
   setError: (error: string | null) => void;
 }
@@ -22,6 +24,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [lastSearchQuery, setLastApiQuery] = useState('');
+  const [graphVersion, setGraphVersion] = useState(0);
 
   // Use a ref so loadGraph's identity doesn't depend on the callback
   const onGraphLoadedRef = useRef(onGraphLoaded);
@@ -37,6 +40,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
           setGraphData(data);
           setLoading(false);
           setLastApiQuery(query ?? '');
+          setGraphVersion((v) => v + 1);
           onGraphLoadedRef.current?.();
           store
             .fetchStats()
@@ -61,6 +65,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     error,
     stats,
     lastSearchQuery,
+    graphVersion,
     loadGraph,
     setError,
   };

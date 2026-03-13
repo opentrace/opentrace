@@ -148,6 +148,7 @@ const GraphViewer = memo(
         error,
         stats,
         lastSearchQuery,
+        graphVersion,
         loadGraph,
         setError,
       } = useGraphData(onGraphLoaded);
@@ -168,6 +169,7 @@ const GraphViewer = memo(
       const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
       const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
       const [labelNodes, setLabelNodes] = useState(new Set<string>());
+      const [hopMap, setHopMap] = useState(new Map<string, number>());
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(
         new Set<string>(['DEPENDS_ON']),
@@ -460,10 +462,12 @@ const GraphViewer = memo(
 
         // BFS from selected node up to `hops` depth for highlights,
         // but only up to 2 hops for labels
+        const hm = new Map<string, number>();
         if (selectedNode) {
           const labelDepth = Math.min(2, hops);
           nodes.add(selectedNode.id);
           labels.add(selectedNode.id);
+          hm.set(selectedNode.id, 0);
           let frontier = new Set<string>([selectedNode.id]);
           for (let depth = 0; depth < hops && frontier.size > 0; depth++) {
             const nextFrontier = new Set<string>();
@@ -474,6 +478,7 @@ const GraphViewer = memo(
                 links.add(linkKey);
                 if (!nodes.has(neighbor)) {
                   nextFrontier.add(neighbor);
+                  hm.set(neighbor, depth + 1);
                 }
                 nodes.add(neighbor);
                 if (depth < labelDepth) {
@@ -488,6 +493,7 @@ const GraphViewer = memo(
         setHighlightNodes(nodes);
         setHighlightLinks(links);
         setLabelNodes(labels);
+        setHopMap(hm);
       }, [
         searchQuery,
         selectedNode,
@@ -498,6 +504,11 @@ const GraphViewer = memo(
       ]);
 
       // Compute degree (connection count) per node for size scaling
+      const graphNodeIds = useMemo(
+        () => graphData.nodes.map((n) => n.id as string),
+        [graphData.nodes],
+      );
+
       const degreeMap = useMemo(() => {
         const map = new Map<string, number>();
         filteredGraphData.links.forEach((l) => {
@@ -541,6 +552,25 @@ const GraphViewer = memo(
             ctx.shadowBlur = 15;
           }
 
+          // Selection halo
+          if (selectedNode && node.id === selectedNode.id) {
+            const haloRadius = size + 4;
+            ctx.beginPath();
+            ctx.arc(node.x!, node.y!, haloRadius, 0, 2 * Math.PI);
+            ctx.strokeStyle = nodeColor(node);
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.6;
+            ctx.stroke();
+            // Outer glow ring
+            ctx.beginPath();
+            ctx.arc(node.x!, node.y!, haloRadius + 3, 0, 2 * Math.PI);
+            ctx.strokeStyle = nodeColor(node);
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.25;
+            ctx.stroke();
+            ctx.globalAlpha = isHighlighted ? 1 : 0.15;
+          }
+
           // Circle
           ctx.beginPath();
           ctx.arc(node.x!, node.y!, size, 0, 2 * Math.PI);
@@ -566,7 +596,7 @@ const GraphViewer = memo(
           }
           ctx.globalAlpha = 1;
         },
-        [nodeColor, nodeSize, highlightNodes, labelNodes],
+        [nodeColor, nodeSize, highlightNodes, labelNodes, selectedNode],
       );
 
       const nodePointerArea = useCallback(
@@ -855,6 +885,9 @@ const GraphViewer = memo(
               setSelectedNode(null);
               setSelectedLink(null);
             }}
+            graphVersion={graphVersion}
+            graphNodeIds={graphNodeIds}
+            hopMap={hopMap}
           />
           <header>
             <div className="header-logo">
