@@ -4,7 +4,10 @@ import { DEFAULT_SUMMARIZER_CONFIG } from '../types';
 
 describe('createStrategy', () => {
   it('enabled:false returns NoopStrategy', () => {
-    const strategy = createStrategy({ ...DEFAULT_SUMMARIZER_CONFIG, enabled: false });
+    const strategy = createStrategy({
+      ...DEFAULT_SUMMARIZER_CONFIG,
+      enabled: false,
+    });
     expect(strategy.type).toBe('none');
   });
 
@@ -37,7 +40,10 @@ describe('createStrategy', () => {
 
 describe('NoopStrategy', () => {
   it('summarizeBatch returns array of empty strings', async () => {
-    const strategy = createStrategy({ ...DEFAULT_SUMMARIZER_CONFIG, enabled: false });
+    const strategy = createStrategy({
+      ...DEFAULT_SUMMARIZER_CONFIG,
+      enabled: false,
+    });
     await strategy.init();
     const results = await strategy.summarizeBatch([
       { name: 'foo', kind: 'function' },
@@ -47,7 +53,10 @@ describe('NoopStrategy', () => {
   });
 
   it('summarize returns empty string', async () => {
-    const strategy = createStrategy({ ...DEFAULT_SUMMARIZER_CONFIG, strategy: 'none' });
+    const strategy = createStrategy({
+      ...DEFAULT_SUMMARIZER_CONFIG,
+      strategy: 'none',
+    });
     const result = await strategy.summarize({ name: 'test', kind: 'function' });
     expect(result).toBe('');
   });

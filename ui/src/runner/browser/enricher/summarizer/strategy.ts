@@ -179,15 +179,6 @@ class LlmStrategy implements SummarizationStrategy {
           max_tokens: 100,
           stream: false,
         }),
-      fetch(`${this.url}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 100,
-          stream: false,
-        }),
       }).then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();

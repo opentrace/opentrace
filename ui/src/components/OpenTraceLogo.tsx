@@ -158,9 +158,15 @@ export interface OpenTraceLogoProps {
   className?: string;
 }
 
-export function OpenTraceLogo({ size = 80, animated = true, className }: OpenTraceLogoProps) {
+export function OpenTraceLogo({
+  size = 80,
+  animated = true,
+  className,
+}: OpenTraceLogoProps) {
   const [isDark, setIsDark] = useState(
-    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+    () =>
+      typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('dark'),
   );
 
   useEffect(() => {
@@ -193,7 +199,15 @@ export function OpenTraceLogo({ size = 80, animated = true, className }: OpenTra
     : { opacity: 1 as const };
 
   return (
-    <div className={className} style={{ position: 'relative', overflow: 'visible', width: size, height: size }}>
+    <div
+      className={className}
+      style={{
+        position: 'relative',
+        overflow: 'visible',
+        width: size,
+        height: size,
+      }}
+    >
       {/* Ambient glow */}
       <div
         style={{
@@ -205,7 +219,9 @@ export function OpenTraceLogo({ size = 80, animated = true, className }: OpenTra
           width: glowSize,
           height: glowSize,
           background: `radial-gradient(circle, ${t.glowColor} 0%, transparent 65%)`,
-          animation: animated ? 'ot-breathe 6s ease-in-out infinite' : undefined,
+          animation: animated
+            ? 'ot-breathe 6s ease-in-out infinite'
+            : undefined,
           transform: animated ? undefined : 'translate(-50%, -50%)',
           opacity: animated ? undefined : 0.6,
         }}
@@ -215,7 +231,12 @@ export function OpenTraceLogo({ size = 80, animated = true, className }: OpenTra
       <svg
         viewBox="0 0 260 256"
         xmlns="http://www.w3.org/2000/svg"
-        style={{ position: 'relative', width: '100%', height: '100%', overflow: 'visible' }}
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          overflow: 'visible',
+        }}
         aria-hidden="true"
       >
         {/* Orange path — nested SVG preserves its own viewBox/coordinate system */}

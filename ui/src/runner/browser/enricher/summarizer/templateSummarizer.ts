@@ -595,12 +595,12 @@ const KEYWORD_PATTERNS: KeywordPattern[] = [
  */
 export function splitIdentifier(name: string): string[] {
   // Strip common prefixes/suffixes
-  let cleaned = name.replace(/^[_$]+/, '').replace(/[_$]+$/, '');
+  const cleaned = name.replace(/^[_$]+/, '').replace(/[_$]+$/, '');
 
   if (!cleaned) return [name];
 
   // Split on underscores/hyphens first
-  const parts = cleaned.split(/[_\-]+/).filter(Boolean);
+  const parts = cleaned.split(/[_-]+/).filter(Boolean);
 
   const words: string[] = [];
   for (const part of parts) {
@@ -834,12 +834,14 @@ export function summarizeClass(
 // File summarizer
 // ---------------------------------------------------------------------------
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
 export function summarizeFile(
   fileName: string,
   symbolNames?: string[],
   language?: string,
   _source?: string,
 ): string {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
   const lowerFile = fileName.toLowerCase();
 
   // Check known file patterns

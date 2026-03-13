@@ -142,7 +142,9 @@
   background: color-mix(in oklch, var(--muted) 60%, transparent);
   border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
   flex-shrink: 0;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
 }
 
 /* Pill thumb */
@@ -155,7 +157,9 @@
   height: 10px;
   border-radius: 50%;
   background: var(--muted-foreground);
-  transition: transform 0.2s, background 0.2s;
+  transition:
+    transform 0.2s,
+    background 0.2s;
 }
 
 /* Checked state */

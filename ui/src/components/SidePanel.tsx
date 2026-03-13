@@ -82,16 +82,22 @@ export default function SidePanel({
   graphNodeIds,
   hopMap,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'filters' | 'discover' | 'details'>('filters');
+  const [activeTab, setActiveTab] = useState<
+    'filters' | 'discover' | 'details'
+  >('filters');
   const previousTab = useRef<'filters' | 'discover'>('filters');
   const activeTabRef = useRef(activeTab);
-  activeTabRef.current = activeTab;
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  });
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
   const expanded = hasSelection || activeTab === 'discover';
 
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
-    storageKey: expanded ? 'ot_side_panel_expanded_width' : 'ot_side_panel_width',
+    storageKey: expanded
+      ? 'ot_side_panel_expanded_width'
+      : 'ot_side_panel_width',
     defaultWidth: expanded ? 480 : 220,
     minWidth: 180,
     maxWidth: 700,
@@ -105,6 +111,7 @@ export default function SidePanel({
       if (activeTabRef.current !== 'details') {
         previousTab.current = activeTabRef.current as 'filters' | 'discover';
       }
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing tab to selection state
       setActiveTab('details');
     } else if (activeTabRef.current === 'details') {
       // Restore previous tab when details close
@@ -147,7 +154,10 @@ export default function SidePanel({
         )}
       </div>
 
-      <div className="side-panel-content" style={{ display: activeTab === 'filters' ? undefined : 'none' }}>
+      <div
+        className="side-panel-content"
+        style={{ display: activeTab === 'filters' ? undefined : 'none' }}
+      >
         <FilterPanel
           nodeTypes={nodeTypes}
           linkTypes={linkTypes}
@@ -164,7 +174,10 @@ export default function SidePanel({
           onHideAllLinks={onHideAllLinks}
         />
       </div>
-      <div className="side-panel-content" style={{ display: activeTab === 'discover' ? undefined : 'none' }}>
+      <div
+        className="side-panel-content"
+        style={{ display: activeTab === 'discover' ? undefined : 'none' }}
+      >
         <DiscoverPanel
           onSelectNode={onSelectNode ?? (() => {})}
           graphVersion={graphVersion}

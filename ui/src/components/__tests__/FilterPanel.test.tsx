@@ -30,7 +30,9 @@ const defaultProps = {
 
 describe('FilterPanel', () => {
   it('renders node and link types', () => {
-    const { getByText } = render(React.createElement(FilterPanel, defaultProps));
+    const { getByText } = render(
+      React.createElement(FilterPanel, defaultProps),
+    );
     expect(getByText('Service')).toBeDefined();
     expect(getByText('Database')).toBeDefined();
     expect(getByText('calls')).toBeDefined(); // lowercased in display
@@ -80,7 +82,9 @@ describe('FilterPanel', () => {
   });
 
   it('renders with correct counts', () => {
-    const { getByText } = render(React.createElement(FilterPanel, defaultProps));
+    const { getByText } = render(
+      React.createElement(FilterPanel, defaultProps),
+    );
     expect(getByText('5')).toBeDefined();
     expect(getByText('3')).toBeDefined();
     expect(getByText('10')).toBeDefined();

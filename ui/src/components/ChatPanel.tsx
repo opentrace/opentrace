@@ -145,12 +145,19 @@ export default function ChatPanel({
 
     if (providerId === 'local') {
       const url = localUrlInputRef.current?.value.trim() ?? '';
-      if (url) { saveLocalUrl(url); setLocalUrl(url); }
+      if (url) {
+        saveLocalUrl(url);
+        setLocalUrl(url);
+      }
       // modelId state already holds the correct value whether from dropdown or text input
-      const model = (localModels && localModels.length > 0)
-        ? modelId
-        : (localModelInputRef.current?.value.trim() ?? modelId);
-      if (model) { saveModelChoice('local', model); setModelId(model); }
+      const model =
+        localModels && localModels.length > 0
+          ? modelId
+          : (localModelInputRef.current?.value.trim() ?? modelId);
+      if (model) {
+        saveModelChoice('local', model);
+        setModelId(model);
+      }
       setShowSettings(false);
     } else if (val) {
       setShowSettings(false);
@@ -165,9 +172,7 @@ export default function ChatPanel({
       const res = await fetch(`${url}/v1/models`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      const ids: string[] = (json.data ?? []).map(
-        (m: { id: string }) => m.id,
-      );
+      const ids: string[] = (json.data ?? []).map((m: { id: string }) => m.id);
       setLocalModels(ids);
       if (ids.length > 0 && !ids.includes(modelId)) {
         setModelId(ids[0]);
@@ -556,7 +561,9 @@ export default function ChatPanel({
               </div>
               <div className="model-selector">
                 <label htmlFor="local-model-input">Model</label>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}>
+                <div
+                  style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}
+                >
                   {localModels && localModels.length > 0 ? (
                     <select
                       id="local-model-input"
@@ -566,7 +573,9 @@ export default function ChatPanel({
                       style={{ flex: 1, marginBottom: 0 }}
                     >
                       {localModels.map((m) => (
-                        <option key={m} value={m}>{m}</option>
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
                       ))}
                     </select>
                   ) : (
@@ -592,7 +601,10 @@ export default function ChatPanel({
                   </button>
                 </div>
                 {localModels !== null && localModels.length === 0 && (
-                  <p className="hint" style={{ color: 'var(--color-error, #f87171)' }}>
+                  <p
+                    className="hint"
+                    style={{ color: 'var(--color-error, #f87171)' }}
+                  >
                     Could not reach server or no models found.
                   </p>
                 )}

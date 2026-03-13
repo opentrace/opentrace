@@ -153,7 +153,7 @@ export default function ChatToolCall({
       default:
         return null;
     }
-  }, [part.name, part.result, part.status, onNodeSelect]);
+  }, [part.name, part.result, part.status, onNodeSelect, onPostComment]);
 
   // Wrench icon for tools, sparkle icon for agents
   const icon = isAgent ? (
