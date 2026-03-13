@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { NodeObject, LinkObject } from 'react-force-graph-2d';
 import type { GraphNode, GraphLink } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
+import { useResizablePanel } from '../hooks/useResizablePanel';
 import FilterPanel from './FilterPanel';
 import DiscoverPanel from './DiscoverPanel';
 import NodeDetailsPanel from './NodeDetailsPanel';
@@ -86,6 +87,17 @@ export default function SidePanel({
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
 
+  const hasSelection = selectedNode !== null || selectedLink !== null;
+  const expanded = hasSelection || activeTab === 'discover';
+
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: expanded ? 'ot_side_panel_expanded_width' : 'ot_side_panel_width',
+    defaultWidth: expanded ? 480 : 220,
+    minWidth: 180,
+    maxWidth: 700,
+    side: 'right',
+  });
+
   // Auto-switch to details when node or edge is selected
   useEffect(() => {
     if (selectedNode || selectedLink) {
@@ -100,16 +112,13 @@ export default function SidePanel({
     }
   }, [selectedNode, selectedLink]);
 
-  const hasSelection = selectedNode !== null || selectedLink !== null;
-  const expanded = hasSelection || activeTab === 'discover';
-
   const handleCloseDetails = () => {
     onCloseDetails();
     setActiveTab(previousTab.current);
   };
 
   return (
-    <div className={`side-panel ${expanded ? 'side-panel--expanded' : ''}`}>
+    <div className="side-panel" style={{ width: panelWidth }}>
       <div className="side-panel-tabs">
         <button
           className={`side-panel-tab ${activeTab === 'filters' ? 'side-panel-tab--active' : ''}`}
@@ -179,6 +188,7 @@ export default function SidePanel({
           ) : null}
         </div>
       )}
+      <div className="side-panel-drag-handle" onMouseDown={handleMouseDown} />
     </div>
   );
 }

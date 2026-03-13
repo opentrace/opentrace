@@ -14,11 +14,33 @@
   padding-top: 64px;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease;
 }
 
-.side-panel--expanded {
-  width: 480px;
+/* Drag handle on the right edge */
+.side-panel-drag-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.side-panel-drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 2px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.side-panel-drag-handle:hover::after,
+.side-panel-drag-handle:active::after {
+  background: var(--primary);
 }
 
 /* Tab bar — only rendered when a node is selected */

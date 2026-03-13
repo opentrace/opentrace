@@ -101,6 +101,7 @@ export interface GraphViewerProps {
   onJobSubmit: (message: JobMessage) => void;
   // Toolbar toggles
   showChat: boolean;
+  chatWidth: number;
   onToggleChat: () => void;
   showSettings: boolean;
   onToggleSettings: () => void;
@@ -129,6 +130,7 @@ const GraphViewer = memo(
         onAddRepoClose,
         onJobSubmit,
         showChat,
+        chatWidth,
         onToggleChat,
         showSettings,
         onToggleSettings,
@@ -647,7 +649,6 @@ const GraphViewer = memo(
         ((jobState.status === 'enriching' || jobState.status === 'done') &&
           jobExpanded);
 
-      const chatWidth = 480;
       const graphWidth = showChat ? width - chatWidth : width;
 
       const isEmpty = graphData.nodes.length === 0;

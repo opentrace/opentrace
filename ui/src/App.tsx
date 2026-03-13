@@ -27,6 +27,7 @@ function App() {
   const [chatGraphData, setChatGraphData] = useState(EMPTY_GRAPH);
 
   const [showChat, setShowChat] = useState(false);
+  const [chatWidth, setChatWidth] = useState(480);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
@@ -72,6 +73,7 @@ function App() {
   const handleAddRepoOpen = useCallback(() => setShowAddRepo(true), []);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
   const handleToggleChat = useCallback(() => setShowChat((v) => !v), []);
+  const handleChatWidthChange = useCallback((w: number) => setChatWidth(w), []);
   const handleToggleSettings = useCallback(
     () => setShowSettings((v) => !v),
     [],
@@ -96,6 +98,7 @@ function App() {
           onAddRepoClose={handleAddRepoClose}
           onJobSubmit={handleJobSubmit}
           showChat={showChat}
+          chatWidth={chatWidth}
           onToggleChat={handleToggleChat}
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
@@ -120,6 +123,7 @@ function App() {
               }
             }}
             repoUrl={activeRepoUrl}
+            onWidthChange={handleChatWidthChange}
           />
         )}
       </div>
