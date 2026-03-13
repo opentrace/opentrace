@@ -9,10 +9,56 @@ import type { GraphStore } from '../store/types';
 import type { PRClient } from '../pr/client';
 
 const MAX_RESULT_CHARS = 6000;
+const MAX_SOURCE_CHARS = 8000;
 
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
   return text.slice(0, limit) + `\n...[truncated, ${text.length} chars total]`;
+}
+
+/**
+ * Apply a unified diff patch to base content to produce the new file content.
+ * Handles standard unified diff format with @@ hunk headers.
+ */
+function applyPatch(base: string, patch: string): string {
+  const baseLines = base.split('\n');
+  const result = [...baseLines];
+  // Track offset as insertions/deletions shift line numbers
+  let offset = 0;
+
+  const patchLines = patch.split('\n');
+  for (let i = 0; i < patchLines.length; i++) {
+    const hunkMatch = patchLines[i].match(
+      /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/,
+    );
+    if (!hunkMatch) continue;
+
+    // Line number in the original file (1-based)
+    let origLine = parseInt(hunkMatch[1], 10) - 1 + offset;
+    i++;
+
+    while (i < patchLines.length) {
+      const line = patchLines[i];
+      if (line.startsWith('@@') || line.startsWith('diff ')) {
+        i--; // re-process this line as a new hunk
+        break;
+      }
+      if (line.startsWith('-')) {
+        result.splice(origLine, 1);
+        offset--;
+      } else if (line.startsWith('+')) {
+        result.splice(origLine, 0, line.slice(1));
+        origLine++;
+        offset++;
+      } else {
+        // Context line — advance position
+        origLine++;
+      }
+      i++;
+    }
+  }
+
+  return result.join('\n');
 }
 
 export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
@@ -57,7 +103,8 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
         name: 'get_pull_request',
         description:
           'Get details of a specific PullRequest node from the graph, ' +
-          'including all files it modifies via CHANGES relationships.',
+          'including all files it modifies via CHANGES relationships (with diff status and line counts). ' +
+          'Use get_pr_file_change to inspect the actual diff or file contents for individual files.',
         schema: z.object({
           prId: z
             .string()
@@ -94,6 +141,110 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
           prId: z
             .string()
             .describe('PullRequest node ID, e.g. "owner/repo/pr/123"'),
+        }),
+      },
+    ),
+    tool(
+      async ({ prId, filePath, version }) => {
+        // Find the CHANGES edge for this file
+        const changes = await store.traverse(prId, 'outgoing', 1, 'CHANGES');
+        const match = changes.find((r) => {
+          const props = r.relationship.properties as
+            | Record<string, unknown>
+            | undefined;
+          return props?.path === filePath;
+        });
+
+        if (!match) {
+          return JSON.stringify({
+            error: `No CHANGES edge found for file "${filePath}" in this PR`,
+            available_files: changes.map(
+              (r) =>
+                (r.relationship.properties as Record<string, unknown>)?.path,
+            ),
+          });
+        }
+
+        const edgeProps = match.relationship.properties as Record<
+          string,
+          unknown
+        >;
+        const patch = (edgeProps?.patch as string) || null;
+        const status = edgeProps?.status as string;
+        const fileId = match.relationship.target_id;
+
+        // Build response based on requested version
+        const result: Record<string, unknown> = {
+          path: filePath,
+          status,
+          additions: edgeProps?.additions,
+          deletions: edgeProps?.deletions,
+        };
+
+        if (version === 'diff' || version === 'all') {
+          result.diff = patch ?? '(no patch available)';
+        }
+
+        if (version === 'base' || version === 'new' || version === 'all') {
+          const source = await store.fetchSource(fileId);
+          const baseContent = source?.content ?? null;
+
+          if (version === 'base' || version === 'all') {
+            result.base_content =
+              status === 'added'
+                ? null
+                : baseContent ?? '(source not indexed)';
+          }
+
+          if (version === 'new' || version === 'all') {
+            if (status === 'removed') {
+              result.new_content = null;
+            } else if (status === 'added') {
+              // For new files the patch is the entire content (all + lines)
+              if (patch) {
+                result.new_content = patch
+                  .split('\n')
+                  .filter((l) => l.startsWith('+'))
+                  .map((l) => l.slice(1))
+                  .join('\n');
+              } else {
+                result.new_content = '(patch not available)';
+              }
+            } else if (baseContent && patch) {
+              result.new_content = applyPatch(baseContent, patch);
+            } else {
+              result.new_content = !baseContent
+                ? '(source not indexed)'
+                : '(patch not available)';
+            }
+          }
+        }
+
+        return truncate(JSON.stringify(result), MAX_SOURCE_CHARS);
+      },
+      {
+        name: 'get_pr_file_change',
+        description:
+          'Get the diff, base (original), or new (changed) content of a specific file in a PR. ' +
+          'Use version "diff" for just the patch, "base" for the original file before the PR, ' +
+          '"new" for the file after the PR changes are applied, or "all" for everything. ' +
+          'This is the primary tool for inspecting PR file changes — use it instead of load_source ' +
+          'when reviewing PRs.',
+        schema: z.object({
+          prId: z
+            .string()
+            .describe('PullRequest node ID, e.g. "owner/repo/pr/123"'),
+          filePath: z
+            .string()
+            .describe(
+              'File path as shown in the PR (e.g. "src/main.ts"), not the full node ID',
+            ),
+          version: z
+            .enum(['diff', 'base', 'new', 'all'])
+            .describe(
+              'Which version to return: "diff" for the patch, "base" for the original, ' +
+                '"new" for the changed version, "all" for everything',
+            ),
         }),
       },
     ),

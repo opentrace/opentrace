@@ -626,7 +626,7 @@ async function handleTraverse(
 
       const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
       const rows = await query(
-        `${pattern} WHERE true${relFilter} RETURN b.id AS id, b.type AS type, b.name AS name, b.properties AS properties, r.id AS rel_id, r.type AS rel_type, a.id AS source_id`,
+        `${pattern} WHERE true${relFilter} RETURN b.id AS id, b.type AS type, b.name AS name, b.properties AS properties, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties, a.id AS source_id`,
       );
 
       for (const row of rows as Record<string, string>[]) {
@@ -646,11 +646,13 @@ async function handleTraverse(
         const isOutgoing =
           direction === 'outgoing' ||
           (direction === 'both' && row.source_id === currentId);
+        const relProps = parseProps(row.rel_properties);
         const relationship = {
           id: row.rel_id || `${currentId}->${row.id}`,
           type: row.rel_type,
           source_id: isOutgoing ? currentId : row.id,
           target_id: isOutgoing ? row.id : currentId,
+          ...(relProps && { properties: relProps }),
         };
 
         results.push({ node, relationship, depth });

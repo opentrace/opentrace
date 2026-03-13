@@ -22,17 +22,20 @@ const STEP_LABELS: Record<string, string> = {
   list_pull_requests: 'Listing PRs',
   get_pull_request: 'Fetching PR details',
   summarize_pr_changes: 'Analyzing blast radius',
+  get_pr_file_change: 'Loading file change',
 };
 
 const CODE_REVIEWER_PROMPT = `You are a code review agent. Your job is to review code changes for quality issues, bugs, security vulnerabilities, and adherence to codebase conventions by combining source code inspection with architecture context from the OpenTrace knowledge graph.
 
 ## Workflow
 
-1. **Identify scope**: Use get_pull_request to find the PR and its changed files with their diffs (in CHANGES edge properties).
-2. **Load source**: Use load_source on each changed/relevant file to read the actual code.
+1. **Identify scope**: Use get_pull_request to find the PR and its changed files.
+2. **Inspect changes**: Use get_pr_file_change on each changed file to get the diff, original (base), and/or new file content. Use version "all" for thorough review, or "diff" for a quick scan.
 3. **Understand context**: Use traverse_graph (incoming + outgoing) to understand how changed code fits into the broader architecture — what calls it, what it depends on.
-4. **Inspect related code**: Use get_node and load_source on related components to check for consistency and convention adherence.
+4. **Inspect related code**: Use get_node and load_source on related (unchanged) components to check for consistency and convention adherence.
 5. **Synthesize review**: Produce a structured code review.
+
+IMPORTANT: When reviewing PR file changes, always use get_pr_file_change — it gives you the diff, the original file, and the new file with changes applied. Only use load_source for unchanged files that you need for context.
 
 ## Review Categories
 
