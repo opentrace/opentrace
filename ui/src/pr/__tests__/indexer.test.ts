@@ -51,7 +51,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, makePR(), meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const prNode = batch.nodes.find(
       (n: { type: string }) => n.type === 'PullRequest',
     );
@@ -68,7 +69,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, makePR(), meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const repoEdge = batch.relationships.find(
       (r: { type: string }) => r.type === 'TARGETS_REPO',
     );
@@ -84,7 +86,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, makePR(), meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const fileNodes = batch.nodes.filter(
       (n: { type: string }) => n.type === 'File',
     );
@@ -101,7 +104,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, makePR(), meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const changesEdges = batch.relationships.filter(
       (r: { type: string }) => r.type === 'CHANGES',
     );
@@ -135,7 +139,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, pr, meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const changesEdge = batch.relationships.find(
       (r: { type: string }) => r.type === 'CHANGES',
     );
@@ -152,13 +157,14 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, makePR(), meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const dirNodes = batch.nodes.filter(
       (n: { type: string }) => n.type === 'Directory',
     );
     // src, src/utils — 'src' should appear only once even though two files use it
-    const srcDirs = dirNodes.filter((n: { properties?: { path: string } }) =>
-      n.properties?.path === 'src',
+    const srcDirs = dirNodes.filter(
+      (n: { properties?: { path: string } }) => n.properties?.path === 'src',
     );
     expect(srcDirs).toHaveLength(1);
   });
@@ -183,7 +189,8 @@ describe('indexPRIntoGraph', () => {
     });
     await indexPRIntoGraph(store, pr, meta);
 
-    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const changesEdge = batch.relationships.find(
       (r: { type: string }) => r.type === 'CHANGES',
     );

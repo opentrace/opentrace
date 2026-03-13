@@ -13,6 +13,7 @@ export function JobServiceProvider({ children }: { children: ReactNode }) {
   return <JobServiceContext value={jobService}>{children}</JobServiceContext>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useJobService(): JobService {
   const ctx = use(JobServiceContext);
   if (!ctx) {

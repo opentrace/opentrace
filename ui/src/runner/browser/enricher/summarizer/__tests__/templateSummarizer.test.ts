@@ -23,10 +23,7 @@ describe('splitIdentifier', () => {
   });
 
   it('splits SCREAMING_SNAKE', () => {
-    expect(splitIdentifier('SCREAMING_SNAKE')).toEqual([
-      'SCREAMING',
-      'SNAKE',
-    ]);
+    expect(splitIdentifier('SCREAMING_SNAKE')).toEqual(['SCREAMING', 'SNAKE']);
   });
 
   it('handles acronyms like parseHTTPResponse', () => {
@@ -49,7 +46,9 @@ describe('splitIdentifier', () => {
 
 describe('extractKeywords', () => {
   it('detects database keywords', () => {
-    const keywords = extractKeywords('const result = db.query("SELECT * FROM users")');
+    const keywords = extractKeywords(
+      'const result = db.query("SELECT * FROM users")',
+    );
     expect(keywords).toContain('database');
   });
 
@@ -64,7 +63,9 @@ describe('extractKeywords', () => {
   });
 
   it('detects crypto keywords', () => {
-    const keywords = extractKeywords('import crypto from "crypto"; encrypt(data)');
+    const keywords = extractKeywords(
+      'import crypto from "crypto"; encrypt(data)',
+    );
     expect(keywords).toContain('crypto');
   });
 
@@ -83,9 +84,15 @@ describe('extractKeywords', () => {
 describe('summarizeFunction', () => {
   it('summarizes constructors', () => {
     expect(summarizeFunction('__init__')).toBe('Initializes instance');
-    expect(summarizeFunction('constructor', undefined, undefined, undefined, 'UserService')).toBe(
-      'Initializes UserService',
-    );
+    expect(
+      summarizeFunction(
+        'constructor',
+        undefined,
+        undefined,
+        undefined,
+        'UserService',
+      ),
+    ).toBe('Initializes UserService');
   });
 
   it('summarizes test functions', () => {
@@ -105,7 +112,13 @@ describe('summarizeFunction', () => {
   });
 
   it('includes receiver type for Go methods', () => {
-    const result = summarizeFunction('getUsers', undefined, undefined, undefined, 'UserRepo');
+    const result = summarizeFunction(
+      'getUsers',
+      undefined,
+      undefined,
+      undefined,
+      'UserRepo',
+    );
     expect(result).toContain('UserRepo method');
   });
 });
@@ -150,12 +163,22 @@ describe('summarizeFile', () => {
 
   it('generic file with symbols', () => {
     // 'helpers.go' matches the helpers? pattern → "Helper functions" (known file pattern wins)
-    const result = summarizeFile('utils.go', ['parseURL', 'buildQuery', 'formatDate', 'validate']);
+    const result = summarizeFile('utils.go', [
+      'parseURL',
+      'buildQuery',
+      'formatDate',
+      'validate',
+    ]);
     // utils.go matches utils? pattern → "Utility functions"
     expect(result).toBe('Utility functions');
 
     // A truly generic file lists symbols
-    const result2 = summarizeFile('converter.go', ['parseURL', 'buildQuery', 'formatDate', 'validate']);
+    const result2 = summarizeFile('converter.go', [
+      'parseURL',
+      'buildQuery',
+      'formatDate',
+      'validate',
+    ]);
     expect(result2).toContain('parseURL');
     expect(result2).toContain('and 1 more');
   });

@@ -10,7 +10,7 @@ interface Props {
 /** Strip markdown syntax for a compact preview */
 function stripMarkdown(text: string): string {
   return text
-    .replace(/[#*_`~>\[\]()!|-]/g, '')
+    .replace(/[#*_`~>[\]()!|-]/g, '')
     .replace(/\n+/g, ' ')
     .trim();
 }

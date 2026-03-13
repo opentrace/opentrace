@@ -174,12 +174,14 @@ export default function AddRepoModal({
     if (!provider) return;
     const key = provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
     const saved = localStorage.getItem(key);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing from localStorage
     if (saved) setPat(saved);
     else setPat('');
   }, [provider]);
 
   // Clear errors when switching source mode
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on dep change
     setError(null);
   }, [source]);
 
@@ -540,5 +542,5 @@ export default function AddRepoModal({
   );
 }
 
-/** Detect the git provider from a URL. Exported for use by parent components. */
+// eslint-disable-next-line react-refresh/only-export-components
 export { detectProvider };

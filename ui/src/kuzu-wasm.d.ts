@@ -7,6 +7,7 @@ declare module '@kuzu/kuzu-wasm' {
     execute(query: string): Promise<QueryResult>;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   export interface Database {}
 
   export interface KuzuModule {

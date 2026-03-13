@@ -124,9 +124,7 @@ describe('fetchGitLabMRDetail', () => {
 
 describe('fetchGitLabFileContent', () => {
   it('decodes base64 content', async () => {
-    mockFetch.mockResolvedValueOnce(
-      jsonResponse({ content: btoa('hello') }),
-    );
+    mockFetch.mockResolvedValueOnce(jsonResponse({ content: btoa('hello') }));
     const content = await fetchGitLabFileContent(
       'gitlab.com',
       'g/p',

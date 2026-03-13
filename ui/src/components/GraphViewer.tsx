@@ -279,7 +279,7 @@ const GraphViewer = memo(
       // Node/edge counts are already capped by the worker's MAX_VIS_NODES/EDGES limits
       // (configured via Settings), so no additional truncation is needed here.
       const filteredGraphData = useMemo(() => {
-        let nodes = graphData.nodes.filter((n) => {
+        const nodes = graphData.nodes.filter((n) => {
           const hasSubTypeFilters = availableSubTypes.has(n.type);
           if (hasSubTypeFilters) {
             // For types with sub-types, visibility is driven by sub-type filters
@@ -833,7 +833,8 @@ const GraphViewer = memo(
               } else {
                 setHiddenNodeTypes((prev) => {
                   const next = new Set(prev);
-                  next.has(type) ? next.delete(type) : next.add(type);
+                  if (next.has(type)) next.delete(type);
+                  else next.add(type);
                   return next;
                 });
               }
@@ -841,14 +842,16 @@ const GraphViewer = memo(
             onToggleLinkType={(type) =>
               setHiddenLinkTypes((prev) => {
                 const next = new Set(prev);
-                next.has(type) ? next.delete(type) : next.add(type);
+                if (next.has(type)) next.delete(type);
+                else next.add(type);
                 return next;
               })
             }
             onToggleSubType={(key) =>
               setHiddenSubTypes((prev) => {
                 const next = new Set(prev);
-                next.has(key) ? next.delete(key) : next.add(key);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
                 return next;
               })
             }
