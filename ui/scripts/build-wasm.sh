@@ -5,7 +5,6 @@
 #   npm run build:wasm           (from ui/)
 #   bash scripts/build-wasm.sh   (from ui/)
 #
-# Requires tree-sitter-cli (installed as devDependency).
 # Output: ui/public/tree-sitter-*.wasm
 
 set -euo pipefail
@@ -16,9 +15,6 @@ PUBLIC_DIR="$UI_DIR/public"
 NODE_MODULES="$UI_DIR/node_modules"
 
 cd "$UI_DIR"
-
-echo "Building tree-sitter WASM grammars..."
-echo "Output directory: $PUBLIC_DIR"
 
 # Grammars with standard layout: node_modules/tree-sitter-<name>/
 # Format: "npm-package-suffix:output-suffix"
@@ -38,6 +34,22 @@ STANDARD_GRAMMARS=(
   "json:json"
   "toml:toml"
 )
+
+# These packages are not in devDependencies — install them on demand to avoid
+# peer-dependency conflicts with the main project.
+GRAMMAR_PKGS=( "tree-sitter-cli" )
+for entry in "${STANDARD_GRAMMARS[@]}"; do
+  IFS=':' read -r pkg_suffix _ <<< "$entry"
+  GRAMMAR_PKGS+=( "tree-sitter-$pkg_suffix" )
+done
+GRAMMAR_PKGS+=( "tree-sitter-typescript" )
+
+echo "Installing tree-sitter grammars..."
+npm install --no-save --legacy-peer-deps "${GRAMMAR_PKGS[@]}"
+
+echo ""
+echo "Building tree-sitter WASM grammars..."
+echo "Output directory: $PUBLIC_DIR"
 
 # Build standard grammars
 for entry in "${STANDARD_GRAMMARS[@]}"; do
