@@ -13,6 +13,6 @@ jobs:
         run: |
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-release \
-            -f 'client_payload[tag]=${{ github.ref_name }}'
+            -f 'client_payload[tag]=main'
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
