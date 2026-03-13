@@ -42,9 +42,14 @@
   transition: all 0.15s;
 }
 
-.settings-back-btn:hover {
+.settings-back-btn:hover:not(:disabled) {
   border-color: color-mix(in oklch, var(--primary) 40%, transparent);
   color: var(--secondary-foreground);
+}
+
+.settings-back-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Provider selector buttons */

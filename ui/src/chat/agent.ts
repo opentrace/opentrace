@@ -18,6 +18,7 @@ export function createLLM(
   providerId: string,
   modelId: string,
   apiKey: string,
+  baseUrl?: string,
 ): BaseChatModel {
   switch (providerId) {
     case 'anthropic':
@@ -30,6 +31,12 @@ export function createLLM(
       return new ChatOpenAI({ model: modelId, apiKey });
     case 'gemini':
       return new ChatGoogleGenerativeAI({ model: modelId, apiKey });
+    case 'local':
+      return new ChatOpenAI({
+        model: modelId,
+        apiKey: apiKey || 'local',
+        configuration: { baseURL: `${baseUrl}/v1` },
+      });
     default:
       throw new Error(`Unknown provider: ${providerId}`);
   }
@@ -42,8 +49,9 @@ export function createChatAgent(
   systemPrompt: string,
   store: GraphStore,
   prClient?: PRClient | null,
+  baseUrl?: string,
 ) {
-  const llm = createLLM(providerId, modelId, apiKey);
+  const llm = createLLM(providerId, modelId, apiKey, baseUrl);
   const graphTools = makeGraphTools(store);
   const prTools = makePRTools(store, prClient);
 

@@ -14,6 +14,8 @@ import {
   saveProviderChoice,
   loadModelChoice,
   saveModelChoice,
+  loadLocalUrl,
+  saveLocalUrl,
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
@@ -53,6 +55,9 @@ export default function ChatPanel({
     return loadModelChoice(pid) ?? PROVIDERS[pid].defaultModel;
   });
   const [apiKey, setApiKey] = useState(() => loadApiKey(loadProviderChoice()));
+  const [localUrl, setLocalUrl] = useState(loadLocalUrl);
+  const [localModels, setLocalModels] = useState<string[] | null>(null);
+  const [localModelsFetching, setLocalModelsFetching] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -61,6 +66,8 @@ export default function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
+  const localUrlInputRef = useRef<HTMLInputElement>(null);
+  const localModelInputRef = useRef<HTMLInputElement>(null);
 
   // Build PRClient from repoUrl
   const prClient = useMemo(() => {
@@ -107,6 +114,7 @@ export default function ChatPanel({
     setApiKey(loadApiKey(id));
     const savedModel = loadModelChoice(id);
     setModelId(savedModel ?? PROVIDERS[id].defaultModel);
+    if (id === 'local') setLocalUrl(loadLocalUrl());
   };
 
   const switchModel = (model: string) => {
@@ -118,11 +126,45 @@ export default function ChatPanel({
     const val = keyInputRef.current?.value.trim() ?? '';
     saveApiKey(providerId, val);
     setApiKey(val);
-    if (val) setShowSettings(false);
+
+    if (providerId === 'local') {
+      const url = localUrlInputRef.current?.value.trim() ?? '';
+      if (url) { saveLocalUrl(url); setLocalUrl(url); }
+      // modelId state already holds the correct value whether from dropdown or text input
+      const model = (localModels && localModels.length > 0)
+        ? modelId
+        : (localModelInputRef.current?.value.trim() ?? modelId);
+      if (model) { saveModelChoice('local', model); setModelId(model); }
+      setShowSettings(false);
+    } else if (val) {
+      setShowSettings(false);
+    }
+  };
+
+  const fetchLocalModels = async () => {
+    const url = localUrlInputRef.current?.value.trim() || localUrl;
+    setLocalModelsFetching(true);
+    setLocalModels(null);
+    try {
+      const res = await fetch(`${url}/v1/models`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const ids: string[] = (json.data ?? []).map(
+        (m: { id: string }) => m.id,
+      );
+      setLocalModels(ids);
+      if (ids.length > 0 && !ids.includes(modelId)) {
+        setModelId(ids[0]);
+      }
+    } catch {
+      setLocalModels([]);
+    } finally {
+      setLocalModelsFetching(false);
+    }
   };
 
   const getAgentHandle = (): AgentHandle => {
-    const key = `${providerId}:${modelId}:${apiKey}:${repoUrl ?? ''}`;
+    const key = `${providerId}:${modelId}:${apiKey}:${localUrl}:${repoUrl ?? ''}`;
     if (agentKeyRef.current !== key || !agentRef.current) {
       const systemPrompt = buildGraphContext(
         graphData.nodes as GraphNode[],
@@ -135,6 +177,7 @@ export default function ChatPanel({
         systemPrompt,
         store,
         prClient,
+        localUrl,
       );
       agentKeyRef.current = key;
     }
@@ -159,7 +202,7 @@ export default function ChatPanel({
 
   const sendMessage = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || !apiKey || streaming) return;
+    if (!trimmed || (providerId !== 'local' && !apiKey) || streaming) return;
 
     // Abort any previous request
     abortRef.current?.abort();
@@ -393,15 +436,15 @@ export default function ChatPanel({
 
   // LLM instance for PR reviews (run directly, not through chat)
   const llm = useMemo(() => {
-    if (!apiKey) return null;
+    if (providerId !== 'local' && !apiKey) return null;
     try {
-      return createLLM(providerId, modelId, apiKey);
+      return createLLM(providerId, modelId, apiKey, localUrl);
     } catch {
       return null;
     }
-  }, [providerId, modelId, apiKey]);
+  }, [providerId, modelId, apiKey, localUrl]);
 
-  const needsKey = !apiKey;
+  const needsKey = providerId !== 'local' && !apiKey;
   const showSettingsView = showSettings || needsKey;
   const hasPRTab = !!prClient;
 
@@ -410,7 +453,7 @@ export default function ChatPanel({
       <div className="panel-header">
         <div className="panel-header-title">
           <h3>AI Assistant</h3>
-          {!showSettingsView && apiKey && (
+          {!showSettingsView && (apiKey || providerId === 'local') && (
             <span
               className="provider-tag"
               onClick={() => setShowSettings(true)}
@@ -480,30 +523,102 @@ export default function ChatPanel({
               </button>
             ))}
           </div>
-          <div className="model-selector">
-            <label htmlFor="model-select">Model</label>
-            <select
-              id="model-select"
-              value={modelId}
-              onChange={(e) => switchModel(e.target.value)}
-            >
-              {PROVIDERS[providerId].models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <p>Enter your {PROVIDERS[providerId].name} API key:</p>
-          <input
-            key={providerId}
-            ref={keyInputRef}
-            type="password"
-            placeholder="API Key..."
-            defaultValue={apiKey}
-            onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-            className="api-key-input"
-          />
+          {providerId === 'local' ? (
+            <>
+              <div className="model-selector">
+                <label htmlFor="local-url-input">URL</label>
+                <input
+                  id="local-url-input"
+                  ref={localUrlInputRef}
+                  type="text"
+                  placeholder="http://localhost:11434"
+                  defaultValue={localUrl}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                  className="api-key-input"
+                />
+              </div>
+              <div className="model-selector">
+                <label htmlFor="local-model-input">Model</label>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch' }}>
+                  {localModels && localModels.length > 0 ? (
+                    <select
+                      id="local-model-input"
+                      value={modelId}
+                      onChange={(e) => setModelId(e.target.value)}
+                      className="api-key-input"
+                      style={{ flex: 1, marginBottom: 0 }}
+                    >
+                      {localModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id="local-model-input"
+                      ref={localModelInputRef}
+                      type="text"
+                      placeholder="llama3.2"
+                      defaultValue={modelId}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                      className="api-key-input"
+                      style={{ flex: 1, marginBottom: 0 }}
+                    />
+                  )}
+                  <button
+                    className="settings-back-btn"
+                    onClick={fetchLocalModels}
+                    disabled={localModelsFetching}
+                    title="Fetch available models from the server"
+                    style={{ alignSelf: 'stretch' }}
+                  >
+                    {localModelsFetching ? '…' : 'Fetch'}
+                  </button>
+                </div>
+                {localModels !== null && localModels.length === 0 && (
+                  <p className="hint" style={{ color: 'var(--color-error, #f87171)' }}>
+                    Could not reach server or no models found.
+                  </p>
+                )}
+              </div>
+              <p>API key (optional):</p>
+              <input
+                key={providerId}
+                ref={keyInputRef}
+                type="password"
+                placeholder="Leave blank if not required"
+                defaultValue={apiKey}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                className="api-key-input"
+              />
+            </>
+          ) : (
+            <>
+              <div className="model-selector">
+                <label htmlFor="model-select">Model</label>
+                <select
+                  id="model-select"
+                  value={modelId}
+                  onChange={(e) => switchModel(e.target.value)}
+                >
+                  {PROVIDERS[providerId].models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p>Enter your {PROVIDERS[providerId].name} API key:</p>
+              <input
+                key={providerId}
+                ref={keyInputRef}
+                type="password"
+                placeholder="API Key..."
+                defaultValue={apiKey}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                className="api-key-input"
+              />
+            </>
+          )}
           <div className="settings-actions">
             <button
               className="api-search-btn"
