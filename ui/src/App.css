@@ -754,13 +754,40 @@ header h1 {
 }
 
 .chat-panel {
-  width: 480px;
   flex-shrink: 0;
   background: var(--background);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
   z-index: 10;
+  position: relative;
+}
+
+/* Drag handle on the left edge */
+.chat-panel-drag-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 20;
+}
+
+.chat-panel-drag-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.chat-panel-drag-handle:hover::after,
+.chat-panel-drag-handle:active::after {
+  background: var(--primary);
 }
 
 @keyframes slideInRight {

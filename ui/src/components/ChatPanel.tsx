@@ -23,6 +23,7 @@ import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
 import { PRClient, parseRepoUrl } from '../pr/client';
+import { useResizablePanel } from '../hooks/useResizablePanel';
 import PRListPanel from './PRListPanel';
 import '../chat/markdown.css';
 import '../chat/parts.css';
@@ -36,6 +37,7 @@ interface Props {
   onNodeSelect?: (nodeId: string) => void;
   onGraphChange?: (focusNodeId?: string) => Promise<void>;
   repoUrl?: string;
+  onWidthChange?: (width: number) => void;
 }
 
 export default function ChatPanel({
@@ -44,8 +46,22 @@ export default function ChatPanel({
   onNodeSelect,
   onGraphChange,
   repoUrl,
+  onWidthChange,
 }: Props) {
   const { store } = useStore();
+
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: 'ot_chat_panel_width',
+    defaultWidth: 480,
+    minWidth: 320,
+    maxWidth: 800,
+    side: 'left',
+  });
+
+  // Notify parent of width changes so graph canvas can adjust
+  useEffect(() => {
+    onWidthChange?.(panelWidth);
+  }, [panelWidth, onWidthChange]);
 
   const [providerId, setProviderId] = useState(loadProviderChoice);
   const [modelId, setModelId] = useState(() => {
@@ -406,7 +422,8 @@ export default function ChatPanel({
   const hasPRTab = !!prClient;
 
   return (
-    <div className="chat-panel">
+    <div className="chat-panel" style={{ width: panelWidth }}>
+      <div className="chat-panel-drag-handle" onMouseDown={handleMouseDown} />
       <div className="panel-header">
         <div className="panel-header-title">
           <h3>AI Assistant</h3>
