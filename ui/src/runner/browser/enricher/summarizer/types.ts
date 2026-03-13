@@ -7,7 +7,7 @@
 
 export type NodeKind = 'function' | 'class' | 'file' | 'directory';
 
-export type SummarizationStrategyType = 'template' | 'ml' | 'none';
+export type SummarizationStrategyType = 'template' | 'ml' | 'llm' | 'none';
 
 /** Structured metadata for template-based summarization (no source code needed). */
 export interface SymbolMetadata {
@@ -25,13 +25,17 @@ export interface SymbolMetadata {
 
 export interface SummarizerConfig {
   enabled: boolean;
-  /** Which summarization approach to use: template (instant), ml (FlanT5), or none. */
+  /** Which summarization approach to use: template (instant), ml (FlanT5), llm (local), or none. */
   strategy: SummarizationStrategyType;
   model: string;
   /** Maximum input tokens for the model. Source is truncated to ~4× this in chars. */
   maxInputLength: number;
   /** Minimum lines for a function/class to be summarized via ML. Smaller ones get a template. */
   minLines: number;
+  /** Base URL for the local LLM server (OpenAI-compatible). Used when strategy === 'llm'. */
+  llmUrl?: string;
+  /** Model name to use on the local LLM server. Used when strategy === 'llm'. */
+  llmModel?: string;
 }
 
 export const DEFAULT_SUMMARIZER_CONFIG: SummarizerConfig = {

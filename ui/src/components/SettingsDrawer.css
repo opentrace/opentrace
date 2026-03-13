@@ -122,6 +122,26 @@
   font-variant-numeric: tabular-nums;
 }
 
+.settings-select {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: color-mix(in oklch, var(--card) 50%, transparent);
+  color: var(--foreground);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  appearance: auto;
+}
+
+.settings-select:hover,
+.settings-select:focus {
+  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+  outline: none;
+}
+
 .limit-input:focus {
   outline: none;
   border-color: var(--primary);

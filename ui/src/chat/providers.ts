@@ -55,10 +55,18 @@ const gemini: ProviderInfo = {
   ],
 };
 
+const local: ProviderInfo = {
+  name: 'Local LLM',
+  id: 'local',
+  defaultModel: 'llama3.2',
+  models: [], // dynamic — user enters model name as free text
+};
+
 export const PROVIDERS: Record<string, ProviderInfo> = {
   anthropic,
   openai,
   gemini,
+  local,
 };
 
 export const PROVIDER_IDS = Object.keys(PROVIDERS) as Array<

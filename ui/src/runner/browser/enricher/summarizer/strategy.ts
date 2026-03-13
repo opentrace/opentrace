@@ -134,6 +134,78 @@ class MlStrategy implements SummarizationStrategy {
 }
 
 // ---------------------------------------------------------------------------
+// LLM strategy — calls any OpenAI-compatible local server (e.g. Ollama)
+// ---------------------------------------------------------------------------
+
+const LLM_CALL_TIMEOUT_MS = 60_000;
+
+class LlmStrategy implements SummarizationStrategy {
+  readonly type = 'llm' as const;
+  private url: string;
+  private model: string;
+
+  constructor(config: SummarizerConfig) {
+    this.url =
+      config.llmUrl ??
+      `${window.location.protocol}//${window.location.hostname}:11434`;
+    this.model = config.llmModel ?? 'llama3.2';
+  }
+
+  async init(): Promise<void> {}
+
+  private buildPrompt(meta: SymbolMetadata): string {
+    const source = meta.source ?? meta.name;
+    switch (meta.kind) {
+      case 'function':
+        return `Summarize what this function does in one sentence:\n\n${source}`;
+      case 'class':
+        return `Summarize what this class does in one sentence:\n\n${source}`;
+      case 'file':
+        return `Summarize what this source file does in one sentence:\n\n${source}`;
+      case 'directory':
+        return `Describe the purpose of this directory in one sentence:\n\n${source}`;
+    }
+  }
+
+  async summarize(meta: SymbolMetadata): Promise<string> {
+    const prompt = this.buildPrompt(meta);
+    const json = await withTimeout(
+      fetch(`${this.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 100,
+          stream: false,
+        }),
+      fetch(`${this.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 100,
+          stream: false,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      }),
+      LLM_CALL_TIMEOUT_MS,
+      `LLM summarize(${meta.name})`,
+    );
+    return (json.choices?.[0]?.message?.content ?? '').trim();
+  }
+
+  async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
+    return Promise.all(items.map((item) => this.summarize(item)));
+  }
+
+  async dispose(): Promise<void> {}
+}
+
+// ---------------------------------------------------------------------------
 // Noop strategy — returns empty strings (summarization disabled)
 // ---------------------------------------------------------------------------
 
@@ -163,6 +235,9 @@ export function createStrategy(
   }
   if (config.strategy === 'ml') {
     return new MlStrategy(config);
+  }
+  if (config.strategy === 'llm') {
+    return new LlmStrategy(config);
   }
   return new TemplateStrategy();
 }

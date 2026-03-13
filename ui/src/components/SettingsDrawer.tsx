@@ -2,6 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
+  loadSummarizerLlmConfig,
+  saveSummarizerLlmConfig,
 } from '../config/summarization';
 import type { SummarizationStrategyType } from '../runner/browser/enricher/summarizer/types';
 import { useStore } from '../store';
@@ -36,6 +38,9 @@ export default function SettingsDrawer({
   const [error, setError] = useState<string | null>(null);
   const [summaryStrategy, setSummaryStrategy] =
     useState<SummarizationStrategyType>(loadSummarizerStrategy);
+  const [llmConfig, setLlmConfig] = useState(loadSummarizerLlmConfig);
+  const [llmModels, setLlmModels] = useState<string[] | null>(null);
+  const [llmModelsFetching, setLlmModelsFetching] = useState(false);
   const [maxNodes, setMaxNodes] = useState(() =>
     loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES),
   );
@@ -60,6 +65,30 @@ export default function SettingsDrawer({
   const handleStrategyChange = (strategy: SummarizationStrategyType) => {
     setSummaryStrategy(strategy);
     saveSummarizerStrategy(strategy);
+  };
+
+  const handleLlmConfigChange = (url: string, model: string) => {
+    setLlmConfig({ url, model });
+    saveSummarizerLlmConfig(url, model);
+  };
+
+  const fetchLlmModels = async () => {
+    setLlmModelsFetching(true);
+    setLlmModels(null);
+    try {
+      const res = await fetch(`${llmConfig.url}/v1/models`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const ids: string[] = (json.data ?? []).map((m: { id: string }) => m.id);
+      setLlmModels(ids);
+      if (ids.length > 0 && !ids.includes(llmConfig.model)) {
+        handleLlmConfigChange(llmConfig.url, ids[0]);
+      }
+    } catch {
+      setLlmModels([]);
+    } finally {
+      setLlmModelsFetching(false);
+    }
   };
 
   const limitsTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -109,18 +138,86 @@ export default function SettingsDrawer({
               </button>
               <button
                 type="button"
+                className={`toggle-btn${summaryStrategy === 'llm' ? ' active' : ''}`}
+                onClick={() => handleStrategyChange('llm')}
+              >
+                Local LLM
+              </button>
+              <button
+                type="button"
                 className={`toggle-btn${summaryStrategy === 'none' ? ' active' : ''}`}
                 onClick={() => handleStrategyChange('none')}
               >
                 Disabled
               </button>
             </div>
+            {summaryStrategy === 'llm' && (
+              <div className="llm-summarizer-config" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div className="limit-row">
+                  <label className="limit-label" htmlFor="sum-llm-url">URL</label>
+                  <input
+                    id="sum-llm-url"
+                    type="text"
+                    className="settings-select"
+                    value={llmConfig.url}
+                    onChange={(e) =>
+                      handleLlmConfigChange(e.target.value, llmConfig.model)
+                    }
+                  />
+                </div>
+                <div className="limit-row">
+                  <label className="limit-label" htmlFor="sum-llm-model">Model</label>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch', flex: 1 }}>
+                    {llmModels && llmModels.length > 0 ? (
+                      <select
+                        id="sum-llm-model"
+                        className="settings-select"
+                        value={llmConfig.model}
+                        onChange={(e) =>
+                          handleLlmConfigChange(llmConfig.url, e.target.value)
+                        }
+                      >
+                        {llmModels.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id="sum-llm-model"
+                        type="text"
+                        className="settings-select"
+                        value={llmConfig.model}
+                        onChange={(e) =>
+                          handleLlmConfigChange(llmConfig.url, e.target.value)
+                        }
+                      />
+                    )}
+                    <button
+                      className="settings-back-btn"
+                      onClick={fetchLlmModels}
+                      disabled={llmModelsFetching}
+                      title="Fetch available models from the server"
+                      style={{ alignSelf: 'stretch' }}
+                    >
+                      {llmModelsFetching ? '…' : 'Fetch'}
+                    </button>
+                  </div>
+                  {llmModels !== null && llmModels.length === 0 && (
+                    <p className="setting-hint" style={{ color: 'var(--color-error, #f87171)', margin: 0 }}>
+                      Could not reach server or no models found.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
             <p className="setting-hint">
               {summaryStrategy === 'template'
                 ? 'Instant summaries from code naming conventions. No model download.'
                 : summaryStrategy === 'ml'
                   ? 'Higher quality for complex code. Downloads ~77MB model on first run.'
-                  : 'Nodes indexed without summaries.'}
+                  : summaryStrategy === 'llm'
+                    ? 'Uses a local LLM (e.g. Ollama) via its OpenAI-compatible API.'
+                    : 'Nodes indexed without summaries.'}
             </p>
           </div>
         </section>
