@@ -8,11 +8,13 @@ import {
   fetchGitHubPRDetail,
   createGitHubReview,
   postGitHubPRComment,
+  fetchGitHubFileContent,
 } from './githubPR';
 import {
   fetchGitLabMRs,
   fetchGitLabMRDetail,
   postGitLabMRComment,
+  fetchGitLabFileContent,
 } from './gitlabPR';
 import { parseGitHubUrl } from '../runner/browser/loader/github';
 import { parseGitLabUrl } from '../runner/browser/loader/gitlab';
@@ -92,6 +94,26 @@ export class PRClient {
       event,
       comments,
       fileDiffs,
+    );
+  }
+
+  /** Fetch a file's content at a given git ref (branch, tag, or SHA). */
+  async getFileContent(path: string, ref: string): Promise<string | null> {
+    if (this.meta.provider === 'gitlab') {
+      return fetchGitLabFileContent(
+        this.meta.host ?? 'gitlab.com',
+        this.projectPath!,
+        path,
+        ref,
+        this.token,
+      );
+    }
+    return fetchGitHubFileContent(
+      this.meta.owner,
+      this.meta.repo,
+      path,
+      ref,
+      this.token,
     );
   }
 

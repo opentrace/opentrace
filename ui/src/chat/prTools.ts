@@ -9,6 +9,7 @@ import type { GraphStore } from '../store/types';
 import type { PRClient } from '../pr/client';
 
 const MAX_RESULT_CHARS = 6000;
+const MAX_SOURCE_CHARS = 8000;
 
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
@@ -57,7 +58,8 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
         name: 'get_pull_request',
         description:
           'Get details of a specific PullRequest node from the graph, ' +
-          'including all files it modifies via CHANGES relationships.',
+          'including all files it modifies via CHANGES relationships (with diff status and line counts). ' +
+          'Use get_pr_file_change to inspect the actual diff or file contents for individual files.',
         schema: z.object({
           prId: z
             .string()
@@ -94,6 +96,106 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
           prId: z
             .string()
             .describe('PullRequest node ID, e.g. "owner/repo/pr/123"'),
+        }),
+      },
+    ),
+    tool(
+      async ({ prId, filePath, version }) => {
+        // Find the CHANGES edge for this file
+        const changes = await store.traverse(prId, 'outgoing', 1, 'CHANGES');
+        const match = changes.find((r) => {
+          const props = r.relationship.properties as
+            | Record<string, unknown>
+            | undefined;
+          return props?.path === filePath;
+        });
+
+        if (!match) {
+          return JSON.stringify({
+            error: `No CHANGES edge found for file "${filePath}" in this PR`,
+            available_files: changes.map(
+              (r) =>
+                (r.relationship.properties as Record<string, unknown>)?.path,
+            ),
+          });
+        }
+
+        const edgeProps = match.relationship.properties as Record<
+          string,
+          unknown
+        >;
+        const patch = (edgeProps?.patch as string) || null;
+        const status = edgeProps?.status as string;
+
+        // Get branch refs from the PR node properties
+        const prNode = await store.getNode(prId);
+        const baseBranch = (prNode?.properties?.base_branch as string) || null;
+        const headBranch = (prNode?.properties?.head_branch as string) || null;
+
+        // Build response based on requested version
+        const result: Record<string, unknown> = {
+          path: filePath,
+          status,
+          additions: edgeProps?.additions,
+          deletions: edgeProps?.deletions,
+        };
+
+        if (version === 'diff' || version === 'all') {
+          result.diff = patch ?? '(no patch available)';
+        }
+
+        if (version === 'base' || version === 'all') {
+          if (status === 'added') {
+            result.base_content = null;
+          } else if (prClient && baseBranch) {
+            result.base_content =
+              (await prClient.getFileContent(filePath, baseBranch)) ??
+              '(file not found at base branch)';
+          } else {
+            // Fall back to indexed source when no client available
+            const fileId = match.relationship.target_id;
+            const source = await store.fetchSource(fileId);
+            result.base_content = source?.content ?? '(source not available)';
+          }
+        }
+
+        if (version === 'new' || version === 'all') {
+          if (status === 'removed') {
+            result.new_content = null;
+          } else if (prClient && headBranch) {
+            result.new_content =
+              (await prClient.getFileContent(filePath, headBranch)) ??
+              '(file not found at head branch)';
+          } else {
+            result.new_content = '(PR client not available)';
+          }
+        }
+
+        return truncate(JSON.stringify(result), MAX_SOURCE_CHARS);
+      },
+      {
+        name: 'get_pr_file_change',
+        description:
+          'Get the diff, base (original), or new (changed) content of a specific file in a PR. ' +
+          'Use version "diff" for just the patch, "base" for the original file before the PR, ' +
+          '"new" for the file after the PR changes are applied, or "all" for everything. ' +
+          'This is the primary tool for inspecting PR file changes — use it instead of load_source ' +
+          'when reviewing PRs.',
+        schema: z.object({
+          prId: z
+            .string()
+            .describe('PullRequest node ID, e.g. "owner/repo/pr/123"'),
+          filePath: z
+            .string()
+            .describe(
+              'File path as shown in the PR (e.g. "src/main.ts"), not the full node ID',
+            ),
+          version: z
+            .enum(['diff', 'base', 'new', 'all'])
+            .describe(
+              'Which version to return: "diff" for the patch, "base" for the original, ' +
+                '"new" for the changed version, "all" for everything',
+            ),
         }),
       },
     ),

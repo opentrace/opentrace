@@ -15,6 +15,7 @@ export interface TraverseRelationship {
   type: string;
   source_id: string;
   target_id: string;
+  properties?: Record<string, unknown>;
 }
 
 export interface TraverseResult {
