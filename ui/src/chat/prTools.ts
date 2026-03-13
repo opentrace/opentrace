@@ -16,51 +16,6 @@ function truncate(text: string, limit: number): string {
   return text.slice(0, limit) + `\n...[truncated, ${text.length} chars total]`;
 }
 
-/**
- * Apply a unified diff patch to base content to produce the new file content.
- * Handles standard unified diff format with @@ hunk headers.
- */
-function applyPatch(base: string, patch: string): string {
-  const baseLines = base.split('\n');
-  const result = [...baseLines];
-  // Track offset as insertions/deletions shift line numbers
-  let offset = 0;
-
-  const patchLines = patch.split('\n');
-  for (let i = 0; i < patchLines.length; i++) {
-    const hunkMatch = patchLines[i].match(
-      /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/,
-    );
-    if (!hunkMatch) continue;
-
-    // Line number in the original file (1-based)
-    let origLine = parseInt(hunkMatch[1], 10) - 1 + offset;
-    i++;
-
-    while (i < patchLines.length) {
-      const line = patchLines[i];
-      if (line.startsWith('@@') || line.startsWith('diff ')) {
-        i--; // re-process this line as a new hunk
-        break;
-      }
-      if (line.startsWith('-')) {
-        result.splice(origLine, 1);
-        offset--;
-      } else if (line.startsWith('+')) {
-        result.splice(origLine, 0, line.slice(1));
-        origLine++;
-        offset++;
-      } else {
-        // Context line — advance position
-        origLine++;
-      }
-      i++;
-    }
-  }
-
-  return result.join('\n');
-}
-
 export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
   const tools: StructuredToolInterface[] = [
     // Always available: query PR nodes from graph
@@ -171,7 +126,11 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
         >;
         const patch = (edgeProps?.patch as string) || null;
         const status = edgeProps?.status as string;
-        const fileId = match.relationship.target_id;
+
+        // Get branch refs from the PR node properties
+        const prNode = await store.getNode(prId);
+        const baseBranch = (prNode?.properties?.base_branch as string) || null;
+        const headBranch = (prNode?.properties?.head_branch as string) || null;
 
         // Build response based on requested version
         const result: Record<string, unknown> = {
@@ -185,38 +144,30 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
           result.diff = patch ?? '(no patch available)';
         }
 
-        if (version === 'base' || version === 'new' || version === 'all') {
-          const source = await store.fetchSource(fileId);
-          const baseContent = source?.content ?? null;
-
-          if (version === 'base' || version === 'all') {
+        if (version === 'base' || version === 'all') {
+          if (status === 'added') {
+            result.base_content = null;
+          } else if (prClient && baseBranch) {
             result.base_content =
-              status === 'added'
-                ? null
-                : baseContent ?? '(source not indexed)';
+              (await prClient.getFileContent(filePath, baseBranch)) ??
+              '(file not found at base branch)';
+          } else {
+            // Fall back to indexed source when no client available
+            const fileId = match.relationship.target_id;
+            const source = await store.fetchSource(fileId);
+            result.base_content = source?.content ?? '(source not available)';
           }
+        }
 
-          if (version === 'new' || version === 'all') {
-            if (status === 'removed') {
-              result.new_content = null;
-            } else if (status === 'added') {
-              // For new files the patch is the entire content (all + lines)
-              if (patch) {
-                result.new_content = patch
-                  .split('\n')
-                  .filter((l) => l.startsWith('+'))
-                  .map((l) => l.slice(1))
-                  .join('\n');
-              } else {
-                result.new_content = '(patch not available)';
-              }
-            } else if (baseContent && patch) {
-              result.new_content = applyPatch(baseContent, patch);
-            } else {
-              result.new_content = !baseContent
-                ? '(source not indexed)'
-                : '(patch not available)';
-            }
+        if (version === 'new' || version === 'all') {
+          if (status === 'removed') {
+            result.new_content = null;
+          } else if (prClient && headBranch) {
+            result.new_content =
+              (await prClient.getFileContent(filePath, headBranch)) ??
+              '(file not found at head branch)';
+          } else {
+            result.new_content = '(PR client not available)';
           }
         }
 

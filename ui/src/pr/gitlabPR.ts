@@ -116,6 +116,33 @@ export async function fetchGitLabMRDetail(
   };
 }
 
+/**
+ * Fetch a single file's content at a given git ref (branch, tag, or SHA).
+ * Returns the decoded text content, or null if the file doesn't exist at that ref.
+ */
+export async function fetchGitLabFileContent(
+  host: string,
+  projectPath: string,
+  path: string,
+  ref: string,
+  token?: string,
+): Promise<string | null> {
+  try {
+    const encoded = encodeURIComponent(projectPath);
+    const filePath = encodeURIComponent(path);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await glFetch<any>(
+      host,
+      `/projects/${encoded}/repository/files/${filePath}?ref=${encodeURIComponent(ref)}`,
+      token,
+    );
+    if (!data.content) return null;
+    return atob(data.content);
+  } catch {
+    return null;
+  }
+}
+
 export async function postGitLabMRComment(
   host: string,
   projectPath: string,

@@ -243,6 +243,30 @@ export async function createGitHubReview(
   });
 }
 
+/**
+ * Fetch a single file's content at a given git ref (branch, tag, or SHA).
+ * Returns the decoded text content, or null if the file doesn't exist at that ref.
+ */
+export async function fetchGitHubFileContent(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+  token?: string,
+): Promise<string | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await ghFetch<any>(
+      `/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref)}`,
+      token,
+    );
+    if (data.type !== 'file' || !data.content) return null;
+    return atob(data.content.replace(/\n/g, ''));
+  } catch {
+    return null;
+  }
+}
+
 export async function postGitHubPRComment(
   owner: string,
   repo: string,
