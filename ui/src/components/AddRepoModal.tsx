@@ -117,6 +117,26 @@ function FolderIcon() {
   );
 }
 
+// --- Example Repositories ---
+
+const EXAMPLE_REPOS = [
+  {
+    name: 'OpenTelemetry Demo',
+    url: 'https://github.com/open-telemetry/opentelemetry-demo',
+    description: 'Microservices demo with OTel instrumentation',
+  },
+  {
+    name: 'Podinfo',
+    url: 'https://github.com/stefanprodan/podinfo',
+    description: 'Go microservice template for Kubernetes',
+  },
+  {
+    name: 'Express.js',
+    url: 'https://github.com/expressjs/express',
+    description: 'Fast, minimalist web framework for Node.js',
+  },
+];
+
 // --- Main Component ---
 
 export default function AddRepoModal({
@@ -283,6 +303,23 @@ export default function AddRepoModal({
                   data-lpignore="true"
                   data-testid="repo-url-input"
                 />
+
+                {!provider && (
+                  <div className="example-repos">
+                    <span className="example-repos-label">Examples:</span>
+                    {EXAMPLE_REPOS.map((repo) => (
+                      <button
+                        key={repo.url}
+                        type="button"
+                        className="example-repo-chip"
+                        onClick={() => setRepoUrl(repo.url)}
+                        title={repo.description}
+                      >
+                        {repo.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <div className="form-info">
                   <svg
