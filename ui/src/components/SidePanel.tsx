@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { NodeObject, LinkObject } from 'react-force-graph-2d';
 import type { GraphNode, GraphLink } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import FilterPanel from './FilterPanel';
+import DiscoverPanel from './DiscoverPanel';
 import NodeDetailsPanel from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
@@ -46,6 +47,13 @@ interface SidePanelProps {
   /* Edge details props */
   selectedLink: Link | null;
   onSelectNode?: (nodeId: string) => void;
+
+  /** Bumps when the graph store changes (new indexing, PR import, etc.) */
+  graphVersion?: number;
+  /** IDs of nodes currently in the graph view */
+  graphNodeIds?: string[];
+  /** Map of node ID → hop distance from selected node (0 = selected) */
+  hopMap?: Map<string, number>;
 }
 
 export default function SidePanel({
@@ -69,70 +77,108 @@ export default function SidePanel({
   onCloseDetails,
   selectedLink,
   onSelectNode,
+  graphVersion,
+  graphNodeIds,
+  hopMap,
 }: SidePanelProps) {
-  const [activeTab, setActiveTab] = useState<'filters' | 'details'>('filters');
+  const [activeTab, setActiveTab] = useState<'filters' | 'discover' | 'details'>('filters');
+  const previousTab = useRef<'filters' | 'discover'>('filters');
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
 
-  // Auto-switch tabs when node or edge selection changes
+  // Auto-switch to details when node or edge is selected
   useEffect(() => {
     if (selectedNode || selectedLink) {
+      // Remember where we were before switching to details
+      if (activeTabRef.current !== 'details') {
+        previousTab.current = activeTabRef.current as 'filters' | 'discover';
+      }
       setActiveTab('details');
-    } else {
-      setActiveTab('filters');
+    } else if (activeTabRef.current === 'details') {
+      // Restore previous tab when details close
+      setActiveTab(previousTab.current);
     }
   }, [selectedNode, selectedLink]);
 
-  const expanded = selectedNode !== null || selectedLink !== null;
+  const hasSelection = selectedNode !== null || selectedLink !== null;
+  const expanded = hasSelection || activeTab === 'discover';
+
+  const handleCloseDetails = () => {
+    onCloseDetails();
+    setActiveTab(previousTab.current);
+  };
 
   return (
     <div className={`side-panel ${expanded ? 'side-panel--expanded' : ''}`}>
-      {expanded && (
-        <div className="side-panel-tabs">
-          <button
-            className={`side-panel-tab ${activeTab === 'filters' ? 'side-panel-tab--active' : ''}`}
-            onClick={() => setActiveTab('filters')}
-          >
-            Filters
-          </button>
-          <button
-            className={`side-panel-tab ${activeTab === 'details' ? 'side-panel-tab--active' : ''}`}
-            onClick={() => setActiveTab('details')}
-          >
-            Details
-          </button>
-          <button className="side-panel-close" onClick={onCloseDetails}>
-            &times;
-          </button>
+      <div className="side-panel-tabs">
+        <button
+          className={`side-panel-tab ${activeTab === 'filters' ? 'side-panel-tab--active' : ''}`}
+          onClick={() => setActiveTab('filters')}
+        >
+          Filters
+        </button>
+        <button
+          className={`side-panel-tab ${activeTab === 'discover' ? 'side-panel-tab--active' : ''}`}
+          onClick={() => setActiveTab('discover')}
+        >
+          Discover
+        </button>
+        {hasSelection && (
+          <>
+            <button
+              className={`side-panel-tab ${activeTab === 'details' ? 'side-panel-tab--active' : ''}`}
+              onClick={() => setActiveTab('details')}
+            >
+              Details
+            </button>
+            <button className="side-panel-close" onClick={handleCloseDetails}>
+              &times;
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="side-panel-content" style={{ display: activeTab === 'filters' ? undefined : 'none' }}>
+        <FilterPanel
+          nodeTypes={nodeTypes}
+          linkTypes={linkTypes}
+          hiddenNodeTypes={hiddenNodeTypes}
+          hiddenLinkTypes={hiddenLinkTypes}
+          subTypesByNodeType={subTypesByNodeType}
+          hiddenSubTypes={hiddenSubTypes}
+          onToggleNodeType={onToggleNodeType}
+          onToggleLinkType={onToggleLinkType}
+          onToggleSubType={onToggleSubType}
+          onShowAllNodes={onShowAllNodes}
+          onHideAllNodes={onHideAllNodes}
+          onShowAllLinks={onShowAllLinks}
+          onHideAllLinks={onHideAllLinks}
+        />
+      </div>
+      <div className="side-panel-content" style={{ display: activeTab === 'discover' ? undefined : 'none' }}>
+        <DiscoverPanel
+          onSelectNode={onSelectNode ?? (() => {})}
+          graphVersion={graphVersion}
+          selectedNodeId={selectedNode?.id as string | undefined}
+          graphNodeIds={graphNodeIds}
+          hopMap={hopMap}
+          isActive={activeTab === 'discover'}
+        />
+      </div>
+      {activeTab === 'details' && (
+        <div className="side-panel-content">
+          {selectedNode ? (
+            <NodeDetailsPanel
+              node={selectedNode}
+              nodeSource={nodeSource}
+              sourceLoading={sourceLoading}
+              sourceError={sourceError}
+            />
+          ) : selectedLink ? (
+            <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />
+          ) : null}
         </div>
       )}
-
-      <div className="side-panel-content">
-        {activeTab === 'filters' ? (
-          <FilterPanel
-            nodeTypes={nodeTypes}
-            linkTypes={linkTypes}
-            hiddenNodeTypes={hiddenNodeTypes}
-            hiddenLinkTypes={hiddenLinkTypes}
-            subTypesByNodeType={subTypesByNodeType}
-            hiddenSubTypes={hiddenSubTypes}
-            onToggleNodeType={onToggleNodeType}
-            onToggleLinkType={onToggleLinkType}
-            onToggleSubType={onToggleSubType}
-            onShowAllNodes={onShowAllNodes}
-            onHideAllNodes={onHideAllNodes}
-            onShowAllLinks={onShowAllLinks}
-            onHideAllLinks={onHideAllLinks}
-          />
-        ) : selectedNode ? (
-          <NodeDetailsPanel
-            node={selectedNode}
-            nodeSource={nodeSource}
-            sourceLoading={sourceLoading}
-            sourceError={sourceError}
-          />
-        ) : selectedLink ? (
-          <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />
-        ) : null}
-      </div>
     </div>
   );
 }
