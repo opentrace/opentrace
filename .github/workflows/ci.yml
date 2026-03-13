@@ -94,3 +94,17 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  trigger-deploy:
+    name: Trigger Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [api, agent, ui]
+    steps:
+      - name: Trigger deployment
+        run: |
+          gh api repos/opentrace/opentrace-deployment/dispatches \
+            -f event_type=submodule-release \
+            -f 'client_payload[tag]=${{ github.ref_name }}'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
