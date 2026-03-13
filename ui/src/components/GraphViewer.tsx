@@ -27,6 +27,7 @@ import IndexingProgress from './IndexingProgress';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import ThemeSelector from './ThemeSelector';
+import { OpenTraceLogo } from './OpenTraceLogo';
 
 type Node = NodeObject<GraphNode>;
 type Link = LinkObject<GraphNode, GraphLink>;
@@ -640,7 +641,7 @@ const GraphViewer = memo(
         return (
           <div className="graph-viewport">
             <div className="loading">
-              <div className="spinner" />
+              <OpenTraceLogo size={64} />
               <span>Loading graph...</span>
               <footer className="version-footer">
                 v{__APP_VERSION__} &middot;{' '}

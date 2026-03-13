@@ -5,6 +5,7 @@ import type { GraphStore } from '../store/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { indexPRIntoGraph } from '../pr/indexer';
 import PRDetailPanel from './PRDetailPanel';
+import { OpenTraceLogo } from './OpenTraceLogo';
 import './PRListPanel.css';
 
 interface Props {
@@ -129,7 +130,7 @@ export default function PRListPanel({
     return (
       <div className="pr-list-panel">
         <div className="pr-list-loading">
-          <div className="pr-spinner" />
+          <OpenTraceLogo size={48} />
           <span>Loading pull requests...</span>
         </div>
       </div>
