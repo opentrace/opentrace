@@ -43,28 +43,10 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
     "prettier": "^3.8.1",
-    "tree-sitter-bash": "^0.23.3",
-    "tree-sitter-c": "^0.23.5",
-    "tree-sitter-c-sharp": "^0.23.1",
-    "tree-sitter-cli": "^0.26.6",
-    "tree-sitter-cpp": "^0.23.4",
-    "tree-sitter-go": "^0.25.0",
-    "tree-sitter-java": "^0.23.5",
-    "tree-sitter-json": "^0.24.8",
-    "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-python": "^0.25.0",
-    "tree-sitter-ruby": "^0.23.1",
-    "tree-sitter-rust": "^0.23.2",
-    "tree-sitter-swift": "^0.6.0",
-    "tree-sitter-toml": "^0.5.1",
-    "tree-sitter-typescript": "^0.23.2",
     "ts-proto": "^2.11.5",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1",
     "vitest": "^3.2.1"
-  },
-  "overrides": {
-    "tree-sitter": "0.22.4"
   }
 }
