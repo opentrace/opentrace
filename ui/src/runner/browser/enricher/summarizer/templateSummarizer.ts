@@ -834,11 +834,14 @@ export function summarizeClass(
 // File summarizer
 // ---------------------------------------------------------------------------
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
 export function summarizeFile(
   fileName: string,
   symbolNames?: string[],
   language?: string,
+  _source?: string,
 ): string {
+  /* eslint-enable @typescript-eslint/no-unused-vars */
   const lowerFile = fileName.toLowerCase();
 
   // Check known file patterns
