@@ -17,6 +17,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
+  --sigma-background-color: var(--background);
 }
 
 /* Header */

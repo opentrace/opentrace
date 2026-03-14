@@ -1,6 +1,5 @@
 import { type ReactNode, useState } from 'react';
-import type { NodeObject } from 'react-force-graph-2d';
-import type { GraphNode } from '../types/graph';
+import type { SelectedNode } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import { IMAGE_MIME_TYPES } from '../runner/browser/loader/constants';
 import { getNodeColor } from '../chat/results/nodeColors';
@@ -9,8 +8,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { markdownComponents } from '../chat/markdownComponents';
 import './NodeDetailsPanel.css';
-
-type Node = NodeObject<GraphNode>;
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set([
@@ -174,7 +171,7 @@ function detectLanguage(source: NodeSourceResponse): string {
 }
 
 interface NodeDetailsPanelProps {
-  node: Node;
+  node: SelectedNode;
   nodeSource: NodeSourceResponse | null;
   sourceLoading: boolean;
   sourceError: string | null;

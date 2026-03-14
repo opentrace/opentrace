@@ -8,17 +8,21 @@ import {
   useRef,
   useState,
 } from 'react';
-import ForceGraph, {
-  type ForceGraphMethods,
-  type NodeObject,
-  type LinkObject,
-} from 'react-force-graph-2d';
-import type { GraphNode, GraphLink } from '../types/graph';
+import { SigmaContainer, useSigma } from '@react-sigma/core';
+import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
+import '@react-sigma/core/lib/style.css';
+import type {
+  GraphNode,
+  GraphLink,
+  SelectedNode,
+  SelectedEdge,
+} from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import { useStore } from '../store';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
 import { useGraphData } from '../hooks/useGraphData';
+import { useSigmaGraph } from '../hooks/useSigmaGraph';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
 import { detectProvider } from './AddRepoModal';
@@ -28,9 +32,16 @@ import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
-
-type Node = NodeObject<GraphNode>;
-type Link = LinkObject<GraphNode, GraphLink>;
+import GraphEvents from './sigma/GraphEvents';
+import LayoutController from './sigma/LayoutController';
+import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
+import {
+  ZOOM_SIZE_EXPONENT,
+  LABEL_RENDERED_SIZE_THRESHOLD,
+  LABEL_SIZE,
+  LABEL_FONT,
+  LABEL_COLOR,
+} from '../config/graphLayout';
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set([
@@ -69,10 +80,10 @@ function getSubType(node: GraphNode): string | null {
 
 /**
  * Extract the string ID from a link endpoint.
- * react-force-graph-2d mutates links at runtime, replacing string IDs
- * with object references after simulation starts. This helper handles both.
+ * GraphLink endpoints are always strings in our data model,
+ * but we keep this helper for safety.
  */
-function linkId(endpoint: string | number | Node | undefined): string {
+function linkId(endpoint: string | number | GraphNode | undefined): string {
   if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
   return String(endpoint);
 }
@@ -112,6 +123,28 @@ export interface GraphViewerProps {
   }) => void;
 }
 
+/**
+ * Inner component that accesses the sigma instance via useSigma().
+ * Used for zoom controls and initial zoom-to-fit.
+ */
+function SigmaZoomControls({
+  onReady,
+}: {
+  onReady: (sigma: ReturnType<typeof useSigma>) => void;
+}) {
+  const sigma = useSigma();
+  const readyRef = useRef(false);
+
+  useEffect(() => {
+    if (!readyRef.current) {
+      readyRef.current = true;
+      onReady(sigma);
+    }
+  }, [sigma, onReady]);
+
+  return null;
+}
+
 const GraphViewer = memo(
   forwardRef<GraphViewerHandle, GraphViewerProps>(
     function GraphViewer(props, ref) {
@@ -138,10 +171,17 @@ const GraphViewer = memo(
       } = props;
 
       const { store } = useStore();
-      const fgRef = useRef<ForceGraphMethods<Node, Link>>(undefined);
+      const sigmaRef = useRef<ReturnType<typeof useSigma> | null>(null);
 
       const onGraphLoaded = useCallback(() => {
-        setTimeout(() => fgRef.current?.zoomToFit(400, 60), 500);
+        setTimeout(() => {
+          if (sigmaRef.current) {
+            zoomToFit(
+              sigmaRef.current as unknown as import('sigma').Sigma,
+              400,
+            );
+          }
+        }, 500);
       }, []);
 
       const {
@@ -164,8 +204,12 @@ const GraphViewer = memo(
         onGraphDataChange?.(graphData);
       }, [graphData, onGraphDataChange]);
 
-      const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-      const [selectedLink, setSelectedLink] = useState<Link | null>(null);
+      const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(
+        null,
+      );
+      const [selectedLink, setSelectedLink] = useState<SelectedEdge | null>(
+        null,
+      );
       const [searchQuery, setSearchQuery] = useState('');
       const [hops, setHops] = useState(2);
       const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
@@ -276,25 +320,20 @@ const GraphViewer = memo(
       }, [availableSubTypes]);
 
       // Apply type + sub-type filters to produce the rendered graph.
-      // Node/edge counts are already capped by the worker's MAX_VIS_NODES/EDGES limits
-      // (configured via Settings), so no additional truncation is needed here.
       const filteredGraphData = useMemo(() => {
         const nodes = graphData.nodes.filter((n) => {
           const hasSubTypeFilters = availableSubTypes.has(n.type);
           if (hasSubTypeFilters) {
-            // For types with sub-types, visibility is driven by sub-type filters
             const sub = getSubType(n);
             if (sub) {
               return !hiddenSubTypes.has(`${n.type}:${sub}`);
             }
-            // Nodes with no sub-type: visible unless ALL sub-types are hidden
             const subs = availableSubTypes.get(n.type)!;
             const allHidden = subs.every((s) =>
               hiddenSubTypes.has(`${n.type}:${s.subType}`),
             );
             return !allHidden;
           }
-          // For types without sub-types, use the type-level filter
           return !hiddenNodeTypes.has(n.type);
         });
         const visibleNodeIds = new Set(nodes.map((n) => n.id));
@@ -317,11 +356,6 @@ const GraphViewer = memo(
         availableSubTypes,
       ]);
 
-      const nodeColor = useCallback(
-        (node: Node) => getNodeColor(node.type),
-        [],
-      );
-
       // Adjacency list for multi-hop BFS traversal (uses filtered data)
       const adjacency = useMemo(() => {
         const map = new Map<string, { neighbor: string; linkKey: string }[]>();
@@ -338,7 +372,7 @@ const GraphViewer = memo(
       }, [filteredGraphData.links]);
 
       const onNodeClick = useCallback(
-        (node: Node) => {
+        (node: GraphNode) => {
           setSelectedNode(node);
           setSelectedLink(null);
           // BFS to find N-hop neighborhood, then zoom to fit it
@@ -356,15 +390,18 @@ const GraphViewer = memo(
             });
             frontier = next;
           }
-          fgRef.current?.zoomToFit(600, 60, (n: Node) =>
-            neighborhood.has(n.id),
-          );
+          if (sigmaRef.current) {
+            zoomToNodes(
+              sigmaRef.current as unknown as import('sigma').Sigma,
+              neighborhood,
+              600,
+            );
+          }
         },
-        [fgRef, hops, adjacency],
+        [hops, adjacency],
       );
 
       // Expose imperative handle for parent/sibling access
-      // (placed after onNodeClick so the reference is initialized)
       useImperativeHandle(
         ref,
         () => ({
@@ -374,32 +411,31 @@ const GraphViewer = memo(
             const node = graphDataRef.current.nodes.find(
               (n) => n.id === nodeId,
             );
-            if (node) onNodeClick(node as Node);
+            if (node) onNodeClick(node);
           },
           reload: (query?: string, hops?: number) => loadGraph(query, hops),
         }),
         [graphData, loadGraph, onNodeClick],
       );
 
-      const onLinkClick = useCallback(
-        (link: Link) => {
-          setSelectedLink(link);
-          setSelectedNode(null);
-          // Highlight the two endpoints and the clicked link
-          const sourceId = linkId(link.source);
-          const targetId = linkId(link.target);
-          setHighlightNodes(new Set([sourceId, targetId]));
-          setHighlightLinks(new Set([`${sourceId}-${targetId}`]));
-          setLabelNodes(new Set([sourceId, targetId]));
-          // Zoom to fit the two endpoints
-          fgRef.current?.zoomToFit(
+      const onLinkClick = useCallback((edge: SelectedEdge) => {
+        setSelectedLink(edge);
+        setSelectedNode(null);
+        // Highlight the two endpoints and the clicked link
+        const sourceId = edge.source;
+        const targetId = edge.target;
+        setHighlightNodes(new Set([sourceId, targetId]));
+        setHighlightLinks(new Set([`${sourceId}-${targetId}`]));
+        setLabelNodes(new Set([sourceId, targetId]));
+        // Zoom to fit the two endpoints
+        if (sigmaRef.current) {
+          zoomToNodes(
+            sigmaRef.current as unknown as import('sigma').Sigma,
+            [sourceId, targetId],
             600,
-            60,
-            (n: Node) => n.id === sourceId || n.id === targetId,
           );
-        },
-        [fgRef],
-      );
+        }
+      }, []);
 
       // Fetch source code when a source-bearing node is selected.
       useEffect(() => {
@@ -522,95 +558,18 @@ const GraphViewer = memo(
         return map;
       }, [filteredGraphData.links]);
 
-      const nodeSize = useCallback(
-        (node: Node) => {
-          const degree = degreeMap.get(node.id) || 0;
-          // sqrt scaling: area proportional to degree. Range: 4px (isolated) to 20px (hub)
-          return Math.min(20, Math.max(4, 4 + Math.sqrt(degree) * 3));
-        },
-        [degreeMap],
-      );
-
-      const paintNode = useCallback(
-        (node: Node, ctx: CanvasRenderingContext2D, globalScale: number) => {
-          const fullLabel = node.name ?? node.id;
-          const size = nodeSize(node);
-          // Truncate labels on smaller nodes — large hubs get the full name
-          const maxChars =
-            size <= 5 ? 12 : size <= 8 ? 20 : size <= 12 ? 30 : Infinity;
-          const label =
-            fullLabel.length > maxChars
-              ? fullLabel.slice(0, maxChars - 1) + '\u2026'
-              : fullLabel;
-          const fontSize = Math.max(12 / globalScale, 1.5);
-          const isHighlighted =
-            highlightNodes.size === 0 || highlightNodes.has(node.id);
-
-          ctx.globalAlpha = isHighlighted ? 1 : 0.15;
-
-          // Glow on highlighted nodes (search, selection)
-          if (highlightNodes.size > 0 && highlightNodes.has(node.id)) {
-            ctx.shadowColor = nodeColor(node);
-            ctx.shadowBlur = 15;
-          }
-
-          // Selection halo
-          if (selectedNode && node.id === selectedNode.id) {
-            const haloRadius = size + 4;
-            ctx.beginPath();
-            ctx.arc(node.x!, node.y!, haloRadius, 0, 2 * Math.PI);
-            ctx.strokeStyle = nodeColor(node);
-            ctx.lineWidth = 2;
-            ctx.globalAlpha = 0.6;
-            ctx.stroke();
-            // Outer glow ring
-            ctx.beginPath();
-            ctx.arc(node.x!, node.y!, haloRadius + 3, 0, 2 * Math.PI);
-            ctx.strokeStyle = nodeColor(node);
-            ctx.lineWidth = 1;
-            ctx.globalAlpha = 0.25;
-            ctx.stroke();
-            ctx.globalAlpha = isHighlighted ? 1 : 0.15;
-          }
-
-          // Circle
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, size, 0, 2 * Math.PI);
-          ctx.fillStyle = nodeColor(node);
-          ctx.fill();
-          ctx.shadowBlur = 0;
-
-          // Label — shown when zoomed in (threshold scales with node size) or within label radius
-          const sizeRatio = size / 4; // 1 for smallest nodes, up to 5 for largest
-          const zoomThreshold = 3.5 / sizeRatio; // hubs: ~0.7, leaves: 3.5
-          if (
-            globalScale > zoomThreshold ||
-            (labelNodes.size > 0 && labelNodes.has(node.id))
-          ) {
-            const isLight = document.documentElement.dataset.mode === 'light';
-            ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillStyle = isLight
-              ? `rgba(0, 0, 0, ${isHighlighted ? 0.85 : 0.15})`
-              : `rgba(255, 255, 255, ${isHighlighted ? 0.9 : 0.2})`;
-            ctx.fillText(String(label), node.x!, node.y! + size + 2);
-          }
-          ctx.globalAlpha = 1;
-        },
-        [nodeColor, nodeSize, highlightNodes, labelNodes, selectedNode],
-      );
-
-      const nodePointerArea = useCallback(
-        (node: Node, color: string, ctx: CanvasRenderingContext2D) => {
-          const size = nodeSize(node);
-          ctx.beginPath();
-          ctx.arc(node.x!, node.y!, Math.max(size, 10), 0, 2 * Math.PI);
-          ctx.fillStyle = color;
-          ctx.fill();
-        },
-        [nodeSize],
-      );
+      // Build graphology Graph from filtered data (layout uses full dataset)
+      const graph = useSigmaGraph({
+        allNodes: graphData.nodes,
+        allLinks: graphData.links,
+        nodes: filteredGraphData.nodes,
+        links: filteredGraphData.links,
+        degreeMap,
+        highlightNodes,
+        highlightLinks,
+        labelNodes,
+        selectedNodeId: selectedNode?.id ?? null,
+      });
 
       const legendItems = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -665,6 +624,39 @@ const GraphViewer = memo(
           onAddRepoOpen();
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
+
+      // Sigma settings — stable reference to avoid re-creating the sigma instance
+      const sigmaSettings = useMemo(
+        () => ({
+          defaultNodeType: 'circle',
+          defaultEdgeType: 'curvedArrow',
+          edgeProgramClasses: {
+            curvedArrow: EdgeCurvedArrowProgram,
+          },
+          renderEdgeLabels: false,
+          enableEdgeEvents: true,
+          labelRenderedSizeThreshold: LABEL_RENDERED_SIZE_THRESHOLD,
+          labelFont: LABEL_FONT,
+          labelColor: { color: LABEL_COLOR },
+          labelSize: LABEL_SIZE,
+          allowInvalidContainer: true,
+          zoomToSizeRatioFunction: (ratio: number) =>
+            Math.pow(ratio, ZOOM_SIZE_EXPONENT),
+        }),
+        [],
+      );
+
+      const handleSigmaReady = useCallback(
+        (sigma: ReturnType<typeof useSigma>) => {
+          sigmaRef.current = sigma;
+        },
+        [],
+      );
+
+      const handleStageClick = useCallback(() => {
+        setSelectedNode(null);
+        setSelectedLink(null);
+      }, []);
 
       // --- Early returns for loading/error/empty states ---
 
@@ -883,7 +875,7 @@ const GraphViewer = memo(
               const node = graphDataRef.current.nodes.find(
                 (n) => n.id === nodeId,
               );
-              if (node) onNodeClick(node as Node);
+              if (node) onNodeClick(node);
             }}
             onCloseDetails={() => {
               setSelectedNode(null);
@@ -1103,73 +1095,36 @@ const GraphViewer = memo(
             )}
           </div>
 
-          <ForceGraph
-            ref={fgRef}
-            graphData={filteredGraphData}
-            width={graphWidth}
-            height={height}
-            backgroundColor="transparent"
-            nodeCanvasObject={paintNode}
-            nodeCanvasObjectMode={() => 'replace'}
-            nodePointerAreaPaint={nodePointerArea}
-            nodeRelSize={1}
-            nodeVal={(node: Node) => nodeSize(node) ** 2}
-            linkColor={(link: Link) => {
-              const id = `${linkId(link.source)}-${linkId(link.target)}`;
-              const label = (link as GraphLink).label ?? '';
-              const baseColor = label ? getLinkColor(label) : '#94a3b8';
-              if (highlightLinks.has(id)) return baseColor;
-              if (highlightLinks.size > 0 || highlightNodes.size > 0)
-                return baseColor + '0D'; // ~5% opacity
-              return baseColor + '4D'; // ~30% opacity
+          <SigmaContainer
+            graph={graph}
+            style={{
+              width: graphWidth,
+              height,
+              position: 'absolute',
+              top: 0,
+              left: 0,
             }}
-            linkWidth={(link: Link) => {
-              return highlightLinks.has(
-                `${linkId(link.source)}-${linkId(link.target)}`,
-              )
-                ? 4
-                : 2.5;
-            }}
-            linkCurvature={0.25}
-            linkDirectionalArrowLength={5}
-            linkDirectionalArrowRelPos={1}
-            linkDirectionalParticles={(link: Link) => {
-              // Disable particles on large graphs for performance
-              if (filteredGraphData.links.length > 500) return 0;
-              return highlightLinks.has(
-                `${linkId(link.source)}-${linkId(link.target)}`,
-              )
-                ? 4
-                : 1;
-            }}
-            linkDirectionalParticleWidth={(link: Link) => {
-              return highlightLinks.has(
-                `${linkId(link.source)}-${linkId(link.target)}`,
-              )
-                ? 3
-                : 2;
-            }}
-            linkDirectionalParticleSpeed={0.005}
-            linkLabel={(link: Link) => (link as GraphLink).label ?? ''}
-            onNodeClick={onNodeClick}
-            onLinkClick={onLinkClick}
-            onBackgroundClick={() => {
-              setSelectedNode(null);
-              setSelectedLink(null);
-            }}
-            enableZoomInteraction={true}
-            enablePanInteraction={true}
-            cooldownTicks={filteredGraphData.nodes.length > 500 ? 50 : 100}
-            d3AlphaDecay={filteredGraphData.nodes.length > 500 ? 0.04 : 0.02}
-            d3VelocityDecay={0.3}
-          />
+            settings={sigmaSettings}
+          >
+            <GraphEvents
+              onNodeClick={onNodeClick}
+              onEdgeClick={onLinkClick}
+              onStageClick={handleStageClick}
+            />
+            <LayoutController nodeCount={filteredGraphData.nodes.length} />
+            <SigmaZoomControls onReady={handleSigmaReady} />
+          </SigmaContainer>
 
           <div className="graph-controls">
             <button
               className="graph-control-btn"
               onClick={() => {
-                const current = fgRef.current?.zoom();
-                if (current) fgRef.current?.zoom(current * 1.5, 300);
+                if (sigmaRef.current) {
+                  const camera = (
+                    sigmaRef.current as unknown as import('sigma').Sigma
+                  ).getCamera();
+                  camera.animatedZoom({ duration: 300 });
+                }
               }}
               title="Zoom in"
             >
@@ -1190,8 +1145,12 @@ const GraphViewer = memo(
             <button
               className="graph-control-btn"
               onClick={() => {
-                const current = fgRef.current?.zoom();
-                if (current) fgRef.current?.zoom(current / 1.5, 300);
+                if (sigmaRef.current) {
+                  const camera = (
+                    sigmaRef.current as unknown as import('sigma').Sigma
+                  ).getCamera();
+                  camera.animatedUnzoom({ duration: 300 });
+                }
               }}
               title="Zoom out"
             >
@@ -1210,7 +1169,14 @@ const GraphViewer = memo(
             </button>
             <button
               className="graph-control-btn"
-              onClick={() => fgRef.current?.zoomToFit(400, 60)}
+              onClick={() => {
+                if (sigmaRef.current) {
+                  const camera = (
+                    sigmaRef.current as unknown as import('sigma').Sigma
+                  ).getCamera();
+                  camera.animatedReset({ duration: 400 });
+                }
+              }}
               title="Zoom to fit"
             >
               <svg

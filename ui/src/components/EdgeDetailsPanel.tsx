@@ -1,29 +1,10 @@
-import type { LinkObject, NodeObject } from 'react-force-graph-2d';
-import type { GraphNode, GraphLink } from '../types/graph';
+import type { SelectedEdge } from '../types/graph';
 import { getLinkColor } from '../chat/results/linkColors';
 import { getNodeColor } from '../chat/results/nodeColors';
 import './EdgeDetailsPanel.css';
 
-type Node = NodeObject<GraphNode>;
-type Link = LinkObject<GraphNode, GraphLink>;
-
-/** Extract the string ID from a link endpoint (handles both string and object forms). */
-function endpointId(endpoint: string | number | Node | undefined): string {
-  if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
-  return String(endpoint);
-}
-
-/** Extract the full node object from a link endpoint, if available. */
-function endpointNode(
-  endpoint: string | number | Node | undefined,
-): Node | null {
-  if (typeof endpoint === 'object' && endpoint !== null)
-    return endpoint as Node;
-  return null;
-}
-
 interface EdgeDetailsPanelProps {
-  link: Link;
+  link: SelectedEdge;
   onSelectNode?: (nodeId: string) => void;
 }
 
@@ -31,13 +12,13 @@ export default function EdgeDetailsPanel({
   link,
   onSelectNode,
 }: EdgeDetailsPanelProps) {
-  const label = (link as unknown as GraphLink).label || 'unknown';
+  const label = link.label || 'unknown';
   const color = getLinkColor(label);
 
-  const sourceId = endpointId(link.source);
-  const targetId = endpointId(link.target);
-  const sourceNode = endpointNode(link.source);
-  const targetNode = endpointNode(link.target);
+  const sourceId = link.source;
+  const targetId = link.target;
+  const sourceNode = link.sourceNode;
+  const targetNode = link.targetNode;
 
   const sourceName = sourceNode?.name || sourceId;
   const targetName = targetNode?.name || targetId;
@@ -110,7 +91,7 @@ export default function EdgeDetailsPanel({
 
       {/* ── Edge properties ── */}
       {(() => {
-        const props = (link as unknown as GraphLink).properties;
+        const props = link.properties;
         if (!props || Object.keys(props).length === 0) return null;
         const patch = typeof props.patch === 'string' ? props.patch : null;
         const otherProps = Object.entries(props).filter(([k]) => k !== 'patch');

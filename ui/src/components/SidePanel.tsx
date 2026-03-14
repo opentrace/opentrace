@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { NodeObject, LinkObject } from 'react-force-graph-2d';
-import type { GraphNode, GraphLink } from '../types/graph';
+import type { SelectedNode, SelectedEdge } from '../types/graph';
 import type { NodeSourceResponse } from '../store/types';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import FilterPanel from './FilterPanel';
@@ -8,9 +7,6 @@ import DiscoverPanel from './DiscoverPanel';
 import NodeDetailsPanel from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
-
-type Node = NodeObject<GraphNode>;
-type Link = LinkObject<GraphNode, GraphLink>;
 
 interface TypeEntry {
   type: string;
@@ -39,14 +35,14 @@ interface SidePanelProps {
   onHideAllLinks: () => void;
 
   /* Node details props */
-  selectedNode: Node | null;
+  selectedNode: SelectedNode | null;
   nodeSource: NodeSourceResponse | null;
   sourceLoading: boolean;
   sourceError: string | null;
   onCloseDetails: () => void;
 
   /* Edge details props */
-  selectedLink: Link | null;
+  selectedLink: SelectedEdge | null;
   onSelectNode?: (nodeId: string) => void;
 
   /** Bumps when the graph store changes (new indexing, PR import, etc.) */

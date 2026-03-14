@@ -22,3 +22,16 @@ export interface GraphStats {
   total_edges: number;
   nodes_by_type: Record<string, number>;
 }
+
+/** Replaces NodeObject<GraphNode> — no more mutable D3 refs */
+export type SelectedNode = GraphNode;
+
+/** Replaces LinkObject<GraphNode, GraphLink> — endpoints always strings */
+export interface SelectedEdge {
+  source: string;
+  target: string;
+  label: string;
+  properties?: Record<string, unknown>;
+  sourceNode?: GraphNode;
+  targetNode?: GraphNode;
+}
