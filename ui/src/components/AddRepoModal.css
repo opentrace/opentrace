@@ -163,6 +163,109 @@
   background: color-mix(in oklch, var(--foreground) 6%, transparent);
 }
 
+/* ── Autocomplete Dropdown ─────────────────── */
+.autocomplete-wrapper {
+  position: relative;
+}
+
+.autocomplete-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: var(--card);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: var(--shadow-xl);
+  animation: dropdownEnter 0.15s ease-out;
+}
+
+@keyframes dropdownEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.autocomplete-label {
+  padding: 6px 10px 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  color: var(--foreground);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.autocomplete-item:hover {
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+
+.autocomplete-item svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.autocomplete-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.autocomplete-item-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+
+.autocomplete-item:hover .autocomplete-item-remove {
+  opacity: 0.5;
+}
+
+.autocomplete-item-remove:hover {
+  opacity: 1 !important;
+  background: color-mix(in oklch, var(--destructive) 12%, transparent);
+  color: var(--destructive);
+}
+
 /* ── Example Repos ──────────────────────────── */
 .example-repos {
   display: flex;
