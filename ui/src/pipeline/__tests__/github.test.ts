@@ -132,8 +132,8 @@ describe.skipIf(SKIP)('github: grafana/grafana', () => {
     // Should complete in a reasonable time (< 5s for structural graph)
     expect(elapsed).toBeLessThan(5_000);
 
-    // No Python files in Grafana → 0 parsed
-    expect(done!.result?.filesProcessed).toBe(0);
+    // All parseable files pass through the processing stage
+    expect(done!.result?.filesProcessed).toBeGreaterThan(0);
   });
 
   it('event stream has correct lifecycle', () => {
@@ -150,7 +150,7 @@ describe.skipIf(SKIP)('github: grafana/grafana', () => {
 
     // Fetching progress events match file count
     const fetchProgress = events.filter(
-      (e) => e.kind === 'stage_progress' && e.phase === 'fetching',
+      (e) => e.kind === 'stage_progress' && e.phase === 'scanning',
     );
     expect(fetchProgress).toHaveLength(fileCount);
     expect(fetchProgress[0].detail?.current).toBe(1);
@@ -161,7 +161,7 @@ describe.skipIf(SKIP)('github: grafana/grafana', () => {
 
     // Fetching stage_stop carries all structural nodes
     const fetchStop = events.find(
-      (e) => e.kind === 'stage_stop' && e.phase === 'fetching',
+      (e) => e.kind === 'stage_stop' && e.phase === 'scanning',
     );
     expect(fetchStop).toBeDefined();
     expect(fetchStop!.nodes!.length).toBeGreaterThan(fileCount);
