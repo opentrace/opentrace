@@ -23,11 +23,10 @@ describe('makeGraphTools', () => {
       const tools = makeGraphTools(store);
       const searchTool = tools.find((t) => t.name === 'search_graph')!;
       await searchTool.invoke({ query: 'auth', nodeTypes: 'Service, Class' });
-      expect(store.searchNodes).toHaveBeenCalledWith(
-        'auth',
-        undefined,
-        ['Service', 'Class'],
-      );
+      expect(store.searchNodes).toHaveBeenCalledWith('auth', undefined, [
+        'Service',
+        'Class',
+      ]);
     });
   });
 
@@ -48,7 +47,9 @@ describe('makeGraphTools', () => {
       const tools = makeGraphTools(store);
       const getTool = tools.find((t) => t.name === 'get_node')!;
       const result = await getTool.invoke({ nodeId: 'missing' });
-      expect(JSON.parse(result as string)).toMatchObject({ error: 'Node not found' });
+      expect(JSON.parse(result as string)).toMatchObject({
+        error: 'Node not found',
+      });
     });
   });
 
@@ -63,8 +64,12 @@ describe('makeGraphTools', () => {
       });
       const tools = makeGraphTools(store);
       const loadTool = tools.find((t) => t.name === 'load_source')!;
-      const result = await loadTool.invoke({ nodeId: 'owner/repo/src/main.ts' });
-      expect(JSON.parse(result as string)).toMatchObject({ path: 'src/main.ts' });
+      const result = await loadTool.invoke({
+        nodeId: 'owner/repo/src/main.ts',
+      });
+      expect(JSON.parse(result as string)).toMatchObject({
+        path: 'src/main.ts',
+      });
     });
 
     it('truncates at MAX_SOURCE_CHARS (8000)', async () => {

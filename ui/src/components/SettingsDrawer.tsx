@@ -152,9 +152,18 @@ export default function SettingsDrawer({
               </button>
             </div>
             {summaryStrategy === 'llm' && (
-              <div className="llm-summarizer-config" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div
+                className="llm-summarizer-config"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                }}
+              >
                 <div className="limit-row">
-                  <label className="limit-label" htmlFor="sum-llm-url">URL</label>
+                  <label className="limit-label" htmlFor="sum-llm-url">
+                    URL
+                  </label>
                   <input
                     id="sum-llm-url"
                     type="text"
@@ -166,8 +175,17 @@ export default function SettingsDrawer({
                   />
                 </div>
                 <div className="limit-row">
-                  <label className="limit-label" htmlFor="sum-llm-model">Model</label>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'stretch', flex: 1 }}>
+                  <label className="limit-label" htmlFor="sum-llm-model">
+                    Model
+                  </label>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '6px',
+                      alignItems: 'stretch',
+                      flex: 1,
+                    }}
+                  >
                     {llmModels && llmModels.length > 0 ? (
                       <select
                         id="sum-llm-model"
@@ -178,7 +196,9 @@ export default function SettingsDrawer({
                         }
                       >
                         {llmModels.map((m) => (
-                          <option key={m} value={m}>{m}</option>
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
                         ))}
                       </select>
                     ) : (
@@ -203,7 +223,13 @@ export default function SettingsDrawer({
                     </button>
                   </div>
                   {llmModels !== null && llmModels.length === 0 && (
-                    <p className="setting-hint" style={{ color: 'var(--color-error, #f87171)', margin: 0 }}>
+                    <p
+                      className="setting-hint"
+                      style={{
+                        color: 'var(--color-error, #f87171)',
+                        margin: 0,
+                      }}
+                    >
                       Could not reach server or no models found.
                     </p>
                   )}

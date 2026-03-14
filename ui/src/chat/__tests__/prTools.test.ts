@@ -84,7 +84,10 @@ describe('makePRTools', () => {
           ...traverseResult[0],
           relationship: {
             ...traverseResult[0].relationship,
-            properties: { ...traverseResult[0].relationship.properties, status: 'added' },
+            properties: {
+              ...traverseResult[0].relationship.properties,
+              status: 'added',
+            },
           },
         },
       ];
@@ -111,7 +114,10 @@ describe('makePRTools', () => {
           ...traverseResult[0],
           relationship: {
             ...traverseResult[0].relationship,
-            properties: { ...traverseResult[0].relationship.properties, status: 'removed' },
+            properties: {
+              ...traverseResult[0].relationship.properties,
+              status: 'removed',
+            },
           },
         },
       ];

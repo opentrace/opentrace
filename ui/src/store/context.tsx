@@ -31,6 +31,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext value={{ store }}>{children}</StoreContext>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useStore(): StoreContextValue {
   const ctx = use(StoreContext);
   if (!ctx) {

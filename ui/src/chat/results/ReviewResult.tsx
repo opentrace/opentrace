@@ -10,7 +10,7 @@ export interface ReviewData {
   comments: PRReviewComment[];
 }
 
-/** Extract the structured review block from the code_reviewer result text. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseReviewResult(text: string): ReviewData | null {
   // Try ```json:review first, then any ```json block containing review fields
   const patterns = [
@@ -39,7 +39,7 @@ export function parseReviewResult(text: string): ReviewData | null {
   return null;
 }
 
-/** Strip the structured review JSON block from the markdown so it isn't rendered twice. */
+// eslint-disable-next-line react-refresh/only-export-components
 export function stripReviewBlock(text: string): string {
   // Remove ```json:review blocks first, then any ```json block that contains review fields
   let result = text.replace(/```json:review\s*\n[\s\S]*?```/, '');

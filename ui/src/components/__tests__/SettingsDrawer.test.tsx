@@ -17,6 +17,8 @@ vi.mock('../../store', () => ({
 vi.mock('../../config/summarization', () => ({
   loadSummarizerStrategy: vi.fn(() => 'template'),
   saveSummarizerStrategy: vi.fn(),
+  loadSummarizerLlmConfig: vi.fn(() => ({ url: '', model: '' })),
+  saveSummarizerLlmConfig: vi.fn(),
 }));
 
 import SettingsDrawer from '../SettingsDrawer';

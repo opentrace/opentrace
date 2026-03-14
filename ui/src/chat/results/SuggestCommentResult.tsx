@@ -11,6 +11,7 @@ export interface SuggestCommentData {
   line?: number;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseSuggestComment(raw: string): SuggestCommentData | null {
   try {
     const data = JSON.parse(raw);

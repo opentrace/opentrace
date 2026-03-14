@@ -841,7 +841,8 @@ const GraphViewer = memo(
               } else {
                 setHiddenNodeTypes((prev) => {
                   const next = new Set(prev);
-                  if (next.has(type)) next.delete(type); else next.add(type);
+                  if (next.has(type)) next.delete(type);
+                  else next.add(type);
                   return next;
                 });
               }
@@ -849,14 +850,16 @@ const GraphViewer = memo(
             onToggleLinkType={(type) =>
               setHiddenLinkTypes((prev) => {
                 const next = new Set(prev);
-                if (next.has(type)) next.delete(type); else next.add(type);
+                if (next.has(type)) next.delete(type);
+                else next.add(type);
                 return next;
               })
             }
             onToggleSubType={(key) =>
               setHiddenSubTypes((prev) => {
                 const next = new Set(prev);
-                if (next.has(key)) next.delete(key); else next.add(key);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
                 return next;
               })
             }

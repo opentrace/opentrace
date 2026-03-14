@@ -6,11 +6,7 @@ function makeNodes(types: string[]): GraphNode[] {
   return types.map((t, i) => ({ id: `n${i}`, name: `Node${i}`, type: t }));
 }
 
-function makeLink(
-  src: string,
-  tgt: string,
-  label?: string,
-): GraphLink {
+function makeLink(src: string, tgt: string, label?: string): GraphLink {
   return { source: src, target: tgt, label: label || '' };
 }
 

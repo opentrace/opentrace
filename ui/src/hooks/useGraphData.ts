@@ -28,7 +28,9 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
 
   // Use a ref so loadGraph's identity doesn't depend on the callback
   const onGraphLoadedRef = useRef(onGraphLoaded);
-  onGraphLoadedRef.current = onGraphLoaded;
+  useEffect(() => {
+    onGraphLoadedRef.current = onGraphLoaded;
+  });
 
   const loadGraph = useCallback(
     (query?: string, hops: number = 0): Promise<void> => {
@@ -56,6 +58,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
     loadGraph();
   }, [loadGraph]);
 

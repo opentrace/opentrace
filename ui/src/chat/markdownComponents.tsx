@@ -3,6 +3,7 @@ import type { Components } from 'react-markdown';
 
 const MermaidDiagram = React.lazy(() => import('./MermaidDiagram'));
 
+// eslint-disable-next-line react-refresh/only-export-components
 function CodeBlock({
   className,
   children,

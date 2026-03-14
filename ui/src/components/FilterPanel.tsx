@@ -49,7 +49,8 @@ export default function FilterPanel({
   const toggleExpanded = (type: string) => {
     setExpandedTypes((prev) => {
       const next = new Set(prev);
-      next.has(type) ? next.delete(type) : next.add(type);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
       return next;
     });
   };

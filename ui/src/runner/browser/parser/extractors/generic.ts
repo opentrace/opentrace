@@ -113,7 +113,7 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
 };
 
 /** Extract documentation comment from the preceding sibling(s) of an AST node.
- *  Handles both block comments (Javadoc `/** ... *​/`) and consecutive line comments (`// ...` or `/// ...`). */
+ *  Handles both block comments (Javadoc-style) and consecutive line comments. */
 function extractPrecedingDoc(node: SyntaxNode): string | undefined {
   const prev = node.previousNamedSibling;
   if (!prev) return undefined;

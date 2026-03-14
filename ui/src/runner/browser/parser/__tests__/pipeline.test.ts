@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runPipeline, type ParserMap, type PipelineCallbacks } from '../pipeline';
+import {
+  runPipeline,
+  type ParserMap,
+  type PipelineCallbacks,
+} from '../pipeline';
 import type { SummarizationStrategy } from '../../enricher/summarizer/strategy';
 import type { RepoTree, GraphBatch } from '../../types';
 
@@ -38,16 +42,6 @@ function makeNoopStrategy(): SummarizationStrategy {
     type: 'none',
     init: vi.fn().mockResolvedValue(undefined),
     summarize: vi.fn().mockResolvedValue(''),
-    summarizeBatch: vi.fn().mockResolvedValue([]),
-    dispose: vi.fn().mockResolvedValue(undefined),
-  };
-}
-
-function makeTemplateStrategy(): SummarizationStrategy {
-  return {
-    type: 'template',
-    init: vi.fn().mockResolvedValue(undefined),
-    summarize: vi.fn().mockResolvedValue('A summary'),
     summarizeBatch: vi.fn().mockResolvedValue([]),
     dispose: vi.fn().mockResolvedValue(undefined),
   };
@@ -100,7 +94,12 @@ describe('runPipeline', () => {
     const callbacks = makeCallbacks();
     const repo = makeRepo({
       files: [
-        { path: 'src/main.ts', content: 'console.log("hi")', sha: '', size: 20 },
+        {
+          path: 'src/main.ts',
+          content: 'console.log("hi")',
+          sha: '',
+          size: 20,
+        },
         { path: 'README.md', content: '# Hello', sha: '', size: 10 },
       ],
     });
@@ -116,9 +115,7 @@ describe('runPipeline', () => {
   it('creates Directory nodes with DEFINED_IN relationships', async () => {
     const callbacks = makeCallbacks();
     const repo = makeRepo({
-      files: [
-        { path: 'src/utils/helper.ts', content: '', sha: '', size: 0 },
-      ],
+      files: [{ path: 'src/utils/helper.ts', content: '', sha: '', size: 0 }],
     });
     await runPipeline(repo, emptyParsers, callbacks, makeNoopStrategy());
 
@@ -171,9 +168,7 @@ describe('runPipeline', () => {
   it('returns correct totals', async () => {
     const callbacks = makeCallbacks();
     const repo = makeRepo({
-      files: [
-        { path: 'src/main.ts', content: '// code', sha: '', size: 10 },
-      ],
+      files: [{ path: 'src/main.ts', content: '// code', sha: '', size: 10 }],
     });
     const result = await runPipeline(
       repo,
@@ -231,9 +226,7 @@ describe('runPipeline', () => {
   it('parentDir returns empty for root files', async () => {
     const callbacks = makeCallbacks();
     const repo = makeRepo({
-      files: [
-        { path: 'main.go', content: 'package main', sha: '', size: 15 },
-      ],
+      files: [{ path: 'main.go', content: 'package main', sha: '', size: 15 }],
     });
     await runPipeline(repo, emptyParsers, callbacks, makeNoopStrategy());
 

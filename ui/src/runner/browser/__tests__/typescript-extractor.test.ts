@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { extractTypeScript } from '../parser/extractors/typescript';
 import { parseTS, parseTSX } from './helpers';

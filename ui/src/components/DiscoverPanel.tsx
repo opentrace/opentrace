@@ -120,9 +120,10 @@ function TreeItem({
   const isSelected = node.id === selectedNodeId;
 
   // Compute highlight intensity: 1.0 at hop 0, fading to ~0.15 at maxHops
-  const hopHighlight = hopDist !== undefined && maxHops > 0
-    ? Math.max(0.15, 1 - (hopDist / maxHops) * 0.85)
-    : undefined;
+  const hopHighlight =
+    hopDist !== undefined && maxHops > 0
+      ? Math.max(0.15, 1 - (hopDist / maxHops) * 0.85)
+      : undefined;
 
   // Filter children if a filter is active
   const visibleChildren = useMemo(() => {
@@ -134,7 +135,9 @@ function TreeItem({
   const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (isSelected && rowRef.current) {
-      const scrollParent = rowRef.current.closest('.side-panel-content') as HTMLElement | null;
+      const scrollParent = rowRef.current.closest(
+        '.side-panel-content',
+      ) as HTMLElement | null;
       // Skip if panel is hidden (display:none) — offsetParent is null in that case
       if (scrollParent && scrollParent.offsetParent !== null) {
         const rowRect = rowRef.current.getBoundingClientRect();
@@ -155,12 +158,14 @@ function TreeItem({
     isSelected ? 'discover-tree-row--selected' : '',
     !isSelected && hopHighlight !== undefined ? 'discover-tree-row--hop' : '',
     offGraph && hopHighlight === undefined ? 'discover-tree-row--faded' : '',
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   const rowStyle: React.CSSProperties = {
     paddingLeft: `${12 + depth * 16}px`,
     ...(!isSelected && hopHighlight !== undefined
-      ? { '--hop-intensity': hopHighlight } as React.CSSProperties
+      ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
       : {}),
   };
 
@@ -256,7 +261,14 @@ interface DiscoverPanelProps {
   isActive?: boolean;
 }
 
-export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNodeId, graphNodeIds, hopMap, isActive }: DiscoverPanelProps) {
+export default function DiscoverPanel({
+  onSelectNode,
+  graphVersion,
+  selectedNodeId,
+  graphNodeIds,
+  hopMap,
+  isActive,
+}: DiscoverPanelProps) {
   const { store } = useStore();
   const [roots, setRoots] = useState<NodeResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -297,19 +309,25 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
         queries.push(
           store
             .traverse(nodeId, 'outgoing', 1, 'CHANGES')
-            .then((r) => r.filter((x) => x.node.id !== nodeId).map((x) => x.node)),
+            .then((r) =>
+              r.filter((x) => x.node.id !== nodeId).map((x) => x.node),
+            ),
         );
       } else {
         queries.push(
           store
             .traverse(nodeId, 'incoming', 1, 'DEFINED_IN')
-            .then((r) => r.filter((x) => x.node.id !== nodeId).map((x) => x.node)),
+            .then((r) =>
+              r.filter((x) => x.node.id !== nodeId).map((x) => x.node),
+            ),
         );
         if (REPO_TYPES.has(nodeType)) {
           queries.push(
             store
               .traverse(nodeId, 'incoming', 1, 'TARGETS_REPO')
-              .then((r) => r.filter((x) => x.node.id !== nodeId).map((x) => x.node)),
+              .then((r) =>
+                r.filter((x) => x.node.id !== nodeId).map((x) => x.node),
+              ),
           );
         }
       }
@@ -457,7 +475,7 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
         });
       }
     },
-    [loadChildren, childrenMap, findNodeType],
+    [loadChildren, childrenMap, findNodeType, loadingSet],
   );
 
   // Compute max hops for gradient scaling
@@ -500,7 +518,12 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
       let currentId = selectedNodeId;
       // Walk up the tree (max 20 levels to avoid infinite loops)
       for (let i = 0; i < 20; i++) {
-        const results = await store.traverse(currentId, 'outgoing', 1, 'DEFINED_IN');
+        const results = await store.traverse(
+          currentId,
+          'outgoing',
+          1,
+          'DEFINED_IN',
+        );
         if (cancelled) return;
         const parent = results.find((r) => r.node.id !== currentId);
         if (!parent) break;
@@ -516,7 +539,10 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
       for (const ancestorId of ancestors) {
         if (cancelled) return;
         if (!childrenMapRef.current.has(ancestorId)) {
-          await loadChildren(ancestorId, findNodeType(ancestorId) || 'Directory');
+          await loadChildren(
+            ancestorId,
+            findNodeType(ancestorId) || 'Directory',
+          );
         }
       }
       if (cancelled) return;
@@ -526,7 +552,9 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
         return next;
       });
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [selectedNodeId, store, loadChildren, findNodeType, expanded]);
 
   const normalizedFilter = filter.toLowerCase().trim();
@@ -547,9 +575,7 @@ export default function DiscoverPanel({ onSelectNode, graphVersion, selectedNode
   if (roots.length === 0) {
     return (
       <div className="discover-panel">
-        <div className="discover-panel-empty">
-          No repositories indexed yet.
-        </div>
+        <div className="discover-panel-empty">No repositories indexed yet.</div>
       </div>
     );
   }

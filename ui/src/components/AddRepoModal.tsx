@@ -11,6 +11,37 @@ interface Props {
   dismissable?: boolean;
 }
 
+const HISTORY_KEY = 'ot_repo_history';
+const MAX_HISTORY = 5;
+
+function loadHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveToHistory(url: string) {
+  const history = loadHistory().filter((u) => u !== url);
+  history.unshift(url);
+  localStorage.setItem(
+    HISTORY_KEY,
+    JSON.stringify(history.slice(0, MAX_HISTORY)),
+  );
+}
+
+function removeFromHistory(url: string): string[] {
+  const updated = loadHistory().filter((u) => u !== url);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  return updated;
+}
+
 function detectProvider(url: string): 'github' | 'gitlab' | null {
   const lower = url.toLowerCase();
   if (lower.includes('github')) return 'github';
@@ -146,6 +177,8 @@ export default function AddRepoModal({
 }: Props) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
+  const [history, setHistory] = useState<string[]>(loadHistory);
+  const [showHistory, setShowHistory] = useState(false);
   const [ref, setRef] = useState('');
   const [pat, setPat] = useState('');
   const [showPat, setShowPat] = useState(false);
@@ -154,6 +187,7 @@ export default function AddRepoModal({
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Reliably focus the URL input when the modal mounts
   useEffect(() => {
@@ -161,6 +195,25 @@ export default function AddRepoModal({
       urlInputRef.current?.focus();
     }
   }, [source]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        e.target !== urlInputRef.current
+      ) {
+        setShowHistory(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const filteredHistory = history.filter(
+    (url) => !repoUrl || url.toLowerCase().includes(repoUrl.toLowerCase()),
+  );
 
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
   const isGitLab = provider === 'gitlab';
@@ -174,12 +227,14 @@ export default function AddRepoModal({
     if (!provider) return;
     const key = provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
     const saved = localStorage.getItem(key);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing from localStorage
     if (saved) setPat(saved);
     else setPat('');
   }, [provider]);
 
   // Clear errors when switching source mode
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on dep change
     setError(null);
   }, [source]);
 
@@ -212,6 +267,8 @@ export default function AddRepoModal({
     const patKey = isGitLab ? 'ot_gitlab_pat' : 'ot_github_pat';
     if (pat) localStorage.setItem(patKey, pat);
     else localStorage.removeItem(patKey);
+
+    saveToHistory(repoUrl);
 
     onSubmit({
       type: 'index-repo',
@@ -289,38 +346,6 @@ export default function AddRepoModal({
           <div className="form-fields">
             {source === 'url' ? (
               <>
-                <input
-                  ref={urlInputRef}
-                  type="text"
-                  required
-                  className="input-pill"
-                  placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git"
-                  value={repoUrl}
-                  onChange={(e) => setRepoUrl(e.target.value)}
-                  autoFocus
-                  autoComplete="off"
-                  data-1p-ignore
-                  data-lpignore="true"
-                  data-testid="repo-url-input"
-                />
-
-                {!provider && (
-                  <div className="example-repos">
-                    <span className="example-repos-label">Examples:</span>
-                    {EXAMPLE_REPOS.map((repo) => (
-                      <button
-                        key={repo.url}
-                        type="button"
-                        className="example-repo-chip"
-                        onClick={() => setRepoUrl(repo.url)}
-                        title={repo.description}
-                      >
-                        {repo.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 <div className="form-info">
                   <svg
                     width="14"
@@ -341,6 +366,110 @@ export default function AddRepoModal({
                     server to avoid browser CORS restrictions. Your access token
                     (if provided) is forwarded but never stored on the server.
                   </span>
+                </div>
+
+                {!provider && (
+                  <div className="example-repos">
+                    <span className="example-repos-label">Examples:</span>
+                    {EXAMPLE_REPOS.map((repo) => (
+                      <button
+                        key={repo.url}
+                        type="button"
+                        className="example-repo-chip"
+                        onClick={() => setRepoUrl(repo.url)}
+                        title={repo.description}
+                      >
+                        {repo.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="autocomplete-wrapper">
+                  <input
+                    ref={urlInputRef}
+                    type="text"
+                    required
+                    className="input-pill"
+                    placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git"
+                    value={repoUrl}
+                    onChange={(e) => {
+                      setRepoUrl(e.target.value);
+                      if (!showHistory) setShowHistory(true);
+                    }}
+                    onFocus={() => setShowHistory(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') setShowHistory(false);
+                    }}
+                    autoFocus
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-testid="repo-url-input"
+                  />
+                  {showHistory && filteredHistory.length > 0 && (
+                    <div ref={dropdownRef} className="autocomplete-dropdown">
+                      <div className="autocomplete-label">Recent</div>
+                      {filteredHistory.map((url) => (
+                        <div
+                          key={url}
+                          className="autocomplete-item"
+                          role="option"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setRepoUrl(url);
+                            setShowHistory(false);
+                            urlInputRef.current?.focus();
+                          }}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="1 4 1 10 7 10" />
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                          </svg>
+                          <span className="autocomplete-item-text">
+                            {url
+                              .replace(/^https?:\/\/(www\.)?/, '')
+                              .replace(/\.git$/, '')}
+                          </span>
+                          <button
+                            type="button"
+                            className="autocomplete-item-remove"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setHistory(removeFromHistory(url));
+                            }}
+                            aria-label="Remove from history"
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {provider && (
@@ -540,5 +669,5 @@ export default function AddRepoModal({
   );
 }
 
-/** Detect the git provider from a URL. Exported for use by parent components. */
+// eslint-disable-next-line react-refresh/only-export-components
 export { detectProvider };

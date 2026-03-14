@@ -111,7 +111,7 @@ export interface IndexSummary {
 
 export interface SummarizerWorkerConfig {
   enabled: boolean;
-  strategy: 'template' | 'ml' | 'none';
+  strategy: 'template' | 'ml' | 'llm' | 'none';
   model: string;
   maxInputLength: number;
   minLines: number;
