@@ -20,7 +20,7 @@ make build
 # Run individual components
 make api       # Start Go API server (port 8080)
 make agent     # Run Python agent
-make ui        # Start React dev server (port 5173)
+make ui        # Start React dev server (port 5173–5180, auto-detected)
 
 # Run all tests
 make test
@@ -54,6 +54,13 @@ cd ui
 npm install
 npm run dev
 ```
+
+#### Worktree & port handling
+
+`ui/vite.config.ts` has two worktree-aware helpers:
+
+- **`resolveEnvDir()`** — `.env` is gitignored so it only exists in the main working tree. When running from a worktree, falls back to the main tree's `.env` via `git worktree list --porcelain`.
+- **`resolvePort()`** — scans ports 5173–5180 and picks the first free one, so multiple worktrees can run `npm run dev` simultaneously. Uses `strictPort: true` so Vite errors instead of silently picking a random port outside the range.
 
 ## MCP Tools
 
@@ -93,7 +100,7 @@ server:
   port: 8080
   env: dev
   cors_hosts:
-    - http://localhost:5173
+    - http://localhost:5173   # UI auto-selects 5173–5180; add more if needed
 graph:
   db_path: ./data/graph.kuzu
 ```
