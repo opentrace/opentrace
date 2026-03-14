@@ -1,4 +1,4 @@
-import type { Parser } from 'web-tree-sitter';
+import type { Parser, Node as SyntaxNode } from 'web-tree-sitter';
 import type {
   Registries,
   CallInfo,
