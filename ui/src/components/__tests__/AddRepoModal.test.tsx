@@ -150,5 +150,23 @@ describe('AddRepoModal', () => {
         stored.filter((u: string) => u === 'https://gitlab.com/baz/qux'),
       ).toHaveLength(1);
     });
+
+    it('removes a history item when trash icon is clicked', () => {
+      const { getByTestId, getAllByLabelText, queryByText } = render(
+        React.createElement(AddRepoModal, defaultProps),
+      );
+      const input = getByTestId('repo-url-input');
+      fireEvent.focus(input);
+      const removeButtons = getAllByLabelText('Remove from history');
+      expect(removeButtons).toHaveLength(2);
+      // Remove the first item (github.com/foo/bar)
+      fireEvent.mouseDown(removeButtons[0]);
+      expect(queryByText('github.com/foo/bar')).toBeNull();
+      expect(queryByText('gitlab.com/baz/qux')).toBeDefined();
+      const stored = JSON.parse(
+        localStorage.getItem('ot_repo_history') ?? '[]',
+      );
+      expect(stored).toEqual(['https://gitlab.com/baz/qux']);
+    });
   });
 });

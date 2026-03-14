@@ -36,6 +36,12 @@ function saveToHistory(url: string) {
   );
 }
 
+function removeFromHistory(url: string): string[] {
+  const updated = loadHistory().filter((u) => u !== url);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+  return updated;
+}
+
 function detectProvider(url: string): 'github' | 'gitlab' | null {
   const lower = url.toLowerCase();
   if (lower.includes('github')) return 'github';
@@ -171,7 +177,7 @@ export default function AddRepoModal({
 }: Props) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
-  const [history] = useState<string[]>(loadHistory);
+  const [history, setHistory] = useState<string[]>(loadHistory);
   const [showHistory, setShowHistory] = useState(false);
   const [ref, setRef] = useState('');
   const [pat, setPat] = useState('');
@@ -405,10 +411,10 @@ export default function AddRepoModal({
                     <div ref={dropdownRef} className="autocomplete-dropdown">
                       <div className="autocomplete-label">Recent</div>
                       {filteredHistory.map((url) => (
-                        <button
+                        <div
                           key={url}
-                          type="button"
                           className="autocomplete-item"
+                          role="option"
                           onMouseDown={(e) => {
                             e.preventDefault();
                             setRepoUrl(url);
@@ -434,7 +440,33 @@ export default function AddRepoModal({
                               .replace(/^https?:\/\/(www\.)?/, '')
                               .replace(/\.git$/, '')}
                           </span>
-                        </button>
+                          <button
+                            type="button"
+                            className="autocomplete-item-remove"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setHistory(removeFromHistory(url));
+                            }}
+                            aria-label="Remove from history"
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                            </svg>
+                          </button>
+                        </div>
                       ))}
                     </div>
                   )}
