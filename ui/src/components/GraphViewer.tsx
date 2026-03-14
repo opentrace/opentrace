@@ -72,8 +72,8 @@ function getSubType(node: GraphNode): string | null {
     return lang || null;
   }
   if (node.type === 'Package') {
-    const provider = node.properties?.source_name as string | undefined;
-    return provider || null;
+    const registry = node.properties?.registry as string | undefined;
+    return registry || null;
   }
   return null;
 }

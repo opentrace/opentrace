@@ -1,8 +1,8 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, createReadStream } from 'fs';
 import { execSync } from 'child_process';
-import { resolve } from 'path';
+import { resolve, join } from 'path';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
@@ -83,27 +83,41 @@ function resolvePort(): number | undefined {
  * fetches (e.g. api.github.com) still work without CORS attributes.
  */
 function crossOriginIsolation(): Plugin {
+  const publicDir = resolve(__dirname, 'public');
+
+  function wasmMiddleware(
+    req: import('http').IncomingMessage,
+    res: import('http').ServerResponse,
+    next: () => void,
+  ) {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+
+    // Serve .wasm files directly with correct MIME type.
+    // Vite's static handler sets the wrong Content-Type for .wasm and
+    // completes the response without calling next(), so no downstream
+    // middleware can fix it. We serve them ourselves first.
+    const url = req.url?.split('?')[0];
+    if (url?.endsWith('.wasm')) {
+      const filePath = join(publicDir, url);
+      if (existsSync(filePath)) {
+        res.setHeader('Content-Type', 'application/wasm');
+        res.statusCode = 200;
+        createReadStream(filePath).pipe(res);
+        return;
+      }
+    }
+
+    next();
+  }
+
   return {
     name: 'cross-origin-isolation',
     configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-        if (req.url?.endsWith('.wasm')) {
-          res.setHeader('Content-Type', 'application/wasm');
-        }
-        next();
-      });
+      server.middlewares.use(wasmMiddleware);
     },
     configurePreviewServer(server) {
-      server.middlewares.use((req, res, next) => {
-        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-        if (req.url?.endsWith('.wasm')) {
-          res.setHeader('Content-Type', 'application/wasm');
-        }
-        next();
-      });
+      server.middlewares.use(wasmMiddleware);
     },
   };
 }

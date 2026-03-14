@@ -183,6 +183,37 @@ function parsePythonFromImport(
 
 // --- Go imports ---
 
+/**
+ * Pre-compute directory → file index for O(1) Go import resolution.
+ * Maps full directory paths and their suffixes to a representative file.
+ */
+function buildDirIndex(knownFiles: Set<string>): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const filePath of knownFiles) {
+    const dir = parentDir(filePath);
+    if (!dir) continue;
+    // Store full dir path
+    if (!index.has(dir)) index.set(dir, filePath);
+    // Also store the basename of the dir (Go package name)
+    const dirBase = dir.split('/').pop()!;
+    if (!index.has(dirBase)) index.set(dirBase, filePath);
+  }
+  return index;
+}
+
+// Cache the dir index — knownFiles doesn't change between calls
+let cachedDirIndex: Map<string, string> | null = null;
+let cachedDirIndexSource: Set<string> | null = null;
+
+function getDirIndex(knownFiles: Set<string>): Map<string, string> {
+  if (cachedDirIndex && cachedDirIndexSource === knownFiles) {
+    return cachedDirIndex;
+  }
+  cachedDirIndex = buildDirIndex(knownFiles);
+  cachedDirIndexSource = knownFiles;
+  return cachedDirIndex;
+}
+
 export function analyzeGoImports(
   rootNode: SyntaxNode,
   knownFiles: Set<string>,
@@ -190,10 +221,11 @@ export function analyzeGoImports(
 ): ImportAnalysisResult {
   const internal: Record<string, string> = {};
   const external: Record<string, string> = {};
+  const dirIndex = getDirIndex(knownFiles);
 
   for (const child of rootNode.children) {
     if (child.type === 'import_declaration') {
-      parseGoImportDecl(child, knownFiles, internal, external, modulePath);
+      parseGoImportDecl(child, dirIndex, internal, external, modulePath);
     }
   }
   return { internal, external };
@@ -201,18 +233,18 @@ export function analyzeGoImports(
 
 function parseGoImportDecl(
   node: SyntaxNode,
-  knownFiles: Set<string>,
+  dirIndex: Map<string, string>,
   internal: Record<string, string>,
   external: Record<string, string>,
   modulePath?: string,
 ): void {
   for (const child of node.children) {
     if (child.type === 'import_spec') {
-      parseGoImportSpec(child, knownFiles, internal, external, modulePath);
+      parseGoImportSpec(child, dirIndex, internal, external, modulePath);
     } else if (child.type === 'import_spec_list') {
       for (const spec of child.children) {
         if (spec.type === 'import_spec') {
-          parseGoImportSpec(spec, knownFiles, internal, external, modulePath);
+          parseGoImportSpec(spec, dirIndex, internal, external, modulePath);
         }
       }
     }
@@ -221,7 +253,7 @@ function parseGoImportDecl(
 
 function parseGoImportSpec(
   node: SyntaxNode,
-  knownFiles: Set<string>,
+  dirIndex: Map<string, string>,
   internal: Record<string, string>,
   external: Record<string, string>,
   modulePath?: string,
@@ -243,33 +275,19 @@ function parseGoImportSpec(
     alias = importPath.split('/').pop()!;
   }
 
-  // Try to resolve as internal file
+  // Try to resolve as internal file via O(1) directory index lookup
   const pkgName = importPath.split('/').pop()!;
-  let found = false;
-  for (const known of knownFiles) {
-    const knownDir = parentDir(known);
-    if (
-      knownDir === importPath ||
-      knownDir.endsWith('/' + importPath) ||
-      knownDir.endsWith(importPath) ||
-      knownDir === pkgName ||
-      knownDir.endsWith('/' + pkgName)
-    ) {
-      internal[alias] = known;
-      found = true;
-      break;
-    }
+  const match = dirIndex.get(importPath) ?? dirIndex.get(pkgName);
+  if (match) {
+    internal[alias] = match;
+    return;
   }
 
   // If not internal and doesn't match our module path, it's external
-  if (!found) {
-    const isOwnModule = modulePath && importPath.startsWith(modulePath);
-    if (!isOwnModule) {
-      // Use the module root (match against known Go module patterns)
-      // Go modules typically have 3 segments: host/owner/repo
-      const goModuleName = goModuleRoot(importPath);
-      external[goModuleName] = packageId('go', goModuleName);
-    }
+  const isOwnModule = modulePath && importPath.startsWith(modulePath);
+  if (!isOwnModule) {
+    const goModuleName = goModuleRoot(importPath);
+    external[goModuleName] = packageId('go', goModuleName);
   }
 }
 
@@ -399,6 +417,194 @@ function parseTsReexport(
   }
 }
 
+// --- Rust imports ---
+
+export function analyzeRustImports(
+  rootNode: SyntaxNode,
+  filePath: string,
+  knownFiles: Set<string>,
+): ImportAnalysisResult {
+  const internal: Record<string, string> = {};
+  const external: Record<string, string> = {};
+  const fileDir = parentDir(filePath);
+
+  for (const child of rootNode.children) {
+    if (child.type === 'mod_item') {
+      // `mod foo;` → maps to foo.rs or foo/mod.rs
+      const nameNode = child.childForFieldName('name');
+      if (!nameNode) continue;
+      // Only external mod declarations (with `;`), not inline `mod foo { ... }`
+      const hasBody = child.children.some((c) => c.type === 'declaration_list');
+      if (hasBody) continue;
+
+      const modName = nameNode.text;
+      const candidates = [
+        fileDir ? `${fileDir}/${modName}.rs` : `${modName}.rs`,
+        fileDir ? `${fileDir}/${modName}/mod.rs` : `${modName}/mod.rs`,
+      ];
+      let found = false;
+      for (const candidate of candidates) {
+        if (knownFiles.has(candidate)) {
+          internal[modName] = candidate;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        // Could be an external crate re-exported via mod
+        external[modName] = packageId('crates', modName);
+      }
+    } else if (child.type === 'use_declaration') {
+      parseRustUseDecl(child, fileDir, knownFiles, internal, external);
+    }
+  }
+  return { internal, external };
+}
+
+function parseRustUseDecl(
+  node: SyntaxNode,
+  fileDir: string,
+  knownFiles: Set<string>,
+  internal: Record<string, string>,
+  external: Record<string, string>,
+): void {
+  // Extract the root crate/module name from use declarations
+  for (const child of node.children) {
+    if (child.type === 'scoped_identifier') {
+      // `use foo::bar` — root is first identifier
+      const parts = child.text.split('::');
+      const root = parts[0];
+      resolveRustRoot(root, fileDir, knownFiles, internal, external);
+    } else if (child.type === 'scoped_use_list') {
+      // `use foo::{bar, baz}` — root is the identifier before ::
+      for (const sub of child.children) {
+        if (sub.type === 'identifier' || sub.type === 'scoped_identifier') {
+          const root = sub.text.split('::')[0];
+          resolveRustRoot(root, fileDir, knownFiles, internal, external);
+          break;
+        }
+      }
+    } else if (child.type === 'identifier') {
+      // `use foo;` — bare use
+      resolveRustRoot(child.text, fileDir, knownFiles, internal, external);
+    }
+  }
+}
+
+function resolveRustRoot(
+  root: string,
+  fileDir: string,
+  knownFiles: Set<string>,
+  internal: Record<string, string>,
+  external: Record<string, string>,
+): void {
+  // Skip Rust built-ins
+  if (
+    root === 'std' ||
+    root === 'core' ||
+    root === 'alloc' ||
+    root === 'self' ||
+    root === 'super' ||
+    root === 'crate'
+  ) {
+    return;
+  }
+
+  // Check if this maps to a known file (sibling module)
+  if (!internal[root]) {
+    const candidates = [
+      fileDir ? `${fileDir}/${root}.rs` : `${root}.rs`,
+      fileDir ? `${fileDir}/${root}/mod.rs` : `${root}/mod.rs`,
+      `src/${root}.rs`,
+      `src/${root}/mod.rs`,
+    ];
+    for (const candidate of candidates) {
+      if (knownFiles.has(candidate)) {
+        internal[root] = candidate;
+        return;
+      }
+    }
+    // External crate
+    external[root] = packageId('crates', root);
+  }
+}
+
+// --- Ruby imports ---
+
+export function analyzeRubyImports(
+  rootNode: SyntaxNode,
+  filePath: string,
+  knownFiles: Set<string>,
+): ImportAnalysisResult {
+  const internal: Record<string, string> = {};
+  const external: Record<string, string> = {};
+  const fileDir = parentDir(filePath);
+
+  for (const child of rootNode.children) {
+    if (child.type === 'call') {
+      const funcNode = child.children[0];
+      if (!funcNode || funcNode.type !== 'identifier') continue;
+      const funcName = funcNode.text;
+
+      if (funcName === 'require_relative') {
+        const argNode =
+          child.childForFieldName('arguments') ??
+          child.children.find((c) => c.type === 'argument_list');
+        if (!argNode) continue;
+        const strNode = argNode.children.find((c) => c.type === 'string');
+        if (!strNode) continue;
+        const contentNode = strNode.children.find(
+          (c) => c.type === 'string_content',
+        );
+        if (!contentNode) continue;
+
+        const requirePath = contentNode.text;
+        const resolved = resolveRelativePath(fileDir, requirePath);
+        const candidates = [`${resolved}.rb`, resolved, `${resolved}/index.rb`];
+        for (const candidate of candidates) {
+          if (knownFiles.has(candidate)) {
+            const alias = requirePath.split('/').pop()!;
+            internal[alias] = candidate;
+            break;
+          }
+        }
+      } else if (funcName === 'require') {
+        const argNode =
+          child.childForFieldName('arguments') ??
+          child.children.find((c) => c.type === 'argument_list');
+        if (!argNode) continue;
+        const strNode = argNode.children.find((c) => c.type === 'string');
+        if (!strNode) continue;
+        const contentNode = strNode.children.find(
+          (c) => c.type === 'string_content',
+        );
+        if (!contentNode) continue;
+
+        const gemName = contentNode.text;
+        // Check if it resolves to a local file first
+        const candidates = [
+          `${gemName}.rb`,
+          `lib/${gemName}.rb`,
+          `${gemName}/init.rb`,
+        ];
+        let found = false;
+        for (const candidate of candidates) {
+          if (knownFiles.has(candidate)) {
+            internal[gemName] = candidate;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const name = gemName.split('/')[0];
+          external[name] = packageId('rubygems', name);
+        }
+      }
+    }
+  }
+  return { internal, external };
+}
+
 // --- Path utilities ---
 
 function parentDir(path: string): string {
@@ -440,9 +646,12 @@ export function analyzeImports(
     case 'go':
       return analyzeGoImports(rootNode, knownPaths, modulePath);
     case 'typescript':
-      return analyzeTypeScriptImports(rootNode, filePath, knownPaths);
     case 'javascript':
       return analyzeTypeScriptImports(rootNode, filePath, knownPaths);
+    case 'rust':
+      return analyzeRustImports(rootNode, filePath, knownPaths);
+    case 'ruby':
+      return analyzeRubyImports(rootNode, filePath, knownPaths);
     default:
       return { internal: {}, external: {} };
   }
