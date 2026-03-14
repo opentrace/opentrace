@@ -83,9 +83,7 @@ function getSubType(node: GraphNode): string | null {
  * GraphLink endpoints are always strings in our data model,
  * but we keep this helper for safety.
  */
-function linkId(
-  endpoint: string | number | GraphNode | undefined,
-): string {
+function linkId(endpoint: string | number | GraphNode | undefined): string {
   if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
   return String(endpoint);
 }
@@ -129,7 +127,11 @@ export interface GraphViewerProps {
  * Inner component that accesses the sigma instance via useSigma().
  * Used for zoom controls and initial zoom-to-fit.
  */
-function SigmaZoomControls({ onReady }: { onReady: (sigma: ReturnType<typeof useSigma>) => void }) {
+function SigmaZoomControls({
+  onReady,
+}: {
+  onReady: (sigma: ReturnType<typeof useSigma>) => void;
+}) {
   const sigma = useSigma();
   const readyRef = useRef(false);
 
@@ -174,7 +176,10 @@ const GraphViewer = memo(
       const onGraphLoaded = useCallback(() => {
         setTimeout(() => {
           if (sigmaRef.current) {
-            zoomToFit(sigmaRef.current as unknown as import('sigma').Sigma, 400);
+            zoomToFit(
+              sigmaRef.current as unknown as import('sigma').Sigma,
+              400,
+            );
           }
         }, 500);
       }, []);
@@ -211,15 +216,11 @@ const GraphViewer = memo(
       const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
       const [labelNodes, setLabelNodes] = useState(new Set<string>());
       const [hopMap, setHopMap] = useState(new Map<string, number>());
-      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(
-        new Set<string>(),
-      );
+      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(
         new Set<string>(['DEPENDS_ON']),
       );
-      const [hiddenSubTypes, setHiddenSubTypes] = useState(
-        new Set<string>(),
-      );
+      const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
       // Track whether we've applied the default Package hiding
       const defaultsApplied = useRef(false);
       const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
@@ -292,10 +293,7 @@ const GraphViewer = memo(
           const counts = map.get(n.type)!;
           counts[sub] = (counts[sub] || 0) + 1;
         });
-        const result = new Map<
-          string,
-          { subType: string; count: number }[]
-        >();
+        const result = new Map<string, { subType: string; count: number }[]>();
         map.forEach((counts, type) => {
           result.set(
             type,
@@ -360,10 +358,7 @@ const GraphViewer = memo(
 
       // Adjacency list for multi-hop BFS traversal (uses filtered data)
       const adjacency = useMemo(() => {
-        const map = new Map<
-          string,
-          { neighbor: string; linkKey: string }[]
-        >();
+        const map = new Map<string, { neighbor: string; linkKey: string }[]>();
         filteredGraphData.links.forEach((l) => {
           const sourceId = linkId(l.source);
           const targetId = linkId(l.target);
@@ -423,27 +418,24 @@ const GraphViewer = memo(
         [graphData, loadGraph, onNodeClick],
       );
 
-      const onLinkClick = useCallback(
-        (edge: SelectedEdge) => {
-          setSelectedLink(edge);
-          setSelectedNode(null);
-          // Highlight the two endpoints and the clicked link
-          const sourceId = edge.source;
-          const targetId = edge.target;
-          setHighlightNodes(new Set([sourceId, targetId]));
-          setHighlightLinks(new Set([`${sourceId}-${targetId}`]));
-          setLabelNodes(new Set([sourceId, targetId]));
-          // Zoom to fit the two endpoints
-          if (sigmaRef.current) {
-            zoomToNodes(
-              sigmaRef.current as unknown as import('sigma').Sigma,
-              [sourceId, targetId],
-              600,
-            );
-          }
-        },
-        [],
-      );
+      const onLinkClick = useCallback((edge: SelectedEdge) => {
+        setSelectedLink(edge);
+        setSelectedNode(null);
+        // Highlight the two endpoints and the clicked link
+        const sourceId = edge.source;
+        const targetId = edge.target;
+        setHighlightNodes(new Set([sourceId, targetId]));
+        setHighlightLinks(new Set([`${sourceId}-${targetId}`]));
+        setLabelNodes(new Set([sourceId, targetId]));
+        // Zoom to fit the two endpoints
+        if (sigmaRef.current) {
+          zoomToNodes(
+            sigmaRef.current as unknown as import('sigma').Sigma,
+            [sourceId, targetId],
+            600,
+          );
+        }
+      }, []);
 
       // Fetch source code when a source-bearing node is selected.
       useEffect(() => {
@@ -461,9 +453,7 @@ const GraphViewer = memo(
         const startLine = selectedNode.properties?.start_line as
           | number
           | undefined;
-        const endLine = selectedNode.properties?.end_line as
-          | number
-          | undefined;
+        const endLine = selectedNode.properties?.end_line as number | undefined;
 
         store
           .fetchSource(selectedNode.id, startLine, endLine)
@@ -517,11 +507,7 @@ const GraphViewer = memo(
           labels.add(selectedNode.id);
           hm.set(selectedNode.id, 0);
           let frontier = new Set<string>([selectedNode.id]);
-          for (
-            let depth = 0;
-            depth < hops && frontier.size > 0;
-            depth++
-          ) {
+          for (let depth = 0; depth < hops && frontier.size > 0; depth++) {
             const nextFrontier = new Set<string>();
             frontier.forEach((nodeId) => {
               const edges = adjacency.get(nodeId);
@@ -654,7 +640,8 @@ const GraphViewer = memo(
           labelColor: { color: LABEL_COLOR },
           labelSize: LABEL_SIZE,
           allowInvalidContainer: true,
-          zoomToSizeRatioFunction: (ratio: number) => Math.pow(ratio, ZOOM_SIZE_EXPONENT),
+          zoomToSizeRatioFunction: (ratio: number) =>
+            Math.pow(ratio, ZOOM_SIZE_EXPONENT),
         }),
         [],
       );
@@ -725,10 +712,7 @@ const GraphViewer = memo(
                   No nodes matched <strong>{lastSearchQuery}</strong>. Try a
                   different search or clear to see the full graph.
                 </p>
-                <button
-                  className="empty-state-add-btn"
-                  onClick={handleReset}
-                >
+                <button className="empty-state-add-btn" onClick={handleReset}>
                   Clear Search
                 </button>
               </div>
@@ -880,9 +864,7 @@ const GraphViewer = memo(
             }}
             onShowAllLinks={() => setHiddenLinkTypes(new Set())}
             onHideAllLinks={() =>
-              setHiddenLinkTypes(
-                new Set(availableLinkTypes.map((t) => t.type)),
-              )
+              setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type)))
             }
             selectedNode={selectedNode}
             nodeSource={nodeSource}
@@ -927,10 +909,7 @@ const GraphViewer = memo(
                   value={hops}
                   onChange={(e) =>
                     setHops(
-                      Math.min(
-                        5,
-                        Math.max(0, parseInt(e.target.value) || 0),
-                      ),
+                      Math.min(5, Math.max(0, parseInt(e.target.value) || 0)),
                     )
                   }
                   className="hops-input"
@@ -993,8 +972,7 @@ const GraphViewer = memo(
               )}
               <span>edges</span>
             </span>
-            {(jobState.status === 'enriching' ||
-              jobState.status === 'done') &&
+            {(jobState.status === 'enriching' || jobState.status === 'done') &&
             !jobExpanded ? (
               <JobMinimizedBar
                 state={jobState}
@@ -1065,10 +1043,7 @@ const GraphViewer = memo(
           </header>
 
           {showAddRepo && jobState.status === 'idle' && (
-            <AddRepoModal
-              onClose={onAddRepoClose}
-              onSubmit={onJobSubmit}
-            />
+            <AddRepoModal onClose={onAddRepoClose} onSubmit={onJobSubmit} />
           )}
 
           {isEmpty && showFullModal && (
@@ -1136,9 +1111,7 @@ const GraphViewer = memo(
               onEdgeClick={onLinkClick}
               onStageClick={handleStageClick}
             />
-            <LayoutController
-              nodeCount={filteredGraphData.nodes.length}
-            />
+            <LayoutController nodeCount={filteredGraphData.nodes.length} />
             <SigmaZoomControls onReady={handleSigmaReady} />
           </SigmaContainer>
 

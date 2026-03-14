@@ -43,14 +43,29 @@ interface UseSigmaGraphOptions {
 }
 
 const STRUCTURAL_TYPES = new Set([
-  'Repository', 'Repo', 'Service', 'InstrumentedService',
-  'Cluster', 'Namespace', 'Deployment', 'Directory', 'Module', 'Package',
+  'Repository',
+  'Repo',
+  'Service',
+  'InstrumentedService',
+  'Cluster',
+  'Namespace',
+  'Deployment',
+  'Directory',
+  'Module',
+  'Package',
 ]);
 
 function nodeSize(degree: number, nodeType: string): number {
-  const base = Math.min(NODE_SIZE_MAX, Math.max(NODE_SIZE_MIN, NODE_SIZE_MIN + Math.sqrt(degree) * NODE_SIZE_DEGREE_SCALE));
-  const multiplier = NODE_SIZE_MULTIPLIERS[nodeType]
-    ?? (STRUCTURAL_TYPES.has(nodeType) ? NODE_SIZE_MULTIPLIERS._structural : 1);
+  const base = Math.min(
+    NODE_SIZE_MAX,
+    Math.max(
+      NODE_SIZE_MIN,
+      NODE_SIZE_MIN + Math.sqrt(degree) * NODE_SIZE_DEGREE_SCALE,
+    ),
+  );
+  const multiplier =
+    NODE_SIZE_MULTIPLIERS[nodeType] ??
+    (STRUCTURAL_TYPES.has(nodeType) ? NODE_SIZE_MULTIPLIERS._structural : 1);
   return base * multiplier;
 }
 
@@ -75,8 +90,14 @@ function computeD3Layout(
   // Compute degree locally so layout doesn't depend on external degreeMap
   const localDegree = new Map<string, number>();
   for (const link of links) {
-    const s = typeof link.source === 'string' ? link.source : (link.source as unknown as GraphNode).id;
-    const t = typeof link.target === 'string' ? link.target : (link.target as unknown as GraphNode).id;
+    const s =
+      typeof link.source === 'string'
+        ? link.source
+        : (link.source as unknown as GraphNode).id;
+    const t =
+      typeof link.target === 'string'
+        ? link.target
+        : (link.target as unknown as GraphNode).id;
     localDegree.set(s, (localDegree.get(s) || 0) + 1);
     localDegree.set(t, (localDegree.get(t) || 0) + 1);
   }
@@ -90,18 +111,34 @@ function computeD3Layout(
   const nodeIdSet = new Set(nodes.map((n) => n.id));
   for (const link of links) {
     if (link.label !== 'DEFINED_IN') continue;
-    const source = typeof link.source === 'string' ? link.source : (link.source as unknown as GraphNode).id;
-    const target = typeof link.target === 'string' ? link.target : (link.target as unknown as GraphNode).id;
+    const source =
+      typeof link.source === 'string'
+        ? link.source
+        : (link.source as unknown as GraphNode).id;
+    const target =
+      typeof link.target === 'string'
+        ? link.target
+        : (link.target as unknown as GraphNode).id;
     if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
       simLinks.push({ source, target });
     }
   }
 
   const simulation = forceSimulation(simNodes)
-    .force('link', forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(FORCE_LINK_DISTANCE))
+    .force(
+      'link',
+      forceLink<SimNode, SimLink>(simLinks)
+        .id((d) => d.id)
+        .distance(FORCE_LINK_DISTANCE),
+    )
     .force('charge', forceManyBody().strength(FORCE_CHARGE_STRENGTH))
     .force('center', forceCenter(0, 0))
-    .force('collide', forceCollide<SimNode>().radius((d) => d.radius + FORCE_COLLIDE_PADDING).iterations(FORCE_COLLIDE_ITERATIONS))
+    .force(
+      'collide',
+      forceCollide<SimNode>()
+        .radius((d) => d.radius + FORCE_COLLIDE_PADDING)
+        .iterations(FORCE_COLLIDE_ITERATIONS),
+    )
     .stop();
 
   for (let i = 0; i < FORCE_SIMULATION_TICKS; i++) {
@@ -128,7 +165,9 @@ function dimColor(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
-  const bgR = 0x1a, bgG = 0x1b, bgB = 0x2e;
+  const bgR = 0x1a,
+    bgG = 0x1b,
+    bgB = 0x2e;
   const nr = Math.round(r * alpha + bgR * (1 - alpha));
   const ng = Math.round(g * alpha + bgG * (1 - alpha));
   const nb = Math.round(b * alpha + bgB * (1 - alpha));
@@ -155,7 +194,8 @@ export function useSigmaGraph({
   // Compute layout from full dataset (not filtered) so filter toggles are instant.
   // useMemo ensures this only reruns when allNodes/allLinks change (new data fetch).
   const positions = useMemo(() => {
-    if (allNodes.length === 0) return new Map<string, { x: number; y: number }>();
+    if (allNodes.length === 0)
+      return new Map<string, { x: number; y: number }>();
     console.time('[graph] d3-force layout');
     const pos = computeD3Layout(allNodes, allLinks);
     console.timeEnd('[graph] d3-force layout');
@@ -170,7 +210,10 @@ export function useSigmaGraph({
     graph.clear();
     console.timeEnd('[graph] clear');
 
-    if (nodes.length === 0) { console.timeEnd('[graph] total rebuild'); return; }
+    if (nodes.length === 0) {
+      console.timeEnd('[graph] total rebuild');
+      return;
+    }
 
     console.time('[graph] add nodes');
     for (const node of nodes) {
@@ -192,8 +235,14 @@ export function useSigmaGraph({
     console.time('[graph] add edges');
     for (let i = 0; i < links.length; i++) {
       const link = links[i];
-      const source = typeof link.source === 'string' ? link.source : (link.source as unknown as GraphNode).id;
-      const target = typeof link.target === 'string' ? link.target : (link.target as unknown as GraphNode).id;
+      const source =
+        typeof link.source === 'string'
+          ? link.source
+          : (link.source as unknown as GraphNode).id;
+      const target =
+        typeof link.target === 'string'
+          ? link.target
+          : (link.target as unknown as GraphNode).id;
       if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
       graph.addEdgeWithKey(`e-${i}`, source, target, {
         label: link.label,
@@ -219,7 +268,9 @@ export function useSigmaGraph({
       const showLabel = !hasHighlight || labelNodes.has(_id);
       const baseColor = getNodeColor(attrs.nodeType as string);
 
-      attrs.color = isHighlighted ? baseColor : dimColor(baseColor, NODE_OPACITY_DIMMED);
+      attrs.color = isHighlighted
+        ? baseColor
+        : dimColor(baseColor, NODE_OPACITY_DIMMED);
       attrs.borderColor = isSelected ? baseColor : undefined;
       attrs.borderSize = isSelected ? 3 : 0;
       attrs.forceLabel = showLabel && hasHighlight;
@@ -233,7 +284,9 @@ export function useSigmaGraph({
 
       if (hasHighlight) {
         graph.mergeEdgeAttributes(id, {
-          color: isHighlighted ? baseColor : dimColor(baseColor, EDGE_OPACITY_DIMMED),
+          color: isHighlighted
+            ? baseColor
+            : dimColor(baseColor, EDGE_OPACITY_DIMMED),
           size: isHighlighted ? EDGE_SIZE_HIGHLIGHTED : EDGE_SIZE_DIMMED,
         });
       } else {

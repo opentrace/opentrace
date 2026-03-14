@@ -20,10 +20,18 @@ export default function GraphEvents({
     const container = sigma.getContainer();
 
     registerEvents({
-      enterNode: () => { container.style.cursor = 'pointer'; },
-      leaveNode: () => { container.style.cursor = 'default'; },
-      enterEdge: () => { container.style.cursor = 'pointer'; },
-      leaveEdge: () => { container.style.cursor = 'default'; },
+      enterNode: () => {
+        container.style.cursor = 'pointer';
+      },
+      leaveNode: () => {
+        container.style.cursor = 'default';
+      },
+      enterEdge: () => {
+        container.style.cursor = 'pointer';
+      },
+      leaveEdge: () => {
+        container.style.cursor = 'default';
+      },
       clickNode: ({ node }) => {
         const graph = sigma.getGraph();
         const attrs = graph.getNodeAttributes(node);
@@ -43,7 +51,9 @@ export default function GraphEvents({
           source,
           target,
           label: (attrs.label as string) || 'unknown',
-          properties: (attrs._graphLink as { properties?: Record<string, unknown> })?.properties,
+          properties: (
+            attrs._graphLink as { properties?: Record<string, unknown> }
+          )?.properties,
           sourceNode: sourceAttrs._graphNode as GraphNode | undefined,
           targetNode: targetAttrs._graphNode as GraphNode | undefined,
         };

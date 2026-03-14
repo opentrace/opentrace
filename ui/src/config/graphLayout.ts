@@ -28,16 +28,16 @@ export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {
 
 // ─── Edge Sizes (screen pixels) ─────────────────────────────────────────
 
-export const EDGE_SIZE_DEFAULT = 1;       // normal state
+export const EDGE_SIZE_DEFAULT = 1; // normal state
 export const EDGE_SIZE_HIGHLIGHTED = 2.5; // when part of a selected neighborhood
-export const EDGE_SIZE_DIMMED = 0.5;      // when another node is selected
+export const EDGE_SIZE_DIMMED = 0.5; // when another node is selected
 
 // ─── Edge Opacity ───────────────────────────────────────────────────────
 // Alpha blend against dark background (0 = invisible, 1 = full color)
 
-export const EDGE_OPACITY_DEFAULT = 0.6;     // normal state
+export const EDGE_OPACITY_DEFAULT = 0.6; // normal state
 export const EDGE_OPACITY_HIGHLIGHTED = 1.0; // when part of a selected neighborhood
-export const EDGE_OPACITY_DIMMED = 0.05;     // when another node is selected
+export const EDGE_OPACITY_DIMMED = 0.05; // when another node is selected
 
 // ─── Node Opacity ───────────────────────────────────────────────────────
 
@@ -52,11 +52,11 @@ export const ZOOM_SIZE_EXPONENT = 0.9;
 // ─── d3-Force Layout ────────────────────────────────────────────────────
 // Layout uses only DEFINED_IN edges. These control the force simulation.
 
-export const FORCE_LINK_DISTANCE = 200;      // target distance between linked nodes
-export const FORCE_CHARGE_STRENGTH = -200;  // repulsion between all nodes (negative = repel)
-export const FORCE_COLLIDE_PADDING = 40;     // extra px padding around each node for collision
-export const FORCE_COLLIDE_ITERATIONS = 3;  // collision resolution passes per tick
-export const FORCE_SIMULATION_TICKS = 300;  // total simulation iterations
+export const FORCE_LINK_DISTANCE = 200; // target distance between linked nodes
+export const FORCE_CHARGE_STRENGTH = -200; // repulsion between all nodes (negative = repel)
+export const FORCE_COLLIDE_PADDING = 40; // extra px padding around each node for collision
+export const FORCE_COLLIDE_ITERATIONS = 3; // collision resolution passes per tick
+export const FORCE_SIMULATION_TICKS = 300; // total simulation iterations
 
 // ─── ForceAtlas2 Live Physics ───────────────────────────────────────────
 // Runs after d3-force initial positioning to refine the layout.
@@ -66,13 +66,13 @@ export const FA2_ENABLED = true;
 export const FA2_GRAVITY = 0.1;
 export const FA2_SCALING_RATIO = 30;
 export const FA2_SLOW_DOWN = 2;
-export const FA2_BARNES_HUT_THRESHOLD = 300;  // use Barnes-Hut when nodeCount > this
+export const FA2_BARNES_HUT_THRESHOLD = 300; // use Barnes-Hut when nodeCount > this
 export const FA2_BARNES_HUT_THETA = 0.5;
 export const FA2_STRONG_GRAVITY = false;
 export const FA2_LIN_LOG_MODE = true;
 export const FA2_OUTBOUND_ATTRACTION = true;
 export const FA2_ADJUST_SIZES = true;
-export const FA2_DURATION = 8000;             // ms to run before auto-stop
+export const FA2_DURATION = 8000; // ms to run before auto-stop
 
 // ─── Noverlap Post-Processing ───────────────────────────────────────────
 // Runs after FA2 stops (or after d3-force if FA2 disabled) to push apart remaining overlaps.
