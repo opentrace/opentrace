@@ -91,10 +91,9 @@ export default function LayoutController({ nodeCount }: LayoutControllerProps) {
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      if (runningRef.current) {
-        stop();
-        runningRef.current = false;
-      }
+      // Always call stop — safe to call on an already-stopped worker
+      stop();
+      runningRef.current = false;
     };
   }, [nodeCount, start, stop, sigma]);
 

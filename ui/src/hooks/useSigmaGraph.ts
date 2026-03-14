@@ -69,6 +69,16 @@ function nodeSize(degree: number, nodeType: string): number {
   return base * multiplier;
 }
 
+/** Extract string ID from a link endpoint (handles both string and object forms). */
+function endpointId(
+  endpoint: string | number | GraphNode | undefined,
+): string {
+  if (typeof endpoint === 'string') return endpoint;
+  if (typeof endpoint === 'object' && endpoint !== null)
+    return (endpoint as GraphNode).id;
+  return String(endpoint);
+}
+
 // ─── d3-force layout using only DEFINED_IN edges ────────────────────────
 
 interface SimNode {
@@ -90,14 +100,8 @@ function computeD3Layout(
   // Compute degree locally so layout doesn't depend on external degreeMap
   const localDegree = new Map<string, number>();
   for (const link of links) {
-    const s =
-      typeof link.source === 'string'
-        ? link.source
-        : (link.source as unknown as GraphNode).id;
-    const t =
-      typeof link.target === 'string'
-        ? link.target
-        : (link.target as unknown as GraphNode).id;
+    const s = endpointId(link.source);
+    const t = endpointId(link.target);
     localDegree.set(s, (localDegree.get(s) || 0) + 1);
     localDegree.set(t, (localDegree.get(t) || 0) + 1);
   }
@@ -111,14 +115,8 @@ function computeD3Layout(
   const nodeIdSet = new Set(nodes.map((n) => n.id));
   for (const link of links) {
     if (link.label !== 'DEFINED_IN') continue;
-    const source =
-      typeof link.source === 'string'
-        ? link.source
-        : (link.source as unknown as GraphNode).id;
-    const target =
-      typeof link.target === 'string'
-        ? link.target
-        : (link.target as unknown as GraphNode).id;
+    const source = endpointId(link.source);
+    const target = endpointId(link.target);
     if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
       simLinks.push({ source, target });
     }
@@ -165,6 +163,7 @@ function dimColor(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
+  // TODO: read from CSS variable for theme support
   const bgR = 0x1a,
     bgG = 0x1b,
     bgB = 0x2e;
@@ -189,6 +188,10 @@ export function useSigmaGraph({
   labelNodes,
   selectedNodeId,
 }: UseSigmaGraphOptions): Graph {
+  // Stable graph instance — created once, never replaced. Both useEffects
+  // below mutate this same instance sequentially (React guarantees effect
+  // ordering within a component), so rebuild always completes before
+  // highlight updates run.
   const graph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
 
   // Compute layout from full dataset (not filtered) so filter toggles are instant.
@@ -196,26 +199,22 @@ export function useSigmaGraph({
   const positions = useMemo(() => {
     if (allNodes.length === 0)
       return new Map<string, { x: number; y: number }>();
-    console.time('[graph] d3-force layout');
+    if (process.env.NODE_ENV === 'development') {
+      console.time('[graph] d3-force layout');
+    }
     const pos = computeD3Layout(allNodes, allLinks);
-    console.timeEnd('[graph] d3-force layout');
-    console.log(`[graph] layout computed for ${allNodes.length} nodes`);
+    if (process.env.NODE_ENV === 'development') {
+      console.timeEnd('[graph] d3-force layout');
+      console.log(`[graph] layout computed for ${allNodes.length} nodes`);
+    }
     return pos;
   }, [allNodes, allLinks]);
 
+  // Rebuild graph structure when filtered data or positions change
   useEffect(() => {
-    console.time('[graph] total rebuild');
-
-    console.time('[graph] clear');
     graph.clear();
-    console.timeEnd('[graph] clear');
+    if (nodes.length === 0) return;
 
-    if (nodes.length === 0) {
-      console.timeEnd('[graph] total rebuild');
-      return;
-    }
-
-    console.time('[graph] add nodes');
     for (const node of nodes) {
       const degree = degreeMap.get(node.id) || 0;
       const size = nodeSize(degree, node.type);
@@ -230,36 +229,29 @@ export function useSigmaGraph({
         _graphNode: node,
       });
     }
-    console.timeEnd('[graph] add nodes');
 
-    console.time('[graph] add edges');
-    for (let i = 0; i < links.length; i++) {
-      const link = links[i];
-      const source =
-        typeof link.source === 'string'
-          ? link.source
-          : (link.source as unknown as GraphNode).id;
-      const target =
-        typeof link.target === 'string'
-          ? link.target
-          : (link.target as unknown as GraphNode).id;
+    // Use stable edge keys based on source/target to avoid identity issues
+    // when filters change the set of visible edges.
+    for (const link of links) {
+      const source = endpointId(link.source);
+      const target = endpointId(link.target);
       if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
-      graph.addEdgeWithKey(`e-${i}`, source, target, {
+      const edgeKey = `${source}-${link.label}-${target}`;
+      // Deduplicate: skip if this exact edge already exists
+      if (graph.hasEdge(edgeKey)) continue;
+      graph.addEdgeWithKey(edgeKey, source, target, {
         label: link.label,
         color: getLinkColor(link.label),
         size: EDGE_SIZE_DEFAULT,
         _graphLink: link,
       });
     }
-    console.timeEnd('[graph] add edges');
-
-    console.timeEnd('[graph] total rebuild');
-    console.log(`[graph] ${nodes.length} nodes, ${links.length} links`);
   }, [graph, nodes, links, degreeMap, positions]);
 
-  // Batch highlight updates to minimize Sigma re-renders
+  // Update visual attributes when highlight state changes.
+  // Runs after the rebuild effect above (React guarantees effect order).
   useEffect(() => {
-    console.time('[graph] highlight update');
+    if (graph.order === 0) return;
     const hasHighlight = highlightNodes.size > 0;
 
     graph.updateEachNodeAttributes((_id, attrs) => {
@@ -296,7 +288,6 @@ export function useSigmaGraph({
         });
       }
     });
-    console.timeEnd('[graph] highlight update');
   }, [graph, highlightNodes, highlightLinks, labelNodes, selectedNodeId]);
 
   return graph;
