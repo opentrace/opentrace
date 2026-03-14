@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
@@ -91,17 +91,16 @@ export default function SettingsDrawer({
     }
   };
 
-  const limitsTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const debouncedLimitsChanged = useCallback(() => {
-    clearTimeout(limitsTimer.current);
-    limitsTimer.current = setTimeout(() => onLimitsChanged?.(), 400);
-  }, [onLimitsChanged]);
+  // Track whether limits have been edited but not yet applied
+  const savedNodes = loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES);
+  const savedEdges = loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES);
+  const limitsChanged = maxNodes !== savedNodes || maxEdges !== savedEdges;
 
-  const applyLimits = async (nodes: number, edges: number) => {
-    localStorage.setItem(LS_KEY_NODES, String(nodes));
-    localStorage.setItem(LS_KEY_EDGES, String(edges));
-    await store.setLimits?.(nodes, edges);
-    debouncedLimitsChanged();
+  const applyLimits = async () => {
+    localStorage.setItem(LS_KEY_NODES, String(maxNodes));
+    localStorage.setItem(LS_KEY_EDGES, String(maxEdges));
+    await store.setLimits?.(maxNodes, maxEdges);
+    onLimitsChanged?.();
   };
 
   return (
@@ -277,7 +276,6 @@ export default function SettingsDrawer({
                     Number(e.target.value) || DEFAULT_MAX_NODES,
                   );
                   setMaxNodes(v);
-                  applyLimits(v, maxEdges);
                 }}
               />
             </div>
@@ -299,10 +297,17 @@ export default function SettingsDrawer({
                     Number(e.target.value) || DEFAULT_MAX_EDGES,
                   );
                   setMaxEdges(v);
-                  applyLimits(maxNodes, v);
                 }}
               />
             </div>
+            <button
+              className="settings-back-btn"
+              onClick={applyLimits}
+              disabled={!limitsChanged}
+              style={{ marginTop: 8, alignSelf: 'flex-start' }}
+            >
+              Redraw Graph
+            </button>
             <p className="setting-hint">
               Defaults: {DEFAULT_MAX_NODES.toLocaleString()} nodes /{' '}
               {DEFAULT_MAX_EDGES.toLocaleString()} edges.

@@ -1,21 +1,16 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-} from 'd3-force';
 import type { GraphNode, GraphLink } from '../types/graph';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
+import type { LayoutRequest, LayoutResponse } from './d3LayoutWorker';
 import {
   NODE_SIZE_MIN,
   NODE_SIZE_MAX,
   NODE_SIZE_DEGREE_SCALE,
   NODE_SIZE_MULTIPLIERS,
   EDGE_SIZE_DEFAULT,
+  EDGE_SIZE_DEFAULT_LINE,
   EDGE_SIZE_HIGHLIGHTED,
   EDGE_SIZE_DIMMED,
   EDGE_OPACITY_DEFAULT,
@@ -23,10 +18,14 @@ import {
   NODE_OPACITY_DIMMED,
   FORCE_LINK_DISTANCE,
   FORCE_CHARGE_STRENGTH,
-  FORCE_COLLIDE_PADDING,
-  FORCE_COLLIDE_ITERATIONS,
   FORCE_SIMULATION_TICKS,
 } from '../config/graphLayout';
+
+export interface UseSigmaGraphResult {
+  graph: Graph;
+  /** True once d3-force layout has been applied and graph is built */
+  layoutReady: boolean;
+}
 
 interface UseSigmaGraphOptions {
   /** Full unfiltered graph data — used for layout computation (cached) */
@@ -40,6 +39,8 @@ interface UseSigmaGraphOptions {
   highlightLinks: Set<string>;
   labelNodes: Set<string>;
   selectedNodeId: string | null;
+  /** When true, use thicker line-edge sizes (matches EdgeLineProgram in GraphViewer) */
+  isLargeGraph: boolean;
 }
 
 const STRUCTURAL_TYPES = new Set([
@@ -75,78 +76,6 @@ function endpointId(endpoint: string | number | GraphNode | undefined): string {
   if (typeof endpoint === 'object' && endpoint !== null)
     return (endpoint as GraphNode).id;
   return String(endpoint);
-}
-
-// ─── d3-force layout using only DEFINED_IN edges ────────────────────────
-
-interface SimNode {
-  id: string;
-  x?: number;
-  y?: number;
-  radius: number;
-}
-
-interface SimLink {
-  source: string;
-  target: string;
-}
-
-function computeD3Layout(
-  nodes: GraphNode[],
-  links: GraphLink[],
-): Map<string, { x: number; y: number }> {
-  // Compute degree locally so layout doesn't depend on external degreeMap
-  const localDegree = new Map<string, number>();
-  for (const link of links) {
-    const s = endpointId(link.source);
-    const t = endpointId(link.target);
-    localDegree.set(s, (localDegree.get(s) || 0) + 1);
-    localDegree.set(t, (localDegree.get(t) || 0) + 1);
-  }
-
-  const simNodes: SimNode[] = nodes.map((n) => {
-    const degree = localDegree.get(n.id) || 0;
-    return { id: n.id, radius: nodeSize(degree, n.type) };
-  });
-
-  const simLinks: SimLink[] = [];
-  const nodeIdSet = new Set(nodes.map((n) => n.id));
-  for (const link of links) {
-    if (link.label !== 'DEFINED_IN') continue;
-    const source = endpointId(link.source);
-    const target = endpointId(link.target);
-    if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
-      simLinks.push({ source, target });
-    }
-  }
-
-  const simulation = forceSimulation(simNodes)
-    .force(
-      'link',
-      forceLink<SimNode, SimLink>(simLinks)
-        .id((d) => d.id)
-        .distance(FORCE_LINK_DISTANCE),
-    )
-    .force('charge', forceManyBody().strength(FORCE_CHARGE_STRENGTH))
-    .force('center', forceCenter(0, 0))
-    .force(
-      'collide',
-      forceCollide<SimNode>()
-        .radius((d) => d.radius + FORCE_COLLIDE_PADDING)
-        .iterations(FORCE_COLLIDE_ITERATIONS),
-    )
-    .stop();
-
-  for (let i = 0; i < FORCE_SIMULATION_TICKS; i++) {
-    simulation.tick();
-  }
-
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const node of simNodes) {
-    positions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
-  }
-
-  return positions;
 }
 
 // ─── Pre-computed color cache ───────────────────────────────────────────
@@ -185,69 +114,180 @@ export function useSigmaGraph({
   highlightLinks,
   labelNodes,
   selectedNodeId,
-}: UseSigmaGraphOptions): Graph {
-  // Stable graph instance — created once, never replaced. Both useEffects
-  // below mutate this same instance sequentially (React guarantees effect
-  // ordering within a component), so rebuild always completes before
-  // highlight updates run.
+  isLargeGraph,
+}: UseSigmaGraphOptions): UseSigmaGraphResult {
+  // Stable graph instance — created once, never replaced.
   const graph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
 
-  // Compute layout from full dataset (not filtered) so filter toggles are instant.
-  // useMemo ensures this only reruns when allNodes/allLinks change (new data fetch).
-  const positions = useMemo(() => {
-    if (allNodes.length === 0)
-      return new Map<string, { x: number; y: number }>();
-    if (process.env.NODE_ENV === 'development') {
-      console.time('[graph] d3-force layout');
+  // Worker ref — persists across renders, terminated on unmount
+  const workerRef = useRef<Worker | null>(null);
+
+  // Latest positions — set once when worker completes
+  const [positions, setPositions] = useState<Map<
+    string,
+    { x: number; y: number }
+  > | null>(null);
+
+  // Track which dataset the worker is computing for (to discard stale results)
+  const requestIdRef = useRef(0);
+
+  // True once d3-force positions are available
+  const layoutReady = positions !== null && positions.size > 0;
+
+  // Launch worker computation when allNodes/allLinks change.
+  useEffect(() => {
+    if (allNodes.length === 0) {
+      setPositions(null); // eslint-disable-line react-hooks/set-state-in-effect -- reset when data clears
+      return;
     }
-    const pos = computeD3Layout(allNodes, allLinks);
-    if (process.env.NODE_ENV === 'development') {
-      console.timeEnd('[graph] d3-force layout');
-      console.log(`[graph] layout computed for ${allNodes.length} nodes`);
+
+    // Reset — new data arriving, layout not ready yet
+    setPositions(null); // eslint-disable-line react-hooks/set-state-in-effect -- reset so layoutReady gates graph build
+
+    // Prepare DEFINED_IN links for the worker
+    const nodeIds = allNodes.map((n) => n.id);
+    const nodeIdSet = new Set(nodeIds);
+    const simLinks: { source: string; target: string }[] = [];
+    for (const link of allLinks) {
+      if (link.label !== 'DEFINED_IN') continue;
+      const source = endpointId(link.source);
+      const target = endpointId(link.target);
+      if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
+        simLinks.push({ source, target });
+      }
     }
-    return pos;
+
+    // Terminate any previous worker
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+
+    const reqId = ++requestIdRef.current;
+
+    const worker = new Worker(new URL('./d3LayoutWorker.ts', import.meta.url), {
+      type: 'module',
+    });
+    workerRef.current = worker;
+
+    if (process.env.NODE_ENV === 'development') {
+      console.time('[graph] d3-force worker layout');
+    }
+
+    worker.onerror = (err) => {
+      if (reqId !== requestIdRef.current) return;
+      console.error('[graph] d3-force worker failed:', err);
+      // Fall back to zero positions so the graph still renders
+      const fallback = new Map<string, { x: number; y: number }>();
+      for (const id of nodeIds) fallback.set(id, { x: 0, y: 0 });
+      setPositions(fallback);
+      if (workerRef.current === worker) workerRef.current = null;
+    };
+
+    worker.onmessage = (e: MessageEvent<LayoutResponse>) => {
+      // Discard if a newer request was issued
+      if (reqId !== requestIdRef.current) return;
+
+      const pos = new Map<string, { x: number; y: number }>();
+      for (const [id, x, y] of e.data.positions) {
+        pos.set(id, { x, y });
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        console.timeEnd('[graph] d3-force worker layout');
+        console.log(`[graph] layout computed for ${pos.size} nodes`);
+      }
+
+      setPositions(pos);
+
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+    };
+
+    worker.postMessage({
+      nodeIds,
+      links: simLinks,
+      config: {
+        linkDistance: FORCE_LINK_DISTANCE,
+        chargeStrength: FORCE_CHARGE_STRENGTH,
+        ticks: FORCE_SIMULATION_TICKS,
+      },
+    } satisfies LayoutRequest);
+
+    return () => {
+      if (workerRef.current === worker) {
+        worker.terminate();
+        workerRef.current = null;
+      }
+    };
   }, [allNodes, allLinks]);
 
-  // Rebuild graph structure when filtered data or positions change
+  // Build graph only once positions are ready, and when filtered data changes.
+  // Uses graph.import() for bulk construction.
   useEffect(() => {
     graph.clear();
-    if (nodes.length === 0) return;
+    if (!positions || nodes.length === 0) return;
 
-    for (const node of nodes) {
+    // Build serialized arrays in plain JS (no graphology events fired)
+    const nodeSet = new Set<string>();
+    const serializedNodes = nodes.map((node) => {
       const degree = degreeMap.get(node.id) || 0;
       const size = nodeSize(degree, node.type);
       const pos = positions.get(node.id) || { x: 0, y: 0 };
-      graph.addNode(node.id, {
-        label: node.name || node.id,
-        x: pos.x,
-        y: pos.y,
-        size,
-        color: getNodeColor(node.type),
-        nodeType: node.type,
-        _graphNode: node,
-      });
-    }
+      nodeSet.add(node.id);
+      return {
+        key: node.id,
+        attributes: {
+          label: node.name || node.id,
+          x: pos.x,
+          y: pos.y,
+          size,
+          color: getNodeColor(node.type),
+          nodeType: node.type,
+          _graphNode: node,
+        },
+      };
+    });
 
-    // Use stable edge keys based on source/target to avoid identity issues
-    // when filters change the set of visible edges.
+    const seenEdges = new Set<string>();
+    const serializedEdges: {
+      key: string;
+      source: string;
+      target: string;
+      attributes: Record<string, unknown>;
+    }[] = [];
+
+    const edgeSize = isLargeGraph ? EDGE_SIZE_DEFAULT_LINE : EDGE_SIZE_DEFAULT;
+
     for (const link of links) {
       const source = endpointId(link.source);
       const target = endpointId(link.target);
-      if (!graph.hasNode(source) || !graph.hasNode(target)) continue;
+      if (!nodeSet.has(source) || !nodeSet.has(target)) continue;
       const edgeKey = `${source}-${link.label}-${target}`;
-      // Deduplicate: skip if this exact edge already exists
-      if (graph.hasEdge(edgeKey)) continue;
-      graph.addEdgeWithKey(edgeKey, source, target, {
-        label: link.label,
-        color: getLinkColor(link.label),
-        size: EDGE_SIZE_DEFAULT,
-        _graphLink: link,
+      if (seenEdges.has(edgeKey)) continue;
+      seenEdges.add(edgeKey);
+      serializedEdges.push({
+        key: edgeKey,
+        source,
+        target,
+        attributes: {
+          label: link.label,
+          color: getLinkColor(link.label),
+          size: edgeSize,
+          _graphLink: link,
+        },
       });
     }
-  }, [graph, nodes, links, degreeMap, positions]);
+
+    // Single bulk import — graphology processes all nodes/edges internally
+    // then fires a single set of events for sigma to pick up.
+    graph.import({
+      nodes: serializedNodes,
+      edges: serializedEdges,
+    });
+  }, [graph, nodes, links, degreeMap, positions, isLargeGraph]);
 
   // Update visual attributes when highlight state changes.
-  // Runs after the rebuild effect above (React guarantees effect order).
   useEffect(() => {
     if (graph.order === 0) return;
     const hasHighlight = highlightNodes.size > 0;
@@ -267,6 +307,10 @@ export function useSigmaGraph({
       return attrs;
     });
 
+    const defaultEdgeSize = isLargeGraph
+      ? EDGE_SIZE_DEFAULT_LINE
+      : EDGE_SIZE_DEFAULT;
+
     graph.forEachEdge((id, attrs, source, target) => {
       const linkKey = `${source}-${target}`;
       const isHighlighted = highlightLinks.has(linkKey);
@@ -282,11 +326,25 @@ export function useSigmaGraph({
       } else {
         graph.mergeEdgeAttributes(id, {
           color: dimColor(baseColor, EDGE_OPACITY_DEFAULT),
-          size: EDGE_SIZE_DEFAULT,
+          size: defaultEdgeSize,
         });
       }
     });
-  }, [graph, highlightNodes, highlightLinks, labelNodes, selectedNodeId]);
+  }, [
+    graph,
+    highlightNodes,
+    highlightLinks,
+    labelNodes,
+    selectedNodeId,
+    isLargeGraph,
+  ]);
 
-  return graph;
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => {
+      workerRef.current?.terminate();
+    };
+  }, []);
+
+  return { graph, layoutReady };
 }
