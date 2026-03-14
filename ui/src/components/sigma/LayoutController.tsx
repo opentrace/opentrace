@@ -23,9 +23,14 @@ import {
 
 interface LayoutControllerProps {
   nodeCount: number;
+  /** When true, d3-force positions are applied and FA2 can start */
+  layoutReady: boolean;
 }
 
-export default function LayoutController({ nodeCount }: LayoutControllerProps) {
+export default function LayoutController({
+  nodeCount,
+  layoutReady,
+}: LayoutControllerProps) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runningRef = useRef(false);
   const sigma = useSigma();
@@ -45,6 +50,9 @@ export default function LayoutController({ nodeCount }: LayoutControllerProps) {
   });
 
   useEffect(() => {
+    // Don't start FA2 until d3-force worker has delivered positions
+    if (!layoutReady) return;
+
     const sigmaInstance = sigma as unknown as import('sigma').Sigma;
     const graph = sigma.getGraph();
 
@@ -56,10 +64,18 @@ export default function LayoutController({ nodeCount }: LayoutControllerProps) {
         stop();
         runningRef.current = false;
 
-        // Noverlap cleanup after FA2 stops
+        // Noverlap cleanup — scale iterations down for large graphs to avoid freeze
         if (graph.order > 0) {
+          const maxIter =
+            graph.order > 5000
+              ? Math.max(
+                  5,
+                  Math.round(NOVERLAP_MAX_ITERATIONS * (5000 / graph.order)),
+                )
+              : NOVERLAP_MAX_ITERATIONS;
+
           noverlap.assign(graph, {
-            maxIterations: NOVERLAP_MAX_ITERATIONS,
+            maxIterations: maxIter,
             settings: {
               ratio: NOVERLAP_RATIO,
               margin: NOVERLAP_MARGIN,
@@ -76,8 +92,16 @@ export default function LayoutController({ nodeCount }: LayoutControllerProps) {
     } else {
       // No FA2 — just noverlap + zoom
       if (graph.order > 0) {
+        const maxIter =
+          graph.order > 5000
+            ? Math.max(
+                5,
+                Math.round(NOVERLAP_MAX_ITERATIONS * (5000 / graph.order)),
+              )
+            : NOVERLAP_MAX_ITERATIONS;
+
         noverlap.assign(graph, {
-          maxIterations: NOVERLAP_MAX_ITERATIONS,
+          maxIterations: maxIter,
           settings: {
             ratio: NOVERLAP_RATIO,
             margin: NOVERLAP_MARGIN,
@@ -95,7 +119,7 @@ export default function LayoutController({ nodeCount }: LayoutControllerProps) {
       stop();
       runningRef.current = false;
     };
-  }, [nodeCount, start, stop, sigma]);
+  }, [layoutReady, nodeCount, start, stop, sigma]);
 
   return null;
 }

@@ -28,7 +28,8 @@ export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {
 
 // ─── Edge Sizes (screen pixels) ─────────────────────────────────────────
 
-export const EDGE_SIZE_DEFAULT = 1; // normal state
+export const EDGE_SIZE_DEFAULT = 1; // normal state (curved arrows)
+export const EDGE_SIZE_DEFAULT_LINE = 2; // normal state (straight lines, for large graphs)
 export const EDGE_SIZE_HIGHLIGHTED = 2.5; // when part of a selected neighborhood
 export const EDGE_SIZE_DIMMED = 0.5; // when another node is selected
 
@@ -54,9 +55,7 @@ export const ZOOM_SIZE_EXPONENT = 0.9;
 
 export const FORCE_LINK_DISTANCE = 200; // target distance between linked nodes
 export const FORCE_CHARGE_STRENGTH = -200; // repulsion between all nodes (negative = repel)
-export const FORCE_COLLIDE_PADDING = 40; // extra px padding around each node for collision
-export const FORCE_COLLIDE_ITERATIONS = 3; // collision resolution passes per tick
-export const FORCE_SIMULATION_TICKS = 300; // total simulation iterations
+export const FORCE_SIMULATION_TICKS = 80; // total simulation iterations (enough to seed FA2)
 
 // ─── ForceAtlas2 Live Physics ───────────────────────────────────────────
 // Runs after d3-force initial positioning to refine the layout.
@@ -72,7 +71,7 @@ export const FA2_STRONG_GRAVITY = false;
 export const FA2_LIN_LOG_MODE = true;
 export const FA2_OUTBOUND_ATTRACTION = true;
 export const FA2_ADJUST_SIZES = true;
-export const FA2_DURATION = 8000; // ms to run before auto-stop
+export const FA2_DURATION = 3000; // ms to run before auto-stop
 
 // ─── Noverlap Post-Processing ───────────────────────────────────────────
 // Runs after FA2 stops (or after d3-force if FA2 disabled) to push apart remaining overlaps.
@@ -83,6 +82,9 @@ export const NOVERLAP_MARGIN = 10;
 export const NOVERLAP_EXPANSION = 1.5;
 
 // ─── Sigma Renderer ─────────────────────────────────────────────────────
+
+// Above this edge count, use simple line edges instead of curved arrows
+export const EDGE_PROGRAM_THRESHOLD = 10000;
 
 export const LABEL_RENDERED_SIZE_THRESHOLD = 8;
 export const LABEL_SIZE = 12;

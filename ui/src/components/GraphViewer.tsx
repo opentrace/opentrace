@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { SigmaContainer, useSigma } from '@react-sigma/core';
 import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
+import { EdgeLineProgram } from 'sigma/rendering';
 import '@react-sigma/core/lib/style.css';
 import type {
   GraphNode,
@@ -37,6 +38,7 @@ import LayoutController from './sigma/LayoutController';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   ZOOM_SIZE_EXPONENT,
+  EDGE_PROGRAM_THRESHOLD,
   LABEL_RENDERED_SIZE_THRESHOLD,
   LABEL_SIZE,
   LABEL_FONT,
@@ -558,8 +560,12 @@ const GraphViewer = memo(
         return map;
       }, [filteredGraphData.links]);
 
+      // Adapts edge program and sizes based on graph size.
+      // Uses unfiltered count so filter toggles don't flip the edge program mid-layout.
+      const isLargeGraph = graphData.links.length > EDGE_PROGRAM_THRESHOLD;
+
       // Build graphology Graph from filtered data (layout uses full dataset)
-      const graph = useSigmaGraph({
+      const { graph, layoutReady } = useSigmaGraph({
         allNodes: graphData.nodes,
         allLinks: graphData.links,
         nodes: filteredGraphData.nodes,
@@ -569,6 +575,7 @@ const GraphViewer = memo(
         highlightLinks,
         labelNodes,
         selectedNodeId: selectedNode?.id ?? null,
+        isLargeGraph,
       });
 
       const legendItems = useMemo(() => {
@@ -625,16 +632,18 @@ const GraphViewer = memo(
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
 
-      // Sigma settings — stable reference to avoid re-creating the sigma instance
       const sigmaSettings = useMemo(
         () => ({
           defaultNodeType: 'circle',
-          defaultEdgeType: 'curvedArrow',
+          defaultEdgeType: isLargeGraph ? 'line' : 'curvedArrow',
           edgeProgramClasses: {
-            curvedArrow: EdgeCurvedArrowProgram,
+            ...(isLargeGraph
+              ? { line: EdgeLineProgram }
+              : { curvedArrow: EdgeCurvedArrowProgram }),
           },
           renderEdgeLabels: false,
-          enableEdgeEvents: true,
+          // Edge hit-testing is O(edges) per mouse move — disable for large graphs
+          enableEdgeEvents: !isLargeGraph,
           labelRenderedSizeThreshold: LABEL_RENDERED_SIZE_THRESHOLD,
           labelFont: LABEL_FONT,
           labelColor: { color: LABEL_COLOR },
@@ -643,7 +652,7 @@ const GraphViewer = memo(
           zoomToSizeRatioFunction: (ratio: number) =>
             Math.pow(ratio, ZOOM_SIZE_EXPONENT),
         }),
-        [],
+        [isLargeGraph],
       );
 
       const handleSigmaReady = useCallback(
@@ -1095,6 +1104,19 @@ const GraphViewer = memo(
             )}
           </div>
 
+          {!layoutReady && !isEmpty && (
+            <div
+              className="loading"
+              style={{ position: 'absolute', inset: 0, zIndex: 1 }}
+            >
+              <OpenTraceLogo size={48} />
+              <span>
+                Computing layout (
+                {filteredGraphData.nodes.length.toLocaleString()} nodes)...
+              </span>
+            </div>
+          )}
+
           <SigmaContainer
             graph={graph}
             style={{
@@ -1111,7 +1133,10 @@ const GraphViewer = memo(
               onEdgeClick={onLinkClick}
               onStageClick={handleStageClick}
             />
-            <LayoutController nodeCount={filteredGraphData.nodes.length} />
+            <LayoutController
+              nodeCount={filteredGraphData.nodes.length}
+              layoutReady={layoutReady}
+            />
             <SigmaZoomControls onReady={handleSigmaReady} />
           </SigmaContainer>
 
