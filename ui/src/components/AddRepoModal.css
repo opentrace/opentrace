@@ -250,7 +250,10 @@
   color: var(--muted-foreground);
   opacity: 0;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
 }
 
 .autocomplete-item:hover .autocomplete-item-remove {
