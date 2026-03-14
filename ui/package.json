@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
-    "@kuzu/kuzu-wasm": "^0.7.0",
     "@langchain/anthropic": "^1.3.22",
     "@langchain/core": "^1.1.31",
     "@langchain/google-genai": "^2.1.24",
@@ -28,6 +27,7 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
+    "kuzu-wasm": "0.11.3",
     "mermaid": "^11.6.0",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.0",

@@ -1,7 +1,27 @@
 import type { GraphData, GraphStats } from '../types/graph';
-import type { NodeResult, TraverseResult } from './kuzuProtocol';
 
-export type { NodeResult, TraverseResult } from './kuzuProtocol';
+// ---- Shared result types (previously in kuzuProtocol.ts) ----
+
+export interface NodeResult {
+  id: string;
+  type: string;
+  name: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface TraverseRelationship {
+  id: string;
+  type: string;
+  source_id: string;
+  target_id: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface TraverseResult {
+  node: NodeResult;
+  relationship: TraverseRelationship;
+  depth: number;
+}
 
 export interface ImportBatchRequest {
   nodes: {
@@ -49,6 +69,8 @@ export interface GraphStore {
   clearGraph(): Promise<void>;
   setLimits?(maxNodes: number, maxEdges: number): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
+  /** Flush any buffered writes to the backing store. No-op if unbuffered. */
+  flush(): Promise<void>;
   storeSource(files: SourceFile[]): void;
   fetchSource(
     nodeId: string,

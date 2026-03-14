@@ -85,6 +85,8 @@ export function packageSourceUrl(
       return `https://pkg.go.dev/${name}`;
     case 'crates':
       return `https://crates.io/crates/${name}`;
+    case 'rubygems':
+      return `https://rubygems.org/gems/${name}`;
     default:
       return undefined;
   }
