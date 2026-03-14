@@ -340,23 +340,6 @@ export default function AddRepoModal({
           <div className="form-fields">
             {source === 'url' ? (
               <>
-                {!provider && (
-                  <div className="example-repos">
-                    <span className="example-repos-label">Examples:</span>
-                    {EXAMPLE_REPOS.map((repo) => (
-                      <button
-                        key={repo.url}
-                        type="button"
-                        className="example-repo-chip"
-                        onClick={() => setRepoUrl(repo.url)}
-                        title={repo.description}
-                      >
-                        {repo.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 <div className="form-info">
                   <svg
                     width="14"
@@ -378,6 +361,23 @@ export default function AddRepoModal({
                     (if provided) is forwarded but never stored on the server.
                   </span>
                 </div>
+
+                {!provider && (
+                  <div className="example-repos">
+                    <span className="example-repos-label">Examples:</span>
+                    {EXAMPLE_REPOS.map((repo) => (
+                      <button
+                        key={repo.url}
+                        type="button"
+                        className="example-repo-chip"
+                        onClick={() => setRepoUrl(repo.url)}
+                        title={repo.description}
+                      >
+                        {repo.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <div className="autocomplete-wrapper">
                   <input
