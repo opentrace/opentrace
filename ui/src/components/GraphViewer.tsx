@@ -32,6 +32,7 @@ import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
+import ResetConfirmModal from './ResetConfirmModal';
 import GraphEvents from './sigma/GraphEvents';
 import LayoutController from './sigma/LayoutController';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
@@ -211,6 +212,7 @@ const GraphViewer = memo(
         null,
       );
       const [searchQuery, setSearchQuery] = useState('');
+      const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [hops, setHops] = useState(2);
       const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
       const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
@@ -886,10 +888,14 @@ const GraphViewer = memo(
             hopMap={hopMap}
           />
           <header>
-            <div className="header-logo">
+            <button
+              type="button"
+              className="header-logo header-logo--clickable"
+              onClick={() => setShowResetConfirm(true)}
+            >
               <img src="/opentrace-logo.svg" alt="OpenTrace" />
               <h1>OpenTrace</h1>
-            </div>
+            </button>
             <div className="search-container">
               <input
                 type="text"
@@ -1041,6 +1047,13 @@ const GraphViewer = memo(
               </svg>
             </button>
           </header>
+
+          {showResetConfirm && (
+            <ResetConfirmModal
+              onConfirm={() => window.location.reload()}
+              onCancel={() => setShowResetConfirm(false)}
+            />
+          )}
 
           {showAddRepo && jobState.status === 'idle' && (
             <AddRepoModal onClose={onAddRepoClose} onSubmit={onJobSubmit} />
