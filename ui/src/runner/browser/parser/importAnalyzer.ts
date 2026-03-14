@@ -189,14 +189,30 @@ function parsePythonFromImport(
  */
 function buildDirIndex(knownFiles: Set<string>): Map<string, string> {
   const index = new Map<string, string>();
+  // Track all dirs per basename to detect ambiguity
+  const baseDirs = new Map<string, Set<string>>();
   for (const filePath of knownFiles) {
+    // Only index .go files — non-code files shouldn't create false Go package matches
+    if (!filePath.endsWith('.go')) continue;
     const dir = parentDir(filePath);
     if (!dir) continue;
     // Store full dir path
     if (!index.has(dir)) index.set(dir, filePath);
-    // Also store the basename of the dir (Go package name)
+    // Collect dirs per basename for ambiguity check
     const dirBase = dir.split('/').pop()!;
-    if (!index.has(dirBase)) index.set(dirBase, filePath);
+    let dirs = baseDirs.get(dirBase);
+    if (!dirs) {
+      dirs = new Set();
+      baseDirs.set(dirBase, dirs);
+    }
+    dirs.add(dir);
+  }
+  // Only store dirBase shortcut when exactly one directory has that name
+  for (const [dirBase, dirs] of baseDirs) {
+    if (dirs.size === 1) {
+      const dir = dirs.values().next().value!;
+      index.set(dirBase, index.get(dir)!);
+    }
   }
   return index;
 }
@@ -212,6 +228,12 @@ function getDirIndex(knownFiles: Set<string>): Map<string, string> {
   cachedDirIndex = buildDirIndex(knownFiles);
   cachedDirIndexSource = knownFiles;
   return cachedDirIndex;
+}
+
+/** Reset the module-level dir index cache. Call in tests to prevent cross-test pollution. */
+export function resetDirIndexCache(): void {
+  cachedDirIndex = null;
+  cachedDirIndexSource = null;
 }
 
 export function analyzeGoImports(
@@ -276,10 +298,28 @@ function parseGoImportSpec(
   }
 
   // Try to resolve as internal file via O(1) directory index lookup
+  // Priority: full import path → modulePath-stripped repo-relative → bare dirBase shortcut
+  const fullMatch = dirIndex.get(importPath);
+  if (fullMatch) {
+    internal[alias] = fullMatch;
+    return;
+  }
+
+  // Strip modulePath prefix to get repo-relative dir (e.g. "github.com/org/app/internal/graph" → "internal/graph")
+  if (modulePath && importPath.startsWith(modulePath + '/')) {
+    const repoRelDir = importPath.slice(modulePath.length + 1);
+    const relMatch = dirIndex.get(repoRelDir);
+    if (relMatch) {
+      internal[alias] = relMatch;
+      return;
+    }
+  }
+
+  // Fall back to bare package name (only works when unambiguous)
   const pkgName = importPath.split('/').pop()!;
-  const match = dirIndex.get(importPath) ?? dirIndex.get(pkgName);
-  if (match) {
-    internal[alias] = match;
+  const baseMatch = dirIndex.get(pkgName);
+  if (baseMatch) {
+    internal[alias] = baseMatch;
     return;
   }
 
