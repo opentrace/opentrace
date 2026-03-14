@@ -19,7 +19,9 @@ function loadHistory(): string[] {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
   } catch {
     return [];
   }
@@ -169,7 +171,7 @@ export default function AddRepoModal({
 }: Props) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
-  const [history, setHistory] = useState<string[]>(loadHistory);
+  const [history] = useState<string[]>(loadHistory);
   const [showHistory, setShowHistory] = useState(false);
   const [ref, setRef] = useState('');
   const [pat, setPat] = useState('');
@@ -261,7 +263,6 @@ export default function AddRepoModal({
     else localStorage.removeItem(patKey);
 
     saveToHistory(repoUrl);
-    setHistory(loadHistory());
 
     onSubmit({
       type: 'index-repo',
@@ -349,7 +350,7 @@ export default function AddRepoModal({
                     value={repoUrl}
                     onChange={(e) => {
                       setRepoUrl(e.target.value);
-                      setShowHistory(true);
+                      if (!showHistory) setShowHistory(true);
                     }}
                     onFocus={() => setShowHistory(true)}
                     onKeyDown={(e) => {
