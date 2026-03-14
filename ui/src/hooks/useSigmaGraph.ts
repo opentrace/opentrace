@@ -70,9 +70,7 @@ function nodeSize(degree: number, nodeType: string): number {
 }
 
 /** Extract string ID from a link endpoint (handles both string and object forms). */
-function endpointId(
-  endpoint: string | number | GraphNode | undefined,
-): string {
+function endpointId(endpoint: string | number | GraphNode | undefined): string {
   if (typeof endpoint === 'string') return endpoint;
   if (typeof endpoint === 'object' && endpoint !== null)
     return (endpoint as GraphNode).id;
