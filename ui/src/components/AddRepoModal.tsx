@@ -340,6 +340,45 @@ export default function AddRepoModal({
           <div className="form-fields">
             {source === 'url' ? (
               <>
+                {!provider && (
+                  <div className="example-repos">
+                    <span className="example-repos-label">Examples:</span>
+                    {EXAMPLE_REPOS.map((repo) => (
+                      <button
+                        key={repo.url}
+                        type="button"
+                        className="example-repo-chip"
+                        onClick={() => setRepoUrl(repo.url)}
+                        title={repo.description}
+                      >
+                        {repo.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="form-info">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  <span>
+                    Repository archives are fetched through the OpenTrace API
+                    server to avoid browser CORS restrictions. Your access token
+                    (if provided) is forwarded but never stored on the server.
+                  </span>
+                </div>
+
                 <div className="autocomplete-wrapper">
                   <input
                     ref={urlInputRef}
@@ -399,45 +438,6 @@ export default function AddRepoModal({
                       ))}
                     </div>
                   )}
-                </div>
-
-                {!provider && (
-                  <div className="example-repos">
-                    <span className="example-repos-label">Examples:</span>
-                    {EXAMPLE_REPOS.map((repo) => (
-                      <button
-                        key={repo.url}
-                        type="button"
-                        className="example-repo-chip"
-                        onClick={() => setRepoUrl(repo.url)}
-                        title={repo.description}
-                      >
-                        {repo.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="form-info">
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="16" x2="12" y2="12" />
-                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                  </svg>
-                  <span>
-                    Repository archives are fetched through the OpenTrace API
-                    server to avoid browser CORS restrictions. Your access token
-                    (if provided) is forwarded but never stored on the server.
-                  </span>
                 </div>
 
                 {provider && (
