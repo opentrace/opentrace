@@ -70,7 +70,8 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 function csvEscape(value: string): string {
   // Always quote to avoid ambiguity — KuzuDB's CSV parser can misparse
   // fields containing JSON with nested commas + quotes.
-  return '"' + value.replace(/"/g, '""') + '"';
+  // Strip newlines — KuzuDB's parallel CSV reader rejects quoted newlines.
+  return '"' + value.replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
 }
 
 /** Generate CSV for a typed node table (no type column — table name IS the type). */
