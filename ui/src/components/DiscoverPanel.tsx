@@ -28,7 +28,9 @@ function sortRank(type: string): number {
 
 function hasParsableExtension(name: string): boolean {
   const dotIdx = name.lastIndexOf('.');
-  return dotIdx >= 0 && PARSEABLE_EXTENSIONS.has(name.slice(dotIdx).toLowerCase());
+  return (
+    dotIdx >= 0 && PARSEABLE_EXTENSIONS.has(name.slice(dotIdx).toLowerCase())
+  );
 }
 
 function displayName(name: string): string {
