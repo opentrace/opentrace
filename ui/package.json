@@ -24,6 +24,7 @@
     "@sigma/edge-curve": "^3.1.0",
     "fflate": "^0.8.2",
     "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",

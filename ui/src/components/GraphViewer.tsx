@@ -566,8 +566,16 @@ const GraphViewer = memo(
       // Uses unfiltered count so filter toggles don't flip the edge program mid-layout.
       const isLargeGraph = graphData.links.length > EDGE_PROGRAM_THRESHOLD;
 
+      const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
+
       // Build graphology Graph from filtered data (layout uses full dataset)
-      const { graph, layoutReady } = useSigmaGraph({
+      const {
+        graph,
+        layoutReady,
+        communityCount,
+        communityAssignments,
+        communityColorMap,
+      } = useSigmaGraph({
         allNodes: graphData.nodes,
         allLinks: graphData.links,
         nodes: filteredGraphData.nodes,
@@ -578,6 +586,7 @@ const GraphViewer = memo(
         labelNodes,
         selectedNodeId: selectedNode?.id ?? null,
         isLargeGraph,
+        colorMode,
       });
 
       const legendItems = useMemo(() => {
@@ -593,6 +602,30 @@ const GraphViewer = memo(
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.nodes]);
+
+      const communityLegendItems = useMemo(() => {
+        if (colorMode !== 'community') return [];
+        // Group filtered nodes by community
+        const counts = new Map<number, number>();
+        for (const n of filteredGraphData.nodes) {
+          const cid = communityAssignments[n.id];
+          if (cid !== undefined) {
+            counts.set(cid, (counts.get(cid) || 0) + 1);
+          }
+        }
+        return [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([cid, count]) => ({
+            label: `Community ${cid}`,
+            count,
+            color: communityColorMap.get(cid) ?? '#64748b',
+          }));
+      }, [
+        colorMode,
+        filteredGraphData.nodes,
+        communityAssignments,
+        communityColorMap,
+      ]);
 
       const legendLinkItems = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -1090,17 +1123,28 @@ const GraphViewer = memo(
           )}
 
           <div className="legend">
-            {legendItems.map(({ type, count, color }) => (
-              <span key={type} className="legend-item">
-                <span
-                  className="legend-dot"
-                  style={{ backgroundColor: color }}
-                />
-                <span className="legend-count">{count}</span>
-                {type}
-              </span>
-            ))}
-            {legendLinkItems.length > 0 && (
+            {colorMode === 'community'
+              ? communityLegendItems.map(({ label, count, color }) => (
+                  <span key={label} className="legend-item">
+                    <span
+                      className="legend-dot"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="legend-count">{count}</span>
+                    {label}
+                  </span>
+                ))
+              : legendItems.map(({ type, count, color }) => (
+                  <span key={type} className="legend-item">
+                    <span
+                      className="legend-dot"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="legend-count">{count}</span>
+                    {type}
+                  </span>
+                ))}
+            {colorMode === 'type' && legendLinkItems.length > 0 && (
               <>
                 <span className="legend-divider" />
                 {legendLinkItems.map(({ type, count, color }) => (
@@ -1154,6 +1198,25 @@ const GraphViewer = memo(
           </SigmaContainer>
 
           <div className="graph-controls">
+            <button
+              className={`graph-control-btn${colorMode === 'community' ? ' graph-control-btn--active' : ''}`}
+              onClick={() =>
+                setColorMode((m) => (m === 'type' ? 'community' : 'type'))
+              }
+              title={`Color by ${colorMode === 'type' ? 'community' : 'type'} (${communityCount} communities)`}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <circle cx="7" cy="7" r="3" />
+                <circle cx="17" cy="7" r="3" />
+                <circle cx="7" cy="17" r="3" />
+                <circle cx="17" cy="17" r="3" />
+              </svg>
+            </button>
             <button
               className="graph-control-btn"
               onClick={() => {

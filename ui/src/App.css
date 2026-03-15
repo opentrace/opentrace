@@ -641,6 +641,11 @@ header h1 {
   background: color-mix(in oklch, var(--primary) 18%, transparent);
 }
 
+.graph-control-btn--active {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.6);
+}
+
 .panel-header {
   padding: 16px 20px;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
