@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FixedSizeList } from 'react-window';
+import { List, useListRef } from 'react-window';
+import type { RowComponentProps } from 'react-window';
 import { useStore } from '../store/context';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { PARSEABLE_EXTENSIONS } from '../runner/browser/loader/constants';
@@ -150,6 +151,117 @@ function flattenTree(
   return rows;
 }
 
+/** Props passed to each virtualized row via rowProps. */
+interface TreeRowProps {
+  flatRows: FlatRow[];
+  selectedNodeId?: string;
+  graphNodeIdSet?: Set<string>;
+  childrenMap: Map<string, NodeResult[]>;
+  hopMap?: Map<string, number>;
+  maxHops: number;
+  onToggle: (nodeId: string) => void;
+  onSelect: (nodeId: string) => void;
+}
+
+/** Virtualized row component for react-window v2. */
+function TreeRow({
+  index,
+  style,
+  flatRows,
+  selectedNodeId,
+  graphNodeIdSet,
+  childrenMap,
+  hopMap,
+  maxHops,
+  onToggle,
+  onSelect,
+}: RowComponentProps<TreeRowProps>) {
+  const row = flatRows[index];
+  const { node, depth, expandable, isExpanded } = row;
+
+  // Loading placeholder row
+  if (node.type === '__loading') {
+    return (
+      <div
+        className="discover-tree-placeholder"
+        style={{
+          ...style,
+          paddingLeft: `${12 + depth * 16}px`,
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  const isSelected = node.id === selectedNodeId;
+  const offGraph = graphNodeIdSet
+    ? !isInGraph(node, graphNodeIdSet, childrenMap)
+    : false;
+  const hopDist = hopMap?.get(node.id);
+  const hopHighlight =
+    hopDist !== undefined && maxHops > 0
+      ? Math.max(0.15, 1 - (hopDist / maxHops) * 0.85)
+      : undefined;
+
+  const rowClasses = [
+    'discover-tree-row',
+    isSelected ? 'discover-tree-row--selected' : '',
+    !isSelected && hopHighlight !== undefined ? 'discover-tree-row--hop' : '',
+    offGraph && hopHighlight === undefined ? 'discover-tree-row--faded' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const rowStyle: React.CSSProperties = {
+    ...style,
+    paddingLeft: `${12 + depth * 16}px`,
+    ...(!isSelected && hopHighlight !== undefined
+      ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
+      : {}),
+  };
+
+  return (
+    <div className={rowClasses} style={rowStyle}>
+      {expandable ? (
+        <button
+          className="filter-expand-btn"
+          onClick={() => onToggle(node.id)}
+          title={isExpanded ? 'Collapse' : 'Expand'}
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
+          >
+            <path
+              d="M3 2 L7 5 L3 8"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          </svg>
+        </button>
+      ) : (
+        <span className="filter-expand-spacer" />
+      )}
+      <span
+        className="filter-dot"
+        style={{ backgroundColor: getNodeColor(node.type) }}
+      />
+      <button
+        className="discover-tree-name"
+        onClick={() => onSelect(node.id)}
+        title={node.name}
+      >
+        {displayName(node.name)}
+      </button>
+      <span className="discover-tree-type">{node.type}</span>
+    </div>
+  );
+}
+
 interface DiscoverPanelProps {
   onSelectNode: (nodeId: string) => void;
   graphVersion?: number;
@@ -180,29 +292,14 @@ export default function DiscoverPanel({
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);
-  const [listHeight, setListHeight] = useState(400);
 
-  const listRef = useRef<FixedSizeList>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useListRef();
 
   // Refs for latest values — used by async effects to avoid stale closures
   const rootsRef = useRef(roots);
   rootsRef.current = roots;
   const childrenMapRef = useRef(childrenMap);
   childrenMapRef.current = childrenMap;
-
-  // Measure container height for the virtual list
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setListHeight(entry.contentRect.height);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // Build a Set for O(1) lookups; undefined means "no filtering" (all nodes in graph)
   const graphNodeIdSet = useMemo(
@@ -497,9 +594,33 @@ export default function DiscoverPanel({
     if (!selectedNodeId || !isActive || !listRef.current) return;
     const idx = flatRows.findIndex((r) => r.node.id === selectedNodeId);
     if (idx >= 0) {
-      listRef.current.scrollToItem(idx, 'center');
+      listRef.current.scrollToRow({ index: idx, align: 'center' });
     }
-  }, [selectedNodeId, isActive, flatRows]);
+  }, [selectedNodeId, isActive, flatRows, listRef]);
+
+  // Stable rowProps object for react-window
+  const rowProps: TreeRowProps = useMemo(
+    () => ({
+      flatRows,
+      selectedNodeId,
+      graphNodeIdSet,
+      childrenMap,
+      hopMap,
+      maxHops,
+      onToggle: handleToggle,
+      onSelect: onSelectNode,
+    }),
+    [
+      flatRows,
+      selectedNodeId,
+      graphNodeIdSet,
+      childrenMap,
+      hopMap,
+      maxHops,
+      handleToggle,
+      onSelectNode,
+    ],
+  );
 
   if (loading) {
     return (
@@ -518,7 +639,7 @@ export default function DiscoverPanel({
   }
 
   return (
-    <div className="discover-panel" ref={containerRef}>
+    <div className="discover-panel">
       <div className="discover-filter-bar">
         <input
           className="discover-filter-input"
@@ -553,106 +674,15 @@ export default function DiscoverPanel({
       {flatRows.length === 0 ? (
         <div className="discover-panel-empty">No matches</div>
       ) : (
-        <FixedSizeList
-          ref={listRef}
-          height={listHeight}
-          itemCount={flatRows.length}
-          itemSize={ROW_HEIGHT}
-          width="100%"
+        <List
+          listRef={listRef}
+          rowCount={flatRows.length}
+          rowHeight={ROW_HEIGHT}
+          rowComponent={TreeRow}
+          rowProps={rowProps}
           overscanCount={20}
-          itemKey={(index) => flatRows[index].node.id}
-        >
-          {({ index, style }) => {
-            const row = flatRows[index];
-            const { node, depth, expandable, isExpanded } = row;
-
-            // Loading placeholder row
-            if (node.type === '__loading') {
-              return (
-                <div
-                  className="discover-tree-placeholder"
-                  style={{
-                    ...style,
-                    paddingLeft: `${12 + depth * 16}px`,
-                  }}
-                >
-                  Loading...
-                </div>
-              );
-            }
-
-            const isSelected = node.id === selectedNodeId;
-            const offGraph = graphNodeIdSet
-              ? !isInGraph(node, graphNodeIdSet, childrenMap)
-              : false;
-            const hopDist = hopMap?.get(node.id);
-            const hopHighlight =
-              hopDist !== undefined && maxHops > 0
-                ? Math.max(0.15, 1 - (hopDist / maxHops) * 0.85)
-                : undefined;
-
-            const rowClasses = [
-              'discover-tree-row',
-              isSelected ? 'discover-tree-row--selected' : '',
-              !isSelected && hopHighlight !== undefined
-                ? 'discover-tree-row--hop'
-                : '',
-              offGraph && hopHighlight === undefined
-                ? 'discover-tree-row--faded'
-                : '',
-            ]
-              .filter(Boolean)
-              .join(' ');
-
-            const rowStyle: React.CSSProperties = {
-              ...style,
-              paddingLeft: `${12 + depth * 16}px`,
-              ...(!isSelected && hopHighlight !== undefined
-                ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
-                : {}),
-            };
-
-            return (
-              <div className={rowClasses} style={rowStyle}>
-                {expandable ? (
-                  <button
-                    className="filter-expand-btn"
-                    onClick={() => handleToggle(node.id)}
-                    title={isExpanded ? 'Collapse' : 'Expand'}
-                  >
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
-                    >
-                      <path
-                        d="M3 2 L7 5 L3 8"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                    </svg>
-                  </button>
-                ) : (
-                  <span className="filter-expand-spacer" />
-                )}
-                <span
-                  className="filter-dot"
-                  style={{ backgroundColor: getNodeColor(node.type) }}
-                />
-                <button
-                  className="discover-tree-name"
-                  onClick={() => onSelectNode(node.id)}
-                  title={node.name}
-                >
-                  {displayName(node.name)}
-                </button>
-                <span className="discover-tree-type">{node.type}</span>
-              </div>
-            );
-          }}
-        </FixedSizeList>
+          className="discover-virtual-list"
+        />
       )}
     </div>
   );
