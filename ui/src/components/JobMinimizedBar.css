@@ -98,3 +98,36 @@
   background: color-mix(in oklch, var(--destructive) 15%, transparent);
   color: var(--destructive);
 }
+
+/* ── Mobile Responsive ───────────────────────── */
+
+@media (max-width: 768px) {
+  .job-minimized-bar {
+    min-width: 180px;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+  }
+
+  .job-minimized-bar__nodes {
+    display: none;
+  }
+
+  .job-minimized-bar__phase {
+    width: auto;
+  }
+
+  .job-minimized-bar__count {
+    width: auto;
+  }
+}
+
+@media (max-width: 480px) {
+  .job-minimized-bar {
+    min-width: 140px;
+  }
+
+  .job-minimized-bar__count {
+    display: none;
+  }
+}

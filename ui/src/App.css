@@ -1240,6 +1240,30 @@ header h1 {
     z-index: 50;
   }
 
+  .theme-dropdown {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 160px;
+  }
+
+  .chat-input-area {
+    padding: 12px 12px 20px;
+  }
+
+  .chat-input-area input {
+    font-size: 16px; /* prevents iOS auto-zoom on focus */
+  }
+
+  .chat-input-area button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .reset-confirm {
+    width: auto;
+  }
+
   .version-tag,
   .copyright-footer {
     display: none;

@@ -109,3 +109,21 @@
   overflow-y: auto;
   min-height: 0;
 }
+
+/* ── Mobile Responsive ───────────────────────── */
+
+@media (max-width: 768px) {
+  .side-panel {
+    width: 180px;
+  }
+}
+
+@media (max-width: 480px) {
+  .side-panel {
+    width: 100%;
+    z-index: 15;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    background: color-mix(in oklch, var(--background) 85%, transparent);
+  }
+}

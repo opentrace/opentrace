@@ -987,3 +987,56 @@
     transform: translateX(250%);
   }
 }
+
+/* ── Mobile Responsive ───────────────────────── */
+
+@media (max-width: 480px) {
+  .modal-card {
+    width: 95vw;
+    padding: 24px 20px 20px;
+  }
+
+  .modal-card-wide {
+    width: 95vw;
+  }
+
+  .hero-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+  }
+
+  .form-hero {
+    margin-bottom: 20px;
+  }
+
+  .input-pill {
+    padding: 12px 14px;
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  .input-pill--icon {
+    padding-left: 38px;
+    padding-right: 38px;
+  }
+
+  .form-chips {
+    flex-wrap: wrap;
+  }
+
+  .step-label {
+    font-size: 0.6rem;
+  }
+
+  .indexing-stats-grid {
+    gap: 8px;
+  }
+
+  .stat-value {
+    font-size: 1.25rem;
+  }
+
+  .failed-message {
+    max-width: 100%;
+  }
+}
