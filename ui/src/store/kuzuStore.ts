@@ -188,12 +188,6 @@ export class KuzuGraphStore implements GraphStore {
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
 
-  /**
-   * Tracks whether group-level COPY RELATES works (null = untested).
-   * If false, falls back to per-subtable COPY FROM.
-   */
-  private relGroupCopyWorks: boolean | null = null;
-
   // --- Visualization limits ---
   private maxVisNodes = 2000;
   private maxVisEdges = 5000;
@@ -552,7 +546,6 @@ export class KuzuGraphStore implements GraphStore {
     this.bm25Index = new BM25Index();
     this.nodePropsCache.clear();
     this.nodeTypeMap.clear();
-    this.relGroupCopyWorks = null;
     this.sourceCache.clear();
   }
 
@@ -663,28 +656,7 @@ export class KuzuGraphStore implements GraphStore {
       }
 
       if (validRels.length > 0) {
-        if (this.relGroupCopyWorks !== false) {
-          // Try group-level COPY first
-          const csv = generateRelCSV(validRels);
-          await kuzu.FS.writeFile('/rels.csv', csv);
-          try {
-            await this.exec("COPY RELATES FROM '/rels.csv' (HEADER=true)");
-            this.relGroupCopyWorks = true;
-            await kuzu.FS.unlink('/rels.csv');
-          } catch (err) {
-            console.warn(
-              '[KuzuStore] Group COPY RELATES failed, falling back to per-subtable COPY:',
-              err,
-            );
-            this.relGroupCopyWorks = false;
-            await kuzu.FS.unlink('/rels.csv');
-            // Fall through to per-subtable approach
-          }
-        }
-
-        if (this.relGroupCopyWorks === false) {
-          await this.copyRelsBySubtable(validRels);
-        }
+        await this.copyRelsBySubtable(validRels);
       }
     }
 
