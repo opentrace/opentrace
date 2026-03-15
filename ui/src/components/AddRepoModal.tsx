@@ -50,26 +50,70 @@ function removeFromHistory(url: string): string[] {
   return updated;
 }
 
-function detectProvider(url: string): 'github' | 'gitlab' | null {
+function detectProvider(
+  url: string,
+): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
   const lower = url.toLowerCase();
   if (lower.includes('github')) return 'github';
   if (lower.includes('gitlab')) return 'gitlab';
+  if (lower.includes('bitbucket')) return 'bitbucket';
+  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
+    return 'azuredevops';
   return null;
 }
 
-// --- Provider SVG Icons (large, for hero tile) ---
+const PROVIDER_ORDER = [
+  'github',
+  'gitlab',
+  'bitbucket',
+  'azuredevops',
+] as const;
 
-function GitHubIconLarge() {
-  return (
-    <svg width="38" height="38" viewBox="0 0 16 16" fill="currentColor">
+/**
+ * Clip-path polygons for each provider's quadrant.
+ * All use 4-point polygons so CSS can interpolate between states.
+ *
+ * Layout: GitHub=top, GitLab=right, Bitbucket=bottom, AzureDevOps=left
+ */
+const QUADRANT_CLIPS: Record<
+  string,
+  { quarter: string; full: string; hidden: string }
+> = {
+  github: {
+    // top triangle
+    quarter: 'polygon(0% 0%, 100% 0%, 50% 50%, 50% 50%)',
+    full: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
+    hidden: 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)',
+  },
+  gitlab: {
+    // right triangle
+    quarter: 'polygon(50% 50%, 100% 0%, 100% 100%, 50% 50%)',
+    full: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
+    hidden: 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)',
+  },
+  bitbucket: {
+    // bottom triangle
+    quarter: 'polygon(50% 50%, 50% 50%, 100% 100%, 0% 100%)',
+    full: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
+    hidden: 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)',
+  },
+  azuredevops: {
+    // left triangle
+    quarter: 'polygon(0% 0%, 50% 50%, 50% 50%, 0% 100%)',
+    full: 'polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)',
+    hidden: 'polygon(50% 50%, 50% 50%, 50% 50%, 50% 50%)',
+  },
+};
+
+/** Full-size SVGs (fill their container) for the clip-path composite. */
+const PROVIDER_FULL_SVG: Record<string, () => JSX.Element> = {
+  github: () => (
+    <svg width="100%" height="100%" viewBox="0 0 16 16" fill="currentColor">
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
     </svg>
-  );
-}
-
-function GitLabIconLarge() {
-  return (
-    <svg width="38" height="38" viewBox="0 0 380 380" fill="currentColor">
+  ),
+  gitlab: () => (
+    <svg width="100%" height="100%" viewBox="0 0 380 380" fill="currentColor">
       <path d="M190 353.9L131.1 172.8h117.8L190 353.9z" opacity="0.85" />
       <path d="M190 353.9L131.1 172.8H15.6L190 353.9z" opacity="0.7" />
       <path
@@ -90,52 +134,64 @@ function GitLabIconLarge() {
         opacity="0.85"
       />
     </svg>
-  );
-}
-
-function SplitProviderIcon() {
-  return (
-    <svg width="38" height="38" viewBox="0 0 38 38" fill="currentColor">
-      <defs>
-        <clipPath id="split-left">
-          <polygon points="0,0 38,0 0,38" />
-        </clipPath>
-        <clipPath id="split-right">
-          <polygon points="38,0 38,38 0,38" />
-        </clipPath>
-      </defs>
-      <g clipPath="url(#split-left)">
-        <g transform="scale(2.375)">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-        </g>
-      </g>
-      <g clipPath="url(#split-right)" opacity="0.85">
-        <g transform="scale(0.1)">
-          <path d="M190 353.9L131.1 172.8h117.8L190 353.9z" />
-          <path d="M190 353.9L131.1 172.8H15.6L190 353.9z" opacity="0.8" />
-          <path
-            d="M15.6 172.8L0.4 219.5c-1.4 4.3 0.1 9 3.8 11.7L190 353.9 15.6 172.8z"
-            opacity="0.65"
-          />
-          <path d="M15.6 172.8h115.5L87.6 26.5c-1.6-4.9-8.5-4.9-10.1 0L15.6 172.8z" />
-          <path d="M190 353.9l58.9-181.1h115.5L190 353.9z" opacity="0.8" />
-          <path
-            d="M364.4 172.8l15.2 46.7c1.4 4.3-0.1 9-3.8 11.7L190 353.9l174.4-181.1z"
-            opacity="0.65"
-          />
-          <path d="M364.4 172.8H248.9l43.5-146.3c1.6-4.9 8.5-4.9 10.1 0l61.9 146.3z" />
-        </g>
-      </g>
-      <line
-        x1="38"
-        y1="0"
-        x2="0"
-        y2="38"
-        stroke="currentColor"
-        strokeWidth="1"
-        opacity="0.2"
-      />
+  ),
+  bitbucket: () => (
+    <svg width="100%" height="100%" viewBox="0 0 32 32" fill="currentColor">
+      <path d="M2.278 2.133a1.07 1.07 0 00-1.07 1.236l4.058 24.637a1.45 1.45 0 001.417 1.195h19.1a1.07 1.07 0 001.07-.903l4.058-24.93a1.07 1.07 0 00-1.07-1.236zm16.7 17.757h-6.1l-1.647-8.613h9.2z" />
     </svg>
+  ),
+  azuredevops: () => (
+    <svg width="100%" height="100%" viewBox="0 0 16 16" fill="currentColor">
+      <path d="M15 3.622v8.512L11.5 15l-5.425-1.975v1.958L3.004 10.97l8.951.7V4.005L15 3.622zm-2.984.428L6.994 1v2.001L2.382 4.356 1 6.13v4.029l1.978.873V5.869l9.038-1.819z" />
+    </svg>
+  ),
+};
+
+function ProviderIconStrip({ selected }: { selected: string | null }) {
+  return (
+    <div className={'hero-icon' + (selected ? ' hero-icon--provider' : '')}>
+      {/* X-shaped divider lines */}
+      <svg
+        className={`quad-dividers${selected ? ' quad-dividers--hidden' : ''}`}
+        width="100%"
+        height="100%"
+        viewBox="0 0 64 64"
+      >
+        <line
+          x1="0"
+          y1="0"
+          x2="64"
+          y2="64"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          opacity="0.2"
+        />
+        <line
+          x1="64"
+          y1="0"
+          x2="0"
+          y2="64"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          opacity="0.2"
+        />
+      </svg>
+      {/* Four icon layers, each clipped to a quadrant */}
+      {PROVIDER_ORDER.map((key) => {
+        const Icon = PROVIDER_FULL_SVG[key];
+        const clips = QUADRANT_CLIPS[key];
+        const clip = !selected
+          ? clips.quarter
+          : key === selected
+            ? clips.full
+            : clips.hidden;
+        return (
+          <div key={key} className="quad-layer" style={{ clipPath: clip }}>
+            <Icon />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -155,6 +211,13 @@ function FolderIcon() {
     </svg>
   );
 }
+
+const PROVIDER_DISPLAY_NAME: Record<string, string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  bitbucket: 'Bitbucket',
+  azuredevops: 'Azure DevOps',
+};
 
 // --- Example Repositories ---
 
@@ -225,7 +288,7 @@ export default function AddRepoModal({
   );
 
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
-  const isGitLab = provider === 'gitlab';
+  const patStorageKey = provider ? `ot_${provider}_pat` : null;
 
   // Check if the entered URL matches an already-indexed repo
   const alreadyIndexed = useMemo(() => {
@@ -245,13 +308,12 @@ export default function AddRepoModal({
 
   // Load saved PAT for the detected provider
   useEffect(() => {
-    if (!provider) return;
-    const key = provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
-    const saved = localStorage.getItem(key);
+    if (!provider || !patStorageKey) return;
+    const saved = localStorage.getItem(patStorageKey);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing from localStorage
     if (saved) setPat(saved);
     else setPat('');
-  }, [provider]);
+  }, [provider, patStorageKey]);
 
   // Clear errors when switching source mode
   useEffect(() => {
@@ -279,7 +341,9 @@ export default function AddRepoModal({
 
     // URL mode
     if (!provider) {
-      setError('Enter a GitHub or GitLab repository URL.');
+      setError(
+        'Enter a GitHub, GitLab, Bitbucket, or Azure DevOps repository URL.',
+      );
       return;
     }
     if (alreadyIndexed) {
@@ -288,9 +352,10 @@ export default function AddRepoModal({
     setError(null);
     setLoading(true);
 
-    const patKey = isGitLab ? 'ot_gitlab_pat' : 'ot_github_pat';
-    if (pat) localStorage.setItem(patKey, pat);
-    else localStorage.removeItem(patKey);
+    if (patStorageKey) {
+      if (pat) localStorage.setItem(patStorageKey, pat);
+      else localStorage.removeItem(patStorageKey);
+    }
 
     saveToHistory(repoUrl);
 
@@ -310,31 +375,21 @@ export default function AddRepoModal({
         <FolderIcon />
       </div>
     ) : (
-      <div className={`hero-icon${provider ? ' hero-icon--provider' : ''}`}>
-        {provider === 'github' ? (
-          <GitHubIconLarge />
-        ) : provider === 'gitlab' ? (
-          <GitLabIconLarge />
-        ) : (
-          <SplitProviderIcon />
-        )}
-      </div>
+      <ProviderIconStrip selected={provider} />
     );
 
   const title =
     source === 'directory'
       ? 'Add Local Directory'
-      : provider === 'github'
-        ? 'Add from GitHub'
-        : provider === 'gitlab'
-          ? 'Add from GitLab'
-          : 'Add Repository';
+      : provider
+        ? `Add from ${PROVIDER_DISPLAY_NAME[provider]}`
+        : 'Add Repository';
 
   const subtitle =
     source === 'directory'
       ? 'Select a directory to index its structure into the graph'
       : provider
-        ? `Enter a ${provider === 'github' ? 'GitHub' : 'GitLab'} repository URL to index`
+        ? `Enter a ${PROVIDER_DISPLAY_NAME[provider]} repository URL to index`
         : 'Enter a repository URL to index its structure into the graph';
 
   return (
@@ -415,7 +470,7 @@ export default function AddRepoModal({
                     type="text"
                     required
                     className="input-pill"
-                    placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git"
+                    placeholder="https://github.com/owner/repo or https://bitbucket.org/ws/repo"
                     value={repoUrl}
                     onChange={(e) => {
                       setRepoUrl(e.target.value);
@@ -515,7 +570,7 @@ export default function AddRepoModal({
                     <input
                       type={showPat ? 'text' : 'password'}
                       className="input-pill input-pill--icon"
-                      placeholder={`${provider === 'gitlab' ? 'GitLab' : 'GitHub'} access token (optional, for private repos)`}
+                      placeholder={`${provider ? PROVIDER_DISPLAY_NAME[provider] : ''} access token (optional, for private repos)`}
                       value={pat}
                       onChange={(e) => setPat(e.target.value)}
                     />
