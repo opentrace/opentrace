@@ -1,14 +1,22 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { JobMessage } from '../job';
+import { normalizeRepoUrl } from '../runner/browser/loader/urlNormalize';
 import './AddRepoModal.css';
 
 type SourceMode = 'url' | 'directory';
+
+export interface IndexedRepo {
+  name: string;
+  url: string;
+}
 
 interface Props {
   onClose: () => void;
   onSubmit: (message: JobMessage) => void;
   /** When false, the backdrop click and Cancel button are hidden (e.g. empty-graph state). */
   dismissable?: boolean;
+  /** Repos already indexed in the graph. Used to detect duplicates. */
+  indexedRepos?: IndexedRepo[];
 }
 
 const HISTORY_KEY = 'ot_repo_history';
@@ -174,6 +182,7 @@ export default function AddRepoModal({
   onClose,
   onSubmit,
   dismissable = true,
+  indexedRepos = [],
 }: Props) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
@@ -218,6 +227,18 @@ export default function AddRepoModal({
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
   const isGitLab = provider === 'gitlab';
 
+  // Check if the entered URL matches an already-indexed repo
+  const alreadyIndexed = useMemo(() => {
+    if (source !== 'url' || !repoUrl.trim() || indexedRepos.length === 0)
+      return null;
+    const normalized = normalizeRepoUrl(repoUrl).toLowerCase();
+    return (
+      indexedRepos.find(
+        (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
+      ) ?? null
+    );
+  }, [source, repoUrl, indexedRepos]);
+
   // Derive directory name from FileList
   const directoryName =
     selectedFiles?.[0]?.webkitRelativePath?.split('/')[0] ?? '';
@@ -259,6 +280,9 @@ export default function AddRepoModal({
     // URL mode
     if (!provider) {
       setError('Enter a GitHub or GitLab repository URL.');
+      return;
+    }
+    if (alreadyIndexed) {
       return;
     }
     setError(null);
@@ -601,7 +625,32 @@ export default function AddRepoModal({
             </div>
           )}
 
-          <button type="submit" className="btn-cta" disabled={loading}>
+          {alreadyIndexed && (
+            <div className="form-indexed">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <span>
+                <strong>{alreadyIndexed.name}</strong> is already indexed
+              </span>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            className="btn-cta"
+            disabled={loading || !!alreadyIndexed}
+          >
             {loading ? (
               <>
                 <span className="btn-spinner" />

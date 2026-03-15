@@ -504,6 +504,28 @@
   flex-shrink: 0;
 }
 
+/* ── Already Indexed Notice ──────────────────── */
+.form-indexed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: oklch(0.7 0.18 155);
+  background: color-mix(in oklch, oklch(0.7 0.18 155) 8%, transparent);
+  border: 1px solid color-mix(in oklch, oklch(0.7 0.18 155) 20%, transparent);
+  border-radius: 10px;
+}
+
+.form-indexed svg {
+  flex-shrink: 0;
+}
+
+.form-indexed strong {
+  font-weight: 600;
+}
+
 /* ── Form Info (warnings / informational notices) ── */
 .form-info {
   display: flex;
