@@ -57,10 +57,10 @@ npm run dev
 
 #### Worktree & port handling
 
-`ui/vite.config.ts` has two worktree-aware helpers:
+`ui/vite.config.ts` has a worktree-aware helper:
 
 - **`resolveEnvDir()`** — `.env` is gitignored so it only exists in the main working tree. When running from a worktree, falls back to the main tree's `.env` via `git worktree list --porcelain`.
-- **`resolvePort()`** — scans ports 5173–5180 and picks the first free one, so multiple worktrees can run `npm run dev` simultaneously. Uses `strictPort: true` so Vite errors instead of silently picking a random port outside the range.
+- **Port** — defaults to 5173. Set `PORT=5174 npm run dev` to use a different port (e.g. when running multiple worktrees). Uses `strictPort: true` so Vite errors if the port is taken.
 
 ## MCP Tools
 

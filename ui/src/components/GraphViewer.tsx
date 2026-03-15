@@ -27,7 +27,7 @@ import { useSigmaGraph } from '../hooks/useSigmaGraph';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
 import { detectProvider } from './AddRepoModal';
-import AddRepoModal from './AddRepoModal';
+import AddRepoModal, { type IndexedRepo } from './AddRepoModal';
 import IndexingProgress from './IndexingProgress';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
@@ -175,6 +175,31 @@ const GraphViewer = memo(
 
       const { store } = useStore();
       const sigmaRef = useRef<ReturnType<typeof useSigma> | null>(null);
+
+      // Fetch indexed repos when the add-repo modal opens
+      const [indexedRepos, setIndexedRepos] = useState<IndexedRepo[]>([]);
+      useEffect(() => {
+        if (!showAddRepo) return;
+        let cancelled = false;
+        store
+          .listNodes('Repository')
+          .then((nodes) => {
+            if (cancelled) return;
+            setIndexedRepos(
+              nodes
+                .filter((n) => n.properties?.source_uri || n.properties?.url)
+                .map((n) => ({
+                  name: n.name,
+                  url: (n.properties!.source_uri ??
+                    n.properties!.url) as string,
+                })),
+            );
+          })
+          .catch(() => {});
+        return () => {
+          cancelled = true;
+        };
+      }, [showAddRepo, store]);
 
       const onGraphLoaded = useCallback(() => {
         setTimeout(() => {
@@ -789,6 +814,7 @@ const GraphViewer = memo(
                 onClose={onAddRepoClose}
                 onSubmit={onJobSubmit}
                 dismissable={false}
+                indexedRepos={indexedRepos}
               />
             )}
 
@@ -1098,7 +1124,11 @@ const GraphViewer = memo(
           )}
 
           {showAddRepo && jobState.status === 'idle' && (
-            <AddRepoModal onClose={onAddRepoClose} onSubmit={onJobSubmit} />
+            <AddRepoModal
+              onClose={onAddRepoClose}
+              onSubmit={onJobSubmit}
+              indexedRepos={indexedRepos}
+            />
           )}
 
           {isEmpty && showFullModal && (

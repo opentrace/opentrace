@@ -151,6 +151,49 @@ describe('AddRepoModal', () => {
       ).toHaveLength(1);
     });
 
+    it('shows already-indexed notice and disables submit for duplicate repo', () => {
+      const onSubmit = vi.fn();
+      const indexedRepos = [
+        { name: 'my-repo', url: 'https://github.com/owner/repo' },
+      ];
+      const { getByTestId, getByText } = render(
+        React.createElement(AddRepoModal, {
+          ...defaultProps,
+          onSubmit,
+          indexedRepos,
+        }),
+      );
+      const input = getByTestId('repo-url-input');
+      fireEvent.change(input, {
+        target: { value: 'https://github.com/owner/repo' },
+      });
+      expect(getByText('is already indexed')).toBeDefined();
+      expect(getByText('my-repo')).toBeDefined();
+      // Submit button should be disabled
+      const submitBtn = getByText('Add & Index').closest('button')!;
+      expect(submitBtn.disabled).toBe(true);
+      // Submitting should not call onSubmit
+      fireEvent.click(submitBtn);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it('matches repos with different URL formats (SSH vs HTTPS)', () => {
+      const indexedRepos = [
+        { name: 'my-repo', url: 'https://github.com/owner/repo' },
+      ];
+      const { getByTestId, getByText } = render(
+        React.createElement(AddRepoModal, {
+          ...defaultProps,
+          indexedRepos,
+        }),
+      );
+      const input = getByTestId('repo-url-input');
+      fireEvent.change(input, {
+        target: { value: 'git@github.com:owner/repo.git' },
+      });
+      expect(getByText('is already indexed')).toBeDefined();
+    });
+
     it('removes a history item when trash icon is clicked', () => {
       const { getByTestId, getAllByLabelText, queryByText } = render(
         React.createElement(AddRepoModal, defaultProps),

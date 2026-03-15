@@ -44,34 +44,6 @@ function resolveEnvDir(): string {
 }
 
 /**
- * Check whether a port is available by attempting a synchronous bind.
- * Uses execSync to run a tiny Node one-liner so the check is blocking.
- */
-function isPortFree(port: number): boolean {
-  try {
-    execSync(
-      `node -e "const s=require('net').createServer();s.on('error',()=>process.exit(1));s.on('listening',()=>{s.close();process.exit(0)});s.listen(${port},'0.0.0.0')"`,
-      { stdio: 'ignore', timeout: 2000 },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Find the first available port in the range 5173–5180. Returns
- * undefined when no port is free (Vite will then fall back to its
- * own default behaviour).
- */
-function resolvePort(): number | undefined {
-  for (let port = 5173; port <= 5180; port++) {
-    if (isPortFree(port)) return port;
-  }
-  return undefined;
-}
-
-/**
  * Inline Vite plugin that sets Cross-Origin-Opener-Policy and
  * Cross-Origin-Embedder-Policy headers so SharedArrayBuffer is
  * available (required by kuzu-wasm).
@@ -131,7 +103,7 @@ export default defineConfig({
   },
   plugins: [react(), crossOriginIsolation()],
   server: {
-    port: resolvePort(),
+    port: Number(process.env.PORT) || 5173,
     strictPort: true,
     proxy: {
       '/api': {
