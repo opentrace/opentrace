@@ -9,6 +9,8 @@ import {
   forceLink,
   forceManyBody,
   forceCenter,
+  forceX,
+  forceY,
 } from 'd3-force';
 
 interface SimNode {
@@ -25,10 +27,13 @@ interface SimLink {
 export interface LayoutRequest {
   nodeIds: string[];
   links: SimLink[];
+  communities?: Record<string, number>;
   config: {
     linkDistance: number;
     chargeStrength: number;
     ticks: number;
+    clusterStrength?: number;
+    clusterTicks?: number;
   };
 }
 
@@ -37,10 +42,11 @@ export interface LayoutResponse {
 }
 
 self.onmessage = (e: MessageEvent<LayoutRequest>) => {
-  const { nodeIds, links, config } = e.data;
+  const { nodeIds, links, communities, config } = e.data;
 
   const simNodes: SimNode[] = nodeIds.map((id) => ({ id }));
 
+  // Phase 1: Standard force layout
   const simulation = forceSimulation(simNodes)
     .force(
       'link',
@@ -54,6 +60,64 @@ self.onmessage = (e: MessageEvent<LayoutRequest>) => {
 
   for (let i = 0; i < config.ticks; i++) {
     simulation.tick();
+  }
+
+  // Phase 2: Community clustering
+  if (communities && config.clusterStrength) {
+    // Compute centroid of each community from Phase 1 positions
+    const centroidSums = new Map<
+      number,
+      { x: number; y: number; count: number }
+    >();
+    for (const node of simNodes) {
+      const cid = communities[node.id];
+      if (cid === undefined) continue;
+      const entry = centroidSums.get(cid) || { x: 0, y: 0, count: 0 };
+      entry.x += node.x ?? 0;
+      entry.y += node.y ?? 0;
+      entry.count += 1;
+      centroidSums.set(cid, entry);
+    }
+    const centroids = new Map<number, { x: number; y: number }>();
+    for (const [cid, { x, y, count }] of centroidSums) {
+      centroids.set(cid, { x: x / count, y: y / count });
+    }
+
+    // Build lookup: nodeId → centroid
+    const nodeCentroid = new Map<string, { x: number; y: number }>();
+    for (const node of simNodes) {
+      const cid = communities[node.id];
+      if (cid !== undefined && centroids.has(cid)) {
+        nodeCentroid.set(node.id, centroids.get(cid)!);
+      }
+    }
+
+    // Phase 2 simulation: keep link forces + add clustering pull with softer repulsion
+    const sim2 = forceSimulation(simNodes)
+      .force(
+        'link',
+        forceLink<SimNode, SimLink>(links)
+          .id((d) => d.id)
+          .distance(config.linkDistance),
+      )
+      .force('charge', forceManyBody().strength(config.chargeStrength * 0.5))
+      .force(
+        'clusterX',
+        forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(
+          config.clusterStrength,
+        ),
+      )
+      .force(
+        'clusterY',
+        forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(
+          config.clusterStrength,
+        ),
+      )
+      .stop();
+
+    for (let i = 0; i < (config.clusterTicks ?? 40); i++) {
+      sim2.tick();
+    }
   }
 
   const positions: [string, number, number][] = simNodes.map((n) => [

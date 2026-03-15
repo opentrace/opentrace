@@ -12,6 +12,13 @@ interface SubTypeEntry {
   count: number;
 }
 
+interface CommunityEntry {
+  communityId: number;
+  label: string;
+  count: number;
+  color: string;
+}
+
 interface FilterPanelProps {
   nodeTypes: TypeEntry[];
   linkTypes: TypeEntry[];
@@ -26,6 +33,12 @@ interface FilterPanelProps {
   onHideAllNodes: () => void;
   onShowAllLinks: () => void;
   onHideAllLinks: () => void;
+  colorMode?: 'type' | 'community';
+  communities?: CommunityEntry[];
+  hiddenCommunities?: Set<number>;
+  onToggleCommunity?: (cid: number) => void;
+  onShowAllCommunities?: () => void;
+  onHideAllCommunities?: () => void;
 }
 
 export default function FilterPanel({
@@ -42,6 +55,12 @@ export default function FilterPanel({
   onHideAllNodes,
   onShowAllLinks,
   onHideAllLinks,
+  colorMode,
+  communities,
+  hiddenCommunities,
+  onToggleCommunity,
+  onShowAllCommunities,
+  onHideAllCommunities,
 }: FilterPanelProps) {
   const allLinksHidden = hiddenLinkTypes.size === linkTypes.length;
   const [expandedTypes, setExpandedTypes] = useState<Set<string>>(new Set());
@@ -76,8 +95,63 @@ export default function FilterPanel({
     return hiddenNodeTypes.has(type);
   });
 
+  const showCommunities =
+    colorMode === 'community' &&
+    communities &&
+    communities.length > 0 &&
+    hiddenCommunities &&
+    onToggleCommunity;
+
+  const allCommunitiesHidden =
+    showCommunities &&
+    communities!.every((c) => hiddenCommunities!.has(c.communityId));
+
   return (
     <div className="filter-panel">
+      {showCommunities && (
+        <div className="filter-section">
+          <div className="filter-section-header">
+            <span className="filter-section-title">Communities</span>
+            <button
+              className="filter-toggle-all"
+              onClick={
+                allCommunitiesHidden
+                  ? onShowAllCommunities
+                  : onHideAllCommunities
+              }
+            >
+              {allCommunitiesHidden ? 'Show all' : 'Hide all'}
+            </button>
+          </div>
+          <div className="filter-list">
+            {communities!.map(({ communityId, label, count, color }) => {
+              const hidden = hiddenCommunities!.has(communityId);
+              return (
+                <label
+                  key={communityId}
+                  className={`filter-item ${hidden ? 'hidden' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hidden}
+                    onChange={() => onToggleCommunity!(communityId)}
+                  />
+                  <span className="filter-expand-spacer" />
+                  <span
+                    className="filter-dot"
+                    style={{
+                      backgroundColor: hidden ? 'var(--muted)' : color,
+                    }}
+                  />
+                  <span className="filter-type-name">{label}</span>
+                  <span className="filter-count">{count}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="filter-section">
         <div className="filter-section-header">
           <span className="filter-section-title">Node Types</span>

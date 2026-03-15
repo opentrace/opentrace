@@ -34,6 +34,11 @@
   flex-shrink: 0;
 }
 
+.community-badge {
+  background: none !important;
+  padding: 1px 8px;
+}
+
 /* ── Generic detail row (used in properties) ── */
 .detail-row {
   display: flex;

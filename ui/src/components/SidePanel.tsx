@@ -18,6 +18,13 @@ interface SubTypeEntry {
   count: number;
 }
 
+interface CommunityEntry {
+  communityId: number;
+  label: string;
+  count: number;
+  color: string;
+}
+
 interface SidePanelProps {
   /* Filter props — forwarded to FilterPanel */
   nodeTypes: TypeEntry[];
@@ -34,12 +41,24 @@ interface SidePanelProps {
   onShowAllLinks: () => void;
   onHideAllLinks: () => void;
 
+  /* Community filter props */
+  colorMode?: 'type' | 'community';
+  communities?: CommunityEntry[];
+  hiddenCommunities?: Set<number>;
+  onToggleCommunity?: (cid: number) => void;
+  onShowAllCommunities?: () => void;
+  onHideAllCommunities?: () => void;
+
   /* Node details props */
   selectedNode: SelectedNode | null;
   nodeSource: NodeSourceResponse | null;
   sourceLoading: boolean;
   sourceError: string | null;
   onCloseDetails: () => void;
+  /** Community name for the selected node */
+  communityName?: string;
+  /** Community color for the selected node */
+  communityColor?: string;
 
   /* Edge details props */
   selectedLink: SelectedEdge | null;
@@ -67,8 +86,16 @@ export default function SidePanel({
   onHideAllNodes,
   onShowAllLinks,
   onHideAllLinks,
+  colorMode,
+  communities,
+  hiddenCommunities,
+  onToggleCommunity,
+  onShowAllCommunities,
+  onHideAllCommunities,
   selectedNode,
   nodeSource,
+  communityName,
+  communityColor,
   sourceLoading,
   sourceError,
   onCloseDetails,
@@ -168,6 +195,12 @@ export default function SidePanel({
           onHideAllNodes={onHideAllNodes}
           onShowAllLinks={onShowAllLinks}
           onHideAllLinks={onHideAllLinks}
+          colorMode={colorMode}
+          communities={communities}
+          hiddenCommunities={hiddenCommunities}
+          onToggleCommunity={onToggleCommunity}
+          onShowAllCommunities={onShowAllCommunities}
+          onHideAllCommunities={onHideAllCommunities}
         />
       </div>
       <div
@@ -190,6 +223,8 @@ export default function SidePanel({
               node={selectedNode}
               nodeSource={nodeSource}
               sourceLoading={sourceLoading}
+              communityName={communityName}
+              communityColor={communityColor}
               sourceError={sourceError}
             />
           ) : selectedLink ? (

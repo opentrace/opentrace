@@ -23,7 +23,7 @@ import { useStore } from '../store';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
 import { useGraphData } from '../hooks/useGraphData';
-import { useSigmaGraph } from '../hooks/useSigmaGraph';
+import { useSigmaGraph, useLouvainCommunities } from '../hooks/useSigmaGraph';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
 import { detectProvider } from './AddRepoModal';
@@ -79,6 +79,131 @@ function getSubType(node: GraphNode): string | null {
 function linkId(endpoint: string | number | GraphNode | undefined): string {
   if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
   return String(endpoint);
+}
+
+// ─── Graph Legend with overflow popover ─────────────────────────────
+
+const LEGEND_MAX_NODES = 5;
+
+type LegendEntry = {
+  key: string;
+  label: string;
+  count: number;
+  color: string;
+  shape: 'dot' | 'line';
+};
+
+function GraphLegend({
+  colorMode,
+  legendItems,
+  communityLegendItems,
+  legendLinkItems,
+}: {
+  colorMode: 'type' | 'community';
+  legendItems: { type: string; count: number; color: string }[];
+  communityLegendItems: { label: string; count: number; color: string }[];
+  legendLinkItems: { type: string; count: number; color: string }[];
+}) {
+  const [showOverflow, setShowOverflow] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (!showOverflow) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node)
+      ) {
+        setShowOverflow(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showOverflow]);
+
+  // Build node/community items (truncatable) and link items (always shown)
+  const nodeItems: LegendEntry[] = [];
+  if (colorMode === 'community') {
+    for (const { label, count, color } of communityLegendItems) {
+      nodeItems.push({ key: `c:${label}`, label, count, color, shape: 'dot' });
+    }
+  } else {
+    for (const { type, count, color } of legendItems) {
+      nodeItems.push({
+        key: `n:${type}`,
+        label: type,
+        count,
+        color,
+        shape: 'dot',
+      });
+    }
+  }
+
+  const linkItems: LegendEntry[] = [];
+  for (const { type, count, color } of legendLinkItems) {
+    linkItems.push({
+      key: `l:${type}`,
+      label: type,
+      count,
+      color,
+      shape: 'line',
+    });
+  }
+
+  const visibleNodes = nodeItems.slice(0, LEGEND_MAX_NODES);
+  const overflowNodes = nodeItems.slice(LEGEND_MAX_NODES);
+
+  return (
+    <div className="legend" ref={popoverRef}>
+      {visibleNodes.map(({ key, label, count, color }) => (
+        <span key={key} className="legend-item" title={label}>
+          <span className="legend-dot" style={{ backgroundColor: color }} />
+          <span className="legend-count">{count}</span>
+          {label.length > 10 ? label.slice(0, 10) + '…' : label}
+        </span>
+      ))}
+      {overflowNodes.length > 0 && (
+        <>
+          <button
+            className="legend-more-btn"
+            onClick={() => setShowOverflow((v) => !v)}
+          >
+            +{overflowNodes.length} more
+          </button>
+          {showOverflow && (
+            <div className="legend-popover">
+              {nodeItems.map(({ key, label, count, color }) => (
+                <span key={key} className="legend-item">
+                  <span
+                    className="legend-dot"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="legend-count">{count}</span>
+                  {label}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {linkItems.length > 0 && (
+        <>
+          <span className="legend-divider" />
+          {linkItems.map(({ key, label, count, color }) => (
+            <span key={key} className="legend-item">
+              <span
+                className="legend-line"
+                style={{ backgroundColor: color }}
+              />
+              <span className="legend-count">{count}</span>
+              {label}
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
 }
 
 export interface GraphViewerHandle {
@@ -240,6 +365,9 @@ const GraphViewer = memo(
         new Set<string>(['DEPENDS_ON']),
       );
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
+      const [hiddenCommunities, setHiddenCommunities] = useState(
+        new Set<number>(),
+      );
       // Track whether we've applied the default Package hiding
       const defaultsApplied = useRef(false);
       const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
@@ -279,6 +407,15 @@ const GraphViewer = memo(
           loadGraph();
         }
       };
+
+      // Compute Louvain communities on the full graph (before filtering, so
+      // community assignments are available for the community filter).
+      const {
+        communityAssignments,
+        communityColorMap,
+        communityNames,
+        communityCount,
+      } = useLouvainCommunities(graphData.nodes, graphData.links);
 
       // Derive available types from raw graph data (for filter panel)
       const availableNodeTypes = useMemo(() => {
@@ -338,9 +475,14 @@ const GraphViewer = memo(
         }
       }, [availableSubTypes]);
 
-      // Apply type + sub-type filters to produce the rendered graph.
+      // Apply type + sub-type + community filters to produce the rendered graph.
       const filteredGraphData = useMemo(() => {
         const nodes = graphData.nodes.filter((n) => {
+          // Community filter (when any communities are hidden)
+          if (hiddenCommunities.size > 0) {
+            const cid = communityAssignments[n.id];
+            if (cid !== undefined && hiddenCommunities.has(cid)) return false;
+          }
           const hasSubTypeFilters = availableSubTypes.has(n.type);
           if (hasSubTypeFilters) {
             const sub = getSubType(n);
@@ -372,6 +514,8 @@ const GraphViewer = memo(
         hiddenNodeTypes,
         hiddenLinkTypes,
         hiddenSubTypes,
+        hiddenCommunities,
+        communityAssignments,
         availableSubTypes,
       ]);
 
@@ -584,13 +728,7 @@ const GraphViewer = memo(
       const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
 
       // Build graphology Graph from filtered data (layout uses full dataset)
-      const {
-        graph,
-        layoutReady,
-        communityCount,
-        communityAssignments,
-        communityColorMap,
-      } = useSigmaGraph({
+      const { graph, layoutReady } = useSigmaGraph({
         allNodes: graphData.nodes,
         allLinks: graphData.links,
         nodes: filteredGraphData.nodes,
@@ -602,6 +740,8 @@ const GraphViewer = memo(
         selectedNodeId: selectedNode?.id ?? null,
         isLargeGraph,
         colorMode,
+        communityAssignments,
+        communityColorMap,
       });
 
       const legendItems = useMemo(() => {
@@ -618,6 +758,30 @@ const GraphViewer = memo(
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.nodes]);
 
+      // Derive available communities from raw graph data (for filter panel)
+      const availableCommunities = useMemo(() => {
+        const counts = new Map<number, number>();
+        for (const n of graphData.nodes) {
+          const cid = communityAssignments[n.id];
+          if (cid !== undefined) {
+            counts.set(cid, (counts.get(cid) || 0) + 1);
+          }
+        }
+        return [...counts.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([cid, count]) => ({
+            communityId: cid,
+            label: communityNames.get(cid) ?? `Community ${cid}`,
+            count,
+            color: communityColorMap.get(cid) ?? '#64748b',
+          }));
+      }, [
+        graphData.nodes,
+        communityAssignments,
+        communityNames,
+        communityColorMap,
+      ]);
+
       const communityLegendItems = useMemo(() => {
         if (colorMode !== 'community') return [];
         // Group filtered nodes by community
@@ -631,7 +795,7 @@ const GraphViewer = memo(
         return [...counts.entries()]
           .sort((a, b) => b[1] - a[1])
           .map(([cid, count]) => ({
-            label: `Community ${cid}`,
+            label: communityNames.get(cid) ?? `Community ${cid}`,
             count,
             color: communityColorMap.get(cid) ?? '#64748b',
           }));
@@ -640,6 +804,7 @@ const GraphViewer = memo(
         filteredGraphData.nodes,
         communityAssignments,
         communityColorMap,
+        communityNames,
       ]);
 
       const legendLinkItems = useMemo(() => {
@@ -858,6 +1023,18 @@ const GraphViewer = memo(
 
       // --- Main graph viewport ---
 
+      const selectedCommunityId = selectedNode
+        ? communityAssignments[selectedNode.id]
+        : undefined;
+      const selectedCommunityName =
+        selectedCommunityId !== undefined
+          ? communityNames.get(selectedCommunityId)
+          : undefined;
+      const selectedCommunityColor =
+        selectedCommunityId !== undefined
+          ? communityColorMap.get(selectedCommunityId)
+          : undefined;
+
       return (
         <div className="graph-viewport">
           <SidePanel
@@ -930,6 +1107,8 @@ const GraphViewer = memo(
             nodeSource={nodeSource}
             sourceLoading={sourceLoading}
             sourceError={sourceError}
+            communityName={selectedCommunityName}
+            communityColor={selectedCommunityColor}
             selectedLink={selectedLink}
             onSelectNode={(nodeId) => {
               const node = graphDataRef.current.nodes.find(
@@ -944,6 +1123,23 @@ const GraphViewer = memo(
             graphVersion={graphVersion}
             graphNodeIds={graphNodeIds}
             hopMap={hopMap}
+            colorMode={colorMode}
+            communities={availableCommunities}
+            hiddenCommunities={hiddenCommunities}
+            onToggleCommunity={(cid) =>
+              setHiddenCommunities((prev) => {
+                const next = new Set(prev);
+                if (next.has(cid)) next.delete(cid);
+                else next.add(cid);
+                return next;
+              })
+            }
+            onShowAllCommunities={() => setHiddenCommunities(new Set())}
+            onHideAllCommunities={() =>
+              setHiddenCommunities(
+                new Set(availableCommunities.map((c) => c.communityId)),
+              )
+            }
           />
           <header>
             <button
@@ -1142,44 +1338,12 @@ const GraphViewer = memo(
             />
           )}
 
-          <div className="legend">
-            {colorMode === 'community'
-              ? communityLegendItems.map(({ label, count, color }) => (
-                  <span key={label} className="legend-item">
-                    <span
-                      className="legend-dot"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="legend-count">{count}</span>
-                    {label}
-                  </span>
-                ))
-              : legendItems.map(({ type, count, color }) => (
-                  <span key={type} className="legend-item">
-                    <span
-                      className="legend-dot"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="legend-count">{count}</span>
-                    {type}
-                  </span>
-                ))}
-            {colorMode === 'type' && legendLinkItems.length > 0 && (
-              <>
-                <span className="legend-divider" />
-                {legendLinkItems.map(({ type, count, color }) => (
-                  <span key={type} className="legend-item">
-                    <span
-                      className="legend-line"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="legend-count">{count}</span>
-                    {type}
-                  </span>
-                ))}
-              </>
-            )}
-          </div>
+          <GraphLegend
+            colorMode={colorMode}
+            legendItems={legendItems}
+            communityLegendItems={communityLegendItems}
+            legendLinkItems={legendLinkItems}
+          />
 
           {!layoutReady && !isEmpty && (
             <div
