@@ -12,7 +12,7 @@ function makeLink(src: string, tgt: string, label?: string): GraphLink {
 
 describe('buildGraphContext', () => {
   it('returns string with correct node and link counts', () => {
-    const nodes = makeNodes(['Service', 'Database']);
+    const nodes = makeNodes(['Repository', 'Class']);
     const links = [makeLink('n0', 'n1', 'READS')];
     const ctx = buildGraphContext(nodes, links);
     expect(ctx).toContain('2 nodes');
@@ -24,27 +24,27 @@ describe('buildGraphContext', () => {
       'File',
       'File',
       'File',
-      'Service',
-      'Service',
-      'Database',
+      'Repository',
+      'Repository',
+      'Class',
     ]);
     const ctx = buildGraphContext(nodes, []);
     const typeSection = ctx.split('Node types:\n')[1].split('\n\n')[0];
     const lines = typeSection.split('\n').map((l) => l.trim());
     expect(lines[0]).toMatch(/^File: 3$/);
-    expect(lines[1]).toMatch(/^Service: 2$/);
-    expect(lines[2]).toMatch(/^Database: 1$/);
+    expect(lines[1]).toMatch(/^Repository: 2$/);
+    expect(lines[2]).toMatch(/^Class: 1$/);
   });
 
   it('uses RELATES as fallback label for links without label', () => {
-    const nodes = makeNodes(['Service']);
+    const nodes = makeNodes(['Repository']);
     const links = [makeLink('n0', 'n0', '')];
     const ctx = buildGraphContext(nodes, links);
     expect(ctx).toContain('RELATES');
   });
 
   it('caps sample nodes at 30', () => {
-    const nodes = makeNodes(Array.from({ length: 50 }, () => 'Service'));
+    const nodes = makeNodes(Array.from({ length: 50 }, () => 'Repository'));
     const ctx = buildGraphContext(nodes, []);
     const sampleSection = ctx.split('Sample nodes:\n')[1].split('\n\n')[0];
     const sampleLines = sampleSection
@@ -54,7 +54,7 @@ describe('buildGraphContext', () => {
   });
 
   it('caps sample relationships at 20', () => {
-    const nodes = makeNodes(['Service', 'Database']);
+    const nodes = makeNodes(['Repository', 'Class']);
     const links = Array.from({ length: 30 }, (_, i) =>
       makeLink('n0', 'n1', `REL${i}`),
     );
@@ -65,10 +65,14 @@ describe('buildGraphContext', () => {
   });
 
   it('handles source/target as object with name/id', () => {
-    const nodes = makeNodes(['Service', 'Database']);
+    const nodes = makeNodes(['Repository', 'Class']);
     const link = {
-      source: { id: 'n0', name: 'Auth', type: 'Service' } as unknown as string,
-      target: { id: 'n1', name: 'DB', type: 'Database' } as unknown as string,
+      source: {
+        id: 'n0',
+        name: 'Auth',
+        type: 'Repository',
+      } as unknown as string,
+      target: { id: 'n1', name: 'DB', type: 'Class' } as unknown as string,
       label: 'READS',
     };
     const ctx = buildGraphContext(nodes, [link]);

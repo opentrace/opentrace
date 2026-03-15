@@ -29,7 +29,7 @@ function stepLabel(toolName: string): string {
 
 // ---- System prompts ----
 
-const CODE_EXPLORER_PROMPT = `You are a code exploration agent with access to the OpenTrace knowledge graph. Your job is to help developers understand their codebase by navigating the indexed graph of services, repositories, classes, functions, files, and their relationships.
+const CODE_EXPLORER_PROMPT = `You are a code exploration agent with access to the OpenTrace knowledge graph. Your job is to help developers understand their codebase by navigating the indexed graph of repositories, classes, functions, files, and their relationships.
 
 ## Workflow
 
@@ -50,15 +50,15 @@ Present findings as structured summaries:
 - Relationships grouped by type (CALLS, READS, DEFINED_IN, etc.)
 
 When presenting graph traversals, show the path clearly:
-  ServiceA --CALLS--> ServiceB --READS--> DatabaseC
+  ClassA --CALLS--> ClassB --DEFINED_IN--> FileC
 
 ## Tips
 
 - Start broad with search_graph, then drill down with get_node
-- Use nodeTypes filter in search_graph to narrow results (e.g. "Service,Database")
+- Use nodeTypes filter in search_graph to narrow results (e.g. "Repository,Class")
 - For "what calls this?" questions, traverse incoming edges
 - For "what does this depend on?" questions, traverse outgoing edges
-- When exploring unfamiliar code, start from Service or Repo nodes and traverse outward
+- When exploring unfamiliar code, start from Repository nodes and traverse outward
 - Use load_source to show actual code when the user asks about implementation details
 
 Produce a clear, synthesized answer. Do NOT return raw JSON — summarize your findings in prose with structured lists.`;
@@ -78,13 +78,13 @@ Present analysis in three sections:
 
 ### Upstream (what depends on this)
 List all consumers with depth annotations:
-  [depth 1] ServiceA --CALLS--> TargetComponent
-  [depth 2] APIGateway --CALLS--> ServiceA --CALLS--> TargetComponent
+  [depth 1] FunctionA --CALLS--> TargetFunction
+  [depth 2] ClassX --CALLS--> FunctionA --CALLS--> TargetFunction
 
 ### Downstream (what this depends on)
 List all dependencies:
-  [depth 1] TargetComponent --READS--> DatabaseA
-  [depth 1] TargetComponent --CALLS--> ServiceB
+  [depth 1] TargetFunction --DEFINED_IN--> FileA
+  [depth 1] TargetFunction --CALLS--> FunctionB
 
 ### Blast Radius Summary
 - Direct consumers: Count and list of depth-1 incoming nodes
@@ -96,8 +96,8 @@ List all dependencies:
 
 - Use depth 3 for initial analysis, increase if deeper exploration is needed
 - Filter by relationship type when asked about specific kinds of dependencies
-- Highlight database dependencies as high-impact
-- Flag services with many incoming connections as critical infrastructure
+- Highlight widely-imported files and packages as high-impact
+- Flag classes/functions with many incoming connections as critical components
 
 Produce a clear, synthesized answer. Do NOT return raw JSON — summarize your findings in prose with structured lists.`;
 
@@ -293,7 +293,7 @@ export function makeSubAgentTools(
         'Delegates a complex code exploration task to a specialized sub-agent. ' +
         'The sub-agent autonomously searches the graph, inspects nodes, and traverses ' +
         'relationships to produce a synthesized answer. Use this for questions that require ' +
-        "multiple lookups like 'explain the structure of ServiceX' or 'how is authentication implemented?'.",
+        "multiple lookups like 'explain the structure of RepositoryX' or 'how is authentication implemented?'.",
       schema: z.object({
         query: z.string().describe('The exploration question to investigate'),
       }),
@@ -319,8 +319,8 @@ export function makeSubAgentTools(
       description:
         'Delegates a dependency or impact analysis task to a specialized sub-agent. ' +
         'The sub-agent autonomously maps upstream consumers, downstream dependencies, and ' +
-        "blast radius. Use this for questions like 'what depends on ServiceX?' or " +
-        "'what is the impact of changing DatabaseY?'.",
+        "blast radius. Use this for questions like 'what depends on ClassX?' or " +
+        "'what is the impact of changing FileY?'.",
       schema: z.object({
         query: z
           .string()

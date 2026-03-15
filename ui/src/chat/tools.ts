@@ -20,7 +20,7 @@ const searchGraphSchema = z.object({
   nodeTypes: z
     .string()
     .optional()
-    .describe("Comma-separated node types to filter, e.g. 'Service,Class'"),
+    .describe("Comma-separated node types to filter, e.g. 'Repository,Class'"),
 });
 
 const listNodesSchema = z.object({
@@ -56,7 +56,7 @@ const loadSourceSchema = z.object({
   nodeId: z
     .string()
     .describe(
-      'Node ID of a File, Class, Function, or Module. ' +
+      'Node ID of a File, Class, or Function. ' +
         "Symbol IDs like 'owner/repo/path.py::ClassName' are automatically resolved to their file.",
     ),
   startLine: z
@@ -76,9 +76,8 @@ const SEARCH_DESC =
   'Returns matching nodes with their types and properties.';
 
 const LIST_DESC =
-  'List nodes of a specific type. Valid types include: Service, Repo, Repository, ' +
-  'Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, ' +
-  'InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable.';
+  'List nodes of a specific type. Valid types include: Repository, ' +
+  'Class, Function, File, Directory, Package, PullRequest.';
 
 const GET_DESC =
   'Get full details of a single node by its ID, including all properties.';

@@ -6,15 +6,15 @@ import {
   parseTraverseResult,
 } from '../parsers';
 
-const validNode = { id: 'n1', type: 'Service', name: 'AuthService' };
-const validNode2 = { id: 'n2', type: 'Database', name: 'UsersDB' };
+const validNode = { id: 'n1', type: 'Repository', name: 'AuthRepo' };
+const validNode2 = { id: 'n2', type: 'Class', name: 'UsersStore' };
 
 describe('parseSearchResult', () => {
   it('parses {results:[...]} format', () => {
     const raw = JSON.stringify({ results: [validNode, validNode2] });
     const result = parseSearchResult(raw);
     expect(result).toHaveLength(2);
-    expect(result![0].name).toBe('AuthService');
+    expect(result![0].name).toBe('AuthRepo');
   });
 
   it('parses bare array', () => {

@@ -22,9 +22,12 @@ describe('makeGraphTools', () => {
       const store = createMockStore();
       const tools = makeGraphTools(store);
       const searchTool = tools.find((t) => t.name === 'search_graph')!;
-      await searchTool.invoke({ query: 'auth', nodeTypes: 'Service, Class' });
+      await searchTool.invoke({
+        query: 'auth',
+        nodeTypes: 'Repository, Class',
+      });
       expect(store.searchNodes).toHaveBeenCalledWith('auth', undefined, [
-        'Service',
+        'Repository',
         'Class',
       ]);
     });
@@ -32,7 +35,7 @@ describe('makeGraphTools', () => {
 
   describe('get_node', () => {
     it('returns node JSON when found', async () => {
-      const node = { id: 'n1', type: 'Service', name: 'Auth' };
+      const node = { id: 'n1', type: 'Repository', name: 'Auth' };
       const store = createMockStore({
         getNode: vi.fn().mockResolvedValue(node),
       });
@@ -93,8 +96,8 @@ describe('makeGraphTools', () => {
     it('truncates results exceeding MAX_RESULT_CHARS (4000)', async () => {
       const bigResults = Array.from({ length: 200 }, (_, i) => ({
         id: `n${i}`,
-        type: 'Service',
-        name: `LongServiceName${i}${'x'.repeat(20)}`,
+        type: 'Repository',
+        name: `LongRepoName${i}${'x'.repeat(20)}`,
       }));
       const store = createMockStore({
         searchNodes: vi.fn().mockResolvedValue(bigResults),
