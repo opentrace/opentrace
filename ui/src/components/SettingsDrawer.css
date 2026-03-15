@@ -251,3 +251,22 @@
   font-size: 0.8rem;
   color: var(--destructive);
 }
+
+/* ── Mobile Responsive ───────────────────────── */
+
+@media (max-width: 768px) {
+  .settings-drawer {
+    width: 340px;
+  }
+
+  .settings-content {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-drawer {
+    width: 100%;
+    border-left: none;
+  }
+}

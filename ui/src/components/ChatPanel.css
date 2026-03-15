@@ -208,3 +208,20 @@
   color: var(--muted-foreground);
   line-height: 1.4;
 }
+
+/* ── Mobile Responsive ───────────────────────── */
+
+@media (max-width: 480px) {
+  .templates-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-tab-bar {
+    padding: 0 12px;
+  }
+
+  .chat-tab {
+    padding: 8px 0;
+    font-size: 0.75rem;
+  }
+}
