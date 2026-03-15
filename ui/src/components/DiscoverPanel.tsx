@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { List, useListRef } from 'react-window';
+import type { RowComponentProps } from 'react-window';
 import { useStore } from '../store/context';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { PARSEABLE_EXTENSIONS } from '../runner/browser/loader/constants';
 import type { NodeResult } from '../store/types';
 import './DiscoverPanel.css';
+
+const ROW_HEIGHT = 28;
 
 const EXPANDABLE_TYPES = new Set([
   'Repo',
@@ -75,93 +79,130 @@ function matchesFilter(
   return false;
 }
 
-interface TreeItemProps {
+interface FlatRow {
   node: NodeResult;
   depth: number;
-  expanded: Set<string>;
-  childrenMap: Map<string, NodeResult[]>;
-  loadingSet: Set<string>;
-  filter: string;
+  expandable: boolean;
+  isExpanded: boolean;
+  isLoading: boolean;
+}
+
+/**
+ * Flatten the tree into a list of visible rows for virtual scrolling.
+ * Walks roots → expanded children recursively, applying filter and hideOffGraph.
+ */
+function flattenTree(
+  roots: NodeResult[],
+  expanded: Set<string>,
+  childrenMap: Map<string, NodeResult[]>,
+  loadingSet: Set<string>,
+  filter: string,
+  hideOffGraph: boolean,
+  graphNodeIdSet?: Set<string>,
+): FlatRow[] {
+  const rows: FlatRow[] = [];
+
+  function walk(nodes: NodeResult[], depth: number) {
+    for (const node of nodes) {
+      // Filter check
+      if (filter && !matchesFilter(node, filter, childrenMap)) continue;
+
+      // Graph visibility check
+      if (hideOffGraph && graphNodeIdSet) {
+        if (!isInGraph(node, graphNodeIdSet, childrenMap)) continue;
+      }
+
+      const children = childrenMap.get(node.id);
+      const couldExpand =
+        EXPANDABLE_TYPES.has(node.type) &&
+        (node.type !== 'File' || hasParsableExtension(node.name));
+      const knownEmpty = children !== undefined && children.length === 0;
+      const expandable = couldExpand && !knownEmpty;
+      const isExpanded = expanded.has(node.id);
+      const isLoading = loadingSet.has(node.id);
+
+      rows.push({ node, depth, expandable, isExpanded, isLoading });
+
+      // Recurse into expanded children
+      if (isExpanded && children && children.length > 0) {
+        const visibleChildren = filter
+          ? children.filter((c) => matchesFilter(c, filter, childrenMap))
+          : children;
+        walk(visibleChildren, depth + 1);
+      } else if (isExpanded && isLoading) {
+        // Placeholder row for loading state
+        rows.push({
+          node: {
+            id: `__loading_${node.id}`,
+            name: 'Loading...',
+            type: '__loading',
+            properties: {},
+          },
+          depth: depth + 1,
+          expandable: false,
+          isExpanded: false,
+          isLoading: true,
+        });
+      }
+    }
+  }
+
+  walk(roots, 0);
+  return rows;
+}
+
+/** Props passed to each virtualized row via rowProps. */
+interface TreeRowProps {
+  flatRows: FlatRow[];
   selectedNodeId?: string;
   graphNodeIdSet?: Set<string>;
-  hideOffGraph: boolean;
+  childrenMap: Map<string, NodeResult[]>;
   hopMap?: Map<string, number>;
   maxHops: number;
-  scrollTrigger: number;
   onToggle: (nodeId: string) => void;
   onSelect: (nodeId: string) => void;
 }
 
-function TreeItem({
-  node,
-  depth,
-  expanded,
-  childrenMap,
-  loadingSet,
-  filter,
+/** Virtualized row component for react-window v2. */
+function TreeRow({
+  index,
+  style,
+  flatRows,
   selectedNodeId,
   graphNodeIdSet,
-  hideOffGraph,
+  childrenMap,
   hopMap,
   maxHops,
-  scrollTrigger,
   onToggle,
   onSelect,
-}: TreeItemProps) {
-  const isExpanded = expanded.has(node.id);
-  const isLoading = loadingSet.has(node.id);
-  const children = childrenMap.get(node.id);
+}: RowComponentProps<TreeRowProps>) {
+  const row = flatRows[index];
+  const { node, depth, expandable, isExpanded } = row;
 
-  // A node is expandable if it could have children and we either
-  // haven't loaded yet, or it actually has children
-  const couldExpand =
-    EXPANDABLE_TYPES.has(node.type) &&
-    (node.type !== 'File' || hasParsableExtension(node.name));
-  const knownEmpty = children !== undefined && children.length === 0;
-  const expandable = couldExpand && !knownEmpty;
+  // Loading placeholder row
+  if (node.type === '__loading') {
+    return (
+      <div
+        className="discover-tree-placeholder"
+        style={{
+          ...style,
+          paddingLeft: `${12 + depth * 16}px`,
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
 
-  // Is this node (or a descendant) present in the current graph view?
+  const isSelected = node.id === selectedNodeId;
   const offGraph = graphNodeIdSet
     ? !isInGraph(node, graphNodeIdSet, childrenMap)
     : false;
-
-  // Hop distance from selected node (undefined = not in neighborhood)
   const hopDist = hopMap?.get(node.id);
-  const isSelected = node.id === selectedNodeId;
-
-  // Compute highlight intensity: 1.0 at hop 0, fading to ~0.15 at maxHops
   const hopHighlight =
     hopDist !== undefined && maxHops > 0
       ? Math.max(0.15, 1 - (hopDist / maxHops) * 0.85)
       : undefined;
-
-  // Filter children if a filter is active
-  const visibleChildren = useMemo(() => {
-    if (!children || !filter) return children;
-    return children.filter((c) => matchesFilter(c, filter, childrenMap));
-  }, [children, filter, childrenMap]);
-
-  // Scroll selected node to upper-third of the panel when selection changes or tab activates
-  const rowRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (isSelected && rowRef.current) {
-      const scrollParent = rowRef.current.closest(
-        '.side-panel-content',
-      ) as HTMLElement | null;
-      // Skip if panel is hidden (display:none) — offsetParent is null in that case
-      if (scrollParent && scrollParent.offsetParent !== null) {
-        const rowRect = rowRef.current.getBoundingClientRect();
-        const parentRect = scrollParent.getBoundingClientRect();
-        const offset = rowRect.top - parentRect.top + scrollParent.scrollTop;
-        scrollParent.scrollTo({
-          top: offset - parentRect.height * 0.33,
-          behavior: 'smooth',
-        });
-      }
-    }
-  }, [isSelected, scrollTrigger]);
-
-  if (hideOffGraph && offGraph) return null;
 
   const rowClasses = [
     'discover-tree-row',
@@ -173,6 +214,7 @@ function TreeItem({
     .join(' ');
 
   const rowStyle: React.CSSProperties = {
+    ...style,
     paddingLeft: `${12 + depth * 16}px`,
     ...(!isSelected && hopHighlight !== undefined
       ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
@@ -180,81 +222,42 @@ function TreeItem({
   };
 
   return (
-    <div className="discover-tree-group">
-      <div
-        className={rowClasses}
-        style={rowStyle}
-        ref={isSelected ? rowRef : undefined}
-      >
-        {expandable ? (
-          <button
-            className="filter-expand-btn"
-            onClick={() => onToggle(node.id)}
-            title={isExpanded ? 'Collapse' : 'Expand'}
-          >
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 10 10"
-              className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
-            >
-              <path
-                d="M3 2 L7 5 L3 8"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-            </svg>
-          </button>
-        ) : (
-          <span className="filter-expand-spacer" />
-        )}
-        <span
-          className="filter-dot"
-          style={{ backgroundColor: getNodeColor(node.type) }}
-        />
+    <div className={rowClasses} style={rowStyle}>
+      {expandable ? (
         <button
-          className="discover-tree-name"
-          onClick={() => onSelect(node.id)}
-          title={node.name}
+          className="filter-expand-btn"
+          onClick={() => onToggle(node.id)}
+          title={isExpanded ? 'Collapse' : 'Expand'}
         >
-          {displayName(node.name)}
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
+          >
+            <path
+              d="M3 2 L7 5 L3 8"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          </svg>
         </button>
-        <span className="discover-tree-type">{node.type}</span>
-      </div>
-
-      {isExpanded && (
-        <div className="discover-tree-children">
-          {isLoading ? (
-            <div
-              className="discover-tree-placeholder"
-              style={{ paddingLeft: `${12 + (depth + 1) * 16}px` }}
-            >
-              Loading...
-            </div>
-          ) : (
-            visibleChildren?.map((child) => (
-              <TreeItem
-                key={child.id}
-                node={child}
-                depth={depth + 1}
-                expanded={expanded}
-                childrenMap={childrenMap}
-                loadingSet={loadingSet}
-                filter={filter}
-                selectedNodeId={selectedNodeId}
-                graphNodeIdSet={graphNodeIdSet}
-                hideOffGraph={hideOffGraph}
-                hopMap={hopMap}
-                maxHops={maxHops}
-                scrollTrigger={scrollTrigger}
-                onToggle={onToggle}
-                onSelect={onSelect}
-              />
-            ))
-          )}
-        </div>
+      ) : (
+        <span className="filter-expand-spacer" />
       )}
+      <span
+        className="filter-dot"
+        style={{ backgroundColor: getNodeColor(node.type) }}
+      />
+      <button
+        className="discover-tree-name"
+        onClick={() => onSelect(node.id)}
+        title={node.name}
+      >
+        {displayName(node.name)}
+      </button>
+      <span className="discover-tree-type">{node.type}</span>
     </div>
   );
 }
@@ -289,20 +292,14 @@ export default function DiscoverPanel({
   const [loadingSet, setLoadingSet] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);
-  const [scrollTrigger, setScrollTrigger] = useState(0);
+
+  const listRef = useListRef(null);
 
   // Refs for latest values — used by async effects to avoid stale closures
   const rootsRef = useRef(roots);
   rootsRef.current = roots;
   const childrenMapRef = useRef(childrenMap);
   childrenMapRef.current = childrenMap;
-
-  // Trigger scroll-into-view when the tab becomes active
-  useEffect(() => {
-    if (isActive && selectedNodeId) {
-      setScrollTrigger((v) => v + 1);
-    }
-  }, [isActive, selectedNodeId]);
 
   // Build a Set for O(1) lookups; undefined means "no filtering" (all nodes in graph)
   const graphNodeIdSet = useMemo(
@@ -569,10 +566,61 @@ export default function DiscoverPanel({
 
   const normalizedFilter = filter.toLowerCase().trim();
 
-  const visibleRoots = useMemo(() => {
-    if (!normalizedFilter) return roots;
-    return roots.filter((r) => matchesFilter(r, normalizedFilter, childrenMap));
-  }, [roots, normalizedFilter, childrenMap]);
+  // Flatten tree into virtual rows
+  const flatRows = useMemo(
+    () =>
+      flattenTree(
+        roots,
+        expanded,
+        childrenMap,
+        loadingSet,
+        normalizedFilter,
+        hideOffGraph,
+        graphNodeIdSet,
+      ),
+    [
+      roots,
+      expanded,
+      childrenMap,
+      loadingSet,
+      normalizedFilter,
+      hideOffGraph,
+      graphNodeIdSet,
+    ],
+  );
+
+  // Scroll to selected node when selection changes or tab becomes active
+  useEffect(() => {
+    if (!selectedNodeId || !isActive || !listRef.current) return;
+    const idx = flatRows.findIndex((r) => r.node.id === selectedNodeId);
+    if (idx >= 0) {
+      listRef.current.scrollToRow({ index: idx, align: 'center' });
+    }
+  }, [selectedNodeId, isActive, flatRows, listRef]);
+
+  // Stable rowProps object for react-window
+  const rowProps: TreeRowProps = useMemo(
+    () => ({
+      flatRows,
+      selectedNodeId,
+      graphNodeIdSet,
+      childrenMap,
+      hopMap,
+      maxHops,
+      onToggle: handleToggle,
+      onSelect: onSelectNode,
+    }),
+    [
+      flatRows,
+      selectedNodeId,
+      graphNodeIdSet,
+      childrenMap,
+      hopMap,
+      maxHops,
+      handleToggle,
+      onSelectNode,
+    ],
+  );
 
   if (loading) {
     return (
@@ -623,28 +671,18 @@ export default function DiscoverPanel({
           </label>
         </div>
       )}
-      {visibleRoots.length === 0 ? (
+      {flatRows.length === 0 ? (
         <div className="discover-panel-empty">No matches</div>
       ) : (
-        visibleRoots.map((root) => (
-          <TreeItem
-            key={root.id}
-            node={root}
-            depth={0}
-            expanded={expanded}
-            childrenMap={childrenMap}
-            loadingSet={loadingSet}
-            filter={normalizedFilter}
-            selectedNodeId={selectedNodeId}
-            graphNodeIdSet={graphNodeIdSet}
-            hideOffGraph={hideOffGraph}
-            hopMap={hopMap}
-            maxHops={maxHops}
-            scrollTrigger={scrollTrigger}
-            onToggle={handleToggle}
-            onSelect={onSelectNode}
-          />
-        ))
+        <List
+          listRef={listRef}
+          rowCount={flatRows.length}
+          rowHeight={ROW_HEIGHT}
+          rowComponent={TreeRow}
+          rowProps={rowProps}
+          overscanCount={20}
+          className="discover-virtual-list"
+        />
       )}
     </div>
   );
