@@ -5,8 +5,31 @@ on:
     branches: [main]
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      agent: ${{ steps.filter.outputs.agent }}
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          token: ''
+          filters: |
+            api:
+              - 'api/**'
+            agent:
+              - 'agent/**'
+            ui:
+              - 'ui/**'
+
   api:
     name: API (Go)
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,6 +60,8 @@ jobs:
 
   agent:
     name: Agent (Python)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,6 +90,8 @@ jobs:
 
   ui:
     name: UI (TypeScript)
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
