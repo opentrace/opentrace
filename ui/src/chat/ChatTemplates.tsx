@@ -33,6 +33,36 @@ const TEMPLATES = [
     prompt:
       'Review the most recent pull request for bugs, security issues, and code quality. Focus on substantive issues.',
   },
+  {
+    label: 'Documentation gaps',
+    description: 'Find missing or outdated documentation across the system',
+    prompt:
+      'Are there any gaps in documentation? Identify services, APIs, or components that are missing or have outdated docs.',
+  },
+  {
+    label: 'Run locally',
+    description: 'Steps to set up and run the system on your machine',
+    prompt:
+      'How can I run this system locally? Walk me through the setup steps, prerequisites, and configuration needed.',
+  },
+  {
+    label: 'Production setup',
+    description: 'How the system is deployed and runs in production',
+    prompt:
+      'How does this system run in production? Describe the deployment architecture, infrastructure, and key operational details.',
+  },
+  {
+    label: 'Testing gaps',
+    description: 'Identify areas with missing or insufficient test coverage',
+    prompt:
+      'Are there any gaps in testing? Identify components or services that lack adequate test coverage or have weak spots.',
+  },
+  {
+    label: 'Performance issues',
+    description: 'Spot potential bottlenecks and performance concerns',
+    prompt:
+      'Are there any performance issues in this system? Look for bottlenecks, slow queries, N+1 problems, or resource-heavy components.',
+  },
 ];
 
 export default function ChatTemplates({ onSelect }: Props) {
