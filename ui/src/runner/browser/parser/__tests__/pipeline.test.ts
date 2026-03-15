@@ -19,34 +19,26 @@ import type { SummarizationStrategy } from '../../enricher/summarizer/strategy';
 import type { RepoTree, GraphBatch, ExtractionResult } from '../../types';
 
 // Mock extractors so we can inject symbols without needing real tree-sitter ASTs
-const mockExtractPython = vi
-  .fn()
-  .mockReturnValue({
-    symbols: [],
-    language: 'python',
-    rootNode: null,
-  } satisfies ExtractionResult);
-const mockExtractTypeScript = vi
-  .fn()
-  .mockReturnValue({
-    symbols: [],
-    language: 'typescript',
-    rootNode: null,
-  } satisfies ExtractionResult);
-const mockExtractGo = vi
-  .fn()
-  .mockReturnValue({
-    symbols: [],
-    language: 'go',
-    rootNode: null,
-  } satisfies ExtractionResult);
-const mockExtractGeneric = vi
-  .fn()
-  .mockReturnValue({
-    symbols: [],
-    language: 'generic',
-    rootNode: null,
-  } satisfies ExtractionResult);
+const mockExtractPython = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'python',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractTypeScript = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'typescript',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractGo = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'go',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractGeneric = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'generic',
+  rootNode: null,
+} satisfies ExtractionResult);
 
 vi.mock('../extractors/python', () => ({
   extractPython: (...args: unknown[]) => mockExtractPython(...args),
