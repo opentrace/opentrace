@@ -293,7 +293,7 @@ export default function DiscoverPanel({
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);
 
-  const listRef = useListRef();
+  const listRef = useListRef(null);
 
   // Refs for latest values — used by async effects to avoid stale closures
   const rootsRef = useRef(roots);
