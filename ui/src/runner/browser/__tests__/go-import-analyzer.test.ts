@@ -258,11 +258,7 @@ import "github.com/myorg/app/internal/graph"
         'internal/graph/graph.go',
         'cmd/main.go',
       ]);
-      const result = analyzeGoImports(
-        root,
-        known,
-        'github.com/myorg/app',
-      );
+      const result = analyzeGoImports(root, known, 'github.com/myorg/app');
       // modulePath stripping: "github.com/myorg/app/internal/graph" → "internal/graph"
       expect(result.internal['graph']).toBe('internal/graph/graph.go');
     });
