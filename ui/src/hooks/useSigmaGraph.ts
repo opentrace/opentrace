@@ -188,7 +188,7 @@ export function useSigmaGraph({
         // Merge parallel edges as weight
         if (tempGraph.hasEdge(source, target)) {
           const w =
-            (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ||
+            (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ??
             1;
           tempGraph.setEdgeAttribute(source, target, 'weight', w + 1);
         } else {
@@ -399,7 +399,7 @@ export function useSigmaGraph({
       const baseColor =
         ((colorMode === 'community'
           ? attrs._communityColor
-          : attrs._typeColor) as string) ??
+          : attrs._typeColor) as string | undefined) ??
         getNodeColor(attrs.nodeType as string);
 
       attrs.color = isHighlighted
