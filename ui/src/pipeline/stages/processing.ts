@@ -264,14 +264,14 @@ export function* execute(
         source: fileSource,
       });
       if (fileSummary) {
-        // Find the file node from scanning and merge summary into it
-        const fileNode = input.fileNodes.find((n) => n.id === fileId);
-        if (fileNode) {
-          fileNode.properties = {
-            ...fileNode.properties,
-            summary: fileSummary,
-          };
-        }
+        // Emit summary-update node; store merges properties with the
+        // original File node that was already saved by the scanning stage.
+        nodes.push({
+          id: fileId,
+          type: 'File',
+          name: fileName,
+          properties: { summary: fileSummary },
+        });
       }
     }
 
@@ -298,7 +298,8 @@ export function* execute(
     };
   }
 
-  // Summarize directories in-place (all children are now known)
+  // Summarize directories — emit update nodes (store merges properties)
+  const dirSummaryNodes: GraphNode[] = [];
   for (const [dirId, dirNode] of input.dirNodes) {
     const dirPath = (dirNode.properties?.path as string) || dirNode.name;
     const childNames = [...(dirChildNames.get(dirId) ?? [])];
@@ -319,7 +320,12 @@ export function* execute(
         childNames,
       });
       if (summary) {
-        dirNode.properties = { ...dirNode.properties, summary };
+        dirSummaryNodes.push({
+          id: dirId,
+          type: 'Directory',
+          name: dirNode.name,
+          properties: { summary },
+        });
       }
     }
   }
@@ -329,6 +335,7 @@ export function* execute(
     phase: 'processing',
     message: `Processed ${filesProcessed} files`,
     errors: errors.length > 0 ? errors : undefined,
+    nodes: dirSummaryNodes.length > 0 ? dirSummaryNodes : undefined,
   };
 
   return {

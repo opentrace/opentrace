@@ -235,11 +235,14 @@ describe('cross-repo: same project imported twice with different repo names', ()
       .filter(([, sources]) => sources.length > 1)
       .map(([id, sources]) => ({ id, sources }));
 
-    // Duplicates should only be Package nodes — never repo-scoped nodes
+    // Duplicates should only be Package, File, or Directory nodes.
+    // File/Directory duplicates are summary-update nodes emitted by the
+    // processing stage (the store merges their properties).
+    const ALLOWED_DUP_TYPES = new Set(['Package', 'File', 'Directory']);
     expect(duplicates.length).toBeGreaterThan(0);
     for (const dup of duplicates) {
       const node = allEmittedNodes.find((n) => n.id === dup.id);
-      expect(node!.type).toBe('Package');
+      expect(ALLOWED_DUP_TYPES.has(node!.type)).toBe(true);
     }
   });
 
