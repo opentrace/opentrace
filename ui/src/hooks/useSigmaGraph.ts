@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Graph from 'graphology';
+import Graph, { UndirectedGraph } from 'graphology';
+import louvain from 'graphology-communities-louvain';
 import type { GraphNode, GraphLink } from '../types/graph';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
+import {
+  buildCommunityColorMap,
+  getCommunityColor,
+} from '../chat/results/communityColors';
 import type { LayoutRequest, LayoutResponse } from './d3LayoutWorker';
 import {
   NODE_SIZE_MIN,
@@ -19,12 +24,19 @@ import {
   FORCE_LINK_DISTANCE,
   FORCE_CHARGE_STRENGTH,
   FORCE_SIMULATION_TICKS,
+  LOUVAIN_RESOLUTION,
 } from '../config/graphLayout';
 
 export interface UseSigmaGraphResult {
   graph: Graph;
   /** True once d3-force layout has been applied and graph is built */
   layoutReady: boolean;
+  /** Number of detected Louvain communities */
+  communityCount: number;
+  /** Node ID → community ID assignments */
+  communityAssignments: Record<string, number>;
+  /** Community ID → color */
+  communityColorMap: Map<number, string>;
 }
 
 interface UseSigmaGraphOptions {
@@ -41,6 +53,8 @@ interface UseSigmaGraphOptions {
   selectedNodeId: string | null;
   /** When true, use thicker line-edge sizes (matches EdgeLineProgram in GraphViewer) */
   isLargeGraph: boolean;
+  /** Color nodes by type or community */
+  colorMode: 'type' | 'community';
 }
 
 const STRUCTURAL_TYPES = new Set([
@@ -115,6 +129,7 @@ export function useSigmaGraph({
   labelNodes,
   selectedNodeId,
   isLargeGraph,
+  colorMode,
 }: UseSigmaGraphOptions): UseSigmaGraphResult {
   // Stable graph instance — created once, never replaced.
   const graph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
@@ -133,6 +148,73 @@ export function useSigmaGraph({
 
   // True once d3-force positions are available
   const layoutReady = positions !== null && positions.size > 0;
+
+  // Compute Louvain communities on the full (unfiltered) graph.
+  // Built on an undirected copy — Louvain expects undirected edges.
+  // Includes ALL edge types for full coupling signal.
+  const { communityAssignments, communityColorMap, communityCount } =
+    useMemo(() => {
+      if (allNodes.length === 0) {
+        return {
+          communityAssignments: {} as Record<string, number>,
+          communityColorMap: new Map<number, string>(),
+          communityCount: 0,
+        };
+      }
+
+      const tempGraph = new UndirectedGraph();
+      const nodeIdSet = new Set<string>();
+
+      for (const node of allNodes) {
+        if (!nodeIdSet.has(node.id)) {
+          tempGraph.addNode(node.id);
+          nodeIdSet.add(node.id);
+        }
+      }
+
+      for (const link of allLinks) {
+        const source =
+          typeof link.source === 'string'
+            ? link.source
+            : (link.source as GraphNode).id;
+        const target =
+          typeof link.target === 'string'
+            ? link.target
+            : (link.target as GraphNode).id;
+        // Skip self-loops and missing nodes
+        if (source === target) continue;
+        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+
+        // Merge parallel edges as weight
+        if (tempGraph.hasEdge(source, target)) {
+          const w =
+            (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ||
+            1;
+          tempGraph.setEdgeAttribute(source, target, 'weight', w + 1);
+        } else {
+          tempGraph.addEdge(source, target, { weight: 1 });
+        }
+      }
+
+      const assignments = louvain(tempGraph, {
+        resolution: LOUVAIN_RESOLUTION,
+        getEdgeWeight: 'weight',
+      });
+      const colorMap = buildCommunityColorMap(assignments);
+      const count = new Set(Object.values(assignments)).size;
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
+        );
+      }
+
+      return {
+        communityAssignments: assignments,
+        communityColorMap: colorMap,
+        communityCount: count,
+      };
+    }, [allNodes, allLinks]);
 
   // Launch worker computation when allNodes/allLinks change.
   useEffect(() => {
@@ -235,6 +317,12 @@ export function useSigmaGraph({
       const size = nodeSize(degree, node.type);
       const pos = positions.get(node.id) || { x: 0, y: 0 };
       nodeSet.add(node.id);
+      const typeColor = getNodeColor(node.type);
+      const commColor = getCommunityColor(
+        communityAssignments,
+        communityColorMap,
+        node.id,
+      );
       return {
         key: node.id,
         attributes: {
@@ -242,8 +330,10 @@ export function useSigmaGraph({
           x: pos.x,
           y: pos.y,
           size,
-          color: getNodeColor(node.type),
+          color: colorMode === 'community' ? commColor : typeColor,
           nodeType: node.type,
+          _typeColor: typeColor,
+          _communityColor: commColor,
           _graphNode: node,
         },
       };
@@ -285,7 +375,17 @@ export function useSigmaGraph({
       nodes: serializedNodes,
       edges: serializedEdges,
     });
-  }, [graph, nodes, links, degreeMap, positions, isLargeGraph]);
+  }, [
+    graph,
+    nodes,
+    links,
+    degreeMap,
+    positions,
+    isLargeGraph,
+    colorMode,
+    communityAssignments,
+    communityColorMap,
+  ]);
 
   // Update visual attributes when highlight state changes.
   useEffect(() => {
@@ -296,7 +396,11 @@ export function useSigmaGraph({
       const isHighlighted = !hasHighlight || highlightNodes.has(_id);
       const isSelected = _id === selectedNodeId;
       const showLabel = !hasHighlight || labelNodes.has(_id);
-      const baseColor = getNodeColor(attrs.nodeType as string);
+      const baseColor =
+        ((colorMode === 'community'
+          ? attrs._communityColor
+          : attrs._typeColor) as string) ??
+        getNodeColor(attrs.nodeType as string);
 
       attrs.color = isHighlighted
         ? baseColor
@@ -337,6 +441,7 @@ export function useSigmaGraph({
     labelNodes,
     selectedNodeId,
     isLargeGraph,
+    colorMode,
   ]);
 
   // Cleanup worker on unmount
@@ -346,5 +451,11 @@ export function useSigmaGraph({
     };
   }, []);
 
-  return { graph, layoutReady };
+  return {
+    graph,
+    layoutReady,
+    communityCount,
+    communityAssignments,
+    communityColorMap,
+  };
 }

@@ -90,3 +90,8 @@ export const LABEL_RENDERED_SIZE_THRESHOLD = 8;
 export const LABEL_SIZE = 12;
 export const LABEL_FONT = 'Inter, system-ui, sans-serif';
 export const LABEL_COLOR = '#e2e8f0';
+
+// ─── Louvain Community Detection ────────────────────────────────────────
+// Resolution >1 produces more communities (finer), <1 produces fewer (coarser).
+
+export const LOUVAIN_RESOLUTION = 1.0;
