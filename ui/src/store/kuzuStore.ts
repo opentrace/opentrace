@@ -188,6 +188,11 @@ export class KuzuGraphStore implements GraphStore {
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
 
+  /** Package node IDs already written to KuzuDB. Packages are shared across
+   *  repos so the same ID can arrive from multiple pipeline runs — skip
+   *  duplicates to avoid KuzuDB COPY FROM primary-key violations. */
+  private flushedPackageIds = new Set<string>();
+
   // --- Visualization limits ---
   private maxVisNodes = 2000;
   private maxVisEdges = 5000;
@@ -546,6 +551,7 @@ export class KuzuGraphStore implements GraphStore {
     this.bm25Index = new BM25Index();
     this.nodePropsCache.clear();
     this.nodeTypeMap.clear();
+    this.flushedPackageIds.clear();
     this.sourceCache.clear();
   }
 
@@ -606,7 +612,9 @@ export class KuzuGraphStore implements GraphStore {
       }
     }
 
-    // Bucket nodes by type and write per-type CSVs
+    // Bucket nodes by type and write per-type CSVs.
+    // Package nodes are shared across repos — deduplicate within this batch
+    // and against previously flushed packages to avoid KuzuDB PK violations.
     if (nodes.length > 0) {
       const buckets = new Map<string, ImportBatchRequest['nodes']>();
       for (const node of nodes) {
@@ -615,6 +623,13 @@ export class KuzuGraphStore implements GraphStore {
             `[KuzuStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
           );
           continue;
+        }
+        if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
+          continue;
+        }
+        // Mark early so intra-batch duplicates are caught
+        if (node.type === 'Package') {
+          this.flushedPackageIds.add(node.id);
         }
         let bucket = buckets.get(node.type);
         if (!bucket) {
