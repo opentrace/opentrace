@@ -1,0 +1,10 @@
+services:
+  kuzu-explorer:
+    image: kuzudb/explorer:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./db.kuzu:/database/db.kuzu
+    environment:
+      MODE: READ_ONLY
+      KUZU_FILE: db.kuzu
