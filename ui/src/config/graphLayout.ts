@@ -18,9 +18,6 @@ export const NODE_SIZE_DEGREE_SCALE = 1.1; // how much degree (connections) infl
 // Type-based multipliers applied to the base size
 export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {
   Repository: 1.0,
-  Repo: 1.0,
-  Service: 1.0,
-  InstrumentedService: 1.0,
   // All other STRUCTURAL_TYPES default to this:
   _structural: 1.0,
   // Everything else gets 1.0 (no multiplier)

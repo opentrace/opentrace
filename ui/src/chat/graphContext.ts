@@ -88,10 +88,10 @@ Use these when the user asks about PRs, code reviews, or change impact analysis.
 
 You also have two specialized sub-agents you can delegate to:
 
-- **code_explorer** — For complex exploration that requires multiple lookups. Use it for questions like "explain the structure of ServiceX", "how is authentication implemented?", or "walk me through the payment flow". The sub-agent will autonomously search, inspect, and traverse the graph to produce a synthesized answer.
-- **dependency_analyzer** — For dependency mapping and impact analysis. Use it for questions like "what depends on ServiceX?", "what is the blast radius of changing DatabaseY?", or "show me the upstream consumers of this endpoint".
+- **code_explorer** — For complex exploration that requires multiple lookups. Use it for questions like "explain the structure of RepositoryX", "how is authentication implemented?", or "walk me through the payment flow". The sub-agent will autonomously search, inspect, and traverse the graph to produce a synthesized answer.
+- **dependency_analyzer** — For dependency mapping and impact analysis. Use it for questions like "what depends on ClassX?", "what is the blast radius of changing FileY?", or "show me the upstream consumers of this function".
 
 **When to delegate vs use tools directly:**
-- Simple lookups (list all services, get a specific node, search by name) → use the raw tools directly
+- Simple lookups (list all repositories, get a specific node, search by name) → use the raw tools directly
 - Multi-step exploration or analysis requiring several tool calls → delegate to a sub-agent`;
 }

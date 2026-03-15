@@ -6,21 +6,18 @@ import type { NodeResult } from '../store/types';
 import './DiscoverPanel.css';
 
 const EXPANDABLE_TYPES = new Set([
-  'Repo',
   'Repository',
   'Directory',
   'File',
   'Class',
-  'Module',
   'PullRequest',
 ]);
 
-const REPO_TYPES = new Set(['Repo', 'Repository']);
+const REPO_TYPES = new Set(['Repository']);
 
 /** Sort priority: directories → files → PRs → symbols, then alphabetical */
 function sortRank(type: string): number {
-  if (type === 'Repo' || type === 'Repository' || type === 'Directory')
-    return 0;
+  if (type === 'Repository' || type === 'Directory') return 0;
   if (type === 'File') return 1;
   if (type === 'PullRequest') return 2;
   return 3;
@@ -379,20 +376,9 @@ export default function DiscoverPanel({
       // Clear stale cache so re-expanding fetches fresh data
       setChildrenMap(new Map());
       try {
-        const [repos, repositories] = await Promise.all([
-          store.listNodes('Repo', 100),
-          store.listNodes('Repository', 100),
-        ]);
+        const repositories = await store.listNodes('Repository', 100);
         if (cancelled) return;
-        const seen = new Set<string>();
-        const merged: NodeResult[] = [];
-        for (const node of [...repos, ...repositories]) {
-          if (!seen.has(node.id)) {
-            seen.add(node.id);
-            merged.push(node);
-          }
-        }
-        const sorted = sortChildren(merged);
+        const sorted = sortChildren(repositories);
         setRoots(sorted);
 
         // Auto-expand 3 levels (root → children → grandchildren)

@@ -43,18 +43,7 @@ interface UseSigmaGraphOptions {
   isLargeGraph: boolean;
 }
 
-const STRUCTURAL_TYPES = new Set([
-  'Repository',
-  'Repo',
-  'Service',
-  'InstrumentedService',
-  'Cluster',
-  'Namespace',
-  'Deployment',
-  'Directory',
-  'Module',
-  'Package',
-]);
+const STRUCTURAL_TYPES = new Set(['Repository', 'Directory', 'Package']);
 
 function nodeSize(degree: number, nodeType: string): number {
   const base = Math.min(

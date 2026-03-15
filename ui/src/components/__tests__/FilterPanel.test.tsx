@@ -8,8 +8,8 @@ afterEach(cleanup);
 
 const defaultProps = {
   nodeTypes: [
-    { type: 'Service', count: 5 },
-    { type: 'Database', count: 3 },
+    { type: 'Repository', count: 5 },
+    { type: 'Class', count: 3 },
   ],
   linkTypes: [
     { type: 'CALLS', count: 10 },
@@ -33,8 +33,8 @@ describe('FilterPanel', () => {
     const { getByText } = render(
       React.createElement(FilterPanel, defaultProps),
     );
-    expect(getByText('Service')).toBeDefined();
-    expect(getByText('Database')).toBeDefined();
+    expect(getByText('Repository')).toBeDefined();
+    expect(getByText('Class')).toBeDefined();
     expect(getByText('calls')).toBeDefined(); // lowercased in display
     expect(getByText('reads')).toBeDefined();
   });
@@ -48,9 +48,9 @@ describe('FilterPanel', () => {
       }),
     );
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-    // First checkbox is for first node type (Service)
+    // First checkbox is for first node type (Repository)
     fireEvent.click(checkboxes[0]);
-    expect(onToggleNodeType).toHaveBeenCalledWith('Service');
+    expect(onToggleNodeType).toHaveBeenCalledWith('Repository');
   });
 
   it('Hide all button calls onHideAllNodes', () => {
@@ -71,7 +71,7 @@ describe('FilterPanel', () => {
     const { getAllByText } = render(
       React.createElement(FilterPanel, {
         ...defaultProps,
-        hiddenNodeTypes: new Set(['Service', 'Database']),
+        hiddenNodeTypes: new Set(['Repository', 'Class']),
         onShowAllNodes,
       }),
     );

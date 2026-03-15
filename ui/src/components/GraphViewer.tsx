@@ -47,13 +47,7 @@ import {
 } from '../config/graphLayout';
 
 /** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set([
-  'File',
-  'Function',
-  'Class',
-  'Module',
-  'PullRequest',
-]);
+const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
 
 /**
  * Extract a sub-type value from a node based on its type.
@@ -66,11 +60,7 @@ function getSubType(node: GraphNode): string | null {
     if (lastDot > 0) return name.slice(lastDot); // e.g. ".ts", ".go"
     return null;
   }
-  if (
-    node.type === 'Function' ||
-    node.type === 'Class' ||
-    node.type === 'Module'
-  ) {
+  if (node.type === 'Function' || node.type === 'Class') {
     const lang = node.properties?.language as string | undefined;
     return lang || null;
   }

@@ -31,7 +31,7 @@ describe('useGraphData', () => {
   });
 
   it('sets loading=false and populates data after fetch', async () => {
-    const nodes = [{ id: 'n1', name: 'Auth', type: 'Service' }];
+    const nodes = [{ id: 'n1', name: 'Auth', type: 'Repository' }];
     const links = [{ source: 'n1', target: 'n2', label: 'CALLS' }];
     vi.mocked(mockStore.fetchGraph).mockResolvedValue({ nodes, links });
 

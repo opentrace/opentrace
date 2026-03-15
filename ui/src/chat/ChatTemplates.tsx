@@ -13,7 +13,7 @@ const TEMPLATES = [
     label: 'List services',
     description: 'Enumerate services and describe their roles',
     prompt:
-      'List all the services in this graph and briefly describe what each one does based on its connections.',
+      'Search the code for services in this system. Look for classes, modules, or files that act as services and briefly describe what each one does based on its connections and source code.',
   },
   {
     label: 'Find dependencies',
@@ -25,7 +25,7 @@ const TEMPLATES = [
     label: 'Database usage',
     description: 'Which databases exist and what connects to them',
     prompt:
-      'What databases exist in this graph and which services connect to them?',
+      'Search the code for database usage in this system. Look for database connections, ORMs, query builders, or migration files and describe which components interact with databases.',
   },
   {
     label: 'Code review',

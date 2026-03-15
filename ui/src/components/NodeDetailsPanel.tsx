@@ -10,13 +10,7 @@ import { markdownComponents } from '../chat/markdownComponents';
 import './NodeDetailsPanel.css';
 
 /** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set([
-  'File',
-  'Function',
-  'Class',
-  'Module',
-  'PullRequest',
-]);
+const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
 
 /** Map file extensions → Prism language identifiers. */
 const EXT_TO_LANG: Record<string, string> = {
