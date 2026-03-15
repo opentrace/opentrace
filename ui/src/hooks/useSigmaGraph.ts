@@ -6,6 +6,7 @@ import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
 import {
   buildCommunityColorMap,
+  buildCommunityNames,
   getCommunityColor,
 } from '../chat/results/communityColors';
 import type { LayoutRequest, LayoutResponse } from './d3LayoutWorker';
@@ -24,19 +25,98 @@ import {
   FORCE_LINK_DISTANCE,
   FORCE_CHARGE_STRENGTH,
   FORCE_SIMULATION_TICKS,
+  FORCE_CLUSTER_STRENGTH,
+  FORCE_CLUSTER_TICKS,
   LOUVAIN_RESOLUTION,
 } from '../config/graphLayout';
+
+// ─── Community Detection Hook ────────────────────────────────────────
+
+export interface LouvainResult {
+  communityAssignments: Record<string, number>;
+  communityColorMap: Map<number, string>;
+  communityNames: Map<number, string>;
+  communityCount: number;
+}
+
+/**
+ * Compute Louvain communities on the full (unfiltered) graph.
+ * Extracted so callers can use community data before filtering.
+ */
+export function useLouvainCommunities(
+  allNodes: GraphNode[],
+  allLinks: GraphLink[],
+): LouvainResult {
+  return useMemo(() => {
+    if (allNodes.length === 0) {
+      return {
+        communityAssignments: {} as Record<string, number>,
+        communityColorMap: new Map<number, string>(),
+        communityNames: new Map<number, string>(),
+        communityCount: 0,
+      };
+    }
+
+    const tempGraph = new UndirectedGraph();
+    const nodeIdSet = new Set<string>();
+
+    for (const node of allNodes) {
+      if (!nodeIdSet.has(node.id)) {
+        tempGraph.addNode(node.id);
+        nodeIdSet.add(node.id);
+      }
+    }
+
+    for (const link of allLinks) {
+      const source =
+        typeof link.source === 'string'
+          ? link.source
+          : (link.source as GraphNode).id;
+      const target =
+        typeof link.target === 'string'
+          ? link.target
+          : (link.target as GraphNode).id;
+      if (source === target) continue;
+      if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+
+      if (tempGraph.hasEdge(source, target)) {
+        const w =
+          (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ?? 1;
+        tempGraph.setEdgeAttribute(source, target, 'weight', w + 1);
+      } else {
+        tempGraph.addEdge(source, target, { weight: 1 });
+      }
+    }
+
+    const assignments = louvain(tempGraph, {
+      resolution: LOUVAIN_RESOLUTION,
+      getEdgeWeight: 'weight',
+    });
+    const colorMap = buildCommunityColorMap(assignments);
+    const nameMap = buildCommunityNames(assignments, allNodes);
+    const count = new Set(Object.values(assignments)).size;
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log(
+        `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
+      );
+    }
+
+    return {
+      communityAssignments: assignments,
+      communityColorMap: colorMap,
+      communityNames: nameMap,
+      communityCount: count,
+    };
+  }, [allNodes, allLinks]);
+}
+
+// ─── Graph Layout Hook ──────────────────────────────────────────────
 
 export interface UseSigmaGraphResult {
   graph: Graph;
   /** True once d3-force layout has been applied and graph is built */
   layoutReady: boolean;
-  /** Number of detected Louvain communities */
-  communityCount: number;
-  /** Node ID → community ID assignments */
-  communityAssignments: Record<string, number>;
-  /** Community ID → color */
-  communityColorMap: Map<number, string>;
 }
 
 interface UseSigmaGraphOptions {
@@ -55,6 +135,9 @@ interface UseSigmaGraphOptions {
   isLargeGraph: boolean;
   /** Color nodes by type or community */
   colorMode: 'type' | 'community';
+  /** Pre-computed community data (from useLouvainCommunities) */
+  communityAssignments: Record<string, number>;
+  communityColorMap: Map<number, string>;
 }
 
 const STRUCTURAL_TYPES = new Set(['Repository', 'Directory', 'Package']);
@@ -119,6 +202,8 @@ export function useSigmaGraph({
   selectedNodeId,
   isLargeGraph,
   colorMode,
+  communityAssignments,
+  communityColorMap,
 }: UseSigmaGraphOptions): UseSigmaGraphResult {
   // Stable graph instance — created once, never replaced.
   const graph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
@@ -138,73 +223,6 @@ export function useSigmaGraph({
   // True once d3-force positions are available
   const layoutReady = positions !== null && positions.size > 0;
 
-  // Compute Louvain communities on the full (unfiltered) graph.
-  // Built on an undirected copy — Louvain expects undirected edges.
-  // Includes ALL edge types for full coupling signal.
-  const { communityAssignments, communityColorMap, communityCount } =
-    useMemo(() => {
-      if (allNodes.length === 0) {
-        return {
-          communityAssignments: {} as Record<string, number>,
-          communityColorMap: new Map<number, string>(),
-          communityCount: 0,
-        };
-      }
-
-      const tempGraph = new UndirectedGraph();
-      const nodeIdSet = new Set<string>();
-
-      for (const node of allNodes) {
-        if (!nodeIdSet.has(node.id)) {
-          tempGraph.addNode(node.id);
-          nodeIdSet.add(node.id);
-        }
-      }
-
-      for (const link of allLinks) {
-        const source =
-          typeof link.source === 'string'
-            ? link.source
-            : (link.source as GraphNode).id;
-        const target =
-          typeof link.target === 'string'
-            ? link.target
-            : (link.target as GraphNode).id;
-        // Skip self-loops and missing nodes
-        if (source === target) continue;
-        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
-
-        // Merge parallel edges as weight
-        if (tempGraph.hasEdge(source, target)) {
-          const w =
-            (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ??
-            1;
-          tempGraph.setEdgeAttribute(source, target, 'weight', w + 1);
-        } else {
-          tempGraph.addEdge(source, target, { weight: 1 });
-        }
-      }
-
-      const assignments = louvain(tempGraph, {
-        resolution: LOUVAIN_RESOLUTION,
-        getEdgeWeight: 'weight',
-      });
-      const colorMap = buildCommunityColorMap(assignments);
-      const count = new Set(Object.values(assignments)).size;
-
-      if (process.env.NODE_ENV === 'development') {
-        console.log(
-          `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
-        );
-      }
-
-      return {
-        communityAssignments: assignments,
-        communityColorMap: colorMap,
-        communityCount: count,
-      };
-    }, [allNodes, allLinks]);
-
   // Launch worker computation when allNodes/allLinks change.
   useEffect(() => {
     if (allNodes.length === 0) {
@@ -213,7 +231,7 @@ export function useSigmaGraph({
     }
 
     // Reset — new data arriving, layout not ready yet
-    setPositions(null); // eslint-disable-line react-hooks/set-state-in-effect -- reset so layoutReady gates graph build
+    setPositions(null);
 
     // Prepare DEFINED_IN links for the worker
     const nodeIds = allNodes.map((n) => n.id);
@@ -278,10 +296,13 @@ export function useSigmaGraph({
     worker.postMessage({
       nodeIds,
       links: simLinks,
+      communities: communityAssignments,
       config: {
         linkDistance: FORCE_LINK_DISTANCE,
         chargeStrength: FORCE_CHARGE_STRENGTH,
         ticks: FORCE_SIMULATION_TICKS,
+        clusterStrength: FORCE_CLUSTER_STRENGTH,
+        clusterTicks: FORCE_CLUSTER_TICKS,
       },
     } satisfies LayoutRequest);
 
@@ -291,7 +312,7 @@ export function useSigmaGraph({
         workerRef.current = null;
       }
     };
-  }, [allNodes, allLinks]);
+  }, [allNodes, allLinks, communityAssignments]);
 
   // Build graph only once positions are ready, and when filtered data changes.
   // Uses graph.import() for bulk construction.
@@ -443,8 +464,5 @@ export function useSigmaGraph({
   return {
     graph,
     layoutReady,
-    communityCount,
-    communityAssignments,
-    communityColorMap,
   };
 }

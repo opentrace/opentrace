@@ -53,6 +53,8 @@ export const ZOOM_SIZE_EXPONENT = 0.9;
 export const FORCE_LINK_DISTANCE = 200; // target distance between linked nodes
 export const FORCE_CHARGE_STRENGTH = -200; // repulsion between all nodes (negative = repel)
 export const FORCE_SIMULATION_TICKS = 80; // total simulation iterations (enough to seed FA2)
+export const FORCE_CLUSTER_STRENGTH = 0.3; // how strongly nodes pull toward community centroid (0-1)
+export const FORCE_CLUSTER_TICKS = 40; // additional ticks for clustering phase
 
 // ─── ForceAtlas2 Live Physics ───────────────────────────────────────────
 // Runs after d3-force initial positioning to refine the layout.

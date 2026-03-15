@@ -169,6 +169,8 @@ interface NodeDetailsPanelProps {
   nodeSource: NodeSourceResponse | null;
   sourceLoading: boolean;
   sourceError: string | null;
+  communityName?: string;
+  communityColor?: string;
 }
 
 type PreviewTab = 'rendered' | 'raw';
@@ -188,6 +190,8 @@ export default function NodeDetailsPanel({
   nodeSource,
   sourceLoading,
   sourceError,
+  communityName,
+  communityColor,
 }: NodeDetailsPanelProps) {
   const [previewTab, setPreviewTab] = useState<PreviewTab>('rendered');
   const color = getNodeColor(node.type);
@@ -210,6 +214,17 @@ export default function NodeDetailsPanel({
         <span className="type-badge" style={{ backgroundColor: color }}>
           {node.type}
         </span>
+        {communityName && (
+          <span
+            className="type-badge community-badge"
+            style={{
+              color: communityColor ?? '#64748b',
+              border: `1.5px solid ${communityColor ?? '#64748b'}`,
+            }}
+          >
+            {communityName}
+          </span>
+        )}
         <span className="detail-name">{node.name || 'N/A'}</span>
         {sourceUri && (
           <a
