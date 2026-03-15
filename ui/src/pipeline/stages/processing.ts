@@ -44,6 +44,8 @@ import {
   countSymbols,
 } from './parsing';
 import { analyzeImports } from '../../runner/browser/parser/importAnalyzer';
+import { summarizeFromMetadata } from '../../runner/browser/enricher/summarizer/templateSummarizer';
+import type { NodeKind } from '../../runner/browser/enricher/summarizer/types';
 import type {
   Registries,
   CallInfo,
@@ -72,6 +74,7 @@ export function* execute(
   };
   const allCallInfo: CallInfo[] = [];
   const emittedNodeIds = new Set<string>();
+  const dirChildNames = new Map<string, string[]>();
 
   // Copy package nodes from scanning (will accumulate more from imports)
   const packageNodes = new Map(input.packageNodes);
@@ -147,6 +150,38 @@ export function* execute(
         classesExtracted += symCounts.classes;
         functionsExtracted += symCounts.functions;
 
+        // Summarize symbols inline using template summarizer
+        const lines = file.content.split('\n');
+        for (const node of nodes) {
+          if (node.type !== 'Function' && node.type !== 'Class') continue;
+          const startLine = node.properties?.start_line as number | undefined;
+          const endLine = node.properties?.end_line as number | undefined;
+          if (startLine == null || endLine == null) continue;
+          const snippet = lines.slice(startLine - 1, endLine).join('\n');
+          if (!snippet.trim()) continue;
+
+          const kind: NodeKind = node.type === 'Class' ? 'class' : 'function';
+          const summary = summarizeFromMetadata({
+            name: node.name,
+            kind,
+            signature: node.properties?.signature as string | undefined,
+            language,
+            lineCount: endLine - startLine + 1,
+            childNames:
+              kind === 'class'
+                ? extraction.symbols
+                    .find((s) => s.name === node.name)
+                    ?.children.map((c) => c.name)
+                : undefined,
+            receiverType: node.properties?.receiver_type as string | undefined,
+            source: snippet,
+            docs: node.properties?.docs as string | undefined,
+          });
+          if (summary) {
+            node.properties = { ...node.properties, summary };
+          }
+        }
+
         // Import analysis — uses rootNode immediately, then discards it
         const rootNode = extraction.rootNode;
         if (rootNode) {
@@ -211,6 +246,44 @@ export function* execute(
       );
     }
 
+    // Summarize file node in-place (mutate the node from scanning stage)
+    const fileName = file.path.includes('/')
+      ? file.path.slice(file.path.lastIndexOf('/') + 1)
+      : file.path;
+    const symbolNames = nodes
+      .filter((n) => n.type === 'Function' || n.type === 'Class')
+      .map((n) => n.name);
+    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
+    if (fileSource.trim()) {
+      const fileSummary = summarizeFromMetadata({
+        name: fileName,
+        kind: 'file',
+        fileName: file.path,
+        language: language ?? undefined,
+        childNames: symbolNames.length > 0 ? symbolNames : undefined,
+        source: fileSource,
+      });
+      if (fileSummary) {
+        // Find the file node from scanning and merge summary into it
+        const fileNode = input.fileNodes.find((n) => n.id === fileId);
+        if (fileNode) {
+          fileNode.properties = {
+            ...fileNode.properties,
+            summary: fileSummary,
+          };
+        }
+      }
+    }
+
+    // Track directory children for directory summaries later
+    const dirPath = file.path.includes('/')
+      ? file.path.slice(0, file.path.lastIndexOf('/'))
+      : '';
+    const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
+    const names = dirChildNames.get(parentDirId) ?? [];
+    names.push(fileName);
+    dirChildNames.set(parentDirId, names);
+
     totalNodes += nodes.length;
     totalRels += rels.length;
     filesProcessed++;
@@ -223,6 +296,32 @@ export function* execute(
       nodes: nodes.length > 0 ? nodes : undefined,
       relationships: rels.length > 0 ? rels : undefined,
     };
+  }
+
+  // Summarize directories in-place (all children are now known)
+  for (const [dirId, dirNode] of input.dirNodes) {
+    const dirPath = (dirNode.properties?.path as string) || dirNode.name;
+    const childNames = [...(dirChildNames.get(dirId) ?? [])];
+    // Include subdirectories
+    for (const [otherId, otherNode] of input.dirNodes) {
+      const otherPath = (otherNode.properties?.path as string) || '';
+      const otherParent = otherPath.includes('/')
+        ? otherPath.slice(0, otherPath.lastIndexOf('/'))
+        : '';
+      if (otherParent === dirPath && otherId !== dirId) {
+        childNames.push(otherNode.name + '/');
+      }
+    }
+    if (childNames.length > 0) {
+      const summary = summarizeFromMetadata({
+        name: dirNode.name,
+        kind: 'directory',
+        childNames,
+      });
+      if (summary) {
+        dirNode.properties = { ...dirNode.properties, summary };
+      }
+    }
   }
 
   yield {
