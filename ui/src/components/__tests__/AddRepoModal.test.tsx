@@ -22,6 +22,21 @@ describe('detectProvider', () => {
   it('detects gitlab', () => {
     expect(detectProvider('https://gitlab.com/owner/repo')).toBe('gitlab');
   });
+  it('detects bitbucket', () => {
+    expect(detectProvider('https://bitbucket.org/workspace/repo')).toBe(
+      'bitbucket',
+    );
+  });
+  it('detects azuredevops from dev.azure.com', () => {
+    expect(detectProvider('https://dev.azure.com/org/project/_git/repo')).toBe(
+      'azuredevops',
+    );
+  });
+  it('detects azuredevops from visualstudio.com', () => {
+    expect(
+      detectProvider('https://org.visualstudio.com/project/_git/repo'),
+    ).toBe('azuredevops');
+  });
   it('returns null for unknown', () => {
     expect(detectProvider('https://example.com/repo')).toBeNull();
   });

@@ -40,8 +40,10 @@ export interface PRReviewComment {
 }
 
 export interface RepoMeta {
-  provider: 'github' | 'gitlab';
+  provider: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
   owner: string;
   repo: string;
   host?: string;
+  /** Azure DevOps project name (org/project/repo triple). */
+  project?: string;
 }

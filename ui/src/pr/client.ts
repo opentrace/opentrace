@@ -1,5 +1,5 @@
 /**
- * Unified PR/MR client that dispatches to GitHub or GitLab APIs.
+ * Unified PR/MR client that dispatches to GitHub, GitLab, Bitbucket, or Azure DevOps APIs.
  */
 
 import type { PRSummary, PRDetail, PRReviewComment, RepoMeta } from './types';
@@ -16,8 +16,22 @@ import {
   postGitLabMRComment,
   fetchGitLabFileContent,
 } from './gitlabPR';
+import {
+  fetchBitbucketPRs,
+  fetchBitbucketPRDetail,
+  postBitbucketPRComment,
+  fetchBitbucketFileContent,
+} from './bitbucketPR';
+import {
+  fetchAzureDevOpsPRs,
+  fetchAzureDevOpsPRDetail,
+  postAzureDevOpsPRComment,
+  fetchAzureDevOpsFileContent,
+} from './azuredevopsPR';
 import { parseGitHubUrl } from '../runner/browser/loader/github';
 import { parseGitLabUrl } from '../runner/browser/loader/gitlab';
+import { parseBitbucketUrl } from '../runner/browser/loader/bitbucket';
+import { parseAzureDevOpsUrl } from '../runner/browser/loader/azuredevops';
 
 const ATTRIBUTION_FOOTER =
   '\n\n---\n*Generated via [OpenTrace](https://oss.opentrace.ai)*';
@@ -37,31 +51,53 @@ export class PRClient {
   }
 
   async listPRs(): Promise<PRSummary[]> {
-    if (this.meta.provider === 'gitlab') {
-      return fetchGitLabMRs(
-        this.meta.host ?? 'gitlab.com',
-        this.projectPath!,
-        this.token,
-      );
+    switch (this.meta.provider) {
+      case 'gitlab':
+        return fetchGitLabMRs(
+          this.meta.host ?? 'gitlab.com',
+          this.projectPath!,
+          this.token,
+        );
+      case 'bitbucket':
+        return fetchBitbucketPRs(this.meta.owner, this.meta.repo, this.token);
+      case 'azuredevops':
+        return fetchAzureDevOpsPRs(this.meta.owner, this.meta.repo, this.token);
+      default:
+        return fetchGitHubPRs(this.meta.owner, this.meta.repo, this.token);
     }
-    return fetchGitHubPRs(this.meta.owner, this.meta.repo, this.token);
   }
 
   async getPRDetail(number: number): Promise<PRDetail> {
-    if (this.meta.provider === 'gitlab') {
-      return fetchGitLabMRDetail(
-        this.meta.host ?? 'gitlab.com',
-        this.projectPath!,
-        number,
-        this.token,
-      );
+    switch (this.meta.provider) {
+      case 'gitlab':
+        return fetchGitLabMRDetail(
+          this.meta.host ?? 'gitlab.com',
+          this.projectPath!,
+          number,
+          this.token,
+        );
+      case 'bitbucket':
+        return fetchBitbucketPRDetail(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+        );
+      case 'azuredevops':
+        return fetchAzureDevOpsPRDetail(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+        );
+      default:
+        return fetchGitHubPRDetail(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+        );
     }
-    return fetchGitHubPRDetail(
-      this.meta.owner,
-      this.meta.repo,
-      number,
-      this.token,
-    );
   }
 
   async createReview(
@@ -74,69 +110,127 @@ export class PRClient {
   ): Promise<void> {
     if (!this.token) throw new Error('Token required for creating reviews');
     const taggedBody = body + ATTRIBUTION_FOOTER;
-    if (this.meta.provider === 'gitlab') {
-      // GitLab doesn't have a review API — post as a comment
-      await postGitLabMRComment(
-        this.meta.host ?? 'gitlab.com',
-        this.projectPath!,
-        number,
-        this.token,
-        taggedBody,
-      );
-      return;
+    // GitLab, Bitbucket, and Azure DevOps don't have a review API — post as comment
+    switch (this.meta.provider) {
+      case 'gitlab':
+        await postGitLabMRComment(
+          this.meta.host ?? 'gitlab.com',
+          this.projectPath!,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      case 'bitbucket':
+        await postBitbucketPRComment(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      case 'azuredevops':
+        await postAzureDevOpsPRComment(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      default:
+        await createGitHubReview(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+          event,
+          comments,
+          fileDiffs,
+        );
     }
-    await createGitHubReview(
-      this.meta.owner,
-      this.meta.repo,
-      number,
-      this.token,
-      taggedBody,
-      event,
-      comments,
-      fileDiffs,
-    );
   }
 
   /** Fetch a file's content at a given git ref (branch, tag, or SHA). */
   async getFileContent(path: string, ref: string): Promise<string | null> {
-    if (this.meta.provider === 'gitlab') {
-      return fetchGitLabFileContent(
-        this.meta.host ?? 'gitlab.com',
-        this.projectPath!,
-        path,
-        ref,
-        this.token,
-      );
+    switch (this.meta.provider) {
+      case 'gitlab':
+        return fetchGitLabFileContent(
+          this.meta.host ?? 'gitlab.com',
+          this.projectPath!,
+          path,
+          ref,
+          this.token,
+        );
+      case 'bitbucket':
+        return fetchBitbucketFileContent(
+          this.meta.owner,
+          this.meta.repo,
+          path,
+          ref,
+          this.token,
+        );
+      case 'azuredevops':
+        return fetchAzureDevOpsFileContent(
+          this.meta.owner,
+          this.meta.repo,
+          path,
+          ref,
+          this.token,
+        );
+      default:
+        return fetchGitHubFileContent(
+          this.meta.owner,
+          this.meta.repo,
+          path,
+          ref,
+          this.token,
+        );
     }
-    return fetchGitHubFileContent(
-      this.meta.owner,
-      this.meta.repo,
-      path,
-      ref,
-      this.token,
-    );
   }
 
   async postComment(number: number, body: string): Promise<void> {
     if (!this.token) throw new Error('Token required for posting comments');
     const taggedBody = body + ATTRIBUTION_FOOTER;
-    if (this.meta.provider === 'gitlab') {
-      await postGitLabMRComment(
-        this.meta.host ?? 'gitlab.com',
-        this.projectPath!,
-        number,
-        this.token,
-        taggedBody,
-      );
-      return;
+    switch (this.meta.provider) {
+      case 'gitlab':
+        await postGitLabMRComment(
+          this.meta.host ?? 'gitlab.com',
+          this.projectPath!,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      case 'bitbucket':
+        await postBitbucketPRComment(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      case 'azuredevops':
+        await postAzureDevOpsPRComment(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+        );
+        return;
+      default:
+        await postGitHubPRComment(
+          this.meta.owner,
+          this.meta.repo,
+          number,
+          this.token,
+          taggedBody,
+        );
     }
-    await postGitHubPRComment(
-      this.meta.owner,
-      this.meta.repo,
-      number,
-      this.token,
-      taggedBody,
-    );
   }
 }
 
@@ -152,6 +246,24 @@ export function parseRepoUrl(url: string): RepoMeta | null {
       owner: gl.namespace,
       repo: gl.project,
       host: gl.host,
+    };
+
+  const bb = parseBitbucketUrl(url);
+  if (bb)
+    return {
+      provider: 'bitbucket',
+      owner: bb.workspace,
+      repo: bb.repo,
+    };
+
+  const ado = parseAzureDevOpsUrl(url);
+  if (ado)
+    return {
+      provider: 'azuredevops',
+      owner: `${ado.org}/${ado.project}`,
+      repo: ado.repo,
+      host: ado.host,
+      project: ado.project,
     };
 
   return null;
