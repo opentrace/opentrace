@@ -431,8 +431,15 @@ export async function runPipeline(
       }
 
       // (c) Summarize each symbol inline (using symbolInfoOut + file content lines)
+      //     Merge summaries into the existing nodes in fileBatch rather than
+      //     emitting duplicate nodes (which causes PK violations in KuzuDB
+      //     and property loss in the in-memory store).
       const lines = file.content.split('\n');
       const symbolNames: string[] = [];
+      const batchNodeIndex = new Map<string, number>();
+      for (let ni = 0; ni < fileBatch.nodes.length; ni++) {
+        batchNodeIndex.set(fileBatch.nodes[ni].id, ni);
+      }
       for (const info of symbolInfoOut) {
         symbolNames.push(info.name);
         const snippet = lines
@@ -467,12 +474,14 @@ export async function runPipeline(
           summary,
         });
         if (summary) {
-          fileBatch.nodes.push({
-            id: info.nodeId,
-            type: nodeType,
-            name: info.name,
-            properties: { summary },
-          });
+          const idx = batchNodeIndex.get(info.nodeId);
+          if (idx != null) {
+            // Merge summary into the existing node's properties
+            fileBatch.nodes[idx].properties = {
+              ...fileBatch.nodes[idx].properties,
+              summary,
+            };
+          }
         }
       }
 
