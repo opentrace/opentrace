@@ -1,7 +1,11 @@
 /* Discover Panel — directory tree view */
 
 .discover-panel {
-  padding: 8px 0 120px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 0 0;
 }
 
 /* Filter bar */
