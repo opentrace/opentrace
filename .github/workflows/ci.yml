@@ -42,7 +42,7 @@ jobs:
           go-version: "1.25"
 
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: api
