@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { analyzeGoImports } from '../parser/importAnalyzer';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { analyzeGoImports, resetDirIndexCache } from '../parser/importAnalyzer';
 import { parseGo } from './helpers';
 
 describe('analyzeGoImports', () => {
+  beforeEach(() => {
+    resetDirIndexCache();
+  });
+
   describe('stdlib imports (skipped)', () => {
     it('skips stdlib single import', async () => {
       const root = await parseGo(`package main
@@ -211,6 +215,98 @@ import "gopkg.in/yaml.v3"
       expect(result.external['gopkg.in/yaml.v3']).toBe(
         'pkg:go:gopkg.in/yaml.v3',
       );
+    });
+  });
+
+  describe('dir index filtering', () => {
+    it('non-.go files do not produce false internal imports', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/docs"
+`);
+      // Directory "docs" only contains a README — should NOT resolve as internal
+      const known = new Set(['docs/README.md', 'cmd/main.go']);
+      const result = analyzeGoImports(root, known);
+      expect(result.internal).toEqual({});
+    });
+
+    it('resolves when .go and non-.go files coexist in same directory', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/internal/store"
+`);
+      const known = new Set([
+        'internal/store/store.go',
+        'internal/store/README.md',
+        'cmd/main.go',
+      ]);
+      const result = analyzeGoImports(root, known);
+      // Should resolve via the .go file, ignoring the README
+      expect(result.internal['store']).toBe('internal/store/store.go');
+    });
+  });
+
+  describe('ambiguous dirBase resolution', () => {
+    it('resolves ambiguous package name via modulePath stripping', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/internal/graph"
+`);
+      // Two dirs named "graph" — dirBase shortcut should be omitted
+      const known = new Set([
+        'api/graph/graph.go',
+        'internal/graph/graph.go',
+        'cmd/main.go',
+      ]);
+      const result = analyzeGoImports(root, known, 'github.com/myorg/app');
+      // modulePath stripping: "github.com/myorg/app/internal/graph" → "internal/graph"
+      expect(result.internal['graph']).toBe('internal/graph/graph.go');
+    });
+
+    it('ambiguous dirBase without modulePath does not resolve as internal', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/internal/graph"
+`);
+      // Two dirs named "graph" — ambiguous, and no modulePath to disambiguate
+      const known = new Set([
+        'api/graph/graph.go',
+        'internal/graph/graph.go',
+        'cmd/main.go',
+      ]);
+      const result = analyzeGoImports(root, known);
+      // Without modulePath, can't resolve ambiguous "graph" — falls through to own-module check
+      expect(result.internal).toEqual({});
+    });
+
+    it('unambiguous dirBase still resolves without modulePath', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/internal/store"
+`);
+      // Only one dir named "store" — dirBase shortcut works
+      const known = new Set(['internal/store/store.go', 'cmd/main.go']);
+      const result = analyzeGoImports(root, known);
+      expect(result.internal['store']).toBe('internal/store/store.go');
+    });
+  });
+
+  describe('cache reset', () => {
+    it('cache reset prevents stale data between calls', async () => {
+      const root = await parseGo(`package main
+
+import "github.com/myorg/app/pkg/utils"
+`);
+      // First call with "utils" dir
+      const known1 = new Set(['pkg/utils/utils.go']);
+      const result1 = analyzeGoImports(root, known1);
+      expect(result1.internal['utils']).toBe('pkg/utils/utils.go');
+
+      // Reset cache, call with different files
+      resetDirIndexCache();
+      const known2 = new Set(['cmd/main.go']);
+      const result2 = analyzeGoImports(root, known2);
+      expect(result2.internal).toEqual({});
     });
   });
 });

@@ -165,6 +165,14 @@ describe('analyzeTypeScriptImports', () => {
     expect(result.internal['db']).toBe('shared/db.ts');
   });
 
+  it('resolves non-code file import when exact path is in knownFiles', async () => {
+    const root = await parseTS("import readme from './README.md';\n");
+    const known = new Set(['src/README.md', 'src/main.ts']);
+    const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
+    // TS bundlers (Vite, webpack) support importing non-code files — knownFiles includes them intentionally
+    expect(result.internal['README.md']).toBe('src/README.md');
+  });
+
   it('returns empty result for file with no imports', async () => {
     const root = await parseTS('const x = 42;\n');
     const known = new Set(['src/main.ts']);
