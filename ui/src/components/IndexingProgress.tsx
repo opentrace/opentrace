@@ -186,7 +186,7 @@ function StatsGrid({
 
 interface Props {
   state: JobState;
-  provider: 'github' | 'gitlab' | null;
+  provider: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null;
   onClose: () => void;
   onCancel: () => void;
   onMinimize?: () => void;
