@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/context';
 import { getNodeColor } from '../chat/results/nodeColors';
+import { PARSEABLE_EXTENSIONS } from '../runner/browser/loader/constants';
 import type { NodeResult } from '../store/types';
 import './DiscoverPanel.css';
 
@@ -23,6 +24,11 @@ function sortRank(type: string): number {
   if (type === 'File') return 1;
   if (type === 'PullRequest') return 2;
   return 3;
+}
+
+function hasParsableExtension(name: string): boolean {
+  const dotIdx = name.lastIndexOf('.');
+  return dotIdx >= 0 && PARSEABLE_EXTENSIONS.has(name.slice(dotIdx).toLowerCase());
 }
 
 function displayName(name: string): string {
@@ -106,7 +112,9 @@ function TreeItem({
 
   // A node is expandable if it could have children and we either
   // haven't loaded yet, or it actually has children
-  const couldExpand = EXPANDABLE_TYPES.has(node.type);
+  const couldExpand =
+    EXPANDABLE_TYPES.has(node.type) &&
+    (node.type !== 'File' || hasParsableExtension(node.name));
   const knownEmpty = children !== undefined && children.length === 0;
   const expandable = couldExpand && !knownEmpty;
 

@@ -97,6 +97,13 @@ export const PARSEABLE_LANGUAGES = new Set([
   'swift',
 ]);
 
+/** File extensions that map to a parseable language (i.e. can contain symbols). */
+export const PARSEABLE_EXTENSIONS = new Set(
+  Object.entries(EXTENSION_LANGUAGE_MAP)
+    .filter(([, lang]) => PARSEABLE_LANGUAGES.has(lang))
+    .map(([ext]) => ext),
+);
+
 /** Image file extensions recognized for binary handling. */
 export const IMAGE_EXTENSIONS = new Set([
   '.png',
