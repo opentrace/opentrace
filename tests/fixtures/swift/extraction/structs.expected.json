@@ -2,8 +2,8 @@
   {
     "name": "Point",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 8,
+    "start_line": 17,
+    "end_line": 24,
     "signature": null,
     "subtype": null,
     "superclasses": null,
@@ -12,8 +12,8 @@
       {
         "name": "distance",
         "kind": "function",
-        "start_line": 5,
-        "end_line": 7,
+        "start_line": 21,
+        "end_line": 23,
         "signature": null,
         "subtype": null,
         "superclasses": null,
@@ -27,8 +27,8 @@
   {
     "name": "Size",
     "kind": "class",
-    "start_line": 10,
-    "end_line": 13,
+    "start_line": 26,
+    "end_line": 29,
     "signature": null,
     "subtype": null,
     "superclasses": null,

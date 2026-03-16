@@ -2,8 +2,8 @@
   {
     "name": "list_users",
     "kind": "function",
-    "start_line": 2,
-    "end_line": 3,
+    "start_line": 16,
+    "end_line": 17,
     "signature": "()",
     "children": [],
     "calls": [
@@ -17,8 +17,8 @@
   {
     "name": "Config",
     "kind": "class",
-    "start_line": 6,
-    "end_line": 8,
+    "start_line": 20,
+    "end_line": 22,
     "signature": null,
     "children": [],
     "calls": []

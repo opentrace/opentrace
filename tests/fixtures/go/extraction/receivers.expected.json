@@ -2,8 +2,8 @@
   {
     "name": "Server",
     "kind": "class",
-    "start_line": 3,
-    "end_line": 3,
+    "start_line": 17,
+    "end_line": 17,
     "signature": null,
     "receiver_var": null,
     "receiver_type": null,
@@ -13,8 +13,8 @@
   {
     "name": "Start",
     "kind": "function",
-    "start_line": 5,
-    "end_line": 7,
+    "start_line": 19,
+    "end_line": 21,
     "signature": "(s Server) ()",
     "receiver_var": "s",
     "receiver_type": "Server",
@@ -24,8 +24,8 @@
   {
     "name": "Stop",
     "kind": "function",
-    "start_line": 9,
-    "end_line": 11,
+    "start_line": 23,
+    "end_line": 25,
     "signature": "(s *Server) ()",
     "receiver_var": "s",
     "receiver_type": "Server",

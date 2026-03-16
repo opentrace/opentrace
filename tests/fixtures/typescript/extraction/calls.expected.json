@@ -2,8 +2,8 @@
   {
     "name": "orchestrate",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 5,
+    "start_line": 17,
+    "end_line": 21,
     "signature": "()",
     "children": [],
     "calls": [
@@ -27,8 +27,8 @@
   {
     "name": "dispatch",
     "kind": "function",
-    "start_line": 6,
-    "end_line": 9,
+    "start_line": 22,
+    "end_line": 25,
     "signature": "(event: string)",
     "children": [],
     "calls": [

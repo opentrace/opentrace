@@ -2,8 +2,8 @@
   {
     "name": "Repository",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 5,
+    "start_line": 17,
+    "end_line": 21,
     "signature": null,
     "subtype": "interface",
     "superclasses": null,
@@ -12,8 +12,8 @@
       {
         "name": "save",
         "kind": "function",
-        "start_line": 2,
-        "end_line": 2,
+        "start_line": 18,
+        "end_line": 18,
         "signature": "(Object item)",
         "subtype": null,
         "superclasses": null,
@@ -24,8 +24,8 @@
       {
         "name": "findById",
         "kind": "function",
-        "start_line": 3,
-        "end_line": 3,
+        "start_line": 19,
+        "end_line": 19,
         "signature": "(String id)",
         "subtype": null,
         "superclasses": null,
@@ -36,8 +36,8 @@
       {
         "name": "delete",
         "kind": "function",
-        "start_line": 4,
-        "end_line": 4,
+        "start_line": 20,
+        "end_line": 20,
         "signature": "(String id)",
         "subtype": null,
         "superclasses": null,

@@ -2,8 +2,8 @@
   {
     "name": "add",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 3,
+    "start_line": 17,
+    "end_line": 19,
     "signature": "(int a, int b)",
     "subtype": null,
     "superclasses": null,
@@ -14,8 +14,8 @@
   {
     "name": "greet",
     "kind": "function",
-    "start_line": 5,
-    "end_line": 7,
+    "start_line": 21,
+    "end_line": 23,
     "signature": "(const char* name)",
     "subtype": null,
     "superclasses": null,
@@ -26,8 +26,8 @@
   {
     "name": "main",
     "kind": "function",
-    "start_line": 9,
-    "end_line": 11,
+    "start_line": 25,
+    "end_line": 27,
     "signature": "()",
     "subtype": null,
     "superclasses": null,

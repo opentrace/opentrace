@@ -2,8 +2,8 @@
   {
     "name": "Animal",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 4,
+    "start_line": 17,
+    "end_line": 20,
     "signature": null,
     "subtype": null,
     "superclasses": null,
@@ -12,8 +12,8 @@
       {
         "name": "breathe",
         "kind": "function",
-        "start_line": 3,
-        "end_line": 3,
+        "start_line": 19,
+        "end_line": 19,
         "signature": "()",
         "subtype": null,
         "superclasses": null,
@@ -27,8 +27,8 @@
   {
     "name": "Dog",
     "kind": "class",
-    "start_line": 6,
-    "end_line": 9,
+    "start_line": 22,
+    "end_line": 25,
     "signature": null,
     "subtype": null,
     "superclasses": [
@@ -39,8 +39,8 @@
       {
         "name": "bark",
         "kind": "function",
-        "start_line": 8,
-        "end_line": 8,
+        "start_line": 24,
+        "end_line": 24,
         "signature": "()",
         "subtype": null,
         "superclasses": null,

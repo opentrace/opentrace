@@ -2,8 +2,8 @@
   {
     "name": "init",
     "kind": "function",
-    "start_line": 3,
-    "end_line": 6,
+    "start_line": 17,
+    "end_line": 20,
     "signature": "()",
     "receiver_var": null,
     "receiver_type": null,
@@ -24,8 +24,8 @@
   {
     "name": "run",
     "kind": "function",
-    "start_line": 8,
-    "end_line": 11,
+    "start_line": 22,
+    "end_line": 25,
     "signature": "()",
     "receiver_var": null,
     "receiver_type": null,
