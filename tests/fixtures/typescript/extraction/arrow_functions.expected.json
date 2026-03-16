@@ -2,8 +2,8 @@
   {
     "name": "greet",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 3,
+    "start_line": 17,
+    "end_line": 19,
     "signature": "(name: string)",
     "children": [],
     "calls": []
@@ -11,8 +11,8 @@
   {
     "name": "double",
     "kind": "function",
-    "start_line": 4,
-    "end_line": 4,
+    "start_line": 20,
+    "end_line": 20,
     "signature": "(n: number)",
     "children": [],
     "calls": []
@@ -20,8 +20,8 @@
   {
     "name": "handler",
     "kind": "function",
-    "start_line": 5,
-    "end_line": 7,
+    "start_line": 21,
+    "end_line": 23,
     "signature": "(req: Request)",
     "children": [],
     "calls": [

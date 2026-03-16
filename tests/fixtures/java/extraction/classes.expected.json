@@ -2,8 +2,8 @@
   {
     "name": "Calculator",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 9,
+    "start_line": 17,
+    "end_line": 25,
     "signature": null,
     "subtype": null,
     "superclasses": null,
@@ -12,8 +12,8 @@
       {
         "name": "add",
         "kind": "function",
-        "start_line": 2,
-        "end_line": 4,
+        "start_line": 18,
+        "end_line": 20,
         "signature": "(int a, int b)",
         "subtype": null,
         "superclasses": null,
@@ -24,8 +24,8 @@
       {
         "name": "subtract",
         "kind": "function",
-        "start_line": 6,
-        "end_line": 8,
+        "start_line": 22,
+        "end_line": 24,
         "signature": "(int a, int b)",
         "subtype": null,
         "superclasses": null,

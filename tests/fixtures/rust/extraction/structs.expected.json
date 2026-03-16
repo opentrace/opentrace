@@ -2,8 +2,8 @@
   {
     "name": "Config",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 4,
+    "start_line": 15,
+    "end_line": 18,
     "signature": null,
     "subtype": "struct",
     "superclasses": null,
@@ -14,8 +14,8 @@
   {
     "name": "Empty",
     "kind": "class",
-    "start_line": 6,
-    "end_line": 6,
+    "start_line": 20,
+    "end_line": 20,
     "signature": null,
     "subtype": "struct",
     "superclasses": null,

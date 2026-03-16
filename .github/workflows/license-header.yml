@@ -1,0 +1,17 @@
+name: License Header Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Check license headers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check license headers
+        uses: apache/skywalking-eyes/header@v0.6.0
+        with:
+          mode: check

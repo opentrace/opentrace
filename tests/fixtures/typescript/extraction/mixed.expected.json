@@ -2,15 +2,15 @@
   {
     "name": "Config",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 5,
+    "start_line": 17,
+    "end_line": 21,
     "signature": null,
     "children": [
       {
         "name": "value",
         "kind": "function",
-        "start_line": 2,
-        "end_line": 4,
+        "start_line": 18,
+        "end_line": 20,
         "signature": "()",
         "children": [],
         "calls": []
@@ -21,8 +21,8 @@
   {
     "name": "setup",
     "kind": "function",
-    "start_line": 6,
-    "end_line": 9,
+    "start_line": 22,
+    "end_line": 25,
     "signature": "(opts: Options)",
     "children": [],
     "calls": [
@@ -41,8 +41,8 @@
   {
     "name": "run",
     "kind": "function",
-    "start_line": 10,
-    "end_line": 12,
+    "start_line": 26,
+    "end_line": 28,
     "signature": "()",
     "children": [],
     "calls": [

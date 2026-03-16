@@ -1,0 +1,43 @@
+header:
+  license:
+    spdx-id: Apache-2.0
+    copyright-owner: OpenTrace Contributors
+
+  paths-ignore:
+    - "**/*.md"
+    - "**/*.json"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.toml"
+    - "**/*.cfg"
+    - "**/*.txt"
+    - "**/*.lock"
+    - "**/*.sum"
+    - "**/*.mod"
+    - "**/*.env*"
+    - "**/*.gitignore"
+    - "**/LICENSE"
+    - "**/NOTICE"
+    - "**/.claude/**"
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/gen/**"
+    - "**/__pycache__/**"
+    - "**/venv/**"
+    - "**/*.wasm"
+    - "**/*.svg"
+    - "**/*.png"
+    - "**/*.ico"
+    - "proto/**/*.pb.go"
+    - "ui/public/**"
+    - "ui/src/vite-env.d.ts"
+    - "**/*.jsonl"
+    - "**/*.rb"
+    - "**/Gemfile"
+    - "**/.prettierrc"
+    - ".entire/**"
+    - ".idea/**"
+    - ".git"
+
+  comment: on-failure

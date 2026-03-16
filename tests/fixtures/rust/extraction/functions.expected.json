@@ -2,8 +2,8 @@
   {
     "name": "add",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 3,
+    "start_line": 15,
+    "end_line": 17,
     "signature": "(a: i32, b: i32)",
     "subtype": null,
     "superclasses": null,
@@ -14,8 +14,8 @@
   {
     "name": "greet",
     "kind": "function",
-    "start_line": 5,
-    "end_line": 7,
+    "start_line": 19,
+    "end_line": 21,
     "signature": "(name: &str)",
     "subtype": null,
     "superclasses": null,

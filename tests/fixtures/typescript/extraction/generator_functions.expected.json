@@ -2,8 +2,8 @@
   {
     "name": "range",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 5,
+    "start_line": 17,
+    "end_line": 21,
     "signature": "(start: number, end: number)",
     "children": [],
     "calls": []

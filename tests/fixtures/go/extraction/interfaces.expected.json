@@ -2,8 +2,8 @@
   {
     "name": "Store",
     "kind": "class",
-    "start_line": 3,
-    "end_line": 6,
+    "start_line": 17,
+    "end_line": 20,
     "signature": null,
     "receiver_var": null,
     "receiver_type": null,
@@ -11,8 +11,8 @@
       {
         "name": "Get",
         "kind": "function",
-        "start_line": 4,
-        "end_line": 4,
+        "start_line": 18,
+        "end_line": 18,
         "signature": "(key string)",
         "receiver_var": null,
         "receiver_type": null,
@@ -22,8 +22,8 @@
       {
         "name": "Set",
         "kind": "function",
-        "start_line": 5,
-        "end_line": 5,
+        "start_line": 19,
+        "end_line": 19,
         "signature": "(key string, value string)",
         "receiver_var": null,
         "receiver_type": null,
@@ -36,8 +36,8 @@
   {
     "name": "Any",
     "kind": "class",
-    "start_line": 8,
-    "end_line": 8,
+    "start_line": 22,
+    "end_line": 22,
     "signature": null,
     "receiver_var": null,
     "receiver_type": null,

@@ -2,8 +2,8 @@
   {
     "name": "process",
     "kind": "function",
-    "start_line": 1,
-    "end_line": 4,
+    "start_line": 15,
+    "end_line": 18,
     "signature": "()",
     "children": [],
     "calls": [
@@ -27,8 +27,8 @@
   {
     "name": "run",
     "kind": "function",
-    "start_line": 6,
-    "end_line": 9,
+    "start_line": 20,
+    "end_line": 23,
     "signature": "()",
     "children": [],
     "calls": [

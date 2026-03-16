@@ -2,8 +2,8 @@
   {
     "name": "main",
     "kind": "function",
-    "start_line": 3,
-    "end_line": 5,
+    "start_line": 17,
+    "end_line": 19,
     "signature": "()",
     "receiver_var": null,
     "receiver_type": null,
@@ -19,8 +19,8 @@
   {
     "name": "add",
     "kind": "function",
-    "start_line": 7,
-    "end_line": 9,
+    "start_line": 21,
+    "end_line": 23,
     "signature": "(a int, b int)",
     "receiver_var": null,
     "receiver_type": null,

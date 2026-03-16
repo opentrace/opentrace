@@ -2,15 +2,15 @@
   {
     "name": "UserService",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 6,
+    "start_line": 17,
+    "end_line": 22,
     "signature": null,
     "children": [
       {
         "name": "constructor",
         "kind": "function",
-        "start_line": 2,
-        "end_line": 2,
+        "start_line": 18,
+        "end_line": 18,
         "signature": "(private db: Database)",
         "children": [],
         "calls": []
@@ -18,8 +18,8 @@
       {
         "name": "getUser",
         "kind": "function",
-        "start_line": 3,
-        "end_line": 5,
+        "start_line": 19,
+        "end_line": 21,
         "signature": "(id: string)",
         "children": [],
         "calls": [
@@ -36,8 +36,8 @@
   {
     "name": "AppModule",
     "kind": "class",
-    "start_line": 7,
-    "end_line": 7,
+    "start_line": 23,
+    "end_line": 23,
     "signature": null,
     "children": [],
     "calls": []

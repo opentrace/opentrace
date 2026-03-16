@@ -2,8 +2,8 @@
   {
     "name": "Node",
     "kind": "class",
-    "start_line": 1,
-    "end_line": 4,
+    "start_line": 17,
+    "end_line": 20,
     "signature": null,
     "subtype": "struct",
     "superclasses": null,
@@ -14,8 +14,8 @@
   {
     "name": "Direction",
     "kind": "class",
-    "start_line": 6,
-    "end_line": 11,
+    "start_line": 22,
+    "end_line": 27,
     "signature": null,
     "subtype": "enum",
     "superclasses": null,
@@ -26,8 +26,8 @@
   {
     "name": "* create_node(int val)",
     "kind": "function",
-    "start_line": 13,
-    "end_line": 15,
+    "start_line": 29,
+    "end_line": 31,
     "signature": null,
     "subtype": null,
     "superclasses": null,
@@ -38,8 +38,8 @@
   {
     "name": "free_node",
     "kind": "function",
-    "start_line": 17,
-    "end_line": 18,
+    "start_line": 33,
+    "end_line": 34,
     "signature": "(struct Node* n)",
     "subtype": null,
     "superclasses": null,
