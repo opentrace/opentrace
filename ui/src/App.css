@@ -770,9 +770,9 @@ header h1 {
 /* GitHub Star Button */
 .github-star-btn {
   pointer-events: auto;
-  background: color-mix(in oklch, var(--card) 80%, transparent);
-  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
-  color: var(--muted-foreground);
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  color: var(--primary-foreground);
   height: 36px;
   padding: 0 12px;
   border-radius: calc(var(--radius) + 2px);
@@ -788,9 +788,8 @@ header h1 {
 }
 
 .github-star-btn:hover {
-  background: color-mix(in oklch, var(--primary) 10%, transparent);
-  color: var(--primary);
-  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+  background: color-mix(in oklch, var(--primary) 85%, black);
+  border-color: color-mix(in oklch, var(--primary) 85%, black);
 }
 
 /* Chat Panel */
