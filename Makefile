@@ -1,4 +1,4 @@
-.PHONY: all install build test clean api agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint
+.PHONY: all install build test clean api agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
 
 all: build
 
@@ -59,6 +59,14 @@ CHANNEL ?= preview
 
 ui-build-static:
 	VITE_API_BASE="" VITE_BROWSER_ONLY=true $(MAKE) -C ui build
+
+## Check that all source files have the Apache 2.0 license header
+license-check:
+	docker run --rm -v $(CURDIR):/github/workspace apache/skywalking-eyes header check
+
+## Add the Apache 2.0 license header to source files missing it
+license-fix:
+	docker run --rm -v $(CURDIR):/github/workspace apache/skywalking-eyes header fix
 
 ## Reload the Claude Code plugin (remove and re-add marketplace + plugin)
 plugin-reload:
