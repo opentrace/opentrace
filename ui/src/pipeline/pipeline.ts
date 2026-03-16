@@ -26,7 +26,7 @@ import { execute as scanning } from './stages/scanning';
 import { execute as processing } from './stages/processing';
 import { execute as resolving } from './stages/resolving';
 import { execute as saving } from './stages/saving';
-import { execute as summarizing } from './stages/summarizing';
+import { wrapWithSummaries } from './stages/summarizing';
 
 export { initParsers } from './stages/parsing';
 
@@ -57,7 +57,7 @@ export function* runPipeline(
   ctx: PipelineContext,
   store?: Store,
 ): Generator<PipelineEvent> {
-  const inner = summarizing(corePipeline(input, ctx));
+  const inner = wrapWithSummaries(corePipeline(input, ctx));
   if (store) {
     yield* saving(inner, store);
   } else {

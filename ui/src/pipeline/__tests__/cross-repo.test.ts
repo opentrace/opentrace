@@ -236,8 +236,8 @@ describe('cross-repo: same project imported twice with different repo names', ()
       .map(([id, sources]) => ({ id, sources }));
 
     // Duplicates should only be Package, File, or Directory nodes.
-    // File/Directory duplicates are summary-update nodes emitted by the
-    // processing stage (the store merges their properties).
+    // File/Directory duplicates occur because the summarizing stage enriches
+    // nodes that were already emitted by the scanning stage.
     const ALLOWED_DUP_TYPES = new Set(['Package', 'File', 'Directory']);
     expect(duplicates.length).toBeGreaterThan(0);
     for (const dup of duplicates) {

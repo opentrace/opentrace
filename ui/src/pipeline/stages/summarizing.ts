@@ -48,7 +48,7 @@ function summarizeNode(node: GraphNode): string {
  * Wrap an inner event generator, adding summaries to every node that
  * doesn't already have one. All events are re-yielded with enriched nodes.
  */
-export function* execute(
+export function* wrapWithSummaries(
   inner: Generator<PipelineEvent>,
 ): Generator<PipelineEvent> {
   for (const event of inner) {
