@@ -5,6 +5,7 @@ on:
     branches: [main]
 
 permissions:
+  contents: read
   pull-requests: write
 
 jobs:
@@ -12,7 +13,7 @@ jobs:
     name: Check for AI co-authors
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
