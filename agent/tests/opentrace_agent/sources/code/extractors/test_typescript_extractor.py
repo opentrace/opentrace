@@ -167,9 +167,7 @@ class Controller {
     # --- arrow function / const declaration tests ---
 
     def test_extract_arrow_function(self):
-        source = (
-            b"const greet = (name: string): string => {\n  return `Hi ${name}`;\n};\n"
-        )
+        source = b"const greet = (name: string): string => {\n  return `Hi ${name}`;\n};\n"
         result = self.extractor.extract(source)
 
         assert len(result.symbols) == 1
@@ -205,9 +203,7 @@ const Validator = class {
         assert cls.children[0].name == "validate"
 
     def test_extract_function_expression(self):
-        source = (
-            b"const handler = function(req: Request) {\n  return process(req);\n};\n"
-        )
+        source = b"const handler = function(req: Request) {\n  return process(req);\n};\n"
         result = self.extractor.extract(source)
 
         assert len(result.symbols) == 1

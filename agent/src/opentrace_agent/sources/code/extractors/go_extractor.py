@@ -35,9 +35,7 @@ class GoExtractor(SymbolExtractor):
         parser = _get_parser()
         tree = parser.parse(source_bytes)
         symbols = _walk_node(tree.root_node)
-        return ExtractionResult(
-            symbols=symbols, language=self.language_name, root_node=tree.root_node
-        )
+        return ExtractionResult(symbols=symbols, language=self.language_name, root_node=tree.root_node)
 
 
 def _walk_node(node: tree_sitter.Node) -> list[CodeSymbol]:
@@ -70,11 +68,7 @@ def _extract_type_decl(node: tree_sitter.Node) -> CodeSymbol | None:
             type_node = child.child_by_field_name("type")
             if type_node and type_node.type in ("struct_type", "interface_type"):
                 is_interface = type_node.type == "interface_type"
-                methods = (
-                    _extract_interface_methods(type_node)
-                    if is_interface
-                    else []
-                )
+                methods = _extract_interface_methods(type_node) if is_interface else []
                 subtype = "interface" if is_interface else "struct"
                 superclasses: list[str] | None = None
                 interfaces: list[str] | None = None

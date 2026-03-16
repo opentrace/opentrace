@@ -7,6 +7,9 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+if TYPE_CHECKING:
+    from opentrace_agent.sources.code.import_analyzer import ImportResult
+
 from opentrace_agent.models.base import BaseTreeNode, NodeRelationship
 from opentrace_agent.models.nodes import (
     ClassNode,
@@ -61,12 +64,8 @@ class SymbolAttacher:
         name_registry: dict[str, list[BaseTreeNode]] = {}
         file_registry: dict[str, dict[str, BaseTreeNode]] = {}
         class_registry: dict[str, list[ClassNode]] = {}
-        import_registry: dict[
-            str, dict[str, str]
-        ] = {}  # file_id → {alias → target_file_id}
-        call_info: list[
-            tuple[BaseTreeNode, list[CallRef], str]
-        ] = []  # (caller, refs, file_id)
+        import_registry: dict[str, dict[str, str]] = {}  # file_id → {alias → target_file_id}
+        call_info: list[tuple[BaseTreeNode, list[CallRef], str]] = []  # (caller, refs, file_id)
 
         # Collect all file nodes first to build the known_file_ids set
         file_nodes: list[tuple[FileNode, SymbolExtractor]] = []
@@ -189,9 +188,7 @@ class SymbolAttacher:
         )
 
         if isinstance(extractor, TypeScriptExtractor):
-            result = extractor.extract_for_extension(
-                source_bytes, file_node.extension or ""
-            )
+            result = extractor.extract_for_extension(source_bytes, file_node.extension or "")
         else:
             result = extractor.extract(source_bytes)
 
@@ -231,9 +228,7 @@ class SymbolAttacher:
                 class_registry,
                 call_info,
             )
-            file_node.add_child(
-                NodeRelationship(target=child_node, relationship="DEFINED_IN")
-            )
+            file_node.add_child(NodeRelationship(target=child_node, relationship="DEFINED_IN"))
             classes += c
             functions += f
 
@@ -266,18 +261,14 @@ class SymbolAttacher:
         from opentrace_agent.summarizer.base import NodeKind
 
         # Collect all items: (source_text, kind, target_node)
-        items: list[
-            tuple[str, NodeKind, FileNode | ClassNode | FunctionNode | DirectoryNode]
-        ] = []
+        items: list[tuple[str, NodeKind, FileNode | ClassNode | FunctionNode | DirectoryNode]] = []
 
         # Build dir_path → [child file names] for directory summaries
         dir_child_names: dict[str, list[str]] = {}
         for file_node, _ in file_nodes:
             if not file_node.path:
                 continue
-            parent_dir = (
-                file_node.path.rsplit("/", 1)[0] if "/" in file_node.path else ""
-            )
+            parent_dir = file_node.path.rsplit("/", 1)[0] if "/" in file_node.path else ""
             file_name = file_node.path.rsplit("/", 1)[-1]
             dir_child_names.setdefault(parent_dir, []).append(file_name)
 
@@ -305,23 +296,15 @@ class SymbolAttacher:
                 if isinstance(node, (ClassNode, FunctionNode)):
                     snippet = self._extract_snippet(node, source_lines)
                     if snippet:
-                        kind: NodeKind = (
-                            "class" if isinstance(node, ClassNode) else "function"
-                        )
+                        kind: NodeKind = "class" if isinstance(node, ClassNode) else "function"
                         items.append((snippet, kind, node))
                     # Also collect methods inside classes
                     if isinstance(node, ClassNode):
                         for child_rel in node.children:
-                            if child_rel.relationship == "DEFINED_IN" and isinstance(
-                                child_rel.target, FunctionNode
-                            ):
-                                snippet = self._extract_snippet(
-                                    child_rel.target, source_lines
-                                )
+                            if child_rel.relationship == "DEFINED_IN" and isinstance(child_rel.target, FunctionNode):
+                                snippet = self._extract_snippet(child_rel.target, source_lines)
                                 if snippet:
-                                    items.append(
-                                        (snippet, "function", child_rel.target)
-                                    )
+                                    items.append((snippet, "function", child_rel.target))
 
         # Collect directory items
         for dn in dir_nodes:
@@ -337,11 +320,7 @@ class SymbolAttacher:
                 items.append((listing, "directory", dn))
 
         # Process in batches
-        batch_size = (
-            self._summarizer._config.batch_size
-            if hasattr(self._summarizer, "_config")
-            else 8
-        )
+        batch_size = self._summarizer._config.batch_size if hasattr(self._summarizer, "_config") else 8
         count = 0
 
         for batch_start in range(0, len(items), batch_size):
@@ -421,9 +400,7 @@ def _symbol_to_node(
                 class_registry,
                 call_info,
             )
-            node.add_child(
-                NodeRelationship(target=child_node, relationship="DEFINED_IN")
-            )
+            node.add_child(NodeRelationship(target=child_node, relationship="DEFINED_IN"))
             classes += c
             functions += f
     else:
@@ -556,11 +533,7 @@ def _resolve_single_call(
     if ref.kind == "attribute":
         caller_receiver_var = getattr(caller_node, "_receiver_var", None)
         caller_receiver_type = getattr(caller_node, "_receiver_type", None)
-        if (
-            caller_receiver_var
-            and ref.receiver == caller_receiver_var
-            and caller_receiver_type
-        ):
+        if caller_receiver_var and ref.receiver == caller_receiver_var and caller_receiver_type:
             # Look for methods with matching receiver_type
             candidates = name_registry.get(ref.name, [])
             for candidate in candidates:
@@ -575,19 +548,14 @@ def _resolve_single_call(
             if type_name and type_name in class_registry:
                 for cls in class_registry[type_name]:
                     for rel in cls.children:
-                        if (
-                            rel.target.name == ref.name
-                            and rel.relationship == "DEFINED_IN"
-                        ):
+                        if rel.target.name == ref.name and rel.relationship == "DEFINED_IN":
                             return rel.target, 0.7
 
     # Strategy 3: ClassName.method() resolution
     if ref.kind == "attribute" and ref.receiver in class_registry:
         class_candidates = class_registry[ref.receiver]
         # Prefer same-file class, then fall back to any
-        sorted_classes = sorted(
-            class_candidates, key=lambda c: 0 if c.id.split("::")[0] == file_id else 1
-        )
+        sorted_classes = sorted(class_candidates, key=lambda c: 0 if c.id.split("::")[0] == file_id else 1)
         for cls in sorted_classes:
             for rel in cls.children:
                 if rel.target.name == ref.name and rel.relationship == "DEFINED_IN":
@@ -624,10 +592,7 @@ def _resolve_single_call(
                 # If it's a class, prefer its __init__/constructor
                 if isinstance(target, ClassNode):
                     for rel in target.children:
-                        if (
-                            rel.target.name in ("__init__", "constructor")
-                            and rel.relationship == "DEFINED_IN"
-                        ):
+                        if rel.target.name in ("__init__", "constructor") and rel.relationship == "DEFINED_IN":
                             return rel.target, 0.9
                 return target, 0.9
 
@@ -635,16 +600,11 @@ def _resolve_single_call(
     if ref.kind == "bare" and ref.name in class_registry:
         class_candidates = class_registry[ref.name]
         # Prefer same-file class, then fall back to any
-        sorted_classes = sorted(
-            class_candidates, key=lambda c: 0 if c.id.split("::")[0] == file_id else 1
-        )
+        sorted_classes = sorted(class_candidates, key=lambda c: 0 if c.id.split("::")[0] == file_id else 1)
         for cls in sorted_classes:
             # Try to find __init__ or constructor child
             for rel in cls.children:
-                if (
-                    rel.target.name in ("__init__", "constructor")
-                    and rel.relationship == "DEFINED_IN"
-                ):
+                if rel.target.name in ("__init__", "constructor") and rel.relationship == "DEFINED_IN":
                     target_file_id = rel.target.id.split("::")[0]
                     conf = 1.0 if target_file_id == file_id else 0.8
                     return rel.target, conf

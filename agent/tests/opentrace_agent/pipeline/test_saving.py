@@ -58,7 +58,7 @@ def _mock_events() -> list[PipelineEvent]:
 
 def test_saving_persists_nodes() -> None:
     store = MemoryStore()
-    events = list(saving(iter(_mock_events()), store))
+    list(saving(iter(_mock_events()), store))
 
     assert "repo/file.py" in store.nodes
     assert "repo" in store.nodes
@@ -68,7 +68,7 @@ def test_saving_persists_nodes() -> None:
 
 def test_saving_persists_relationships() -> None:
     store = MemoryStore()
-    events = list(saving(iter(_mock_events()), store))
+    list(saving(iter(_mock_events()), store))
 
     assert "rel-1" in store.relationships
     assert "rel-2" in store.relationships

@@ -98,13 +98,12 @@ _GO_REQUIRE_SINGLE = re.compile(
     r'^\s*require\s+"?([^\s"]+)"?\s+(\S+)',
 )
 _GO_REQUIRE_BLOCK_LINE = re.compile(
-    r'^\s*([^\s/]+)\s+(\S+)',
+    r"^\s*([^\s/]+)\s+(\S+)",
 )
 
 
 def parse_go_mod(content: str, source: str) -> list[ParsedDependency]:
     deps: list[ParsedDependency] = []
-    go_module_path: str | None = None
     in_require = False
 
     for line in content.splitlines():
@@ -112,7 +111,7 @@ def parse_go_mod(content: str, source: str) -> list[ParsedDependency]:
 
         # Extract module path
         if stripped.startswith("module "):
-            go_module_path = stripped.split(None, 1)[1].strip()
+            stripped.split(None, 1)[1].strip()  # module path (unused for now)
             continue
 
         # Single-line require
@@ -167,10 +166,10 @@ def extract_go_module_path(content: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 _REQ_LINE = re.compile(
-    r'^([A-Za-z0-9][\w.\-]*)',
+    r"^([A-Za-z0-9][\w.\-]*)",
 )
 _REQ_VERSION = re.compile(
-    r'[><=!~]+\s*(\S+)',
+    r"[><=!~]+\s*(\S+)",
 )
 
 
@@ -263,12 +262,12 @@ def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
 
 def _parse_pep508_line(spec: str) -> tuple[str, str] | None:
     """Parse a PEP 508 dependency spec like ``requests>=2.0`` → (name, version)."""
-    m = re.match(r'^([A-Za-z0-9][\w.\-]*)', spec)
+    m = re.match(r"^([A-Za-z0-9][\w.\-]*)", spec)
     if not m:
         return None
     name = m.group(1)
-    rest = spec[m.end():]
-    version_match = re.search(r'[><=!~]+\s*(\S+)', rest)
+    rest = spec[m.end() :]
+    version_match = re.search(r"[><=!~]+\s*(\S+)", rest)
     version = version_match.group(1).rstrip(",;") if version_match else "*"
     return name, version
 

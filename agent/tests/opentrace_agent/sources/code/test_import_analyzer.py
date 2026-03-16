@@ -161,26 +161,20 @@ class TestTypeScriptImports:
     def test_relative_import(self):
         source = b"import { helper } from './utils';\n"
         known = {"src/utils.ts", "src/main.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/main.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
         assert result.internal.get("utils") == "src/utils.ts"
 
     def test_relative_import_parent_dir(self):
         source = b"import { config } from '../config';\n"
         known = {"src/config.ts", "src/app/main.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/app/main.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/app/main.ts", known)
         assert result.internal.get("config") == "src/config.ts"
 
     def test_bare_specifier_produces_external(self):
         """Non-relative imports produce external Package refs."""
         source = b"import React from 'react';\n"
         known = {"src/main.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/main.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
         assert result.internal == {}
         assert result.external.get("react") == "pkg:npm:react"
 
@@ -188,41 +182,31 @@ class TestTypeScriptImports:
         """Scoped npm packages produce correct package IDs."""
         source = b"import { useState } from '@tanstack/react-query';\n"
         known = {"src/main.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/main.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
         assert result.external.get("@tanstack/react-query") == "pkg:npm:@tanstack/react-query"
 
     def test_index_file_resolution(self):
         source = b"import { App } from './components';\n"
         known = {"src/components/index.ts", "src/main.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/main.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
         assert result.internal.get("components") == "src/components/index.ts"
 
     def test_tsx_extension_resolution(self):
         source = b"import { Widget } from './Widget';\n"
         known = {"src/Widget.tsx", "src/App.tsx"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/App.tsx", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/App.tsx", known)
         assert result.internal.get("Widget") == "src/Widget.tsx"
 
     def test_named_reexport(self):
         """export { Config } from './config' should create an alias."""
         source = b"export { Config } from './config';\n"
         known = {"src/config.ts", "src/index.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/index.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/index.ts", known)
         assert result.internal.get("config") == "src/config.ts"
 
     def test_reexport_skips_external(self):
         """Re-exports from external packages should be skipped."""
         source = b"export { useState } from 'react';\n"
         known = {"src/index.ts"}
-        result = analyze_typescript_imports(
-            _parse_typescript(source), "src/index.ts", known
-        )
+        result = analyze_typescript_imports(_parse_typescript(source), "src/index.ts", known)
         assert result.internal == {}

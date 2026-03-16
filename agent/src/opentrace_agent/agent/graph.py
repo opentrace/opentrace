@@ -24,16 +24,12 @@ def _make_plan_node(registry: SourceRegistry):
         for source_type, source in registry.all_sources.items():
             source_cfg = sources_config.get(source_type, {})
             # Check if any registered loader has config
-            has_config = any(
-                loader.provider_name in source_cfg for loader in source.loaders
-            )
+            has_config = any(loader.provider_name in source_cfg for loader in source.loaders)
             if has_config:
                 sources_to_run.append(source_type)
                 logger.info("Source '%s' has configured loaders, will run", source_type)
             else:
-                logger.debug(
-                    "Source '%s' has no configured loaders, skipping", source_type
-                )
+                logger.debug("Source '%s' has no configured loaders, skipping", source_type)
 
         if not sources_to_run:
             logger.info("No sources configured — nothing to do")

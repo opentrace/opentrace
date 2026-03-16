@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Sequence
-
-import pytest
 
 from opentrace_agent.models.base import NodeRelationship
 from opentrace_agent.models.nodes import (
@@ -17,7 +14,7 @@ from opentrace_agent.models.nodes import (
 )
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 from opentrace_agent.sources.code.symbol_attacher import SymbolAttacher
-from opentrace_agent.summarizer.base import NodeKind, SummarizerConfig
+from opentrace_agent.summarizer.base import NodeKind
 
 
 class FakeSummarizer:
@@ -108,9 +105,7 @@ class TestSymbolAttacherSummarization:
                 assert node.summary == "Summary of function"
                 summaries_found += 1
 
-        assert summaries_found >= 2, (
-            f"Expected at least 2 summarized nodes, got {summaries_found}"
-        )
+        assert summaries_found >= 2, f"Expected at least 2 summarized nodes, got {summaries_found}"
 
     def test_attach_without_summarizer_skips_phase3(self, tmp_path: Path):
         """When no summarizer is provided, no summaries should be generated."""

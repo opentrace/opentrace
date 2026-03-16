@@ -96,9 +96,7 @@ class FlanT5Summarizer:
             return [r.strip() for r in results]
         except Exception:
             # Fall back to sequential on batch failure
-            logger.warning(
-                "Batch summarization failed, falling back to sequential", exc_info=True
-            )
+            logger.warning("Batch summarization failed, falling back to sequential", exc_info=True)
             results: list[str] = []
             for source, kind in items:
                 try:

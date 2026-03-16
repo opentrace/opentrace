@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from typing import Any
-
 import pytest
 
 from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
@@ -12,8 +9,8 @@ from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
 # Skip entire module if kuzu is not installed
 kuzu = pytest.importorskip("kuzu")
 
-from opentrace_agent.pipeline.adapters import KuzuStoreAdapter
-from opentrace_agent.store import KuzuStore
+KuzuStoreAdapter = pytest.importorskip("opentrace_agent.pipeline.adapters").KuzuStoreAdapter
+KuzuStore = pytest.importorskip("opentrace_agent.store").KuzuStore
 
 
 @pytest.fixture()

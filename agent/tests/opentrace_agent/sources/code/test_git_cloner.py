@@ -81,9 +81,5 @@ class TestGitCloner:
         # No GIT_* vars from the host environment should leak through
         # (except the ones we explicitly set)
         for key in env:
-            if (
-                key.startswith("GIT_")
-                and key != "GIT_TERMINAL_PROMPT"
-                and key != "GIT_ASKPASS"
-            ):
+            if key.startswith("GIT_") and key != "GIT_TERMINAL_PROMPT" and key != "GIT_ASKPASS":
                 pytest.fail(f"Unexpected GIT_ env var: {key}")

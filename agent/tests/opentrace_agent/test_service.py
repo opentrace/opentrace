@@ -6,16 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from dependency_injector import providers
+from opentrace_agent.gen.opentrace.v1 import agent_service_pb2 as pb2
+from opentrace_agent.gen.opentrace.v1 import job_config_pb2
 
 from opentrace_agent.config import AgentConfig
 from opentrace_agent.container import AppContainer
-from opentrace_agent.gen.opentrace.v1 import agent_service_pb2 as pb2
-from opentrace_agent.gen.opentrace.v1 import job_config_pb2
 from opentrace_agent.service import (
     AgentServiceServicer,
     _git_integrations_to_sources_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # _git_integrations_to_sources_config
@@ -201,7 +200,7 @@ class TestRunJob:
         container.git_cloner.override(providers.Object(mock_cloner))
         container.mcp_client.override(providers.Object(mock_client))
 
-        events = await _collect_events(request, container)
+        await _collect_events(request, container)
 
         mock_client.close.assert_awaited_once()
 

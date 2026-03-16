@@ -46,18 +46,14 @@ class GitLabIssueLoader(Loader):
                 state="open",
                 provider="gitlab",
             )
-            project_node.add_child(
-                NodeRelationship(target=issue_node, relationship="DEFINED_IN")
-            )
+            project_node.add_child(NodeRelationship(target=issue_node, relationship="DEFINED_IN"))
 
             user_node = UserNode(
                 id="gitlab/user/placeholder",
                 name="placeholder-user",
                 provider="gitlab",
             )
-            issue_node.add_child(
-                NodeRelationship(target=user_node, relationship="ASSIGNED")
-            )
+            issue_node.add_child(NodeRelationship(target=user_node, relationship="ASSIGNED"))
 
             trees.append(
                 TreeWithOrigin(
@@ -66,8 +62,6 @@ class GitLabIssueLoader(Loader):
                     counters={"projects": 1, "issues": 1, "users": 1},
                 )
             )
-            logger.info(
-                "Created placeholder tree for GitLab project '%s'", project_name
-            )
+            logger.info("Created placeholder tree for GitLab project '%s'", project_name)
 
         return trees

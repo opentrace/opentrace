@@ -18,9 +18,7 @@ class TestGitLabIssueLoader:
     @pytest.mark.anyio
     async def test_load_with_project(self):
         loader = GitLabIssueLoader()
-        trees = await loader.load(
-            {"projects": [{"id": "group/proj", "name": "My Proj"}]}
-        )
+        trees = await loader.load({"projects": [{"id": "group/proj", "name": "My Proj"}]})
         assert len(trees) == 1
         assert trees[0].origin == "issue"
         assert trees[0].root.name == "My Proj"

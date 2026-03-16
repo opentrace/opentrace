@@ -8,7 +8,6 @@ from opentrace_agent.pipeline.processing import processing
 from opentrace_agent.pipeline.types import (
     EventKind,
     FileEntry,
-    Phase,
     PipelineContext,
     ProcessingOutput,
     ScanResult,
@@ -32,10 +31,7 @@ def _make_scan_result(tmp_path: Path) -> ScanResult:
     )
 
     helper_file = tmp_path / "utils.py"
-    helper_file.write_text(
-        "def helper():\n"
-        "    return 42\n"
-    )
+    helper_file.write_text("def helper():\n    return 42\n")
 
     repo_id = "test/repo"
     file_entries = [
@@ -74,7 +70,7 @@ def test_processing_extracts_symbols(tmp_path: Path) -> None:
     ctx = PipelineContext()
     out: StageResult[ProcessingOutput] = StageResult()
 
-    events = list(processing(scan, ctx, out))
+    list(processing(scan, ctx, out))
     proc = out.value
     assert proc is not None
 
@@ -158,7 +154,7 @@ def test_processing_handles_unreadable_file(tmp_path: Path) -> None:
     ctx = PipelineContext()
     out: StageResult[ProcessingOutput] = StageResult()
 
-    events = list(processing(scan, ctx, out))
+    list(processing(scan, ctx, out))
     proc = out.value
     assert proc is not None
     assert len(proc.errors) == 1
@@ -168,12 +164,7 @@ def test_processing_handles_unreadable_file(tmp_path: Path) -> None:
 def test_processing_go_file(tmp_path: Path) -> None:
     """Go files are processed correctly."""
     go_file = tmp_path / "main.go"
-    go_file.write_text(
-        "package main\n\n"
-        "func main() {\n"
-        "    fmt.Println(\"hello\")\n"
-        "}\n"
-    )
+    go_file.write_text('package main\n\nfunc main() {\n    fmt.Println("hello")\n}\n')
 
     scan = ScanResult(
         repo_id="test/repo",
@@ -193,7 +184,7 @@ def test_processing_go_file(tmp_path: Path) -> None:
     ctx = PipelineContext()
     out: StageResult[ProcessingOutput] = StageResult()
 
-    events = list(processing(scan, ctx, out))
+    list(processing(scan, ctx, out))
     proc = out.value
     assert proc is not None
     assert proc.functions_extracted >= 1

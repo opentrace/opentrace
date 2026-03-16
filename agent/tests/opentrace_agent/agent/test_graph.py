@@ -16,7 +16,6 @@ from opentrace_agent.sources.issue.gitlab_loader import GitLabIssueLoader
 from opentrace_agent.sources.issue.linear_loader import LinearIssueLoader
 from opentrace_agent.sources.issue.source import IssueSource
 from opentrace_agent.sources.registry import SourceRegistry
-
 from tests.conftest import MockMCPClient
 
 

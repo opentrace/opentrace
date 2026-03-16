@@ -13,7 +13,6 @@ from opentrace_agent.sources.code.extractors.typescript_extractor import (
 )
 from opentrace_agent.sources.code.symbol_attacher import SymbolAttacher
 
-
 SAMPLE_PYTHON = b'''\
 class Greeter:
     """A sample class."""
@@ -277,9 +276,7 @@ class Service:
 
         # Find the handle method inside Service
         service_rel = next(r for r in file_node.children if r.target.name == "Service")
-        handle_rel = next(
-            r for r in service_rel.target.children if r.target.name == "handle"
-        )
+        handle_rel = next(r for r in service_rel.target.children if r.target.name == "handle")
         handle_node = handle_rel.target
 
         call_rels = [r for r in handle_node.children if r.relationship == "CALLS"]
@@ -340,9 +337,7 @@ class Service:
         assert counts["calls"] == 1
 
         service_rel = next(r for r in file_node.children if r.target.name == "Service")
-        handle_rel = next(
-            r for r in service_rel.target.children if r.target.name == "handle"
-        )
+        handle_rel = next(r for r in service_rel.target.children if r.target.name == "handle")
         call_rels = [r for r in handle_rel.target.children if r.relationship == "CALLS"]
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "validate"
@@ -476,9 +471,7 @@ def process():
         assert counts["calls"] == 1
 
         process_rel = next(r for r in file_node.children if r.target.name == "process")
-        call_rels = [
-            r for r in process_rel.target.children if r.relationship == "CALLS"
-        ]
+        call_rels = [r for r in process_rel.target.children if r.relationship == "CALLS"]
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "check"
         assert call_rels[0].confidence == 1.0  # same file
@@ -635,7 +628,7 @@ function create() {
         main_file.write_bytes(b"import os\n\ndef run():\n    os.getcwd()\n")
 
         repo = RepoNode(id="test/repo", name="repo")
-        fn_main = _make_file_node(repo, "main.py", str(main_file), ".py")
+        _make_file_node(repo, "main.py", str(main_file), ".py")
 
         attacher = SymbolAttacher([PythonExtractor()])
         counts = attacher.attach(repo)
@@ -767,10 +760,7 @@ def serve(channel: grpc.Channel):
         utils_file.write_bytes(b"export function validate(): void {}\n")
 
         main_file = tmp_path / "main.ts"
-        main_file.write_bytes(
-            b"import { validate } from './utils';\n\n"
-            b"function run() {\n  utils.validate();\n}\n"
-        )
+        main_file.write_bytes(b"import { validate } from './utils';\n\nfunction run() {\n  utils.validate();\n}\n")
 
         repo = RepoNode(id="test/repo", name="repo")
         _make_file_node(repo, "utils.ts", str(utils_file), ".ts")

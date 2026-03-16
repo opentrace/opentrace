@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from opentrace_agent.pipeline.scanning import scanning
@@ -33,7 +32,7 @@ def test_scanning_produces_structural_nodes(tmp_path: Path) -> None:
     ctx = PipelineContext()
     out: StageResult[ScanResult] = StageResult()
 
-    events = list(scanning(inp, ctx, out))
+    list(scanning(inp, ctx, out))
 
     assert out.value is not None
     scan = out.value

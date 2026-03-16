@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Generator
 
-from opentrace_agent.pipeline.saving import saving
-from opentrace_agent.pipeline.scanning import scanning
 from opentrace_agent.pipeline.processing import processing
 from opentrace_agent.pipeline.resolving import resolving
+from opentrace_agent.pipeline.saving import saving
+from opentrace_agent.pipeline.scanning import scanning
 from opentrace_agent.pipeline.store import Store
 from opentrace_agent.pipeline.types import (
     EventKind,

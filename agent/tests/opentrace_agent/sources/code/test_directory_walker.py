@@ -28,9 +28,7 @@ class TestDirectoryWalker:
     def test_walk_basic_structure(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(
-            tmp_path, "org/repo", "repo", url="https://github.com/org/repo"
-        )
+        repo = walker.walk(tmp_path, "org/repo", "repo", url="https://github.com/org/repo")
 
         assert isinstance(repo, RepoNode)
         assert repo.id == "org/repo"

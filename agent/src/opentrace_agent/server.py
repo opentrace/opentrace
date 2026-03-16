@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 async def serve(port: int, container: AppContainer) -> None:
     """Start the gRPC server and block until a shutdown signal is received."""
     server = grpc.aio.server()
-    agent_service_pb2_grpc.add_AgentServiceServicer_to_server(
-        AgentServiceServicer(container), server
-    )
+    agent_service_pb2_grpc.add_AgentServiceServicer_to_server(AgentServiceServicer(container), server)
     listen_addr = f"[::]:{port}"
     server.add_insecure_port(listen_addr)
 

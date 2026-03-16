@@ -137,10 +137,8 @@ def test_intra_file_bare_call() -> None:
     regs = Registries()
     file_id = "test/app.py"
 
-    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function",
-                     file_id=file_id, language="python")
-    bar = SymbolInfo(node_id=f"{file_id}::bar", name="bar", kind="function",
-                     file_id=file_id, language="python")
+    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function", file_id=file_id, language="python")
+    bar = SymbolInfo(node_id=f"{file_id}::bar", name="bar", kind="function", file_id=file_id, language="python")
 
     regs.name_registry["foo"] = [foo]
     regs.name_registry["bar"] = [bar]
@@ -167,10 +165,10 @@ def test_cross_file_unique_match() -> None:
     file_a = "test/a.py"
     file_b = "test/b.py"
 
-    caller = SymbolInfo(node_id=f"{file_a}::main", name="main", kind="function",
-                        file_id=file_a, language="python")
-    target = SymbolInfo(node_id=f"{file_b}::unique_fn", name="unique_fn",
-                        kind="function", file_id=file_b, language="python")
+    caller = SymbolInfo(node_id=f"{file_a}::main", name="main", kind="function", file_id=file_a, language="python")
+    target = SymbolInfo(
+        node_id=f"{file_b}::unique_fn", name="unique_fn", kind="function", file_id=file_b, language="python"
+    )
 
     regs.name_registry["main"] = [caller]
     regs.name_registry["unique_fn"] = [target]
@@ -197,10 +195,8 @@ def test_dedup_calls() -> None:
     regs = Registries()
     file_id = "test/app.py"
 
-    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function",
-                     file_id=file_id, language="python")
-    bar = SymbolInfo(node_id=f"{file_id}::bar", name="bar", kind="function",
-                     file_id=file_id, language="python")
+    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function", file_id=file_id, language="python")
+    bar = SymbolInfo(node_id=f"{file_id}::bar", name="bar", kind="function", file_id=file_id, language="python")
 
     regs.name_registry["foo"] = [foo]
     regs.name_registry["bar"] = [bar]
@@ -227,8 +223,7 @@ def test_skip_recursive_call() -> None:
     regs = Registries()
     file_id = "test/app.py"
 
-    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function",
-                     file_id=file_id, language="python")
+    foo = SymbolInfo(node_id=f"{file_id}::foo", name="foo", kind="function", file_id=file_id, language="python")
 
     regs.name_registry["foo"] = [foo]
     regs.file_registry[file_id] = {"foo": foo}

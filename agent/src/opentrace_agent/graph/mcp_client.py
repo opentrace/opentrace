@@ -145,11 +145,7 @@ class SimpleMCPClient:
 
     async def close(self) -> None:
         """Tear down the session and transport. Safe to call multiple times."""
-        if (
-            not self._connected
-            and self._session_context is None
-            and self._transport_task is None
-        ):
+        if not self._connected and self._session_context is None and self._transport_task is None:
             return
 
         try:
@@ -179,9 +175,7 @@ class SimpleMCPClient:
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{name}'"
-            )
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
         return self._create_tool_function(name)
 
     def _create_tool_function(self, tool_name: str) -> Callable[..., Any]:
@@ -190,17 +184,13 @@ class SimpleMCPClient:
 
             if tool_name not in self._tools:
                 available = list(self._tools.keys())
-                raise AttributeError(
-                    f"Tool '{tool_name}' not found. Available tools: {available}"
-                )
+                raise AttributeError(f"Tool '{tool_name}' not found. Available tools: {available}")
 
             for attempt in range(self._max_retries + 1):
                 version_before_call = self._session_version
                 try:
                     if not self._session:
-                        raise MCPConnectionError(
-                            f"MCP session to {self.url} is not initialized"
-                        )
+                        raise MCPConnectionError(f"MCP session to {self.url} is not initialized")
                     result = await asyncio.wait_for(
                         self._session.call_tool(tool_name, kwargs),
                         timeout=self._call_tool_timeout,
@@ -304,9 +294,7 @@ class SimpleMCPClient:
                 )
                 return True
             except Exception as e:
-                logger.error(
-                    "Failed to reconnect SimpleMCPClient to %s: %s", self.url, e
-                )
+                logger.error("Failed to reconnect SimpleMCPClient to %s: %s", self.url, e)
                 await self.close()
                 return False
 
@@ -315,9 +303,7 @@ class SimpleMCPClient:
     # ------------------------------------------------------------------
 
     async def _start_transport(self) -> Tuple[Any, Any]:
-        ready: asyncio.Future[Tuple[Any, Any]] = (
-            asyncio.get_running_loop().create_future()
-        )
+        ready: asyncio.Future[Tuple[Any, Any]] = asyncio.get_running_loop().create_future()
 
         async def _transport_runner() -> None:
             http_client: Optional[httpx.AsyncClient] = None
@@ -326,9 +312,7 @@ class SimpleMCPClient:
                     transport_cm = sse_client(self.url, self._headers)
                 elif self.transport == "streamable_http":
                     http_client = create_mcp_http_client(headers=self._headers)
-                    transport_cm = streamable_http_client(
-                        self.url, http_client=http_client
-                    )
+                    transport_cm = streamable_http_client(self.url, http_client=http_client)
                 else:
                     raise ValueError(f"Unsupported transport: {self.transport}")
 
@@ -383,9 +367,7 @@ class SimpleMCPClient:
 
     def _extract_tool_result(self, tool_name: str, result: Any) -> str:
         if result.isError:
-            error_text = (
-                result.content[0].text if result.content else "Unknown MCP error"
-            )
+            error_text = result.content[0].text if result.content else "Unknown MCP error"
             raise MCPToolError(tool_name, error_text)
 
         if result.content:

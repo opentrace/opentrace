@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 from pytest_httpx import HTTPXMock
 
 from opentrace_agent.cli.api_client import BatchImportClient, ImportError
@@ -43,10 +43,7 @@ class TestCheckConnectivity:
 
 class TestImportAll:
     def _sample_nodes(self, count: int = 3) -> list[dict]:
-        return [
-            {"id": f"n{i}", "type": "File", "name": f"file{i}", "properties": {}}
-            for i in range(count)
-        ]
+        return [{"id": f"n{i}", "type": "File", "name": f"file{i}", "properties": {}} for i in range(count)]
 
     def _sample_rels(self, count: int = 2) -> list[dict]:
         return [
@@ -73,9 +70,7 @@ class TestImportAll:
         )
 
         client = BatchImportClient("http://localhost:8080")
-        result = client.import_all(
-            self._sample_nodes(), self._sample_rels(), batch_size=100
-        )
+        result = client.import_all(self._sample_nodes(), self._sample_rels(), batch_size=100)
 
         assert result["nodes_created"] == 3
         assert result["relationships_created"] == 2

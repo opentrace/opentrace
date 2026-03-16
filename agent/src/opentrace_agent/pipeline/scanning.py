@@ -9,6 +9,19 @@ from typing import Generator
 
 from opentrace_agent.models.base import BaseTreeNode
 from opentrace_agent.models.nodes import FileNode, RepoNode
+from opentrace_agent.pipeline.types import (
+    EventKind,
+    FileEntry,
+    GraphNode,
+    GraphRelationship,
+    Phase,
+    PipelineContext,
+    PipelineEvent,
+    PipelineInput,
+    ProgressDetail,
+    ScanResult,
+    StageResult,
+)
 from opentrace_agent.sources.code.directory_walker import (
     EXTENSION_LANGUAGE_MAP,
     DirectoryWalker,
@@ -27,20 +40,6 @@ from opentrace_agent.sources.code.manifest_parser import (
     extract_go_module_path,
     is_manifest_file,
     parse_manifest,
-)
-
-from opentrace_agent.pipeline.types import (
-    EventKind,
-    FileEntry,
-    GraphNode,
-    GraphRelationship,
-    Phase,
-    PipelineContext,
-    PipelineEvent,
-    PipelineInput,
-    ProgressDetail,
-    ScanResult,
-    StageResult,
 )
 
 logger = logging.getLogger(__name__)

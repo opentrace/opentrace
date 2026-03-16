@@ -76,12 +76,8 @@ class KuzuStore:
 
     def _ensure_schema(self) -> None:
         stmts = [
-            "CREATE NODE TABLE IF NOT EXISTS Node("
-            "id STRING PRIMARY KEY, type STRING, name STRING, properties STRING"
-            ")",
-            "CREATE REL TABLE IF NOT EXISTS RELATES("
-            "FROM Node TO Node, id STRING, type STRING, properties STRING"
-            ")",
+            "CREATE NODE TABLE IF NOT EXISTS Node(id STRING PRIMARY KEY, type STRING, name STRING, properties STRING)",
+            "CREATE REL TABLE IF NOT EXISTS RELATES(FROM Node TO Node, id STRING, type STRING, properties STRING)",
         ]
         for stmt in stmts:
             self._conn.execute(stmt)
@@ -94,10 +90,7 @@ class KuzuStore:
 
         # FTS index (also not idempotent).
         try:
-            self._conn.execute(
-                "CALL CREATE_FTS_INDEX('Node', 'node_fts', ['search_text'], "
-                "stemmer := 'porter')"
-            )
+            self._conn.execute("CALL CREATE_FTS_INDEX('Node', 'node_fts', ['search_text'], stemmer := 'porter')")
         except RuntimeError:
             pass  # index already exists
 
@@ -225,9 +218,7 @@ class KuzuStore:
             "errors": errors,
         }
 
-    def _import_nodes_individually(
-        self, nodes: list[dict[str, Any]]
-    ) -> tuple[int, int]:
+    def _import_nodes_individually(self, nodes: list[dict[str, Any]]) -> tuple[int, int]:
         """Fallback: import nodes one at a time with auto-commit."""
         ok = 0
         errs = 0
@@ -245,9 +236,7 @@ class KuzuStore:
                 errs += 1
         return ok, errs
 
-    def _import_rels_individually(
-        self, relationships: list[dict[str, Any]]
-    ) -> tuple[int, int]:
+    def _import_rels_individually(self, relationships: list[dict[str, Any]]) -> tuple[int, int]:
         """Fallback: import relationships one at a time with auto-commit."""
         ok = 0
         errs = 0
@@ -271,8 +260,7 @@ class KuzuStore:
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Fetch a single node by ID."""
         result = self._conn.execute(
-            "MATCH (n:Node {id: $id}) "
-            "RETURN n.id, n.type, n.name, n.properties",
+            "MATCH (n:Node {id: $id}) RETURN n.id, n.type, n.name, n.properties",
             parameters={"id": node_id},
         )
         if not result.has_next():
@@ -287,8 +275,7 @@ class KuzuStore:
     ) -> list[dict[str, Any]]:
         """List nodes of a given type, with optional property filters."""
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE n.type = $type "
-            "RETURN n.id, n.type, n.name, n.properties",
+            "MATCH (n:Node) WHERE n.type = $type RETURN n.id, n.type, n.name, n.properties",
             parameters={"type": node_type},
         )
         nodes: list[dict[str, Any]] = []
@@ -331,8 +318,7 @@ class KuzuStore:
         # Substring fallback
         q = query.lower()
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE lower(n.name) CONTAINS $query "
-            "RETURN n.id, n.type, n.name, n.properties",
+            "MATCH (n:Node) WHERE lower(n.name) CONTAINS $query RETURN n.id, n.type, n.name, n.properties",
             parameters={"query": q},
         )
         type_set = set(node_types) if node_types else None
@@ -418,11 +404,13 @@ class KuzuStore:
                 if nb_node["id"] in visited:
                     continue
                 visited.add(nb_node["id"])
-                results.append({
-                    "node": nb_node,
-                    "relationship": nb_rel,
-                    "depth": depth + 1,
-                })
+                results.append(
+                    {
+                        "node": nb_node,
+                        "relationship": nb_rel,
+                        "depth": depth + 1,
+                    }
+                )
                 queue.append((nb_node["id"], depth + 1))
 
         return results
@@ -431,9 +419,7 @@ class KuzuStore:
 
     def get_stats(self) -> dict[str, Any]:
         """Return aggregate counts: total_nodes, total_edges, nodes_by_type."""
-        result = self._conn.execute(
-            "MATCH (n:Node) RETURN n.type, count(n)"
-        )
+        result = self._conn.execute("MATCH (n:Node) RETURN n.type, count(n)")
         nodes_by_type: dict[str, int] = {}
         total_nodes = 0
         while result.has_next():
@@ -443,9 +429,7 @@ class KuzuStore:
             nodes_by_type[ntype] = count
             total_nodes += count
 
-        result = self._conn.execute(
-            "MATCH ()-[r:RELATES]->() RETURN count(r)"
-        )
+        result = self._conn.execute("MATCH ()-[r:RELATES]->() RETURN count(r)")
         total_edges = 0
         if result.has_next():
             total_edges = int(result.get_next()[0])
@@ -474,8 +458,7 @@ class KuzuStore:
     def _fts_search(self, query: str, limit: int) -> list[tuple[str, float]]:
         """Run FTS query and return list of (node_id, score)."""
         result = self._conn.execute(
-            "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $limit) "
-            "RETURN node.id, score",
+            "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $limit) RETURN node.id, score",
             parameters={"query": query, "limit": limit},
         )
         results: list[tuple[str, float]] = []
@@ -484,9 +467,7 @@ class KuzuStore:
             results.append((str(row[0]), float(row[1])))
         return results
 
-    def _get_neighbors(
-        self, node_id: str, direction: str
-    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    def _get_neighbors(self, node_id: str, direction: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         """Fetch immediate neighbors in the given direction.
 
         Returns list of (neighbor_node, relationship) tuples.
@@ -532,21 +513,21 @@ class KuzuStore:
     def _list_all_relationships(self, limit: int) -> list[dict[str, Any]]:
         """List all relationships (used for hops=0 search_graph)."""
         result = self._conn.execute(
-            "MATCH (a:Node)-[r:RELATES]->(b:Node) "
-            "RETURN r.id, r.type, r.properties, a.id, b.id "
-            f"LIMIT {limit}"
+            f"MATCH (a:Node)-[r:RELATES]->(b:Node) RETURN r.id, r.type, r.properties, a.id, b.id LIMIT {limit}"
         )
         rels: list[dict[str, Any]] = []
         while result.has_next():
             vals = result.get_next()
             props = _unmarshal_props(str(vals[2]) if vals[2] else "")
-            rels.append({
-                "id": str(vals[0]),
-                "type": str(vals[1]),
-                "properties": props,
-                "source_id": str(vals[3]),
-                "target_id": str(vals[4]),
-            })
+            rels.append(
+                {
+                    "id": str(vals[0]),
+                    "type": str(vals[1]),
+                    "properties": props,
+                    "source_id": str(vals[3]),
+                    "target_id": str(vals[4]),
+                }
+            )
         return rels
 
 

@@ -49,13 +49,10 @@ class BatchImportClient:
             return resp.json()
         except httpx.ConnectError as exc:
             raise ConnectionError(
-                f"Cannot connect to OpenTrace API at {self._base_url}. "
-                "Is the server running?"
+                f"Cannot connect to OpenTrace API at {self._base_url}. Is the server running?"
             ) from exc
         except httpx.HTTPStatusError as exc:
-            raise ConnectionError(
-                f"OpenTrace API returned {exc.response.status_code} on health check"
-            ) from exc
+            raise ConnectionError(f"OpenTrace API returned {exc.response.status_code} on health check") from exc
 
     def import_all(
         self,
@@ -96,9 +93,7 @@ class BatchImportClient:
             if not batch:
                 break
             if on_progress:
-                on_progress(
-                    f"Uploading relationships {i + 1}-{i + len(batch)} of {len(relationships)}"
-                )
+                on_progress(f"Uploading relationships {i + 1}-{i + len(batch)} of {len(relationships)}")
             result = self._post_batch([], batch)
             total_rels += result.get("relationships_created", 0)
             all_errors.extend(result.get("errors", []))
@@ -160,6 +155,4 @@ class BatchImportClient:
                     )
                     time.sleep(wait)
 
-        raise ConnectionError(
-            f"Failed to upload batch after {_MAX_RETRIES} attempts: {last_exc}"
-        )
+        raise ConnectionError(f"Failed to upload batch after {_MAX_RETRIES} attempts: {last_exc}")

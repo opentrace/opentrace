@@ -140,21 +140,14 @@ def _parse_python_from_import(
                     base_dir = file_dir
                     for _ in range(len(dots) - 1):
                         base_dir = _parent_dir(base_dir)
-                    if (
-                        module_text == module_name_node.text.decode()
-                        and module_text.startswith(".")
-                    ):
+                    if module_text == module_name_node.text.decode() and module_text.startswith("."):
                         module_text = ""
             break
 
     if is_relative:
         # For relative imports, resolve relative to file's directory
         if module_text:
-            base_path = (
-                f"{file_dir}/{module_text.replace('.', '/')}"
-                if file_dir
-                else module_text.replace(".", "/")
-            )
+            base_path = f"{file_dir}/{module_text.replace('.', '/')}" if file_dir else module_text.replace(".", "/")
         else:
             base_path = file_dir
         candidates = [f"{base_path}.py", f"{base_path}/__init__.py"]
@@ -175,9 +168,7 @@ def _parse_python_from_import(
     # Store individual imported symbol names from `from X import Y, Z`
     if resolved_path is not None:
         for child in node.children:
-            if child.type == "dotted_name" and child != node.child_by_field_name(
-                "module_name"
-            ):
+            if child.type == "dotted_name" and child != node.child_by_field_name("module_name"):
                 # Bare imported name: `from X import Y`
                 result[child.text.decode()] = resolved_path
             elif child.type == "aliased_import":

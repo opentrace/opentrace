@@ -46,18 +46,14 @@ class LinearIssueLoader(Loader):
                 provider="linear",
                 labels=["placeholder"],
             )
-            project_node.add_child(
-                NodeRelationship(target=issue_node, relationship="DEFINED_IN")
-            )
+            project_node.add_child(NodeRelationship(target=issue_node, relationship="DEFINED_IN"))
 
             user_node = UserNode(
                 id="linear/user/placeholder",
                 name="placeholder-user",
                 provider="linear",
             )
-            issue_node.add_child(
-                NodeRelationship(target=user_node, relationship="ASSIGNED")
-            )
+            issue_node.add_child(NodeRelationship(target=user_node, relationship="ASSIGNED"))
 
             trees.append(
                 TreeWithOrigin(

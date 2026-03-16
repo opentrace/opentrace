@@ -96,9 +96,7 @@ class NodeRelationship(Generic[NodeType]):
     def save_function_name(self) -> str:
         operation = relationship_mapping.get(self.relationship)
         if not operation:
-            raise ValueError(
-                f"Could not determine MCP operation for relationship type: {self.relationship}"
-            )
+            raise ValueError(f"Could not determine MCP operation for relationship type: {self.relationship}")
         return operation
 
     @property
@@ -138,13 +136,9 @@ class BaseTreeNode:
     def __post_init__(self) -> None:
         if self.__class__ is not BaseTreeNode:
             if not self.__class__.graph_type:
-                raise ValueError(
-                    f"{self.__class__.__name__} must define 'graph_type' class variable"
-                )
+                raise ValueError(f"{self.__class__.__name__} must define 'graph_type' class variable")
             if not self.__class__.save_function_name:
-                raise ValueError(
-                    f"{self.__class__.__name__} must define 'save_function_name' class variable"
-                )
+                raise ValueError(f"{self.__class__.__name__} must define 'save_function_name' class variable")
 
     @property
     def type(self) -> str:

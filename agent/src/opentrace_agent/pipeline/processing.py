@@ -6,28 +6,9 @@ import logging
 from pathlib import Path
 from typing import Generator
 
-from opentrace_agent.sources.code.extractors import (
-    GoExtractor,
-    PythonExtractor,
-    SymbolExtractor,
-    TypeScriptExtractor,
-)
-from opentrace_agent.sources.code.extractors.base import CallRef, CodeSymbol
-from opentrace_agent.sources.code.extractors.typescript_extractor import (
-    TypeScriptExtractor as TSExtractor,
-)
-from opentrace_agent.sources.code.import_analyzer import (
-    ImportResult,
-    analyze_go_imports,
-    analyze_python_imports,
-    analyze_typescript_imports,
-    package_source_url,
-)
-
 from opentrace_agent.pipeline.types import (
     CallInfo,
     EventKind,
-    FileEntry,
     GraphNode,
     GraphRelationship,
     Phase,
@@ -39,6 +20,23 @@ from opentrace_agent.pipeline.types import (
     ScanResult,
     StageResult,
     SymbolInfo,
+)
+from opentrace_agent.sources.code.extractors import (
+    GoExtractor,
+    PythonExtractor,
+    SymbolExtractor,
+    TypeScriptExtractor,
+)
+from opentrace_agent.sources.code.extractors.base import CodeSymbol
+from opentrace_agent.sources.code.extractors.typescript_extractor import (
+    TypeScriptExtractor as TSExtractor,
+)
+from opentrace_agent.sources.code.import_analyzer import (
+    ImportResult,
+    analyze_go_imports,
+    analyze_python_imports,
+    analyze_typescript_imports,
+    package_source_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,10 +225,7 @@ def processing(
     yield PipelineEvent(
         kind=EventKind.STAGE_STOP,
         phase=Phase.PROCESSING,
-        message=(
-            f"Extracted {total_classes} classes, {total_functions} functions "
-            f"from {files_processed} files"
-        ),
+        message=(f"Extracted {total_classes} classes, {total_functions} functions from {files_processed} files"),
     )
 
     out.value = ProcessingOutput(

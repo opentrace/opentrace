@@ -130,11 +130,7 @@ class DirectoryWalker:
 
         for dirpath_str, dirnames, filenames in os.walk(root_path):
             # Filter excluded directories in-place so os.walk skips them
-            dirnames[:] = [
-                d
-                for d in dirnames
-                if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")
-            ]
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
             dirnames.sort()
 
             dirpath = Path(dirpath_str)
@@ -156,18 +152,12 @@ class DirectoryWalker:
                     dir_count += 1
 
                     # Attach to parent
-                    parent_rel = (
-                        str(rel_dir.parent) if str(rel_dir.parent) != "." else ""
-                    )
+                    parent_rel = str(rel_dir.parent) if str(rel_dir.parent) != "." else ""
                     if parent_rel == "":
-                        repo_node.add_child(
-                            NodeRelationship(target=dir_node, relationship="DEFINED_IN")
-                        )
+                        repo_node.add_child(NodeRelationship(target=dir_node, relationship="DEFINED_IN"))
                     else:
                         parent_dir = dir_map[parent_rel]
-                        parent_dir.add_child(
-                            NodeRelationship(target=dir_node, relationship="DEFINED_IN")
-                        )
+                        parent_dir.add_child(NodeRelationship(target=dir_node, relationship="DEFINED_IN"))
 
                 parent_node = dir_map[rel_dir_str]
 
@@ -188,9 +178,7 @@ class DirectoryWalker:
                     language=EXTENSION_LANGUAGE_MAP.get(ext),
                     abs_path=abs_file,
                 )
-                parent_node.add_child(
-                    NodeRelationship(target=file_node, relationship="DEFINED_IN")
-                )
+                parent_node.add_child(NodeRelationship(target=file_node, relationship="DEFINED_IN"))
                 file_count += 1
 
         logger.info(

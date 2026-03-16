@@ -40,9 +40,7 @@ class TypeScriptExtractor(SymbolExtractor):
     extensions: ClassVar[tuple[str, ...]] = (".ts", ".tsx", ".js", ".jsx")
     language_name: ClassVar[str] = "typescript"
 
-    def extract(
-        self, source_bytes: bytes, *, tsx: bool | None = None
-    ) -> ExtractionResult:
+    def extract(self, source_bytes: bytes, *, tsx: bool | None = None) -> ExtractionResult:
         if tsx is None:
             # Default: can't infer from bytes alone, use TS parser
             # The caller (SymbolAttacher) should set tsx based on extension
@@ -50,21 +48,15 @@ class TypeScriptExtractor(SymbolExtractor):
         parser = _get_tsx_parser() if tsx else _get_ts_parser()
         tree = parser.parse(source_bytes)
         symbols = _walk_node(tree.root_node)
-        return ExtractionResult(
-            symbols=symbols, language=self.language_name, root_node=tree.root_node
-        )
+        return ExtractionResult(symbols=symbols, language=self.language_name, root_node=tree.root_node)
 
-    def extract_for_extension(
-        self, source_bytes: bytes, extension: str
-    ) -> ExtractionResult:
+    def extract_for_extension(self, source_bytes: bytes, extension: str) -> ExtractionResult:
         """Extract with the correct parser based on file extension."""
         # TSX parser handles JSX syntax and is also a superset of plain JS
         tsx = extension in (".tsx", ".jsx")
         language = "javascript" if extension in (".js", ".jsx") else "typescript"
         result = self.extract(source_bytes, tsx=tsx)
-        return ExtractionResult(
-            symbols=result.symbols, language=language, root_node=result.root_node
-        )
+        return ExtractionResult(symbols=result.symbols, language=language, root_node=result.root_node)
 
 
 _CLASS_TYPES = {"class_declaration", "abstract_class_declaration"}

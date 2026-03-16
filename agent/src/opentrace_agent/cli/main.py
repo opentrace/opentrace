@@ -19,9 +19,7 @@ def app() -> None:
 
 
 @app.command()
-@click.argument(
-    "path", type=click.Path(exists=True, file_okay=False, resolve_path=True)
-)
+@click.argument("path", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option(
     "--api-url",
     default="http://localhost:8080",
@@ -35,12 +33,8 @@ def app() -> None:
     type=click.Path(),
     help="Write directly to a local KuzuDB database (bypasses API).",
 )
-@click.option(
-    "--repo-id", default=None, help="Repository ID (defaults to directory name)."
-)
-@click.option(
-    "--batch-size", default=200, show_default=True, help="Items per upload batch."
-)
+@click.option("--repo-id", default=None, help="Repository ID (defaults to directory name).")
+@click.option("--batch-size", default=200, show_default=True, help="Items per upload batch.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def index(
     path: str,
@@ -54,7 +48,6 @@ def index(
     _configure_logging(verbose)
 
     from opentrace_agent.pipeline import (
-        EventKind,
         PipelineInput,
         run_pipeline,
     )
@@ -83,9 +76,7 @@ def index(
     click.echo(f"Done in {elapsed:.1f}s.")
 
 
-def _make_store(
-    *, api_url: str, db_path: str | None, batch_size: int
-) -> object:
+def _make_store(*, api_url: str, db_path: str | None, batch_size: int) -> object:
     """Create the appropriate store adapter based on CLI options.
 
     --db takes priority over --api-url.
@@ -95,8 +86,7 @@ def _make_store(
             from opentrace_agent.store import KuzuStore
         except ImportError:
             click.echo(
-                "Error: kuzu package not installed. "
-                "Install with: pip install opentrace-agent[kuzu]",
+                "Error: kuzu package not installed. Install with: pip install opentrace-agent[kuzu]",
                 err=True,
             )
             sys.exit(1)

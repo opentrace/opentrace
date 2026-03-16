@@ -35,9 +35,7 @@ class PythonExtractor(SymbolExtractor):
         parser = _get_parser()
         tree = parser.parse(source_bytes)
         symbols = _walk_node(tree.root_node)
-        return ExtractionResult(
-            symbols=symbols, language=self.language_name, root_node=tree.root_node
-        )
+        return ExtractionResult(symbols=symbols, language=self.language_name, root_node=tree.root_node)
 
 
 def _walk_node(node: tree_sitter.Node) -> list[CodeSymbol]:

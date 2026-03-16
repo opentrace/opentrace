@@ -104,9 +104,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
 
             for source_type, source in registry.all_sources.items():
                 source_cfg = sources_config.get(source_type, {})
-                has_config = any(
-                    loader.provider_name in source_cfg for loader in source.loaders
-                )
+                has_config = any(loader.provider_name in source_cfg for loader in source.loaders)
                 if has_config:
                     sources_to_run.append(source_type)
 

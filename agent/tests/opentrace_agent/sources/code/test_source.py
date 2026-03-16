@@ -42,9 +42,7 @@ class TestCodeSource:
     async def test_collect_with_config(self, tmp_path: Path):
         source = CodeSource()
         source.register_loader(_make_loader(tmp_path))
-        trees = await source.collect(
-            {"github": {"repos": [{"owner": "org", "name": "repo"}]}}
-        )
+        trees = await source.collect({"github": {"repos": [{"owner": "org", "name": "repo"}]}})
         assert len(trees) == 1
         assert trees[0].origin == "code"
         assert trees[0].root.name == "repo"

@@ -17,7 +17,6 @@ from opentrace_agent.pipeline.types import (
     ProgressDetail,
     Registries,
     StageResult,
-    SymbolInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -164,9 +163,7 @@ def _resolve_single_call(
     # Strategy 3: ClassName.method() resolution
     if kind == "attribute" and receiver in registries.class_registry:
         class_candidates = registries.class_registry[receiver]
-        sorted_classes = sorted(
-            class_candidates, key=lambda c: 0 if c.file_id == file_id else 1
-        )
+        sorted_classes = sorted(class_candidates, key=lambda c: 0 if c.file_id == file_id else 1)
         for cls in sorted_classes:
             for child in cls.children:
                 if child.name == name:
@@ -208,9 +205,7 @@ def _resolve_single_call(
     # Strategy 5: Constructor call — bare name matches a class
     if kind == "bare" and name in registries.class_registry:
         class_candidates = registries.class_registry[name]
-        sorted_classes = sorted(
-            class_candidates, key=lambda c: 0 if c.file_id == file_id else 1
-        )
+        sorted_classes = sorted(class_candidates, key=lambda c: 0 if c.file_id == file_id else 1)
         for cls in sorted_classes:
             for child in cls.children:
                 if child.name in ("__init__", "constructor"):

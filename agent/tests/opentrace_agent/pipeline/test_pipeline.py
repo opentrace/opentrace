@@ -6,28 +6,18 @@ from pathlib import Path
 
 from opentrace_agent.pipeline import (
     EventKind,
-    GraphNode,
-    GraphRelationship,
     MemoryStore,
     PipelineInput,
     collect_pipeline,
-    run_pipeline,
 )
 
 
 def _make_multi_file_project(tmp_path: Path) -> Path:
     """Create a small Python project with cross-file calls."""
     (tmp_path / "main.py").write_text(
-        "from utils import helper\n"
-        "\n"
-        "def main():\n"
-        "    result = helper()\n"
-        "    return result\n"
+        "from utils import helper\n\ndef main():\n    result = helper()\n    return result\n"
     )
-    (tmp_path / "utils.py").write_text(
-        "def helper():\n"
-        "    return 42\n"
-    )
+    (tmp_path / "utils.py").write_text("def helper():\n    return 42\n")
     (tmp_path / "models.py").write_text(
         "class User:\n"
         "    def __init__(self, name):\n"
@@ -97,13 +87,7 @@ def test_pipeline_with_memory_store(tmp_path: Path) -> None:
 
 def test_pipeline_go_project(tmp_path: Path) -> None:
     """Pipeline handles Go files correctly."""
-    (tmp_path / "main.go").write_text(
-        'package main\n\n'
-        'import "fmt"\n\n'
-        'func main() {\n'
-        '    fmt.Println("hello")\n'
-        '}\n'
-    )
+    (tmp_path / "main.go").write_text('package main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("hello")\n}\n')
     (tmp_path / "handler.go").write_text(
         "package main\n\n"
         "type Server struct{}\n\n"
@@ -125,13 +109,7 @@ def test_pipeline_go_project(tmp_path: Path) -> None:
 
 def test_pipeline_ts_project(tmp_path: Path) -> None:
     """Pipeline handles TypeScript files."""
-    (tmp_path / "app.ts").write_text(
-        "export class App {\n"
-        "  run(): void {\n"
-        "    console.log('running');\n"
-        "  }\n"
-        "}\n"
-    )
+    (tmp_path / "app.ts").write_text("export class App {\n  run(): void {\n    console.log('running');\n  }\n}\n")
 
     inp = PipelineInput(path=str(tmp_path), repo_id="test/tsproject")
     events, nodes, rels = collect_pipeline(inp)

@@ -33,9 +33,7 @@ class TestGitHubCodeLoader:
         mock_cloner.clone.return_value = tmp_path
 
         loader = GitHubCodeLoader(cloner=mock_cloner)
-        trees = await loader.load(
-            {"repos": [{"owner": "org", "name": "repo", "branch": "develop"}]}
-        )
+        trees = await loader.load({"repos": [{"owner": "org", "name": "repo", "branch": "develop"}]})
 
         assert len(trees) == 1
         tree = trees[0]
@@ -59,9 +57,7 @@ class TestGitHubCodeLoader:
         mock_cloner.clone.return_value = tmp_path
 
         loader = GitHubCodeLoader(cloner=mock_cloner)
-        await loader.load(
-            {"repos": [{"owner": "o", "name": "r", "token": "secret123"}]}
-        )
+        await loader.load({"repos": [{"owner": "o", "name": "r", "token": "secret123"}]})
 
         call_kwargs = mock_cloner.clone.call_args[1]
         assert call_kwargs["token"] == "secret123"
@@ -99,9 +95,7 @@ class TestGitHubCodeLoader:
         mock_cloner.clone.return_value = tmp_path
 
         with (
-            patch(
-                "opentrace_agent.sources.code.github_loader.tempfile"
-            ) as mock_tempfile,
+            patch("opentrace_agent.sources.code.github_loader.tempfile") as mock_tempfile,
             patch("opentrace_agent.sources.code.github_loader.shutil") as mock_shutil,
         ):
             mock_tempfile.mkdtemp.return_value = str(tmp_path)

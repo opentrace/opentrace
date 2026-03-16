@@ -52,9 +52,7 @@ class TestBaseTreeNode:
         file_node = FileNode(id="f", name="main.py", path="src/main.py")
 
         repo.add_child(NodeRelationship(target=dir_node, relationship="DEFINED_IN"))
-        dir_node.add_child(
-            NodeRelationship(target=file_node, relationship="DEFINED_IN")
-        )
+        dir_node.add_child(NodeRelationship(target=file_node, relationship="DEFINED_IN"))
 
         assert file_node.find_parent(RepoNode) is repo
         assert file_node.find_parent(DirectoryNode) is dir_node
