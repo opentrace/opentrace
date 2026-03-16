@@ -44,8 +44,6 @@ import {
   countSymbols,
 } from './parsing';
 import { analyzeImports } from '../../runner/browser/parser/importAnalyzer';
-import { summarizeFromMetadata } from '../../runner/browser/enricher/summarizer/templateSummarizer';
-import type { NodeKind } from '../../runner/browser/enricher/summarizer/types';
 import type {
   Registries,
   CallInfo,
@@ -74,7 +72,6 @@ export function* execute(
   };
   const allCallInfo: CallInfo[] = [];
   const emittedNodeIds = new Set<string>();
-  const dirChildNames = new Map<string, string[]>();
 
   // Copy package nodes from scanning (will accumulate more from imports)
   const packageNodes = new Map(input.packageNodes);
@@ -150,38 +147,6 @@ export function* execute(
         classesExtracted += symCounts.classes;
         functionsExtracted += symCounts.functions;
 
-        // Summarize symbols inline using template summarizer
-        const lines = file.content.split('\n');
-        for (const node of nodes) {
-          if (node.type !== 'Function' && node.type !== 'Class') continue;
-          const startLine = node.properties?.start_line as number | undefined;
-          const endLine = node.properties?.end_line as number | undefined;
-          if (startLine == null || endLine == null) continue;
-          const snippet = lines.slice(startLine - 1, endLine).join('\n');
-          if (!snippet.trim()) continue;
-
-          const kind: NodeKind = node.type === 'Class' ? 'class' : 'function';
-          const summary = summarizeFromMetadata({
-            name: node.name,
-            kind,
-            signature: node.properties?.signature as string | undefined,
-            language,
-            lineCount: endLine - startLine + 1,
-            childNames:
-              kind === 'class'
-                ? extraction.symbols
-                    .find((s) => s.name === node.name)
-                    ?.children.map((c) => c.name)
-                : undefined,
-            receiverType: node.properties?.receiver_type as string | undefined,
-            source: snippet,
-            docs: node.properties?.docs as string | undefined,
-          });
-          if (summary) {
-            node.properties = { ...node.properties, summary };
-          }
-        }
-
         // Import analysis — uses rootNode immediately, then discards it
         const rootNode = extraction.rootNode;
         if (rootNode) {
@@ -246,46 +211,6 @@ export function* execute(
       );
     }
 
-    // Summarize file node in-place (mutate the node from scanning stage)
-    const fileName = file.path.includes('/')
-      ? file.path.slice(file.path.lastIndexOf('/') + 1)
-      : file.path;
-    const symbolNames = nodes
-      .filter((n) => n.type === 'Function' || n.type === 'Class')
-      .map((n) => n.name);
-    const fileSource = file.content.split('\n').slice(0, 200).join('\n');
-    if (fileSource.trim()) {
-      const fileSummary = summarizeFromMetadata({
-        name: fileName,
-        kind: 'file',
-        fileName: file.path,
-        language: language ?? undefined,
-        childNames: symbolNames.length > 0 ? symbolNames : undefined,
-        source: fileSource,
-      });
-      if (fileSummary) {
-        // Emit summary-update node; store merges properties with the
-        // original File node that was already saved by the scanning stage.
-        nodes.push({
-          id: fileId,
-          type: 'File',
-          name: fileName,
-          properties: { summary: fileSummary },
-        });
-      }
-    }
-
-    // Track directory children for directory summaries later.
-    // dirChildNames is keyed by bare path (e.g. "src") to match input.dirNodes.
-    const dirPath = file.path.includes('/')
-      ? file.path.slice(0, file.path.lastIndexOf('/'))
-      : '';
-    if (dirPath) {
-      const names = dirChildNames.get(dirPath) ?? [];
-      names.push(fileName);
-      dirChildNames.set(dirPath, names);
-    }
-
     totalNodes += nodes.length;
     totalRels += rels.length;
     filesProcessed++;
@@ -300,89 +225,11 @@ export function* execute(
     };
   }
 
-  // Summarize non-parseable files (e.g. .md, .json, .css) that were skipped
-  // by the main loop. Parseable files already have summaries.
-  const summarizedFileIds = new Set<string>();
-  // Collect IDs of files already summarized in the main loop
-  for (const file of parseableFiles) {
-    summarizedFileIds.add(`${repoId}/${file.path}`);
-  }
-  const nonParseableFileSummaryNodes: GraphNode[] = [];
-  for (const fileNode of input.fileNodes) {
-    if (summarizedFileIds.has(fileNode.id)) continue;
-    const fileName = fileNode.name;
-    const filePath = (fileNode.properties?.path as string) || fileName;
-    const summary = summarizeFromMetadata({
-      name: fileName,
-      kind: 'file',
-      fileName: filePath,
-    });
-    if (summary) {
-      nonParseableFileSummaryNodes.push({
-        id: fileNode.id,
-        type: 'File',
-        name: fileName,
-        properties: { summary },
-      });
-    }
-    // Track as directory child so directory summaries include all files
-    const dirPath = filePath.includes('/')
-      ? filePath.slice(0, filePath.lastIndexOf('/'))
-      : '';
-    if (dirPath) {
-      const names = dirChildNames.get(dirPath) ?? [];
-      names.push(fileName);
-      dirChildNames.set(dirPath, names);
-    }
-  }
-  if (nonParseableFileSummaryNodes.length > 0) {
-    yield {
-      kind: 'stage_progress',
-      phase: 'processing',
-      message: `Summarized ${nonParseableFileSummaryNodes.length} non-parseable files`,
-      detail: { current: total, total },
-      nodes: nonParseableFileSummaryNodes,
-    };
-  }
-
-  // Summarize directories — emit update nodes (store merges properties)
-  const dirSummaryNodes: GraphNode[] = [];
-  for (const [dirId, dirNode] of input.dirNodes) {
-    const dirPath = (dirNode.properties?.path as string) || dirNode.name;
-    const childNames = [...(dirChildNames.get(dirPath) ?? [])];
-    // Include subdirectories
-    for (const [otherId, otherNode] of input.dirNodes) {
-      const otherPath = (otherNode.properties?.path as string) || '';
-      const otherParent = otherPath.includes('/')
-        ? otherPath.slice(0, otherPath.lastIndexOf('/'))
-        : '';
-      if (otherParent === dirPath && otherId !== dirId) {
-        childNames.push(otherNode.name + '/');
-      }
-    }
-    if (childNames.length > 0) {
-      const summary = summarizeFromMetadata({
-        name: dirNode.name,
-        kind: 'directory',
-        childNames,
-      });
-      if (summary) {
-        dirSummaryNodes.push({
-          id: dirId,
-          type: 'Directory',
-          name: dirNode.name,
-          properties: { summary },
-        });
-      }
-    }
-  }
-
   yield {
     kind: 'stage_stop',
     phase: 'processing',
     message: `Processed ${filesProcessed} files`,
     errors: errors.length > 0 ? errors : undefined,
-    nodes: dirSummaryNodes.length > 0 ? dirSummaryNodes : undefined,
   };
 
   return {
