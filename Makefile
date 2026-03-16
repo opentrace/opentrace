@@ -2,49 +2,53 @@
 
 all: build
 
-## Generate protobuf code for TS and Python
+## Generate protobuf code (targets: ts, py, go — skips targets whose output dirs are missing)
 proto:
-	$(MAKE) -C proto all
+	$(MAKE) -C proto ts
+	@if [ -d agent ]; then $(MAKE) -C proto py; fi
+	@if [ -d api ]; then $(MAKE) -C proto go; fi
 
 ## Install dependencies for all components
 install:
-	$(MAKE) -C api build
-	$(MAKE) -C agent install
+	@if [ -d api ]; then $(MAKE) -C api build; fi
+	@if [ -d agent ]; then $(MAKE) -C agent install; fi
 	$(MAKE) -C ui install
 
 ## Build all components
 build:
-	$(MAKE) -C api build
+	@if [ -d api ]; then $(MAKE) -C api build; fi
 	$(MAKE) -C ui build
 
 ## Run all tests
 test:
-	$(MAKE) -C api test
-	$(MAKE) -C agent test
+	@if [ -d api ]; then $(MAKE) -C api test; fi
+	@if [ -d agent ]; then $(MAKE) -C agent test; fi
 
 ## Clean all build artifacts
 clean:
-	$(MAKE) -C api clean
-	$(MAKE) -C agent clean
+	@if [ -d api ]; then $(MAKE) -C api clean; fi
+	@if [ -d agent ]; then $(MAKE) -C agent clean; fi
 	$(MAKE) -C ui clean
 
 ## Format all code
 fmt:
-	$(MAKE) -C api fmt
-	$(MAKE) -C agent fmt
+	@if [ -d api ]; then $(MAKE) -C api fmt; fi
+	@if [ -d agent ]; then $(MAKE) -C agent fmt; fi
 	$(MAKE) -C ui fmt
 
 ## Lint all code
 lint:
-	$(MAKE) -C api lint
-	$(MAKE) -C agent lint
+	@if [ -d api ]; then $(MAKE) -C api lint; fi
+	@if [ -d agent ]; then $(MAKE) -C agent lint; fi
 	$(MAKE) -C ui lint
 
 ## Component shortcuts
 api:
+	@if [ ! -d api ]; then echo "api/ directory not found — not yet available in the open-source repo." >&2; exit 1; fi
 	$(MAKE) -C api run
 
 agent:
+	@if [ ! -d agent ]; then echo "agent/ directory not found — not yet available in the open-source repo." >&2; exit 1; fi
 	$(MAKE) -C agent run
 
 ui:
