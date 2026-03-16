@@ -323,6 +323,14 @@ export function* execute(
         properties: { summary },
       });
     }
+    // Track as directory child so directory summaries include all files
+    const dirPath = filePath.includes('/')
+      ? filePath.slice(0, filePath.lastIndexOf('/'))
+      : '';
+    const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
+    const names = dirChildNames.get(parentDirId) ?? [];
+    names.push(fileName);
+    dirChildNames.set(parentDirId, names);
   }
   if (nonParseableFileSummaryNodes.length > 0) {
     yield {
