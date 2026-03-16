@@ -275,14 +275,16 @@ export function* execute(
       }
     }
 
-    // Track directory children for directory summaries later
+    // Track directory children for directory summaries later.
+    // dirChildNames is keyed by bare path (e.g. "src") to match input.dirNodes.
     const dirPath = file.path.includes('/')
       ? file.path.slice(0, file.path.lastIndexOf('/'))
       : '';
-    const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
-    const names = dirChildNames.get(parentDirId) ?? [];
-    names.push(fileName);
-    dirChildNames.set(parentDirId, names);
+    if (dirPath) {
+      const names = dirChildNames.get(dirPath) ?? [];
+      names.push(fileName);
+      dirChildNames.set(dirPath, names);
+    }
 
     totalNodes += nodes.length;
     totalRels += rels.length;
@@ -327,10 +329,11 @@ export function* execute(
     const dirPath = filePath.includes('/')
       ? filePath.slice(0, filePath.lastIndexOf('/'))
       : '';
-    const parentDirId = dirPath ? `${repoId}/${dirPath}` : repoId;
-    const names = dirChildNames.get(parentDirId) ?? [];
-    names.push(fileName);
-    dirChildNames.set(parentDirId, names);
+    if (dirPath) {
+      const names = dirChildNames.get(dirPath) ?? [];
+      names.push(fileName);
+      dirChildNames.set(dirPath, names);
+    }
   }
   if (nonParseableFileSummaryNodes.length > 0) {
     yield {
@@ -346,7 +349,7 @@ export function* execute(
   const dirSummaryNodes: GraphNode[] = [];
   for (const [dirId, dirNode] of input.dirNodes) {
     const dirPath = (dirNode.properties?.path as string) || dirNode.name;
-    const childNames = [...(dirChildNames.get(dirId) ?? [])];
+    const childNames = [...(dirChildNames.get(dirPath) ?? [])];
     // Include subdirectories
     for (const [otherId, otherNode] of input.dirNodes) {
       const otherPath = (otherNode.properties?.path as string) || '';

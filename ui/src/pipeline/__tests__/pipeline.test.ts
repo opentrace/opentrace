@@ -175,6 +175,56 @@ def main():
     expect(progressEvents[1].detail?.fileName).toBe('b.py');
   });
 
+  it('generates summaries for functions, classes, files, and directories', () => {
+    const repo = makeRepoTree([
+      {
+        path: 'src/models.py',
+        content: `class User:
+    def __init__(self, name):
+        self.name = name
+
+    def greet(self):
+        return f"Hello, {self.name}"
+`,
+      },
+      {
+        path: 'src/utils.py',
+        content: `def getUserById(user_id):
+    pass
+`,
+      },
+      { path: 'README.md', content: '# Project' },
+    ]);
+
+    const { nodes } = collectPipeline({ repo }, noopCtx());
+
+    // Functions should have summaries
+    const getUserById = nodes.find(
+      (n) => n.type === 'Function' && n.name === 'getUserById',
+    );
+    expect(getUserById).toBeDefined();
+    expect(getUserById!.properties?.summary).toBeTruthy();
+
+    // Classes should have summaries
+    const userClass = nodes.find(
+      (n) => n.type === 'Class' && n.name === 'User',
+    );
+    expect(userClass).toBeDefined();
+    expect(userClass!.properties?.summary).toBeTruthy();
+
+    // Parseable files should have summaries (emitted as update nodes)
+    const fileSummaries = nodes.filter(
+      (n) => n.type === 'File' && n.properties?.summary,
+    );
+    expect(fileSummaries.length).toBeGreaterThanOrEqual(1);
+
+    // Directories should have summaries
+    const dirSummaries = nodes.filter(
+      (n) => n.type === 'Directory' && n.properties?.summary,
+    );
+    expect(dirSummaries.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('loading emits per-file progress', () => {
     const repo = makeRepoTree([
       { path: 'a.py', content: '' },
