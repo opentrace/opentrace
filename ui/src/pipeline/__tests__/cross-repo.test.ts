@@ -235,14 +235,13 @@ describe('cross-repo: same project imported twice with different repo names', ()
       .filter(([, sources]) => sources.length > 1)
       .map(([id, sources]) => ({ id, sources }));
 
-    // Duplicates should only be Package, File, or Directory nodes.
-    // File/Directory duplicates occur because the summarizing stage enriches
-    // nodes that were already emitted by the scanning stage.
-    const ALLOWED_DUP_TYPES = new Set(['Package', 'File', 'Directory']);
+    // Duplicates should only be Package nodes — they have global IDs
+    // (e.g. pkg:pypi:flask) that collide across repo runs. File/Directory
+    // IDs are repo-prefixed and cannot collide.
     expect(duplicates.length).toBeGreaterThan(0);
     for (const dup of duplicates) {
       const node = allEmittedNodes.find((n) => n.id === dup.id);
-      expect(ALLOWED_DUP_TYPES.has(node!.type)).toBe(true);
+      expect(node!.type).toBe('Package');
     }
   });
 
