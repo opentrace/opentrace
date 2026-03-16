@@ -1,0 +1,74 @@
+name: AI Co-author Check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-ai-coauthor:
+    name: Check for AI co-authors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check commits for AI co-authors
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+
+          AI_PATTERNS=(
+            "Co-authored-by:.*Claude"
+            "Co-authored-by:.*Copilot"
+            "Co-authored-by:.*ChatGPT"
+            "Co-authored-by:.*OpenAI"
+            "Co-authored-by:.*Cursor"
+            "Co-authored-by:.*Devin"
+            "Co-authored-by:.*Gemini"
+            "Co-authored-by:.*claude-code"
+            "Co-authored-by:.*github-actions"
+          )
+
+          PATTERN=$(IFS='|'; echo "${AI_PATTERNS[*]}")
+
+          if git log --format='%b' "$BASE_SHA".."$HEAD_SHA" | grep -qiE "$PATTERN"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on PR if no AI co-author
+        if: steps.check.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          COMMENTS=$(gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments --jq '.[].body')
+          if echo "$COMMENTS" | grep -q "AI Co-author Check"; then
+            echo "Comment already exists, skipping."
+            exit 0
+          fi
+
+          MESSAGES=(
+            "Looks like you wrote all this code yourself — impressive, but have you heard of our robot overlords? 🤖 Try pairing with an AI coder like Claude next time!"
+            "No AI co-author detected! Are you speedrunning software engineering on hard mode? 🎮 Give Claude or another AI coder a shot — your future self will thank you."
+            "Solo mission detected! 🧑‍🚀 Nothing wrong with that, but AI coders like Claude can be a great co-pilot. Pair up next time and see what happens!"
+            "All human, all the time! 💪 Respect. But if you ever want a tireless coding buddy who never needs coffee, AI coders are just a commit away."
+          )
+
+          RANDOM_INDEX=$((RANDOM % ${#MESSAGES[@]}))
+          MESSAGE="${MESSAGES[$RANDOM_INDEX]}"
+
+          gh pr comment "${PR_NUMBER}" --body "#### 🤖 AI Co-author Check
+
+          ${MESSAGE}
+
+          > Add a \`Co-authored-by\` trailer to your commits to make this message go away. Most AI coding tools do this automatically."
