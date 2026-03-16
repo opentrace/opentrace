@@ -298,6 +298,42 @@ export function* execute(
     };
   }
 
+  // Summarize non-parseable files (e.g. .md, .json, .css) that were skipped
+  // by the main loop. Parseable files already have summaries.
+  const summarizedFileIds = new Set<string>();
+  // Collect IDs of files already summarized in the main loop
+  for (const file of parseableFiles) {
+    summarizedFileIds.add(`${repoId}/${file.path}`);
+  }
+  const nonParseableFileSummaryNodes: GraphNode[] = [];
+  for (const fileNode of input.fileNodes) {
+    if (summarizedFileIds.has(fileNode.id)) continue;
+    const fileName = fileNode.name;
+    const filePath = (fileNode.properties?.path as string) || fileName;
+    const summary = summarizeFromMetadata({
+      name: fileName,
+      kind: 'file',
+      fileName: filePath,
+    });
+    if (summary) {
+      nonParseableFileSummaryNodes.push({
+        id: fileNode.id,
+        type: 'File',
+        name: fileName,
+        properties: { summary },
+      });
+    }
+  }
+  if (nonParseableFileSummaryNodes.length > 0) {
+    yield {
+      kind: 'stage_progress',
+      phase: 'processing',
+      message: `Summarized ${nonParseableFileSummaryNodes.length} non-parseable files`,
+      detail: { current: total, total },
+      nodes: nonParseableFileSummaryNodes,
+    };
+  }
+
   // Summarize directories — emit update nodes (store merges properties)
   const dirSummaryNodes: GraphNode[] = [];
   for (const [dirId, dirNode] of input.dirNodes) {
