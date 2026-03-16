@@ -13,24 +13,16 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 │                                  │  tree-sitter    │ │
 │                                  │  WASM parsers   │ │
 │                                  └─────────────────┘ │
-└──────────────────┬───────────────────────────────────┘
-                   │ REST + MCP
-┌──────────────────▼───────────────────────────────────┐
-│                  API Server (Go)                     │
-│       MCP endpoint  ·  REST API  ·  Graph store      │
-│           localhost:8080                             │
-│  ┌─────────────┐  ┌─────────────┐                    │
-│  │  KuzuDB     │  │  In-Memory  │  (switchable)      │
-│  │  (embedded) │  │  Store      │                    │
-│  └─────────────┘  └─────────────┘                    │
-└──────────────────┬───────────────────────────────────┘
-                   │ gRPC
-┌──────────────────▼───────────────────────────────────┐
-│               Agent (Python)                         │
-│     LangGraph pipeline  ·  data loaders              │
-│         GitHub · GitLab · Linear                     │
+│                                  ┌─────────────────┐ │
+│                                  │  KuzuDB WASM    │ │
+│                                  │  graph store    │ │
+│                                  └─────────────────┘ │
 └──────────────────────────────────────────────────────┘
 ```
+
+> **Planned:** A Go API server (MCP endpoint, persistent graph store) and a
+> Python agent (LangGraph pipeline, data loaders) are under development but not
+> yet included in the open-source repo.
 
 ## Quick Start
 
@@ -38,11 +30,9 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 # Clone and install
 git clone https://github.com/opentrace/opentrace.git
 cd opentrace
+make install   # installs npm dependencies
 
-# Start the API server (uses in-memory graph store by default)
-make api
-
-# In another terminal, start the UI
+# Start the UI
 make ui
 ```
 
@@ -51,32 +41,19 @@ Open [http://localhost:5173](http://localhost:5173), point the indexer at a GitH
 ## Repository Structure
 
 ```
-api/                  — Go backend (MCP server, graph store, REST API)
-agent/                — Python agent (LangGraph pipeline, data loaders)
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
 proto/                — Protobuf definitions (shared API contracts)
-claude-code-plugin/   — Claude Code plugin (agents + slash commands)
+claude-code-plugin/   — Claude Code plugin (MCP server config)
 tests/                — Cross-validation and integration test fixtures
 ```
 
 ## Components
 
-### `api/` — Go Backend
-
-MCP server, REST API, and graph storage. Two interchangeable store backends:
-
-- **KuzuDB** — embedded graph database for persistent storage (requires CGo)
-- **In-Memory** — pure Go, no dependencies, used for dev/test
-
-```bash
-cd api
-go build ./cmd/server       # memory store only
-go build -tags kuzu ./cmd/server  # with KuzuDB support
-```
-
 ### `ui/` — React/TypeScript Frontend
 
 Graph explorer with a built-in browser-based code indexer. The indexer runs tree-sitter WASM parsers inside a Web Worker to extract symbols, calls, and relationships directly in the browser — no server-side processing needed.
+
+The graph is stored in-browser using **KuzuDB WASM** — an embedded graph database compiled to WebAssembly. An in-memory store is also available as a fallback (no WASM, no COOP/COEP headers required).
 
 ```bash
 cd ui
@@ -84,47 +61,31 @@ npm install
 npm run dev
 ```
 
-### `agent/` — Python Agent
+### `proto/` — Protobuf Definitions
 
-LangGraph-based pipeline that loads data from external sources (GitHub, GitLab, Linear) into the graph. Uses `uv` for package management.
+Shared API contracts for the platform. Currently generates TypeScript types for the UI:
 
 ```bash
-cd agent
-uv sync
-uv run pytest
+make proto   # generates TS types (py/go targets run when agent/api dirs exist)
 ```
 
-## MCP Tools
+## Graph Tools
 
-The API server exposes an MCP endpoint at `/mcp` with these tools:
+The UI exposes these graph tools to the built-in chat agent:
 
 | Tool | Description |
 |------|-------------|
-| `query_graph` | Search or list nodes by type with optional property filters |
-| `get_node` | Fetch a single node by ID with its immediate neighbors |
-| `traverse_graph` | Walk relationships from a starting node (outgoing/incoming/both) |
-| `search_graph` | Search nodes by name and return a subgraph with relationships |
-| `load_source` | Fetch file contents from registered GitHub/GitLab integrations |
-
-Connect any MCP-compatible client to `http://localhost:8080/mcp` to query the graph.
+| `search_graph` | Full-text search across graph nodes by name or properties |
+| `list_nodes` | List nodes of a specific type with optional property filters |
+| `get_node` | Get full details of a single node by its ID |
+| `traverse_graph` | BFS traversal from a node to discover connected nodes and relationships |
+| `load_source` | Fetch source code for an indexed file or symbol |
 
 ## Claude Code Plugin
 
-OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that gives Claude direct access to the knowledge graph.
+OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server.
 
-**Agents:**
-
-| Agent | Description |
-|-------|-------------|
-| `@code-explorer` | Explore indexed code structure — find classes, functions, services and their relationships |
-| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes |
-
-**Commands:**
-
-| Command | Description |
-|---------|-------------|
-| `/graph-status` | Show overview of indexed nodes by type, list repos and services |
-| `/explore <name>` | Quick exploration of a named component in the graph |
+The plugin is configured in `claude-code-plugin/.mcp.json` and points to `http://localhost:8080/mcp`.
 
 ## Supported Languages
 
@@ -136,34 +97,13 @@ The browser-based indexer parses source code using tree-sitter WASM grammars. La
 
 Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are indexed as file nodes.
 
-## Configuration
-
-Server config lives in `config.yaml` at the repo root:
-
-```yaml
-server:
-  port: 8080
-  env: dev
-  request_timeout: 60s
-  cors_hosts:
-    - http://localhost:5173
-
-graph:
-  # Set db_path for KuzuDB persistent storage.
-  # Omit or leave empty for in-memory store.
-  db_path: ./data/graph.kuzu
-
-agent:
-  address: localhost:50051
-```
-
 ## Development
 
 ```bash
-# Build all components
+# Build the UI
 make build
 
-# Run all tests
+# Run tests
 make test
 
 # Format code
@@ -174,15 +114,6 @@ make lint
 
 # Generate protobuf code
 make proto
-```
-
-### Running API tests with KuzuDB
-
-KuzuDB requires its shared library on the library path:
-
-```bash
-LD_LIBRARY_PATH=$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu@v0.11.3/lib/dynamic/linux-amd64/ \
-  go test ./...
 ```
 
 ### Static / Browser-Only Build
