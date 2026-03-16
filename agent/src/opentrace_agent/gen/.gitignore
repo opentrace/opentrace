@@ -1,3 +1,8 @@
 # Generated protobuf code — regenerate with: make proto
 *
 !.gitignore
+!__init__.py
+!opentrace/
+!opentrace/__init__.py
+!opentrace/v1/
+!opentrace/v1/__init__.py

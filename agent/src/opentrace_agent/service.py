@@ -63,7 +63,7 @@ def _git_integrations_to_sources_config(
 
 
 class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
-    """Streams pipeline progress as RunJobEvent messages."""
+    """Streams pipeline progress as JobEvent messages."""
 
     def __init__(self, container: AppContainer) -> None:
         self._container = container
@@ -72,7 +72,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
         self,
         request: pb2.RunJobRequest,
         context: Any,
-    ) -> AsyncIterator[pb2.RunJobEvent]:
+    ) -> AsyncIterator[pb2.JobEvent]:
         all_errors: list[str] = []
         total_nodes = 0
         total_rels = 0
@@ -84,12 +84,12 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
         try:
             # --- STARTING ---
             if use_mcp:
-                yield pb2.RunJobEvent(
+                yield pb2.JobEvent(
                     phase=pb2.JOB_PHASE_STARTING,
                     message="Initialising registry and MCP client",
                 )
             else:
-                yield pb2.RunJobEvent(
+                yield pb2.JobEvent(
                     phase=pb2.JOB_PHASE_STARTING,
                     message="Initialising registry (streaming mode)",
                 )
@@ -109,14 +109,14 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                     sources_to_run.append(source_type)
 
             if not sources_to_run:
-                yield pb2.RunJobEvent(
+                yield pb2.JobEvent(
                     phase=pb2.JOB_PHASE_ERROR,
                     message="No sources to run after planning",
                     errors=["No configured integrations produced runnable sources"],
                 )
                 return
 
-            yield pb2.RunJobEvent(
+            yield pb2.JobEvent(
                 phase=pb2.JOB_PHASE_PLANNING,
                 message=f"Will run {len(sources_to_run)} source(s): {', '.join(sources_to_run)}",
             )
@@ -138,7 +138,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                     all_trees.extend(trees)
                     for tree in trees:
                         repos_processed += 1
-                        yield pb2.RunJobEvent(
+                        yield pb2.JobEvent(
                             phase=pb2.JOB_PHASE_LOADING,
                             message=f"Loaded tree from '{tree.origin}'",
                             repo_url=getattr(tree.root, "url", ""),
@@ -149,7 +149,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                     all_errors.append(msg)
 
             if not all_trees:
-                yield pb2.RunJobEvent(
+                yield pb2.JobEvent(
                     phase=pb2.JOB_PHASE_ERROR,
                     message="No trees produced by any source",
                     errors=all_errors or ["All sources returned empty results"],
@@ -157,7 +157,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                 return
 
             # --- MAPPING ---
-            yield pb2.RunJobEvent(
+            yield pb2.JobEvent(
                 phase=pb2.JOB_PHASE_MAPPING,
                 message=f"Mapping {len(all_trees)} tree(s) to graph",
             )
@@ -190,7 +190,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                     yield event
 
             # --- DONE ---
-            yield pb2.RunJobEvent(
+            yield pb2.JobEvent(
                 phase=pb2.JOB_PHASE_DONE,
                 message="Job completed",
                 result=pb2.JobResult(
@@ -205,7 +205,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
             msg = f"Unexpected error: {e}"
             logger.exception(msg)
             all_errors.append(msg)
-            yield pb2.RunJobEvent(
+            yield pb2.JobEvent(
                 phase=pb2.JOB_PHASE_ERROR,
                 message=msg,
                 errors=all_errors,
