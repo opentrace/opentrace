@@ -8,20 +8,12 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: slate
+    primary: custom
+    accent: custom
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - content.code.copy
     - navigation.sections
@@ -29,6 +21,9 @@ theme:
     - navigation.top
     - search.suggest
     - search.highlight
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
