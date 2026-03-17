@@ -41,6 +41,8 @@ interface CommunityEntry {
   color: string;
 }
 
+export type SidePanelTab = 'filters' | 'discover' | 'details';
+
 interface SidePanelProps {
   /* Filter props — forwarded to FilterPanel */
   nodeTypes: TypeEntry[];
@@ -86,6 +88,11 @@ interface SidePanelProps {
   graphNodeIds?: string[];
   /** Map of node ID → hop distance from selected node (0 = selected) */
   hopMap?: Map<string, number>;
+
+  /** Mobile: externally controlled active tab */
+  mobileActiveTab?: SidePanelTab | null;
+  /** Mobile: callback when the panel wants to close */
+  onMobileClose?: () => void;
 }
 
 export default function SidePanel({
@@ -120,6 +127,8 @@ export default function SidePanel({
   graphVersion,
   graphNodeIds,
   hopMap,
+  mobileActiveTab,
+  onMobileClose,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<
     'filters' | 'discover' | 'details'
@@ -129,6 +138,13 @@ export default function SidePanel({
   useEffect(() => {
     activeTabRef.current = activeTab;
   });
+
+  // Sync internal tab when driven externally on mobile
+  useEffect(() => {
+    if (mobileActiveTab) {
+      setActiveTab(mobileActiveTab);
+    }
+  }, [mobileActiveTab]);
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
   const expanded = hasSelection || activeTab === 'discover';
@@ -163,8 +179,13 @@ export default function SidePanel({
     setActiveTab(previousTab.current);
   };
 
+  const isMobileOpen = !!mobileActiveTab;
+
   return (
-    <div className="side-panel" style={{ width: panelWidth }}>
+    <div
+      className={`side-panel${isMobileOpen ? ' side-panel--mobile-open' : ''}`}
+      style={{ width: isMobileOpen ? undefined : panelWidth }}
+    >
       <div className="side-panel-tabs">
         <button
           className={`side-panel-tab ${activeTab === 'filters' ? 'side-panel-tab--active' : ''}`}
@@ -186,10 +207,18 @@ export default function SidePanel({
             >
               Details
             </button>
+          </>
+        )}
+        {isMobileOpen ? (
+          <button className="side-panel-close" onClick={onMobileClose}>
+            &times;
+          </button>
+        ) : (
+          hasSelection && (
             <button className="side-panel-close" onClick={handleCloseDetails}>
               &times;
             </button>
-          </>
+          )
         )}
       </div>
 
@@ -248,7 +277,9 @@ export default function SidePanel({
           ) : null}
         </div>
       )}
-      <div className="side-panel-drag-handle" onMouseDown={handleMouseDown} />
+      {!isMobileOpen && (
+        <div className="side-panel-drag-handle" onMouseDown={handleMouseDown} />
+      )}
     </div>
   );
 }

@@ -1234,6 +1234,12 @@ header h1 {
   display: none;
 }
 
+/* ── Mobile-only panel buttons / divider (hidden on desktop) ── */
+.mobile-panel-btn,
+.mobile-menu-divider {
+  display: none;
+}
+
 /* ── Burger Menu Button ────────────────────────── */
 .burger-menu-btn {
   display: none;
@@ -1383,5 +1389,56 @@ header h1 {
   /* ── Separator between add-repo area and the action buttons ── */
   .header-collapsible .add-repo-btn {
     margin-left: 0;
+  }
+
+  /* ── Mobile panel buttons in burger menu ── */
+  .mobile-panel-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--foreground);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: auto;
+  }
+
+  .mobile-panel-btn:hover {
+    background: var(--accent);
+  }
+
+  .mobile-menu-divider {
+    display: block;
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  /* ── Hide the desktop side panel on mobile ── */
+  .side-panel {
+    display: none;
+  }
+
+  /* ── Show as full-width overlay when opened from burger menu ── */
+  .side-panel.side-panel--mobile-open {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    z-index: 50;
+    padding-top: 0;
+    background: var(--background);
+    border-right: none;
+    backdrop-filter: none;
+  }
+
+  .side-panel--mobile-open .side-panel-tabs {
+    padding-top: 8px;
   }
 }

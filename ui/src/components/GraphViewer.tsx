@@ -47,6 +47,7 @@ import AddRepoModal, { type IndexedRepo } from './AddRepoModal';
 import IndexingProgress from './IndexingProgress';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
+import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
@@ -372,6 +373,7 @@ const GraphViewer = memo(
       const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+      const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(null);
       const [hops, setHops] = useState(2);
       const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
       const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
@@ -1157,6 +1159,8 @@ const GraphViewer = memo(
                 new Set(availableCommunities.map((c) => c.communityId)),
               )
             }
+            mobileActiveTab={mobilePanelTab}
+            onMobileClose={() => setMobilePanelTab(null)}
           />
           <header>
             <button
@@ -1190,6 +1194,42 @@ const GraphViewer = memo(
               </svg>
             </button>
             <div className={`header-collapsible${mobileMenuOpen ? ' open' : ''}`}>
+            <button
+              type="button"
+              className="mobile-panel-btn"
+              onClick={() => { setMobilePanelTab('filters'); setMobileMenuOpen(false); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+              </svg>
+              <span className="menu-label">Filters</span>
+            </button>
+            <button
+              type="button"
+              className="mobile-panel-btn"
+              onClick={() => { setMobilePanelTab('discover'); setMobileMenuOpen(false); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
+              </svg>
+              <span className="menu-label">Discover</span>
+            </button>
+            {(selectedNode || selectedLink) && (
+              <button
+                type="button"
+                className="mobile-panel-btn"
+                onClick={() => { setMobilePanelTab('details'); setMobileMenuOpen(false); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="16" x2="12" y2="12"></line>
+                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <span className="menu-label">Details</span>
+              </button>
+            )}
+            <div className="mobile-menu-divider"></div>
             <div className="search-container">
               <input
                 type="text"
