@@ -212,8 +212,8 @@ export class KuzuGraphStore implements GraphStore {
   private flushedPackageIds = new Set<string>();
 
   // --- Visualization limits ---
-  private maxVisNodes = 2000;
-  private maxVisEdges = 5000;
+  private maxVisNodes = 20000;
+  private maxVisEdges = 20000;
 
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
