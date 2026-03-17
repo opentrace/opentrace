@@ -1,9 +1,22 @@
 [project]
-name = "opentrace-agent"
+name = "opentraceai"
 version = "0.1.0"
-description = "OpenTrace Python agent for collecting and reporting traces"
+description = "OpenTrace Python agent — maps system architecture, code structure, and service relationships into a knowledge graph"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
+authors = [
+    { name = "OpenTrace Contributors" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "langchain-core>=0.3",
     "langgraph>=0.2",
@@ -30,6 +43,11 @@ summarization = [
     "optimum[onnxruntime]>=1.17",
     "transformers>=4.38",
 ]
+
+[project.urls]
+Homepage = "https://github.com/opentrace/opentrace"
+Repository = "https://github.com/opentrace/opentrace"
+Issues = "https://github.com/opentrace/opentrace/issues"
 
 [project.scripts]
 opentrace = "opentrace_agent.cli.main:app"

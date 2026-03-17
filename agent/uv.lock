@@ -1099,7 +1099,7 @@ wheels = [
 ]
 
 [[package]]
-name = "opentrace-agent"
+name = "opentraceai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

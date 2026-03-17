@@ -1,0 +1,43 @@
+name: Publish Dev Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+
+jobs:
+  publish-dev:
+    name: Publish dev to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/opentraceai/
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set dev version
+        working-directory: agent
+        run: |
+          BASE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          DEV_VERSION="${BASE_VERSION}.dev${GITHUB_RUN_NUMBER}"
+          sed -i "s/^version = .*/version = \"${DEV_VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${DEV_VERSION}\"/" src/opentrace_agent/__init__.py
+          echo "Published version: ${DEV_VERSION}"
+
+      - name: Build package
+        working-directory: agent
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist/

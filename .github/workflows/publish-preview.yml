@@ -1,0 +1,59 @@
+name: Publish Preview Release
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+    paths:
+      - "agent/**"
+
+jobs:
+  publish-preview:
+    name: Publish preview to PyPI
+    if: contains(github.event.pull_request.labels.*.name, 'publish-preview')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pull-requests: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/opentraceai/
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set preview version
+        working-directory: agent
+        run: |
+          BASE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          PREVIEW_VERSION="${BASE_VERSION}rc${{ github.event.pull_request.number }}.dev${GITHUB_RUN_NUMBER}"
+          sed -i "s/^version = .*/version = \"${PREVIEW_VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${PREVIEW_VERSION}\"/" src/opentrace_agent/__init__.py
+          echo "PREVIEW_VERSION=${PREVIEW_VERSION}" >> "$GITHUB_ENV"
+          echo "Published version: ${PREVIEW_VERSION}"
+
+      - name: Build package
+        working-directory: agent
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist/
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `📦 Preview published: \`opentraceai==${process.env.PREVIEW_VERSION}\`\n\n\`\`\`bash\npip install opentraceai==${process.env.PREVIEW_VERSION}\n\`\`\``
+            });
