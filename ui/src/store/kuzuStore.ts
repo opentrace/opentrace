@@ -602,12 +602,30 @@ export class KuzuGraphStore implements GraphStore {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
     await this.ready;
 
-    const nodes = this.pendingNodes;
+    const rawNodes = this.pendingNodes;
     const rels = this.pendingRels;
     this.pendingNodes = [];
     this.pendingRels = [];
 
     const t0 = performance.now();
+
+    // Deduplicate nodes by ID, merging properties. The pipeline may emit
+    // the same node twice (e.g. structure batch + summary update) which
+    // would cause KuzuDB COPY FROM primary-key violations.
+    const nodeDedup = new Map<string, (typeof rawNodes)[0]>();
+    for (const node of rawNodes) {
+      const existing = nodeDedup.get(node.id);
+      if (existing) {
+        existing.properties = {
+          ...existing.properties,
+          ...(node.properties ?? {}),
+        };
+        if (node.embedding) existing.embedding = node.embedding;
+      } else {
+        nodeDedup.set(node.id, { ...node, properties: { ...node.properties } });
+      }
+    }
+    const nodes = Array.from(nodeDedup.values());
 
     // Update JS-side indexes before writing to DB
     for (const node of nodes) {

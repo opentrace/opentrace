@@ -60,13 +60,22 @@ export class InMemoryGraphStore implements GraphStore {
     let relsCreated = 0;
 
     for (const n of batch.nodes) {
-      if (!this.nodes.has(n.id)) nodesCreated++;
-      this.nodes.set(n.id, {
-        id: n.id,
-        type: n.type,
-        name: n.name,
-        properties: n.properties ?? {},
-      });
+      const existing = this.nodes.get(n.id);
+      if (existing) {
+        // Merge properties into existing node (e.g. summary update)
+        existing.properties = {
+          ...existing.properties,
+          ...(n.properties ?? {}),
+        };
+      } else {
+        nodesCreated++;
+        this.nodes.set(n.id, {
+          id: n.id,
+          type: n.type,
+          name: n.name,
+          properties: n.properties ?? {},
+        });
+      }
     }
 
     for (const r of batch.relationships) {

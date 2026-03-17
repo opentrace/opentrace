@@ -21,7 +21,16 @@ export class MemoryStore implements Store {
   readonly relationships = new Map<string, GraphRelationship>();
 
   saveNode(node: GraphNode): void {
-    this.nodes.set(node.id, node);
+    const existing = this.nodes.get(node.id);
+    if (existing) {
+      // Merge properties (e.g. summary update into existing node)
+      existing.properties = {
+        ...existing.properties,
+        ...(node.properties ?? {}),
+      };
+    } else {
+      this.nodes.set(node.id, node);
+    }
   }
 
   saveRelationship(rel: GraphRelationship): void {

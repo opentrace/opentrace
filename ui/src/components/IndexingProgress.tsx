@@ -69,7 +69,7 @@ const STAGE_CONFIG: { phase: JobPhase; label: string }[] = [
   { phase: JobPhase.JOB_PHASE_FETCHING, label: 'Fetching files' },
   { phase: JobPhase.JOB_PHASE_PARSING, label: 'Files & symbols' },
   { phase: JobPhase.JOB_PHASE_RESOLVING, label: 'Call resolution' },
-  { phase: JobPhase.JOB_PHASE_SUMMARIZING, label: 'Directory summaries' },
+  { phase: JobPhase.JOB_PHASE_SUMMARIZING, label: 'Summarizing' },
   { phase: JobPhase.JOB_PHASE_SUBMITTING, label: 'Persisting graph' },
   { phase: JobPhase.JOB_PHASE_EMBEDDING, label: 'Generating embeddings' },
 ];

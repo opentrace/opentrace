@@ -102,6 +102,7 @@ const PHASE_MAP: Record<PipelinePhase, JobPhase> = {
   scanning: JobPhase.JOB_PHASE_FETCHING,
   processing: JobPhase.JOB_PHASE_PARSING,
   resolving: JobPhase.JOB_PHASE_RESOLVING,
+  summarizing: JobPhase.JOB_PHASE_SUMMARIZING,
   submitting: JobPhase.JOB_PHASE_SUBMITTING,
 };
 

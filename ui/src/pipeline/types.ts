@@ -39,6 +39,7 @@ export type PipelinePhase =
   | 'scanning'
   | 'processing'
   | 'resolving'
+  | 'summarizing'
   | 'submitting';
 
 export interface ProgressDetail {

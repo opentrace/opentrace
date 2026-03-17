@@ -40,6 +40,7 @@ header:
     - "**/*.rb"
     - "**/Gemfile"
     - "**/.prettierrc"
+    - "**/.nvmrc"
     - ".entire/**"
     - ".idea/**"
     - ".git"

@@ -14,14 +14,53 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SummarizationStrategy } from '../../enricher/summarizer/strategy';
+import type { RepoTree, GraphBatch, ExtractionResult } from '../../types';
+
+// Mock extractors so we can inject symbols without needing real tree-sitter ASTs
+const mockExtractPython = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'python',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractTypeScript = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'typescript',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractGo = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'go',
+  rootNode: null,
+} satisfies ExtractionResult);
+const mockExtractGeneric = vi.fn().mockReturnValue({
+  symbols: [],
+  language: 'generic',
+  rootNode: null,
+} satisfies ExtractionResult);
+
+vi.mock('../extractors/python', () => ({
+  extractPython: (...args: unknown[]) => mockExtractPython(...args),
+}));
+vi.mock('../extractors/typescript', () => ({
+  extractTypeScript: (...args: unknown[]) => mockExtractTypeScript(...args),
+}));
+vi.mock('../extractors/go', () => ({
+  extractGo: (...args: unknown[]) => mockExtractGo(...args),
+}));
+vi.mock('../extractors/generic', () => ({
+  extractGeneric: (...args: unknown[]) => mockExtractGeneric(...args),
+}));
+vi.mock('../importAnalyzer', () => ({
+  analyzeImports: () => ({ internal: {}, external: {} }),
+}));
+
 import {
   runPipeline,
   type ParserMap,
   type PipelineCallbacks,
 } from '../pipeline';
-import type { SummarizationStrategy } from '../../enricher/summarizer/strategy';
-import type { RepoTree, GraphBatch } from '../../types';
 
 function makeRepo(overrides?: Partial<RepoTree>): RepoTree {
   return {
@@ -58,6 +97,23 @@ function makeNoopStrategy(): SummarizationStrategy {
     type: 'none',
     init: vi.fn().mockResolvedValue(undefined),
     summarize: vi.fn().mockResolvedValue(''),
+    summarizeBatch: vi.fn().mockResolvedValue([]),
+    dispose: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function makeTemplateStrategy(): SummarizationStrategy {
+  // Mimics the real template strategy — returns a deterministic summary
+  return {
+    type: 'template',
+    init: vi.fn().mockResolvedValue(undefined),
+    summarize: vi.fn().mockImplementation(async (meta) => {
+      if (meta.kind === 'function') return `Retrieves ${meta.name}`;
+      if (meta.kind === 'class') return `${meta.name} class`;
+      if (meta.kind === 'file') return `Source file ${meta.name}`;
+      if (meta.kind === 'directory') return `Directory ${meta.name}`;
+      return '';
+    }),
     summarizeBatch: vi.fn().mockResolvedValue([]),
     dispose: vi.fn().mockResolvedValue(undefined),
   };
@@ -253,5 +309,357 @@ describe('runPipeline', () => {
         r.source_id === 'testowner/testrepo/main.go' && r.type === 'DEFINED_IN',
     );
     expect(fileRel?.target_id).toBe('testowner/testrepo');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Summary generation tests
+// ---------------------------------------------------------------------------
+
+describe('runPipeline summary generation', () => {
+  beforeEach(() => {
+    mockExtractPython.mockReset();
+    mockExtractTypeScript.mockReset();
+    mockExtractGo.mockReset();
+    mockExtractGeneric.mockReset();
+  });
+
+  function makeSymbolExtraction(
+    symbols: ExtractionResult['symbols'],
+    language = 'python',
+  ): ExtractionResult {
+    return { symbols, language, rootNode: null };
+  }
+
+  it('merges function summary into the same node (no duplicate nodes)', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'getUserById',
+          kind: 'function',
+          startLine: 1,
+          endLine: 3,
+          signature: '(user_id: int)',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'users.py',
+          content:
+            'def getUserById(user_id: int):\n    return db.get(user_id)\n',
+          sha: '',
+          size: 50,
+        },
+      ],
+    });
+    const strategy = makeTemplateStrategy();
+    await runPipeline(repo, makeMockParsers(), callbacks, strategy);
+
+    const allNodes = callbacks.batches.flatMap((b) => b.nodes);
+
+    // Should have exactly ONE Function node, not two
+    const funcNodes = allNodes.filter(
+      (n) => n.type === 'Function' && n.name === 'getUserById',
+    );
+    expect(funcNodes).toHaveLength(1);
+
+    // That node should have both the original properties AND the summary
+    const funcNode = funcNodes[0];
+    expect(funcNode.properties?.summary).toBe('Retrieves getUserById');
+    expect(funcNode.properties?.language).toBe('python');
+    expect(funcNode.properties?.start_line).toBe(1);
+    expect(funcNode.properties?.end_line).toBe(3);
+  });
+
+  it('merges class summary into the same node', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'UserService',
+          kind: 'class',
+          startLine: 1,
+          endLine: 10,
+          signature: null,
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'service.py',
+          content: 'class UserService:\n    pass\n' + '\n'.repeat(8),
+          sha: '',
+          size: 50,
+        },
+      ],
+    });
+    await runPipeline(
+      repo,
+      makeMockParsers(),
+      callbacks,
+      makeTemplateStrategy(),
+    );
+
+    const allNodes = callbacks.batches.flatMap((b) => b.nodes);
+    const classNodes = allNodes.filter(
+      (n) => n.type === 'Class' && n.name === 'UserService',
+    );
+    expect(classNodes).toHaveLength(1);
+    expect(classNodes[0].properties?.summary).toBe('UserService class');
+    expect(classNodes[0].properties?.language).toBe('python');
+  });
+
+  it('emits file summary as a separate update node', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'hello',
+          kind: 'function',
+          startLine: 1,
+          endLine: 2,
+          signature: '()',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'hello.py',
+          content: 'def hello():\n    print("hi")\n',
+          sha: '',
+          size: 30,
+        },
+      ],
+    });
+    await runPipeline(
+      repo,
+      makeMockParsers(),
+      callbacks,
+      makeTemplateStrategy(),
+    );
+
+    const allNodes = callbacks.batches.flatMap((b) => b.nodes);
+    // File summary update node should have summary property
+    const fileSummaryNodes = allNodes.filter(
+      (n) =>
+        n.type === 'File' && n.name === 'hello.py' && n.properties?.summary,
+    );
+    expect(fileSummaryNodes.length).toBeGreaterThanOrEqual(1);
+    expect(fileSummaryNodes[0].properties?.summary).toBe(
+      'Source file hello.py',
+    );
+  });
+
+  it('includes summaries in enrichItems', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'processData',
+          kind: 'function',
+          startLine: 1,
+          endLine: 3,
+          signature: '(data)',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'process.py',
+          content: 'def processData(data):\n    return data\n',
+          sha: '',
+          size: 40,
+        },
+      ],
+    });
+    const result = await runPipeline(
+      repo,
+      makeMockParsers(),
+      callbacks,
+      makeTemplateStrategy(),
+    );
+
+    // enrichItems should contain function + file entries with summaries
+    const funcEnrich = result.enrichItems.find(
+      (e) => e.kind === 'function' && e.nodeName === 'processData',
+    );
+    expect(funcEnrich).toBeDefined();
+    expect(funcEnrich!.summary).toBe('Retrieves processData');
+
+    const fileEnrich = result.enrichItems.find(
+      (e) => e.kind === 'file' && e.nodeName === 'process.py',
+    );
+    expect(fileEnrich).toBeDefined();
+    expect(fileEnrich!.summary).toBe('Source file process.py');
+  });
+
+  it('generates directory summaries for directories with children', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'helper',
+          kind: 'function',
+          startLine: 1,
+          endLine: 2,
+          signature: '()',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'utils/helper.py',
+          content: 'def helper():\n    pass\n',
+          sha: '',
+          size: 20,
+        },
+      ],
+    });
+    const result = await runPipeline(
+      repo,
+      makeMockParsers(),
+      callbacks,
+      makeTemplateStrategy(),
+    );
+
+    const dirEnrich = result.enrichItems.find(
+      (e) => e.kind === 'directory' && e.nodeName === 'utils',
+    );
+    expect(dirEnrich).toBeDefined();
+    expect(dirEnrich!.summary).toBe('Directory utils');
+  });
+
+  it('strategy.summarize is called for each symbol', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'funcA',
+          kind: 'function',
+          startLine: 1,
+          endLine: 2,
+          signature: '()',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+        {
+          name: 'funcB',
+          kind: 'function',
+          startLine: 3,
+          endLine: 4,
+          signature: '()',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'multi.py',
+          content: 'def funcA():\n    pass\ndef funcB():\n    pass\n',
+          sha: '',
+          size: 40,
+        },
+      ],
+    });
+    const strategy = makeTemplateStrategy();
+    await runPipeline(repo, makeMockParsers(), callbacks, strategy);
+
+    // strategy.summarize should be called for: funcA, funcB, file, directory(ies)
+    expect(strategy.summarize).toHaveBeenCalled();
+    const calls = (strategy.summarize as ReturnType<typeof vi.fn>).mock.calls;
+    const funcCalls = calls.filter(
+      (c: unknown[]) => (c[0] as { kind: string }).kind === 'function',
+    );
+    expect(funcCalls).toHaveLength(2);
+    expect(
+      funcCalls.map((c: unknown[]) => (c[0] as { name: string }).name).sort(),
+    ).toEqual(['funcA', 'funcB']);
+  });
+
+  it('noop strategy produces no summary properties on symbol nodes', async () => {
+    mockExtractPython.mockReturnValue(
+      makeSymbolExtraction([
+        {
+          name: 'noSummary',
+          kind: 'function',
+          startLine: 1,
+          endLine: 2,
+          signature: '()',
+          children: [],
+          calls: [],
+          receiverVar: null,
+          receiverType: null,
+          paramTypes: null,
+        },
+      ]),
+    );
+
+    const callbacks = makeCallbacks();
+    const repo = makeRepo({
+      files: [
+        {
+          path: 'empty.py',
+          content: 'def noSummary():\n    pass\n',
+          sha: '',
+          size: 25,
+        },
+      ],
+    });
+    await runPipeline(repo, makeMockParsers(), callbacks, makeNoopStrategy());
+
+    const allNodes = callbacks.batches.flatMap((b) => b.nodes);
+    const funcNodes = allNodes.filter(
+      (n) => n.type === 'Function' && n.name === 'noSummary',
+    );
+    // With noop strategy, summary is '' (falsy), so it should NOT be added to properties
+    for (const node of funcNodes) {
+      expect(node.properties?.summary).toBeUndefined();
+    }
   });
 });
