@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from opentrace.v1 import agent_service_pb2 as opentrace_dot_v1_dot_agent__service__pb2
+from opentrace_agent.gen.opentrace.v1 import agent_service_pb2 as opentrace_dot_v1_dot_agent__service__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
