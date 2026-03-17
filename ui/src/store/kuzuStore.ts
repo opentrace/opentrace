@@ -212,8 +212,9 @@ export class KuzuGraphStore implements GraphStore {
   private flushedPackageIds = new Set<string>();
 
   // --- Visualization limits ---
-  private maxVisNodes = 20000;
-  private maxVisEdges = 20000;
+  private static readonly isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+  private maxVisNodes = KuzuStore.isMobile ? 8000 : 20000;
+  private maxVisEdges = KuzuStore.isMobile ? 8000 : 20000;
 
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
@@ -230,8 +231,9 @@ export class KuzuGraphStore implements GraphStore {
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
     if (savedNodes || savedEdges) {
-      const maxN = savedNodes ? Number(savedNodes) : 2000;
-      const maxE = savedEdges ? Number(savedEdges) : 5000;
+      const fallback = KuzuStore.isMobile ? 8000 : 20000;
+      const maxN = savedNodes ? Number(savedNodes) : fallback;
+      const maxE = savedEdges ? Number(savedEdges) : fallback;
       if (Number.isFinite(maxN) && Number.isFinite(maxE)) {
         this.maxVisNodes = maxN;
         this.maxVisEdges = maxE;

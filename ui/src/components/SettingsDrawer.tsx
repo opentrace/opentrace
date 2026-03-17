@@ -25,8 +25,9 @@ import type { SummarizationStrategyType } from '../runner/browser/enricher/summa
 import { useStore } from '../store';
 import './SettingsDrawer.css';
 
-const DEFAULT_MAX_NODES = 20000;
-const DEFAULT_MAX_EDGES = 20000;
+const IS_MOBILE = window.matchMedia('(max-width: 768px)').matches;
+const DEFAULT_MAX_NODES = IS_MOBILE ? 8000 : 20000;
+const DEFAULT_MAX_EDGES = IS_MOBILE ? 8000 : 20000;
 const LS_KEY_NODES = 'ot:maxVisNodes';
 const LS_KEY_EDGES = 'ot:maxVisEdges';
 
