@@ -17,7 +17,7 @@
 /**
  * In-memory GraphStore implementation.
  *
- * Drop-in replacement for KuzuGraphStore that keeps everything in Maps.
+ * Drop-in replacement for KuzuGraphStore (LadybugDB) that keeps everything in Maps.
  * No WASM, no workers, no COOP/COEP headers required.
  */
 

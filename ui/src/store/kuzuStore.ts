@@ -15,7 +15,7 @@
  */
 
 /**
- * KuzuDB graph store using kuzu-wasm 0.11.3 with typed node tables.
+ * LadybugDB graph store using @lbug/lbug-wasm with typed node tables.
  *
  * Uses typed node tables (Repository, Directory, File, Package, Class,
  * Function) instead of a single Node table, enabling direct MATCH by type
@@ -24,7 +24,8 @@
  * filesystem.
  */
 
-import kuzu from 'kuzu-wasm';
+import lbugInit from '@lbug/lbug-wasm';
+import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -84,9 +85,9 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 // ---- CSV helpers ----
 
 function csvEscape(value: string): string {
-  // Always quote to avoid ambiguity — KuzuDB's CSV parser can misparse
+  // Always quote to avoid ambiguity — LadybugDB's CSV parser can misparse
   // fields containing JSON with nested commas + quotes.
-  // Strip newlines — KuzuDB's parallel CSV reader rejects quoted newlines.
+  // Strip newlines — LadybugDB's parallel CSV reader rejects quoted newlines.
   return '"' + value.replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
 }
 
@@ -182,8 +183,8 @@ function unionAllTextSearch(escapedLower: string): string {
 // ---- Store implementation ----
 
 export class KuzuGraphStore implements GraphStore {
-  private db: InstanceType<typeof kuzu.Database>;
-  private conn: InstanceType<typeof kuzu.Connection>;
+  private lbug!: LbugModule;
+  private conn!: WebConnection;
   private ready: Promise<void>;
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
@@ -205,60 +206,70 @@ export class KuzuGraphStore implements GraphStore {
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
 
-  /** Package node IDs already written to KuzuDB. Packages are shared across
+  /** Package node IDs already written to LadybugDB. Packages are shared across
    *  repos so the same ID can arrive from multiple pipeline runs — skip
-   *  duplicates to avoid KuzuDB COPY FROM primary-key violations. */
+   *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
   private flushedPackageIds = new Set<string>();
 
   // --- Visualization limits ---
   private maxVisNodes = 2000;
   private maxVisEdges = 5000;
 
-  // --- Serialization queue (kuzu-wasm wraps single-threaded C++ engine) ---
+  // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
 
   constructor() {
-    kuzu.setWorkerPath('/kuzu_wasm_worker.js');
-    this.db = new kuzu.Database(':memory:', 512 * 1024 * 1024);
-    this.conn = new kuzu.Connection(this.db);
-    this.ready = this.initSchema().then(() => {
-      const savedNodes = localStorage.getItem('ot:maxVisNodes');
-      const savedEdges = localStorage.getItem('ot:maxVisEdges');
-      if (savedNodes || savedEdges) {
-        const maxN = savedNodes ? Number(savedNodes) : 2000;
-        const maxE = savedEdges ? Number(savedEdges) : 5000;
-        if (Number.isFinite(maxN) && Number.isFinite(maxE)) {
-          this.maxVisNodes = maxN;
-          this.maxVisEdges = maxE;
-        }
+    this.ready = this.initModule();
+  }
+
+  private async initModule(): Promise<void> {
+    this.lbug = await lbugInit();
+    const db = await this.lbug.Database(':memory:', 512 * 1024 * 1024);
+    this.conn = await this.lbug.Connection(db);
+    await this.initSchema();
+    const savedNodes = localStorage.getItem('ot:maxVisNodes');
+    const savedEdges = localStorage.getItem('ot:maxVisEdges');
+    if (savedNodes || savedEdges) {
+      const maxN = savedNodes ? Number(savedNodes) : 2000;
+      const maxE = savedEdges ? Number(savedEdges) : 5000;
+      if (Number.isFinite(maxN) && Number.isFinite(maxE)) {
+        this.maxVisNodes = maxN;
+        this.maxVisEdges = maxE;
       }
-    });
+    }
   }
 
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
-      const result = await this.conn.query(stmt);
-      await result.close();
+      const result = this.conn.query(stmt);
+      if (!result.isSuccess()) {
+        const err = result.getErrorMessage();
+        result.close();
+        throw new Error(err);
+      }
+      result.close();
     }
   }
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Serialized through a queue to prevent concurrent execute() calls.
+   * Uses conn.execute() which returns an Apache Arrow Table, then
+   * converts rows to plain objects via toJSON().
+   * Serialized through a queue to prevent concurrent calls.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
     await this.ready;
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const result = await this.conn.query(cypher);
-          if (!result.isSuccess()) {
-            const err = await result.getErrorMessage();
-            await result.close();
-            throw new Error(err);
+          const table = await this.conn.execute(cypher);
+          if (!table) {
+            throw new Error(`Query failed: ${cypher.slice(0, 120)}`);
           }
-          const rows = await result.getAllObjects();
-          await result.close();
+          const rows: Record<string, unknown>[] = [];
+          for (const row of table) {
+            rows.push(row.toJSON());
+          }
           resolve(rows);
         })
         .catch((err) => {
@@ -269,19 +280,20 @@ export class KuzuGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher statement that doesn't return rows (DDL, COPY, etc.).
+   * Uses raw conn.query() for synchronous execution with error reporting.
    */
   private async exec(cypher: string): Promise<void> {
     await this.ready;
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
-        .then(async () => {
-          const result = await this.conn.query(cypher);
+        .then(() => {
+          const result = this.conn.query(cypher);
           if (!result.isSuccess()) {
-            const err = await result.getErrorMessage();
-            await result.close();
+            const err = result.getErrorMessage();
+            result.close();
             throw new Error(err);
           }
-          await result.close();
+          result.close();
           resolve();
         })
         .catch((err) => {
@@ -594,7 +606,7 @@ export class KuzuGraphStore implements GraphStore {
   }
 
   /**
-   * Flush all buffered writes to KuzuDB via CSV + COPY FROM.
+   * Flush all buffered writes to LadybugDB via CSV + COPY FROM.
    * Nodes are bucketed by type and written to per-type CSVs.
    * Relationships are written via the RELATES REL TABLE GROUP.
    */
@@ -649,7 +661,7 @@ export class KuzuGraphStore implements GraphStore {
 
     // Bucket nodes by type and write per-type CSVs.
     // Package nodes are shared across repos — deduplicate within this batch
-    // and against previously flushed packages to avoid KuzuDB PK violations.
+    // and against previously flushed packages to avoid LadybugDB PK violations.
     if (nodes.length > 0) {
       const buckets = new Map<string, ImportBatchRequest['nodes']>();
       for (const node of nodes) {
@@ -677,9 +689,9 @@ export class KuzuGraphStore implements GraphStore {
       for (const [type, bucket] of buckets) {
         const csv = generateTypedNodeCSV(bucket);
         const path = `/nodes_${type}.csv`;
-        await kuzu.FS.writeFile(path, csv);
+        this.lbug.FS.writeFile(path, csv);
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
-        await kuzu.FS.unlink(path);
+        this.lbug.FS.unlink(path);
       }
     }
 
@@ -739,7 +751,7 @@ export class KuzuGraphStore implements GraphStore {
     for (const [key, bucket] of buckets) {
       const csv = generateRelCSV(bucket);
       const path = `/rels_${key}.csv`;
-      await kuzu.FS.writeFile(path, csv);
+      this.lbug.FS.writeFile(path, csv);
       try {
         await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
       } catch (err) {
@@ -761,7 +773,7 @@ export class KuzuGraphStore implements GraphStore {
           }
         }
       }
-      await kuzu.FS.unlink(path);
+      this.lbug.FS.unlink(path);
     }
   }
 
