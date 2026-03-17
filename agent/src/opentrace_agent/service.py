@@ -99,12 +99,14 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
             # --- STARTING ---
             if use_mcp:
                 yield pb2.JobEvent(
-                    phase=pb2.JOB_PHASE_STARTING,
+                    kind=pb2.JOB_EVENT_KIND_PROGRESS,
+                    phase=pb2.JOB_PHASE_INITIALIZING,
                     message="Initialising registry and MCP client",
                 )
             else:
                 yield pb2.JobEvent(
-                    phase=pb2.JOB_PHASE_STARTING,
+                    kind=pb2.JOB_EVENT_KIND_PROGRESS,
+                    phase=pb2.JOB_PHASE_INITIALIZING,
                     message="Initialising registry (streaming mode)",
                 )
 
@@ -124,14 +126,16 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
 
             if not sources_to_run:
                 yield pb2.JobEvent(
-                    phase=pb2.JOB_PHASE_ERROR,
+                    kind=pb2.JOB_EVENT_KIND_ERROR,
+                    phase=pb2.JOB_PHASE_INITIALIZING,
                     message="No sources to run after planning",
                     errors=["No configured integrations produced runnable sources"],
                 )
                 return
 
             yield pb2.JobEvent(
-                phase=pb2.JOB_PHASE_PLANNING,
+                kind=pb2.JOB_EVENT_KIND_PROGRESS,
+                phase=pb2.JOB_PHASE_INITIALIZING,
                 message=f"Will run {len(sources_to_run)} source(s): {', '.join(sources_to_run)}",
             )
 
@@ -152,10 +156,14 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
                     all_trees.extend(trees)
                     for tree in trees:
                         repos_processed += 1
+                        repo_url = getattr(tree.root, "url", "")
+                        msg = f"Loaded tree from '{tree.origin}'"
+                        if repo_url:
+                            msg += f" ({repo_url})"
                         yield pb2.JobEvent(
-                            phase=pb2.JOB_PHASE_LOADING,
-                            message=f"Loaded tree from '{tree.origin}'",
-                            repo_url=getattr(tree.root, "url", ""),
+                            kind=pb2.JOB_EVENT_KIND_PROGRESS,
+                            phase=pb2.JOB_PHASE_FETCHING,
+                            message=msg,
                         )
                 except Exception as e:
                     msg = f"Error loading source '{source_type}': {e}"
@@ -164,7 +172,8 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
 
             if not all_trees:
                 yield pb2.JobEvent(
-                    phase=pb2.JOB_PHASE_ERROR,
+                    kind=pb2.JOB_EVENT_KIND_ERROR,
+                    phase=pb2.JOB_PHASE_FETCHING,
                     message="No trees produced by any source",
                     errors=all_errors or ["All sources returned empty results"],
                 )
@@ -172,7 +181,8 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
 
             # --- MAPPING ---
             yield pb2.JobEvent(
-                phase=pb2.JOB_PHASE_MAPPING,
+                kind=pb2.JOB_EVENT_KIND_PROGRESS,
+                phase=pb2.JOB_PHASE_SUBMITTING,
                 message=f"Mapping {len(all_trees)} tree(s) to graph",
             )
 
@@ -205,6 +215,7 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
 
             # --- DONE ---
             yield pb2.JobEvent(
+                kind=pb2.JOB_EVENT_KIND_DONE,
                 phase=pb2.JOB_PHASE_DONE,
                 message="Job completed",
                 result=pb2.JobResult(
@@ -220,7 +231,8 @@ class AgentServiceServicer(pb2_grpc.AgentServiceServicer):
             logger.exception(msg)
             all_errors.append(msg)
             yield pb2.JobEvent(
-                phase=pb2.JOB_PHASE_ERROR,
+                kind=pb2.JOB_EVENT_KIND_ERROR,
+                phase=pb2.JOB_PHASE_DONE,
                 message=msg,
                 errors=all_errors,
             )

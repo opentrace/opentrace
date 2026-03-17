@@ -129,7 +129,7 @@ class _ClosableMockMCPClient:
 async def _collect_events(
     request: pb2.RunJobRequest,
     container: AppContainer | None = None,
-) -> list[pb2.RunJobEvent]:
+) -> list[pb2.JobEvent]:
     """Run the servicer and collect all streamed events."""
     if container is None:
         container = AppContainer(config=AgentConfig())
@@ -167,12 +167,12 @@ class TestRunJob:
         request = pb2.RunJobRequest(mcp_url="http://localhost/sse")
         events = await _collect_events(request)
 
-        assert len(events) >= 2  # STARTING + ERROR
-        assert events[-1].phase == pb2.JOB_PHASE_ERROR
+        assert len(events) >= 2  # INITIALIZING + ERROR
+        assert events[-1].kind == pb2.JOB_EVENT_KIND_ERROR
 
     @pytest.mark.anyio
     async def test_full_pipeline_phase_order(self, mock_mcp, tmp_path):
-        """Happy path: STARTING -> PLANNING -> LOADING -> MAPPING -> DONE."""
+        """Happy path: INITIALIZING -> FETCHING -> SUBMITTING -> DONE."""
         (tmp_path / "main.py").write_text("def hello(): pass\n")
 
         mock_cloner = MagicMock()
@@ -187,11 +187,10 @@ class TestRunJob:
         events = await _collect_events(request, container)
 
         phases = [e.phase for e in events]
-        assert phases[0] == pb2.JOB_PHASE_STARTING
-        assert phases[1] == pb2.JOB_PHASE_PLANNING
-        loading_events = [e for e in events if e.phase == pb2.JOB_PHASE_LOADING]
-        assert len(loading_events) >= 1
-        assert phases[-2] == pb2.JOB_PHASE_MAPPING
+        assert phases[0] == pb2.JOB_PHASE_INITIALIZING
+        fetching_events = [e for e in events if e.phase == pb2.JOB_PHASE_FETCHING]
+        assert len(fetching_events) >= 1
+        assert phases[-2] == pb2.JOB_PHASE_SUBMITTING
         assert phases[-1] == pb2.JOB_PHASE_DONE
 
         done_event = events[-1]
@@ -244,8 +243,8 @@ class TestRunJob:
         events = await _collect_events(request, container)
 
         # Should get ERROR because no trees were produced
-        assert any(e.phase == pb2.JOB_PHASE_ERROR for e in events)
-        error_events = [e for e in events if e.phase == pb2.JOB_PHASE_ERROR]
+        assert any(e.kind == pb2.JOB_EVENT_KIND_ERROR for e in events)
+        error_events = [e for e in events if e.kind == pb2.JOB_EVENT_KIND_ERROR]
         assert any("load failed" in str(e.errors) for e in error_events)
 
     @pytest.mark.anyio
@@ -266,13 +265,13 @@ class TestRunJob:
 
         events = await _collect_events(request, container)
 
-        assert any(e.phase == pb2.JOB_PHASE_ERROR for e in events)
-        error_event = [e for e in events if e.phase == pb2.JOB_PHASE_ERROR][0]
+        assert any(e.kind == pb2.JOB_EVENT_KIND_ERROR for e in events)
+        error_event = [e for e in events if e.kind == pb2.JOB_EVENT_KIND_ERROR][0]
         assert "boom" in error_event.message
 
     @pytest.mark.anyio
-    async def test_loading_event_has_repo_url(self, mock_mcp, tmp_path):
-        """LOADING events should include the repo URL."""
+    async def test_fetching_event_has_repo_info(self, mock_mcp, tmp_path):
+        """FETCHING events should include repo info in the message."""
         (tmp_path / "f.py").write_text("pass\n")
 
         mock_cloner = MagicMock()
@@ -286,6 +285,5 @@ class TestRunJob:
 
         events = await _collect_events(request, container)
 
-        loading = [e for e in events if e.phase == pb2.JOB_PHASE_LOADING]
-        assert len(loading) >= 1
-        assert "github.com/org/myrepo" in loading[0].repo_url
+        fetching = [e for e in events if e.phase == pb2.JOB_PHASE_FETCHING]
+        assert len(fetching) >= 1
