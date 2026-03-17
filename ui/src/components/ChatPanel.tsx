@@ -147,6 +147,7 @@ export default function ChatPanel({
     const savedModel = loadModelChoice(id);
     setModelId(savedModel ?? PROVIDERS[id].defaultModel);
     if (id === 'local') setLocalUrl(loadLocalUrl());
+    setShowSettings(true);
   };
 
   const switchModel = (model: string) => {
@@ -672,7 +673,7 @@ export default function ChatPanel({
             >
               Save
             </button>
-            {apiKey && (
+            {(apiKey || providerId === 'local') && (
               <button
                 className="settings-back-btn"
                 style={{ padding: '8px' }}
