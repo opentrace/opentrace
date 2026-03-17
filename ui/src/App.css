@@ -1312,15 +1312,11 @@ header h1 {
     margin: 4px 10px;
   }
 
-  /* ── Badge as a menu row ── */
-  .header-collapsible .badge {
-    padding: 8px 16px;
-    font-size: 13px;
-  }
-
-  /* ── Show All button ── */
-  .header-collapsible .reset-btn {
-    margin: 0 10px;
+  /* ── Hide desktop-only items in mobile menu ── */
+  .header-collapsible .badge,
+  .header-collapsible .reset-btn,
+  .header-collapsible .job-minimized-bar {
+    display: none;
   }
 
   /* ── Common menu-item style for buttons ── */
