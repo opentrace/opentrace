@@ -35,6 +35,7 @@ go test ./...
 ```
 
 KuzuDB (embedded graph database) requires the shared library in `LD_LIBRARY_PATH` for tests:
+
 ```bash
 LD_LIBRARY_PATH=$(go env GOPATH)/pkg/mod/github.com/kuzudb/go-kuzu@v0.11.3/lib/dynamic/linux-amd64/ go test ./...
 ```
@@ -66,27 +67,27 @@ npm run dev
 
 The API server exposes an MCP endpoint at `/mcp` with these tools:
 
-| Tool | Description |
-|------|-------------|
-| `query_graph` | Search or list nodes by type with optional property filters |
-| `get_node` | Fetch a single node by ID with its immediate neighbors |
+| Tool             | Description                                                      |
+| ---------------- | ---------------------------------------------------------------- |
+| `query_graph`    | Search or list nodes by type with optional property filters      |
+| `get_node`       | Fetch a single node by ID with its immediate neighbors           |
 | `traverse_graph` | Walk relationships from a starting node (outgoing/incoming/both) |
-| `search_graph` | Search nodes by name and return a subgraph with relationships |
-| `load_source` | Fetch file contents from registered GitHub/GitLab integrations |
+| `search_graph`   | Search nodes by name and return a subgraph with relationships    |
+| `load_source`    | Fetch file contents from registered GitHub/GitLab integrations   |
 
 ## Agents
 
-| Agent | Description |
-|-------|-------------|
-| `@code-explorer` | Explore indexed code structure — find classes, functions, services and their relationships |
-| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes |
+| Agent                  | Description                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `@code-explorer`       | Explore indexed code structure — find classes, functions, services and their relationships |
+| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                                     |
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/graph-status` | Show overview of indexed nodes by type, list repos and services |
-| `/explore <name>` | Quick exploration of a named component in the graph |
+| Command           | Description                                                     |
+| ----------------- | --------------------------------------------------------------- |
+| `/graph-status`   | Show overview of indexed nodes by type, list repos and services |
+| `/explore <name>` | Quick exploration of a named component in the graph             |
 
 ## Graph Node Types
 
@@ -95,12 +96,13 @@ Service, Repo, Repository, Class, Module, Function, File, Directory, Cluster, Na
 ## Configuration
 
 Server config is in `config.yaml`:
+
 ```yaml
 server:
   port: 8080
   env: dev
   cors_hosts:
-    - http://localhost:5173   # UI auto-selects 5173–5180; add more if needed
+    - http://localhost:5173 # UI auto-selects 5173–5180; add more if needed
 graph:
   db_path: ./data/graph.kuzu
 ```
