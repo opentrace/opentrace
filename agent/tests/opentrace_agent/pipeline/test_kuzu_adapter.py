@@ -20,8 +20,8 @@ import pytest
 
 from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
 
-# Skip entire module if kuzu is not installed
-kuzu = pytest.importorskip("kuzu")
+# Skip entire module if real_ladybug (LadybugDB) is not installed
+kuzu = pytest.importorskip("real_ladybug")
 
 KuzuStoreAdapter = pytest.importorskip("opentrace_agent.pipeline.adapters").KuzuStoreAdapter
 KuzuStore = pytest.importorskip("opentrace_agent.store").KuzuStore

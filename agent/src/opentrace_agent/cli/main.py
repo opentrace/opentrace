@@ -45,7 +45,7 @@ def app() -> None:
     "db_path",
     default=None,
     type=click.Path(),
-    help="Write directly to a local KuzuDB database (bypasses API).",
+    help="Write directly to a local LadybugDB database (bypasses API).",
 )
 @click.option("--repo-id", default=None, help="Repository ID (defaults to directory name).")
 @click.option("--batch-size", default=200, show_default=True, help="Items per upload batch.")
@@ -100,14 +100,14 @@ def _make_store(*, api_url: str, db_path: str | None, batch_size: int) -> object
             from opentrace_agent.store import KuzuStore
         except ImportError:
             click.echo(
-                "Error: kuzu package not installed. Install with: pip install opentrace-agent[kuzu]",
+                "Error: real-ladybug package not installed. Install with: pip install opentrace-agent[kuzu]",
                 err=True,
             )
             sys.exit(1)
 
         from opentrace_agent.pipeline.adapters import KuzuStoreAdapter
 
-        click.echo(f"Opening KuzuDB at {db_path} ...")
+        click.echo(f"Opening LadybugDB at {db_path} ...")
         kuzu_store = KuzuStore(db_path)
         return KuzuStoreAdapter(kuzu_store, batch_size=batch_size)
 

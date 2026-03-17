@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""KuzuDB-backed graph store — Python equivalent of ``api/pkg/graph/kuzu.go``.
+"""LadybugDB-backed graph store — Python equivalent of ``api/pkg/graph/kuzu.go``.
 
 Same schema, same Cypher queries, interoperable databases.
 """
@@ -24,7 +24,7 @@ import logging
 from collections import deque
 from typing import Any
 
-import kuzu
+import real_ladybug as kuzu  # LadybugDB — drop-in replacement for kuzu
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def _unmarshal_props(s: str) -> dict[str, Any] | None:
 
 
 class KuzuStore:
-    """Embedded graph store backed by KuzuDB.
+    """Embedded graph store backed by LadybugDB.
 
     Schema matches the Go ``KuzuStore`` exactly::
 
@@ -551,7 +551,7 @@ class KuzuStore:
 
 
 def _row_to_node(row: list) -> dict[str, Any]:
-    """Convert a kuzu result row [id, type, name, properties] to a node dict."""
+    """Convert a result row [id, type, name, properties] to a node dict."""
     props = _unmarshal_props(str(row[3]) if row[3] else "")
     return {
         "id": str(row[0]),

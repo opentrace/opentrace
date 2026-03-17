@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-kuzu = ["kuzu>=0.9"]
+kuzu = ["real-ladybug>=0.13"]
 summarization = [
     "optimum[onnxruntime]>=1.17",
     "transformers>=4.38",
