@@ -50,6 +50,14 @@ header {
   pointer-events: none;
 }
 
+.header-collapsible {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  pointer-events: auto;
+}
+
 header h1 {
   margin: 0;
   font-size: 1.25rem;
