@@ -1228,3 +1228,66 @@ header h1 {
   opacity: 0.5;
   pointer-events: none;
 }
+
+/* ── Burger Menu Button ────────────────────────── */
+.burger-menu-btn {
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  pointer-events: auto;
+  flex-shrink: 0;
+}
+
+.burger-menu-btn:hover {
+  background: var(--accent);
+}
+
+/* ── Mobile Responsive ─────────────────────────── */
+@media (max-width: 768px) {
+  .burger-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    gap: 8px;
+  }
+
+  .header-collapsible {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .header-collapsible.open {
+    display: flex;
+  }
+
+  .search-container {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+  }
+
+  .badge {
+    align-self: center;
+  }
+
+  .header-collapsible .add-repo-btn,
+  .header-collapsible .chat-toggle-btn,
+  .header-collapsible .github-star-btn,
+  .header-collapsible .settings-toggle-btn,
+  .header-collapsible .theme-selector-wrapper,
+  .header-collapsible .reset-btn {
+    align-self: flex-start;
+  }
+}
