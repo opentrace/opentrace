@@ -20,12 +20,18 @@ declare module '@lbug/lbug-wasm' {
     toJSON(): Record<string, unknown>;
   }
 
-  /** Arrow Table returned by Connection.execute(). */
+  /** Arrow Table returned within an ExecuteResult. */
   interface ArrowTable {
     [Symbol.iterator](): Iterator<ArrowRow>;
+    toArray(): ArrowRow[];
     numRows: number;
     numCols: number;
     toString(): string;
+  }
+
+  /** Wrapper returned by Connection.execute(). */
+  interface ExecuteResult {
+    table: ArrowTable;
   }
 
   interface WebDatabase {
@@ -53,8 +59,8 @@ declare module '@lbug/lbug-wasm' {
   interface WebConnection {
     /** Raw synchronous query — returns a WebQueryResult with error info. */
     query(statement: string): WebQueryResult;
-    /** High-level async query — returns an Arrow Table, or undefined on failure. */
-    execute(statement: string): Promise<ArrowTable | undefined>;
+    /** High-level async query — returns an ExecuteResult wrapper, or undefined on failure. */
+    execute(statement: string): Promise<ExecuteResult | undefined>;
     close(): void;
     setQueryTimeout(ms: number): void;
     setMaxNumThreadForExec(n: number): void;

@@ -253,8 +253,9 @@ export class KuzuGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Uses conn.execute() which returns an Apache Arrow Table, then
-   * converts rows to plain objects via toJSON().
+   * Uses conn.execute() which returns { table: ArrowTable }.
+   * Rows are extracted via the Arrow Table's toArray()/toJSON() or
+   * JSON.parse(table.toString()) as a fallback.
    * Serialized through a queue to prevent concurrent calls.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
@@ -262,10 +263,12 @@ export class KuzuGraphStore implements GraphStore {
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const table = await this.conn.execute(cypher);
-          if (!table) {
+          const result = await this.conn.execute(cypher);
+          if (!result) {
             throw new Error(`Query failed: ${cypher.slice(0, 120)}`);
           }
+          // execute() returns { table: ArrowTable }
+          const table = result.table;
           const rows: Record<string, unknown>[] = [];
           for (const row of table) {
             rows.push(row.toJSON());
