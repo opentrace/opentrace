@@ -1312,11 +1312,24 @@ header h1 {
     margin: 4px 10px;
   }
 
-  /* ── Hide desktop-only items in mobile menu ── */
-  .header-collapsible .badge,
-  .header-collapsible .reset-btn,
-  .header-collapsible .job-minimized-bar {
+  /* ── Hide all children by default, then whitelist mobile items ── */
+  .header-collapsible > * {
     display: none;
+  }
+
+  .header-collapsible > .mobile-panel-btn,
+  .header-collapsible > .mobile-menu-divider,
+  .header-collapsible > .search-container,
+  .header-collapsible > .add-repo-btn,
+  .header-collapsible > .theme-selector-wrapper,
+  .header-collapsible > .chat-toggle-btn,
+  .header-collapsible > .github-star-btn,
+  .header-collapsible > .settings-toggle-btn {
+    display: flex;
+  }
+
+  .header-collapsible > .mobile-menu-divider {
+    display: block;
   }
 
   /* ── Common menu-item style for buttons ── */
