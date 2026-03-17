@@ -3,16 +3,31 @@ name: Trigger Deployment
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [labeled, synchronize]
 
 jobs:
   trigger-deploy:
     name: Trigger Deployment
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'deploy-preview'))
     steps:
+      - name: Determine branch
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Trigger deployment
         run: |
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-release \
-            -f 'client_payload[branch]=main'
+            -f 'client_payload[branch]=${{ steps.branch.outputs.ref }}'
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
