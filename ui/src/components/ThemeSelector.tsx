@@ -27,6 +27,7 @@ export default function ThemeSelector() {
         className={`theme-toggle-btn ${open ? 'active' : ''}`}
         onClick={() => setOpen(!open)}
         title="Select theme"
+        aria-expanded={open}
       >
         <svg
           width="20"
@@ -48,6 +49,7 @@ export default function ThemeSelector() {
           <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
           <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
         </svg>
+        <span className="menu-label">Theme</span>
       </button>
 
       {open && (
