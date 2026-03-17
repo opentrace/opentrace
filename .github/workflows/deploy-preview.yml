@@ -1,18 +1,19 @@
-name: Trigger Deployment
+name: Deploy Preview
 
 on:
-  push:
-    branches: [main]
+  pull_request:
+    types: [labeled, synchronize]
 
 jobs:
   trigger-deploy:
-    name: Trigger Deployment
+    name: Deploy Preview
     runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'deploy-preview')
     steps:
       - name: Trigger deployment
         run: |
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-release \
-            -f 'client_payload[branch]=main'
+            -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}'
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
