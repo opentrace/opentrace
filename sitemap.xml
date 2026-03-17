@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://opentrace.github.io/opentrace/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/architecture/overview/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/development/contributing/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/development/setup/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/getting-started/configuration/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/getting-started/quickstart/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/reference/chat-providers/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+    <url>
+         <loc>https://opentrace.github.io/opentrace/reference/languages/</loc>
+         <lastmod>2026-03-17</lastmod>
+    </url>
+</urlset>
