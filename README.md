@@ -5,6 +5,10 @@
 
 A knowledge graph that maps your codebase structure, service architecture, and system relationships — then exposes it all through MCP so AI tools can understand your systems.
 
+## Try Now
+
+**[oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
+
 ## Quick Start
 
 ```bash
