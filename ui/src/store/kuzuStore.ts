@@ -212,7 +212,9 @@ export class KuzuGraphStore implements GraphStore {
   private flushedPackageIds = new Set<string>();
 
   // --- Visualization limits ---
-  private static readonly isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+  private static readonly isMobile =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 768px)').matches;
   private maxVisNodes = KuzuStore.isMobile ? 8000 : 20000;
   private maxVisEdges = KuzuStore.isMobile ? 8000 : 20000;
 
