@@ -139,15 +139,11 @@ export default function SidePanel({
     activeTabRef.current = activeTab;
   });
 
-  // Sync internal tab when driven externally on mobile
-  useEffect(() => {
-    if (mobileActiveTab) {
-      setActiveTab(mobileActiveTab);
-    }
-  }, [mobileActiveTab]);
+  // On mobile, the externally-set tab takes priority
+  const effectiveTab = mobileActiveTab ?? activeTab;
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
-  const expanded = hasSelection || activeTab === 'discover';
+  const expanded = hasSelection || effectiveTab === 'discover';
 
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: expanded
@@ -188,13 +184,13 @@ export default function SidePanel({
     >
       <div className="side-panel-tabs">
         <button
-          className={`side-panel-tab ${activeTab === 'filters' ? 'side-panel-tab--active' : ''}`}
+          className={`side-panel-tab ${effectiveTab === 'filters' ? 'side-panel-tab--active' : ''}`}
           onClick={() => setActiveTab('filters')}
         >
           Filters
         </button>
         <button
-          className={`side-panel-tab ${activeTab === 'discover' ? 'side-panel-tab--active' : ''}`}
+          className={`side-panel-tab ${effectiveTab === 'discover' ? 'side-panel-tab--active' : ''}`}
           onClick={() => setActiveTab('discover')}
         >
           Discover
@@ -202,7 +198,7 @@ export default function SidePanel({
         {hasSelection && (
           <>
             <button
-              className={`side-panel-tab ${activeTab === 'details' ? 'side-panel-tab--active' : ''}`}
+              className={`side-panel-tab ${effectiveTab === 'details' ? 'side-panel-tab--active' : ''}`}
               onClick={() => setActiveTab('details')}
             >
               Details
@@ -224,7 +220,7 @@ export default function SidePanel({
 
       <div
         className="side-panel-content"
-        style={{ display: activeTab === 'filters' ? undefined : 'none' }}
+        style={{ display: effectiveTab === 'filters' ? undefined : 'none' }}
       >
         <FilterPanel
           nodeTypes={nodeTypes}
@@ -250,7 +246,7 @@ export default function SidePanel({
       </div>
       <div
         className="side-panel-content"
-        style={{ display: activeTab === 'discover' ? undefined : 'none' }}
+        style={{ display: effectiveTab === 'discover' ? undefined : 'none' }}
       >
         <DiscoverPanel
           onSelectNode={onSelectNode ?? (() => {})}
@@ -258,10 +254,10 @@ export default function SidePanel({
           selectedNodeId={selectedNode?.id as string | undefined}
           graphNodeIds={graphNodeIds}
           hopMap={hopMap}
-          isActive={activeTab === 'discover'}
+          isActive={effectiveTab === 'discover'}
         />
       </div>
-      {activeTab === 'details' && (
+      {effectiveTab === 'details' && (
         <div className="side-panel-content">
           {selectedNode ? (
             <NodeDetailsPanel
