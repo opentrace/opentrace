@@ -24,7 +24,7 @@ import logging
 from collections import deque
 from typing import Any
 
-import real_ladybug as kuzu  # LadybugDB — drop-in replacement for kuzu
+import real_ladybug as kuzu
 
 logger = logging.getLogger(__name__)
 
