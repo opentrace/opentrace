@@ -54,4 +54,5 @@ nav:
       - Setup: development/setup.md
       - Contributing: development/contributing.md
   - Reference:
+      - Chat Providers: reference/chat-providers.md
       - Supported Languages: reference/languages.md
