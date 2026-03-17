@@ -39,3 +39,37 @@ jobs:
         with:
           files: opentrace-ui-${{ github.ref_name }}.zip
           generate_release_notes: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/opentraceai/
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set version from tag
+        working-directory: agent
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" src/opentrace_agent/__init__.py
+
+      - name: Build package
+        working-directory: agent
+        run: |
+          pip install build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent/dist/
