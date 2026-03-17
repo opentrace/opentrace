@@ -1251,6 +1251,7 @@ header h1 {
   color: var(--foreground);
   pointer-events: auto;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .burger-menu-btn:hover {
