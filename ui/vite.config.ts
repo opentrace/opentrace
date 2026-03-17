@@ -62,7 +62,7 @@ function resolveEnvDir(): string {
 /**
  * Inline Vite plugin that sets Cross-Origin-Opener-Policy and
  * Cross-Origin-Embedder-Policy headers so SharedArrayBuffer is
- * available (required by kuzu-wasm).
+ * available (required by lbug-wasm).
  *
  * Also sets the correct MIME type for .wasm files so WebAssembly
  * streaming compilation works (requires application/wasm).
@@ -143,7 +143,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      exclude: ['web-tree-sitter', 'kuzu-wasm'],
+      exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
     },
     worker: {
       format: 'es',

@@ -33,7 +33,7 @@ function getStore(): KuzuGraphStore {
     if (!crossOriginIsolated) {
       throw new Error(
         'Cross-Origin Isolation (COOP/COEP headers) is required ' +
-          'for in-browser KuzuDB. Serve with appropriate headers.',
+          'for in-browser LadybugDB. Serve with appropriate headers.',
       );
     }
     singletonStore = new KuzuGraphStore();

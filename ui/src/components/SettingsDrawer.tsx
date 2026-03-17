@@ -337,7 +337,7 @@ export default function SettingsDrawer({
             <div className="danger-info">
               <strong>Clear graph database</strong>
               <p>
-                Remove all nodes and edges from KuzuDB. This action cannot be
+                Remove all nodes and edges from LadybugDB. This action cannot be
                 undone.
               </p>
             </div>
