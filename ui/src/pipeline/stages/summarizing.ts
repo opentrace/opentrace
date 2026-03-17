@@ -62,22 +62,47 @@ function summarizeNode(node: GraphNode): string {
 
 /**
  * Wrap an inner event generator, adding summaries to every node that
- * doesn't already have one. All events are re-yielded with enriched nodes.
+ * doesn't already have one. Emits its own start/progress/stop events
+ * so the UI modal can show summarization activity.
  */
 export function* wrapWithSummaries(
   inner: Generator<PipelineEvent>,
 ): Generator<PipelineEvent> {
+  let summarized = 0;
+  let total = 0;
+
+  yield {
+    kind: 'stage_start',
+    phase: 'summarizing',
+    message: 'Summarizing nodes...',
+  };
+
   for (const event of inner) {
     if (event.nodes) {
       for (const node of event.nodes) {
+        total++;
         if (!node.properties?.summary) {
           const summary = summarizeNode(node);
           if (summary) {
             node.properties = { ...node.properties, summary };
+            summarized++;
           }
         }
       }
+
+      yield {
+        kind: 'stage_progress',
+        phase: 'summarizing',
+        message: `Summarized ${summarized} of ${total} nodes`,
+        detail: { current: summarized, total },
+      };
     }
     yield event;
   }
+
+  yield {
+    kind: 'stage_stop',
+    phase: 'summarizing',
+    message: `Summarized ${summarized} nodes`,
+  };
 }
