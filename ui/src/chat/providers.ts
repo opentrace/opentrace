@@ -36,25 +36,25 @@ export interface ProviderInfo {
 const anthropic: ProviderInfo = {
   name: 'Anthropic Claude',
   id: 'anthropic',
-  defaultModel: 'claude-sonnet-4-5-20250929',
+  defaultModel: 'claude-sonnet-4-6-20250514',
   models: [
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
+    { id: 'claude-opus-4-6-20250605', name: 'Claude Opus 4.6' },
+    { id: 'claude-opus-4-5-20250529', name: 'Claude Opus 4.5' },
+    { id: 'claude-sonnet-4-6-20250514', name: 'Claude Sonnet 4.6' },
     { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-    { id: 'claude-haiku-3-5-20241022', name: 'Claude Haiku 3.5' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
   ],
 };
 
 const openai: ProviderInfo = {
   name: 'OpenAI',
   id: 'openai',
-  defaultModel: 'gpt-4o-mini',
+  defaultModel: 'gpt-4.1-mini',
   models: [
     { id: 'o3', name: 'o3' },
     { id: 'o4-mini', name: 'o4-mini' },
     { id: 'gpt-4.1', name: 'GPT-4.1' },
     { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
-    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano' },
     { id: 'gpt-4o', name: 'GPT-4o' },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
   ],
@@ -88,3 +88,44 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
 export const PROVIDER_IDS = Object.keys(PROVIDERS) as Array<
   keyof typeof PROVIDERS
 >;
+
+export interface ApiKeyResource {
+  docs: string;
+  dashboard: string;
+  signup: string;
+  signupLabel: string;
+  steps: string[];
+}
+
+export const API_KEY_RESOURCES: Record<string, ApiKeyResource> = {
+  openai: {
+    docs: 'https://platform.openai.com/docs/quickstart',
+    dashboard: 'https://platform.openai.com/api-keys',
+    signup: 'https://platform.openai.com/api-keys',
+    signupLabel: 'platform.openai.com',
+    steps: [
+      'Go to API Keys in your dashboard',
+      'Click "Create new secret key"',
+    ],
+  },
+  anthropic: {
+    docs: 'https://docs.anthropic.com/claude/docs/getting-access-to-claude',
+    dashboard: 'https://platform.claude.com/settings/keys',
+    signup: 'https://platform.claude.com/settings/keys',
+    signupLabel: 'platform.claude.com',
+    steps: [
+      'Go to Settings > API Keys',
+      'Click "Create Key"',
+    ],
+  },
+  gemini: {
+    docs: 'https://ai.google.dev/gemini-api/docs/api-key',
+    dashboard: 'https://aistudio.google.com/api-keys',
+    signup: 'https://aistudio.google.com/api-keys',
+    signupLabel: 'Google AI Studio',
+    steps: [
+      'Click "Get API key"',
+      'Create a key for your project',
+    ],
+  },
+};

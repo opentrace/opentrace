@@ -225,6 +225,61 @@
   line-height: 1.4;
 }
 
+/* API key help section */
+.api-key-help {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.api-key-help-title {
+  margin: 0 0 8px 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  letter-spacing: 0.01em;
+}
+
+.api-key-steps {
+  margin: 0 0 10px 0;
+  padding-left: 16px;
+  font-size: 0.75rem;
+  color: var(--foreground);
+  line-height: 2;
+  text-align: left;
+  list-style-position: outside;
+}
+
+.api-key-steps li::marker {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
+.api-key-steps a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.api-key-steps a:hover {
+  text-decoration: underline;
+}
+
+.api-key-help-footer {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.api-key-help-footer a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.api-key-help-footer a:hover {
+  text-decoration: underline;
+}
+
 /* ── Responsive: tablet/mobile ── */
 @media (max-width: 1024px) {
   .chat-templates {
