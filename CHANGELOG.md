@@ -36,6 +36,7 @@ All notable changes to this project will be documented in this file.
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -53,6 +54,7 @@ All notable changes to this project will be documented in this file.
 - **ui:** Responsive chat panel with full-screen mobile overlay (#87) ([#87](https://github.com/opentrace/opentrace/pull/87))
 - **ui:** Modular graph layout architecture with community-aware pipeline (#84) ([#84](https://github.com/opentrace/opentrace/pull/84))
 - **plugin:** Switch to stdio MCP and fix agent/command tool references (#92) ([#92](https://github.com/opentrace/opentrace/pull/92))
+- **plugin:** Add marketplace.json for plugin discovery (#95) ([#95](https://github.com/opentrace/opentrace/pull/95))
 
 ### Miscellaneous
 
