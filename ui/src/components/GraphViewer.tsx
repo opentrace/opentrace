@@ -393,13 +393,20 @@ const GraphViewer = memo(
       const [sourceError, setSourceError] = useState<string | null>(null);
 
       const pendingMinimize = useRef(false);
+      const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+      );
 
       // React to persisted: start loading graph data
       useEffect(() => {
         if (jobState.status === 'persisted') {
-          loadGraph().then(() => {
-            pendingMinimize.current = true;
-          });
+          loadGraph()
+            .then(() => {
+              pendingMinimize.current = true;
+            })
+            .catch(() => {
+              // Graph load failed — don't set pendingMinimize
+            });
         }
       }, [jobState.status, loadGraph]);
 
@@ -858,9 +865,17 @@ const GraphViewer = memo(
       useEffect(() => {
         if (pendingMinimize.current && !isEmpty) {
           pendingMinimize.current = false;
-          const id = setTimeout(() => onJobMinimize(), 500);
-          return () => clearTimeout(id);
+          minimizeTimeoutRef.current = setTimeout(() => {
+            minimizeTimeoutRef.current = null;
+            onJobMinimize();
+          }, 500);
         }
+        return () => {
+          if (minimizeTimeoutRef.current) {
+            clearTimeout(minimizeTimeoutRef.current);
+            minimizeTimeoutRef.current = null;
+          }
+        };
       }, [isEmpty, onJobMinimize]);
 
       // Auto-open the Add Repo modal when the graph is empty and idle
