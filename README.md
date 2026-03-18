@@ -1,6 +1,6 @@
 # OpenTrace
 
-[![CI](https://github.com/opentrace/opentrace/actions/workflows/ci.yml/badge.svg)](https://github.com/opentrace/opentrace/actions/workflows/ci.yml)
+[![Deploy](https://github.com/opentrace/opentrace/actions/workflows/deploy.yml/badge.svg)](https://github.com/opentrace/opentrace/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 A knowledge graph that maps your codebase structure, service architecture, and system relationships — then exposes it all through MCP so AI tools can understand your systems.
