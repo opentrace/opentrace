@@ -91,6 +91,8 @@ interface SidePanelProps {
 
   /** Mobile: externally controlled active tab */
   mobileActiveTab?: SidePanelTab | null;
+  /** Mobile: callback to switch tabs while the panel is open */
+  onMobileTabChange?: (tab: SidePanelTab) => void;
   /** Mobile: callback when the panel wants to close */
   onMobileClose?: () => void;
 }
@@ -128,6 +130,7 @@ export default function SidePanel({
   graphNodeIds,
   hopMap,
   mobileActiveTab,
+  onMobileTabChange,
   onMobileClose,
 }: SidePanelProps) {
   const [activeTab, setActiveTab] = useState<
@@ -177,6 +180,11 @@ export default function SidePanel({
 
   const isMobileOpen = !!mobileActiveTab;
 
+  const switchTab = (tab: SidePanelTab) => {
+    setActiveTab(tab);
+    if (isMobileOpen && onMobileTabChange) onMobileTabChange(tab);
+  };
+
   return (
     <div
       className={`side-panel${isMobileOpen ? ' side-panel--mobile-open' : ''}`}
@@ -185,13 +193,13 @@ export default function SidePanel({
       <div className="side-panel-tabs">
         <button
           className={`side-panel-tab ${effectiveTab === 'filters' ? 'side-panel-tab--active' : ''}`}
-          onClick={() => setActiveTab('filters')}
+          onClick={() => switchTab('filters')}
         >
           Filters
         </button>
         <button
           className={`side-panel-tab ${effectiveTab === 'discover' ? 'side-panel-tab--active' : ''}`}
-          onClick={() => setActiveTab('discover')}
+          onClick={() => switchTab('discover')}
         >
           Discover
         </button>
@@ -199,7 +207,7 @@ export default function SidePanel({
           <>
             <button
               className={`side-panel-tab ${effectiveTab === 'details' ? 'side-panel-tab--active' : ''}`}
-              onClick={() => setActiveTab('details')}
+              onClick={() => switchTab('details')}
             >
               Details
             </button>

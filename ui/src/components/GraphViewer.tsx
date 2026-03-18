@@ -1183,6 +1183,7 @@ const GraphViewer = memo(
               )
             }
             mobileActiveTab={mobilePanelTab}
+            onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}
           />
           <header>
