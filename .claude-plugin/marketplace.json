@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "opentrace-oss",
+  "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies",
+  "owner": {
+    "name": "OpenTrace"
+  },
+  "plugins": [
+    {
+      "name": "opentrace-oss",
+      "description": "OpenTrace knowledge graph — search, traverse, and analyze indexed codebases",
+      "version": "0.3.0",
+      "author": {
+        "name": "OpenTrace"
+      },
+      "source": "./claude-code-plugin",
+      "category": "development"
+    }
+  ]
+}
