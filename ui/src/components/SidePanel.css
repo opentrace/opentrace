@@ -125,3 +125,18 @@
   overflow-y: auto;
   min-height: 0;
 }
+
+/* ── Tablet/Mobile (≤ 1024px): touch-friendly targets ── */
+@media (max-width: 1024px) {
+  .side-panel-close {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .side-panel-tab {
+    min-height: 44px;
+  }
+}

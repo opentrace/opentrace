@@ -1058,3 +1058,27 @@
     transform: translateX(250%);
   }
 }
+
+/* ── Mobile (≤ 640px): tighter modal layout ── */
+@media (max-width: 640px) {
+  .modal-card {
+    padding: 24px 20px 20px;
+  }
+
+  .autocomplete-dropdown {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .indexing-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chip-toggle-btn {
+    min-height: 44px;
+  }
+
+  .btn-cta {
+    min-height: 48px;
+  }
+}
