@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenTrace CLI — index local codebases into a KuzuDB knowledge graph."""
+"""OpenTrace CLI — index local codebases into a LadybugDB knowledge graph."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ import click
     default="./otindex.db",
     show_default=True,
     type=click.Path(),
-    help="KuzuDB database path.",
+    help="LadybugDB database path.",
 )
 @click.option("--repo-id", default=None, help="Repository ID (defaults to directory name).")
 @click.option("--batch-size", default=200, show_default=True, help="Items per batch.")
@@ -44,7 +44,7 @@ def index(
     batch_size: int,
     verbose: bool,
 ) -> None:
-    """Index a local codebase into a KuzuDB knowledge graph."""
+    """Index a local codebase into a LadybugDB knowledge graph."""
     _configure_logging(verbose)
 
     from opentrace_agent.pipeline import PipelineInput, run_pipeline
@@ -55,7 +55,7 @@ def index(
     if repo_id is None:
         repo_id = root.name
 
-    click.echo(f"Opening KuzuDB at {db_path} ...")
+    click.echo(f"Opening LadybugDB at {db_path} ...")
     kuzu_store = KuzuStore(db_path)
     store = KuzuStoreAdapter(kuzu_store, batch_size=batch_size)
 
