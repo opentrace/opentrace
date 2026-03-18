@@ -180,6 +180,21 @@ export default function LayoutPipeline({
     } satisfies SpacingRequest);
   }
 
+  /** Compute scale factor to convert screen-pixel sizes to graph-coordinate sizes. */
+  function getGraphScaleFactor(): number {
+    const graph = sigma.getGraph();
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    graph.forEachNode((_, attrs) => {
+      const x = attrs.x as number;
+      const y = attrs.y as number;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    });
+    return Math.max(maxX - minX, maxY - minY, 1) / 4000;
+  }
+
   // ─── Per-community noverlap ─────────────────────────────────────
   // Runs noverlap within each community separately so nodes spread
   // out without drifting across community boundaries. Uses
@@ -210,7 +225,18 @@ export default function LayoutPipeline({
     let idx = 0;
     let totalMoved = 0;
     let cancelled = false;
-    perCommunityNoverlapCancel.current = () => { cancelled = true; };
+    let pendingCallbackId: number | ReturnType<typeof setTimeout> | null = null;
+    perCommunityNoverlapCancel.current = () => {
+      cancelled = true;
+      if (pendingCallbackId !== null) {
+        if (typeof cancelIdleCallback === 'function') {
+          cancelIdleCallback(pendingCallbackId as number);
+        } else {
+          clearTimeout(pendingCallbackId);
+        }
+        pendingCallbackId = null;
+      }
+    };
 
     function processNext() {
       if (cancelled || idx >= sorted.length) {
@@ -286,9 +312,9 @@ export default function LayoutPipeline({
 
     function scheduleNext() {
       if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(processNext, { timeout: 50 });
+        pendingCallbackId = requestIdleCallback(processNext, { timeout: 50 });
       } else {
-        setTimeout(processNext, 0);
+        pendingCallbackId = setTimeout(processNext, 0);
       }
     }
 

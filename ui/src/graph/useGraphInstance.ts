@@ -251,7 +251,8 @@ export function useGraphInstance({
         workerRef.current = null;
       }
     };
-    // communityData read from closure — only changes when allNodes/allLinks change
+    // Dependencies: allNodes/allLinks/layoutConfig changes trigger full rebuild.
+    // communityData is derived from allNodes/allLinks, so it's implicitly tracked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks, graph, layoutConfig]);
 
