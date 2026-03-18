@@ -50,6 +50,7 @@ export interface LayoutRequest {
     ticks: number;
     clusterStrength?: number;
     clusterTicks?: number;
+    clusterSeparation?: number;
   };
 }
 
@@ -97,6 +98,28 @@ self.onmessage = (e: MessageEvent<LayoutRequest>) => {
     const centroids = new Map<number, { x: number; y: number }>();
     for (const [cid, { x, y, count }] of centroidSums) {
       centroids.set(cid, { x: x / count, y: y / count });
+    }
+
+    // Spread centroids apart by scaling distance from global center.
+    // Uses log scale: small graphs barely spread, large graphs spread more.
+    const baseSep = config.clusterSeparation ?? 1;
+    const separation =
+      centroids.size <= 10 ? 1.0 : baseSep * Math.log10(centroids.size);
+    if (separation > 1 && centroids.size > 1) {
+      let gx = 0,
+        gy = 0;
+      for (const { x, y } of centroids.values()) {
+        gx += x;
+        gy += y;
+      }
+      gx /= centroids.size;
+      gy /= centroids.size;
+      for (const [cid, c] of centroids) {
+        centroids.set(cid, {
+          x: gx + (c.x - gx) * separation,
+          y: gy + (c.y - gy) * separation,
+        });
+      }
     }
 
     // Build lookup: nodeId → centroid

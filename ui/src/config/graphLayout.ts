@@ -99,7 +99,7 @@ export const NOVERLAP_EXPANSION = 1.5;
 // ─── Sigma Renderer ─────────────────────────────────────────────────────
 
 // Above this edge count, use simple line edges instead of curved arrows
-export const EDGE_PROGRAM_THRESHOLD = 10000;
+export const EDGE_PROGRAM_THRESHOLD = 50000;
 
 export const LABEL_RENDERED_SIZE_THRESHOLD = 8;
 export const LABEL_SIZE = 12;
@@ -110,3 +110,51 @@ export const LABEL_COLOR = '#e2e8f0';
 // Resolution >1 produces more communities (finer), <1 produces fewer (coarser).
 
 export const LOUVAIN_RESOLUTION = 1.0;
+
+// ─── Bundled LayoutConfig ──────────────────────────────────────────────
+// Same values as above, bundled into a single object for passing to hooks/components.
+
+import type { LayoutConfig } from '../graph/types';
+import { getNodeColor } from '../chat/results/nodeColors';
+import { getLinkColor } from '../chat/results/linkColors';
+import {
+  buildCommunityColorMap,
+  buildCommunityNames,
+  getCommunityColor,
+} from '../chat/results/communityColors';
+
+export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
+  linkDistance: FORCE_LINK_DISTANCE,
+  chargeStrength: FORCE_CHARGE_STRENGTH,
+  simulationTicks: FORCE_SIMULATION_TICKS,
+  clusterStrength: FORCE_CLUSTER_STRENGTH,
+  clusterTicks: FORCE_CLUSTER_TICKS,
+  clusterSeparation: 2.5,
+  fa2Enabled: FA2_ENABLED,
+  fa2Gravity: FA2_GRAVITY,
+  fa2ScalingRatio: FA2_SCALING_RATIO,
+  fa2SlowDown: FA2_SLOW_DOWN,
+  fa2BarnesHutThreshold: FA2_BARNES_HUT_THRESHOLD,
+  fa2BarnesHutTheta: FA2_BARNES_HUT_THETA,
+  fa2StrongGravity: FA2_STRONG_GRAVITY,
+  fa2LinLogMode: FA2_LIN_LOG_MODE,
+  fa2OutboundAttraction: FA2_OUTBOUND_ATTRACTION,
+  fa2AdjustSizes: FA2_ADJUST_SIZES,
+  fa2Duration: FA2_DURATION,
+  noverlapMaxNodes: 3000,
+  noverlapMaxIterations: NOVERLAP_MAX_ITERATIONS,
+  noverlapRatio: NOVERLAP_RATIO,
+  noverlapMargin: NOVERLAP_MARGIN,
+  noverlapExpansion: NOVERLAP_EXPANSION,
+  louvainResolution: LOUVAIN_RESOLUTION,
+  edgeProgramThreshold: 50000,
+  // Graph structure
+  layoutEdgeType: 'DEFINED_IN',
+  structuralTypes: ['Repository', 'Directory', 'Package'],
+  // Color functions — OpenTrace palettes
+  getNodeColor,
+  getLinkColor,
+  buildCommunityColorMap,
+  buildCommunityNames,
+  getCommunityColor,
+};
