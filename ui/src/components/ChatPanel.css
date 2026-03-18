@@ -242,7 +242,7 @@
   }
 
   .chat-input-area {
-    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    padding-bottom: calc(20px + max(0px, env(safe-area-inset-bottom)));
   }
 }
 

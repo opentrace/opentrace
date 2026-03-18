@@ -1491,7 +1491,7 @@ header h1 {
     width: 100% !important;
     z-index: 50;
     border-left: none;
-    padding-top: env(safe-area-inset-top);
+    padding-top: max(0px, env(safe-area-inset-top));
   }
 
   .chat-panel-drag-handle {
@@ -1521,7 +1521,7 @@ header h1 {
     bottom: 0;
     width: 100% !important;
     z-index: 50;
-    padding-top: env(safe-area-inset-top);
+    padding-top: max(0px, env(safe-area-inset-top));
     background: var(--background);
     border-right: none;
     backdrop-filter: none;
@@ -1600,7 +1600,7 @@ header h1 {
   }
 
   .chat-input-area {
-    padding: 10px 12px calc(16px + env(safe-area-inset-bottom));
+    padding: 10px 12px calc(16px + max(0px, env(safe-area-inset-bottom)));
   }
 
   .message {
