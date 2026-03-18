@@ -120,7 +120,7 @@ def _print_event(event: object, verbose: bool) -> None:
     default="./otindex.db",
     show_default=True,
     type=click.Path(exists=True),
-    help="LadybugDB database path.",
+    help="OpenTrace database path.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def mcp_cmd(db_path: str, verbose: bool) -> None:
