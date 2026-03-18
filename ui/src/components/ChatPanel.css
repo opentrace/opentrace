@@ -224,3 +224,31 @@
   color: var(--muted-foreground);
   line-height: 1.4;
 }
+
+/* ── Responsive: tablet/mobile ── */
+@media (max-width: 1024px) {
+  .chat-templates {
+    max-width: none;
+  }
+
+  .provider-selector {
+    flex-wrap: wrap;
+  }
+
+  .provider-selector button {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 8px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .templates-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-selector button {
+    font-size: 0.7rem;
+    padding: 6px 8px;
+  }
+}
