@@ -39,7 +39,15 @@ import { useStore } from '../store';
 import { getNodeColor } from '../chat/results/nodeColors';
 import { getLinkColor } from '../chat/results/linkColors';
 import { useGraphData } from '../hooks/useGraphData';
-import { useSigmaGraph, useLouvainCommunities } from '../hooks/useSigmaGraph';
+import { useGraphInstance } from '../graph/useGraphInstance';
+import { useGraphFilters } from '../graph/useGraphFilters';
+import { useGraphVisuals } from '../graph/useGraphVisuals';
+import { useCommunities } from '../graph/useCommunities';
+import { useHighlights } from '../graph/useHighlights';
+import LayoutPipeline, { type OptimizeStatus } from '../graph/LayoutPipeline';
+import { drawNodeHover } from '../graph/drawNodeHover';
+import { DEFAULT_LAYOUT_CONFIG } from '../config/graphLayout';
+import type { FilterState } from '../graph/types';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
 import { detectProvider } from './AddRepoModal';
@@ -51,7 +59,6 @@ import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
 import GraphEvents from './sigma/GraphEvents';
-import LayoutController from './sigma/LayoutController';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   ZOOM_SIZE_EXPONENT,
@@ -372,10 +379,6 @@ const GraphViewer = memo(
       const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [hops, setHops] = useState(2);
-      const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
-      const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
-      const [labelNodes, setLabelNodes] = useState(new Set<string>());
-      const [hopMap, setHopMap] = useState(new Map<string, number>());
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(
         new Set<string>(['DEPENDS_ON']),
@@ -397,7 +400,16 @@ const GraphViewer = memo(
         null,
       );
 
-      // React to persisted: start loading graph data
+      // Edge-click highlight override state
+      const [edgeHighlightNodes, setEdgeHighlightNodes] = useState<Set<string>>(new Set());
+      const [edgeHighlightLinks, setEdgeHighlightLinks] = useState<Set<string>>(new Set());
+      const [edgeLabelNodes, setEdgeLabelNodes] = useState<Set<string>>(new Set());
+
+      // Optimize/spread button state
+      const [optimizeTick, setOptimizeTick] = useState(0);
+      const [optimizeStatus, setOptimizeStatus] = useState<OptimizeStatus | null>(null);
+
+      // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
         if (jobState.status === 'persisted') {
           loadGraph()
@@ -435,12 +447,7 @@ const GraphViewer = memo(
 
       // Compute Louvain communities on the full graph (before filtering, so
       // community assignments are available for the community filter).
-      const {
-        communityAssignments,
-        communityColorMap,
-        communityNames,
-        communityCount,
-      } = useLouvainCommunities(graphData.nodes, graphData.links);
+      const communityData = useCommunities(graphData.nodes, graphData.links, DEFAULT_LAYOUT_CONFIG.louvainResolution);
 
       // Derive available types from raw graph data (for filter panel)
       const availableNodeTypes = useMemo(() => {
@@ -505,7 +512,7 @@ const GraphViewer = memo(
         const nodes = graphData.nodes.filter((n) => {
           // Community filter (when any communities are hidden)
           if (hiddenCommunities.size > 0) {
-            const cid = communityAssignments[n.id];
+            const cid = communityData.assignments[n.id];
             if (cid !== undefined && hiddenCommunities.has(cid)) return false;
           }
           const hasSubTypeFilters = availableSubTypes.has(n.type);
@@ -540,9 +547,17 @@ const GraphViewer = memo(
         hiddenLinkTypes,
         hiddenSubTypes,
         hiddenCommunities,
-        communityAssignments,
+        communityData.assignments,
         availableSubTypes,
       ]);
+
+      // Build filterState for the new hooks
+      const filterState: FilterState = useMemo(() => ({
+        hiddenNodeTypes,
+        hiddenLinkTypes,
+        hiddenSubTypes,
+        hiddenCommunities,
+      }), [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities]);
 
       // Adjacency list for multi-hop BFS traversal (uses filtered data)
       const adjacency = useMemo(() => {
@@ -563,6 +578,10 @@ const GraphViewer = memo(
         (node: GraphNode) => {
           setSelectedNode(node);
           setSelectedLink(null);
+          // Clear edge-click highlights
+          setEdgeHighlightNodes(new Set());
+          setEdgeHighlightLinks(new Set());
+          setEdgeLabelNodes(new Set());
           // BFS to find N-hop neighborhood, then zoom to fit it
           const neighborhood = new Set<string>([node.id]);
           let frontier = new Set<string>([node.id]);
@@ -612,9 +631,9 @@ const GraphViewer = memo(
         // Highlight the two endpoints and the clicked link
         const sourceId = edge.source;
         const targetId = edge.target;
-        setHighlightNodes(new Set([sourceId, targetId]));
-        setHighlightLinks(new Set([`${sourceId}-${targetId}`]));
-        setLabelNodes(new Set([sourceId, targetId]));
+        setEdgeHighlightNodes(new Set([sourceId, targetId]));
+        setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
+        setEdgeLabelNodes(new Set([sourceId, targetId]));
         // Zoom to fit the two endpoints
         if (sigmaRef.current) {
           zoomToNodes(
@@ -663,72 +682,6 @@ const GraphViewer = memo(
         };
       }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
 
-      // Update highlights when search or selection changes
-      useEffect(() => {
-        // When an edge is selected, its click handler sets highlights directly — skip this effect.
-        if (selectedLink) return;
-
-        const nodes = new Set<string>();
-        const links = new Set<string>();
-        const labels = new Set<string>();
-
-        if (searchQuery) {
-          const q = searchQuery.toLowerCase();
-          filteredGraphData.nodes.forEach((n) => {
-            if (
-              n.name?.toLowerCase().includes(q) ||
-              n.id.toLowerCase().includes(q) ||
-              n.type.toLowerCase().includes(q)
-            ) {
-              nodes.add(n.id);
-              labels.add(n.id);
-            }
-          });
-        }
-
-        // BFS from selected node up to `hops` depth for highlights,
-        // but only up to 2 hops for labels
-        const hm = new Map<string, number>();
-        if (selectedNode) {
-          const labelDepth = Math.min(2, hops);
-          nodes.add(selectedNode.id);
-          labels.add(selectedNode.id);
-          hm.set(selectedNode.id, 0);
-          let frontier = new Set<string>([selectedNode.id]);
-          for (let depth = 0; depth < hops && frontier.size > 0; depth++) {
-            const nextFrontier = new Set<string>();
-            frontier.forEach((nodeId) => {
-              const edges = adjacency.get(nodeId);
-              if (!edges) return;
-              edges.forEach(({ neighbor, linkKey }) => {
-                links.add(linkKey);
-                if (!nodes.has(neighbor)) {
-                  nextFrontier.add(neighbor);
-                  hm.set(neighbor, depth + 1);
-                }
-                nodes.add(neighbor);
-                if (depth < labelDepth) {
-                  labels.add(neighbor);
-                }
-              });
-            });
-            frontier = nextFrontier;
-          }
-        }
-
-        setHighlightNodes(nodes);
-        setHighlightLinks(links);
-        setLabelNodes(labels);
-        setHopMap(hm);
-      }, [
-        searchQuery,
-        selectedNode,
-        selectedLink,
-        hops,
-        adjacency,
-        filteredGraphData,
-      ]);
-
       // Compute degree (connection count) per node for size scaling
       const graphNodeIds = useMemo(
         () => graphData.nodes.map((n) => n.id as string),
@@ -752,22 +705,47 @@ const GraphViewer = memo(
 
       const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
 
-      // Build graphology Graph from filtered data (layout uses full dataset)
-      const { graph, layoutReady } = useSigmaGraph({
+      // ─── New graph hooks architecture ─────────────────────────────────
+
+      const { graph, layoutReady } = useGraphInstance({
         allNodes: graphData.nodes,
         allLinks: graphData.links,
-        nodes: filteredGraphData.nodes,
-        links: filteredGraphData.links,
-        degreeMap,
-        highlightNodes,
-        highlightLinks,
-        labelNodes,
-        selectedNodeId: selectedNode?.id ?? null,
-        isLargeGraph,
-        colorMode,
-        communityAssignments,
-        communityColorMap,
+        communityData,
+        layoutConfig: DEFAULT_LAYOUT_CONFIG,
       });
+
+      useGraphFilters(graph, layoutReady, filterState, communityData.assignments, availableSubTypes, getSubType);
+
+      const highlights = useHighlights(graph, layoutReady, graphData.nodes, graphData.links, searchQuery, selectedNode?.id ?? null, hops, filterState);
+
+      // Merge edge-click overrides with computed highlights
+      const effectiveHighlightNodes = useMemo(() => {
+        if (selectedLink && edgeHighlightNodes.size > 0) return edgeHighlightNodes;
+        return highlights.highlightNodes;
+      }, [selectedLink, edgeHighlightNodes, highlights.highlightNodes]);
+
+      const effectiveHighlightLinks = useMemo(() => {
+        if (selectedLink && edgeHighlightLinks.size > 0) return edgeHighlightLinks;
+        return highlights.highlightLinks;
+      }, [selectedLink, edgeHighlightLinks, highlights.highlightLinks]);
+
+      const effectiveLabelNodes = useMemo(() => {
+        if (selectedLink && edgeLabelNodes.size > 0) return edgeLabelNodes;
+        return highlights.labelNodes;
+      }, [selectedLink, edgeLabelNodes, highlights.labelNodes]);
+
+      const hopMap = useMemo(() => {
+        if (selectedLink) return new Map<string, number>();
+        return highlights.hopMap;
+      }, [selectedLink, highlights.hopMap]);
+
+      useGraphVisuals(graph, layoutReady, {
+        colorMode,
+        highlightNodes: effectiveHighlightNodes,
+        highlightLinks: effectiveHighlightLinks,
+        labelNodes: effectiveLabelNodes,
+        selectedNodeId: selectedNode?.id ?? null,
+      }, degreeMap, isLargeGraph);
 
       const legendItems = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -787,7 +765,7 @@ const GraphViewer = memo(
       const availableCommunities = useMemo(() => {
         const counts = new Map<number, number>();
         for (const n of graphData.nodes) {
-          const cid = communityAssignments[n.id];
+          const cid = communityData.assignments[n.id];
           if (cid !== undefined) {
             counts.set(cid, (counts.get(cid) || 0) + 1);
           }
@@ -796,15 +774,15 @@ const GraphViewer = memo(
           .sort((a, b) => b[1] - a[1])
           .map(([cid, count]) => ({
             communityId: cid,
-            label: communityNames.get(cid) ?? `Community ${cid}`,
+            label: communityData.names.get(cid) ?? `Community ${cid}`,
             count,
-            color: communityColorMap.get(cid) ?? '#64748b',
+            color: communityData.colorMap.get(cid) ?? '#64748b',
           }));
       }, [
         graphData.nodes,
-        communityAssignments,
-        communityNames,
-        communityColorMap,
+        communityData.assignments,
+        communityData.names,
+        communityData.colorMap,
       ]);
 
       const communityLegendItems = useMemo(() => {
@@ -812,7 +790,7 @@ const GraphViewer = memo(
         // Group filtered nodes by community
         const counts = new Map<number, number>();
         for (const n of filteredGraphData.nodes) {
-          const cid = communityAssignments[n.id];
+          const cid = communityData.assignments[n.id];
           if (cid !== undefined) {
             counts.set(cid, (counts.get(cid) || 0) + 1);
           }
@@ -820,16 +798,16 @@ const GraphViewer = memo(
         return [...counts.entries()]
           .sort((a, b) => b[1] - a[1])
           .map(([cid, count]) => ({
-            label: communityNames.get(cid) ?? `Community ${cid}`,
+            label: communityData.names.get(cid) ?? `Community ${cid}`,
             count,
-            color: communityColorMap.get(cid) ?? '#64748b',
+            color: communityData.colorMap.get(cid) ?? '#64748b',
           }));
       }, [
         colorMode,
         filteredGraphData.nodes,
-        communityAssignments,
-        communityColorMap,
-        communityNames,
+        communityData.assignments,
+        communityData.colorMap,
+        communityData.names,
       ]);
 
       const legendLinkItems = useMemo(() => {
@@ -906,6 +884,7 @@ const GraphViewer = memo(
           labelFont: LABEL_FONT,
           labelColor: { color: LABEL_COLOR },
           labelSize: LABEL_SIZE,
+          defaultDrawNodeHover: drawNodeHover,
           allowInvalidContainer: true,
           zoomToSizeRatioFunction: (ratio: number) =>
             Math.pow(ratio, ZOOM_SIZE_EXPONENT),
@@ -923,6 +902,10 @@ const GraphViewer = memo(
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
+        // Clear edge-click highlights
+        setEdgeHighlightNodes(new Set());
+        setEdgeHighlightLinks(new Set());
+        setEdgeLabelNodes(new Set());
       }, []);
 
       // --- Early returns for loading/error/empty states ---
@@ -1067,15 +1050,15 @@ const GraphViewer = memo(
       // --- Main graph viewport ---
 
       const selectedCommunityId = selectedNode
-        ? communityAssignments[selectedNode.id]
+        ? communityData.assignments[selectedNode.id]
         : undefined;
       const selectedCommunityName =
         selectedCommunityId !== undefined
-          ? communityNames.get(selectedCommunityId)
+          ? communityData.names.get(selectedCommunityId)
           : undefined;
       const selectedCommunityColor =
         selectedCommunityId !== undefined
-          ? communityColorMap.get(selectedCommunityId)
+          ? communityData.colorMap.get(selectedCommunityId)
           : undefined;
 
       return (
@@ -1445,9 +1428,12 @@ const GraphViewer = memo(
               onEdgeClick={onLinkClick}
               onStageClick={handleStageClick}
             />
-            <LayoutController
-              nodeCount={filteredGraphData.nodes.length}
+            <LayoutPipeline
               layoutReady={layoutReady}
+              layoutConfig={DEFAULT_LAYOUT_CONFIG}
+              optimizeTick={optimizeTick}
+              communityAssignments={communityData.assignments}
+              onOptimizeStatus={setOptimizeStatus}
             />
             <SigmaZoomControls onReady={handleSigmaReady} />
           </SigmaContainer>
@@ -1458,7 +1444,7 @@ const GraphViewer = memo(
               onClick={() =>
                 setColorMode((m) => (m === 'type' ? 'community' : 'type'))
               }
-              title={`Color by ${colorMode === 'type' ? 'community' : 'type'} (${communityCount} communities)`}
+              title={`Color by ${colorMode === 'type' ? 'community' : 'type'} (${communityData.count} communities)`}
             >
               <svg
                 width="16"
@@ -1551,7 +1537,47 @@ const GraphViewer = memo(
                 <line x1="3" y1="21" x2="10" y2="14" />
               </svg>
             </button>
+            <button
+              className={`graph-control-btn${optimizeStatus?.phase === 'optimizing' ? ' graph-control-btn--active' : ''}`}
+              onClick={() => setOptimizeTick((t) => t + 1)}
+              title={
+                optimizeStatus?.phase === 'optimizing'
+                  ? `Optimizing... ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean`
+                  : optimizeStatus?.phase === 'fa2'
+                    ? 'Running physics...'
+                    : 'Optimize layout'
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2l0 4M12 18l0 4M2 12l4 0M18 12l4 0" />
+                <path d="M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+              </svg>
+            </button>
           </div>
+          {optimizeStatus && optimizeStatus.phase !== 'done' && (
+            <div className="optimize-status" style={{
+              position: 'absolute',
+              left: '50%',
+              bottom: 60,
+              transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.75)',
+              color: '#e2e8f0',
+              padding: '6px 16px',
+              borderRadius: 8,
+              fontSize: 13,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}>
+              {optimizeStatus.phase === 'fa2' && 'Running physics...'}
+              {optimizeStatus.phase === 'noverlap' && 'Resolving overlaps...'}
+              {optimizeStatus.phase === 'spacing' &&
+                `Spacing communities${optimizeStatus.iteration !== undefined ? ` (iter ${optimizeStatus.iteration})` : ''}...`}
+              {optimizeStatus.phase === 'optimizing' &&
+                `Optimizing: ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean${
+                  optimizeStatus.totalOverlaps ? ` · ${optimizeStatus.totalOverlaps} overlaps` : ''
+                }`}
+            </div>
+          )}
         </div>
       );
     },
