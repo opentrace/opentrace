@@ -376,6 +376,27 @@ const GraphViewer = memo(
       const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
         null,
       );
+      const menuRef = useRef<HTMLElement>(null);
+      const burgerRef = useRef<HTMLButtonElement>(null);
+
+      // Close burger menu on click-outside or Escape
+      useEffect(() => {
+        if (!mobileMenuOpen) return;
+        const onClickOutside = (e: MouseEvent) => {
+          if (menuRef.current?.contains(e.target as Node)) return;
+          if (burgerRef.current?.contains(e.target as Node)) return;
+          setMobileMenuOpen(false);
+        };
+        const onEscape = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') setMobileMenuOpen(false);
+        };
+        document.addEventListener('mousedown', onClickOutside);
+        document.addEventListener('keydown', onEscape);
+        return () => {
+          document.removeEventListener('mousedown', onClickOutside);
+          document.removeEventListener('keydown', onEscape);
+        };
+      }, [mobileMenuOpen]);
       const [hops, setHops] = useState(2);
       const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
       const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
@@ -1176,6 +1197,7 @@ const GraphViewer = memo(
             <button
               type="button"
               className="burger-menu-btn"
+              ref={burgerRef}
               onClick={() => setMobileMenuOpen((v) => !v)}
               aria-label="Toggle menu"
               aria-expanded={mobileMenuOpen}
@@ -1204,8 +1226,9 @@ const GraphViewer = memo(
                 )}
               </svg>
             </button>
-            <div
-              className={`header-collapsible${mobileMenuOpen ? ' open' : ''}`}
+            <nav
+              className={`header-menu${mobileMenuOpen ? ' open' : ''}`}
+              ref={menuRef}
             >
               <button
                 type="button"
@@ -1278,7 +1301,7 @@ const GraphViewer = memo(
                   <span className="menu-label">Details</span>
                 </button>
               )}
-              <div className="mobile-menu-divider"></div>
+              <div className="menu-divider"></div>
               <div className="search-container">
                 <input
                   type="text"
@@ -1471,7 +1494,7 @@ const GraphViewer = memo(
                 </svg>
                 <span className="menu-label">Settings</span>
               </button>
-            </div>
+            </nav>
           </header>
 
           {showResetConfirm && (
