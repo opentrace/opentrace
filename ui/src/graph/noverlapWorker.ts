@@ -63,44 +63,43 @@ export type NoverlapResponse = NoverlapCellResult | NoverlapDone;
 // ─── Spatial grid for fast neighbor queries ──────────────────────────
 
 class SpatialGrid {
-  private cells = new Map<string, number[]>();
-  private cellSize: number;
+  #cells = new Map<string, number[]>();
+  #cellSize: number;
+  #nodes: NoverlapNode[];
 
-  constructor(
-    private nodes: NoverlapNode[],
-    cellSize: number,
-  ) {
-    this.cellSize = cellSize;
+  constructor(nodes: NoverlapNode[], cellSize: number) {
+    this.#nodes = nodes;
+    this.#cellSize = cellSize;
     this.rebuild();
   }
 
-  private key(cx: number, cy: number): string {
+  #key(cx: number, cy: number): string {
     return `${cx},${cy}`;
   }
 
   rebuild() {
-    this.cells.clear();
-    for (let i = 0; i < this.nodes.length; i++) {
-      const cx = Math.floor(this.nodes[i].x / this.cellSize);
-      const cy = Math.floor(this.nodes[i].y / this.cellSize);
-      const k = this.key(cx, cy);
-      let list = this.cells.get(k);
+    this.#cells.clear();
+    for (let i = 0; i < this.#nodes.length; i++) {
+      const cx = Math.floor(this.#nodes[i].x / this.#cellSize);
+      const cy = Math.floor(this.#nodes[i].y / this.#cellSize);
+      const k = this.#key(cx, cy);
+      let list = this.#cells.get(k);
       if (!list) {
         list = [];
-        this.cells.set(k, list);
+        this.#cells.set(k, list);
       }
       list.push(i);
     }
   }
 
   getNeighborIndices(idx: number): number[] {
-    const n = this.nodes[idx];
-    const cx = Math.floor(n.x / this.cellSize);
-    const cy = Math.floor(n.y / this.cellSize);
+    const n = this.#nodes[idx];
+    const cx = Math.floor(n.x / this.#cellSize);
+    const cy = Math.floor(n.y / this.#cellSize);
     const result: number[] = [];
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
-        const list = this.cells.get(this.key(cx + dx, cy + dy));
+        const list = this.#cells.get(this.#key(cx + dx, cy + dy));
         if (list) {
           for (const j of list) {
             if (j !== idx) result.push(j);

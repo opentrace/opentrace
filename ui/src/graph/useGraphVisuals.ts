@@ -63,7 +63,7 @@ export function useGraphVisuals(
   layoutReady: boolean,
   visualState: VisualState,
   layoutConfig: LayoutConfig,
-  degreeMap: Map<string, number>,
+  _degreeMap: Map<string, number>,
   isLargeGraph: boolean,
 ): void {
   useEffect(() => {

@@ -34,8 +34,8 @@ function endpointId(endpoint: string | number | GraphNode | undefined): string {
  * and excluding links whose endpoints belong to hidden node types.
  */
 export function useHighlights(
-  graph: Graph,
-  layoutReady: boolean,
+  _graph: Graph,
+  _layoutReady: boolean,
   allNodes: GraphNode[],
   allLinks: GraphLink[],
   searchQuery: string,

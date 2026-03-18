@@ -21,7 +21,8 @@
  * Shows the node label + community name in the tooltip.
  */
 import type { Attributes } from 'graphology-types';
-import type { NodeDisplayData, Settings } from 'sigma/types';
+import type { NodeDisplayData } from 'sigma/types';
+import type { Settings } from 'sigma/settings';
 
 type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 
