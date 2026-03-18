@@ -1,5 +1,4 @@
-# git-cliff configuration for CHANGELOG.md (excludes dependency bumps).
-# Release notes use cliff-release.toml which includes them.
+# git-cliff configuration — used by both changelog and release-notes workflows.
 # https://git-cliff.org/docs/configuration
 
 [changelog]
