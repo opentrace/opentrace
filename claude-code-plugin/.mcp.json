@@ -1,9 +1,15 @@
 {
   "mcpServers": {
     "opentrace-oss": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "description": "OpenTrace OSS knowledge graph tools."
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "opentraceai",
+        "mcp",
+        "--db",
+        "./otindex.db"
+      ],
+      "description": "OpenTrace knowledge graph tools (queries a local indexed codebase)."
     }
   }
 }

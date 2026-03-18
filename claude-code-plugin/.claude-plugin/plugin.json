@@ -1,0 +1,11 @@
+{
+  "name": "opentrace-oss",
+  "version": "0.3.0",
+  "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies.",
+  "author": {
+    "name": "OpenTrace"
+  },
+  "repository": "https://github.com/opentrace/opentrace",
+  "license": "Apache-2.0",
+  "keywords": ["architecture", "graph", "dependencies", "observability"]
+}
