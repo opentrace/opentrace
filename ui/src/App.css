@@ -18,7 +18,7 @@
 .app {
   position: relative;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -611,7 +611,7 @@ header h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   gap: 16px;
   color: var(--muted-foreground);
   background: var(--background);
@@ -638,7 +638,7 @@ header h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   color: var(--foreground);
   background: var(--background);
   text-align: center;
