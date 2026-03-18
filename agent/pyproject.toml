@@ -24,6 +24,7 @@ dependencies = [
     "tree-sitter-typescript",
     "tree-sitter-go",
     "click>=8.0",
+    "mcp>=1.0",
     "real-ladybug>=0.13",
 ]
 
@@ -39,7 +40,7 @@ Repository = "https://github.com/opentrace/opentrace"
 Issues = "https://github.com/opentrace/opentrace/issues"
 
 [project.scripts]
-opentrace = "opentrace_agent.cli.main:index"
+opentrace = "opentrace_agent.cli.main:app"
 
 [dependency-groups]
 dev = ["pytest", "pytest-anyio", "ruff"]

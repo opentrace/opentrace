@@ -23,8 +23,13 @@ from pathlib import Path
 import click
 
 
-@click.command()
+@click.group()
 @click.version_option(package_name="opentraceai")
+def app() -> None:
+    """OpenTrace — map codebases into a knowledge graph."""
+
+
+@app.command()
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option(
     "--db",
@@ -102,6 +107,30 @@ def _print_event(event: object, verbose: bool) -> None:
         click.echo(f"  Error: {message}", err=True)
         for err in errors or []:
             click.echo(f"    {err}", err=True)
+
+
+@app.command("mcp")
+@click.option(
+    "--db",
+    "db_path",
+    required=True,
+    type=click.Path(exists=True),
+    help="LadybugDB database path.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def mcp_cmd(db_path: str, verbose: bool) -> None:
+    """Start a stdio MCP server exposing graph query tools."""
+    _configure_logging(verbose)
+
+    from opentrace_agent.cli.mcp_server import create_mcp_server
+    from opentrace_agent.store import KuzuStore
+
+    store = KuzuStore(db_path)
+    try:
+        server = create_mcp_server(store)
+        server.run(transport="stdio")
+    finally:
+        store.close()
 
 
 def _configure_logging(verbose: bool) -> None:
