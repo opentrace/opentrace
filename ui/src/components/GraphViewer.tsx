@@ -363,7 +363,9 @@ const GraphViewer = memo(
 
       // Keep a ref to latest graphData so imperative selectNode always reads fresh data
       const graphDataRef = useRef(graphData);
-      graphDataRef.current = graphData;
+      useEffect(() => {
+        graphDataRef.current = graphData;
+      }, [graphData]);
 
       // Notify parent when graphData changes (for reactive sibling props like ChatPanel)
       useEffect(() => {
@@ -510,6 +512,7 @@ const GraphViewer = memo(
         const pkgSubs = availableSubTypes.get('Package');
         if (pkgSubs && pkgSubs.length > 0) {
           defaultsApplied.current = true;
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
           setHiddenSubTypes((prev) => {
             const next = new Set(prev);
             pkgSubs.forEach((s) => next.add(`Package:${s.subType}`));
@@ -659,6 +662,7 @@ const GraphViewer = memo(
       }, []);
 
       // Fetch source code when a source-bearing node is selected.
+      /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
       useEffect(() => {
         if (!selectedNode || !SOURCE_TYPES.has(selectedNode.type)) {
           setNodeSource(null);
@@ -695,6 +699,7 @@ const GraphViewer = memo(
           cancelled = true;
         };
       }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
+      /* eslint-enable react-hooks/set-state-in-effect */
 
       // Compute degree (connection count) per node for size scaling
       const graphNodeIds = useMemo(
@@ -817,12 +822,7 @@ const GraphViewer = memo(
             count,
             color: communityData.colorMap.get(cid) ?? '#64748b',
           }));
-      }, [
-        graphData.nodes,
-        communityData.assignments,
-        communityData.names,
-        communityData.colorMap,
-      ]);
+      }, [graphData.nodes, communityData]);
 
       const communityLegendItems = useMemo(() => {
         if (colorMode !== 'community') return [];
@@ -841,13 +841,7 @@ const GraphViewer = memo(
             count,
             color: communityData.colorMap.get(cid) ?? '#64748b',
           }));
-      }, [
-        colorMode,
-        filteredGraphData.nodes,
-        communityData.assignments,
-        communityData.colorMap,
-        communityData.names,
-      ]);
+      }, [colorMode, filteredGraphData.nodes, communityData]);
 
       const legendLinkItems = useMemo(() => {
         const counts: Record<string, number> = {};
