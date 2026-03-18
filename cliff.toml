@@ -38,12 +38,14 @@ commit_parsers = [
   { message = "^fix", group = "Bug Fixes" },
   { message = "^refactor", group = "Refactoring" },
   { message = "^perf", group = "Performance" },
-  { message = "^doc", group = "Documentation" },
+  { message = "^docs?", group = "Documentation" },
   { message = "^ci", group = "CI/CD" },
   { message = "^chore", group = "Miscellaneous" },
   { message = "^test", group = "Testing" },
   { message = "^build", group = "Build" },
   { message = "^style", group = "Styling" },
+  # Skip anything that doesn't match a known conventional type
+  { message = ".*", skip = true },
 ]
 protect_breaking_commits = false
 filter_commits = false
