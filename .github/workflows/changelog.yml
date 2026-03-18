@@ -5,18 +5,25 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   changelog:
     name: Update CHANGELOG.md
     runs-on: ubuntu-latest
-    # Skip commits made by this workflow to avoid infinite loops
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CHANGELOG_APP_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install git-cliff
         uses: kenji-miyake/setup-git-cliff@v2
@@ -24,11 +31,10 @@ jobs:
       - name: Generate changelog
         run: git-cliff -o CHANGELOG.md
 
-      - name: Commit changelog
+      - name: Commit and push changelog
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
-          # Only commit if there are changes
           git diff --cached --quiet || git commit -m "docs: update CHANGELOG.md [skip ci]"
           git push
