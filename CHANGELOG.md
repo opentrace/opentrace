@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Update README with repo structure, Claude Code plugin, and static build
 - Add open-source README, CONTRIBUTING, and SECURITY guides (#65) ([#65](https://github.com/opentrace/opentrace/pull/65))
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -48,6 +49,7 @@ All notable changes to this project will be documented in this file.
 - **agent:** Add stdio MCP server for querying indexed codebases (#81) ([#81](https://github.com/opentrace/opentrace/pull/81))
 - **ui:** Responsive toolbar redesign with three-tier breakpoints (#74) ([#74](https://github.com/opentrace/opentrace/pull/74))
 - **ui:** Responsive chat panel with full-screen mobile overlay (#87) ([#87](https://github.com/opentrace/opentrace/pull/87))
+- **ui:** Modular graph layout architecture with community-aware pipeline (#84) ([#84](https://github.com/opentrace/opentrace/pull/84))
 
 ### Miscellaneous
 
