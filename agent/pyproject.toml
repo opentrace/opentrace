@@ -41,6 +41,7 @@ Issues = "https://github.com/opentrace/opentrace/issues"
 
 [project.scripts]
 opentrace = "opentrace_agent.cli.main:app"
+opentraceai = "opentrace_agent.cli.main:app"
 
 [dependency-groups]
 dev = ["pytest", "pytest-anyio", "ruff"]
