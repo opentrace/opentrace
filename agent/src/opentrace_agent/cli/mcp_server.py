@@ -52,7 +52,7 @@ def create_mcp_server(store: KuzuStore) -> FastMCP:
         return _json_response(nodes)
 
     @server.tool()
-    def list_nodes(type: str, limit: int = 50, filters: dict[str, str] | None = None) -> str:
+    def list_nodes(type: str, limit: int = 50, filters: dict[str, Any] | None = None) -> str:
         """List nodes of a specific type.
 
         Valid types include: Repository, Class, Function, File, Directory,
@@ -69,7 +69,10 @@ def create_mcp_server(store: KuzuStore) -> FastMCP:
         if node is None:
             return json.dumps({"error": f"Node not found: {nodeId}"})
 
-        neighbors = store.traverse(nodeId, direction="both", max_depth=1)
+        try:
+            neighbors = store.traverse(nodeId, direction="both", max_depth=1)
+        except ValueError:
+            neighbors = []
         result = {
             "node": node,
             "neighbors": [{"node": n["node"], "relationship": n["relationship"]} for n in neighbors],
@@ -88,6 +91,8 @@ def create_mcp_server(store: KuzuStore) -> FastMCP:
         Direction can be 'outgoing', 'incoming', or 'both'.
         Optionally filter by relationship type (e.g. 'CALLS', 'DEFINES', 'CONTAINS').
         """
+        if direction not in ("outgoing", "incoming", "both"):
+            return json.dumps({"error": f"Invalid direction: {direction}. Must be 'outgoing', 'incoming', or 'both'."})
         depth = min(depth, 10)
         rel_type = relationship if relationship else None
         try:

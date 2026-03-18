@@ -17,16 +17,20 @@
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from pathlib import Path
 
 import click
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(package_name="opentraceai")
-def app() -> None:
+@click.pass_context
+def app(ctx: click.Context) -> None:
     """OpenTrace — map codebases into a knowledge graph."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 
 @app.command()
@@ -113,7 +117,8 @@ def _print_event(event: object, verbose: bool) -> None:
 @click.option(
     "--db",
     "db_path",
-    required=True,
+    default="./otindex.db",
+    show_default=True,
     type=click.Path(exists=True),
     help="LadybugDB database path.",
 )
@@ -126,9 +131,18 @@ def mcp_cmd(db_path: str, verbose: bool) -> None:
     from opentrace_agent.store import KuzuStore
 
     store = KuzuStore(db_path)
+
+    def _shutdown(signum: int, _frame: object) -> None:
+        store.close()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+
     try:
         server = create_mcp_server(store)
         server.run(transport="stdio")
+    except KeyboardInterrupt:
+        pass
     finally:
         store.close()
 
