@@ -30,7 +30,7 @@ jobs:
         working-directory: agent
         run: |
           BASE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          PREVIEW_VERSION="${BASE_VERSION}rc${{ github.event.pull_request.number }}.dev${GITHUB_RUN_NUMBER}"
+          PREVIEW_VERSION="${BASE_VERSION}.dev${{ github.event.pull_request.number }}${GITHUB_RUN_NUMBER}"
           sed -i "s/^version = .*/version = \"${PREVIEW_VERSION}\"/" pyproject.toml
           sed -i "s/^__version__ = .*/__version__ = \"${PREVIEW_VERSION}\"/" src/opentrace_agent/__init__.py
           echo "PREVIEW_VERSION=${PREVIEW_VERSION}" >> "$GITHUB_ENV"
