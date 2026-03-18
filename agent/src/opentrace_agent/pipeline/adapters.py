@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Store adapters wrapping existing clients to conform to the Store protocol."""
+"""Store adapter wrapping KuzuStore to conform to the pipeline Store protocol."""
 
 from __future__ import annotations
 
@@ -22,47 +22,6 @@ from typing import Any
 from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
 
 logger = logging.getLogger(__name__)
-
-
-class ApiStoreAdapter:
-    """Wraps BatchImportClient to conform to the Store protocol.
-
-    Accumulates nodes/relationships and flushes in batches.
-    """
-
-    def __init__(
-        self,
-        client: Any,  # BatchImportClient — lazy import to avoid hard dep
-        batch_size: int = 200,
-    ) -> None:
-        self._client = client
-        self._batch_size = batch_size
-        self._nodes: list[dict[str, Any]] = []
-        self._rels: list[dict[str, Any]] = []
-
-    def save_node(self, node: GraphNode) -> None:
-        self._nodes.append(_node_to_dict(node))
-        if len(self._nodes) >= self._batch_size:
-            self._flush_nodes()
-
-    def save_relationship(self, rel: GraphRelationship) -> None:
-        self._rels.append(_rel_to_dict(rel))
-        if len(self._rels) >= self._batch_size:
-            self._flush_rels()
-
-    def flush(self) -> None:
-        self._flush_nodes()
-        self._flush_rels()
-
-    def _flush_nodes(self) -> None:
-        if self._nodes:
-            self._client.import_all(self._nodes, [], batch_size=self._batch_size)
-            self._nodes.clear()
-
-    def _flush_rels(self) -> None:
-        if self._rels:
-            self._client.import_all([], self._rels, batch_size=self._batch_size)
-            self._rels.clear()
 
 
 def _node_to_dict(node: GraphNode) -> dict[str, Any]:

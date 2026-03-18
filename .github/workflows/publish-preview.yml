@@ -51,9 +51,42 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.issues.createComment({
+            const marker = '<!-- opentraceai-preview -->';
+            const body = [
+              marker,
+              `📦 Preview published: \`opentraceai==${process.env.PREVIEW_VERSION}\``,
+              '',
+              '```bash',
+              `pip install opentraceai==${process.env.PREVIEW_VERSION}`,
+              '```',
+              '',
+              '```bash',
+              `uv pip install opentraceai==${process.env.PREVIEW_VERSION}`,
+              '',
+              '# or as a CLI tool',
+              `uv tool install opentraceai==${process.env.PREVIEW_VERSION}`,
+              '```',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `📦 Preview published: \`opentraceai==${process.env.PREVIEW_VERSION}\`\n\n\`\`\`bash\npip install opentraceai==${process.env.PREVIEW_VERSION}\n\`\`\``
             });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
