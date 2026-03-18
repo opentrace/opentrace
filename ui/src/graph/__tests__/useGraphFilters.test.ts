@@ -59,7 +59,13 @@ describe('shouldHideNode', () => {
       hiddenNodeTypes: new Set(['Service']),
     });
     expect(
-      shouldHideNode(node, filterState, noAssignments, noSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        noSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(true);
   });
 
@@ -70,20 +76,38 @@ describe('shouldHideNode', () => {
       hiddenCommunities: new Set([3]),
     });
     expect(
-      shouldHideNode(node, filterState, assignments, noSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        assignments,
+        noSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(true);
   });
 
   it('hides a node whose sub-type is in hiddenSubTypes', () => {
     const node: GraphNode = { id: 'n1', name: 'foo.ts', type: 'File' };
     const availableSubTypes = new Map([
-      ['File', [{ subType: 'ts', count: 5 }, { subType: 'go', count: 3 }]],
+      [
+        'File',
+        [
+          { subType: 'ts', count: 5 },
+          { subType: 'go', count: 3 },
+        ],
+      ],
     ]);
     const filterState = makeFilterState({
       hiddenSubTypes: new Set(['File:ts']),
     });
     expect(
-      shouldHideNode(node, filterState, noAssignments, availableSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        availableSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(true);
   });
 
@@ -94,7 +118,13 @@ describe('shouldHideNode', () => {
       hiddenCommunities: new Set([99]),
     });
     expect(
-      shouldHideNode(node, filterState, noAssignments, noSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        noSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(false);
   });
 
@@ -105,14 +135,26 @@ describe('shouldHideNode', () => {
     });
     // No sub-types registered for Service, so sub-type filter is skipped
     expect(
-      shouldHideNode(node, filterState, noAssignments, noSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        noSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(false);
   });
 
   it('hides by type even when sub-type does not match', () => {
     const node: GraphNode = { id: 'n1', name: 'foo.go', type: 'File' };
     const availableSubTypes = new Map([
-      ['File', [{ subType: 'ts', count: 5 }, { subType: 'go', count: 3 }]],
+      [
+        'File',
+        [
+          { subType: 'ts', count: 5 },
+          { subType: 'go', count: 3 },
+        ],
+      ],
     ]);
     const filterState = makeFilterState({
       hiddenNodeTypes: new Set(['File']),
@@ -120,7 +162,13 @@ describe('shouldHideNode', () => {
     });
     // Type filter catches it even though sub-type doesn't match
     expect(
-      shouldHideNode(node, filterState, noAssignments, availableSubTypes, defaultGetSubType),
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        availableSubTypes,
+        defaultGetSubType,
+      ),
     ).toBe(true);
   });
 });

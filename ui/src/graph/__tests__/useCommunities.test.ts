@@ -98,11 +98,17 @@ describe('useCommunities', () => {
     // Should detect at least 2 communities (disconnected components)
     expect(result.current.count).toBeGreaterThanOrEqual(2);
     // a and b should be in the same community
-    expect(result.current.assignments['a']).toBe(result.current.assignments['b']);
+    expect(result.current.assignments['a']).toBe(
+      result.current.assignments['b'],
+    );
     // c and d should be in the same community
-    expect(result.current.assignments['c']).toBe(result.current.assignments['d']);
+    expect(result.current.assignments['c']).toBe(
+      result.current.assignments['d'],
+    );
     // The two clusters should be in different communities
-    expect(result.current.assignments['a']).not.toBe(result.current.assignments['c']);
+    expect(result.current.assignments['a']).not.toBe(
+      result.current.assignments['c'],
+    );
   });
 
   it('returns correct count matching unique community IDs', () => {
@@ -112,9 +118,7 @@ describe('useCommunities', () => {
       { id: 'b', name: 'B', type: 'Service' },
       { id: 'c', name: 'C', type: 'Service' },
     ];
-    const links: GraphLink[] = [
-      { source: 'a', target: 'b', label: 'CALLS' },
-    ];
+    const links: GraphLink[] = [{ source: 'a', target: 'b', label: 'CALLS' }];
 
     const { result } = renderHook(() => useCommunities(nodes, links, config));
 
@@ -137,9 +141,7 @@ describe('useCommunities', () => {
       { id: 'a', name: 'A', type: 'Service' },
       { id: 'b', name: 'B', type: 'Service' },
     ];
-    const links: GraphLink[] = [
-      { source: 'a', target: 'b', label: 'CALLS' },
-    ];
+    const links: GraphLink[] = [{ source: 'a', target: 'b', label: 'CALLS' }];
 
     const { result } = renderHook(() => useCommunities(nodes, links, config));
 

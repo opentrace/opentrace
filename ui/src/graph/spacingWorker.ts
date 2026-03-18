@@ -74,7 +74,10 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
 
   if (nodes.length === 0) {
     (self as unknown as Worker).postMessage({
-      type: 'done', iterations: 0, maxOverlap: 0, totalMs: 0,
+      type: 'done',
+      iterations: 0,
+      maxOverlap: 0,
+      totalMs: 0,
     } satisfies SpacingDone);
     return;
   }
@@ -84,28 +87,39 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
   for (let i = 0; i < nodes.length; i++) {
     const cid = nodes[i].communityId;
     let list = communityMap.get(cid);
-    if (!list) { list = []; communityMap.set(cid, list); }
+    if (!list) {
+      list = [];
+      communityMap.set(cid, list);
+    }
     list.push(i);
   }
 
   // Build community array with centroids and radii
   const comms: Community[] = [];
   for (const [id, indices] of communityMap) {
-    let cx = 0, cy = 0;
-    for (const i of indices) { cx += nodes[i].x; cy += nodes[i].y; }
+    let cx = 0,
+      cy = 0;
+    for (const i of indices) {
+      cx += nodes[i].x;
+      cy += nodes[i].y;
+    }
     cx /= indices.length;
     cy /= indices.length;
     comms.push({
       id,
       nodeIndices: indices,
-      cx, cy,
+      cx,
+      cy,
       radius: Math.sqrt(indices.length) * radiusScale,
     });
   }
 
   if (comms.length < 2) {
     (self as unknown as Worker).postMessage({
-      type: 'done', iterations: 0, maxOverlap: 0, totalMs: 0,
+      type: 'done',
+      iterations: 0,
+      maxOverlap: 0,
+      totalMs: 0,
     } satisfies SpacingDone);
     return;
   }

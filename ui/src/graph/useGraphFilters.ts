@@ -33,7 +33,10 @@ export function shouldHideNode(
 ): boolean {
   // Community filter
   const communityId = communityAssignments[node.id];
-  if (communityId !== undefined && filterState.hiddenCommunities.has(communityId)) {
+  if (
+    communityId !== undefined &&
+    filterState.hiddenCommunities.has(communityId)
+  ) {
     return true;
   }
 

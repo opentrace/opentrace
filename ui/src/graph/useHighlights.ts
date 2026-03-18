@@ -80,7 +80,12 @@ export function useHighlights(
       map.get(targetId)!.push({ neighbor: sourceId, linkKey });
     }
     return map;
-  }, [allLinks, filterState.hiddenLinkTypes, filterState.hiddenNodeTypes, nodeTypeMap]);
+  }, [
+    allLinks,
+    filterState.hiddenLinkTypes,
+    filterState.hiddenNodeTypes,
+    nodeTypeMap,
+  ]);
 
   // Compute highlights via search and/or BFS from selected node.
   return useMemo(() => {

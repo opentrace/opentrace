@@ -16,7 +16,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
-import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from './types';
+import type {
+  GraphNode,
+  GraphLink,
+  CommunityData,
+  LayoutConfig,
+} from './types';
 import type { LayoutRequest, LayoutResponse } from '../hooks/d3LayoutWorker';
 import {
   NODE_SIZE_MIN,

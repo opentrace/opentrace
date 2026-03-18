@@ -17,7 +17,12 @@
 import { useMemo } from 'react';
 import { UndirectedGraph } from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from './types';
+import type {
+  GraphNode,
+  GraphLink,
+  CommunityData,
+  LayoutConfig,
+} from './types';
 
 /**
  * Compute Louvain communities on the full (unfiltered) graph.

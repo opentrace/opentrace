@@ -71,7 +71,16 @@ describe('useHighlights', () => {
       { id: 'n1', name: 'AuthService', type: 'Service' },
     ];
     const { result } = renderHook(() =>
-      useHighlights(graph, true, nodes, [], 'AUTHSERVICE', null, 1, emptyFilter()),
+      useHighlights(
+        graph,
+        true,
+        nodes,
+        [],
+        'AUTHSERVICE',
+        null,
+        1,
+        emptyFilter(),
+      ),
     );
     expect(result.current.highlightNodes.has('n1')).toBe(true);
     expect(result.current.labelNodes.has('n1')).toBe(true);

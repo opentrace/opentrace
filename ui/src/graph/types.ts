@@ -75,11 +75,20 @@ export interface LayoutConfig {
   getNodeColor: (type: string) => string;
   getLinkColor: (label: string) => string;
   /** Build a community→color mapping from assignments (largest community gets first palette slot) */
-  buildCommunityColorMap: (assignments: Record<string, number>) => Map<number, string>;
+  buildCommunityColorMap: (
+    assignments: Record<string, number>,
+  ) => Map<number, string>;
   /** Derive human-readable community names from assignments and nodes */
-  buildCommunityNames: (assignments: Record<string, number>, nodes: GraphNode[]) => Map<number, string>;
+  buildCommunityNames: (
+    assignments: Record<string, number>,
+    nodes: GraphNode[],
+  ) => Map<number, string>;
   /** Look up the community color for a given node */
-  getCommunityColor: (assignments: Record<string, number>, colorMap: Map<number, string>, nodeId: string) => string;
+  getCommunityColor: (
+    assignments: Record<string, number>,
+    colorMap: Map<number, string>,
+    nodeId: string,
+  ) => string;
 }
 
 export interface FilterState {

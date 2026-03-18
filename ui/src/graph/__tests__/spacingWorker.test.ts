@@ -59,19 +59,29 @@ function runSpacing(
   for (let i = 0; i < nodes.length; i++) {
     const cid = nodes[i].communityId;
     let list = communityMap.get(cid);
-    if (!list) { list = []; communityMap.set(cid, list); }
+    if (!list) {
+      list = [];
+      communityMap.set(cid, list);
+    }
     list.push(i);
   }
 
   // Build communities
   const comms: Community[] = [];
   for (const [id, indices] of communityMap) {
-    let cx = 0, cy = 0;
-    for (const i of indices) { cx += nodes[i].x; cy += nodes[i].y; }
+    let cx = 0,
+      cy = 0;
+    for (const i of indices) {
+      cx += nodes[i].x;
+      cy += nodes[i].y;
+    }
     cx /= indices.length;
     cy /= indices.length;
     comms.push({
-      id, nodeIndices: indices, cx, cy,
+      id,
+      nodeIndices: indices,
+      cx,
+      cy,
       radius: Math.sqrt(indices.length) * radiusScale,
     });
   }
@@ -86,7 +96,8 @@ function runSpacing(
 
     for (let i = 0; i < comms.length; i++) {
       for (let j = i + 1; j < comms.length; j++) {
-        const a = comms[i], b = comms[j];
+        const a = comms[i],
+          b = comms[j];
         const dx = b.cx - a.cx;
         const dy = b.cy - a.cy;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -97,7 +108,8 @@ function runSpacing(
           if (overlap > maxOverlap) maxOverlap = overlap;
           const push = (minDist - dist) * 0.5;
           if (dist > 0.001) {
-            const nx = dx / dist, ny = dy / dist;
+            const nx = dx / dist,
+              ny = dy / dist;
             const totalSize = a.nodeIndices.length + b.nodeIndices.length;
             const aRatio = b.nodeIndices.length / totalSize;
             const bRatio = a.nodeIndices.length / totalSize;
@@ -112,7 +124,8 @@ function runSpacing(
 
     let anyMoved = false;
     for (let i = 0; i < comms.length; i++) {
-      const ox = pushX[i], oy = pushY[i];
+      const ox = pushX[i],
+        oy = pushY[i];
       if (Math.abs(ox) < 0.01 && Math.abs(oy) < 0.01) continue;
       anyMoved = true;
       comms[i].cx += ox;
@@ -201,10 +214,16 @@ describe('spacing algorithm', () => {
     ];
     // With a large gap, communities should be pushed apart
     const smallGap = runSpacing(
-      nodes.map((n) => ({ ...n })), 1, 1, 100,
+      nodes.map((n) => ({ ...n })),
+      1,
+      1,
+      100,
     );
     const largeGap = runSpacing(
-      nodes.map((n) => ({ ...n })), 1, 50, 100,
+      nodes.map((n) => ({ ...n })),
+      1,
+      50,
+      100,
     );
 
     const smallDist = Math.abs(smallGap.nodes[1].x - smallGap.nodes[0].x);

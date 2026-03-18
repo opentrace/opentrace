@@ -118,10 +118,9 @@ export default function LayoutPipeline({
       });
     });
 
-    const worker = new Worker(
-      new URL('./spacingWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
+    const worker = new Worker(new URL('./spacingWorker.ts', import.meta.url), {
+      type: 'module',
+    });
     spacingWorkerRef.current = worker;
 
     worker.onmessage = (e: MessageEvent<SpacingResponse>) => {
@@ -133,7 +132,10 @@ export default function LayoutPipeline({
           for (const u of msg.updates) posMap.set(u.id, { x: u.x, y: u.y });
           graph.updateEachNodeAttributes((id, attrs) => {
             const pos = posMap.get(id);
-            if (pos) { attrs.x = pos.x; attrs.y = pos.y; }
+            if (pos) {
+              attrs.x = pos.x;
+              attrs.y = pos.y;
+            }
             return attrs;
           });
         }
@@ -183,7 +185,10 @@ export default function LayoutPipeline({
   /** Compute scale factor to convert screen-pixel sizes to graph-coordinate sizes. */
   function getGraphScaleFactor(): number {
     const graph = sigma.getGraph();
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
     graph.forEachNode((_, attrs) => {
       const x = attrs.x as number;
       const y = attrs.y as number;
@@ -202,7 +207,10 @@ export default function LayoutPipeline({
 
   function runPerCommunityNoverlap(onDone: () => void) {
     const graph = sigma.getGraph();
-    if (graph.order === 0 || !communityAssignments) { onDone(); return; }
+    if (graph.order === 0 || !communityAssignments) {
+      onDone();
+      return;
+    }
 
     const scale = getGraphScaleFactor();
 
@@ -212,12 +220,17 @@ export default function LayoutPipeline({
       const cid = communityAssignments[id];
       if (cid === undefined) return;
       let list = groups.get(cid);
-      if (!list) { list = []; groups.set(cid, list); }
+      if (!list) {
+        list = [];
+        groups.set(cid, list);
+      }
       list.push(id);
     });
 
     // Sort largest first for most visual impact early
-    const sorted = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sorted = [...groups.entries()].sort(
+      (a, b) => b[1].length - a[1].length,
+    );
 
     // Max inline community size — larger communities are skipped (spacing handles them)
     const MAX_INLINE = 500;
@@ -261,7 +274,10 @@ export default function LayoutPipeline({
       }
 
       // Build position map for this community's nodes
-      const subGraph = new Map<string, { x: number; y: number; size: number }>();
+      const subGraph = new Map<
+        string,
+        { x: number; y: number; size: number }
+      >();
       for (const nid of nodeIds) {
         const attrs = graph.getNodeAttributes(nid);
         subGraph.set(nid, {
@@ -300,7 +316,10 @@ export default function LayoutPipeline({
       let moved = 0;
       for (const [nid, pos] of subGraph) {
         const attrs = graph.getNodeAttributes(nid);
-        if (Math.abs(pos.x - (attrs.x as number)) > 0.1 || Math.abs(pos.y - (attrs.y as number)) > 0.1) {
+        if (
+          Math.abs(pos.x - (attrs.x as number)) > 0.1 ||
+          Math.abs(pos.y - (attrs.y as number)) > 0.1
+        ) {
           graph.mergeNodeAttributes(nid, { x: pos.x, y: pos.y });
           moved++;
         }

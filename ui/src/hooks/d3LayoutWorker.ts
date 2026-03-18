@@ -104,9 +104,7 @@ self.onmessage = (e: MessageEvent<LayoutRequest>) => {
     // Uses log scale: small graphs barely spread, large graphs spread more.
     const baseSep = config.clusterSeparation ?? 1;
     const separation =
-      centroids.size <= 10
-        ? 1.0
-        : baseSep * Math.log10(centroids.size);
+      centroids.size <= 10 ? 1.0 : baseSep * Math.log10(centroids.size);
     if (separation > 1 && centroids.size > 1) {
       let gx = 0,
         gy = 0;

@@ -58,7 +58,10 @@ function runOptimize(
     const pushY = new Float64Array(nodes.length);
 
     for (let i = 0; i < nodes.length; i++) {
-      if (frozen[i]) { cleanCount++; continue; }
+      if (frozen[i]) {
+        cleanCount++;
+        continue;
+      }
 
       const a = nodes[i];
       let worstOverlap = 0;
@@ -77,7 +80,8 @@ function runOptimize(
 
           const force = overlap * pushStrength;
           if (dist > 0.001) {
-            const nx = dx / dist, ny = dy / dist;
+            const nx = dx / dist,
+              ny = dy / dist;
             if (!frozen[i]) {
               pushX[i] -= nx * force * minDist;
               pushY[i] -= ny * force * minDist;
@@ -155,7 +159,7 @@ describe('optimize algorithm', () => {
 
     const dist = Math.sqrt(
       (result.nodes[1].x - result.nodes[0].x) ** 2 +
-      (result.nodes[1].y - result.nodes[0].y) ** 2,
+        (result.nodes[1].y - result.nodes[0].y) ** 2,
     );
     // After optimization, distance should be at least close to minDist
     expect(dist).toBeGreaterThan(2);
@@ -171,7 +175,7 @@ describe('optimize algorithm', () => {
 
     const dist = Math.sqrt(
       (result.nodes[1].x - result.nodes[0].x) ** 2 +
-      (result.nodes[1].y - result.nodes[0].y) ** 2,
+        (result.nodes[1].y - result.nodes[0].y) ** 2,
     );
     // After optimization they should be meaningfully separated
     expect(dist).toBeGreaterThan(1);

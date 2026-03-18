@@ -401,13 +401,20 @@ const GraphViewer = memo(
       );
 
       // Edge-click highlight override state
-      const [edgeHighlightNodes, setEdgeHighlightNodes] = useState<Set<string>>(new Set());
-      const [edgeHighlightLinks, setEdgeHighlightLinks] = useState<Set<string>>(new Set());
-      const [edgeLabelNodes, setEdgeLabelNodes] = useState<Set<string>>(new Set());
+      const [edgeHighlightNodes, setEdgeHighlightNodes] = useState<Set<string>>(
+        new Set(),
+      );
+      const [edgeHighlightLinks, setEdgeHighlightLinks] = useState<Set<string>>(
+        new Set(),
+      );
+      const [edgeLabelNodes, setEdgeLabelNodes] = useState<Set<string>>(
+        new Set(),
+      );
 
       // Optimize/spread button state
       const [optimizeTick, setOptimizeTick] = useState(0);
-      const [optimizeStatus, setOptimizeStatus] = useState<OptimizeStatus | null>(null);
+      const [optimizeStatus, setOptimizeStatus] =
+        useState<OptimizeStatus | null>(null);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
@@ -447,7 +454,11 @@ const GraphViewer = memo(
 
       // Compute Louvain communities on the full graph (before filtering, so
       // community assignments are available for the community filter).
-      const communityData = useCommunities(graphData.nodes, graphData.links, DEFAULT_LAYOUT_CONFIG);
+      const communityData = useCommunities(
+        graphData.nodes,
+        graphData.links,
+        DEFAULT_LAYOUT_CONFIG,
+      );
 
       // Derive available types from raw graph data (for filter panel)
       const availableNodeTypes = useMemo(() => {
@@ -552,12 +563,15 @@ const GraphViewer = memo(
       ]);
 
       // Build filterState for the new hooks
-      const filterState: FilterState = useMemo(() => ({
-        hiddenNodeTypes,
-        hiddenLinkTypes,
-        hiddenSubTypes,
-        hiddenCommunities,
-      }), [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities]);
+      const filterState: FilterState = useMemo(
+        () => ({
+          hiddenNodeTypes,
+          hiddenLinkTypes,
+          hiddenSubTypes,
+          hiddenCommunities,
+        }),
+        [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities],
+      );
 
       // Adjacency list for multi-hop BFS traversal (uses filtered data)
       const adjacency = useMemo(() => {
@@ -714,18 +728,36 @@ const GraphViewer = memo(
         layoutConfig: DEFAULT_LAYOUT_CONFIG,
       });
 
-      useGraphFilters(graph, layoutReady, filterState, communityData.assignments, availableSubTypes, getSubType);
+      useGraphFilters(
+        graph,
+        layoutReady,
+        filterState,
+        communityData.assignments,
+        availableSubTypes,
+        getSubType,
+      );
 
-      const highlights = useHighlights(graph, layoutReady, graphData.nodes, graphData.links, searchQuery, selectedNode?.id ?? null, hops, filterState);
+      const highlights = useHighlights(
+        graph,
+        layoutReady,
+        graphData.nodes,
+        graphData.links,
+        searchQuery,
+        selectedNode?.id ?? null,
+        hops,
+        filterState,
+      );
 
       // Merge edge-click overrides with computed highlights
       const effectiveHighlightNodes = useMemo(() => {
-        if (selectedLink && edgeHighlightNodes.size > 0) return edgeHighlightNodes;
+        if (selectedLink && edgeHighlightNodes.size > 0)
+          return edgeHighlightNodes;
         return highlights.highlightNodes;
       }, [selectedLink, edgeHighlightNodes, highlights.highlightNodes]);
 
       const effectiveHighlightLinks = useMemo(() => {
-        if (selectedLink && edgeHighlightLinks.size > 0) return edgeHighlightLinks;
+        if (selectedLink && edgeHighlightLinks.size > 0)
+          return edgeHighlightLinks;
         return highlights.highlightLinks;
       }, [selectedLink, edgeHighlightLinks, highlights.highlightLinks]);
 
@@ -739,13 +771,20 @@ const GraphViewer = memo(
         return highlights.hopMap;
       }, [selectedLink, highlights.hopMap]);
 
-      useGraphVisuals(graph, layoutReady, {
-        colorMode,
-        highlightNodes: effectiveHighlightNodes,
-        highlightLinks: effectiveHighlightLinks,
-        labelNodes: effectiveLabelNodes,
-        selectedNodeId: selectedNode?.id ?? null,
-      }, DEFAULT_LAYOUT_CONFIG, degreeMap, isLargeGraph);
+      useGraphVisuals(
+        graph,
+        layoutReady,
+        {
+          colorMode,
+          highlightNodes: effectiveHighlightNodes,
+          highlightLinks: effectiveHighlightLinks,
+          labelNodes: effectiveLabelNodes,
+          selectedNodeId: selectedNode?.id ?? null,
+        },
+        DEFAULT_LAYOUT_CONFIG,
+        degreeMap,
+        isLargeGraph,
+      );
 
       const legendItems = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -1548,33 +1587,47 @@ const GraphViewer = memo(
                     : 'Optimize layout'
               }
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M12 2l0 4M12 18l0 4M2 12l4 0M18 12l4 0" />
                 <path d="M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
               </svg>
             </button>
           </div>
           {optimizeStatus && optimizeStatus.phase !== 'done' && (
-            <div className="optimize-status" style={{
-              position: 'absolute',
-              left: '50%',
-              bottom: 60,
-              transform: 'translateX(-50%)',
-              background: 'rgba(0,0,0,0.75)',
-              color: '#e2e8f0',
-              padding: '6px 16px',
-              borderRadius: 8,
-              fontSize: 13,
-              pointerEvents: 'none',
-              whiteSpace: 'nowrap',
-            }}>
+            <div
+              className="optimize-status"
+              style={{
+                position: 'absolute',
+                left: '50%',
+                bottom: 60,
+                transform: 'translateX(-50%)',
+                background: 'rgba(0,0,0,0.75)',
+                color: '#e2e8f0',
+                padding: '6px 16px',
+                borderRadius: 8,
+                fontSize: 13,
+                pointerEvents: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {optimizeStatus.phase === 'fa2' && 'Running physics...'}
               {optimizeStatus.phase === 'noverlap' && 'Resolving overlaps...'}
               {optimizeStatus.phase === 'spacing' &&
                 `Spacing communities${optimizeStatus.iteration !== undefined ? ` (iter ${optimizeStatus.iteration})` : ''}...`}
               {optimizeStatus.phase === 'optimizing' &&
                 `Optimizing: ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean${
-                  optimizeStatus.totalOverlaps ? ` · ${optimizeStatus.totalOverlaps} overlaps` : ''
+                  optimizeStatus.totalOverlaps
+                    ? ` · ${optimizeStatus.totalOverlaps} overlaps`
+                    : ''
                 }`}
             </div>
           )}

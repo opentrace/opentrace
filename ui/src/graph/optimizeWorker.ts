@@ -233,7 +233,11 @@ self.onmessage = (e: MessageEvent<OptimizeRequest>) => {
     // Send all current positions every 5 iterations so the graph stays in sync.
     // We send all nodes (not just moved ones) because intermediate iterations
     // accumulate movement that was never reported.
-    if (iter % 5 === 0 || cleanRatio >= targetCleanRatio || iter === maxIterations - 1) {
+    if (
+      iter % 5 === 0 ||
+      cleanRatio >= targetCleanRatio ||
+      iter === maxIterations - 1
+    ) {
       const updates: { id: string; x: number; y: number }[] = [];
       for (const n of nodes) {
         updates.push({ id: n.id, x: n.x, y: n.y });
