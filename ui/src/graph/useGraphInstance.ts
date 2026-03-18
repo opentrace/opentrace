@@ -16,12 +16,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Graph from 'graphology';
-import type { GraphNode, GraphLink } from '../types/graph';
-import type { CommunityData, LayoutConfig } from '../graph/types';
+import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from './types';
 import type { LayoutRequest, LayoutResponse } from '../hooks/d3LayoutWorker';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
-import { getCommunityColor } from '../chat/results/communityColors';
 import {
   NODE_SIZE_MIN,
   NODE_SIZE_MAX,
@@ -33,9 +29,11 @@ import {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-const STRUCTURAL_TYPES = new Set(['Repository', 'Directory', 'Package']);
-
-function nodeSize(degree: number, nodeType: string): number {
+function nodeSize(
+  degree: number,
+  nodeType: string,
+  structuralTypes: Set<string>,
+): number {
   const base = Math.min(
     NODE_SIZE_MAX,
     Math.max(
@@ -45,7 +43,7 @@ function nodeSize(degree: number, nodeType: string): number {
   );
   const multiplier =
     NODE_SIZE_MULTIPLIERS[nodeType] ??
-    (STRUCTURAL_TYPES.has(nodeType) ? NODE_SIZE_MULTIPLIERS._structural : 1);
+    (structuralTypes.has(nodeType) ? NODE_SIZE_MULTIPLIERS._structural : 1);
   return base * multiplier;
 }
 
@@ -92,6 +90,12 @@ export function useGraphInstance({
 
   const [layoutReady, setLayoutReady] = useState(false);
 
+  // Derived from config
+  const structuralTypes = useMemo(
+    () => new Set(layoutConfig.structuralTypes),
+    [layoutConfig.structuralTypes],
+  );
+
   // Single effect: rebuild graph and run d3-force worker when data changes.
   useEffect(() => {
     graph.clear();
@@ -100,6 +104,7 @@ export function useGraphInstance({
     if (allNodes.length === 0) return;
 
     const { assignments, colorMap, names } = communityData;
+    const { getNodeColor, getLinkColor, getCommunityColor } = layoutConfig;
 
     // ── Build ALL nodes with initial x:0, y:0 ──────────────────────────
     const nodeIdSet = new Set<string>();
@@ -115,7 +120,7 @@ export function useGraphInstance({
           label: node.name || node.id,
           x: 0,
           y: 0,
-          size: nodeSize(0, node.type),
+          size: nodeSize(0, node.type, structuralTypes),
           nodeType: node.type,
           _graphNode: node,
           _typeColor: typeColor,
@@ -134,9 +139,10 @@ export function useGraphInstance({
       attributes: Record<string, unknown>;
     }[] = [];
 
-    const edgeSize = allLinks.length > layoutConfig.edgeProgramThreshold
-      ? EDGE_SIZE_DEFAULT_LINE
-      : EDGE_SIZE_DEFAULT;
+    const edgeSize =
+      allLinks.length > layoutConfig.edgeProgramThreshold
+        ? EDGE_SIZE_DEFAULT_LINE
+        : EDGE_SIZE_DEFAULT;
 
     for (const link of allLinks) {
       const source = endpointId(link.source);
@@ -168,7 +174,7 @@ export function useGraphInstance({
     const nodeIds = allNodes.map((n) => n.id);
     const simLinks: { source: string; target: string }[] = [];
     for (const link of allLinks) {
-      if (link.label !== 'DEFINED_IN') continue;
+      if (link.label !== layoutConfig.layoutEdgeType) continue;
       const source = endpointId(link.source);
       const target = endpointId(link.target);
       if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
@@ -254,7 +260,7 @@ export function useGraphInstance({
     // Dependencies: allNodes/allLinks/layoutConfig changes trigger full rebuild.
     // communityData is derived from allNodes/allLinks, so it's implicitly tracked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNodes, allLinks, graph, layoutConfig]);
+  }, [allNodes, allLinks, graph, layoutConfig, structuralTypes]);
 
   // Track mount state — reset on each mount (strict mode remounts)
   useEffect(() => {

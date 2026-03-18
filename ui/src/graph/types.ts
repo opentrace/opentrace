@@ -1,4 +1,23 @@
-import type { GraphNode } from '../types/graph';
+/**
+ * Graph node — the minimal interface required by the graph layout system.
+ * Consumers can extend this with additional properties.
+ */
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: string;
+  properties?: Record<string, unknown>;
+}
+
+/**
+ * Graph link — the minimal interface required by the graph layout system.
+ */
+export interface GraphLink {
+  source: string;
+  target: string;
+  label: string;
+  properties?: Record<string, unknown>;
+}
 
 /** All layout tuning parameters bundled into one object. */
 export interface LayoutConfig {
@@ -32,6 +51,19 @@ export interface LayoutConfig {
   louvainResolution: number;
   // Rendering
   edgeProgramThreshold: number;
+  // Graph structure — which edge type to use for force layout
+  layoutEdgeType: string;
+  // Node types considered structural (affect sizing)
+  structuralTypes: string[];
+  // Color functions — consumers provide their own palettes
+  getNodeColor: (type: string) => string;
+  getLinkColor: (label: string) => string;
+  /** Build a community→color mapping from assignments (largest community gets first palette slot) */
+  buildCommunityColorMap: (assignments: Record<string, number>) => Map<number, string>;
+  /** Derive human-readable community names from assignments and nodes */
+  buildCommunityNames: (assignments: Record<string, number>, nodes: GraphNode[]) => Map<number, string>;
+  /** Look up the community color for a given node */
+  getCommunityColor: (assignments: Record<string, number>, colorMap: Map<number, string>, nodeId: string) => string;
 }
 
 export interface FilterState {

@@ -17,21 +17,17 @@
 import { useMemo } from 'react';
 import { UndirectedGraph } from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import {
-  buildCommunityColorMap,
-  buildCommunityNames,
-} from '../chat/results/communityColors';
-import type { GraphNode, GraphLink } from '../types/graph';
-import type { CommunityData } from './types';
+import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from './types';
 
 /**
  * Compute Louvain communities on the full (unfiltered) graph.
- * Returns community assignments, a color map, human-readable names, and count.
+ * Color and naming functions are provided via layoutConfig to avoid
+ * coupling to a specific color palette.
  */
 export function useCommunities(
   allNodes: GraphNode[],
   allLinks: GraphLink[],
-  resolution: number,
+  layoutConfig: LayoutConfig,
 ): CommunityData {
   return useMemo(() => {
     if (allNodes.length === 0) {
@@ -75,11 +71,11 @@ export function useCommunities(
     }
 
     const assignments = louvain(tempGraph, {
-      resolution,
+      resolution: layoutConfig.louvainResolution,
       getEdgeWeight: 'weight',
     });
-    const colorMap = buildCommunityColorMap(assignments);
-    const names = buildCommunityNames(assignments, allNodes);
+    const colorMap = layoutConfig.buildCommunityColorMap(assignments);
+    const names = layoutConfig.buildCommunityNames(assignments, allNodes);
     const count = new Set(Object.values(assignments)).size;
 
     if (process.env.NODE_ENV === 'development') {
@@ -89,5 +85,5 @@ export function useCommunities(
     }
 
     return { assignments, colorMap, names, count };
-  }, [allNodes, allLinks, resolution]);
+  }, [allNodes, allLinks, layoutConfig]);
 }

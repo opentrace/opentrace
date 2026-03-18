@@ -115,6 +115,13 @@ export const LOUVAIN_RESOLUTION = 1.0;
 // Same values as above, bundled into a single object for passing to hooks/components.
 
 import type { LayoutConfig } from '../graph/types';
+import { getNodeColor } from '../chat/results/nodeColors';
+import { getLinkColor } from '../chat/results/linkColors';
+import {
+  buildCommunityColorMap,
+  buildCommunityNames,
+  getCommunityColor,
+} from '../chat/results/communityColors';
 
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   linkDistance: FORCE_LINK_DISTANCE,
@@ -141,4 +148,13 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   noverlapExpansion: NOVERLAP_EXPANSION,
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
+  // Graph structure
+  layoutEdgeType: 'DEFINED_IN',
+  structuralTypes: ['Repository', 'Directory', 'Package'],
+  // Color functions — OpenTrace palettes
+  getNodeColor,
+  getLinkColor,
+  buildCommunityColorMap,
+  buildCommunityNames,
+  getCommunityColor,
 };

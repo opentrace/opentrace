@@ -16,8 +16,7 @@
 
 import { useEffect } from 'react';
 import type Graph from 'graphology';
-import type { GraphNode } from '../types/graph';
-import type { FilterState, GetSubTypeFn } from '../graph/types';
+import type { GraphNode, FilterState, GetSubTypeFn } from './types';
 
 // ─── Filter Logic ───────────────────────────────────────────────────────
 

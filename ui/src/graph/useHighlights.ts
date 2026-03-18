@@ -16,8 +16,7 @@
 
 import { useMemo } from 'react';
 import type Graph from 'graphology';
-import type { GraphNode, GraphLink } from '../types/graph';
-import type { FilterState } from './types';
+import type { GraphNode, GraphLink, FilterState } from './types';
 
 /** Extract a string ID from a link endpoint (handles string, number, and object forms). */
 function endpointId(endpoint: string | number | GraphNode | undefined): string {

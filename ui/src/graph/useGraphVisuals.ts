@@ -16,9 +16,7 @@
 
 import { useEffect } from 'react';
 import type Graph from 'graphology';
-import type { VisualState } from '../graph/types';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
+import type { VisualState, LayoutConfig } from './types';
 import {
   EDGE_SIZE_DEFAULT,
   EDGE_SIZE_DEFAULT_LINE,
@@ -57,12 +55,14 @@ function dimColor(hex: string, alpha: number): string {
 
 /**
  * Updates colors, highlights, and selection state on graph nodes/edges.
+ * Color functions are read from layoutConfig to avoid coupling to a specific palette.
  * Never touches x/y positions.
  */
 export function useGraphVisuals(
   graph: Graph,
   layoutReady: boolean,
   visualState: VisualState,
+  layoutConfig: LayoutConfig,
   degreeMap: Map<string, number>,
   isLargeGraph: boolean,
 ): void {
@@ -77,6 +77,7 @@ export function useGraphVisuals(
       selectedNodeId,
     } = visualState;
 
+    const { getNodeColor, getLinkColor } = layoutConfig;
     const hasHighlight = highlightNodes.size > 0;
 
     // Batched node update — single event
@@ -104,7 +105,7 @@ export function useGraphVisuals(
       ? EDGE_SIZE_DEFAULT_LINE
       : EDGE_SIZE_DEFAULT;
 
-    graph.updateEachEdgeAttributes((id, attrs, source, target) => {
+    graph.updateEachEdgeAttributes((_id, attrs, source, target) => {
       const linkKey = `${source}-${target}`;
       const isHighlighted = highlightLinks.has(linkKey);
       const baseColor = getLinkColor(attrs.label as string);
@@ -121,5 +122,5 @@ export function useGraphVisuals(
 
       return attrs;
     });
-  }, [graph, layoutReady, visualState, isLargeGraph]);
+  }, [graph, layoutReady, visualState, layoutConfig, isLargeGraph]);
 }

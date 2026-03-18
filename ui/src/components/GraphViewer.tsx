@@ -447,7 +447,7 @@ const GraphViewer = memo(
 
       // Compute Louvain communities on the full graph (before filtering, so
       // community assignments are available for the community filter).
-      const communityData = useCommunities(graphData.nodes, graphData.links, DEFAULT_LAYOUT_CONFIG.louvainResolution);
+      const communityData = useCommunities(graphData.nodes, graphData.links, DEFAULT_LAYOUT_CONFIG);
 
       // Derive available types from raw graph data (for filter panel)
       const availableNodeTypes = useMemo(() => {
@@ -745,7 +745,7 @@ const GraphViewer = memo(
         highlightLinks: effectiveHighlightLinks,
         labelNodes: effectiveLabelNodes,
         selectedNodeId: selectedNode?.id ?? null,
-      }, degreeMap, isLargeGraph);
+      }, DEFAULT_LAYOUT_CONFIG, degreeMap, isLargeGraph);
 
       const legendItems = useMemo(() => {
         const counts: Record<string, number> = {};
