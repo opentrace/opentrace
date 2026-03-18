@@ -50,6 +50,8 @@ header {
   pointer-events: none;
 }
 
+/* .header-menu styles are in the responsive section below */
+
 header h1 {
   margin: 0;
   font-size: 1.25rem;
@@ -1227,4 +1229,267 @@ header h1 {
   color: var(--muted-foreground);
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* ── Desktop: header-menu is inline flex ─────── */
+.header-menu {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  pointer-events: auto;
+}
+
+/* Hidden on desktop by default */
+.menu-label {
+  display: none;
+}
+
+.mobile-panel-btn,
+.menu-divider {
+  display: none;
+}
+
+.burger-menu-btn {
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  pointer-events: auto;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.burger-menu-btn:hover {
+  background: var(--accent);
+}
+
+/* ── Tablet + Mobile (≤ 1024px): burger dropdown ── */
+@media (max-width: 1024px) {
+  header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    gap: 0;
+  }
+
+  .burger-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Dropdown menu — hidden by default, shown when .open */
+  .header-menu {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 2px);
+    padding: 6px 0;
+    margin-top: 8px;
+    pointer-events: auto;
+  }
+
+  .header-menu.open {
+    display: flex;
+  }
+
+  /* Show panel shortcuts and dividers */
+  .mobile-panel-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--foreground);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: auto;
+  }
+
+  .mobile-panel-btn:hover {
+    background: var(--accent);
+  }
+
+  .menu-divider {
+    display: block;
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  .menu-label {
+    display: inline;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  /* Search takes full width in dropdown */
+  .header-menu .search-container {
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    margin: 4px 10px;
+  }
+
+  /* Style all action buttons as full-width menu rows */
+  .header-menu .add-repo-btn,
+  .header-menu .chat-toggle-btn,
+  .header-menu .settings-toggle-btn,
+  .header-menu .theme-toggle-btn {
+    width: auto;
+    height: auto;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--foreground);
+    justify-content: flex-start;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .header-menu .add-repo-btn:hover,
+  .header-menu .chat-toggle-btn:hover,
+  .header-menu .settings-toggle-btn:hover,
+  .header-menu .theme-toggle-btn:hover {
+    background: var(--accent);
+    color: var(--foreground);
+    border-color: transparent;
+  }
+
+  .header-menu .chat-toggle-btn.active,
+  .header-menu .settings-toggle-btn.active,
+  .header-menu .theme-toggle-btn.active {
+    background: color-mix(in oklch, var(--primary) 15%, transparent);
+    color: var(--primary);
+  }
+
+  /* Reset-btn as menu row */
+  .header-menu .reset-btn {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    height: auto;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+
+  .header-menu .reset-btn:hover {
+    background: var(--accent);
+    border-color: transparent;
+  }
+
+  /* Badge as menu row */
+  .header-menu .badge {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    height: auto;
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+
+  /* GitHub Star as menu row */
+  .header-menu .github-star-btn {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--foreground);
+    padding: 10px 16px;
+    height: auto;
+    justify-content: flex-start;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .header-menu .github-star-btn:hover {
+    background: var(--accent);
+  }
+
+  /* Hide the desktop-only "Star" text and second star icon */
+  .header-menu .github-star-btn .star-label,
+  .header-menu .github-star-btn svg:nth-of-type(2) {
+    display: none;
+  }
+
+  /* Theme selector inline in dropdown */
+  .header-menu .theme-selector-wrapper {
+    width: 100%;
+  }
+
+  .header-menu .theme-dropdown {
+    position: static;
+    box-shadow: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    margin-top: 4px;
+  }
+
+  .header-menu .add-repo-btn {
+    margin-left: 0;
+  }
+
+  /* Job minimized bar as menu row */
+  .header-menu .job-minimized-bar {
+    margin-left: 0;
+    border-radius: 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Hide the desktop side panel on tablet/mobile */
+  .side-panel {
+    display: none;
+  }
+
+  /* Show as full-width overlay when opened from burger menu */
+  .side-panel.side-panel--mobile-open {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
+    z-index: 50;
+    padding-top: 0;
+    background: var(--background);
+    border-right: none;
+    backdrop-filter: none;
+  }
+
+  .side-panel--mobile-open .side-panel-tabs {
+    padding-top: 8px;
+  }
+}
+
+/* ── Mobile (≤ 640px): tighter spacing, icon-only logo ── */
+@media (max-width: 640px) {
+  header {
+    padding: 10px 12px;
+  }
+
+  header h1 {
+    display: none;
+  }
+
+  .header-menu .search-container {
+    margin: 4px 8px;
+  }
 }
