@@ -1272,7 +1272,9 @@ header h1 {
 @media (max-width: 1024px) {
   header {
     flex-wrap: wrap;
-    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
+    padding: max(12px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right)) 12px
+      max(16px, env(safe-area-inset-left));
     gap: 0;
   }
 
@@ -1533,7 +1535,9 @@ header h1 {
 /* ── Mobile (≤ 640px): tighter spacing, icon-only logo ── */
 @media (max-width: 640px) {
   header {
-    padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(12px, env(safe-area-inset-left));
+    padding: max(10px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right)) 10px
+      max(12px, env(safe-area-inset-left));
   }
 
   header h1 {
