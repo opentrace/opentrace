@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -34,11 +36,16 @@ jobs:
           cd ui/dist
           zip -r ../../opentrace-ui-${GITHUB_REF_NAME}.zip .
 
+      - name: Install git-cliff
+        uses: kenji-miyake/setup-git-cliff@v2
+
+      - name: Generate release notes
+        run: git-cliff --config cliff-release.toml --latest --strip header -o RELEASE_NOTES.md
+
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: opentrace-ui-${{ github.ref_name }}.zip
-          generate_release_notes: true
+        run: gh release create ${{ github.ref_name }} opentrace-ui-${{ github.ref_name }}.zip --notes-file RELEASE_NOTES.md
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   publish-pypi:
     name: Publish to PyPI
