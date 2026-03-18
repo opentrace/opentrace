@@ -10,6 +10,8 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 **[oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
 
+**[Docs](https://opentrace.github.io/opentrace/reference/chat-providers/)** - for help and support
+
 ## Quick Start
 
 ```bash
