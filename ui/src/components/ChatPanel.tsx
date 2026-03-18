@@ -692,16 +692,16 @@ export default function ChatPanel({
                       rel="noopener noreferrer"
                     >
                       OpenTrace docs
-                    </a>
-                    {' '}or{' '}
+                    </a>{' '}
+                    or{' '}
                     <a
                       href={API_KEY_RESOURCES[providerId].docs}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
                       {PROVIDERS[providerId].name} docs
-                    </a>
-                    {' '}for more details.
+                    </a>{' '}
+                    for more details.
                   </p>
                 </div>
               )}

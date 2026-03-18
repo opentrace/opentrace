@@ -113,19 +113,13 @@ export const API_KEY_RESOURCES: Record<string, ApiKeyResource> = {
     dashboard: 'https://platform.claude.com/settings/keys',
     signup: 'https://platform.claude.com/settings/keys',
     signupLabel: 'platform.claude.com',
-    steps: [
-      'Go to Settings > API Keys',
-      'Click "Create Key"',
-    ],
+    steps: ['Go to Settings > API Keys', 'Click "Create Key"'],
   },
   gemini: {
     docs: 'https://ai.google.dev/gemini-api/docs/api-key',
     dashboard: 'https://aistudio.google.com/api-keys',
     signup: 'https://aistudio.google.com/api-keys',
     signupLabel: 'Google AI Studio',
-    steps: [
-      'Click "Get API key"',
-      'Create a key for your project',
-    ],
+    steps: ['Click "Get API key"', 'Create a key for your project'],
   },
 };
