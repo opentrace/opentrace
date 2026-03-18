@@ -42,7 +42,7 @@ function App() {
   const graphViewerRef = useRef<GraphViewerHandle>(null);
   const [chatGraphData, setChatGraphData] = useState(EMPTY_GRAPH);
 
-  const [showChat, setShowChat] = useState(false);
+  const [showChat, setShowChat] = useState(true);
   const [chatWidth, setChatWidth] = useState(480);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddRepo, setShowAddRepo] = useState(false);

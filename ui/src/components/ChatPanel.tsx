@@ -19,6 +19,7 @@ import type { GraphNode, GraphLink } from '../types/graph';
 import {
   PROVIDERS,
   PROVIDER_IDS,
+  API_KEY_RESOURCES,
   type ChatMessage,
   type AssistantMessage,
   type MessagePart,
@@ -663,6 +664,47 @@ export default function ChatPanel({
                 onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
                 className="api-key-input"
               />
+              {API_KEY_RESOURCES[providerId] && (
+                <div className="api-key-help">
+                  <p className="api-key-help-title">
+                    How to get your {PROVIDERS[providerId].name} key:
+                  </p>
+                  <ol className="api-key-steps">
+                    <li>
+                      Sign up at{' '}
+                      <a
+                        href={API_KEY_RESOURCES[providerId].signup}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {API_KEY_RESOURCES[providerId].signupLabel}
+                      </a>
+                    </li>
+                    {API_KEY_RESOURCES[providerId].steps.map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ol>
+                  <p className="api-key-help-footer">
+                    See the{' '}
+                    <a
+                      href="https://opentrace.github.io/opentrace/reference/chat-providers/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      OpenTrace docs
+                    </a>{' '}
+                    or{' '}
+                    <a
+                      href={API_KEY_RESOURCES[providerId].docs}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {PROVIDERS[providerId].name} docs
+                    </a>{' '}
+                    for more details.
+                  </p>
+                </div>
+              )}
             </>
           )}
           <div className="settings-actions">
