@@ -106,4 +106,12 @@ def create_mcp_server(store: KuzuStore) -> FastMCP:
             return json.dumps({"error": str(e)})
         return _json_response(results)
 
+    @server.tool()
+    def get_stats() -> str:
+        """Get graph statistics: total node count, total edge count, and node counts broken down by type.
+
+        Use this as a first step to understand what has been indexed before running targeted queries.
+        """
+        return _json_response(store.get_stats())
+
     return server
