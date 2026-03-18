@@ -22,14 +22,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set dev version
+      - name: Set rc version
         working-directory: agent
         run: |
           BASE_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          DEV_VERSION="${BASE_VERSION}.dev${GITHUB_RUN_NUMBER}"
-          sed -i "s/^version = .*/version = \"${DEV_VERSION}\"/" pyproject.toml
-          sed -i "s/^__version__ = .*/__version__ = \"${DEV_VERSION}\"/" src/opentrace_agent/__init__.py
-          echo "Published version: ${DEV_VERSION}"
+          RC_VERSION="${BASE_VERSION}rc${GITHUB_RUN_NUMBER}"
+          sed -i "s/^version = .*/version = \"${RC_VERSION}\"/" pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${RC_VERSION}\"/" src/opentrace_agent/__init__.py
+          echo "Published version: ${RC_VERSION}"
 
       - name: Build package
         working-directory: agent
