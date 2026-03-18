@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - Merge summaries into existing nodes instead of emitting duplicates (#50) ([#50](https://github.com/opentrace/opentrace/pull/50))
 - **ui:** Keep indexing modal open until graph data is ready (#83) ([#83](https://github.com/opentrace/opentrace/pull/83))
 - **ci:** Use GitHub App token for changelog push to main (#88) ([#88](https://github.com/opentrace/opentrace/pull/88))
+- **ci:** Skip non-conventional commits in changelog generation (#89) ([#89](https://github.com/opentrace/opentrace/pull/89))
 
 ### CI/CD
 
@@ -31,6 +32,7 @@ All notable changes to this project will be documented in this file.
 
 - Update README with repo structure, Claude Code plugin, and static build
 - Add open-source README, CONTRIBUTING, and SECURITY guides (#65) ([#65](https://github.com/opentrace/opentrace/pull/65))
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -64,28 +66,4 @@ All notable changes to this project will be documented in this file.
 
 - **ui:** Replace kuzu-wasm with @lbug/lbug-wasm (#69) ([#69](https://github.com/opentrace/opentrace/pull/69))
 - **agent:** Simplify CLI to local-only KuzuDB indexer (#78) ([#78](https://github.com/opentrace/opentrace/pull/78))
-
-### Ui
-
-- Multi-language parsing, node details panel, chat enhancements (v0.1.0)
-- Batch UNWIND imports, connection recycling, and version metadata
-- Fix graph limits, PR review, chat enhancements, sub-type filters
-- Fix tree-sitter peer dependency conflicts with overrides
-- Move tree-sitter grammars to on-demand install in build-wasm
-- Replace loading spinners with animated OpenTrace logo
-- Add get_pr_file_change tool for base/new/diff file access in PR reviews
-- Fetch base/new file content from source instead of applying patches
-- Add Discover tab with directory tree view and graph-aware highlights
-- Add example repo chips and worktree .env resolution
-- Add drag handles to resize side panels
-- Add Local LLM provider option for chat and summarization
-- Add unit test coverage for app layer (26 new test files, 206 tests)
-- Fix all eslint errors and apply prettier formatting
-- Fix SettingsDrawer test mock for loadSummarizerLlmConfig
-- Fix tsc build errors from lint cleanup
-- Auto-detect dev server port in 5173–5180 range for worktree support
-- Add repo URL history autocomplete to AddRepoModal (#22) ([#22](https://github.com/opentrace/opentrace/pull/22))
-- Sigma.js migration with d3-force layout (#23) ([#23](https://github.com/opentrace/opentrace/pull/23))
-- Streaming indexing pipeline with browser-based parsing (#26) ([#26](https://github.com/opentrace/opentrace/pull/26))
-- Make header logo clickable with reset confirmation modal (#27) ([#27](https://github.com/opentrace/opentrace/pull/27))
 
