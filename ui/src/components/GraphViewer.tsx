@@ -392,14 +392,23 @@ const GraphViewer = memo(
       const [sourceLoading, setSourceLoading] = useState(false);
       const [sourceError, setSourceError] = useState<string | null>(null);
 
-      // React to persisted: load the graph, then auto-minimize after a brief delay
+      const pendingMinimize = useRef(false);
+      const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+      );
+
+      // React to persisted: start loading graph data
       useEffect(() => {
         if (jobState.status === 'persisted') {
-          loadGraph().then(() => {
-            setTimeout(() => onJobMinimize(), 1500);
-          });
+          loadGraph()
+            .then(() => {
+              pendingMinimize.current = true;
+            })
+            .catch(() => {
+              // Graph load failed — don't set pendingMinimize
+            });
         }
-      }, [jobState.status, loadGraph, onJobMinimize]);
+      }, [jobState.status, loadGraph]);
 
       // React to done: final graph refresh with enriched data
       useEffect(() => {
@@ -850,6 +859,24 @@ const GraphViewer = memo(
 
       const isEmpty = graphData.nodes.length === 0;
       const isSearchEmpty = isEmpty && !!lastSearchQuery;
+
+      // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
+      // to the "Computing layout" overlay without flashing "no data").
+      useEffect(() => {
+        if (pendingMinimize.current && !isEmpty) {
+          pendingMinimize.current = false;
+          minimizeTimeoutRef.current = setTimeout(() => {
+            minimizeTimeoutRef.current = null;
+            onJobMinimize();
+          }, 500);
+        }
+        return () => {
+          if (minimizeTimeoutRef.current) {
+            clearTimeout(minimizeTimeoutRef.current);
+            minimizeTimeoutRef.current = null;
+          }
+        };
+      }, [isEmpty, onJobMinimize]);
 
       // Auto-open the Add Repo modal when the graph is empty and idle
       useEffect(() => {
