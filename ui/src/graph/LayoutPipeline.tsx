@@ -331,33 +331,38 @@ export default function LayoutPipeline({
     const sigmaInstance = sigma as unknown as import('sigma').Sigma;
     const graph = sigma.getGraph();
 
-    // Pipeline: Spacing → FA2 → Per-community noverlap → Spacing (re-check) → Zoom
+    // Pipeline: Spacing → FA2 → Per-community noverlap → Spacing → FA2 (soften) → Zoom
     runSpacing(() => {
       zoomToFit(sigmaInstance, 0);
 
-      const afterFA2 = () => {
-        // Per-community noverlap: run noverlap within each community
-        // so nodes spread out without crossing community boundaries
-        onOptimizeStatus?.({ phase: 'noverlap' });
-        runPerCommunityNoverlap(() => {
-          // Re-space communities after noverlap expanded them
-          runSpacing(() => {
-            zoomToFit(sigmaInstance, 600);
-            onOptimizeStatus?.(null);
-          });
-        });
+      const runFA2 = (duration: number, onDone: () => void) => {
+        if (layoutConfig.fa2Enabled && graph.order > 0) {
+          onOptimizeStatus?.({ phase: 'fa2' });
+          start();
+          timerRef.current = setTimeout(() => {
+            stop();
+            onDone();
+          }, duration);
+        } else {
+          onDone();
+        }
       };
 
-      if (layoutConfig.fa2Enabled && graph.order > 0) {
-        onOptimizeStatus?.({ phase: 'fa2' });
-        start();
-        timerRef.current = setTimeout(() => {
-          stop();
-          afterFA2();
-        }, layoutConfig.fa2Duration);
-      } else {
-        afterFA2();
-      }
+      // Step 2: Initial FA2 — establish edge-based structure
+      runFA2(layoutConfig.fa2Duration, () => {
+        // Step 3: Per-community noverlap — spread stacked nodes
+        onOptimizeStatus?.({ phase: 'noverlap' });
+        runPerCommunityNoverlap(() => {
+          // Step 4: Re-space communities after noverlap expanded them
+          runSpacing(() => {
+            // Step 5: Short FA2 pass — soften edges after spacing/noverlap moved things
+            runFA2(Math.min(layoutConfig.fa2Duration, 1500), () => {
+              zoomToFit(sigmaInstance, 600);
+              onOptimizeStatus?.(null);
+            });
+          });
+        });
+      });
     });
 
     return cleanup;
