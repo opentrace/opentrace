@@ -56,7 +56,7 @@ function makeMockConfig(overrides: Partial<LayoutConfig> = {}): LayoutConfig {
       const ids = [...new Set(Object.values(assignments))];
       return new Map(ids.map((cid, i) => [cid, `#color${i}`]));
     },
-    buildCommunityNames: (assignments, _nodes) => {
+    buildCommunityNames: (assignments) => {
       const ids = [...new Set(Object.values(assignments))];
       return new Map(ids.map((cid) => [cid, `Community ${cid}`]));
     },
