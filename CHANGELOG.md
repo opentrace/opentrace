@@ -41,6 +41,7 @@ All notable changes to this project will be documented in this file.
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -60,6 +61,7 @@ All notable changes to this project will be documented in this file.
 - **plugin:** Switch to stdio MCP and fix agent/command tool references (#92) ([#92](https://github.com/opentrace/opentrace/pull/92))
 - **plugin:** Add marketplace.json for plugin discovery (#95) ([#95](https://github.com/opentrace/opentrace/pull/95))
 - **agent:** Add opentraceai CLI alias (#97) ([#97](https://github.com/opentrace/opentrace/pull/97))
+- **ui:** Add provider API key help and update models (#100) ([#100](https://github.com/opentrace/opentrace/pull/100))
 
 ### Miscellaneous
 
