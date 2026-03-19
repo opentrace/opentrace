@@ -47,6 +47,7 @@ All notable changes to this project will be documented in this file.
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -68,6 +69,7 @@ All notable changes to this project will be documented in this file.
 - **agent:** Add opentraceai CLI alias (#97) ([#97](https://github.com/opentrace/opentrace/pull/97))
 - **ui:** Add provider API key help and update models (#100) ([#100](https://github.com/opentrace/opentrace/pull/100))
 - **ui:** Responsive design for iPhone/iPad/mobile (#96) ([#96](https://github.com/opentrace/opentrace/pull/96))
+- **plugin:** Add hooks, skills, and agents for graph discovery (#106) ([#106](https://github.com/opentrace/opentrace/pull/106))
 
 ### Miscellaneous
 
