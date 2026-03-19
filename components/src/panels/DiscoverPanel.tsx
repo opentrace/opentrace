@@ -276,7 +276,6 @@ export default function DiscoverPanel({
   graphNodeIds,
   hopMap,
   isExpandable = defaultIsExpandable,
-  loading,
 }: DiscoverPanelProps) {
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);

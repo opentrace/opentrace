@@ -345,7 +345,6 @@ export default function DiscoverPanelContainer({
       graphNodeIds={graphNodeIds}
       hopMap={hopMap}
       isExpandable={isExpandable}
-      loading={loading}
     />
   );
 }
