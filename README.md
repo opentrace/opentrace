@@ -52,8 +52,6 @@ OpenTrace indexes source code directly in your browser — no server required. P
 └──────────────────────────────────────────────────────┘
 ```
 
-> **Planned:** A Go API server (MCP endpoint, persistent graph store) and a Python agent (LangGraph pipeline, data loaders) are under development but not yet included in the open-source repo.
-
 ## Supported Languages
 
 | Full Extraction (symbols + calls + imports) | Structural Extraction (symbols only) |
