@@ -51,8 +51,8 @@ describe('storage', () => {
   });
 
   describe('loadProviderChoice / saveProviderChoice', () => {
-    it('defaults to anthropic', () => {
-      expect(loadProviderChoice()).toBe('anthropic');
+    it('defaults to gemini', () => {
+      expect(loadProviderChoice()).toBe('gemini');
     });
 
     it('saves and loads provider', () => {

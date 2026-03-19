@@ -79,9 +79,9 @@ const local: ProviderInfo = {
 };
 
 export const PROVIDERS: Record<string, ProviderInfo> = {
+  gemini,
   anthropic,
   openai,
-  gemini,
   local,
 };
 
@@ -120,6 +120,10 @@ export const API_KEY_RESOURCES: Record<string, ApiKeyResource> = {
     dashboard: 'https://aistudio.google.com/api-keys',
     signup: 'https://aistudio.google.com/api-keys',
     signupLabel: 'Google AI Studio',
-    steps: ['Click "Get API key"', 'Create a key for your project'],
+    steps: [
+      'Click "Get API key"',
+      'Create a key for your project',
+      'Free tier available — no billing required',
+    ],
   },
 };

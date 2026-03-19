@@ -43,9 +43,11 @@ const listNodesSchema = z.object({
   type: z.string().describe('Node type to list'),
   limit: z.number().optional().describe('Max results (default 50, max 1000)'),
   filters: z
-    .record(z.string(), z.string())
+    .string()
     .optional()
-    .describe('Property filters as key-value pairs for AND matching'),
+    .describe(
+      'Property filters as a JSON object string for AND matching, e.g. \'{"language":"go","team":"platform"}\'',
+    ),
 });
 
 const getNodeSchema = z.object({
@@ -132,7 +134,15 @@ export function makeGraphTools(store: GraphStore) {
     ),
     tool(
       async ({ type, limit, filters }) => {
-        const nodes = await store.listNodes(type, limit, filters);
+        let parsedFilters: Record<string, string> | undefined;
+        if (filters) {
+          try {
+            parsedFilters = JSON.parse(filters);
+          } catch {
+            return JSON.stringify({ error: 'Invalid filters JSON', filters });
+          }
+        }
+        const nodes = await store.listNodes(type, limit, parsedFilters);
         return truncate(
           JSON.stringify({ nodes, count: nodes.length }),
           MAX_RESULT_CHARS,

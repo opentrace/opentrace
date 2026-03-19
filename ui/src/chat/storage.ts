@@ -32,7 +32,7 @@ export function saveApiKey(provider: string, key: string): void {
 }
 
 export function loadProviderChoice(): string {
-  return localStorage.getItem(PROVIDER_KEY) ?? 'anthropic';
+  return localStorage.getItem(PROVIDER_KEY) ?? 'gemini';
 }
 
 export function saveProviderChoice(provider: string): void {
