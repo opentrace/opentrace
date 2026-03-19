@@ -25,6 +25,7 @@ import {
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_DIMMED,
   NODE_OPACITY_DIMMED,
+  NODE_SIZE_DIMMED_SCALE,
 } from '../config/graphLayout';
 
 // ─── Pre-computed color cache ───────────────────────────────────────────
@@ -91,12 +92,26 @@ export function useGraphVisuals(
           : attrs._typeColor) as string | undefined) ??
         getNodeColor(attrs.nodeType as string);
 
+      // _baseSize and _originalLabel are set once at graph construction
+      // (useGraphInstance) so they always reflect the true source values.
+      const baseSize = (attrs._baseSize as number) ?? attrs.size;
+      const originalLabel =
+        (attrs._originalLabel as string | null) ?? attrs.label;
+
       attrs.color = isHighlighted
         ? baseColor
         : dimColor(baseColor, NODE_OPACITY_DIMMED);
+      attrs.size =
+        hasHighlight && !isHighlighted
+          ? baseSize * NODE_SIZE_DIMMED_SCALE
+          : baseSize;
       attrs.borderColor = isSelected ? baseColor : undefined;
       attrs.borderSize = isSelected ? 3 : 0;
+      attrs.label = hasHighlight && !isHighlighted ? null : originalLabel;
       attrs.forceLabel = showLabel && hasHighlight;
+      attrs.zIndex = isSelected ? 2 : isHighlighted && hasHighlight ? 1 : 0;
+      // highlighted → renders on sigma's hoverNodes layer (above edges canvas)
+      attrs.highlighted = hasHighlight && isHighlighted;
       return attrs;
     });
 
@@ -115,9 +130,11 @@ export function useGraphVisuals(
           ? baseColor
           : dimColor(baseColor, EDGE_OPACITY_DIMMED);
         attrs.size = isHighlighted ? EDGE_SIZE_HIGHLIGHTED : EDGE_SIZE_DIMMED;
+        attrs.zIndex = isHighlighted ? 1 : 0;
       } else {
         attrs.color = dimColor(baseColor, EDGE_OPACITY_DEFAULT);
         attrs.size = defaultEdgeSize;
+        attrs.zIndex = 0;
       }
 
       return attrs;

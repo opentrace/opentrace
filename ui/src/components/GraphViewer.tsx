@@ -817,6 +817,47 @@ const GraphViewer = memo(
         isLargeGraph,
       );
 
+      // When a selection is active, raise the edges canvas above the nodes canvas
+      // so dimmed nodes render behind edges. Highlighted nodes use sigma's
+      // hoverNodes layer (already above edges) via the `highlighted` attribute.
+      //
+      // Sigma's canvas stack (DOM order): edges → edgeLabels → nodes → labels →
+      // hovers → hoverNodes → mouse.  The mouse canvas captures all pointer
+      // events, so it MUST stay on top. We assign explicit z-indices to the
+      // full stack to keep everything consistent.
+      useEffect(() => {
+        const container = sigmaRef.current?.getContainer?.();
+        if (!container) return;
+
+        // All sigma layer class names in DOM order
+        const layers = [
+          'sigma-edges',
+          'sigma-edgeLabels',
+          'sigma-nodes',
+          'sigma-labels',
+          'sigma-hovers',
+          'sigma-hoverNodes',
+          'sigma-mouse',
+        ];
+        const els = layers.map(
+          (cls) => container.querySelector(`.${cls}`) as HTMLElement | null,
+        );
+
+        const hasSelection = effectiveHighlightNodes.size > 0;
+        if (hasSelection) {
+          // Reorder: nodes(1) < edges(2) < edgeLabels(3) < labels(4) <
+          //          hovers(5) < hoverNodes(6) < mouse(7)
+          const zMap = [2, 3, 1, 4, 5, 6, 7];
+          els.forEach((el, i) => {
+            if (el) el.style.zIndex = String(zMap[i]);
+          });
+        } else {
+          els.forEach((el) => {
+            if (el) el.style.zIndex = '';
+          });
+        }
+      }, [effectiveHighlightNodes]);
+
       const legendItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.nodes.forEach((n) => {
@@ -945,6 +986,7 @@ const GraphViewer = memo(
           labelSize: LABEL_SIZE,
           defaultDrawNodeHover: drawNodeHover,
           allowInvalidContainer: true,
+          zIndex: true,
           zoomToSizeRatioFunction: (ratio: number) =>
             Math.pow(ratio, ZOOM_SIZE_EXPONENT),
         }),
@@ -1605,6 +1647,7 @@ const GraphViewer = memo(
               position: 'absolute',
               top: 0,
               left: 0,
+              isolation: 'isolate',
             }}
             settings={sigmaSettings}
           >

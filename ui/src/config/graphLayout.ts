@@ -43,7 +43,7 @@ export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {
 
 export const EDGE_SIZE_DEFAULT = 1; // normal state (curved arrows)
 export const EDGE_SIZE_DEFAULT_LINE = 2; // normal state (straight lines, for large graphs)
-export const EDGE_SIZE_HIGHLIGHTED = 2.5; // when part of a selected neighborhood
+export const EDGE_SIZE_HIGHLIGHTED = 1.25; // when part of a selected neighborhood
 export const EDGE_SIZE_DIMMED = 0.5; // when another node is selected
 
 // ─── Edge Opacity ───────────────────────────────────────────────────────
@@ -56,6 +56,7 @@ export const EDGE_OPACITY_DIMMED = 0.05; // when another node is selected
 // ─── Node Opacity ───────────────────────────────────────────────────────
 
 export const NODE_OPACITY_DIMMED = 0.15; // when another node is selected
+export const NODE_SIZE_DIMMED_SCALE = 0.35; // shrink non-highlighted nodes so edges show through
 
 // ─── Zoom Scaling ───────────────────────────────────────────────────────
 // Controls how node sizes scale when zooming out.

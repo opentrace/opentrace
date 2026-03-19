@@ -123,9 +123,11 @@ export function useGraphInstance({
         key: node.id,
         attributes: {
           label: node.name || node.id,
+          _originalLabel: node.name || node.id,
           x: 0,
           y: 0,
           size: nodeSize(0, node.type, structuralTypes),
+          _baseSize: nodeSize(0, node.type, structuralTypes),
           nodeType: node.type,
           _graphNode: node,
           _typeColor: typeColor,
