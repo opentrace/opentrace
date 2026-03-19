@@ -30,11 +30,13 @@ All notable changes to this project will be documented in this file.
 - Only run CI on pull requests, not on push to main (#24) ([#24](https://github.com/opentrace/opentrace/pull/24))
 - Add semantic PR title validation workflow (#85) ([#85](https://github.com/opentrace/opentrace/pull/85))
 - Add git-cliff changelog and release notes generation (#86) ([#86](https://github.com/opentrace/opentrace/pull/86))
+- Add preview-npm workflow and components CI job (#112) ([#112](https://github.com/opentrace/opentrace/pull/112))
 
 ### Documentation
 
 - Update README with repo structure, Claude Code plugin, and static build
 - Add open-source README, CONTRIBUTING, and SECURITY guides (#65) ([#65](https://github.com/opentrace/opentrace/pull/65))
+- Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
