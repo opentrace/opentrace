@@ -1565,10 +1565,7 @@ const GraphViewer = memo(
             />
           )}
 
-          <GraphLegend
-            items={legendItems}
-            linkItems={legendLinkItems}
-          />
+          <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
           {!layoutReady && !isEmpty && (
             <div
