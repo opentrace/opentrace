@@ -15,7 +15,7 @@
  */
 
 // Polyfill ResizeObserver for jsdom (used by react-window v2)
-if (typeof globalThis.ResizeObserver === "undefined") {
+if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
     private callback: ResizeObserverCallback;
     constructor(callback: ResizeObserverCallback) {
@@ -27,7 +27,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
         [
           {
             contentRect: { width: 300, height: 600 } as DOMRectReadOnly,
-            target: document.createElement("div"),
+            target: document.createElement('div'),
             borderBoxSize: [],
             contentBoxSize: [],
             devicePixelContentBoxSize: [],

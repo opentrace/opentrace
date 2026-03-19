@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { useEffect } from "react";
-import type Graph from "graphology";
-import type { GraphNode, FilterState, GetSubTypeFn } from "./types";
+import { useEffect } from 'react';
+import type Graph from 'graphology';
+import type { GraphNode, FilterState, GetSubTypeFn } from './types';
 
 // ─── Filter Logic ───────────────────────────────────────────────────────
 

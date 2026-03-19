@@ -15,23 +15,23 @@
  */
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent, cleanup } from "@testing-library/react";
-import React from "react";
-import FilterPanel from "../FilterPanel";
-import type { FilterPanelProps } from "../types";
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, fireEvent, cleanup } from '@testing-library/react';
+import React from 'react';
+import FilterPanel from '../FilterPanel';
+import type { FilterPanelProps } from '../types';
 
 afterEach(cleanup);
 
 function makeProps(overrides?: Partial<FilterPanelProps>): FilterPanelProps {
   return {
     nodeTypes: [
-      { type: "Repository", count: 5 },
-      { type: "Class", count: 3 },
+      { type: 'Repository', count: 5 },
+      { type: 'Class', count: 3 },
     ],
     linkTypes: [
-      { type: "CALLS", count: 10 },
-      { type: "READS", count: 4 },
+      { type: 'CALLS', count: 10 },
+      { type: 'READS', count: 4 },
     ],
     hiddenNodeTypes: new Set<string>(),
     hiddenLinkTypes: new Set<string>(),
@@ -48,34 +48,34 @@ function makeProps(overrides?: Partial<FilterPanelProps>): FilterPanelProps {
   };
 }
 
-describe("FilterPanel", () => {
-  it("renders node and link types", () => {
+describe('FilterPanel', () => {
+  it('renders node and link types', () => {
     const { getByText } = render(React.createElement(FilterPanel, makeProps()));
-    expect(getByText("Repository")).toBeDefined();
-    expect(getByText("Class")).toBeDefined();
-    expect(getByText("calls")).toBeDefined();
-    expect(getByText("reads")).toBeDefined();
+    expect(getByText('Repository')).toBeDefined();
+    expect(getByText('Class')).toBeDefined();
+    expect(getByText('calls')).toBeDefined();
+    expect(getByText('reads')).toBeDefined();
   });
 
-  it("renders correct counts", () => {
+  it('renders correct counts', () => {
     const { getByText } = render(React.createElement(FilterPanel, makeProps()));
-    expect(getByText("5")).toBeDefined();
-    expect(getByText("3")).toBeDefined();
-    expect(getByText("10")).toBeDefined();
-    expect(getByText("4")).toBeDefined();
+    expect(getByText('5')).toBeDefined();
+    expect(getByText('3')).toBeDefined();
+    expect(getByText('10')).toBeDefined();
+    expect(getByText('4')).toBeDefined();
   });
 
-  it("fires onToggleNodeType when a node type checkbox is clicked", () => {
+  it('fires onToggleNodeType when a node type checkbox is clicked', () => {
     const onToggleNodeType = vi.fn();
     const { container } = render(
       React.createElement(FilterPanel, makeProps({ onToggleNodeType })),
     );
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     fireEvent.click(checkboxes[0]);
-    expect(onToggleNodeType).toHaveBeenCalledWith("Repository");
+    expect(onToggleNodeType).toHaveBeenCalledWith('Repository');
   });
 
-  it("fires onToggleLinkType when an edge type checkbox is clicked", () => {
+  it('fires onToggleLinkType when an edge type checkbox is clicked', () => {
     const onToggleLinkType = vi.fn();
     const { container } = render(
       React.createElement(FilterPanel, makeProps({ onToggleLinkType })),
@@ -83,7 +83,7 @@ describe("FilterPanel", () => {
     // Node type checkboxes come first (2), then link type checkboxes
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     fireEvent.click(checkboxes[2]); // first link type
-    expect(onToggleLinkType).toHaveBeenCalledWith("CALLS");
+    expect(onToggleLinkType).toHaveBeenCalledWith('CALLS');
   });
 
   it('calls onHideAllNodes when "Hide all" is clicked', () => {
@@ -91,7 +91,7 @@ describe("FilterPanel", () => {
     const { getAllByText } = render(
       React.createElement(FilterPanel, makeProps({ onHideAllNodes })),
     );
-    fireEvent.click(getAllByText("Hide all")[0]);
+    fireEvent.click(getAllByText('Hide all')[0]);
     expect(onHideAllNodes).toHaveBeenCalled();
   });
 
@@ -101,12 +101,12 @@ describe("FilterPanel", () => {
       React.createElement(
         FilterPanel,
         makeProps({
-          hiddenNodeTypes: new Set(["Repository", "Class"]),
+          hiddenNodeTypes: new Set(['Repository', 'Class']),
           onShowAllNodes,
         }),
       ),
     );
-    const showButtons = getAllByText("Show all");
+    const showButtons = getAllByText('Show all');
     fireEvent.click(showButtons[0]);
     expect(onShowAllNodes).toHaveBeenCalled();
   });
@@ -117,7 +117,7 @@ describe("FilterPanel", () => {
       React.createElement(FilterPanel, makeProps({ onHideAllLinks })),
     );
     // Second "Hide all" is for edges section
-    fireEvent.click(getAllByText("Hide all")[1]);
+    fireEvent.click(getAllByText('Hide all')[1]);
     expect(onHideAllLinks).toHaveBeenCalled();
   });
 
@@ -127,12 +127,12 @@ describe("FilterPanel", () => {
       React.createElement(
         FilterPanel,
         makeProps({
-          hiddenLinkTypes: new Set(["CALLS", "READS"]),
+          hiddenLinkTypes: new Set(['CALLS', 'READS']),
           onShowAllLinks,
         }),
       ),
     );
-    const showButtons = getAllByText("Show all");
+    const showButtons = getAllByText('Show all');
     // Last "Show all" is for edges
     fireEvent.click(showButtons[showButtons.length - 1]);
     expect(onShowAllLinks).toHaveBeenCalled();
@@ -142,17 +142,17 @@ describe("FilterPanel", () => {
     const { getByText } = render(
       React.createElement(FilterPanel, makeProps({ linkTypes: [] })),
     );
-    expect(getByText("No edges")).toBeDefined();
+    expect(getByText('No edges')).toBeDefined();
   });
 
-  describe("sub-types", () => {
-    it("shows expand button for types with sub-types", () => {
+  describe('sub-types', () => {
+    it('shows expand button for types with sub-types', () => {
       const subs = new Map([
         [
-          "Class",
+          'Class',
           [
-            { subType: "Controller", count: 2 },
-            { subType: "Service", count: 1 },
+            { subType: 'Controller', count: 2 },
+            { subType: 'Service', count: 1 },
           ],
         ],
       ]);
@@ -162,17 +162,17 @@ describe("FilterPanel", () => {
           makeProps({ subTypesByNodeType: subs }),
         ),
       );
-      const expandBtns = container.querySelectorAll(".filter-expand-btn");
+      const expandBtns = container.querySelectorAll('.filter-expand-btn');
       expect(expandBtns.length).toBe(1);
     });
 
-    it("shows sub-types after expand is clicked", () => {
+    it('shows sub-types after expand is clicked', () => {
       const subs = new Map([
         [
-          "Class",
+          'Class',
           [
-            { subType: "Controller", count: 2 },
-            { subType: "Service", count: 1 },
+            { subType: 'Controller', count: 2 },
+            { subType: 'Service', count: 1 },
           ],
         ],
       ]);
@@ -182,15 +182,15 @@ describe("FilterPanel", () => {
           makeProps({ subTypesByNodeType: subs }),
         ),
       );
-      const expandBtn = container.querySelector(".filter-expand-btn")!;
+      const expandBtn = container.querySelector('.filter-expand-btn')!;
       fireEvent.click(expandBtn);
-      expect(getByText("Controller")).toBeDefined();
-      expect(getByText("Service")).toBeDefined();
+      expect(getByText('Controller')).toBeDefined();
+      expect(getByText('Service')).toBeDefined();
     });
 
-    it("fires onToggleSubType when a sub-type checkbox is clicked", () => {
+    it('fires onToggleSubType when a sub-type checkbox is clicked', () => {
       const onToggleSubType = vi.fn();
-      const subs = new Map([["Class", [{ subType: "Controller", count: 2 }]]]);
+      const subs = new Map([['Class', [{ subType: 'Controller', count: 2 }]]]);
       const { container } = render(
         React.createElement(
           FilterPanel,
@@ -198,23 +198,23 @@ describe("FilterPanel", () => {
         ),
       );
       // Expand first
-      const expandBtn = container.querySelector(".filter-expand-btn")!;
+      const expandBtn = container.querySelector('.filter-expand-btn')!;
       fireEvent.click(expandBtn);
       // Find sub-type checkbox (inside .filter-subtypes)
       const subCheckbox = container.querySelector(
         '.filter-subtypes input[type="checkbox"]',
       )!;
       fireEvent.click(subCheckbox);
-      expect(onToggleSubType).toHaveBeenCalledWith("Class:Controller");
+      expect(onToggleSubType).toHaveBeenCalledWith('Class:Controller');
     });
 
-    it("shows indeterminate state when some sub-types hidden", () => {
+    it('shows indeterminate state when some sub-types hidden', () => {
       const subs = new Map([
         [
-          "Class",
+          'Class',
           [
-            { subType: "Controller", count: 2 },
-            { subType: "Service", count: 1 },
+            { subType: 'Controller', count: 2 },
+            { subType: 'Service', count: 1 },
           ],
         ],
       ]);
@@ -223,22 +223,22 @@ describe("FilterPanel", () => {
           FilterPanel,
           makeProps({
             subTypesByNodeType: subs,
-            hiddenSubTypes: new Set(["Class:Controller"]),
+            hiddenSubTypes: new Set(['Class:Controller']),
           }),
         ),
       );
       // The Class filter-item should have .partial class
-      const classItem = container.querySelector(".filter-item.partial");
+      const classItem = container.querySelector('.filter-item.partial');
       expect(classItem).not.toBeNull();
     });
   });
 
-  describe("communities", () => {
+  describe('communities', () => {
     const communityProps = {
-      colorMode: "community" as const,
+      colorMode: 'community' as const,
       communities: [
-        { communityId: 0, label: "Frontend", count: 10, color: "#f00" },
-        { communityId: 1, label: "Backend", count: 8, color: "#0f0" },
+        { communityId: 0, label: 'Frontend', count: 10, color: '#f00' },
+        { communityId: 1, label: 'Backend', count: 8, color: '#0f0' },
       ],
       hiddenCommunities: new Set<number>(),
       onToggleCommunity: vi.fn(),
@@ -246,26 +246,26 @@ describe("FilterPanel", () => {
       onHideAllCommunities: vi.fn(),
     };
 
-    it("renders community section when colorMode is community", () => {
+    it('renders community section when colorMode is community', () => {
       const { getByText } = render(
         React.createElement(FilterPanel, makeProps(communityProps)),
       );
-      expect(getByText("Communities")).toBeDefined();
-      expect(getByText("Frontend")).toBeDefined();
-      expect(getByText("Backend")).toBeDefined();
+      expect(getByText('Communities')).toBeDefined();
+      expect(getByText('Frontend')).toBeDefined();
+      expect(getByText('Backend')).toBeDefined();
     });
 
-    it("does not render community section when colorMode is type", () => {
+    it('does not render community section when colorMode is type', () => {
       const { queryByText } = render(
         React.createElement(
           FilterPanel,
-          makeProps({ ...communityProps, colorMode: "type" }),
+          makeProps({ ...communityProps, colorMode: 'type' }),
         ),
       );
-      expect(queryByText("Communities")).toBeNull();
+      expect(queryByText('Communities')).toBeNull();
     });
 
-    it("fires onToggleCommunity when community checkbox clicked", () => {
+    it('fires onToggleCommunity when community checkbox clicked', () => {
       const onToggleCommunity = vi.fn();
       const { container } = render(
         React.createElement(
@@ -292,7 +292,7 @@ describe("FilterPanel", () => {
         ),
       );
       // First "Show all" is for communities section
-      fireEvent.click(getAllByText("Show all")[0]);
+      fireEvent.click(getAllByText('Show all')[0]);
       expect(onShowAllCommunities).toHaveBeenCalled();
     });
   });

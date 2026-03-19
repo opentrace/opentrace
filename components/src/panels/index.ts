@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-export { default as FilterPanel } from "./FilterPanel";
-export { default as GraphLegend } from "./GraphLegend";
-export { default as DiscoverPanel } from "./DiscoverPanel";
+export { default as FilterPanel } from './FilterPanel';
+export { default as GraphLegend } from './GraphLegend';
+export { default as DiscoverPanel } from './DiscoverPanel';
 
 export type {
   TypeEntry,
@@ -29,4 +29,4 @@ export type {
   GraphLegendProps,
   TreeNodeData,
   DiscoverPanelProps,
-} from "./types";
+} from './types';

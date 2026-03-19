@@ -47,7 +47,7 @@ export interface FilterPanelProps {
   onHideAllNodes: () => void;
   onShowAllLinks: () => void;
   onHideAllLinks: () => void;
-  colorMode?: "type" | "community";
+  colorMode?: 'type' | 'community';
   communities?: CommunityEntry[];
   hiddenCommunities?: Set<number>;
   onToggleCommunity?: (cid: number) => void;
@@ -76,7 +76,7 @@ export interface LegendLinkItem {
 }
 
 export interface GraphLegendProps {
-  colorMode: "type" | "community";
+  colorMode: 'type' | 'community';
   legendItems: LegendNodeItem[];
   communityLegendItems: LegendCommunityItem[];
   legendLinkItems: LegendLinkItem[];

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from "react";
-import type { GraphLegendProps } from "./types";
-import "./GraphLegend.css";
+import { useEffect, useRef, useState } from 'react';
+import type { GraphLegendProps } from './types';
+import './GraphLegend.css';
 
 const DEFAULT_MAX_VISIBLE = 5;
 
@@ -25,7 +25,7 @@ type LegendEntry = {
   label: string;
   count: number;
   color: string;
-  shape: "dot" | "line";
+  shape: 'dot' | 'line';
 };
 
 export default function GraphLegend({
@@ -49,15 +49,15 @@ export default function GraphLegend({
         setShowOverflow(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, [showOverflow]);
 
   // Build node/community items (truncatable) and link items (always shown)
   const nodeItems: LegendEntry[] = [];
-  if (colorMode === "community") {
+  if (colorMode === 'community') {
     for (const { label, count, color } of communityLegendItems) {
-      nodeItems.push({ key: `c:${label}`, label, count, color, shape: "dot" });
+      nodeItems.push({ key: `c:${label}`, label, count, color, shape: 'dot' });
     }
   } else {
     for (const { type, count, color } of legendItems) {
@@ -66,7 +66,7 @@ export default function GraphLegend({
         label: type,
         count,
         color,
-        shape: "dot",
+        shape: 'dot',
       });
     }
   }
@@ -78,7 +78,7 @@ export default function GraphLegend({
       label: type,
       count,
       color,
-      shape: "line",
+      shape: 'line',
     });
   }
 
@@ -91,7 +91,7 @@ export default function GraphLegend({
         <span key={key} className="legend-item" title={label}>
           <span className="legend-dot" style={{ backgroundColor: color }} />
           <span className="legend-count">{count}</span>
-          {label.length > 10 ? label.slice(0, 10) + "…" : label}
+          {label.length > 10 ? label.slice(0, 10) + '…' : label}
         </span>
       ))}
       {overflowNodes.length > 0 && (

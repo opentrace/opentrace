@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import { useCallback, useState } from "react";
-import { getNodeColor } from "../colors/nodeColors";
-import { getLinkColor } from "../colors/linkColors";
-import type { FilterPanelProps, SubTypeEntry } from "./types";
-import "./FilterPanel.css";
+import { useCallback, useState } from 'react';
+import { getNodeColor } from '../colors/nodeColors';
+import { getLinkColor } from '../colors/linkColors';
+import type { FilterPanelProps, SubTypeEntry } from './types';
+import './FilterPanel.css';
 
 export default function FilterPanel({
   nodeTypes,
@@ -55,12 +55,12 @@ export default function FilterPanel({
 
   /** Compute parent checkbox state for a node type that has sub-types. */
   const getSubTypeState = useCallback(
-    (type: string, subs: SubTypeEntry[]): "all" | "none" | "some" => {
+    (type: string, subs: SubTypeEntry[]): 'all' | 'none' | 'some' => {
       const keys = subs.map((s) => `${type}:${s.subType}`);
       const hiddenCount = keys.filter((k) => hiddenSubTypes.has(k)).length;
-      if (hiddenCount === 0) return "all";
-      if (hiddenCount === keys.length) return "none";
-      return "some";
+      if (hiddenCount === 0) return 'all';
+      if (hiddenCount === keys.length) return 'none';
+      return 'some';
     },
     [hiddenSubTypes],
   );
@@ -69,13 +69,13 @@ export default function FilterPanel({
   const allNodesHidden = nodeTypes.every(({ type }) => {
     const subs = subTypesByNodeType.get(type);
     if (subs && subs.length > 0) {
-      return getSubTypeState(type, subs) === "none";
+      return getSubTypeState(type, subs) === 'none';
     }
     return hiddenNodeTypes.has(type);
   });
 
   const showCommunities =
-    colorMode === "community" &&
+    colorMode === 'community' &&
     communities &&
     communities.length > 0 &&
     hiddenCommunities &&
@@ -99,7 +99,7 @@ export default function FilterPanel({
                   : onHideAllCommunities
               }
             >
-              {allCommunitiesHidden ? "Show all" : "Hide all"}
+              {allCommunitiesHidden ? 'Show all' : 'Hide all'}
             </button>
           </div>
           <div className="filter-list">
@@ -108,7 +108,7 @@ export default function FilterPanel({
               return (
                 <label
                   key={communityId}
-                  className={`filter-item ${hidden ? "hidden" : ""}`}
+                  className={`filter-item ${hidden ? 'hidden' : ''}`}
                 >
                   <input
                     type="checkbox"
@@ -119,7 +119,7 @@ export default function FilterPanel({
                   <span
                     className="filter-dot"
                     style={{
-                      backgroundColor: hidden ? "var(--muted)" : color,
+                      backgroundColor: hidden ? 'var(--muted)' : color,
                     }}
                   />
                   <span className="filter-type-name">{label}</span>
@@ -138,7 +138,7 @@ export default function FilterPanel({
             className="filter-toggle-all"
             onClick={allNodesHidden ? onShowAllNodes : onHideAllNodes}
           >
-            {allNodesHidden ? "Show all" : "Hide all"}
+            {allNodesHidden ? 'Show all' : 'Hide all'}
           </button>
         </div>
         <div className="filter-list">
@@ -152,8 +152,8 @@ export default function FilterPanel({
             let indeterminate = false;
             if (hasSubTypes) {
               const state = getSubTypeState(type, subTypes);
-              hidden = state === "none";
-              indeterminate = state === "some";
+              hidden = state === 'none';
+              indeterminate = state === 'some';
             } else {
               hidden = hiddenNodeTypes.has(type);
             }
@@ -161,7 +161,7 @@ export default function FilterPanel({
             return (
               <div key={type} className="filter-type-group">
                 <label
-                  className={`filter-item ${hidden ? "hidden" : ""} ${indeterminate ? "partial" : ""}`}
+                  className={`filter-item ${hidden ? 'hidden' : ''} ${indeterminate ? 'partial' : ''}`}
                 >
                   <input
                     type="checkbox"
@@ -179,13 +179,13 @@ export default function FilterPanel({
                         e.stopPropagation();
                         toggleExpanded(type);
                       }}
-                      title={isExpanded ? "Collapse" : "Expand sub-types"}
+                      title={isExpanded ? 'Collapse' : 'Expand sub-types'}
                     >
                       <svg
                         width="10"
                         height="10"
                         viewBox="0 0 10 10"
-                        className={`filter-expand-icon ${isExpanded ? "filter-expand-icon--open" : ""}`}
+                        className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
                       >
                         <path
                           d="M3 2 L7 5 L3 8"
@@ -202,7 +202,7 @@ export default function FilterPanel({
                     className="filter-dot"
                     style={{
                       backgroundColor: hidden
-                        ? "var(--muted)"
+                        ? 'var(--muted)'
                         : getNodeColor(type),
                     }}
                   />
@@ -217,7 +217,7 @@ export default function FilterPanel({
                       return (
                         <label
                           key={subKey}
-                          className={`filter-item filter-subitem ${subHidden ? "hidden" : ""}`}
+                          className={`filter-item filter-subitem ${subHidden ? 'hidden' : ''}`}
                         >
                           <input
                             type="checkbox"
@@ -228,7 +228,7 @@ export default function FilterPanel({
                             className="filter-dot filter-dot--small"
                             style={{
                               backgroundColor: subHidden
-                                ? "var(--muted)"
+                                ? 'var(--muted)'
                                 : getNodeColor(type),
                               opacity: subHidden ? 1 : 0.7,
                             }}
@@ -253,7 +253,7 @@ export default function FilterPanel({
             className="filter-toggle-all"
             onClick={allLinksHidden ? onShowAllLinks : onHideAllLinks}
           >
-            {allLinksHidden ? "Show all" : "Hide all"}
+            {allLinksHidden ? 'Show all' : 'Hide all'}
           </button>
         </div>
         <div className="filter-list">
@@ -262,7 +262,7 @@ export default function FilterPanel({
             return (
               <label
                 key={type}
-                className={`filter-item ${hidden ? "hidden" : ""}`}
+                className={`filter-item ${hidden ? 'hidden' : ''}`}
               >
                 <input
                   type="checkbox"
@@ -273,7 +273,7 @@ export default function FilterPanel({
                   className="filter-line"
                   style={{
                     backgroundColor: hidden
-                      ? "var(--muted)"
+                      ? 'var(--muted)'
                       : getLinkColor(type),
                   }}
                 />

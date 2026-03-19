@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { useEffect } from "react";
-import type Graph from "graphology";
-import type { VisualState, LayoutConfig } from "./types";
+import { useEffect } from 'react';
+import type Graph from 'graphology';
+import type { VisualState, LayoutConfig } from './types';
 import {
   EDGE_SIZE_DEFAULT,
   EDGE_SIZE_DEFAULT_LINE,
@@ -26,7 +26,7 @@ import {
   EDGE_OPACITY_DIMMED,
   NODE_OPACITY_DIMMED,
   NODE_SIZE_DIMMED_SCALE,
-} from "../config/graphLayout";
+} from '../config/graphLayout';
 
 // ─── Pre-computed color cache ───────────────────────────────────────────
 
@@ -47,7 +47,7 @@ function dimColor(hex: string, alpha: number): string {
   const nr = Math.round(r * alpha + bgR * (1 - alpha));
   const ng = Math.round(g * alpha + bgG * (1 - alpha));
   const nb = Math.round(b * alpha + bgB * (1 - alpha));
-  const result = `#${nr.toString(16).padStart(2, "0")}${ng.toString(16).padStart(2, "0")}${nb.toString(16).padStart(2, "0")}`;
+  const result = `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
   dimColorCache.set(key, result);
   return result;
 }
@@ -87,7 +87,7 @@ export function useGraphVisuals(
       const isSelected = _id === selectedNodeId;
       const showLabel = !hasHighlight || labelNodes.has(_id);
       const baseColor =
-        ((colorMode === "community"
+        ((colorMode === 'community'
           ? attrs._communityColor
           : attrs._typeColor) as string | undefined) ??
         getNodeColor(attrs.nodeType as string);

@@ -21,25 +21,25 @@
  */
 
 const COMMUNITY_PALETTE = [
-  "#f472b6", // Pink
-  "#38bdf8", // Sky
-  "#fb923c", // Orange
-  "#4ade80", // Green
-  "#c084fc", // Purple
-  "#fbbf24", // Amber
-  "#22d3ee", // Cyan
-  "#f87171", // Red
-  "#a3e635", // Lime
-  "#818cf8", // Indigo
-  "#fb7185", // Rose
-  "#2dd4bf", // Teal
-  "#e879f9", // Fuchsia
-  "#60a5fa", // Blue
-  "#facc15", // Yellow
-  "#34d399", // Emerald
+  '#f472b6', // Pink
+  '#38bdf8', // Sky
+  '#fb923c', // Orange
+  '#4ade80', // Green
+  '#c084fc', // Purple
+  '#fbbf24', // Amber
+  '#22d3ee', // Cyan
+  '#f87171', // Red
+  '#a3e635', // Lime
+  '#818cf8', // Indigo
+  '#fb7185', // Rose
+  '#2dd4bf', // Teal
+  '#e879f9', // Fuchsia
+  '#60a5fa', // Blue
+  '#facc15', // Yellow
+  '#34d399', // Emerald
 ];
 
-const FALLBACK_COLOR = "#64748b"; // Slate grey
+const FALLBACK_COLOR = '#64748b'; // Slate grey
 
 /**
  * Build a stable community→color mapping, sorted by member count (largest community
@@ -66,7 +66,7 @@ export function buildCommunityColorMap(
 }
 
 // Node types that represent structural containers (ordered by priority — most specific first)
-const CONTAINER_TYPES = ["Package", "Directory", "Repository"];
+const CONTAINER_TYPES = ['Package', 'Directory', 'Repository'];
 
 interface NameableNode {
   id: string;
@@ -132,13 +132,13 @@ export function buildCommunityNames(
     const prefix = longestCommonPrefix(nodeNames);
     if (prefix.length > 0) {
       // Trim to last path separator for a clean directory-like name
-      const trimmed = prefix.includes("/")
-        ? prefix.slice(0, prefix.lastIndexOf("/") + 1)
-        : prefix.includes(".")
-          ? prefix.slice(0, prefix.lastIndexOf(".") + 1)
+      const trimmed = prefix.includes('/')
+        ? prefix.slice(0, prefix.lastIndexOf('/') + 1)
+        : prefix.includes('.')
+          ? prefix.slice(0, prefix.lastIndexOf('.') + 1)
           : prefix;
       if (trimmed.length > 1) {
-        names.set(cid, trimmed.replace(/\/$/, ""));
+        names.set(cid, trimmed.replace(/\/$/, ''));
         continue;
       }
     }
@@ -154,7 +154,7 @@ export function buildCommunityNames(
     for (const node of members) {
       typeCounts.set(node.type, (typeCounts.get(node.type) || 0) + 1);
     }
-    let dominantType = "Nodes";
+    let dominantType = 'Nodes';
     let maxCount = 0;
     for (const [type, count] of typeCounts) {
       if (count > maxCount) {
@@ -247,22 +247,22 @@ function dedup(names: Map<number, string>, hubs: Map<number, string>): void {
 }
 
 function longestCommonPrefix(strings: string[]): string {
-  if (strings.length === 0) return "";
+  if (strings.length === 0) return '';
   if (strings.length === 1) return strings[0];
   let prefix = strings[0];
   for (let i = 1; i < strings.length; i++) {
     while (!strings[i].startsWith(prefix)) {
       prefix = prefix.slice(0, -1);
-      if (prefix.length === 0) return "";
+      if (prefix.length === 0) return '';
     }
   }
   return prefix;
 }
 
 function pluralize(type: string): string {
-  if (type.endsWith("s")) return type;
-  if (type.endsWith("y")) return type.slice(0, -1) + "ies";
-  return type + "s";
+  if (type.endsWith('s')) return type;
+  if (type.endsWith('y')) return type.slice(0, -1) + 'ies';
+  return type + 's';
 }
 
 /**

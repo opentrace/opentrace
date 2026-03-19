@@ -14,33 +14,33 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { List, useListRef } from "react-window";
-import type { RowComponentProps } from "react-window";
-import { getNodeColor } from "../colors/nodeColors";
-import type { DiscoverPanelProps, TreeNodeData } from "./types";
-import "./DiscoverPanel.css";
+import { useEffect, useMemo, useState } from 'react';
+import { List, useListRef } from 'react-window';
+import type { RowComponentProps } from 'react-window';
+import { getNodeColor } from '../colors/nodeColors';
+import type { DiscoverPanelProps, TreeNodeData } from './types';
+import './DiscoverPanel.css';
 
 const ROW_HEIGHT = 28;
 
 const DEFAULT_EXPANDABLE_TYPES = new Set([
-  "Repository",
-  "Directory",
-  "File",
-  "Class",
-  "PullRequest",
+  'Repository',
+  'Directory',
+  'File',
+  'Class',
+  'PullRequest',
 ]);
 
 /** Sort priority: directories → files → PRs → symbols, then alphabetical */
 function sortRank(type: string): number {
-  if (type === "Repository" || type === "Directory") return 0;
-  if (type === "File") return 1;
-  if (type === "PullRequest") return 2;
+  if (type === 'Repository' || type === 'Directory') return 0;
+  if (type === 'File') return 1;
+  if (type === 'PullRequest') return 2;
   return 3;
 }
 
 function displayName(name: string): string {
-  const segments = name.split("/");
+  const segments = name.split('/');
   return segments[segments.length - 1] || name;
 }
 
@@ -119,7 +119,7 @@ function flattenTree(
       const children = childrenMap.get(node.id);
       const couldExpand =
         expandableTypes.has(node.type) &&
-        (node.type !== "File" || isExpandableFile(node.name));
+        (node.type !== 'File' || isExpandableFile(node.name));
       const knownEmpty = children !== undefined && children.length === 0;
       const expandable = couldExpand && !knownEmpty;
       const isExpanded = expanded.has(node.id);
@@ -139,8 +139,8 @@ function flattenTree(
         rows.push({
           node: {
             id: `__loading_${node.id}`,
-            name: "Loading...",
-            type: "__loading",
+            name: 'Loading...',
+            type: '__loading',
             properties: {},
           },
           depth: depth + 1,
@@ -185,7 +185,7 @@ function TreeRow({
   const { node, depth, expandable, isExpanded } = row;
 
   // Loading placeholder row
-  if (node.type === "__loading") {
+  if (node.type === '__loading') {
     return (
       <div
         className="discover-tree-placeholder"
@@ -210,19 +210,19 @@ function TreeRow({
       : undefined;
 
   const rowClasses = [
-    "discover-tree-row",
-    isSelected ? "discover-tree-row--selected" : "",
-    !isSelected && hopHighlight !== undefined ? "discover-tree-row--hop" : "",
-    offGraph && hopHighlight === undefined ? "discover-tree-row--faded" : "",
+    'discover-tree-row',
+    isSelected ? 'discover-tree-row--selected' : '',
+    !isSelected && hopHighlight !== undefined ? 'discover-tree-row--hop' : '',
+    offGraph && hopHighlight === undefined ? 'discover-tree-row--faded' : '',
   ]
     .filter(Boolean)
-    .join(" ");
+    .join(' ');
 
   const rowStyle: React.CSSProperties = {
     ...style,
     paddingLeft: `${12 + depth * 16}px`,
     ...(!isSelected && hopHighlight !== undefined
-      ? ({ "--hop-intensity": hopHighlight } as React.CSSProperties)
+      ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
       : {}),
   };
 
@@ -232,13 +232,13 @@ function TreeRow({
         <button
           className="filter-expand-btn"
           onClick={() => onToggle(node.id)}
-          title={isExpanded ? "Collapse" : "Expand"}
+          title={isExpanded ? 'Collapse' : 'Expand'}
         >
           <svg
             width="10"
             height="10"
             viewBox="0 0 10 10"
-            className={`filter-expand-icon ${isExpanded ? "filter-expand-icon--open" : ""}`}
+            className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
           >
             <path
               d="M3 2 L7 5 L3 8"
@@ -282,7 +282,7 @@ export default function DiscoverPanel({
   isExpandableFile = () => true,
   loading,
 }: DiscoverPanelProps) {
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);
 
   const listRef = useListRef(null);
@@ -339,7 +339,7 @@ export default function DiscoverPanel({
     if (!selectedNodeId || !isActive || !listRef.current) return;
     const idx = flatRows.findIndex((r) => r.node.id === selectedNodeId);
     if (idx >= 0) {
-      listRef.current.scrollToRow({ index: idx, align: "center" });
+      listRef.current.scrollToRow({ index: idx, align: 'center' });
     }
   }, [selectedNodeId, isActive, flatRows, listRef]);
 
@@ -396,7 +396,7 @@ export default function DiscoverPanel({
         {filter && (
           <button
             className="discover-filter-clear"
-            onClick={() => setFilter("")}
+            onClick={() => setFilter('')}
             title="Clear filter"
           >
             &times;

@@ -20,9 +20,9 @@
  * Theme-aware: reads --popover / --popover-foreground CSS variables.
  * Shows the node label + community name in the tooltip.
  */
-import type { Attributes } from "graphology-types";
-import type { NodeDisplayData } from "sigma/types";
-import type { Settings } from "sigma/settings";
+import type { Attributes } from 'graphology-types';
+import type { NodeDisplayData } from 'sigma/types';
+import type { Settings } from 'sigma/settings';
 
 type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 
@@ -50,14 +50,14 @@ let cached: ThemeColors | null = null;
 
 function resolveThemeColors(): ThemeColors {
   const root = document.documentElement;
-  const key = `${root.dataset.theme ?? ""}_${root.dataset.mode ?? ""}`;
+  const key = `${root.dataset.theme ?? ''}_${root.dataset.mode ?? ''}`;
   if (cached && cached.key === key) return cached;
 
   const style = getComputedStyle(root);
   cached = {
-    bg: style.getPropertyValue("--popover").trim() || "#1e293b",
-    fg: style.getPropertyValue("--popover-foreground").trim() || "#e2e8f0",
-    muted: style.getPropertyValue("--muted-foreground").trim() || "#94a3b8",
+    bg: style.getPropertyValue('--popover').trim() || '#1e293b',
+    fg: style.getPropertyValue('--popover-foreground').trim() || '#e2e8f0',
+    muted: style.getPropertyValue('--muted-foreground').trim() || '#94a3b8',
     key,
   };
   return cached;
@@ -71,7 +71,7 @@ export function drawNodeHover<
   G extends Attributes = Attributes,
 >(
   context: CanvasRenderingContext2D,
-  data: PartialButFor<NodeDisplayData, "x" | "y" | "size" | "label" | "color">,
+  data: PartialButFor<NodeDisplayData, 'x' | 'y' | 'size' | 'label' | 'color'>,
   settings: Settings<N, E, G>,
 ): void {
   // Only draw hover tooltip for the actually hovered node, not all highlighted nodes
@@ -87,14 +87,14 @@ export function drawNodeHover<
   const extras = data as Record<string, unknown>;
   // label may be null on dimmed nodes — fall back to the preserved original
   const label =
-    typeof data.label === "string"
+    typeof data.label === 'string'
       ? data.label
-      : typeof extras._originalLabel === "string"
+      : typeof extras._originalLabel === 'string'
         ? extras._originalLabel
-        : "";
+        : '';
   const nodeType = extras.nodeType as string | undefined;
   const communityName = extras._communityName as string | undefined;
-  const subtitle = [nodeType, communityName].filter(Boolean).join(" · ");
+  const subtitle = [nodeType, communityName].filter(Boolean).join(' · ');
 
   context.font = `${weight} ${size}px ${font}`;
 
@@ -117,7 +117,7 @@ export function drawNodeHover<
     context.closePath();
     context.fillStyle = colors.bg;
     context.shadowBlur = 10;
-    context.shadowColor = "rgba(0,0,0,0.5)";
+    context.shadowColor = 'rgba(0,0,0,0.5)';
     context.fill();
     context.shadowBlur = 0;
 
@@ -147,7 +147,7 @@ export function drawNodeHover<
   context.shadowOffsetX = 0;
   context.shadowOffsetY = 2;
   context.shadowBlur = 10;
-  context.shadowColor = "rgba(0,0,0,0.5)";
+  context.shadowColor = 'rgba(0,0,0,0.5)';
 
   context.beginPath();
   context.moveTo(data.x + xDelta, data.y + boxHeight / 2);

@@ -95,7 +95,7 @@
   opacity: 0.45;
 }
 
-.filter-item input[type="checkbox"] {
+.filter-item input[type='checkbox'] {
   display: none;
 }
 

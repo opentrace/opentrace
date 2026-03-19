@@ -42,7 +42,7 @@ export interface SpacingRequest {
 }
 
 export interface SpacingProgress {
-  type: "progress";
+  type: 'progress';
   iteration: number;
   maxOverlap: number;
   /** Per-node position updates (delta applied to all members of moved communities) */
@@ -50,7 +50,7 @@ export interface SpacingProgress {
 }
 
 export interface SpacingDone {
-  type: "done";
+  type: 'done';
   iterations: number;
   maxOverlap: number;
   totalMs: number;
@@ -74,7 +74,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
 
   if (nodes.length === 0) {
     (self as unknown as Worker).postMessage({
-      type: "done",
+      type: 'done',
       iterations: 0,
       maxOverlap: 0,
       totalMs: 0,
@@ -116,7 +116,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
 
   if (comms.length < 2) {
     (self as unknown as Worker).postMessage({
-      type: "done",
+      type: 'done',
       iterations: 0,
       maxOverlap: 0,
       totalMs: 0,
@@ -185,7 +185,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
 
     // Post progress every iteration
     (self as unknown as Worker).postMessage({
-      type: "progress",
+      type: 'progress',
       iteration: iter,
       maxOverlap,
       updates,
@@ -196,7 +196,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
     // Converged
     if (maxOverlap <= overlapThreshold || updates.length === 0) {
       (self as unknown as Worker).postMessage({
-        type: "done",
+        type: 'done',
         iterations: iter + 1,
         maxOverlap,
         totalMs: performance.now() - t0,
@@ -207,7 +207,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
 
   // Max iterations
   (self as unknown as Worker).postMessage({
-    type: "done",
+    type: 'done',
     iterations: maxIterations,
     maxOverlap: lastMaxOverlap,
     totalMs: performance.now() - t0,

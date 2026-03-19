@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-import { useMemo } from "react";
-import type Graph from "graphology";
-import type { GraphNode, GraphLink, FilterState } from "./types";
+import { useMemo } from 'react';
+import type Graph from 'graphology';
+import type { GraphNode, GraphLink, FilterState } from './types';
 
 /** Extract a string ID from a link endpoint (handles string, number, and object forms). */
 function endpointId(endpoint: string | number | GraphNode | undefined): string {
-  if (typeof endpoint === "string") return endpoint;
-  if (typeof endpoint === "object" && endpoint !== null)
+  if (typeof endpoint === 'string') return endpoint;
+  if (typeof endpoint === 'object' && endpoint !== null)
     return (endpoint as GraphNode).id;
   return String(endpoint);
 }

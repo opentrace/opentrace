@@ -22,31 +22,31 @@
  *   dist/opentrace-components.cjs  (CJS)
  *   dist/components.css            (extracted CSS)
  */
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import { resolve } from "path";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [react()],
   publicDir: false,
   build: {
-    outDir: "dist",
+    outDir: 'dist',
     lib: {
       entry: {
-        "opentrace-components": resolve(__dirname, "src/index.ts"),
-        utils: resolve(__dirname, "src/utils.ts"),
+        'opentrace-components': resolve(__dirname, 'src/index.ts'),
+        utils: resolve(__dirname, 'src/utils.ts'),
       },
-      name: "OpenTraceComponents",
-      formats: ["es", "cjs"],
+      name: 'OpenTraceComponents',
+      formats: ['es', 'cjs'],
     },
     rollupOptions: {
       // Only externalize React — everything else is bundled
-      external: ["react", "react-dom", "react/jsx-runtime"],
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
       output: {
         globals: {
-          react: "React",
-          "react-dom": "ReactDOM",
-          "react/jsx-runtime": "jsxRuntime",
+          react: 'React',
+          'react-dom': 'ReactDOM',
+          'react/jsx-runtime': 'jsxRuntime',
         },
       },
     },
@@ -54,6 +54,6 @@ export default defineConfig({
     minify: false,
   },
   worker: {
-    format: "es",
+    format: 'es',
   },
 });

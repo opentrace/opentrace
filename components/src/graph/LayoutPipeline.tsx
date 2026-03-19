@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef } from "react";
-import { useSigma } from "@react-sigma/core";
-import { useWorkerLayoutForceAtlas2 } from "@react-sigma/layout-forceatlas2";
-import { zoomToFit } from "../sigma/zoomToNodes";
-import type { LayoutConfig } from "./types";
+import { useEffect, useRef } from 'react';
+import { useSigma } from '@react-sigma/core';
+import { useWorkerLayoutForceAtlas2 } from '@react-sigma/layout-forceatlas2';
+import { zoomToFit } from '../sigma/zoomToNodes';
+import type { LayoutConfig } from './types';
 import type {
   SpacingNode,
   SpacingRequest,
   SpacingResponse,
-} from "./spacingWorker";
+} from './spacingWorker';
 
 interface LayoutPipelineProps {
   layoutReady: boolean;
@@ -36,7 +36,7 @@ interface LayoutPipelineProps {
 }
 
 export interface OptimizeStatus {
-  phase: "fa2" | "noverlap" | "spacing" | "optimizing" | "done";
+  phase: 'fa2' | 'noverlap' | 'spacing' | 'optimizing' | 'done';
   iteration?: number;
   cleanRatio?: number;
   totalOverlaps?: number;
@@ -104,7 +104,7 @@ export default function LayoutPipeline({
       return;
     }
 
-    onOptimizeStatus?.({ phase: "spacing" });
+    onOptimizeStatus?.({ phase: 'spacing' });
 
     const nodes: SpacingNode[] = [];
     graph.forEachNode((id, attrs) => {
@@ -118,15 +118,15 @@ export default function LayoutPipeline({
       });
     });
 
-    const worker = new Worker(new URL("./spacingWorker.ts", import.meta.url), {
-      type: "module",
+    const worker = new Worker(new URL('./spacingWorker.ts', import.meta.url), {
+      type: 'module',
     });
     spacingWorkerRef.current = worker;
 
     worker.onmessage = (e: MessageEvent<SpacingResponse>) => {
       const msg = e.data;
 
-      if (msg.type === "progress") {
+      if (msg.type === 'progress') {
         if (msg.updates.length > 0) {
           const posMap = new Map<string, { x: number; y: number }>();
           for (const u of msg.updates) posMap.set(u.id, { x: u.x, y: u.y });
@@ -141,24 +141,24 @@ export default function LayoutPipeline({
         }
 
         onOptimizeStatus?.({
-          phase: "spacing",
+          phase: 'spacing',
           iteration: msg.iteration,
           cleanRatio: 1 - msg.maxOverlap,
         });
 
-        if (process.env.NODE_ENV === "development") {
+        if (process.env.NODE_ENV === 'development') {
           console.log(
             `%c[spacing]%c iter ${msg.iteration}: overlap ${(msg.maxOverlap * 100).toFixed(0)}%, ${msg.updates.length} nodes moved`,
-            "color: #fbbf24; font-weight: bold",
-            "color: inherit",
+            'color: #fbbf24; font-weight: bold',
+            'color: inherit',
           );
         }
-      } else if (msg.type === "done") {
-        if (process.env.NODE_ENV === "development") {
+      } else if (msg.type === 'done') {
+        if (process.env.NODE_ENV === 'development') {
           console.log(
             `%c[spacing]%c done: ${msg.iterations} iters, ${(msg.maxOverlap * 100).toFixed(0)}% max overlap in ${msg.totalMs.toFixed(0)}ms`,
-            "color: #fbbf24; font-weight: bold",
-            "color: inherit",
+            'color: #fbbf24; font-weight: bold',
+            'color: inherit',
           );
         }
         worker.terminate();
@@ -242,7 +242,7 @@ export default function LayoutPipeline({
     perCommunityNoverlapCancel.current = () => {
       cancelled = true;
       if (pendingCallbackId !== null) {
-        if (typeof cancelIdleCallback === "function") {
+        if (typeof cancelIdleCallback === 'function') {
           cancelIdleCallback(pendingCallbackId as number);
         } else {
           clearTimeout(pendingCallbackId);
@@ -253,11 +253,11 @@ export default function LayoutPipeline({
 
     function processNext() {
       if (cancelled || idx >= sorted.length) {
-        if (process.env.NODE_ENV === "development") {
+        if (process.env.NODE_ENV === 'development') {
           console.log(
-            `%c[noverlap]%c per-community done: ${sorted.length} communities, ${totalMoved} nodes moved${cancelled ? " (cancelled)" : ""}`,
-            "color: #4ade80; font-weight: bold",
-            "color: inherit",
+            `%c[noverlap]%c per-community done: ${sorted.length} communities, ${totalMoved} nodes moved${cancelled ? ' (cancelled)' : ''}`,
+            'color: #4ade80; font-weight: bold',
+            'color: inherit',
           );
         }
         perCommunityNoverlapCancel.current = null;
@@ -330,7 +330,7 @@ export default function LayoutPipeline({
     }
 
     function scheduleNext() {
-      if (typeof requestIdleCallback === "function") {
+      if (typeof requestIdleCallback === 'function') {
         pendingCallbackId = requestIdleCallback(processNext, { timeout: 50 });
       } else {
         pendingCallbackId = setTimeout(processNext, 0);
@@ -347,7 +347,7 @@ export default function LayoutPipeline({
 
     cleanup();
 
-    const sigmaInstance = sigma as unknown as import("sigma").Sigma;
+    const sigmaInstance = sigma as unknown as import('sigma').Sigma;
     const graph = sigma.getGraph();
 
     // Pipeline: Spacing → FA2 → Per-community noverlap → Spacing → FA2 (soften) → Zoom
@@ -356,7 +356,7 @@ export default function LayoutPipeline({
 
       const runFA2 = (duration: number, onDone: () => void) => {
         if (layoutConfig.fa2Enabled && graph.order > 0) {
-          onOptimizeStatus?.({ phase: "fa2" });
+          onOptimizeStatus?.({ phase: 'fa2' });
           start();
           timerRef.current = setTimeout(() => {
             stop();
@@ -370,7 +370,7 @@ export default function LayoutPipeline({
       // Step 2: Initial FA2 — establish edge-based structure
       runFA2(layoutConfig.fa2Duration, () => {
         // Step 3: Per-community noverlap — spread stacked nodes
-        onOptimizeStatus?.({ phase: "noverlap" });
+        onOptimizeStatus?.({ phase: 'noverlap' });
         runPerCommunityNoverlap(() => {
           // Step 4: Re-space communities after noverlap expanded them
           runSpacing(() => {

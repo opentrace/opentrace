@@ -99,7 +99,7 @@ export interface FilterState {
 }
 
 export interface VisualState {
-  colorMode: "type" | "community";
+  colorMode: 'type' | 'community';
   highlightNodes: Set<string>;
   highlightLinks: Set<string>;
   labelNodes: Set<string>;

@@ -104,8 +104,8 @@ export const EDGE_PROGRAM_THRESHOLD = 50000;
 
 export const LABEL_RENDERED_SIZE_THRESHOLD = 8;
 export const LABEL_SIZE = 12;
-export const LABEL_FONT = "Inter, system-ui, sans-serif";
-export const LABEL_COLOR = "#e2e8f0";
+export const LABEL_FONT = 'Inter, system-ui, sans-serif';
+export const LABEL_COLOR = '#e2e8f0';
 
 // ─── Louvain Community Detection ────────────────────────────────────────
 // Resolution >1 produces more communities (finer), <1 produces fewer (coarser).
@@ -115,14 +115,14 @@ export const LOUVAIN_RESOLUTION = 1.0;
 // ─── Bundled LayoutConfig ──────────────────────────────────────────────
 // Same values as above, bundled into a single object for passing to hooks/components.
 
-import type { LayoutConfig } from "../graph/types";
-import { getNodeColor } from "../colors/nodeColors";
-import { getLinkColor } from "../colors/linkColors";
+import type { LayoutConfig } from '../graph/types';
+import { getNodeColor } from '../colors/nodeColors';
+import { getLinkColor } from '../colors/linkColors';
 import {
   buildCommunityColorMap,
   buildCommunityNames,
   getCommunityColor,
-} from "../colors/communityColors";
+} from '../colors/communityColors';
 
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   linkDistance: FORCE_LINK_DISTANCE,
@@ -150,8 +150,8 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
-  layoutEdgeType: "DEFINED_IN",
-  structuralTypes: ["Repository", "Directory", "Package"],
+  layoutEdgeType: 'DEFINED_IN',
+  structuralTypes: ['Repository', 'Directory', 'Package'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,

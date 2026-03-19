@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-import { defineConfig } from "vitest/config";
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ["src/**/__tests__/**/*.test.{ts,tsx}"],
-    environment: "node",
+    include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
+    environment: 'node',
     css: false,
-    setupFiles: ["src/__tests__/setup.ts"],
+    setupFiles: ['src/__tests__/setup.ts'],
   },
 });
