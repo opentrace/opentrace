@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "outDir": "dist/lib",
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "verbatimModuleSyntax": false,
+    "rootDir": "src",
+    "types": ["vite/client", "node"]
+  },
+  "include": [
+    "src/lib/**/*.ts",
+    "src/lib/**/*.tsx",
+    "src/graph/**/*.ts",
+    "src/graph/**/*.tsx",
+    "src/types/**/*.ts",
+    "src/config/graphLayout.ts",
+    "src/chat/results/nodeColors.ts",
+    "src/chat/results/linkColors.ts",
+    "src/chat/results/communityColors.ts",
+    "src/components/sigma/zoomToNodes.ts",
+    "src/hooks/d3LayoutWorker.ts"
+  ],
+  "exclude": ["src/**/__tests__/**"]
+}
