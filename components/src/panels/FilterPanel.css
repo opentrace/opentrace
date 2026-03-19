@@ -24,6 +24,10 @@
   padding: 0 14px;
 }
 
+.filter-section:first-child {
+  padding-top: 8px;
+}
+
 .filter-section + .filter-section {
   margin-top: 12px;
   padding-top: 12px;
