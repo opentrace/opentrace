@@ -52,6 +52,7 @@ All notable changes to this project will be documented in this file.
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -75,6 +76,7 @@ All notable changes to this project will be documented in this file.
 - **ui:** Responsive design for iPhone/iPad/mobile (#96) ([#96](https://github.com/opentrace/opentrace/pull/96))
 - **plugin:** Add hooks, skills, and agents for graph discovery (#106) ([#106](https://github.com/opentrace/opentrace/pull/106))
 - **ui:** Improve graph selection UX with zoom, z-ordering, and visual hierarchy (#108) ([#108](https://github.com/opentrace/opentrace/pull/108))
+- **ui:** Add @opentrace/components library build (#110) ([#110](https://github.com/opentrace/opentrace/pull/110))
 
 ### Miscellaneous
 
