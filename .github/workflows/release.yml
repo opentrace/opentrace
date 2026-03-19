@@ -13,9 +13,17 @@ jobs:
     name: Build & Release
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CHANGELOG_APP_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: actions/setup-node@v6
         with:
@@ -46,6 +54,35 @@ jobs:
         run: gh release create ${{ github.ref_name }} opentrace-ui-${{ github.ref_name }}.zip --notes-file RELEASE_NOTES.md
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Bump versions and update changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Bump agent version
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" agent/pyproject.toml
+          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" agent/src/opentrace_agent/__init__.py
+
+          # Bump UI version
+          cd ui
+          npm version "${VERSION}" --no-git-tag-version
+          cd ..
+
+          # Bump components version
+          cd components
+          npm version "${VERSION}" --no-git-tag-version
+          cd ..
+
+          # Regenerate full changelog
+          git-cliff -o CHANGELOG.md
+
+          # Commit and push to main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git add agent/pyproject.toml agent/src/opentrace_agent/__init__.py ui/package.json ui/package-lock.json components/package.json components/package-lock.json CHANGELOG.md
+          git diff --cached --quiet || git commit -m "chore(release): bump to ${VERSION} and update changelog [skip ci]"
+          git push
 
   npm-version:
     name: Extract npm version from tag
