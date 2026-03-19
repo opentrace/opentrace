@@ -25,20 +25,18 @@ afterEach(cleanup);
 
 function makeProps(overrides?: Partial<GraphLegendProps>): GraphLegendProps {
   return {
-    colorMode: 'type',
-    legendItems: [
-      { type: 'Repository', count: 5, color: '#10b981' },
-      { type: 'Class', count: 12, color: '#3b82f6' },
-      { type: 'Function', count: 30, color: '#a855f7' },
+    items: [
+      { label: 'Repository', count: 5, color: '#10b981' },
+      { label: 'Class', count: 12, color: '#3b82f6' },
+      { label: 'Function', count: 30, color: '#a855f7' },
     ],
-    communityLegendItems: [],
-    legendLinkItems: [{ type: 'CALLS', count: 20, color: '#666' }],
+    linkItems: [{ label: 'CALLS', count: 20, color: '#666' }],
     ...overrides,
   };
 }
 
 describe('GraphLegend', () => {
-  it('renders node type items in type mode', () => {
+  it('renders items', () => {
     const { getByText } = render(React.createElement(GraphLegend, makeProps()));
     expect(getByText('Repository')).toBeDefined();
     expect(getByText('Class')).toBeDefined();
@@ -64,19 +62,18 @@ describe('GraphLegend', () => {
 
   it('does not render divider when there are no link items', () => {
     const { container } = render(
-      React.createElement(GraphLegend, makeProps({ legendLinkItems: [] })),
+      React.createElement(GraphLegend, makeProps({ linkItems: [] })),
     );
     const divider = container.querySelector('.legend-divider');
     expect(divider).toBeNull();
   });
 
-  it('renders community items when colorMode is community', () => {
-    const { getByText, queryByText } = render(
+  it('renders community items when passed as items', () => {
+    const { getByText } = render(
       React.createElement(
         GraphLegend,
         makeProps({
-          colorMode: 'community',
-          communityLegendItems: [
+          items: [
             { label: 'Frontend', count: 10, color: '#f00' },
             { label: 'Backend', count: 8, color: '#0f0' },
           ],
@@ -85,20 +82,18 @@ describe('GraphLegend', () => {
     );
     expect(getByText('Frontend')).toBeDefined();
     expect(getByText('Backend')).toBeDefined();
-    // Node type items should not appear in community mode
-    expect(queryByText('Repository')).toBeNull();
   });
 
   describe('overflow', () => {
     const manyItems = Array.from({ length: 8 }, (_, i) => ({
-      type: `Type${i}`,
+      label: `Type${i}`,
       count: i + 1,
       color: `#${String(i).repeat(6).slice(0, 6)}`,
     }));
 
     it('shows "+N more" button when items exceed maxVisible (default 5)', () => {
       const { getByText } = render(
-        React.createElement(GraphLegend, makeProps({ legendItems: manyItems })),
+        React.createElement(GraphLegend, makeProps({ items: manyItems })),
       );
       expect(getByText('+3 more')).toBeDefined();
     });
@@ -107,7 +102,7 @@ describe('GraphLegend', () => {
       const { getByText } = render(
         React.createElement(
           GraphLegend,
-          makeProps({ legendItems: manyItems, maxVisible: 3 }),
+          makeProps({ items: manyItems, maxVisible: 3 }),
         ),
       );
       expect(getByText('+5 more')).toBeDefined();
@@ -123,20 +118,20 @@ describe('GraphLegend', () => {
 
     it('shows popover with all items when overflow button is clicked', () => {
       const { getByText, container } = render(
-        React.createElement(GraphLegend, makeProps({ legendItems: manyItems })),
+        React.createElement(GraphLegend, makeProps({ items: manyItems })),
       );
       fireEvent.click(getByText('+3 more'));
       const popover = container.querySelector('.legend-popover');
       expect(popover).not.toBeNull();
       // Popover shows ALL items (not just overflow)
       for (const item of manyItems) {
-        expect(popover!.textContent).toContain(item.type);
+        expect(popover!.textContent).toContain(item.label);
       }
     });
 
     it('toggles popover off on second click', () => {
       const { getByText, container } = render(
-        React.createElement(GraphLegend, makeProps({ legendItems: manyItems })),
+        React.createElement(GraphLegend, makeProps({ items: manyItems })),
       );
       fireEvent.click(getByText('+3 more'));
       expect(container.querySelector('.legend-popover')).not.toBeNull();
@@ -149,9 +144,7 @@ describe('GraphLegend', () => {
         React.createElement(
           GraphLegend,
           makeProps({
-            legendItems: [
-              { type: 'VeryLongTypeName', count: 1, color: '#000' },
-            ],
+            items: [{ label: 'VeryLongTypeName', count: 1, color: '#000' }],
           }),
         ),
       );

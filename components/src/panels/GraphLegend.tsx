@@ -15,24 +15,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { GraphLegendProps } from './types';
+import type { GraphLegendProps, LegendItem } from './types';
 import './GraphLegend.css';
 
 const DEFAULT_MAX_VISIBLE = 5;
 
-type LegendEntry = {
-  key: string;
-  label: string;
-  count: number;
-  color: string;
-  shape: 'dot' | 'line';
-};
-
 export default function GraphLegend({
-  colorMode,
-  legendItems,
-  communityLegendItems,
-  legendLinkItems,
+  items,
+  linkItems = [],
   maxVisible = DEFAULT_MAX_VISIBLE,
 }: GraphLegendProps) {
   const [showOverflow, setShowOverflow] = useState(false);
@@ -53,59 +43,30 @@ export default function GraphLegend({
     return () => document.removeEventListener('mousedown', handler);
   }, [showOverflow]);
 
-  // Build node/community items (truncatable) and link items (always shown)
-  const nodeItems: LegendEntry[] = [];
-  if (colorMode === 'community') {
-    for (const { label, count, color } of communityLegendItems) {
-      nodeItems.push({ key: `c:${label}`, label, count, color, shape: 'dot' });
-    }
-  } else {
-    for (const { type, count, color } of legendItems) {
-      nodeItems.push({
-        key: `n:${type}`,
-        label: type,
-        count,
-        color,
-        shape: 'dot',
-      });
-    }
-  }
-
-  const linkItems: LegendEntry[] = [];
-  for (const { type, count, color } of legendLinkItems) {
-    linkItems.push({
-      key: `l:${type}`,
-      label: type,
-      count,
-      color,
-      shape: 'line',
-    });
-  }
-
-  const visibleNodes = nodeItems.slice(0, maxVisible);
-  const overflowNodes = nodeItems.slice(maxVisible);
+  const visibleItems = items.slice(0, maxVisible);
+  const overflowItems = items.slice(maxVisible);
 
   return (
     <div className="legend" ref={popoverRef}>
-      {visibleNodes.map(({ key, label, count, color }) => (
-        <span key={key} className="legend-item" title={label}>
+      {visibleItems.map(({ label, count, color }) => (
+        <span key={label} className="legend-item" title={label}>
           <span className="legend-dot" style={{ backgroundColor: color }} />
           <span className="legend-count">{count}</span>
           {label.length > 10 ? label.slice(0, 10) + '…' : label}
         </span>
       ))}
-      {overflowNodes.length > 0 && (
+      {overflowItems.length > 0 && (
         <>
           <button
             className="legend-more-btn"
             onClick={() => setShowOverflow((v) => !v)}
           >
-            +{overflowNodes.length} more
+            +{overflowItems.length} more
           </button>
           {showOverflow && (
             <div className="legend-popover">
-              {nodeItems.map(({ key, label, count, color }) => (
-                <span key={key} className="legend-item">
+              {items.map(({ label, count, color }) => (
+                <span key={label} className="legend-item">
                   <span
                     className="legend-dot"
                     style={{ backgroundColor: color }}
@@ -121,8 +82,8 @@ export default function GraphLegend({
       {linkItems.length > 0 && (
         <>
           <span className="legend-divider" />
-          {linkItems.map(({ key, label, count, color }) => (
-            <span key={key} className="legend-item">
+          {linkItems.map(({ label, count, color }: LegendItem) => (
+            <span key={label} className="legend-item">
               <span
                 className="legend-line"
                 style={{ backgroundColor: color }}

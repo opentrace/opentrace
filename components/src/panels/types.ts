@@ -57,29 +57,17 @@ export interface FilterPanelProps {
 
 // ─── GraphLegend types ──────────────────────────────────────────────
 
-export interface LegendNodeItem {
-  type: string;
-  count: number;
-  color: string;
-}
-
-export interface LegendCommunityItem {
+export interface LegendItem {
   label: string;
   count: number;
   color: string;
 }
 
-export interface LegendLinkItem {
-  type: string;
-  count: number;
-  color: string;
-}
-
 export interface GraphLegendProps {
-  colorMode: 'type' | 'community';
-  legendItems: LegendNodeItem[];
-  communityLegendItems: LegendCommunityItem[];
-  legendLinkItems: LegendLinkItem[];
+  /** Node or community items (dots). */
+  items: LegendItem[];
+  /** Link/edge items (lines). */
+  linkItems?: LegendItem[];
   /** Max node/community items before overflow. Defaults to 5. */
   maxVisible?: number;
 }

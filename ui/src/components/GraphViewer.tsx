@@ -738,16 +738,16 @@ const GraphViewer = memo(
         }
       }, [effectiveHighlightNodes]);
 
-      const legendItems = useMemo(() => {
+      const legendNodeItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.nodes.forEach((n) => {
           counts[n.type] = (counts[n.type] || 0) + 1;
         });
         return Object.entries(counts)
-          .map(([type, count]) => ({
-            type,
+          .map(([label, count]) => ({
+            label,
             count,
-            color: getNodeColor(type),
+            color: getNodeColor(label),
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.nodes]);
@@ -771,7 +771,7 @@ const GraphViewer = memo(
           }));
       }, [graphData.nodes, communityData]);
 
-      const communityLegendItems = useMemo(() => {
+      const legendCommunityItems = useMemo(() => {
         if (colorMode !== 'community') return [];
         // Group filtered nodes by community
         const counts = new Map<number, number>();
@@ -790,6 +790,9 @@ const GraphViewer = memo(
           }));
       }, [colorMode, filteredGraphData.nodes, communityData]);
 
+      const legendItems =
+        colorMode === 'community' ? legendCommunityItems : legendNodeItems;
+
       const legendLinkItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.links.forEach((l) => {
@@ -797,10 +800,10 @@ const GraphViewer = memo(
           counts[label] = (counts[label] || 0) + 1;
         });
         return Object.entries(counts)
-          .map(([type, count]) => ({
-            type,
+          .map(([label, count]) => ({
+            label,
             count,
-            color: getLinkColor(type),
+            color: getLinkColor(label),
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.links]);
@@ -1504,10 +1507,8 @@ const GraphViewer = memo(
           )}
 
           <GraphLegend
-            colorMode={colorMode}
-            legendItems={legendItems}
-            communityLegendItems={communityLegendItems}
-            legendLinkItems={legendLinkItems}
+            items={legendItems}
+            linkItems={legendLinkItems}
           />
 
           {!layoutReady && !isEmpty && (
