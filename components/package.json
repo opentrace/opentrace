@@ -25,6 +25,9 @@
     },
     "./style.css": "./dist/components.css"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],
