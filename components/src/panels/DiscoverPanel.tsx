@@ -119,9 +119,7 @@ function flattenTree(
       }
 
       const children = childrenMap.get(node.id);
-      const couldExpand =
-        expandableTypes.has(node.type) &&
-        (node.type !== 'File' || isExpandableFile(node.name));
+      const couldExpand = isExpandable(node);
       const knownEmpty = children !== undefined && children.length === 0;
       const expandable = couldExpand && !knownEmpty;
       const isExpanded = expanded.has(node.id);
@@ -277,7 +275,9 @@ export default function DiscoverPanel({
   selectedNodeId,
   graphNodeIds,
   hopMap,
+  isActive,
   isExpandable = defaultIsExpandable,
+  loading,
 }: DiscoverPanelProps) {
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);

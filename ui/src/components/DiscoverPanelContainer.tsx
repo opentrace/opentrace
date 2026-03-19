@@ -344,7 +344,9 @@ export default function DiscoverPanelContainer({
       selectedNodeId={isActive ? selectedNodeId : undefined}
       graphNodeIds={graphNodeIds}
       hopMap={hopMap}
+      isActive={isActive}
       isExpandable={isExpandable}
+      loading={loading}
     />
   );
 }
