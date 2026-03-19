@@ -25,6 +25,10 @@
     },
     "./style.css": "./dist/components.css"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     "dist"
   ],
@@ -33,6 +37,7 @@
   ],
   "scripts": {
     "build": "vite build && tsc",
+    "test": "vitest run",
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check ."
   },
@@ -50,18 +55,23 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
+    "react-window": "^2.2.7",
     "sigma": "^3.0.2"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "jsdom": "^29.0.0",
     "prettier": "^3.8.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "typescript": "~5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.1.0"
   }
 }

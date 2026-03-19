@@ -16,56 +16,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
+import { FilterPanel, type FilterPanelProps } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useResizablePanel } from '../hooks/useResizablePanel';
-import FilterPanel from './FilterPanel';
-import DiscoverPanel from './DiscoverPanel';
+import DiscoverPanelContainer from './DiscoverPanelContainer';
 import NodeDetailsPanel from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
 
-interface TypeEntry {
-  type: string;
-  count: number;
-}
-
-interface SubTypeEntry {
-  subType: string;
-  count: number;
-}
-
-interface CommunityEntry {
-  communityId: number;
-  label: string;
-  count: number;
-  color: string;
-}
-
 export type SidePanelTab = 'filters' | 'discover' | 'details';
 
 interface SidePanelProps {
-  /* Filter props — forwarded to FilterPanel */
-  nodeTypes: TypeEntry[];
-  linkTypes: TypeEntry[];
-  hiddenNodeTypes: Set<string>;
-  hiddenLinkTypes: Set<string>;
-  subTypesByNodeType: Map<string, SubTypeEntry[]>;
-  hiddenSubTypes: Set<string>;
-  onToggleNodeType: (type: string) => void;
-  onToggleLinkType: (type: string) => void;
-  onToggleSubType: (key: string) => void;
-  onShowAllNodes: () => void;
-  onHideAllNodes: () => void;
-  onShowAllLinks: () => void;
-  onHideAllLinks: () => void;
-
-  /* Community filter props */
-  colorMode?: 'type' | 'community';
-  communities?: CommunityEntry[];
-  hiddenCommunities?: Set<number>;
-  onToggleCommunity?: (cid: number) => void;
-  onShowAllCommunities?: () => void;
-  onHideAllCommunities?: () => void;
+  /** Filter sections to render in the Filters tab. */
+  filterSections: FilterPanelProps[];
 
   /* Node details props */
   selectedNode: SelectedNode | null;
@@ -98,25 +61,7 @@ interface SidePanelProps {
 }
 
 export default function SidePanel({
-  nodeTypes,
-  linkTypes,
-  hiddenNodeTypes,
-  hiddenLinkTypes,
-  subTypesByNodeType,
-  hiddenSubTypes,
-  onToggleNodeType,
-  onToggleLinkType,
-  onToggleSubType,
-  onShowAllNodes,
-  onHideAllNodes,
-  onShowAllLinks,
-  onHideAllLinks,
-  colorMode,
-  communities,
-  hiddenCommunities,
-  onToggleCommunity,
-  onShowAllCommunities,
-  onHideAllCommunities,
+  filterSections,
   selectedNode,
   nodeSource,
   communityName,
@@ -230,33 +175,17 @@ export default function SidePanel({
         className="side-panel-content"
         style={{ display: effectiveTab === 'filters' ? undefined : 'none' }}
       >
-        <FilterPanel
-          nodeTypes={nodeTypes}
-          linkTypes={linkTypes}
-          hiddenNodeTypes={hiddenNodeTypes}
-          hiddenLinkTypes={hiddenLinkTypes}
-          subTypesByNodeType={subTypesByNodeType}
-          hiddenSubTypes={hiddenSubTypes}
-          onToggleNodeType={onToggleNodeType}
-          onToggleLinkType={onToggleLinkType}
-          onToggleSubType={onToggleSubType}
-          onShowAllNodes={onShowAllNodes}
-          onHideAllNodes={onHideAllNodes}
-          onShowAllLinks={onShowAllLinks}
-          onHideAllLinks={onHideAllLinks}
-          colorMode={colorMode}
-          communities={communities}
-          hiddenCommunities={hiddenCommunities}
-          onToggleCommunity={onToggleCommunity}
-          onShowAllCommunities={onShowAllCommunities}
-          onHideAllCommunities={onHideAllCommunities}
-        />
+        <div className="filter-panel">
+          {filterSections.map((section) => (
+            <FilterPanel key={section.title} {...section} />
+          ))}
+        </div>
       </div>
       <div
         className="side-panel-content"
         style={{ display: effectiveTab === 'discover' ? undefined : 'none' }}
       >
-        <DiscoverPanel
+        <DiscoverPanelContainer
           onSelectNode={onSelectNode ?? (() => {})}
           graphVersion={graphVersion}
           selectedNodeId={selectedNode?.id as string | undefined}

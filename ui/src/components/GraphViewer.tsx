@@ -41,6 +41,11 @@ import {
   useCommunities,
   useHighlights,
 } from '@opentrace/components/utils';
+import {
+  GraphLegend,
+  type FilterItem,
+  type FilterPanelProps,
+} from '@opentrace/components';
 import { useGraphInstance } from '../graph/useGraphInstance';
 import { useGraphFilters } from '../graph/useGraphFilters';
 import { useGraphVisuals } from '../graph/useGraphVisuals';
@@ -107,130 +112,7 @@ function linkId(endpoint: string | number | GraphNode | undefined): string {
   return String(endpoint);
 }
 
-// ─── Graph Legend with overflow popover ─────────────────────────────
-
-const LEGEND_MAX_NODES = 5;
-
-type LegendEntry = {
-  key: string;
-  label: string;
-  count: number;
-  color: string;
-  shape: 'dot' | 'line';
-};
-
-function GraphLegend({
-  colorMode,
-  legendItems,
-  communityLegendItems,
-  legendLinkItems,
-}: {
-  colorMode: 'type' | 'community';
-  legendItems: { type: string; count: number; color: string }[];
-  communityLegendItems: { label: string; count: number; color: string }[];
-  legendLinkItems: { type: string; count: number; color: string }[];
-}) {
-  const [showOverflow, setShowOverflow] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  // Close popover on outside click
-  useEffect(() => {
-    if (!showOverflow) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
-        setShowOverflow(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showOverflow]);
-
-  // Build node/community items (truncatable) and link items (always shown)
-  const nodeItems: LegendEntry[] = [];
-  if (colorMode === 'community') {
-    for (const { label, count, color } of communityLegendItems) {
-      nodeItems.push({ key: `c:${label}`, label, count, color, shape: 'dot' });
-    }
-  } else {
-    for (const { type, count, color } of legendItems) {
-      nodeItems.push({
-        key: `n:${type}`,
-        label: type,
-        count,
-        color,
-        shape: 'dot',
-      });
-    }
-  }
-
-  const linkItems: LegendEntry[] = [];
-  for (const { type, count, color } of legendLinkItems) {
-    linkItems.push({
-      key: `l:${type}`,
-      label: type,
-      count,
-      color,
-      shape: 'line',
-    });
-  }
-
-  const visibleNodes = nodeItems.slice(0, LEGEND_MAX_NODES);
-  const overflowNodes = nodeItems.slice(LEGEND_MAX_NODES);
-
-  return (
-    <div className="legend" ref={popoverRef}>
-      {visibleNodes.map(({ key, label, count, color }) => (
-        <span key={key} className="legend-item" title={label}>
-          <span className="legend-dot" style={{ backgroundColor: color }} />
-          <span className="legend-count">{count}</span>
-          {label.length > 10 ? label.slice(0, 10) + '…' : label}
-        </span>
-      ))}
-      {overflowNodes.length > 0 && (
-        <>
-          <button
-            className="legend-more-btn"
-            onClick={() => setShowOverflow((v) => !v)}
-          >
-            +{overflowNodes.length} more
-          </button>
-          {showOverflow && (
-            <div className="legend-popover">
-              {nodeItems.map(({ key, label, count, color }) => (
-                <span key={key} className="legend-item">
-                  <span
-                    className="legend-dot"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="legend-count">{count}</span>
-                  {label}
-                </span>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-      {linkItems.length > 0 && (
-        <>
-          <span className="legend-divider" />
-          {linkItems.map(({ key, label, count, color }) => (
-            <span key={key} className="legend-item">
-              <span
-                className="legend-line"
-                style={{ backgroundColor: color }}
-              />
-              <span className="legend-count">{count}</span>
-              {label}
-            </span>
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
+// GraphLegend is now imported from @opentrace/components
 
 export interface GraphViewerHandle {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
@@ -860,16 +742,16 @@ const GraphViewer = memo(
         }
       }, [effectiveHighlightNodes]);
 
-      const legendItems = useMemo(() => {
+      const legendNodeItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.nodes.forEach((n) => {
           counts[n.type] = (counts[n.type] || 0) + 1;
         });
         return Object.entries(counts)
-          .map(([type, count]) => ({
-            type,
+          .map(([label, count]) => ({
+            label,
             count,
-            color: getNodeColor(type),
+            color: getNodeColor(label),
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.nodes]);
@@ -893,7 +775,7 @@ const GraphViewer = memo(
           }));
       }, [graphData.nodes, communityData]);
 
-      const communityLegendItems = useMemo(() => {
+      const legendCommunityItems = useMemo(() => {
         if (colorMode !== 'community') return [];
         // Group filtered nodes by community
         const counts = new Map<number, number>();
@@ -912,6 +794,9 @@ const GraphViewer = memo(
           }));
       }, [colorMode, filteredGraphData.nodes, communityData]);
 
+      const legendItems =
+        colorMode === 'community' ? legendCommunityItems : legendNodeItems;
+
       const legendLinkItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.links.forEach((l) => {
@@ -919,10 +804,10 @@ const GraphViewer = memo(
           counts[label] = (counts[label] || 0) + 1;
         });
         return Object.entries(counts)
-          .map(([type, count]) => ({
-            type,
+          .map(([label, count]) => ({
+            label,
             count,
-            color: getLinkColor(type),
+            color: getLinkColor(label),
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.links]);
@@ -1164,74 +1049,146 @@ const GraphViewer = memo(
           ? communityData.colorMap.get(selectedCommunityId)
           : undefined;
 
+      // ─── Build filter sections for SidePanel ──────────────────────────
+
+      const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
+        ({ type, count }) => {
+          const subs = availableSubTypes.get(type);
+          const children = subs?.map((s) => ({
+            key: `${type}:${s.subType}`,
+            label: s.subType,
+            count: s.count,
+            color: getNodeColor(type),
+            hidden: hiddenSubTypes.has(`${type}:${s.subType}`),
+          }));
+          return {
+            key: type,
+            label: type,
+            count,
+            color: getNodeColor(type),
+            hidden: hiddenNodeTypes.has(type),
+            children,
+          };
+        },
+      );
+
+      const toggleNodeFilter = (key: string) => {
+        if (key.includes(':')) {
+          // Sub-type key like "Class:Controller"
+          setHiddenSubTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+        } else {
+          // Parent type key — toggle all sub-types if any, else toggle type
+          const subs = availableSubTypes.get(key);
+          if (subs && subs.length > 0) {
+            setHiddenSubTypes((prev) => {
+              const keys = subs.map((s) => `${key}:${s.subType}`);
+              const allHidden = keys.every((k) => prev.has(k));
+              const next = new Set(prev);
+              if (allHidden) {
+                keys.forEach((k) => next.delete(k));
+              } else {
+                keys.forEach((k) => next.add(k));
+              }
+              return next;
+            });
+          } else {
+            setHiddenNodeTypes((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }
+        }
+      };
+
+      const linkFilterItems: FilterItem[] = availableLinkTypes.map(
+        ({ type, count }) => ({
+          key: type,
+          label: type.toLowerCase(),
+          count,
+          color: getLinkColor(type),
+          hidden: hiddenLinkTypes.has(type),
+        }),
+      );
+
+      const communityFilterItems: FilterItem[] = availableCommunities.map(
+        ({ communityId, label, count, color }) => ({
+          key: String(communityId),
+          label,
+          count,
+          color,
+          hidden: hiddenCommunities.has(communityId),
+        }),
+      );
+
+      const filterSections: FilterPanelProps[] = [];
+
+      if (colorMode === 'community' && communityFilterItems.length > 0) {
+        filterSections.push({
+          title: 'Communities',
+          items: communityFilterItems,
+          onToggle: (key) => {
+            const cid = Number(key);
+            setHiddenCommunities((prev) => {
+              const next = new Set(prev);
+              if (next.has(cid)) next.delete(cid);
+              else next.add(cid);
+              return next;
+            });
+          },
+          onShowAll: () => setHiddenCommunities(new Set()),
+          onHideAll: () =>
+            setHiddenCommunities(
+              new Set(availableCommunities.map((c) => c.communityId)),
+            ),
+        });
+      }
+
+      filterSections.push({
+        title: 'Node Types',
+        items: nodeFilterItems,
+        onToggle: toggleNodeFilter,
+        onShowAll: () => {
+          setHiddenNodeTypes(new Set());
+          setHiddenSubTypes(new Set());
+        },
+        onHideAll: () => {
+          setHiddenNodeTypes(new Set(availableNodeTypes.map((t) => t.type)));
+          const allSubKeys = new Set<string>();
+          availableSubTypes.forEach((subs, type) => {
+            subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
+          });
+          setHiddenSubTypes(allSubKeys);
+        },
+      });
+
+      filterSections.push({
+        title: 'Edges',
+        items: linkFilterItems,
+        indicator: 'line',
+        emptyMessage: 'No edges',
+        onToggle: (key) =>
+          setHiddenLinkTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          }),
+        onShowAll: () => setHiddenLinkTypes(new Set()),
+        onHideAll: () =>
+          setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type))),
+      });
+
       return (
         <div className="graph-viewport">
           <SidePanel
-            nodeTypes={availableNodeTypes}
-            linkTypes={availableLinkTypes}
-            hiddenNodeTypes={hiddenNodeTypes}
-            hiddenLinkTypes={hiddenLinkTypes}
-            subTypesByNodeType={availableSubTypes}
-            hiddenSubTypes={hiddenSubTypes}
-            onToggleNodeType={(type) => {
-              const subs = availableSubTypes.get(type);
-              if (subs && subs.length > 0) {
-                // For types with sub-types, toggle all sub-types
-                setHiddenSubTypes((prev) => {
-                  const keys = subs.map((s) => `${type}:${s.subType}`);
-                  const allHidden = keys.every((k) => prev.has(k));
-                  const next = new Set(prev);
-                  if (allHidden) {
-                    keys.forEach((k) => next.delete(k));
-                  } else {
-                    keys.forEach((k) => next.add(k));
-                  }
-                  return next;
-                });
-              } else {
-                setHiddenNodeTypes((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(type)) next.delete(type);
-                  else next.add(type);
-                  return next;
-                });
-              }
-            }}
-            onToggleLinkType={(type) =>
-              setHiddenLinkTypes((prev) => {
-                const next = new Set(prev);
-                if (next.has(type)) next.delete(type);
-                else next.add(type);
-                return next;
-              })
-            }
-            onToggleSubType={(key) =>
-              setHiddenSubTypes((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })
-            }
-            onShowAllNodes={() => {
-              setHiddenNodeTypes(new Set());
-              setHiddenSubTypes(new Set());
-            }}
-            onHideAllNodes={() => {
-              setHiddenNodeTypes(
-                new Set(availableNodeTypes.map((t) => t.type)),
-              );
-              // Also hide all sub-types
-              const allSubKeys = new Set<string>();
-              availableSubTypes.forEach((subs, type) => {
-                subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
-              });
-              setHiddenSubTypes(allSubKeys);
-            }}
-            onShowAllLinks={() => setHiddenLinkTypes(new Set())}
-            onHideAllLinks={() =>
-              setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type)))
-            }
+            filterSections={filterSections}
             selectedNode={selectedNode}
             nodeSource={nodeSource}
             sourceLoading={sourceLoading}
@@ -1252,23 +1209,6 @@ const GraphViewer = memo(
             graphVersion={graphVersion}
             graphNodeIds={graphNodeIds}
             hopMap={hopMap}
-            colorMode={colorMode}
-            communities={availableCommunities}
-            hiddenCommunities={hiddenCommunities}
-            onToggleCommunity={(cid) =>
-              setHiddenCommunities((prev) => {
-                const next = new Set(prev);
-                if (next.has(cid)) next.delete(cid);
-                else next.add(cid);
-                return next;
-              })
-            }
-            onShowAllCommunities={() => setHiddenCommunities(new Set())}
-            onHideAllCommunities={() =>
-              setHiddenCommunities(
-                new Set(availableCommunities.map((c) => c.communityId)),
-              )
-            }
             mobileActiveTab={mobilePanelTab}
             onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}
@@ -1625,12 +1565,7 @@ const GraphViewer = memo(
             />
           )}
 
-          <GraphLegend
-            colorMode={colorMode}
-            legendItems={legendItems}
-            communityLegendItems={communityLegendItems}
-            legendLinkItems={legendLinkItems}
-          />
+          <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
           {!layoutReady && !isEmpty && (
             <div

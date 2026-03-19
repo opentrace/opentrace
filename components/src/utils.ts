@@ -55,3 +55,13 @@ export { shouldHideNode } from './graph/useGraphFilters';
 // ─── Hooks that don't depend on sigma/WebGL ─────────────────────────────
 export { useCommunities } from './graph/useCommunities';
 export { useHighlights } from './graph/useHighlights';
+
+// ─── Panel types (no React component imports) ───────────────────────────
+export type {
+  FilterItem,
+  FilterPanelProps,
+  LegendItem,
+  GraphLegendProps,
+  TreeNodeData,
+  DiscoverPanelProps,
+} from './panels/types';

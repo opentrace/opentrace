@@ -100,3 +100,14 @@ export {
   buildCommunityNames,
   getCommunityColor,
 } from './colors/communityColors';
+
+// ─── Panel components ───────────────────────────────────────────────────
+export { FilterPanel, GraphLegend, DiscoverPanel } from './panels';
+export type {
+  FilterItem,
+  FilterPanelProps,
+  LegendItem,
+  GraphLegendProps,
+  TreeNodeData,
+  DiscoverPanelProps,
+} from './panels';

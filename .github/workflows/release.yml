@@ -84,22 +84,26 @@ jobs:
           git diff --cached --quiet || git commit -m "chore(release): bump to ${VERSION} and update changelog [skip ci]"
           git push
 
-  npm-version:
-    name: Extract npm version from tag
+  publish-npm:
+    name: Publish to npm
     needs: release
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
-      - id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Dispatch npm publish workflow
+        run: gh workflow run npm-publish.yml -f version="${GITHUB_REF_NAME#v}" -f tag=latest
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-  publish-npm:
-    needs: npm-version
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      version: ${{ needs.npm-version.outputs.version }}
-      tag: latest
+      - name: Wait for run to appear
+        run: sleep 5
+
+      - name: Watch triggered run until completion
+        run: |
+          RUN_ID=$(gh run list -w npm-publish.yml -L 1 --json databaseId -q '.[0].databaseId')
+          echo "Watching run $RUN_ID"
+          gh run watch "$RUN_ID" --exit-status
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   publish-pypi:
     name: Publish to PyPI
