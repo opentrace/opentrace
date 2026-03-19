@@ -78,6 +78,8 @@ jobs:
       - name: Publish to npm
         working-directory: components
         run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ""
 
   publish-pypi:
     name: Publish to PyPI
