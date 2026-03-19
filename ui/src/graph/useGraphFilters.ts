@@ -95,24 +95,30 @@ export function useGraphFilters(
       return attrs;
     });
 
-    // Batched edge update — single event
-    graph.updateEachEdgeAttributes((_id, attrs, source, target) => {
-      // Hide edge if either endpoint is hidden
-      if (hiddenNodes.has(source) || hiddenNodes.has(target)) {
-        attrs.hidden = true;
-        return attrs;
-      }
+    // Passing hints with a layout-affecting field ('type') forces sigma to
+    // use skipIndexation: false, which re-indexes edges during refresh.
+    // This avoids the "edge can't be repaint" race when edges exist in
+    // graphology but haven't been indexed by sigma's async process() yet.
+    graph.updateEachEdgeAttributes(
+      (_id, attrs, source, target) => {
+        // Hide edge if either endpoint is hidden
+        if (hiddenNodes.has(source) || hiddenNodes.has(target)) {
+          attrs.hidden = true;
+          return attrs;
+        }
 
-      // Hide edge if its link type is hidden
-      const label = attrs.label as string | undefined;
-      if (label && filterState.hiddenLinkTypes.has(label)) {
-        attrs.hidden = true;
-        return attrs;
-      }
+        // Hide edge if its link type is hidden
+        const label = attrs.label as string | undefined;
+        if (label && filterState.hiddenLinkTypes.has(label)) {
+          attrs.hidden = true;
+          return attrs;
+        }
 
-      attrs.hidden = false;
-      return attrs;
-    });
+        attrs.hidden = false;
+        return attrs;
+      },
+      { attributes: ['type'] },
+    );
   }, [
     graph,
     layoutReady,
