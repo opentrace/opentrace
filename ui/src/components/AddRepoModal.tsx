@@ -246,19 +246,24 @@ const PROVIDER_DISPLAY_NAME: Record<string, string> = {
 
 const EXAMPLE_REPOS = [
   {
+    name: 'OpenTrace',
+    url: 'https://github.com/opentrace/opentrace',
+    description: 'Knowledge graph for system architecture and code structure',
+  },
+  {
     name: 'OpenTelemetry Demo',
     url: 'https://github.com/open-telemetry/opentelemetry-demo',
     description: 'Microservices demo with OTel instrumentation',
   },
   {
-    name: 'Podinfo',
-    url: 'https://github.com/stefanprodan/podinfo',
-    description: 'Go microservice template for Kubernetes',
-  },
-  {
     name: 'Express.js',
     url: 'https://github.com/expressjs/express',
     description: 'Fast, minimalist web framework for Node.js',
+  },
+  {
+    name: 'Podinfo',
+    url: 'https://github.com/stefanprodan/podinfo',
+    description: 'Go microservice template for Kubernetes',
   },
 ];
 
