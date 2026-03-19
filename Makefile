@@ -12,57 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: all install build test clean api agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
+.PHONY: all install build test clean agent ui components ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
 
 all: build
 
-## Generate protobuf code (targets: ts, py, go — skips targets whose output dirs are missing)
+## Generate protobuf code
 proto:
 	$(MAKE) -C proto ts
-	@if [ -d agent ]; then $(MAKE) -C proto py; fi
-	@if [ -d api ]; then $(MAKE) -C proto go; fi
+	$(MAKE) -C proto py
 
 ## Install dependencies for all components
 install:
-	@if [ -d api ]; then $(MAKE) -C api build; fi
-	@if [ -d agent ]; then $(MAKE) -C agent install; fi
+	$(MAKE) -C components install
+	$(MAKE) -C agent install
 	$(MAKE) -C ui install
 
 ## Build all components
 build:
-	@if [ -d api ]; then $(MAKE) -C api build; fi
+	$(MAKE) -C components build
 	$(MAKE) -C ui build
 
 ## Run all tests
 test:
-	@if [ -d api ]; then $(MAKE) -C api test; fi
-	@if [ -d agent ]; then $(MAKE) -C agent test; fi
+	$(MAKE) -C agent test
 
 ## Clean all build artifacts
 clean:
-	@if [ -d api ]; then $(MAKE) -C api clean; fi
-	@if [ -d agent ]; then $(MAKE) -C agent clean; fi
+	$(MAKE) -C components clean
+	$(MAKE) -C agent clean
 	$(MAKE) -C ui clean
 
 ## Format all code
 fmt:
-	@if [ -d api ]; then $(MAKE) -C api fmt; fi
-	@if [ -d agent ]; then $(MAKE) -C agent fmt; fi
+	$(MAKE) -C agent fmt
 	$(MAKE) -C ui fmt
 
 ## Lint all code
 lint:
-	@if [ -d api ]; then $(MAKE) -C api lint; fi
-	@if [ -d agent ]; then $(MAKE) -C agent lint; fi
+	$(MAKE) -C agent lint
 	$(MAKE) -C ui lint
 
 ## Component shortcuts
-api:
-	@if [ ! -d api ]; then echo "api/ directory not found — not yet available in the open-source repo." >&2; exit 1; fi
-	$(MAKE) -C api run
+components:
+	$(MAKE) -C components build
 
 agent:
-	@if [ ! -d agent ]; then echo "agent/ directory not found — not yet available in the open-source repo." >&2; exit 1; fi
 	$(MAKE) -C agent run
 
 ui:

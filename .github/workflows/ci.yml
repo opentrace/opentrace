@@ -9,7 +9,6 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
       agent: ${{ steps.filter.outputs.agent }}
       ui: ${{ steps.filter.outputs.ui }}
       components: ${{ steps.filter.outputs.components }}
@@ -20,46 +19,12 @@ jobs:
         with:
           token: ''
           filters: |
-            api:
-              - 'api/**'
             agent:
               - 'agent/**'
             ui:
               - 'ui/**'
             components:
               - 'components/**'
-
-  api:
-    name: API (Go)
-    needs: changes
-    if: needs.changes.outputs.api == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          working-directory: api
-
-      - name: Check formatting
-        run: |
-          gofmt -l .
-          test -z "$(gofmt -l .)"
-
-      - name: Test
-        run: go test ./...
-
-      - name: Build
-        run: CGO_ENABLED=0 go build ./cmd/server
 
   agent:
     name: Agent (Python)
