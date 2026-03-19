@@ -57,10 +57,10 @@ export interface LegendItem {
 }
 
 export interface GraphLegendProps {
-  colorMode: 'type' | 'community';
-  legendItems: LegendNodeItem[];
-  communityLegendItems: LegendCommunityItem[];
-  legendLinkItems: LegendLinkItem[];
+  /** Node or community items (dots). */
+  items: LegendItem[];
+  /** Link/edge items (lines). */
+  linkItems?: LegendItem[];
   /** Max node/community items before overflow. Defaults to 5. */
   maxVisible?: number;
 }
