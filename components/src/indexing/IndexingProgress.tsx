@@ -17,13 +17,17 @@
 /**
  * IndexingProgress — overlay showing indexing status.
  *
- * Extracted from AddRepoModal's indexing/failed/done stages.
- * Receives JobState as props from App.tsx.
+ * Generic version: receives stage configuration as props instead of
+ * relying on proto-generated JobPhase enum.
  */
 
-import { JobPhase } from '../job';
-import type { JobState, StageState } from '../job';
-import './AddRepoModal.css';
+import type {
+  IndexingProgressProps,
+  StageConfig,
+  StageState,
+} from './types';
+import './indexing-base.css';
+import './IndexingProgress.css';
 
 // --- Provider small icons (for indexing header) ---
 
@@ -63,17 +67,6 @@ function GitLabIconSmall() {
 
 // --- Multi-Stage Progress ---
 
-/** Ordered list of stages and their display labels. */
-const STAGE_CONFIG: { phase: JobPhase; label: string }[] = [
-  { phase: JobPhase.JOB_PHASE_INITIALIZING, label: 'Initializing' },
-  { phase: JobPhase.JOB_PHASE_FETCHING, label: 'Fetching files' },
-  { phase: JobPhase.JOB_PHASE_PARSING, label: 'Files & symbols' },
-  { phase: JobPhase.JOB_PHASE_RESOLVING, label: 'Call resolution' },
-  { phase: JobPhase.JOB_PHASE_SUMMARIZING, label: 'Summarizing' },
-  { phase: JobPhase.JOB_PHASE_SUBMITTING, label: 'Persisting graph' },
-  { phase: JobPhase.JOB_PHASE_EMBEDDING, label: 'Generating embeddings' },
-];
-
 /** Format a byte count as a human-readable MB string. */
 function formatMB(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
@@ -82,12 +75,10 @@ function formatMB(bytes: number): string {
 function StageProgressRow({
   label,
   stage,
-  phase,
   removing,
 }: {
   label: string;
   stage: StageState;
-  phase: JobPhase;
   removing?: boolean;
 }) {
   const isCompleted = stage.status === 'completed';
@@ -95,6 +86,7 @@ function StageProgressRow({
   const indeterminate = isActive && stage.total === 0;
   const pct =
     stage.total > 0 ? Math.min(100, (stage.current / stage.total) * 100) : 0;
+  const isBytes = stage.format === 'bytes';
 
   let cls = 'stage-row';
   if (removing) cls += ' stage-row--removing';
@@ -114,11 +106,11 @@ function StageProgressRow({
         <span className="stage-label">{label}</span>
         <span className="stage-count">
           {stage.total > 0
-            ? phase === JobPhase.JOB_PHASE_FETCHING
+            ? isBytes
               ? `${formatMB(stage.current)} / ${formatMB(stage.total)}`
               : `${stage.current}/${stage.total}`
             : stage.current > 0
-              ? phase === JobPhase.JOB_PHASE_FETCHING
+              ? isBytes
                 ? formatMB(stage.current)
                 : `${stage.current}`
               : ''}
@@ -141,15 +133,19 @@ function StageProgressRow({
 
 function MultiStageProgress({
   stages,
+  stageConfig,
 }: {
-  stages: Partial<Record<JobPhase, StageState>>;
+  stages: Record<string, StageState>;
+  stageConfig: StageConfig[];
 }) {
   // Build visible entries, filtering out stages that haven't started
-  const entries = STAGE_CONFIG.map(({ phase, label }) => ({
-    phase,
-    label,
-    stage: stages[phase],
-  })).filter((e): e is typeof e & { stage: StageState } => !!e.stage);
+  const entries = stageConfig
+    .map(({ key, label }) => ({
+      key,
+      label,
+      stage: stages[key],
+    }))
+    .filter((e): e is typeof e & { stage: StageState } => !!e.stage);
 
   // Find the last completed stage — all completed stages before it are "stale"
   let lastCompletedIdx = -1;
@@ -162,12 +158,11 @@ function MultiStageProgress({
 
   return (
     <div className="multi-stage-progress">
-      {entries.map(({ phase, label, stage }, i) => (
+      {entries.map(({ key, label, stage }, i) => (
         <StageProgressRow
-          key={phase}
+          key={key}
           label={label}
           stage={stage}
-          phase={phase}
           removing={stage.status === 'completed' && i < lastCompletedIdx}
         />
       ))}
@@ -200,21 +195,14 @@ function StatsGrid({
 
 // --- Main Component ---
 
-interface Props {
-  state: JobState;
-  provider: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null;
-  onClose: () => void;
-  onCancel: () => void;
-  onMinimize?: () => void;
-}
-
 export default function IndexingProgress({
   state,
+  stages: stageConfig,
   provider,
   onClose,
   onCancel,
   onMinimize,
-}: Props) {
+}: IndexingProgressProps) {
   if (state.status === 'error') {
     return (
       <div className="modal-backdrop">
@@ -223,7 +211,10 @@ export default function IndexingProgress({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="indexing-progress">
-            <MultiStageProgress stages={state.stages} />
+            <MultiStageProgress
+              stages={state.stages}
+              stageConfig={stageConfig}
+            />
 
             <div className="failed-content">
               <div className="failed-icon">
@@ -285,7 +276,10 @@ export default function IndexingProgress({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="indexing-progress">
-            <MultiStageProgress stages={state.stages} />
+            <MultiStageProgress
+              stages={state.stages}
+              stageConfig={stageConfig}
+            />
 
             <div className="done-content">
               <div className="done-checkmark">
@@ -349,7 +343,10 @@ export default function IndexingProgress({
             <h2>Enriching Repository</h2>
           </div>
           <div className="indexing-progress">
-            <MultiStageProgress stages={state.stages} />
+            <MultiStageProgress
+              stages={state.stages}
+              stageConfig={stageConfig}
+            />
             <StatsGrid
               nodes={state.nodesCreated}
               relationships={state.relationshipsCreated}
@@ -372,7 +369,10 @@ export default function IndexingProgress({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="indexing-progress">
-            <MultiStageProgress stages={state.stages} />
+            <MultiStageProgress
+              stages={state.stages}
+              stageConfig={stageConfig}
+            />
 
             <div className="done-content">
               <div className="done-checkmark">
@@ -427,7 +427,10 @@ export default function IndexingProgress({
           <h2>Indexing Repository</h2>
         </div>
         <div className="indexing-progress">
-          <MultiStageProgress stages={state.stages} />
+          <MultiStageProgress
+            stages={state.stages}
+            stageConfig={stageConfig}
+          />
           <StatsGrid
             nodes={state.nodesCreated}
             relationships={state.relationshipsCreated}

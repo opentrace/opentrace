@@ -35,6 +35,7 @@ export default defineConfig({
       entry: {
         'opentrace-components': resolve(__dirname, 'src/index.ts'),
         utils: resolve(__dirname, 'src/utils.ts'),
+        indexing: resolve(__dirname, 'src/indexing/index.ts'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],

@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/react';
 import React from 'react';
-import AddRepoModal, { detectProvider } from '../AddRepoModal';
+import { AddRepoModal, detectProvider } from '@opentrace/components/indexing';
 
 afterEach(() => {
   cleanup();

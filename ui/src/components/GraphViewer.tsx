@@ -54,15 +54,29 @@ import { useStore } from '../store';
 import { useGraphData } from '../hooks/useGraphData';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
-import { detectProvider } from './AddRepoModal';
-import AddRepoModal, { type IndexedRepo } from './AddRepoModal';
-import IndexingProgress from './IndexingProgress';
+import { JobPhase } from '../job';
+import {
+  AddRepoModal,
+  IndexingProgress,
+  detectProvider,
+  type IndexedRepo,
+} from '@opentrace/components';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
+
+const INDEXING_STAGES = [
+  { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
+  { key: String(JobPhase.JOB_PHASE_FETCHING), label: 'Fetching files' },
+  { key: String(JobPhase.JOB_PHASE_PARSING), label: 'Files & symbols' },
+  { key: String(JobPhase.JOB_PHASE_RESOLVING), label: 'Call resolution' },
+  { key: String(JobPhase.JOB_PHASE_SUMMARIZING), label: 'Summarizing' },
+  { key: String(JobPhase.JOB_PHASE_SUBMITTING), label: 'Persisting graph' },
+  { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
+];
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
@@ -827,6 +841,7 @@ const GraphViewer = memo(
             {showFullModal && (
               <IndexingProgress
                 state={jobState}
+                stages={INDEXING_STAGES}
                 provider={detectProvider(activeRepoUrl)}
                 onClose={onJobClose}
                 onCancel={onJobCancel}
@@ -1357,6 +1372,7 @@ const GraphViewer = memo(
           {showFullModal && (
             <IndexingProgress
               state={jobState}
+              stages={INDEXING_STAGES}
               provider={detectProvider(activeRepoUrl)}
               onClose={onJobClose}
               onCancel={onJobCancel}

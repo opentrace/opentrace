@@ -30,6 +30,7 @@ export interface StageState {
   total: number;
   message: string;
   fileName?: string;
+  format?: 'count' | 'bytes';
 }
 
 export interface JobState {
@@ -116,6 +117,9 @@ export function useJobStream(jobService: JobService) {
                           total: d.total,
                           message: event.message,
                           fileName: d.fileName || undefined,
+                          ...(event.phase === JobPhase.JOB_PHASE_FETCHING
+                            ? { format: 'bytes' as const }
+                            : {}),
                         };
                   return {
                     ...s,

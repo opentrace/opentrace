@@ -22,24 +22,23 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { JobMessage } from '../job';
-import { normalizeRepoUrl } from '../runner/browser/loader/urlNormalize';
+import type { AddRepoModalProps } from './types';
+import { normalizeRepoUrl } from './urlNormalize';
+import './indexing-base.css';
 import './AddRepoModal.css';
 
 type SourceMode = 'url' | 'directory';
 
-export interface IndexedRepo {
-  name: string;
-  url: string;
-}
-
-interface Props {
-  onClose: () => void;
-  onSubmit: (message: JobMessage) => void;
-  /** When false, the backdrop click and Cancel button are hidden (e.g. empty-graph state). */
-  dismissable?: boolean;
-  /** Repos already indexed in the graph. Used to detect duplicates. */
-  indexedRepos?: IndexedRepo[];
+export function detectProvider(
+  url: string,
+): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
+  const lower = url.toLowerCase();
+  if (lower.includes('github')) return 'github';
+  if (lower.includes('gitlab')) return 'gitlab';
+  if (lower.includes('bitbucket')) return 'bitbucket';
+  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
+    return 'azuredevops';
+  return null;
 }
 
 const HISTORY_KEY = 'ot_repo_history';
@@ -71,18 +70,6 @@ function removeFromHistory(url: string): string[] {
   const updated = loadHistory().filter((u) => u !== url);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
   return updated;
-}
-
-function detectProvider(
-  url: string,
-): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
-  const lower = url.toLowerCase();
-  if (lower.includes('github')) return 'github';
-  if (lower.includes('gitlab')) return 'gitlab';
-  if (lower.includes('bitbucket')) return 'bitbucket';
-  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
-    return 'azuredevops';
-  return null;
 }
 
 const PROVIDER_ORDER = [
@@ -297,7 +284,7 @@ export default function AddRepoModal({
   onSubmit,
   dismissable = true,
   indexedRepos = [],
-}: Props) {
+}: AddRepoModalProps) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
   const [history, setHistory] = useState<string[]>(loadHistory);
@@ -828,6 +815,3 @@ export default function AddRepoModal({
     </div>
   );
 }
-
-// eslint-disable-next-line react-refresh/only-export-components
-export { detectProvider };
