@@ -15,17 +15,27 @@ jobs:
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-preview \
             -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}' \
-            -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}'
+            -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}' \
+            -f 'client_payload[trigger_run_id]=${{ github.run_id }}'
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
 
-      - name: Wait for run to appear
-        run: sleep 5
-
       - name: Watch triggered run until completion
         run: |
-          RUN_ID=$(gh run list -R opentrace/opentrace-deployment -e repository_dispatch -L 1 --json databaseId -q '.[0].databaseId')
-          echo "Watching opentrace-deployment run $RUN_ID"
-          gh run watch "$RUN_ID" -R opentrace/opentrace-deployment --exit-status
+          # Poll until a run appears whose name contains our run ID
+          for i in $(seq 1 30); do
+            RUN_ID=$(gh run list -R opentrace/opentrace-deployment -e repository_dispatch \
+              -L 5 --json databaseId,displayTitle \
+              -q '.[] | select(.displayTitle | contains("${{ github.run_id }}")) | .databaseId' \
+              | head -1)
+            if [ -n "$RUN_ID" ]; then
+              echo "Watching opentrace-deployment run $RUN_ID"
+              gh run watch "$RUN_ID" -R opentrace/opentrace-deployment --exit-status
+              exit $?
+            fi
+            sleep 2
+          done
+          echo "::error::Timed out waiting for deployment run to appear"
+          exit 1
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
