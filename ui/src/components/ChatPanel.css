@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/* AI icon in header */
+.ai-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
 /* Provider tag in header */
 .panel-header-title {
   display: flex;
