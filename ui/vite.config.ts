@@ -126,6 +126,22 @@ export default defineConfig(({ mode }) => {
       __APP_VERSION__: JSON.stringify(`${pkg.version}+${gitSha}`),
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
+    resolve: {
+      alias: {
+        // Resolve through source so Vite processes workers & CSS correctly.
+        // Without this, production builds pick up the pre-built dist bundle
+        // which has baked-in worker URLs that Rollup can't resolve.
+        '@opentrace/components/utils': resolve(
+          __dirname,
+          '../components/src/utils.ts',
+        ),
+        '@opentrace/components': resolve(
+          __dirname,
+          '../components/src/index.ts',
+        ),
+      },
+      dedupe: ['react', 'react-dom'],
+    },
     plugins: [react(), crossOriginIsolation()],
     server: {
       port,
@@ -141,9 +157,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
       },
-    },
-    resolve: {
-      dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
       exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
