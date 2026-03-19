@@ -29,16 +29,16 @@ import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
 import { EdgeLineProgram } from 'sigma/rendering';
 import '@react-sigma/core/lib/style.css';
 
-import type { GraphNode, GraphLink, SelectedEdge } from '../types/graph';
-import type { LayoutConfig, FilterState, VisualState } from '../graph/types';
-import { useGraphInstance } from '../graph/useGraphInstance';
-import { useGraphFilters } from '../graph/useGraphFilters';
-import { useGraphVisuals } from '../graph/useGraphVisuals';
-import { useCommunities } from '../graph/useCommunities';
-import { useHighlights } from '../graph/useHighlights';
-import LayoutPipeline, { type OptimizeStatus } from '../graph/LayoutPipeline';
-import { drawNodeHover } from '../graph/drawNodeHover';
-import { zoomToNodes, zoomToFit } from '../components/sigma/zoomToNodes';
+import type { GraphNode, GraphLink, SelectedEdge } from './types/graph';
+import type { LayoutConfig, FilterState, VisualState } from './graph/types';
+import { useGraphInstance } from './graph/useGraphInstance';
+import { useGraphFilters } from './graph/useGraphFilters';
+import { useGraphVisuals } from './graph/useGraphVisuals';
+import { useCommunities } from './graph/useCommunities';
+import { useHighlights } from './graph/useHighlights';
+import LayoutPipeline, { type OptimizeStatus } from './graph/LayoutPipeline';
+import { drawNodeHover } from './graph/drawNodeHover';
+import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   ZOOM_SIZE_EXPONENT,
   EDGE_PROGRAM_THRESHOLD,
@@ -47,8 +47,8 @@ import {
   LABEL_FONT,
   LABEL_COLOR,
   DEFAULT_LAYOUT_CONFIG,
-} from '../config/graphLayout';
-import type { GetSubTypeFn } from '../graph/types';
+} from './config/graphLayout';
+import type { GetSubTypeFn } from './graph/types';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 

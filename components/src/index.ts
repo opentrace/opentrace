@@ -27,24 +27,24 @@ export { default as GraphCanvas } from './GraphCanvas';
 export type { GraphCanvasProps, GraphCanvasHandle } from './GraphCanvas';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
-export { useGraphInstance } from '../graph/useGraphInstance';
+export { useGraphInstance } from './graph/useGraphInstance';
 export type {
   UseGraphInstanceResult,
   UseGraphInstanceOptions,
-} from '../graph/useGraphInstance';
+} from './graph/useGraphInstance';
 
-export { useGraphFilters, shouldHideNode } from '../graph/useGraphFilters';
-export { useGraphVisuals } from '../graph/useGraphVisuals';
-export { useCommunities } from '../graph/useCommunities';
-export { useHighlights } from '../graph/useHighlights';
+export { useGraphFilters, shouldHideNode } from './graph/useGraphFilters';
+export { useGraphVisuals } from './graph/useGraphVisuals';
+export { useCommunities } from './graph/useCommunities';
+export { useHighlights } from './graph/useHighlights';
 
 // ─── Layout pipeline ────────────────────────────────────────────────────
-export { default as LayoutPipeline } from '../graph/LayoutPipeline';
-export type { OptimizeStatus } from '../graph/LayoutPipeline';
+export { default as LayoutPipeline } from './graph/LayoutPipeline';
+export type { OptimizeStatus } from './graph/LayoutPipeline';
 
 // ─── Sigma utilities ────────────────────────────────────────────────────
-export { zoomToNodes, zoomToFit } from '../components/sigma/zoomToNodes';
-export { drawNodeHover } from '../graph/drawNodeHover';
+export { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
+export { drawNodeHover } from './graph/drawNodeHover';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export type {
@@ -54,7 +54,7 @@ export type {
   GraphStats,
   SelectedNode,
   SelectedEdge,
-} from '../types/graph';
+} from './types/graph';
 
 export type {
   LayoutConfig,
@@ -62,10 +62,10 @@ export type {
   VisualState,
   CommunityData,
   GetSubTypeFn,
-} from '../graph/types';
+} from './graph/types';
 
 // ─── Configuration & defaults ───────────────────────────────────────────
-export { DEFAULT_LAYOUT_CONFIG } from '../config/graphLayout';
+export { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
 
 export {
   NODE_SIZE_MIN,
@@ -90,13 +90,13 @@ export {
   FA2_SCALING_RATIO,
   FA2_DURATION,
   LOUVAIN_RESOLUTION,
-} from '../config/graphLayout';
+} from './config/graphLayout';
 
 // ─── Color utilities ────────────────────────────────────────────────────
-export { getNodeColor } from '../chat/results/nodeColors';
-export { getLinkColor } from '../chat/results/linkColors';
+export { getNodeColor } from './colors/nodeColors';
+export { getLinkColor } from './colors/linkColors';
 export {
   buildCommunityColorMap,
   buildCommunityNames,
   getCommunityColor,
-} from '../chat/results/communityColors';
+} from './colors/communityColors';

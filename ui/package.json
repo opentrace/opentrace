@@ -1,35 +1,11 @@
 {
-  "name": "@opentrace/components",
+  "name": "ui",
+  "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "React components for graph visualization — powered by Sigma.js and Graphology",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/opentrace/opentrace",
-    "directory": "ui"
-  },
-  "main": "./dist/lib/opentrace-components.cjs",
-  "module": "./dist/lib/opentrace-components.js",
-  "types": "./dist/lib/lib/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/lib/lib/index.d.ts",
-      "import": "./dist/lib/opentrace-components.js",
-      "require": "./dist/lib/opentrace-components.cjs"
-    },
-    "./style.css": "./dist/lib/components.css"
-  },
-  "files": [
-    "dist/lib"
-  ],
-  "sideEffects": [
-    "**/*.css"
-  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "vite build --config vite.config.lib.ts && tsc -p tsconfig.lib.json",
     "build:wasm": "bash scripts/build-wasm.sh",
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check .",
@@ -63,10 +39,6 @@
     "sigma": "^3.0.2",
     "web-tree-sitter": "^0.26.6",
     "zod": "^4.3.6"
-  },
-  "peerDependencies": {
-    "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

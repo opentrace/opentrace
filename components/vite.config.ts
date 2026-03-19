@@ -17,12 +17,10 @@
 /**
  * Vite config for building @opentrace/components as a library.
  *
- * Usage: vite build --config vite.config.lib.ts
- *
  * Outputs:
- *   dist/lib/opentrace-components.js   (ESM)
- *   dist/lib/opentrace-components.cjs  (CJS)
- *   dist/lib/style.css                 (extracted CSS)
+ *   dist/opentrace-components.js   (ESM)
+ *   dist/opentrace-components.cjs  (CJS)
+ *   dist/components.css            (extracted CSS)
  */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -30,12 +28,11 @@ import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [react()],
-  // Don't copy public/ assets into the library output
   publicDir: false,
   build: {
-    outDir: 'dist/lib',
+    outDir: 'dist',
     lib: {
-      entry: resolve(__dirname, 'src/lib/index.ts'),
+      entry: resolve(__dirname, 'src/index.ts'),
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],
       fileName: (format) =>
@@ -52,9 +49,7 @@ export default defineConfig({
         },
       },
     },
-    // Generate source maps for debugging
     sourcemap: true,
-    // Don't minify — let consumers handle that
     minify: false,
   },
   worker: {
