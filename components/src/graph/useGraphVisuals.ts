@@ -120,24 +120,31 @@ export function useGraphVisuals(
       ? EDGE_SIZE_DEFAULT_LINE
       : EDGE_SIZE_DEFAULT;
 
-    graph.updateEachEdgeAttributes((_id, attrs, source, target) => {
-      const linkKey = `${source}-${target}`;
-      const isHighlighted = highlightLinks.has(linkKey);
-      const baseColor = getLinkColor(attrs.label as string);
+    // The hints tell sigma which fields changed. Including 'zIndex' forces
+    // skipIndexation: false in sigma's refresh, which re-indexes edges and
+    // avoids the "edge can't be repaint" error when edges exist in graphology
+    // but haven't been indexed by sigma's async process() yet.
+    graph.updateEachEdgeAttributes(
+      (_id, attrs, source, target) => {
+        const linkKey = `${source}-${target}`;
+        const isHighlighted = highlightLinks.has(linkKey);
+        const baseColor = getLinkColor(attrs.label as string);
 
-      if (hasHighlight) {
-        attrs.color = isHighlighted
-          ? baseColor
-          : dimColor(baseColor, EDGE_OPACITY_DIMMED);
-        attrs.size = isHighlighted ? EDGE_SIZE_HIGHLIGHTED : EDGE_SIZE_DIMMED;
-        attrs.zIndex = isHighlighted ? 1 : 0;
-      } else {
-        attrs.color = dimColor(baseColor, EDGE_OPACITY_DEFAULT);
-        attrs.size = defaultEdgeSize;
-        attrs.zIndex = 0;
-      }
+        if (hasHighlight) {
+          attrs.color = isHighlighted
+            ? baseColor
+            : dimColor(baseColor, EDGE_OPACITY_DIMMED);
+          attrs.size = isHighlighted ? EDGE_SIZE_HIGHLIGHTED : EDGE_SIZE_DIMMED;
+          attrs.zIndex = isHighlighted ? 1 : 0;
+        } else {
+          attrs.color = dimColor(baseColor, EDGE_OPACITY_DEFAULT);
+          attrs.size = defaultEdgeSize;
+          attrs.zIndex = 0;
+        }
 
-      return attrs;
-    });
+        return attrs;
+      },
+      { attributes: ['zIndex'] },
+    );
   }, [graph, layoutReady, visualState, layoutConfig, isLargeGraph]);
 }
