@@ -1,6 +1,6 @@
 {
   "name": "@opentrace/components",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "React components for graph visualization — powered by Sigma.js and Graphology",
   "license": "Apache-2.0",
