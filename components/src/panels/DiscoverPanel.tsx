@@ -31,6 +31,10 @@ const DEFAULT_EXPANDABLE_TYPES = new Set([
   'PullRequest',
 ]);
 
+function defaultIsExpandable(node: TreeNodeData): boolean {
+  return DEFAULT_EXPANDABLE_TYPES.has(node.type);
+}
+
 /** Sort priority: directories → files → PRs → symbols, then alphabetical */
 function sortRank(type: string): number {
   if (type === 'Repository' || type === 'Directory') return 0;
@@ -101,8 +105,7 @@ function flattenTree(
   filter: string,
   hideOffGraph: boolean,
   graphNodeIdSet: Set<string> | undefined,
-  expandableTypes: Set<string>,
-  isExpandableFile: (name: string) => boolean,
+  isExpandable: (node: TreeNodeData) => boolean,
 ): FlatRow[] {
   const rows: FlatRow[] = [];
 
@@ -117,9 +120,7 @@ function flattenTree(
       }
 
       const children = childrenMap.get(node.id);
-      const couldExpand =
-        expandableTypes.has(node.type) &&
-        (node.type !== 'File' || isExpandableFile(node.name));
+      const couldExpand = isExpandable(node);
       const knownEmpty = children !== undefined && children.length === 0;
       const expandable = couldExpand && !knownEmpty;
       const isExpanded = expanded.has(node.id);
@@ -278,8 +279,7 @@ export default function DiscoverPanel({
   graphNodeIds,
   hopMap,
   isActive,
-  expandableTypes = DEFAULT_EXPANDABLE_TYPES,
-  isExpandableFile = () => true,
+  isExpandable = defaultIsExpandable,
   loading,
 }: DiscoverPanelProps) {
   const [filter, setFilter] = useState('');
@@ -318,8 +318,7 @@ export default function DiscoverPanel({
         normalizedFilter,
         hideOffGraph,
         graphNodeIdSet,
-        expandableTypes,
-        isExpandableFile,
+        isExpandable,
       ),
     [
       roots,
@@ -329,8 +328,7 @@ export default function DiscoverPanel({
       normalizedFilter,
       hideOffGraph,
       graphNodeIdSet,
-      expandableTypes,
-      isExpandableFile,
+      isExpandable,
     ],
   );
 

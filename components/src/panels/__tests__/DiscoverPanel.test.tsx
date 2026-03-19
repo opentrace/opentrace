@@ -294,8 +294,8 @@ describe('DiscoverPanel', () => {
     });
   });
 
-  describe('isExpandableFile', () => {
-    it('respects custom isExpandableFile predicate', () => {
+  describe('isExpandable', () => {
+    it('respects custom isExpandable predicate', () => {
       const onToggleExpand = vi.fn();
       const mdFile: TreeNodeData = {
         id: 'md-1',
@@ -315,7 +315,8 @@ describe('DiscoverPanel', () => {
             childrenMap: new Map(),
             expanded: new Set(),
             // Only .ts files are expandable
-            isExpandableFile: (name: string) => name.endsWith('.ts'),
+            isExpandable: (node: TreeNodeData) =>
+              node.type === 'File' && node.name.endsWith('.ts'),
             onToggleExpand,
           }),
         ),

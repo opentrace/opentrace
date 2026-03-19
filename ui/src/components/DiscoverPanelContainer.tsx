@@ -30,6 +30,18 @@ const EXPANDABLE_TYPES = new Set([
 
 const REPO_TYPES = new Set(['Repository']);
 
+function isExpandable(node: TreeNodeData): boolean {
+  if (!EXPANDABLE_TYPES.has(node.type)) return false;
+  if (node.type === 'File') {
+    const dotIdx = node.name.lastIndexOf('.');
+    return (
+      dotIdx >= 0 &&
+      PARSEABLE_EXTENSIONS.has(node.name.slice(dotIdx).toLowerCase())
+    );
+  }
+  return true;
+}
+
 function sortChildren(nodes: NodeResult[]): NodeResult[] {
   return [...nodes].sort((a, b) => {
     const ra = sortRank(a.type);
@@ -44,13 +56,6 @@ function sortRank(type: string): number {
   if (type === 'File') return 1;
   if (type === 'PullRequest') return 2;
   return 3;
-}
-
-function hasParsableExtension(name: string): boolean {
-  const dotIdx = name.lastIndexOf('.');
-  return (
-    dotIdx >= 0 && PARSEABLE_EXTENSIONS.has(name.slice(dotIdx).toLowerCase())
-  );
 }
 
 interface DiscoverPanelContainerProps {
@@ -333,8 +338,7 @@ export default function DiscoverPanelContainer({
       graphNodeIds={graphNodeIds}
       hopMap={hopMap}
       isActive={isActive}
-      expandableTypes={EXPANDABLE_TYPES}
-      isExpandableFile={hasParsableExtension}
+      isExpandable={isExpandable}
       loading={loading}
     />
   );

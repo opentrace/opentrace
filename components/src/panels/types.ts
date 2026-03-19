@@ -114,10 +114,8 @@ export interface DiscoverPanelProps {
   hopMap?: Map<string, number>;
   /** Whether this panel tab is currently active/visible */
   isActive?: boolean;
-  /** Node types that can be expanded. Defaults to Repository, Directory, File, Class, PullRequest */
-  expandableTypes?: Set<string>;
-  /** Check whether a File-type node is expandable (e.g. has parseable extension). Defaults to () => true */
-  isExpandableFile?: (name: string) => boolean;
+  /** Whether a node can be expanded. Defaults to Repository, Directory, File, Class, PullRequest types. */
+  isExpandable?: (node: TreeNodeData) => boolean;
   /** Whether the tree is still loading its initial data */
   loading?: boolean;
 }
