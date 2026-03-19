@@ -43,4 +43,4 @@ jobs:
 
       - name: Publish to npm
         working-directory: components
-        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ inputs.tag }}"
+        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ inputs.tag }}" --loglevel verbose
