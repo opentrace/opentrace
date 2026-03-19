@@ -295,6 +295,10 @@
     min-width: 0;
     padding: 8px 12px;
   }
+
+  .chat-input-area {
+    padding-bottom: calc(20px + max(0px, env(safe-area-inset-bottom)));
+  }
 }
 
 @media (max-width: 640px) {
@@ -304,6 +308,7 @@
 
   .provider-selector button {
     font-size: 0.7rem;
-    padding: 6px 8px;
+    padding: 10px 12px;
+    min-height: 44px;
   }
 }

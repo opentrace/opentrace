@@ -267,3 +267,21 @@
   font-size: 0.8rem;
   color: var(--destructive);
 }
+
+/* ── Tablet (≤ 1024px): full-width drawer ── */
+@media (max-width: 1024px) {
+  .settings-drawer {
+    width: 100%;
+    max-width: 100vw;
+    border-left: none;
+    padding-top: max(0px, env(safe-area-inset-top));
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Mobile (≤ 640px): tighter content padding ── */
+@media (max-width: 640px) {
+  .settings-content {
+    padding: 16px;
+  }
+}

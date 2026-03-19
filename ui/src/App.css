@@ -18,7 +18,7 @@
 .app {
   position: relative;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -33,6 +33,7 @@
   position: relative;
   min-width: 0;
   overflow: hidden;
+  touch-action: none;
   --sigma-background-color: var(--background);
 }
 
@@ -611,7 +612,7 @@ header h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   gap: 16px;
   color: var(--muted-foreground);
   background: var(--background);
@@ -638,7 +639,7 @@ header h1 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   color: var(--foreground);
   background: var(--background);
   text-align: center;
@@ -1271,8 +1272,35 @@ header h1 {
 @media (max-width: 1024px) {
   header {
     flex-wrap: wrap;
-    padding: 12px 16px;
+    padding: max(12px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right)) 12px
+      max(16px, env(safe-area-inset-left));
     gap: 0;
+  }
+
+  .legend {
+    left: max(24px, env(safe-area-inset-left));
+    bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .graph-controls {
+    right: max(24px, env(safe-area-inset-right));
+    bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .version-footer {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .copyright-footer {
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .empty-state-header {
+    top: max(16px, env(safe-area-inset-top));
+    left: max(20px, env(safe-area-inset-left));
   }
 
   .burger-menu-btn {
@@ -1463,6 +1491,7 @@ header h1 {
     width: 100% !important;
     z-index: 50;
     border-left: none;
+    padding-top: max(0px, env(safe-area-inset-top));
   }
 
   .chat-panel-drag-handle {
@@ -1492,7 +1521,7 @@ header h1 {
     bottom: 0;
     width: 100% !important;
     z-index: 50;
-    padding-top: 0;
+    padding-top: max(0px, env(safe-area-inset-top));
     background: var(--background);
     border-right: none;
     backdrop-filter: none;
@@ -1506,7 +1535,9 @@ header h1 {
 /* ── Mobile (≤ 640px): tighter spacing, icon-only logo ── */
 @media (max-width: 640px) {
   header {
-    padding: 10px 12px;
+    padding: max(10px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right)) 10px
+      max(12px, env(safe-area-inset-left));
   }
 
   header h1 {
@@ -1521,6 +1552,44 @@ header h1 {
     display: none;
   }
 
+  /* Hide legend on small screens — info is available in filter panel */
+  .legend {
+    display: none;
+  }
+
+  /* Graph control buttons: 44px touch targets */
+  .graph-control-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* Filter items: larger touch targets */
+  .filter-item {
+    padding: 8px 6px;
+    min-height: 44px;
+  }
+
+  .filter-expand-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .filter-dot {
+    width: 10px;
+    height: 10px;
+  }
+
+  /* Search buttons: larger touch targets */
+  .api-search-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .hops-input {
+    width: 40px;
+    height: 28px;
+  }
+
   /* Chat panel: tighter spacing on mobile */
   .panel-header {
     padding: 12px 16px;
@@ -1531,7 +1600,7 @@ header h1 {
   }
 
   .chat-input-area {
-    padding: 10px 12px 16px;
+    padding: 10px 12px calc(16px + max(0px, env(safe-area-inset-bottom)));
   }
 
   .message {
