@@ -278,7 +278,6 @@ export default function DiscoverPanel({
   selectedNodeId,
   graphNodeIds,
   hopMap,
-  isActive,
   isExpandable = defaultIsExpandable,
   loading,
 }: DiscoverPanelProps) {
@@ -332,14 +331,14 @@ export default function DiscoverPanel({
     ],
   );
 
-  // Scroll to selected node when selection changes or tab becomes active
+  // Scroll to selected node when selection changes
   useEffect(() => {
-    if (!selectedNodeId || !isActive || !listRef.current) return;
+    if (!selectedNodeId || !listRef.current) return;
     const idx = flatRows.findIndex((r) => r.node.id === selectedNodeId);
     if (idx >= 0) {
       listRef.current.scrollToRow({ index: idx, align: 'center' });
     }
-  }, [selectedNodeId, isActive, flatRows, listRef]);
+  }, [selectedNodeId, flatRows, listRef]);
 
   // Stable rowProps object for react-window
   const rowProps: TreeRowProps = useMemo(
