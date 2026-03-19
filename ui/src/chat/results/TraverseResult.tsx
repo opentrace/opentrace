@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import { getNodeColor } from './nodeColors';
+import { getNodeColor } from '@opentrace/components/utils';
 import type { TraverseEntry } from './parsers';
 
 interface Props {

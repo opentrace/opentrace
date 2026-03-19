@@ -15,7 +15,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GraphNode, GraphLink, GraphStats } from '../types/graph';
+import type {
+  GraphNode,
+  GraphLink,
+  GraphStats,
+} from '@opentrace/components/utils';
 import { useStore } from '../store';
 
 export interface GraphDataState {

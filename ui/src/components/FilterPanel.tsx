@@ -15,8 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
+import { getNodeColor, getLinkColor } from '@opentrace/components/utils';
 
 interface TypeEntry {
   type: string;

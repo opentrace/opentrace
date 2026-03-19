@@ -17,8 +17,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useCommunities } from '../useCommunities';
-import type { GraphNode, GraphLink, LayoutConfig } from '../types';
+import { useCommunities } from '@opentrace/components/utils';
+import type {
+  GraphNode,
+  GraphLink,
+  LayoutConfig,
+} from '@opentrace/components/utils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 

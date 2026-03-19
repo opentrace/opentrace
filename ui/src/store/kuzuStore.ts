@@ -40,7 +40,7 @@ import type {
   GraphNode,
   GraphLink,
   GraphStats,
-} from '../types/graph';
+} from '@opentrace/components/utils';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
 import { BM25Index } from './search/bm25';
 import { VectorIndex } from './search/vector';

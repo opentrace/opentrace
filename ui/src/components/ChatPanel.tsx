@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphNode, GraphLink } from '../types/graph';
+import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import {
   PROVIDERS,
   PROVIDER_IDS,

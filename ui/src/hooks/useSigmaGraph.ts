@@ -17,33 +17,49 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Graph, { UndirectedGraph } from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import type { GraphNode, GraphLink } from '../types/graph';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
+import type { GraphNode, GraphLink } from '@opentrace/components';
 import {
+  getNodeColor,
+  getLinkColor,
   buildCommunityColorMap,
   buildCommunityNames,
   getCommunityColor,
-} from '../chat/results/communityColors';
-import type { LayoutRequest, LayoutResponse } from './d3LayoutWorker';
-import {
   NODE_SIZE_MIN,
   NODE_SIZE_MAX,
   NODE_SIZE_DEGREE_SCALE,
   NODE_SIZE_MULTIPLIERS,
   EDGE_SIZE_DEFAULT,
-  EDGE_SIZE_DEFAULT_LINE,
   EDGE_SIZE_HIGHLIGHTED,
   EDGE_SIZE_DIMMED,
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_DIMMED,
   NODE_OPACITY_DIMMED,
+  LOUVAIN_RESOLUTION,
+} from '@opentrace/components';
+// d3LayoutWorker types — worker is bundled in @opentrace/components
+interface LayoutRequest {
+  nodeIds: string[];
+  links: { source: string; target: string }[];
+  communities?: Record<string, number>;
+  config: {
+    linkDistance: number;
+    chargeStrength: number;
+    ticks: number;
+    clusterStrength?: number;
+    clusterTicks?: number;
+    clusterSeparation?: number;
+  };
+}
+interface LayoutResponse {
+  positions: [string, number, number][];
+}
+import {
+  EDGE_SIZE_DEFAULT_LINE,
   FORCE_LINK_DISTANCE,
   FORCE_CHARGE_STRENGTH,
   FORCE_SIMULATION_TICKS,
   FORCE_CLUSTER_STRENGTH,
   FORCE_CLUSTER_TICKS,
-  LOUVAIN_RESOLUTION,
 } from '../config/graphLayout';
 
 // ─── Community Detection Hook ────────────────────────────────────────

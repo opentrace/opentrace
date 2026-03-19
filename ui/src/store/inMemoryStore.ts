@@ -21,7 +21,7 @@
  * No WASM, no workers, no COOP/COEP headers required.
  */
 
-import type { GraphData, GraphStats } from '../types/graph';
+import type { GraphData, GraphStats } from '@opentrace/components/utils';
 import type {
   GraphStore,
   ImportBatchRequest,

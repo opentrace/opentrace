@@ -94,11 +94,8 @@ jobs:
   ui:
     name: UI (TypeScript)
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.components == 'true'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ui
     steps:
       - uses: actions/checkout@v6
 
@@ -108,19 +105,28 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      - name: Build components
+        working-directory: components
+        run: npm ci && npm run build
+
       - name: Install dependencies
+        working-directory: ui
         run: npm ci
 
       - name: Lint
+        working-directory: ui
         run: npx eslint .
 
       - name: Check formatting
+        working-directory: ui
         run: npx prettier --check .
 
       - name: Test
+        working-directory: ui
         run: npx vitest run
 
       - name: Build
+        working-directory: ui
         run: npm run build
 
   components:

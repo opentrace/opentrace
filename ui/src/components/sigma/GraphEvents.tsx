@@ -16,7 +16,7 @@
 
 import { useEffect } from 'react';
 import { useRegisterEvents, useSigma } from '@react-sigma/core';
-import type { GraphNode, SelectedEdge } from '../../types/graph';
+import type { GraphNode, SelectedEdge } from '@opentrace/components/utils';
 import { setHoveredNodeKey } from '../../graph/drawNodeHover';
 
 interface GraphEventsProps {

@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { SelectedNode, SelectedEdge } from '../types/graph';
+import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
 import type { NodeSourceResponse } from '../store/types';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import FilterPanel from './FilterPanel';

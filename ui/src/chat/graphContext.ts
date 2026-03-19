@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { GraphNode, GraphLink } from '../types/graph';
+import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 
 export function buildGraphContext(
   nodes: GraphNode[],
