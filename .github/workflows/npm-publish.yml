@@ -1,0 +1,46 @@
+name: npm Publish
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.1, 0.1.1-rc.5, 0.1.1-pr.110.3)"
+        required: true
+        type: string
+      tag:
+        description: "npm dist-tag (latest, next, preview)"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set version
+        working-directory: components
+        run: |
+          npm version "${{ inputs.version }}" --no-git-tag-version
+          echo "Publishing @opentrace/components@${{ inputs.version }} with tag ${{ inputs.tag }}"
+
+      - name: Install dependencies
+        working-directory: components
+        run: npm ci
+
+      - name: Build
+        working-directory: components
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: components
+        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ inputs.tag }}"

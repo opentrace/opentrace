@@ -5,10 +5,31 @@ on:
     branches: [main]
     paths:
       - "agent/**"
+      - "components/**"
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      agent: ${{ steps.filter.outputs.agent }}
+      components: ${{ steps.filter.outputs.components }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          token: ''
+          filters: |
+            agent:
+              - 'agent/**'
+            components:
+              - 'components/**'
+
   publish-dev:
     name: Publish dev to PyPI
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -41,3 +62,27 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: agent/dist/
+
+  npm-version:
+    name: Compute npm rc version
+    needs: changes
+    if: needs.changes.outputs.components == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        working-directory: components
+        run: |
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          VERSION="${BASE_VERSION}-rc.${GITHUB_RUN_NUMBER}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  publish-npm-dev:
+    name: Publish dev to npm
+    needs: npm-version
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      version: ${{ needs.npm-version.outputs.version }}
+      tag: next
