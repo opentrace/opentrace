@@ -142,6 +142,9 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+    },
     optimizeDeps: {
       exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
     },
