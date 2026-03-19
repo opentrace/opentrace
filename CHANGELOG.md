@@ -51,6 +51,7 @@ All notable changes to this project will be documented in this file.
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
+- Update CHANGELOG.md [skip ci]
 
 ### Features
 
@@ -82,6 +83,7 @@ All notable changes to this project will be documented in this file.
 - Add Claude Code statusline script (#25) ([#25](https://github.com/opentrace/opentrace/pull/25))
 - Remove .idea directory from version control (#66) ([#66](https://github.com/opentrace/opentrace/pull/66))
 - **ui:** Add vite port to .env (#70) ([#70](https://github.com/opentrace/opentrace/pull/70))
+- Add sparkles icon to AI Assistant header (#113) ([#113](https://github.com/opentrace/opentrace/pull/113))
 
 ### Performance
 
