@@ -58,9 +58,7 @@ export { useHighlights } from './graph/useHighlights';
 
 // ─── Panel types (no React component imports) ───────────────────────────
 export type {
-  TypeEntry,
-  SubTypeEntry,
-  CommunityEntry,
+  FilterItem,
   FilterPanelProps,
   LegendItem,
   GraphLegendProps,

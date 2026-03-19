@@ -19,9 +19,7 @@ export { default as GraphLegend } from './GraphLegend';
 export { default as DiscoverPanel } from './DiscoverPanel';
 
 export type {
-  TypeEntry,
-  SubTypeEntry,
-  CommunityEntry,
+  FilterItem,
   FilterPanelProps,
   LegendItem,
   GraphLegendProps,

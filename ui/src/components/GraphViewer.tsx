@@ -41,7 +41,11 @@ import {
   useCommunities,
   useHighlights,
 } from '@opentrace/components/utils';
-import { GraphLegend } from '@opentrace/components';
+import {
+  GraphLegend,
+  type FilterItem,
+  type FilterPanelProps,
+} from '@opentrace/components';
 import { useGraphInstance } from '../graph/useGraphInstance';
 import { useGraphFilters } from '../graph/useGraphFilters';
 import { useGraphVisuals } from '../graph/useGraphVisuals';
@@ -1045,74 +1049,146 @@ const GraphViewer = memo(
           ? communityData.colorMap.get(selectedCommunityId)
           : undefined;
 
+      // ─── Build filter sections for SidePanel ──────────────────────────
+
+      const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
+        ({ type, count }) => {
+          const subs = availableSubTypes.get(type);
+          const children = subs?.map((s) => ({
+            key: `${type}:${s.subType}`,
+            label: s.subType,
+            count: s.count,
+            color: getNodeColor(type),
+            hidden: hiddenSubTypes.has(`${type}:${s.subType}`),
+          }));
+          return {
+            key: type,
+            label: type,
+            count,
+            color: getNodeColor(type),
+            hidden: hiddenNodeTypes.has(type),
+            children,
+          };
+        },
+      );
+
+      const toggleNodeFilter = (key: string) => {
+        if (key.includes(':')) {
+          // Sub-type key like "Class:Controller"
+          setHiddenSubTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+        } else {
+          // Parent type key — toggle all sub-types if any, else toggle type
+          const subs = availableSubTypes.get(key);
+          if (subs && subs.length > 0) {
+            setHiddenSubTypes((prev) => {
+              const keys = subs.map((s) => `${key}:${s.subType}`);
+              const allHidden = keys.every((k) => prev.has(k));
+              const next = new Set(prev);
+              if (allHidden) {
+                keys.forEach((k) => next.delete(k));
+              } else {
+                keys.forEach((k) => next.add(k));
+              }
+              return next;
+            });
+          } else {
+            setHiddenNodeTypes((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            });
+          }
+        }
+      };
+
+      const linkFilterItems: FilterItem[] = availableLinkTypes.map(
+        ({ type, count }) => ({
+          key: type,
+          label: type.toLowerCase(),
+          count,
+          color: getLinkColor(type),
+          hidden: hiddenLinkTypes.has(type),
+        }),
+      );
+
+      const communityFilterItems: FilterItem[] = availableCommunities.map(
+        ({ communityId, label, count, color }) => ({
+          key: String(communityId),
+          label,
+          count,
+          color,
+          hidden: hiddenCommunities.has(communityId),
+        }),
+      );
+
+      const filterSections: FilterPanelProps[] = [];
+
+      if (colorMode === 'community' && communityFilterItems.length > 0) {
+        filterSections.push({
+          title: 'Communities',
+          items: communityFilterItems,
+          onToggle: (key) => {
+            const cid = Number(key);
+            setHiddenCommunities((prev) => {
+              const next = new Set(prev);
+              if (next.has(cid)) next.delete(cid);
+              else next.add(cid);
+              return next;
+            });
+          },
+          onShowAll: () => setHiddenCommunities(new Set()),
+          onHideAll: () =>
+            setHiddenCommunities(
+              new Set(availableCommunities.map((c) => c.communityId)),
+            ),
+        });
+      }
+
+      filterSections.push({
+        title: 'Node Types',
+        items: nodeFilterItems,
+        onToggle: toggleNodeFilter,
+        onShowAll: () => {
+          setHiddenNodeTypes(new Set());
+          setHiddenSubTypes(new Set());
+        },
+        onHideAll: () => {
+          setHiddenNodeTypes(new Set(availableNodeTypes.map((t) => t.type)));
+          const allSubKeys = new Set<string>();
+          availableSubTypes.forEach((subs, type) => {
+            subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
+          });
+          setHiddenSubTypes(allSubKeys);
+        },
+      });
+
+      filterSections.push({
+        title: 'Edges',
+        items: linkFilterItems,
+        indicator: 'line',
+        emptyMessage: 'No edges',
+        onToggle: (key) =>
+          setHiddenLinkTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          }),
+        onShowAll: () => setHiddenLinkTypes(new Set()),
+        onHideAll: () =>
+          setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type))),
+      });
+
       return (
         <div className="graph-viewport">
           <SidePanel
-            nodeTypes={availableNodeTypes}
-            linkTypes={availableLinkTypes}
-            hiddenNodeTypes={hiddenNodeTypes}
-            hiddenLinkTypes={hiddenLinkTypes}
-            subTypesByNodeType={availableSubTypes}
-            hiddenSubTypes={hiddenSubTypes}
-            onToggleNodeType={(type) => {
-              const subs = availableSubTypes.get(type);
-              if (subs && subs.length > 0) {
-                // For types with sub-types, toggle all sub-types
-                setHiddenSubTypes((prev) => {
-                  const keys = subs.map((s) => `${type}:${s.subType}`);
-                  const allHidden = keys.every((k) => prev.has(k));
-                  const next = new Set(prev);
-                  if (allHidden) {
-                    keys.forEach((k) => next.delete(k));
-                  } else {
-                    keys.forEach((k) => next.add(k));
-                  }
-                  return next;
-                });
-              } else {
-                setHiddenNodeTypes((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(type)) next.delete(type);
-                  else next.add(type);
-                  return next;
-                });
-              }
-            }}
-            onToggleLinkType={(type) =>
-              setHiddenLinkTypes((prev) => {
-                const next = new Set(prev);
-                if (next.has(type)) next.delete(type);
-                else next.add(type);
-                return next;
-              })
-            }
-            onToggleSubType={(key) =>
-              setHiddenSubTypes((prev) => {
-                const next = new Set(prev);
-                if (next.has(key)) next.delete(key);
-                else next.add(key);
-                return next;
-              })
-            }
-            onShowAllNodes={() => {
-              setHiddenNodeTypes(new Set());
-              setHiddenSubTypes(new Set());
-            }}
-            onHideAllNodes={() => {
-              setHiddenNodeTypes(
-                new Set(availableNodeTypes.map((t) => t.type)),
-              );
-              // Also hide all sub-types
-              const allSubKeys = new Set<string>();
-              availableSubTypes.forEach((subs, type) => {
-                subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
-              });
-              setHiddenSubTypes(allSubKeys);
-            }}
-            onShowAllLinks={() => setHiddenLinkTypes(new Set())}
-            onHideAllLinks={() =>
-              setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type)))
-            }
+            filterSections={filterSections}
             selectedNode={selectedNode}
             nodeSource={nodeSource}
             sourceLoading={sourceLoading}
@@ -1133,23 +1209,6 @@ const GraphViewer = memo(
             graphVersion={graphVersion}
             graphNodeIds={graphNodeIds}
             hopMap={hopMap}
-            colorMode={colorMode}
-            communities={availableCommunities}
-            hiddenCommunities={hiddenCommunities}
-            onToggleCommunity={(cid) =>
-              setHiddenCommunities((prev) => {
-                const next = new Set(prev);
-                if (next.has(cid)) next.delete(cid);
-                else next.add(cid);
-                return next;
-              })
-            }
-            onShowAllCommunities={() => setHiddenCommunities(new Set())}
-            onHideAllCommunities={() =>
-              setHiddenCommunities(
-                new Set(availableCommunities.map((c) => c.communityId)),
-              )
-            }
             mobileActiveTab={mobilePanelTab}
             onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}
@@ -1506,10 +1565,7 @@ const GraphViewer = memo(
             />
           )}
 
-          <GraphLegend
-            items={legendItems}
-            linkItems={legendLinkItems}
-          />
+          <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
           {!layoutReady && !isEmpty && (
             <div

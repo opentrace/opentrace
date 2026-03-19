@@ -104,9 +104,7 @@ export {
 // ─── Panel components ───────────────────────────────────────────────────
 export { FilterPanel, GraphLegend, DiscoverPanel } from './panels';
 export type {
-  TypeEntry,
-  SubTypeEntry,
-  CommunityEntry,
+  FilterItem,
   FilterPanelProps,
   LegendItem,
   GraphLegendProps,
