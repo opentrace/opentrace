@@ -339,7 +339,6 @@ export default function DiscoverPanelContainer({
       roots={roots}
       childrenMap={childrenMap}
       expanded={expanded}
-      loadingNodes={loadingSet}
       onToggleExpand={handleToggle}
       onSelectNode={onSelectNode}
       selectedNodeId={isActive ? selectedNodeId : undefined}

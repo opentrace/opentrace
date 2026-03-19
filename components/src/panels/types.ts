@@ -100,8 +100,6 @@ export interface DiscoverPanelProps {
   childrenMap: Map<string, TreeNodeData[]>;
   /** Currently expanded node IDs (controlled) */
   expanded: Set<string>;
-  /** Node IDs that are currently loading children */
-  loadingNodes?: Set<string>;
   /** Called when a node's expand/collapse toggle is clicked */
   onToggleExpand: (nodeId: string) => void;
   /** Called when a node name is clicked */

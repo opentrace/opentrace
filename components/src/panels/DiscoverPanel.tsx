@@ -101,7 +101,6 @@ function flattenTree(
   roots: TreeNodeData[],
   expanded: Set<string>,
   childrenMap: Map<string, TreeNodeData[]>,
-  loadingSet: Set<string>,
   filter: string,
   hideOffGraph: boolean,
   graphNodeIdSet: Set<string> | undefined,
@@ -124,9 +123,8 @@ function flattenTree(
       const knownEmpty = children !== undefined && children.length === 0;
       const expandable = couldExpand && !knownEmpty;
       const isExpanded = expanded.has(node.id);
-      const isLoading = loadingSet.has(node.id);
 
-      rows.push({ node, depth, expandable, isExpanded, isLoading });
+      rows.push({ node, depth, expandable, isExpanded, isLoading: false });
 
       // Recurse into expanded children
       if (isExpanded && children && children.length > 0) {
@@ -135,14 +133,13 @@ function flattenTree(
           ? sorted.filter((c) => matchesFilter(c, filter, childrenMap))
           : sorted;
         walk(visibleChildren, depth + 1);
-      } else if (isExpanded && isLoading) {
-        // Placeholder row for loading state
+      } else if (isExpanded && !children) {
+        // Expanded but children not yet in map — show loading placeholder
         rows.push({
           node: {
             id: `__loading_${node.id}`,
             name: 'Loading...',
             type: '__loading',
-            properties: {},
           },
           depth: depth + 1,
           expandable: false,
@@ -272,7 +269,6 @@ export default function DiscoverPanel({
   roots,
   childrenMap,
   expanded,
-  loadingNodes,
   onToggleExpand,
   onSelectNode,
   selectedNodeId,
@@ -284,8 +280,6 @@ export default function DiscoverPanel({
   const [hideOffGraph, setHideOffGraph] = useState(false);
 
   const listRef = useListRef(null);
-
-  const loadingSet = loadingNodes ?? new Set<string>();
 
   // Build a Set for O(1) lookups; undefined means "no filtering" (all nodes in graph)
   const graphNodeIdSet = useMemo(
@@ -312,7 +306,6 @@ export default function DiscoverPanel({
         roots,
         expanded,
         childrenMap,
-        loadingSet,
         normalizedFilter,
         hideOffGraph,
         graphNodeIdSet,
@@ -322,7 +315,6 @@ export default function DiscoverPanel({
       roots,
       expanded,
       childrenMap,
-      loadingSet,
       normalizedFilter,
       hideOffGraph,
       graphNodeIdSet,

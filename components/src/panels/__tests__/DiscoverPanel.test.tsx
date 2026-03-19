@@ -246,7 +246,7 @@ describe('DiscoverPanel', () => {
   });
 
   describe('loading nodes', () => {
-    it('shows loading placeholder for nodes being loaded', () => {
+    it('shows loading placeholder when expanded node has no children yet', () => {
       const { getByText } = render(
         React.createElement(
           DiscoverPanel,
@@ -255,9 +255,8 @@ describe('DiscoverPanel', () => {
             childrenMap: new Map([
               ['repo-1', [dirNode]],
               ['dir-1', [fileNode]],
-              // file-1 has no children yet (loading)
+              // file-1 is expanded but not in childrenMap → loading
             ]),
-            loadingNodes: new Set(['file-1']),
           }),
         ),
       );
