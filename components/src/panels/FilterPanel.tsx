@@ -15,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import type { FilterPanelProps, FilterItem } from './types';
+import type { FilterPanelProps } from './types';
 import './FilterPanel.css';
 
 export default function FilterPanel({
