@@ -17,6 +17,7 @@
 import { useEffect } from 'react';
 import { useRegisterEvents, useSigma } from '@react-sigma/core';
 import type { GraphNode, SelectedEdge } from '../../types/graph';
+import { setHoveredNodeKey } from '../../graph/drawNodeHover';
 
 interface GraphEventsProps {
   onNodeClick: (node: GraphNode) => void;
@@ -36,10 +37,12 @@ export default function GraphEvents({
     const container = sigma.getContainer();
 
     registerEvents({
-      enterNode: () => {
+      enterNode: ({ node }) => {
+        setHoveredNodeKey(node);
         container.style.cursor = 'pointer';
       },
       leaveNode: () => {
+        setHoveredNodeKey(null);
         container.style.cursor = 'default';
       },
       enterEdge: () => {

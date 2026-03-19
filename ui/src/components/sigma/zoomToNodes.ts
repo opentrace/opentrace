@@ -17,14 +17,19 @@
 import type Sigma from 'sigma';
 
 /**
- * Zoom the sigma camera to fit a set of node IDs.
- * Replaces `fgRef.current.zoomToFit(duration, padding, predicate)`.
+ * Zoom the sigma camera to fit a set of node IDs with padding.
+ *
+ * Coordinates from `getNodeDisplayData` are in sigma's **framed graph space**
+ * (normalized, pre-camera-transform). The camera also operates in this space.
+ * To compute the correct zoom ratio we measure the visible framed-graph extent
+ * at the current camera ratio via `viewportToFramedGraph`, then scale
+ * proportionally so the bounding box fits with the requested padding.
  */
 export function zoomToNodes(
   sigma: Sigma,
   nodeIds: Iterable<string>,
   duration = 600,
-  padding = 0.1,
+  padding = 0.2,
 ): void {
   let minX = Infinity;
   let maxX = -Infinity;
@@ -45,29 +50,31 @@ export function zoomToNodes(
   if (count === 0) return;
 
   const camera = sigma.getCamera();
-
-  // Single node — just center on it
-  if (count === 1 || (maxX - minX < 1 && maxY - minY < 1)) {
-    camera.animate(
-      { x: (minX + maxX) / 2, y: (minY + maxY) / 2, ratio: 0.1 },
-      { duration },
-    );
-    return;
-  }
-
-  // Compute bounding box center and ratio
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
 
-  // Get the container dimensions
-  const { width, height } = sigma.getDimensions();
-  const graphWidth = maxX - minX;
-  const graphHeight = maxY - minY;
+  // Single node or near-coincident cluster — center and zoom in
+  if (count === 1 || (maxX - minX < 0.001 && maxY - minY < 0.001)) {
+    camera.animate({ x: cx, y: cy, ratio: 0.1 }, { duration });
+    return;
+  }
 
-  // Calculate ratio to fit the bounding box with padding
-  const ratioX = graphWidth / (width * (1 - padding * 2));
-  const ratioY = graphHeight / (height * (1 - padding * 2));
-  const ratio = Math.max(ratioX, ratioY, 0.01);
+  // Measure visible framed-graph extent at the current camera ratio.
+  // Since visible_extent ∝ camera.ratio, we can scale proportionally.
+  const { width, height } = sigma.getDimensions();
+  const topLeft = sigma.viewportToFramedGraph({ x: 0, y: 0 });
+  const bottomRight = sigma.viewportToFramedGraph({ x: width, y: height });
+  const visibleW = Math.abs(bottomRight.x - topLeft.x);
+  const visibleH = Math.abs(topLeft.y - bottomRight.y);
+  const currentRatio = camera.ratio;
+
+  const bboxW = maxX - minX;
+  const bboxH = maxY - minY;
+
+  // How much of the current visible area the bbox would occupy (with padding)
+  const scaleX = visibleW > 0 ? bboxW / (visibleW * (1 - 2 * padding)) : 1;
+  const scaleY = visibleH > 0 ? bboxH / (visibleH * (1 - 2 * padding)) : 1;
+  const ratio = Math.max(currentRatio * Math.max(scaleX, scaleY), 0.01);
 
   camera.animate({ x: cx, y: cy, ratio }, { duration });
 }
