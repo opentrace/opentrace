@@ -12,7 +12,6 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'preview-npm')
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v6
@@ -41,7 +40,9 @@ jobs:
 
       - name: Publish to npm
         working-directory: components
-        run: npm publish --tag preview --access public --provenance
+        run: npm publish --tag preview --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Comment on PR
         uses: actions/github-script@v7
