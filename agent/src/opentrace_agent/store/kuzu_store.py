@@ -81,10 +81,11 @@ class KuzuStore:
         FTS index ``node_fts`` on ``search_text`` with Porter stemmer
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db = kuzu.Database(db_path)
+    def __init__(self, db_path: str, *, read_only: bool = False) -> None:
+        self._db = kuzu.Database(db_path, read_only=read_only)
         self._conn = kuzu.Connection(self._db)
-        self._ensure_schema()
+        if not read_only:
+            self._ensure_schema()
 
     # -- schema ----------------------------------------------------------
 

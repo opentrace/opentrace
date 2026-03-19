@@ -2,18 +2,21 @@
 name: code-explorer
 description: |
   Explores indexed code structure using the OpenTrace knowledge graph. Finds classes,
-  functions, files, services, and their relationships. Use this agent to understand
-  how code is organized, trace dependencies, and discover connected components.
+  functions, files, directories, services, modules, and their relationships. Use this
+  agent to understand how code is organized, browse repo structure, trace dependencies,
+  and discover connected components.
 
   Use this agent when the user asks:
   - "How does X work?" or "What does X do?"
-  - "Where is X defined?" or "Find the X class/function/service"
+  - "Where is X defined?" or "Find the X class/function/service/file"
   - "What calls X?" or "What does X call?"
   - "Show me the architecture" or "How is this organized?"
+  - "What's in X?" or "Show me X" or "Look at X" or "List the files in X"
+  - "What files/directories/services/classes are there?"
+  - "Find X" or "What examples exist?" or "Where are the tests?"
   - "How are X and Y connected?" or "What's the relationship between X and Y?"
-  - "What services/classes/functions are there?"
   - "Walk me through the codebase" or "Give me an overview"
-  - Any question about code structure, organization, or component relationships
+  - Any question about repo structure, code organization, files, or component relationships
 tools: mcp__opentrace_oss__search_graph, mcp__opentrace_oss__get_node, mcp__opentrace_oss__traverse_graph, mcp__opentrace_oss__list_nodes, mcp__opentrace_oss__get_stats, Read, Grep, Glob
 ---
 
