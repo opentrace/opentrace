@@ -36,5 +36,10 @@ functions/lib/
 *.log
 
 
+# OpenTrace index
+.opentrace/
+otindex.db
+otindex.db.wal
+
 # Developer Files
 config.yaml

@@ -5,9 +5,7 @@
       "command": "uvx",
       "args": [
         "opentraceai",
-        "mcp",
-        "--db",
-        "./otindex.db"
+        "mcp"
       ],
       "description": "OpenTrace knowledge graph tools (queries a local indexed codebase)."
     }
