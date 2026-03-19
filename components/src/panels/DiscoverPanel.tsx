@@ -140,7 +140,6 @@ function flattenTree(
             id: `__loading_${node.id}`,
             name: 'Loading...',
             type: '__loading',
-            properties: {},
           },
           depth: depth + 1,
           expandable: false,
