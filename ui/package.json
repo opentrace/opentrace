@@ -66,20 +66,7 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0",
-    "@react-sigma/core": "^5.0.0",
-    "@react-sigma/layout-forceatlas2": "^5.0.0",
-    "@sigma/edge-curve": "^3.0.0",
-    "graphology": "^0.26.0",
-    "graphology-communities-louvain": "^2.0.0",
-    "graphology-types": "^0.24.0",
-    "sigma": "^3.0.0",
-    "d3-force": "^3.0.0"
-  },
-  "peerDependenciesMeta": {
-    "d3-force": {
-      "optional": true
-    }
+    "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

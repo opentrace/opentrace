@@ -42,34 +42,13 @@ export default defineConfig({
         `opentrace-components.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      // Externalize peer dependencies — consumers provide these
-      external: [
-        'react',
-        'react-dom',
-        'react/jsx-runtime',
-        // Sigma ecosystem — large, likely shared
-        'sigma',
-        'sigma/rendering',
-        '@react-sigma/core',
-        '@react-sigma/layout-forceatlas2',
-        '@sigma/edge-curve',
-        'graphology',
-        'graphology-communities-louvain',
-        'graphology-layout-forceatlas2',
-        'graphology-layout-noverlap',
-        'graphology-types',
-        // d3-force is used by the layout worker
-        'd3-force',
-      ],
+      // Only externalize React — everything else is bundled
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
       output: {
-        // Preserve module structure for tree-shaking
-        preserveModules: false,
         globals: {
           react: 'React',
           'react-dom': 'ReactDOM',
           'react/jsx-runtime': 'jsxRuntime',
-          sigma: 'Sigma',
-          graphology: 'Graphology',
         },
       },
     },
