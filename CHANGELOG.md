@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Use GitHub App token for changelog push to main (#88) ([#88](https://github.com/opentrace/opentrace/pull/88))
 - **ci:** Skip non-conventional commits in changelog generation (#89) ([#89](https://github.com/opentrace/opentrace/pull/89))
 - **ci:** Correct PyPI pre-release version ordering (#99) ([#99](https://github.com/opentrace/opentrace/pull/99))
+- **ui:** Fix Gemini tool schema compat and make Gemini default provider (#101) ([#101](https://github.com/opentrace/opentrace/pull/101))
 
 ### CI/CD
 
@@ -33,6 +34,7 @@ All notable changes to this project will be documented in this file.
 
 - Update README with repo structure, Claude Code plugin, and static build
 - Add open-source README, CONTRIBUTING, and SECURITY guides (#65) ([#65](https://github.com/opentrace/opentrace/pull/65))
+- Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
 - Update CHANGELOG.md [skip ci]
