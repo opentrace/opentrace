@@ -94,16 +94,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Wait for run to appear
-        run: sleep 5
-
-      - name: Watch triggered run until completion
-        run: |
-          RUN_ID=$(gh run list -w npm-publish.yml -L 1 --json databaseId -q '.[0].databaseId')
-          echo "Watching run $RUN_ID"
-          gh run watch "$RUN_ID" --exit-status
-        env:
-          GH_TOKEN: ${{ github.token }}
+  publish-npm:
+    needs: npm-version
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      version: ${{ needs.npm-version.outputs.version }}
+      tag: latest
 
   publish-pypi:
     name: Publish to PyPI
