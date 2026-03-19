@@ -201,35 +201,7 @@ header h1 {
   border-color: color-mix(in oklch, var(--primary) 30%, transparent);
 }
 
-.badge {
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-  background: color-mix(in oklch, var(--background) 85%, transparent);
-  backdrop-filter: blur(8px);
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 14px;
-  border-radius: calc(var(--radius) + 2px);
-  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
-  pointer-events: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.badge-rendered {
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.badge-total {
-  color: var(--muted-foreground);
-  font-weight: 400;
-}
-
-.badge-sep {
-  margin: 0 3px;
-}
+/* GraphBadge styles are now in @opentrace/components */
 
 .add-repo-btn {
   margin-left: auto;
@@ -1155,7 +1127,7 @@ header h1 {
   }
 
   /* Badge as menu row */
-  .header-menu .badge {
+  .header-menu .graph-badge {
     border: none;
     border-radius: 0;
     background: transparent;

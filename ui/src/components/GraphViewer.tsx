@@ -42,6 +42,7 @@ import {
   useHighlights,
 } from '@opentrace/components/utils';
 import {
+  GraphBadge,
   GraphLegend,
   type FilterItem,
   type FilterPanelProps,
@@ -1395,23 +1396,12 @@ const GraphViewer = memo(
                   Show All
                 </button>
               )}
-              <span className="badge">
-                <span className="badge-rendered">
-                  {filteredGraphData.nodes.length}
-                </span>
-                {stats && (
-                  <span className="badge-total">({stats.total_nodes})</span>
-                )}
-                <span>nodes</span>
-                <span className="badge-sep">&middot;</span>
-                <span className="badge-rendered">
-                  {filteredGraphData.links.length}
-                </span>
-                {stats && (
-                  <span className="badge-total">({stats.total_edges})</span>
-                )}
-                <span>edges</span>
-              </span>
+              <GraphBadge
+                nodeCount={filteredGraphData.nodes.length}
+                edgeCount={filteredGraphData.links.length}
+                totalNodes={stats?.total_nodes}
+                totalEdges={stats?.total_edges}
+              />
               {(jobState.status === 'enriching' ||
                 jobState.status === 'done') &&
               !jobExpanded ? (

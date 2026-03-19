@@ -60,6 +60,19 @@ export interface GraphLegendProps {
   maxVisible?: number;
 }
 
+// ─── GraphBadge types ────────────────────────────────────────────────
+
+export interface GraphBadgeProps {
+  /** Number of currently rendered/filtered nodes. */
+  nodeCount: number;
+  /** Number of currently rendered/filtered edges. */
+  edgeCount: number;
+  /** Total node count from the API (shown in parentheses). */
+  totalNodes?: number;
+  /** Total edge count from the API (shown in parentheses). */
+  totalEdges?: number;
+}
+
 // ─── DiscoverPanel types ────────────────────────────────────────────
 
 export interface TreeNodeData {
