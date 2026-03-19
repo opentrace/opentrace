@@ -32,11 +32,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     lib: {
-      entry: resolve(__dirname, 'src/index.ts'),
+      entry: {
+        'opentrace-components': resolve(__dirname, 'src/index.ts'),
+        utils: resolve(__dirname, 'src/utils.ts'),
+      },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],
-      fileName: (format) =>
-        `opentrace-components.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
       // Only externalize React — everything else is bundled

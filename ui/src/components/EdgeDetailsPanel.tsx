@@ -14,9 +14,8 @@
  * limitations under the License.
  */
 
-import type { SelectedEdge } from '../types/graph';
-import { getLinkColor } from '../chat/results/linkColors';
-import { getNodeColor } from '../chat/results/nodeColors';
+import type { SelectedEdge } from '@opentrace/components/utils';
+import { getLinkColor, getNodeColor } from '@opentrace/components/utils';
 import './EdgeDetailsPanel.css';
 
 interface EdgeDetailsPanelProps {

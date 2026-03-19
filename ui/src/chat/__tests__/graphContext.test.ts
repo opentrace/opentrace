@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildGraphContext } from '../graphContext';
-import type { GraphNode, GraphLink } from '../../types/graph';
+import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 
 function makeNodes(types: string[]): GraphNode[] {
   return types.map((t, i) => ({ id: `n${i}`, name: `Node${i}`, type: t }));

@@ -20,6 +20,7 @@
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.2.12",
     "@lbug/lbug-wasm": "^0.13.1",
+    "@opentrace/components": "file:../components",
     "@react-sigma/core": "^5.0.6",
     "@react-sigma/layout-forceatlas2": "^5.0.6",
     "@sigma/edge-curve": "^3.1.0",

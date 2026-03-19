@@ -15,10 +15,10 @@
  */
 
 import { type ReactNode, useState } from 'react';
-import type { SelectedNode } from '../types/graph';
+import type { SelectedNode } from '@opentrace/components/utils';
+import { getNodeColor } from '@opentrace/components/utils';
 import type { NodeSourceResponse } from '../store/types';
 import { IMAGE_MIME_TYPES } from '../runner/browser/loader/constants';
-import { getNodeColor } from '../chat/results/nodeColors';
 import { Highlight, themes } from 'prism-react-renderer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';

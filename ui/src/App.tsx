@@ -21,7 +21,7 @@ import GraphViewer from './components/GraphViewer';
 import type { GraphViewerHandle } from './components/GraphViewer';
 import ChatPanel from './components/ChatPanel';
 import SettingsDrawer from './components/SettingsDrawer';
-import type { GraphNode, GraphLink } from './types/graph';
+import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import './App.css';
 
 const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {

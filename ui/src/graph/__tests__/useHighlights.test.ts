@@ -18,8 +18,12 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import Graph from 'graphology';
-import { useHighlights } from '../useHighlights';
-import type { GraphNode, GraphLink, FilterState } from '../types';
+import { useHighlights } from '@opentrace/components/utils';
+import type {
+  GraphNode,
+  GraphLink,
+  FilterState,
+} from '@opentrace/components/utils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 

@@ -115,14 +115,14 @@ export const LOUVAIN_RESOLUTION = 1.0;
 // ─── Bundled LayoutConfig ──────────────────────────────────────────────
 // Same values as above, bundled into a single object for passing to hooks/components.
 
-import type { LayoutConfig } from '../graph/types';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
+import type { LayoutConfig } from '@opentrace/components/utils';
 import {
+  getNodeColor,
+  getLinkColor,
   buildCommunityColorMap,
   buildCommunityNames,
   getCommunityColor,
-} from '../chat/results/communityColors';
+} from '@opentrace/components/utils';
 
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   linkDistance: FORCE_LINK_DISTANCE,

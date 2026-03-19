@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getNodeColor } from '../nodeColors';
+import { getNodeColor } from '@opentrace/components/utils';
 
 describe('getNodeColor', () => {
   it('returns fixed color for known node types', () => {

@@ -18,6 +18,11 @@
       "import": "./dist/opentrace-components.js",
       "require": "./dist/opentrace-components.cjs"
     },
+    "./utils": {
+      "types": "./dist/src/utils.d.ts",
+      "import": "./dist/utils.js",
+      "require": "./dist/utils.cjs"
+    },
     "./style.css": "./dist/components.css"
   },
   "files": [

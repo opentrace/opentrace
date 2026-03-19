@@ -33,21 +33,32 @@ import type {
   GraphLink,
   SelectedNode,
   SelectedEdge,
-} from '../types/graph';
-import type { NodeSourceResponse } from '../store/types';
-import { useStore } from '../store';
-import { getNodeColor } from '../chat/results/nodeColors';
-import { getLinkColor } from '../chat/results/linkColors';
-import { useGraphData } from '../hooks/useGraphData';
+  FilterState,
+} from '@opentrace/components/utils';
+import {
+  getNodeColor,
+  getLinkColor,
+  useCommunities,
+  useHighlights,
+} from '@opentrace/components/utils';
 import { useGraphInstance } from '../graph/useGraphInstance';
 import { useGraphFilters } from '../graph/useGraphFilters';
 import { useGraphVisuals } from '../graph/useGraphVisuals';
-import { useCommunities } from '../graph/useCommunities';
-import { useHighlights } from '../graph/useHighlights';
 import LayoutPipeline, { type OptimizeStatus } from '../graph/LayoutPipeline';
 import { drawNodeHover } from '../graph/drawNodeHover';
-import { DEFAULT_LAYOUT_CONFIG } from '../config/graphLayout';
-import type { FilterState } from '../graph/types';
+import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
+import {
+  DEFAULT_LAYOUT_CONFIG,
+  ZOOM_SIZE_EXPONENT,
+  EDGE_PROGRAM_THRESHOLD,
+  LABEL_RENDERED_SIZE_THRESHOLD,
+  LABEL_SIZE,
+  LABEL_FONT,
+  LABEL_COLOR,
+} from '../config/graphLayout';
+import type { NodeSourceResponse } from '../store/types';
+import { useStore } from '../store';
+import { useGraphData } from '../hooks/useGraphData';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
 import { detectProvider } from './AddRepoModal';
@@ -60,15 +71,6 @@ import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
 import GraphEvents from './sigma/GraphEvents';
-import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
-import {
-  ZOOM_SIZE_EXPONENT,
-  EDGE_PROGRAM_THRESHOLD,
-  LABEL_RENDERED_SIZE_THRESHOLD,
-  LABEL_SIZE,
-  LABEL_FONT,
-  LABEL_COLOR,
-} from '../config/graphLayout';
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);

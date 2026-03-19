@@ -18,7 +18,7 @@ import { useEffect, useRef } from 'react';
 import { useSigma } from '@react-sigma/core';
 import { useWorkerLayoutForceAtlas2 } from '@react-sigma/layout-forceatlas2';
 import noverlap from 'graphology-layout-noverlap';
-import { zoomToFit } from './zoomToNodes';
+import { zoomToFit } from '@opentrace/components';
 import {
   FA2_ENABLED,
   FA2_GRAVITY,

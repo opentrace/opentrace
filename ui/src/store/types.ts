@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { GraphData, GraphStats } from '../types/graph';
+import type { GraphData, GraphStats } from '@opentrace/components/utils';
 
 // ---- Shared result types (previously in kuzuProtocol.ts) ----
 

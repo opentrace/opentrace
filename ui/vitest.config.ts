@@ -15,8 +15,16 @@
  */
 
 import { defineConfig } from 'vitest/config';
+import { resolve } from 'path';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // Dedupe React so @opentrace/components uses the same instance as ui/
+      react: resolve(__dirname, 'node_modules/react'),
+      'react-dom': resolve(__dirname, 'node_modules/react-dom'),
+    },
+  },
   test: {
     include: ['src/**/__tests__/**/*.test.{ts,tsx}'],
     environment: 'node',

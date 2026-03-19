@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { List, useListRef } from 'react-window';
 import type { RowComponentProps } from 'react-window';
 import { useStore } from '../store/context';
-import { getNodeColor } from '../chat/results/nodeColors';
+import { getNodeColor } from '@opentrace/components/utils';
 import { PARSEABLE_EXTENSIONS } from '../runner/browser/loader/constants';
 import type { NodeResult } from '../store/types';
 import './DiscoverPanel.css';

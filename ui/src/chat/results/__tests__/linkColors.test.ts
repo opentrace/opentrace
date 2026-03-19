@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getLinkColor } from '../linkColors';
+import { getLinkColor } from '@opentrace/components/utils';
 
 describe('getLinkColor', () => {
   it('returns fixed color for known relationship types', () => {

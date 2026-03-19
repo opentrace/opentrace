@@ -15,7 +15,7 @@
  */
 
 import { Fragment } from 'react';
-import { getNodeColor } from './nodeColors';
+import { getNodeColor } from '@opentrace/components/utils';
 import type { NodeResult } from './parsers';
 
 interface Props {
