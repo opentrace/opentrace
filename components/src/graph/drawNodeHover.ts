@@ -26,6 +26,17 @@ import type { Settings } from 'sigma/settings';
 
 type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 
+// ─── Hovered-node gate ──────────────────────────────────────────────
+// When nodes are `highlighted: true` (for z-ordering), sigma calls
+// drawHover for ALL of them. We only want the tooltip for the one
+// actually being hovered, so GraphEvents updates this key on
+// enterNode / leaveNode.
+
+let _hoveredNodeKey: string | null = null;
+export function setHoveredNodeKey(key: string | null): void {
+  _hoveredNodeKey = key;
+}
+
 // ─── Theme color cache ──────────────────────────────────────────────
 
 interface ThemeColors {
@@ -63,14 +74,24 @@ export function drawNodeHover<
   data: PartialButFor<NodeDisplayData, 'x' | 'y' | 'size' | 'label' | 'color'>,
   settings: Settings<N, E, G>,
 ): void {
+  // Only draw hover tooltip for the actually hovered node, not all highlighted nodes
+  const key = (data as Record<string, unknown>).key as string | undefined;
+  if (key && _hoveredNodeKey !== null && key !== _hoveredNodeKey) return;
+
   const size = settings.labelSize;
   const font = settings.labelFont;
   const weight = settings.labelWeight;
   const colors = resolveThemeColors();
   const PADDING = 4;
 
-  const label = typeof data.label === 'string' ? data.label : '';
   const extras = data as Record<string, unknown>;
+  // label may be null on dimmed nodes — fall back to the preserved original
+  const label =
+    typeof data.label === 'string'
+      ? data.label
+      : typeof extras._originalLabel === 'string'
+        ? extras._originalLabel
+        : '';
   const nodeType = extras.nodeType as string | undefined;
   const communityName = extras._communityName as string | undefined;
   const subtitle = [nodeType, communityName].filter(Boolean).join(' · ');
