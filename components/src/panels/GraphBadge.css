@@ -1,0 +1,45 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.graph-badge {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--background) 85%, transparent);
+  backdrop-filter: blur(8px);
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px;
+  border-radius: calc(var(--radius) + 2px);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  pointer-events: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.graph-badge-rendered {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.graph-badge-total {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+.graph-badge-sep {
+  margin: 0 3px;
+}

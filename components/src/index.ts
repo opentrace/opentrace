@@ -102,10 +102,11 @@ export {
 } from './colors/communityColors';
 
 // ─── Panel components ───────────────────────────────────────────────────
-export { FilterPanel, GraphLegend, DiscoverPanel } from './panels';
+export { FilterPanel, GraphBadge, GraphLegend, DiscoverPanel } from './panels';
 export type {
   FilterItem,
   FilterPanelProps,
+  GraphBadgeProps,
   LegendItem,
   GraphLegendProps,
   TreeNodeData,

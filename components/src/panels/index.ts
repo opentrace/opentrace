@@ -15,12 +15,14 @@
  */
 
 export { default as FilterPanel } from './FilterPanel';
+export { default as GraphBadge } from './GraphBadge';
 export { default as GraphLegend } from './GraphLegend';
 export { default as DiscoverPanel } from './DiscoverPanel';
 
 export type {
   FilterItem,
   FilterPanelProps,
+  GraphBadgeProps,
   LegendItem,
   GraphLegendProps,
   TreeNodeData,
