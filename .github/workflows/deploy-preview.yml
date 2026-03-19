@@ -24,7 +24,7 @@ jobs:
 
       - name: Watch triggered run until completion
         run: |
-          RUN_ID=$(gh run list -R opentrace/opentrace-deployment -w repository_dispatch -L 1 --json databaseId -q '.[0].databaseId')
+          RUN_ID=$(gh run list -R opentrace/opentrace-deployment -e repository_dispatch -L 1 --json databaseId -q '.[0].databaseId')
           echo "Watching opentrace-deployment run $RUN_ID"
           gh run watch "$RUN_ID" -R opentrace/opentrace-deployment --exit-status
         env:
