@@ -45,6 +45,6 @@ SAFE_DB_SIZE=$(json_escape "${DB_SIZE}")
 
 cat <<EOF
 {
-  "additionalContext": "OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}, size: ${SAFE_DB_SIZE}). Use the @code-explorer, @dependency-analyzer, @find-usages, or @explain-service agents to query the indexed codebase structure. Use the /explore or /graph-status commands for quick lookups. The graph contains indexed services, classes, functions, files, and their relationships — prefer it over raw Grep/Glob when answering structural or architectural questions."
+  "additionalContext": "OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}, size: ${SAFE_DB_SIZE}). The graph indexes files, directories, classes, functions, modules, services, and their relationships — not just code symbols. Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions. Call get_stats early to see exactly what node types and counts are indexed."
 }
 EOF
