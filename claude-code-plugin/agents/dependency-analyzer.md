@@ -4,6 +4,15 @@ description: |
   Analyzes dependencies and blast radius for code changes. Maps what depends on a
   given component and what it depends on. Use this agent to assess the impact of
   changes before making them.
+
+  Use this agent when the user asks:
+  - "What will this change break?" or "Is it safe to change X?"
+  - "What uses X?" or "What depends on X?"
+  - "What's the blast radius?" or "What's the impact of changing X?"
+  - "What are the dependencies of X?"
+  - "Show me upstream/downstream consumers"
+  - "Which services will be affected if I modify X?"
+  - Any question about change impact, risk assessment, or dependency mapping
 tools: mcp__opentrace_oss__traverse_graph, mcp__opentrace_oss__get_node, mcp__opentrace_oss__search_graph, mcp__opentrace_oss__list_nodes, mcp__opentrace_oss__get_stats
 ---
 
