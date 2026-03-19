@@ -85,24 +85,13 @@ jobs:
           git push
 
   publish-npm:
-    name: Publish to npm
+    name: Dispatch npm publish
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch npm publish workflow
-        run: gh workflow run npm-publish.yml -f version="${GITHUB_REF_NAME#v}" -f tag=latest
+      - run: gh workflow run npm-publish.yml -f version="${GITHUB_REF_NAME#v}" -f tag=latest
         env:
           GH_TOKEN: ${{ github.token }}
-
-  publish-npm:
-    needs: npm-version
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      version: ${{ needs.npm-version.outputs.version }}
-      tag: latest
 
   publish-pypi:
     name: Publish to PyPI

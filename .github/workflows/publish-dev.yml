@@ -41,30 +41,3 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: agent/dist/
-
-  npm-version:
-    name: Compute npm rc version
-    needs: changes
-    if: needs.changes.outputs.components == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-      - id: version
-        working-directory: components
-        run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
-          VERSION="${BASE_VERSION}-rc.${GITHUB_RUN_NUMBER}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-  publish-npm-dev:
-    name: Publish dev to npm
-    needs: npm-version
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      version: ${{ needs.npm-version.outputs.version }}
-      tag: next
