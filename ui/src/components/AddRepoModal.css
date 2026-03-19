@@ -350,6 +350,31 @@
   background: color-mix(in oklch, var(--primary) 8%, transparent);
 }
 
+.example-repo-size {
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  line-height: 1.3;
+}
+
+.example-repo-size--s {
+  color: #4ade80;
+  background: color-mix(in oklch, #4ade80 12%, transparent);
+}
+
+.example-repo-size--m {
+  color: #fbbf24;
+  background: color-mix(in oklch, #fbbf24 12%, transparent);
+}
+
+.example-repo-size--l {
+  color: #f87171;
+  background: color-mix(in oklch, #f87171 12%, transparent);
+}
+
 /* ── CTA Button ──────────────────────────────── */
 .btn-cta {
   display: flex;

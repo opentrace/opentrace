@@ -244,26 +244,49 @@ const PROVIDER_DISPLAY_NAME: Record<string, string> = {
 
 // --- Example Repositories ---
 
-const EXAMPLE_REPOS = [
+type RepoSize = 'S' | 'M' | 'L';
+
+const EXAMPLE_REPOS: {
+  name: string;
+  url: string;
+  description: string;
+  size: RepoSize;
+}[] = [
   {
     name: 'OpenTrace',
     url: 'https://github.com/opentrace/opentrace',
     description: 'Knowledge graph for system architecture and code structure',
+    size: 'M',
   },
   {
     name: 'OpenTelemetry Demo',
     url: 'https://github.com/open-telemetry/opentelemetry-demo',
     description: 'Microservices demo with OTel instrumentation',
+    size: 'M',
   },
   {
     name: 'Express.js',
     url: 'https://github.com/expressjs/express',
     description: 'Fast, minimalist web framework for Node.js',
+    size: 'S',
   },
   {
     name: 'Podinfo',
     url: 'https://github.com/stefanprodan/podinfo',
     description: 'Go microservice template for Kubernetes',
+    size: 'S',
+  },
+  {
+    name: 'Grafana',
+    url: 'https://github.com/grafana/grafana',
+    description: 'Open-source observability and monitoring platform',
+    size: 'L',
+  },
+  {
+    name: 'Linux',
+    url: 'https://github.com/torvalds/linux',
+    description: 'Linux kernel source tree',
+    size: 'L',
   },
 ];
 
@@ -487,6 +510,11 @@ export default function AddRepoModal({
                         title={repo.description}
                       >
                         {repo.name}
+                        <span
+                          className={`example-repo-size example-repo-size--${repo.size.toLowerCase()}`}
+                        >
+                          {repo.size}
+                        </span>
                       </button>
                     ))}
                   </div>
