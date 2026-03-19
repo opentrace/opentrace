@@ -91,8 +91,6 @@ export interface DiscoverPanelProps {
   graphNodeIds?: string[];
   /** Map of node ID → hop distance from selected node */
   hopMap?: Map<string, number>;
-  /** Whether this panel tab is currently active/visible */
-  isActive?: boolean;
   /** Whether a node can be expanded. Defaults to Repository, Directory, File, Class, PullRequest types. */
   isExpandable?: (node: TreeNodeData) => boolean;
   /** Whether the tree is still loading its initial data */

@@ -275,7 +275,6 @@ export default function DiscoverPanel({
   selectedNodeId,
   graphNodeIds,
   hopMap,
-  isActive,
   isExpandable = defaultIsExpandable,
   loading,
 }: DiscoverPanelProps) {
