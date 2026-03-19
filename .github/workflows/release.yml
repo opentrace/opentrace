@@ -84,25 +84,14 @@ jobs:
           git diff --cached --quiet || git commit -m "chore(release): bump to ${VERSION} and update changelog [skip ci]"
           git push
 
-  npm-version:
-    name: Extract npm version from tag
+  publish-npm:
+    name: Dispatch npm publish
     needs: release
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     steps:
-      - id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-  publish-npm:
-    needs: npm-version
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      version: ${{ needs.npm-version.outputs.version }}
-      tag: latest
+      - run: gh workflow run npm-publish.yml -f version="${GITHUB_REF_NAME#v}" -f tag=latest
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   publish-pypi:
     name: Publish to PyPI

@@ -1,10 +1,18 @@
 name: npm Publish
 
 on:
-  workflow_call:
+  pull_request:
+    types: [labeled, synchronize]
+    paths:
+      - "components/**"
+  push:
+    branches: [main]
+    paths:
+      - "components/**"
+  workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. 0.1.1, 0.1.1-rc.5, 0.1.1-pr.110.3)"
+        description: "Exact version to publish (e.g. 0.2.0)"
         required: true
         type: string
       tag:
@@ -13,8 +21,37 @@ on:
         type: string
 
 jobs:
+  version:
+    name: Compute version
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview-npm'))
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        working-directory: components
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BASE_VERSION=$(node -p "require('./package.json').version")
+            echo "version=${BASE_VERSION}-rc.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          else
+            BASE_VERSION=$(node -p "require('./package.json').version")
+            echo "version=${BASE_VERSION}-pr.${{ github.event.pull_request.number }}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "tag=preview" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
     name: Publish to npm
+    needs: version
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,8 +67,8 @@ jobs:
       - name: Set version
         working-directory: components
         run: |
-          npm version "${{ inputs.version }}" --no-git-tag-version
-          echo "Publishing @opentrace/components@${{ inputs.version }} with tag ${{ inputs.tag }}"
+          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
+          echo "Publishing @opentrace/components@${{ needs.version.outputs.version }} with tag ${{ needs.version.outputs.tag }}"
 
       - name: Install dependencies
         working-directory: components
@@ -43,4 +80,51 @@ jobs:
 
       - name: Publish to npm
         working-directory: components
-        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ inputs.tag }}" --loglevel verbose
+        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ needs.version.outputs.tag }}"
+
+  comment:
+    name: Comment on PR
+    if: github.event_name == 'pull_request'
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          PREVIEW_VERSION: ${{ needs.version.outputs.version }}
+        with:
+          script: |
+            const marker = '<!-- opentrace-components-preview -->';
+            const body = [
+              marker,
+              `📦 Preview published: \`@opentrace/components@${process.env.PREVIEW_VERSION}\``,
+              '',
+              '```bash',
+              `npm install @opentrace/components@${process.env.PREVIEW_VERSION}`,
+              '```',
+              '',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
