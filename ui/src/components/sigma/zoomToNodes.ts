@@ -59,22 +59,29 @@ export function zoomToNodes(
     return;
   }
 
-  // Measure visible framed-graph extent at the current camera ratio.
-  // Since visible_extent ∝ camera.ratio, we can scale proportionally.
+  // Compute the target ratio absolutely (camera-state-independent) by
+  // measuring the full visible extent at ratio=1 as a fixed reference.
+  // This avoids incorrect results when the camera is mid-animation.
+  const refState = { x: 0.5, y: 0.5, ratio: 1, angle: 0 };
   const { width, height } = sigma.getDimensions();
-  const topLeft = sigma.viewportToFramedGraph({ x: 0, y: 0 });
-  const bottomRight = sigma.viewportToFramedGraph({ x: width, y: height });
-  const visibleW = Math.abs(bottomRight.x - topLeft.x);
-  const visibleH = Math.abs(topLeft.y - bottomRight.y);
-  const currentRatio = camera.ratio;
+  const topLeft = sigma.viewportToFramedGraph(
+    { x: 0, y: 0 },
+    { cameraState: refState },
+  );
+  const bottomRight = sigma.viewportToFramedGraph(
+    { x: width, y: height },
+    { cameraState: refState },
+  );
+  const fullW = Math.abs(bottomRight.x - topLeft.x);
+  const fullH = Math.abs(topLeft.y - bottomRight.y);
 
   const bboxW = maxX - minX;
   const bboxH = maxY - minY;
 
-  // How much of the current visible area the bbox would occupy (with padding)
-  const scaleX = visibleW > 0 ? bboxW / (visibleW * (1 - 2 * padding)) : 1;
-  const scaleY = visibleH > 0 ? bboxH / (visibleH * (1 - 2 * padding)) : 1;
-  const ratio = Math.max(currentRatio * Math.max(scaleX, scaleY), 0.01);
+  // At ratio=1 the full extent is visible; scale proportionally for the bbox
+  const scaleX = fullW > 0 ? bboxW / (fullW * (1 - 2 * padding)) : 1;
+  const scaleY = fullH > 0 ? bboxH / (fullH * (1 - 2 * padding)) : 1;
+  const ratio = Math.max(Math.max(scaleX, scaleY), 0.01);
 
   camera.animate({ x: cx, y: cy, ratio }, { duration });
 }

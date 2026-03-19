@@ -92,9 +92,10 @@ export function useGraphVisuals(
           : attrs._typeColor) as string | undefined) ??
         getNodeColor(attrs.nodeType as string);
 
-      // Preserve original size so we can restore it when un-dimmed
-      if (attrs._baseSize === undefined) attrs._baseSize = attrs.size;
-      const baseSize = attrs._baseSize as number;
+      // _baseSize and _originalLabel are set once at graph construction
+      // (useGraphInstance) so they always reflect the true source values.
+      const baseSize = (attrs._baseSize as number) ?? attrs.size;
+      const originalLabel = (attrs._originalLabel as string | null) ?? attrs.label;
 
       attrs.color = isHighlighted
         ? baseColor
@@ -105,8 +106,7 @@ export function useGraphVisuals(
           : baseSize;
       attrs.borderColor = isSelected ? baseColor : undefined;
       attrs.borderSize = isSelected ? 3 : 0;
-      if (attrs._originalLabel === undefined) attrs._originalLabel = attrs.label;
-      attrs.label = hasHighlight && !isHighlighted ? null : (attrs._originalLabel as string | null);
+      attrs.label = hasHighlight && !isHighlighted ? null : originalLabel;
       attrs.forceLabel = showLabel && hasHighlight;
       attrs.zIndex = isSelected ? 2 : isHighlighted && hasHighlight ? 1 : 0;
       // highlighted → renders on sigma's hoverNodes layer (above edges canvas)
