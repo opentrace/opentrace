@@ -14,7 +14,8 @@
 # limitations under the License.
 
 # SessionStart hook: inject OpenTrace graph awareness into the session.
-# Checks for an otindex.db in common locations and tells Claude about the graph.
+# Checks for an otindex.db in common locations, runs `opentraceai stats` to
+# show what's indexed, and tells Claude about the available tools.
 
 set -euo pipefail
 
@@ -32,8 +33,11 @@ if [ -z "$DB_PATH" ]; then
   exit 0
 fi
 
-# Get basic stats if the MCP server is queryable (best-effort)
-DB_SIZE=$(du -sh "$DB_PATH" 2>/dev/null | cut -f1 || echo "unknown")
+# Get graph stats (best-effort, timeout 10s)
+GRAPH_STATS=""
+if command -v uvx &>/dev/null; then
+  GRAPH_STATS=$(timeout 10 uvx opentraceai stats --db "$DB_PATH" 2>/dev/null || true)
+fi
 
 # Escape values for safe JSON embedding
 json_escape() {
@@ -41,10 +45,16 @@ json_escape() {
 }
 
 SAFE_DB_PATH=$(json_escape "${DB_PATH}")
-SAFE_DB_SIZE=$(json_escape "${DB_SIZE}")
+
+if [ -n "$GRAPH_STATS" ]; then
+  SAFE_STATS=$(json_escape "${GRAPH_STATS}")
+  CONTEXT="OpenTrace knowledge graph is available (${SAFE_STATS}). The graph indexes files, directories, classes, functions, modules, services, and their relationships — not just code symbols. Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions."
+else
+  CONTEXT="OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}). Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions. Call get_stats to see what's indexed."
+fi
 
 cat <<EOF
 {
-  "additionalContext": "OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}, size: ${SAFE_DB_SIZE}). The graph indexes files, directories, classes, functions, modules, services, and their relationships — not just code symbols. Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions. Call get_stats early to see exactly what node types and counts are indexed."
+  "additionalContext": "${CONTEXT}"
 }
 EOF

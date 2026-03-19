@@ -113,6 +113,45 @@ def _print_event(event: object, verbose: bool) -> None:
             click.echo(f"    {err}", err=True)
 
 
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default="./otindex.db",
+    show_default=True,
+    type=click.Path(exists=True),
+    help="OpenTrace database path.",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format.",
+)
+def stats(db_path: str, output_format: str) -> None:
+    """Display graph statistics."""
+    import json
+
+    from opentrace_agent.store import KuzuStore
+
+    store = KuzuStore(db_path, read_only=True)
+    try:
+        data = store.get_stats()
+    finally:
+        store.close()
+
+    if output_format == "json":
+        click.echo(json.dumps(data))
+        return
+
+    # text: compact, prompt-friendly format
+    nodes_by_type = data.get("nodes_by_type", {})
+    parts = [f"{count} {ntype}" for ntype, count in sorted(nodes_by_type.items(), key=lambda x: -x[1])]
+    click.echo(f"{data['total_nodes']} nodes, {data['total_edges']} edges: {', '.join(parts)}")
+
+
 @app.command("mcp")
 @click.option(
     "--db",
