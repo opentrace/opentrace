@@ -326,6 +326,14 @@ export default function DiscoverPanelContainer({
     };
   }, [selectedNodeId, store, loadChildren, findNodeType, expanded]);
 
+  if (loading) {
+    return (
+      <div className="discover-panel">
+        <div className="discover-panel-empty">Loading repositories...</div>
+      </div>
+    );
+  }
+
   return (
     <DiscoverPanel
       roots={roots}
@@ -338,7 +346,6 @@ export default function DiscoverPanelContainer({
       graphNodeIds={graphNodeIds}
       hopMap={hopMap}
       isExpandable={isExpandable}
-      loading={loading}
     />
   );
 }

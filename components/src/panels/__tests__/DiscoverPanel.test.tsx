@@ -76,13 +76,6 @@ function makeProps(
 }
 
 describe('DiscoverPanel', () => {
-  it('renders loading state', () => {
-    const { getByText } = render(
-      React.createElement(DiscoverPanel, makeProps({ loading: true })),
-    );
-    expect(getByText('Loading repositories...')).toBeDefined();
-  });
-
   it('renders empty state when no roots', () => {
     const { getByText } = render(
       React.createElement(DiscoverPanel, makeProps({ roots: [] })),

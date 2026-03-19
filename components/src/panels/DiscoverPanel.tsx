@@ -279,7 +279,6 @@ export default function DiscoverPanel({
   graphNodeIds,
   hopMap,
   isExpandable = defaultIsExpandable,
-  loading,
 }: DiscoverPanelProps) {
   const [filter, setFilter] = useState('');
   const [hideOffGraph, setHideOffGraph] = useState(false);
@@ -363,14 +362,6 @@ export default function DiscoverPanel({
       onSelectNode,
     ],
   );
-
-  if (loading) {
-    return (
-      <div className="discover-panel">
-        <div className="discover-panel-empty">Loading repositories...</div>
-      </div>
-    );
-  }
 
   if (roots.length === 0) {
     return (
