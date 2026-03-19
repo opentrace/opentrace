@@ -23,22 +23,22 @@ import {
   useMemo,
   useRef,
   useState,
-} from 'react';
-import { SigmaContainer, useSigma } from '@react-sigma/core';
-import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
-import { EdgeLineProgram } from 'sigma/rendering';
-import '@react-sigma/core/lib/style.css';
+} from "react";
+import { SigmaContainer, useSigma } from "@react-sigma/core";
+import { EdgeCurvedArrowProgram } from "@sigma/edge-curve";
+import { EdgeLineProgram } from "sigma/rendering";
+import "@react-sigma/core/lib/style.css";
 
-import type { GraphNode, GraphLink, SelectedEdge } from './types/graph';
-import type { LayoutConfig, FilterState, VisualState } from './graph/types';
-import { useGraphInstance } from './graph/useGraphInstance';
-import { useGraphFilters } from './graph/useGraphFilters';
-import { useGraphVisuals } from './graph/useGraphVisuals';
-import { useCommunities } from './graph/useCommunities';
-import { useHighlights } from './graph/useHighlights';
-import LayoutPipeline, { type OptimizeStatus } from './graph/LayoutPipeline';
-import { drawNodeHover } from './graph/drawNodeHover';
-import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
+import type { GraphNode, GraphLink, SelectedEdge } from "./types/graph";
+import type { LayoutConfig, FilterState, VisualState } from "./graph/types";
+import { useGraphInstance } from "./graph/useGraphInstance";
+import { useGraphFilters } from "./graph/useGraphFilters";
+import { useGraphVisuals } from "./graph/useGraphVisuals";
+import { useCommunities } from "./graph/useCommunities";
+import { useHighlights } from "./graph/useHighlights";
+import LayoutPipeline, { type OptimizeStatus } from "./graph/LayoutPipeline";
+import { drawNodeHover } from "./graph/drawNodeHover";
+import { zoomToNodes, zoomToFit } from "./sigma/zoomToNodes";
 import {
   ZOOM_SIZE_EXPONENT,
   EDGE_PROGRAM_THRESHOLD,
@@ -47,8 +47,8 @@ import {
   LABEL_FONT,
   LABEL_COLOR,
   DEFAULT_LAYOUT_CONFIG,
-} from './config/graphLayout';
-import type { GetSubTypeFn } from './graph/types';
+} from "./config/graphLayout";
+import type { GetSubTypeFn } from "./graph/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ export interface GraphCanvasProps {
   /** Layout and color configuration. Defaults to DEFAULT_LAYOUT_CONFIG. */
   layoutConfig?: LayoutConfig;
   /** Color mode for nodes — 'type' uses node type colors, 'community' uses Louvain community colors. */
-  colorMode?: 'type' | 'community';
+  colorMode?: "type" | "community";
   /** Set of node type strings to hide. */
   hiddenNodeTypes?: Set<string>;
   /** Set of link label strings to hide. */
@@ -145,16 +145,16 @@ function GraphEventHandler({
 
     const handlers = {
       enterNode: () => {
-        container.style.cursor = 'pointer';
+        container.style.cursor = "pointer";
       },
       leaveNode: () => {
-        container.style.cursor = 'default';
+        container.style.cursor = "default";
       },
       enterEdge: () => {
-        container.style.cursor = 'pointer';
+        container.style.cursor = "pointer";
       },
       leaveEdge: () => {
-        container.style.cursor = 'default';
+        container.style.cursor = "default";
       },
       clickNode: ({ node }: { node: string }) => {
         if (!onNodeClick) return;
@@ -172,7 +172,7 @@ function GraphEventHandler({
         onEdgeClick({
           source,
           target,
-          label: (attrs.label as string) || 'unknown',
+          label: (attrs.label as string) || "unknown",
           properties: (
             attrs._graphLink as { properties?: Record<string, unknown> }
           )?.properties,
@@ -186,22 +186,22 @@ function GraphEventHandler({
     };
 
     // Register sigma events
-    sigma.on('enterNode', handlers.enterNode);
-    sigma.on('leaveNode', handlers.leaveNode);
-    sigma.on('enterEdge', handlers.enterEdge);
-    sigma.on('leaveEdge', handlers.leaveEdge);
-    sigma.on('clickNode', handlers.clickNode);
-    sigma.on('clickEdge', handlers.clickEdge);
-    sigma.on('clickStage', handlers.clickStage);
+    sigma.on("enterNode", handlers.enterNode);
+    sigma.on("leaveNode", handlers.leaveNode);
+    sigma.on("enterEdge", handlers.enterEdge);
+    sigma.on("leaveEdge", handlers.leaveEdge);
+    sigma.on("clickNode", handlers.clickNode);
+    sigma.on("clickEdge", handlers.clickEdge);
+    sigma.on("clickStage", handlers.clickStage);
 
     return () => {
-      sigma.off('enterNode', handlers.enterNode);
-      sigma.off('leaveNode', handlers.leaveNode);
-      sigma.off('enterEdge', handlers.enterEdge);
-      sigma.off('leaveEdge', handlers.leaveEdge);
-      sigma.off('clickNode', handlers.clickNode);
-      sigma.off('clickEdge', handlers.clickEdge);
-      sigma.off('clickStage', handlers.clickStage);
+      sigma.off("enterNode", handlers.enterNode);
+      sigma.off("leaveNode", handlers.leaveNode);
+      sigma.off("enterEdge", handlers.enterEdge);
+      sigma.off("leaveEdge", handlers.leaveEdge);
+      sigma.off("clickNode", handlers.clickNode);
+      sigma.off("clickEdge", handlers.clickEdge);
+      sigma.off("clickStage", handlers.clickStage);
     };
   }, [sigma, onNodeClick, onEdgeClick, onStageClick]);
 
@@ -227,12 +227,12 @@ const GraphCanvas = memo(
         width,
         height,
         layoutConfig = DEFAULT_LAYOUT_CONFIG,
-        colorMode = 'type',
+        colorMode = "type",
         hiddenNodeTypes = EMPTY_STRING_SET,
         hiddenLinkTypes = EMPTY_STRING_SET,
         hiddenSubTypes = EMPTY_STRING_SET,
         hiddenCommunities = EMPTY_NUMBER_SET,
-        searchQuery = '',
+        searchQuery = "",
         selectedNodeId = null,
         hops = 2,
         getSubType = defaultGetSubType,
@@ -296,11 +296,11 @@ const GraphCanvas = memo(
         const map = new Map<string, number>();
         links.forEach((l) => {
           const sourceId =
-            typeof l.source === 'string'
+            typeof l.source === "string"
               ? l.source
               : (l.source as GraphNode).id;
           const targetId =
-            typeof l.target === 'string'
+            typeof l.target === "string"
               ? l.target
               : (l.target as GraphNode).id;
           map.set(sourceId, (map.get(sourceId) || 0) + 1);
@@ -335,10 +335,10 @@ const GraphCanvas = memo(
       // Sigma settings
       const sigmaSettings = useMemo(
         () => ({
-          defaultNodeType: 'circle' as const,
+          defaultNodeType: "circle" as const,
           defaultEdgeType: isLargeGraph
-            ? ('line' as const)
-            : ('curvedArrow' as const),
+            ? ("line" as const)
+            : ("curvedArrow" as const),
           edgeProgramClasses: {
             ...(isLargeGraph
               ? { line: EdgeLineProgram }
@@ -381,11 +381,11 @@ const GraphCanvas = memo(
                 const adj = new Map<string, string[]>();
                 for (const l of links) {
                   const s =
-                    typeof l.source === 'string'
+                    typeof l.source === "string"
                       ? l.source
                       : (l.source as GraphNode).id;
                   const t =
-                    typeof l.target === 'string'
+                    typeof l.target === "string"
                       ? l.target
                       : (l.target as GraphNode).id;
                   if (!adj.has(s)) adj.set(s, []);
@@ -406,7 +406,7 @@ const GraphCanvas = memo(
                   frontier = next;
                 }
                 zoomToNodes(
-                  sigmaRef.current as unknown as import('sigma').Sigma,
+                  sigmaRef.current as unknown as import("sigma").Sigma,
                   neighborhood,
                   600,
                 );
@@ -416,7 +416,7 @@ const GraphCanvas = memo(
           zoomToFit: (duration = 400) => {
             if (sigmaRef.current) {
               zoomToFit(
-                sigmaRef.current as unknown as import('sigma').Sigma,
+                sigmaRef.current as unknown as import("sigma").Sigma,
                 duration,
               );
             }
@@ -424,7 +424,7 @@ const GraphCanvas = memo(
           zoomToNodes: (nodeIds: Iterable<string>, duration = 600) => {
             if (sigmaRef.current) {
               zoomToNodes(
-                sigmaRef.current as unknown as import('sigma').Sigma,
+                sigmaRef.current as unknown as import("sigma").Sigma,
                 nodeIds,
                 duration,
               );
@@ -441,7 +441,7 @@ const GraphCanvas = memo(
         <div
           className={className}
           style={{
-            position: 'relative',
+            position: "relative",
             width,
             height,
             ...style,
@@ -450,14 +450,14 @@ const GraphCanvas = memo(
           {!layoutReady && nodes.length > 0 && (
             <div
               style={{
-                position: 'absolute',
+                position: "absolute",
                 inset: 0,
                 zIndex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: 'rgba(0,0,0,0.5)',
-                color: '#e2e8f0',
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "rgba(0,0,0,0.5)",
+                color: "#e2e8f0",
                 fontSize: 14,
               }}
             >
@@ -469,7 +469,7 @@ const GraphCanvas = memo(
             style={{
               width,
               height,
-              position: 'absolute',
+              position: "absolute",
               top: 0,
               left: 0,
             }}

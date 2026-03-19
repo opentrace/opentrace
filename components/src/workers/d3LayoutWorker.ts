@@ -27,7 +27,7 @@ import {
   forceCenter,
   forceX,
   forceY,
-} from 'd3-force';
+} from "d3-force";
 
 interface SimNode {
   id: string;
@@ -66,13 +66,13 @@ self.onmessage = (e: MessageEvent<LayoutRequest>) => {
   // Phase 1: Standard force layout
   const simulation = forceSimulation(simNodes)
     .force(
-      'link',
+      "link",
       forceLink<SimNode, SimLink>(links)
         .id((d) => d.id)
         .distance(config.linkDistance),
     )
-    .force('charge', forceManyBody().strength(config.chargeStrength))
-    .force('center', forceCenter(0, 0))
+    .force("charge", forceManyBody().strength(config.chargeStrength))
+    .force("center", forceCenter(0, 0))
     .stop();
 
   for (let i = 0; i < config.ticks; i++) {
@@ -134,20 +134,20 @@ self.onmessage = (e: MessageEvent<LayoutRequest>) => {
     // Phase 2 simulation: keep link forces + add clustering pull with softer repulsion
     const sim2 = forceSimulation(simNodes)
       .force(
-        'link',
+        "link",
         forceLink<SimNode, SimLink>(links)
           .id((d) => d.id)
           .distance(config.linkDistance),
       )
-      .force('charge', forceManyBody().strength(config.chargeStrength * 0.5))
+      .force("charge", forceManyBody().strength(config.chargeStrength * 0.5))
       .force(
-        'clusterX',
+        "clusterX",
         forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(
           config.clusterStrength,
         ),
       )
       .force(
-        'clusterY',
+        "clusterY",
         forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(
           config.clusterStrength,
         ),

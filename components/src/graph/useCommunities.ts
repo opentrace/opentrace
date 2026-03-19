@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-import { useMemo } from 'react';
-import { UndirectedGraph } from 'graphology';
-import louvain from 'graphology-communities-louvain';
+import { useMemo } from "react";
+import { UndirectedGraph } from "graphology";
+import louvain from "graphology-communities-louvain";
 import type {
   GraphNode,
   GraphLink,
   CommunityData,
   LayoutConfig,
-} from './types';
+} from "./types";
 
 /**
  * Compute Louvain communities on the full (unfiltered) graph.
@@ -56,11 +56,11 @@ export function useCommunities(
 
     for (const link of allLinks) {
       const source =
-        typeof link.source === 'string'
+        typeof link.source === "string"
           ? link.source
           : (link.source as GraphNode).id;
       const target =
-        typeof link.target === 'string'
+        typeof link.target === "string"
           ? link.target
           : (link.target as GraphNode).id;
       if (source === target) continue;
@@ -68,8 +68,8 @@ export function useCommunities(
 
       if (tempGraph.hasEdge(source, target)) {
         const w =
-          (tempGraph.getEdgeAttribute(source, target, 'weight') as number) ?? 1;
-        tempGraph.setEdgeAttribute(source, target, 'weight', w + 1);
+          (tempGraph.getEdgeAttribute(source, target, "weight") as number) ?? 1;
+        tempGraph.setEdgeAttribute(source, target, "weight", w + 1);
       } else {
         tempGraph.addEdge(source, target, { weight: 1 });
       }
@@ -77,13 +77,13 @@ export function useCommunities(
 
     const assignments = louvain(tempGraph, {
       resolution: layoutConfig.louvainResolution,
-      getEdgeWeight: 'weight',
+      getEdgeWeight: "weight",
     });
     const colorMap = layoutConfig.buildCommunityColorMap(assignments);
     const names = layoutConfig.buildCommunityNames(assignments, allNodes);
     const count = new Set(Object.values(assignments)).size;
 
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === "development") {
       console.log(
         `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
       );

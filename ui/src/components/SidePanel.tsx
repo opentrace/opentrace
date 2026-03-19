@@ -16,30 +16,18 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
+import {
+  FilterPanel,
+  type TypeEntry,
+  type SubTypeEntry,
+  type CommunityEntry,
+} from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useResizablePanel } from '../hooks/useResizablePanel';
-import FilterPanel from './FilterPanel';
-import DiscoverPanel from './DiscoverPanel';
+import DiscoverPanelContainer from './DiscoverPanelContainer';
 import NodeDetailsPanel from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
-
-interface TypeEntry {
-  type: string;
-  count: number;
-}
-
-interface SubTypeEntry {
-  subType: string;
-  count: number;
-}
-
-interface CommunityEntry {
-  communityId: number;
-  label: string;
-  count: number;
-  color: string;
-}
 
 export type SidePanelTab = 'filters' | 'discover' | 'details';
 
@@ -256,7 +244,7 @@ export default function SidePanel({
         className="side-panel-content"
         style={{ display: effectiveTab === 'discover' ? undefined : 'none' }}
       >
-        <DiscoverPanel
+        <DiscoverPanelContainer
           onSelectNode={onSelectNode ?? (() => {})}
           graphVersion={graphVersion}
           selectedNodeId={selectedNode?.id as string | undefined}

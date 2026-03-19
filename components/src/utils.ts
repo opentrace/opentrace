@@ -30,7 +30,7 @@ export type {
   GraphStats,
   SelectedNode,
   SelectedEdge,
-} from './types/graph';
+} from "./types/graph";
 
 export type {
   LayoutConfig,
@@ -38,20 +38,34 @@ export type {
   VisualState,
   CommunityData,
   GetSubTypeFn,
-} from './graph/types';
+} from "./graph/types";
 
 // ─── Color utilities ────────────────────────────────────────────────────
-export { getNodeColor } from './colors/nodeColors';
-export { getLinkColor } from './colors/linkColors';
+export { getNodeColor } from "./colors/nodeColors";
+export { getLinkColor } from "./colors/linkColors";
 export {
   buildCommunityColorMap,
   buildCommunityNames,
   getCommunityColor,
-} from './colors/communityColors';
+} from "./colors/communityColors";
 
 // ─── Filter logic (pure function, no React) ─────────────────────────────
-export { shouldHideNode } from './graph/useGraphFilters';
+export { shouldHideNode } from "./graph/useGraphFilters";
 
 // ─── Hooks that don't depend on sigma/WebGL ─────────────────────────────
-export { useCommunities } from './graph/useCommunities';
-export { useHighlights } from './graph/useHighlights';
+export { useCommunities } from "./graph/useCommunities";
+export { useHighlights } from "./graph/useHighlights";
+
+// ─── Panel types (no React component imports) ───────────────────────────
+export type {
+  TypeEntry,
+  SubTypeEntry,
+  CommunityEntry,
+  FilterPanelProps,
+  LegendNodeItem,
+  LegendCommunityItem,
+  LegendLinkItem,
+  GraphLegendProps,
+  TreeNodeData,
+  DiscoverPanelProps,
+} from "./panels/types";

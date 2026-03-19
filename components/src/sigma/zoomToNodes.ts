@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type Sigma from 'sigma';
+import type Sigma from "sigma";
 
 /**
  * Zoom the sigma camera to fit a set of node IDs.

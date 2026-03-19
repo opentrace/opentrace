@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import Graph from 'graphology';
+import { useEffect, useMemo, useRef, useState } from "react";
+import Graph from "graphology";
 import type {
   GraphNode,
   GraphLink,
   CommunityData,
   LayoutConfig,
-} from './types';
-import type { LayoutRequest, LayoutResponse } from '../workers/d3LayoutWorker';
+} from "./types";
+import type { LayoutRequest, LayoutResponse } from "../workers/d3LayoutWorker";
 import {
   NODE_SIZE_MIN,
   NODE_SIZE_MAX,
@@ -30,7 +30,7 @@ import {
   NODE_SIZE_MULTIPLIERS,
   EDGE_SIZE_DEFAULT,
   EDGE_SIZE_DEFAULT_LINE,
-} from '../config/graphLayout';
+} from "../config/graphLayout";
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -54,8 +54,8 @@ function nodeSize(
 
 /** Extract string ID from a link endpoint (handles both string and object forms). */
 function endpointId(endpoint: string | number | GraphNode | undefined): string {
-  if (typeof endpoint === 'string') return endpoint;
-  if (typeof endpoint === 'object' && endpoint !== null)
+  if (typeof endpoint === "string") return endpoint;
+  if (typeof endpoint === "object" && endpoint !== null)
     return (endpoint as GraphNode).id;
   return String(endpoint);
 }
@@ -82,7 +82,7 @@ export function useGraphInstance({
   layoutConfig,
 }: UseGraphInstanceOptions): UseGraphInstanceResult {
   // Stable graph instance — created once, never replaced.
-  const graph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
+  const graph = useMemo(() => new Graph({ multi: true, type: "directed" }), []);
 
   // Worker ref — persists across renders, terminated on unmount
   const workerRef = useRef<Worker | null>(null);
@@ -196,18 +196,18 @@ export function useGraphInstance({
     const reqId = ++requestIdRef.current;
 
     const worker = new Worker(
-      new URL('../workers/d3LayoutWorker.ts', import.meta.url),
-      { type: 'module' },
+      new URL("../workers/d3LayoutWorker.ts", import.meta.url),
+      { type: "module" },
     );
     workerRef.current = worker;
 
-    if (process.env.NODE_ENV === 'development') {
-      console.time('[graph] d3-force worker layout');
+    if (process.env.NODE_ENV === "development") {
+      console.time("[graph] d3-force worker layout");
     }
 
     worker.onerror = (err) => {
       if (reqId !== requestIdRef.current || unmountedRef.current) return;
-      console.error('[graph] d3-force worker failed:', err);
+      console.error("[graph] d3-force worker failed:", err);
       setLayoutReady(true);
       if (workerRef.current === worker) workerRef.current = null;
     };
@@ -221,8 +221,8 @@ export function useGraphInstance({
         pos.set(id, { x, y });
       }
 
-      if (process.env.NODE_ENV === 'development') {
-        console.timeEnd('[graph] d3-force worker layout');
+      if (process.env.NODE_ENV === "development") {
+        console.timeEnd("[graph] d3-force worker layout");
         console.log(`[graph] layout computed for ${pos.size} nodes`);
       }
 
