@@ -119,7 +119,9 @@ function flattenTree(
       }
 
       const children = childrenMap.get(node.id);
-      const couldExpand = isExpandable(node);
+      const couldExpand =
+        expandableTypes.has(node.type) &&
+        (node.type !== 'File' || isExpandableFile(node.name));
       const knownEmpty = children !== undefined && children.length === 0;
       const expandable = couldExpand && !knownEmpty;
       const isExpanded = expanded.has(node.id);
@@ -140,6 +142,7 @@ function flattenTree(
             id: `__loading_${node.id}`,
             name: 'Loading...',
             type: '__loading',
+            properties: {},
           },
           depth: depth + 1,
           expandable: false,

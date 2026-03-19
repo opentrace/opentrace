@@ -27,20 +27,25 @@ export interface FilterItem {
 }
 
 export interface FilterPanelProps {
-  /** Section heading. */
-  title: string;
-  /** Items to display in this section. */
-  items: FilterItem[];
-  /** Called when an item's checkbox is toggled. */
-  onToggle: (key: string) => void;
-  /** Show all items in this section. */
-  onShowAll: () => void;
-  /** Hide all items in this section. */
-  onHideAll: () => void;
-  /** Shape of the color indicator. Defaults to 'dot'. */
-  indicator?: 'dot' | 'line';
-  /** Message when items is empty. */
-  emptyMessage?: string;
+  nodeTypes: TypeEntry[];
+  linkTypes: TypeEntry[];
+  hiddenNodeTypes: Set<string>;
+  hiddenLinkTypes: Set<string>;
+  subTypesByNodeType: Map<string, SubTypeEntry[]>;
+  hiddenSubTypes: Set<string>;
+  onToggleNodeType: (type: string) => void;
+  onToggleLinkType: (type: string) => void;
+  onToggleSubType: (key: string) => void;
+  onShowAllNodes: () => void;
+  onHideAllNodes: () => void;
+  onShowAllLinks: () => void;
+  onHideAllLinks: () => void;
+  colorMode?: 'type' | 'community';
+  communities?: CommunityEntry[];
+  hiddenCommunities?: Set<number>;
+  onToggleCommunity?: (cid: number) => void;
+  onShowAllCommunities?: () => void;
+  onHideAllCommunities?: () => void;
 }
 
 // ─── GraphLegend types ──────────────────────────────────────────────
@@ -52,10 +57,10 @@ export interface LegendItem {
 }
 
 export interface GraphLegendProps {
-  /** Node or community items (dots). */
-  items: LegendItem[];
-  /** Link/edge items (lines). */
-  linkItems?: LegendItem[];
+  colorMode: 'type' | 'community';
+  legendItems: LegendNodeItem[];
+  communityLegendItems: LegendCommunityItem[];
+  legendLinkItems: LegendLinkItem[];
   /** Max node/community items before overflow. Defaults to 5. */
   maxVisible?: number;
 }

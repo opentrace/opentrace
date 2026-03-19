@@ -15,10 +15,18 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { GraphLegendProps, LegendItem } from './types';
+import type { GraphLegendProps } from './types';
 import './GraphLegend.css';
 
 const DEFAULT_MAX_VISIBLE = 5;
+
+type LegendEntry = {
+  key: string;
+  label: string;
+  count: number;
+  color: string;
+  shape: 'dot' | 'line';
+};
 
 export default function GraphLegend({
   items,
@@ -43,8 +51,37 @@ export default function GraphLegend({
     return () => document.removeEventListener('mousedown', handler);
   }, [showOverflow]);
 
-  const visibleItems = items.slice(0, maxVisible);
-  const overflowItems = items.slice(maxVisible);
+  // Build node/community items (truncatable) and link items (always shown)
+  const nodeItems: LegendEntry[] = [];
+  if (colorMode === 'community') {
+    for (const { label, count, color } of communityLegendItems) {
+      nodeItems.push({ key: `c:${label}`, label, count, color, shape: 'dot' });
+    }
+  } else {
+    for (const { type, count, color } of legendItems) {
+      nodeItems.push({
+        key: `n:${type}`,
+        label: type,
+        count,
+        color,
+        shape: 'dot',
+      });
+    }
+  }
+
+  const linkItems: LegendEntry[] = [];
+  for (const { type, count, color } of legendLinkItems) {
+    linkItems.push({
+      key: `l:${type}`,
+      label: type,
+      count,
+      color,
+      shape: 'line',
+    });
+  }
+
+  const visibleNodes = nodeItems.slice(0, maxVisible);
+  const overflowNodes = nodeItems.slice(maxVisible);
 
   return (
     <div className="legend" ref={popoverRef}>

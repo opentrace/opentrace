@@ -25,18 +25,20 @@ afterEach(cleanup);
 
 function makeProps(overrides?: Partial<GraphLegendProps>): GraphLegendProps {
   return {
-    items: [
-      { label: 'Repository', count: 5, color: '#10b981' },
-      { label: 'Class', count: 12, color: '#3b82f6' },
-      { label: 'Function', count: 30, color: '#a855f7' },
+    colorMode: 'type',
+    legendItems: [
+      { type: 'Repository', count: 5, color: '#10b981' },
+      { type: 'Class', count: 12, color: '#3b82f6' },
+      { type: 'Function', count: 30, color: '#a855f7' },
     ],
-    linkItems: [{ label: 'CALLS', count: 20, color: '#666' }],
+    communityLegendItems: [],
+    legendLinkItems: [{ type: 'CALLS', count: 20, color: '#666' }],
     ...overrides,
   };
 }
 
 describe('GraphLegend', () => {
-  it('renders items', () => {
+  it('renders node type items in type mode', () => {
     const { getByText } = render(React.createElement(GraphLegend, makeProps()));
     expect(getByText('Repository')).toBeDefined();
     expect(getByText('Class')).toBeDefined();
@@ -68,12 +70,13 @@ describe('GraphLegend', () => {
     expect(divider).toBeNull();
   });
 
-  it('renders community items when passed as items', () => {
-    const { getByText } = render(
+  it('renders community items when colorMode is community', () => {
+    const { getByText, queryByText } = render(
       React.createElement(
         GraphLegend,
         makeProps({
-          items: [
+          colorMode: 'community',
+          communityLegendItems: [
             { label: 'Frontend', count: 10, color: '#f00' },
             { label: 'Backend', count: 8, color: '#0f0' },
           ],
@@ -82,6 +85,8 @@ describe('GraphLegend', () => {
     );
     expect(getByText('Frontend')).toBeDefined();
     expect(getByText('Backend')).toBeDefined();
+    // Node type items should not appear in community mode
+    expect(queryByText('Repository')).toBeNull();
   });
 
   describe('overflow', () => {
@@ -144,7 +149,9 @@ describe('GraphLegend', () => {
         React.createElement(
           GraphLegend,
           makeProps({
-            items: [{ label: 'VeryLongTypeName', count: 1, color: '#000' }],
+            legendItems: [
+              { type: 'VeryLongTypeName', count: 1, color: '#000' },
+            ],
           }),
         ),
       );

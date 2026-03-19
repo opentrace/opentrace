@@ -76,6 +76,13 @@ function makeProps(
 }
 
 describe('DiscoverPanel', () => {
+  it('renders loading state', () => {
+    const { getByText } = render(
+      React.createElement(DiscoverPanel, makeProps({ loading: true })),
+    );
+    expect(getByText('Loading repositories...')).toBeDefined();
+  });
+
   it('renders empty state when no roots', () => {
     const { getByText } = render(
       React.createElement(DiscoverPanel, makeProps({ roots: [] })),
@@ -246,7 +253,7 @@ describe('DiscoverPanel', () => {
   });
 
   describe('loading nodes', () => {
-    it('shows loading placeholder when expanded node has no children yet', () => {
+    it('shows loading placeholder for nodes being loaded', () => {
       const { getByText } = render(
         React.createElement(
           DiscoverPanel,
@@ -255,8 +262,9 @@ describe('DiscoverPanel', () => {
             childrenMap: new Map([
               ['repo-1', [dirNode]],
               ['dir-1', [fileNode]],
-              // file-1 is expanded but not in childrenMap → loading
+              // file-1 has no children yet (loading)
             ]),
+            loadingNodes: new Set(['file-1']),
           }),
         ),
       );
@@ -286,8 +294,8 @@ describe('DiscoverPanel', () => {
     });
   });
 
-  describe('isExpandable', () => {
-    it('respects custom isExpandable predicate', () => {
+  describe('isExpandableFile', () => {
+    it('respects custom isExpandableFile predicate', () => {
       const onToggleExpand = vi.fn();
       const mdFile: TreeNodeData = {
         id: 'md-1',
@@ -307,8 +315,7 @@ describe('DiscoverPanel', () => {
             childrenMap: new Map(),
             expanded: new Set(),
             // Only .ts files are expandable
-            isExpandable: (node: TreeNodeData) =>
-              node.type === 'File' && node.name.endsWith('.ts'),
+            isExpandableFile: (name: string) => name.endsWith('.ts'),
             onToggleExpand,
           }),
         ),

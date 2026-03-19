@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
-import type { FilterPanelProps } from './types';
+import { useCallback, useState } from 'react';
+import { getNodeColor } from '../colors/nodeColors';
+import { getLinkColor } from '../colors/linkColors';
+import type { FilterPanelProps, SubTypeEntry } from './types';
 import './FilterPanel.css';
 
 export default function FilterPanel({
@@ -38,51 +40,232 @@ export default function FilterPanel({
     });
   };
 
-  const allHidden =
-    items.length > 0 &&
-    items.every((item) => {
-      if (item.children && item.children.length > 0) {
-        return item.children.every((c) => c.hidden);
-      }
-      return item.hidden;
-    });
+  /** Compute parent checkbox state for a node type that has sub-types. */
+  const getSubTypeState = useCallback(
+    (type: string, subs: SubTypeEntry[]): 'all' | 'none' | 'some' => {
+      const keys = subs.map((s) => `${type}:${s.subType}`);
+      const hiddenCount = keys.filter((k) => hiddenSubTypes.has(k)).length;
+      if (hiddenCount === 0) return 'all';
+      if (hiddenCount === keys.length) return 'none';
+      return 'some';
+    },
+    [hiddenSubTypes],
+  );
+
+  // Compute allNodesHidden accounting for sub-type-driven types
+  const allNodesHidden = nodeTypes.every(({ type }) => {
+    const subs = subTypesByNodeType.get(type);
+    if (subs && subs.length > 0) {
+      return getSubTypeState(type, subs) === 'none';
+    }
+    return hiddenNodeTypes.has(type);
+  });
+
+  const showCommunities =
+    colorMode === 'community' &&
+    communities &&
+    communities.length > 0 &&
+    hiddenCommunities &&
+    onToggleCommunity;
+
+  const allCommunitiesHidden =
+    showCommunities &&
+    communities!.every((c) => hiddenCommunities!.has(c.communityId));
 
   return (
-    <div className="filter-section">
-      <div className="filter-section-header">
-        <span className="filter-section-title">{title}</span>
-        <button
-          className="filter-toggle-all"
-          onClick={allHidden ? onShowAll : onHideAll}
-        >
-          {allHidden ? 'Show all' : 'Hide all'}
-        </button>
+    <div className="filter-panel">
+      {showCommunities && (
+        <div className="filter-section">
+          <div className="filter-section-header">
+            <span className="filter-section-title">Communities</span>
+            <button
+              className="filter-toggle-all"
+              onClick={
+                allCommunitiesHidden
+                  ? onShowAllCommunities
+                  : onHideAllCommunities
+              }
+            >
+              {allCommunitiesHidden ? 'Show all' : 'Hide all'}
+            </button>
+          </div>
+          <div className="filter-list">
+            {communities!.map(({ communityId, label, count, color }) => {
+              const hidden = hiddenCommunities!.has(communityId);
+              return (
+                <label
+                  key={communityId}
+                  className={`filter-item ${hidden ? 'hidden' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hidden}
+                    onChange={() => onToggleCommunity!(communityId)}
+                  />
+                  <span className="filter-expand-spacer" />
+                  <span
+                    className="filter-dot"
+                    style={{
+                      backgroundColor: hidden ? 'var(--muted)' : color,
+                    }}
+                  />
+                  <span className="filter-type-name">{label}</span>
+                  <span className="filter-count">{count}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="filter-section">
+        <div className="filter-section-header">
+          <span className="filter-section-title">Node Types</span>
+          <button
+            className="filter-toggle-all"
+            onClick={allNodesHidden ? onShowAllNodes : onHideAllNodes}
+          >
+            {allNodesHidden ? 'Show all' : 'Hide all'}
+          </button>
+        </div>
+        <div className="filter-list">
+          {nodeTypes.map(({ type, count }) => {
+            const subTypes = subTypesByNodeType.get(type);
+            const hasSubTypes = subTypes && subTypes.length > 0;
+            const isExpanded = expandedTypes.has(type);
+
+            // Derive parent checked state
+            let hidden: boolean;
+            let indeterminate = false;
+            if (hasSubTypes) {
+              const state = getSubTypeState(type, subTypes);
+              hidden = state === 'none';
+              indeterminate = state === 'some';
+            } else {
+              hidden = hiddenNodeTypes.has(type);
+            }
+
+            return (
+              <div key={type} className="filter-type-group">
+                <label
+                  className={`filter-item ${hidden ? 'hidden' : ''} ${indeterminate ? 'partial' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hidden && !indeterminate}
+                    ref={(el) => {
+                      if (el) el.indeterminate = indeterminate;
+                    }}
+                    onChange={() => onToggleNodeType(type)}
+                  />
+                  {hasSubTypes ? (
+                    <button
+                      className="filter-expand-btn"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleExpanded(type);
+                      }}
+                      title={isExpanded ? 'Collapse' : 'Expand sub-types'}
+                    >
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 10 10"
+                        className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
+                      >
+                        <path
+                          d="M3 2 L7 5 L3 8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                        />
+                      </svg>
+                    </button>
+                  ) : (
+                    <span className="filter-expand-spacer" />
+                  )}
+                  <span
+                    className="filter-dot"
+                    style={{
+                      backgroundColor: hidden
+                        ? 'var(--muted)'
+                        : getNodeColor(type),
+                    }}
+                  />
+                  <span className="filter-type-name">{type}</span>
+                  <span className="filter-count">{count}</span>
+                </label>
+                {hasSubTypes && isExpanded && (
+                  <div className="filter-subtypes">
+                    {subTypes.map(({ subType, count: subCount }) => {
+                      const subKey = `${type}:${subType}`;
+                      const subHidden = hiddenSubTypes.has(subKey);
+                      return (
+                        <label
+                          key={subKey}
+                          className={`filter-item filter-subitem ${subHidden ? 'hidden' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!subHidden}
+                            onChange={() => onToggleSubType(subKey)}
+                          />
+                          <span
+                            className="filter-dot filter-dot--small"
+                            style={{
+                              backgroundColor: subHidden
+                                ? 'var(--muted)'
+                                : getNodeColor(type),
+                              opacity: subHidden ? 1 : 0.7,
+                            }}
+                          />
+                          <span className="filter-type-name">{subType}</span>
+                          <span className="filter-count">{subCount}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div className="filter-list">
         {items.map((item) => {
           const hasChildren = item.children && item.children.length > 0;
           const isExpanded = expandedKeys.has(item.key);
 
-          // Derive indeterminate state from children
-          let hidden = item.hidden;
-          let indeterminate = false;
-          if (hasChildren) {
-            const hiddenCount = item.children!.filter((c) => c.hidden).length;
-            if (hiddenCount === item.children!.length) hidden = true;
-            else if (hiddenCount > 0) indeterminate = true;
-            else hidden = false;
-          }
-
-          return (
-            <div key={item.key} className="filter-type-group">
+      <div className="filter-section">
+        <div className="filter-section-header">
+          <span className="filter-section-title">Edges</span>
+          <button
+            className="filter-toggle-all"
+            onClick={allLinksHidden ? onShowAllLinks : onHideAllLinks}
+          >
+            {allLinksHidden ? 'Show all' : 'Hide all'}
+          </button>
+        </div>
+        <div className="filter-list">
+          {linkTypes.map(({ type, count }) => {
+            const hidden = hiddenLinkTypes.has(type);
+            return (
               <label
-                className={`filter-item ${hidden ? 'hidden' : ''} ${indeterminate ? 'partial' : ''}`}
+                key={type}
+                className={`filter-item ${hidden ? 'hidden' : ''}`}
               >
                 <input
                   type="checkbox"
-                  checked={!hidden && !indeterminate}
-                  ref={(el) => {
-                    if (el) el.indeterminate = indeterminate;
+                  checked={!hidden}
+                  onChange={() => onToggleLinkType(type)}
+                />
+                <span
+                  className="filter-line"
+                  style={{
+                    backgroundColor: hidden
+                      ? 'var(--muted)'
+                      : getLinkColor(type),
                   }}
                   onChange={() => onToggle(item.key)}
                 />
