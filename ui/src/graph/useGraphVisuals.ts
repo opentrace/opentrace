@@ -95,7 +95,8 @@ export function useGraphVisuals(
       // _baseSize and _originalLabel are set once at graph construction
       // (useGraphInstance) so they always reflect the true source values.
       const baseSize = (attrs._baseSize as number) ?? attrs.size;
-      const originalLabel = (attrs._originalLabel as string | null) ?? attrs.label;
+      const originalLabel =
+        (attrs._originalLabel as string | null) ?? attrs.label;
 
       attrs.color = isHighlighted
         ? baseColor
