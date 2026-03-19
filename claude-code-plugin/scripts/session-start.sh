@@ -35,8 +35,16 @@ fi
 # Get basic stats if the MCP server is queryable (best-effort)
 DB_SIZE=$(du -sh "$DB_PATH" 2>/dev/null | cut -f1 || echo "unknown")
 
+# Escape values for safe JSON embedding
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+SAFE_DB_PATH=$(json_escape "${DB_PATH}")
+SAFE_DB_SIZE=$(json_escape "${DB_SIZE}")
+
 cat <<EOF
 {
-  "additionalContext": "OpenTrace knowledge graph is available (index: ${DB_PATH}, size: ${DB_SIZE}). Use the @code-explorer, @dependency-analyzer, @find-usages, or @explain-service agents to query the indexed codebase structure. Use the /explore or /graph-status commands for quick lookups. The graph contains indexed services, classes, functions, files, and their relationships — prefer it over raw Grep/Glob when answering structural or architectural questions."
+  "additionalContext": "OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}, size: ${SAFE_DB_SIZE}). Use the @code-explorer, @dependency-analyzer, @find-usages, or @explain-service agents to query the indexed codebase structure. Use the /explore or /graph-status commands for quick lookups. The graph contains indexed services, classes, functions, files, and their relationships — prefer it over raw Grep/Glob when answering structural or architectural questions."
 }
 EOF
