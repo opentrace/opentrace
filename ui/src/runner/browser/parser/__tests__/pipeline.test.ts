@@ -41,7 +41,8 @@ const mockExtractGeneric = vi.fn().mockReturnValue({
 } satisfies ExtractionResult);
 
 vi.mock('@opentrace/components/pipeline', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@opentrace/components/pipeline')>();
+  const original =
+    await importOriginal<typeof import('@opentrace/components/pipeline')>();
   return {
     ...original,
     extractPython: (...args: unknown[]) => mockExtractPython(...args),

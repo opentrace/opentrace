@@ -24,7 +24,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractTypeScript, analyzeTypeScriptImports } from '@opentrace/components/pipeline';
+import {
+  extractTypeScript,
+  analyzeTypeScriptImports,
+} from '@opentrace/components/pipeline';
 import { parseTS } from './helpers';
 import {
   normalizeSymbol,
