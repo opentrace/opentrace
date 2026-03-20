@@ -43,28 +43,27 @@ def _debug(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Index discovery
+# Index presence check (lightweight — full discovery is in the CLI)
 # ---------------------------------------------------------------------------
 
 _OPENTRACE_DIR = ".opentrace"
 _INDEX_NAME = "index.db"
 
 
-def find_ot_index(start_dir: str) -> str | None:
-    """Walk up to 5 parent directories looking for .opentrace/index.db."""
+def _has_index(start_dir: str) -> bool:
+    """Quick check: does .opentrace/index.db exist at or above start_dir?"""
     try:
         current = Path(start_dir).resolve()
-        for _ in range(6):  # start_dir + 5 parents
-            candidate = current / _OPENTRACE_DIR / _INDEX_NAME
-            if candidate.is_file():
-                return str(candidate)
+        for _ in range(6):
+            if (current / _OPENTRACE_DIR / _INDEX_NAME).is_file():
+                return True
             parent = current.parent
             if parent == current:
                 break
             current = parent
     except Exception:
         pass
-    return None
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +185,12 @@ def handle_pre_tool_use(payload: dict) -> None:
             _debug("no absolute cwd, skipping")
             return
 
-        db_path = find_ot_index(cwd)
-        if not db_path:
-            _debug("no otindex.db found")
-            return
-
         tool_name = payload.get("tool_name", "")
         if tool_name not in _AUGMENT_TOOLS:
+            return
+
+        if not _has_index(cwd):
+            _debug("no index found")
             return
 
         tool_input = payload.get("tool_input", {})
@@ -202,10 +200,8 @@ def handle_pre_tool_use(payload: dict) -> None:
             return
 
         _debug(f"augmenting {tool_name} with pattern={pattern!r}")
-        result = run_opentraceai(
-            ["augment", "--db", db_path, "--", pattern],
-            cwd=cwd,
-        )
+        # Let the CLI handle DB discovery via its own find_db()
+        result = run_opentraceai(["augment", "--", pattern], cwd=cwd)
         if result:
             send_hook_response("PreToolUse", result)
     except Exception as exc:
@@ -228,8 +224,7 @@ def handle_post_tool_use(payload: dict) -> None:
         if not cwd or not os.path.isabs(cwd):
             return
 
-        db_path = find_ot_index(cwd)
-        if not db_path:
+        if not _has_index(cwd):
             return
 
         _debug("git mutation detected, emitting staleness warning")
