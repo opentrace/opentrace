@@ -216,7 +216,10 @@ const GraphViewer = memo(
       const canvasRef = useRef<GraphCanvasHandle>(null);
 
       // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
-      interface IndexedRepo { name: string; url: string }
+      interface IndexedRepo {
+        name: string;
+        url: string;
+      }
       const [indexedRepos, setIndexedRepos] = useState<IndexedRepo[]>([]);
       useEffect(() => {
         if (!showAddRepo) return;
