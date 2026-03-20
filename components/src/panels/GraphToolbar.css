@@ -1,0 +1,352 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* ── Toolbar layout ─────────────────────────── */
+
+.ot-toolbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  pointer-events: none;
+}
+
+.ot-toolbar h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.02em;
+  pointer-events: auto;
+}
+
+/* ── Nav (inline on desktop, dropdown on mobile) */
+
+.ot-toolbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  pointer-events: auto;
+}
+
+/* Hidden on desktop */
+.ot-toolbar .ot-menu-label {
+  display: none;
+}
+
+.ot-toolbar .ot-mobile-panel-btn,
+.ot-toolbar .ot-menu-divider {
+  display: none;
+}
+
+/* ── Burger button ──────────────────────────── */
+
+.ot-toolbar .ot-burger-btn {
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--foreground);
+  pointer-events: auto;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.ot-toolbar .ot-burger-btn:hover {
+  background: var(--accent);
+}
+
+/* ── Search ─────────────────────────────────── */
+
+.ot-toolbar .ot-search-container {
+  position: relative;
+  flex: 1;
+  max-width: 460px;
+  margin: 0 0.5rem;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+}
+
+.ot-toolbar .ot-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  padding-right: 155px;
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  color: var(--foreground);
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.ot-toolbar .ot-search-input:focus {
+  outline: none;
+  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 12%, transparent);
+}
+
+.ot-toolbar .ot-search-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.ot-toolbar .ot-search-params {
+  position: absolute;
+  right: 56px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  border-left: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  padding-left: 8px;
+}
+
+.ot-toolbar .ot-hops-input {
+  width: 32px;
+  height: 22px;
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--foreground);
+  font-size: 0.7rem;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.ot-toolbar .ot-hops-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.ot-toolbar .ot-hops-input::-webkit-inner-spin-button,
+.ot-toolbar .ot-hops-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.ot-toolbar .ot-search-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ot-toolbar .ot-clear-search {
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ot-toolbar .ot-clear-search:hover {
+  color: var(--foreground);
+}
+
+.ot-toolbar .ot-search-btn {
+  background: var(--primary);
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--primary-foreground);
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.ot-toolbar .ot-search-btn:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 85%, black);
+}
+
+.ot-toolbar .ot-search-btn:disabled {
+  background: color-mix(in oklch, var(--secondary) 60%, transparent);
+  color: var(--muted-foreground);
+  cursor: not-allowed;
+}
+
+/* ── Reset / Show All button ────────────────── */
+
+.ot-toolbar .ot-reset-btn {
+  pointer-events: auto;
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  color: var(--muted-foreground);
+  height: 36px;
+  padding: 0 12px;
+  border-radius: calc(var(--radius) + 2px);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ot-toolbar .ot-reset-btn:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+/* ── Tablet + Mobile (≤ 1024px): burger dropdown ── */
+
+@media (max-width: 1024px) {
+  .ot-toolbar {
+    flex-wrap: wrap;
+    padding: max(12px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right)) 12px
+      max(16px, env(safe-area-inset-left));
+    gap: 0;
+  }
+
+  .ot-toolbar .ot-burger-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ot-toolbar-nav {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 2px);
+    padding: 6px 0;
+    margin-top: 8px;
+    pointer-events: auto;
+  }
+
+  .ot-toolbar-nav.open {
+    display: flex;
+  }
+
+  /* Show panel shortcuts and dividers */
+  .ot-toolbar .ot-mobile-panel-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--foreground);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    pointer-events: auto;
+  }
+
+  .ot-toolbar .ot-mobile-panel-btn:hover {
+    background: var(--accent);
+  }
+
+  .ot-toolbar .ot-menu-divider {
+    display: block;
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+  }
+
+  .ot-toolbar .ot-menu-label {
+    display: inline;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  /* Search full width in dropdown */
+  .ot-toolbar-nav .ot-search-container {
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    margin: 4px 10px;
+  }
+
+  /* Reset button as menu row */
+  .ot-toolbar-nav .ot-reset-btn {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    height: auto;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+
+  .ot-toolbar-nav .ot-reset-btn:hover {
+    background: var(--accent);
+    border-color: transparent;
+  }
+
+  /* Badge as menu row */
+  .ot-toolbar-nav .graph-badge {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    height: auto;
+    padding: 10px 16px;
+    font-size: 13px;
+  }
+}
+
+/* ── Small mobile (≤ 640px) ─────────────────── */
+
+@media (max-width: 640px) {
+  .ot-toolbar {
+    padding: max(10px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right)) 10px
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .ot-toolbar h1 {
+    display: none;
+  }
+
+  .ot-toolbar-nav .ot-search-container {
+    margin: 4px 8px;
+  }
+
+  .ot-toolbar .ot-search-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .ot-toolbar .ot-hops-input {
+    width: 40px;
+    height: 28px;
+  }
+}
