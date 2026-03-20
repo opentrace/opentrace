@@ -20,10 +20,7 @@ We import from the hook script directly via importlib since it's not a package.
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
-
-import pytest
 
 # Import the hook module from the plugin scripts directory
 _HOOK_PATH = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts" / "opentrace-hook.py"

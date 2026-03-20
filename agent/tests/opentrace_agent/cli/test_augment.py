@@ -24,7 +24,6 @@ from opentrace_agent.cli._augment import (
     run_augment,
 )
 
-
 # -- formatting helpers ------------------------------------------------------
 
 
