@@ -16,7 +16,14 @@
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { existsSync, readFileSync, createReadStream } from 'fs';
+import {
+  existsSync,
+  readFileSync,
+  createReadStream,
+  readdirSync,
+  copyFileSync,
+  mkdirSync,
+} from 'fs';
 import { execSync } from 'child_process';
 import { resolve, join } from 'path';
 
@@ -72,6 +79,7 @@ function resolveEnvDir(): string {
  */
 function crossOriginIsolation(): Plugin {
   const publicDir = resolve(__dirname, 'public');
+  const componentsWasmDir = resolve(__dirname, '../components/public/wasm');
 
   function wasmMiddleware(
     req: import('http').IncomingMessage,
@@ -85,9 +93,14 @@ function crossOriginIsolation(): Plugin {
     // Vite's static handler sets the wrong Content-Type for .wasm and
     // completes the response without calling next(), so no downstream
     // middleware can fix it. We serve them ourselves first.
+    //
+    // Check ui/public/ first (local overrides), then components/public/wasm/
+    // (canonical location for tree-sitter grammars).
     const url = req.url?.split('?')[0];
     if (url?.endsWith('.wasm')) {
-      const filePath = join(publicDir, url);
+      const localPath = join(publicDir, url);
+      const componentPath = join(componentsWasmDir, url.split('/').pop()!);
+      const filePath = existsSync(localPath) ? localPath : componentPath;
       if (existsSync(filePath)) {
         res.setHeader('Content-Type', 'application/wasm');
         res.statusCode = 200;
@@ -106,6 +119,31 @@ function crossOriginIsolation(): Plugin {
     },
     configurePreviewServer(server) {
       server.middlewares.use(wasmMiddleware);
+    },
+  };
+}
+
+/**
+ * Vite plugin that copies tree-sitter WASM files from components/public/wasm/
+ * into the build output. During dev, the crossOriginIsolation middleware serves
+ * them directly; this plugin handles production builds.
+ */
+function copyComponentsWasm(): Plugin {
+  const wasmDir = resolve(__dirname, '../components/public/wasm');
+  return {
+    name: 'copy-components-wasm',
+    writeBundle(options) {
+      if (!existsSync(wasmDir)) return;
+      const outDir = options.dir || resolve(__dirname, 'dist');
+      mkdirSync(outDir, { recursive: true });
+      for (const file of readdirSync(wasmDir)) {
+        if (!file.endsWith('.wasm')) continue;
+        // Don't overwrite files already in ui/public/ (copied by Vite)
+        const dest = join(outDir, file);
+        if (!existsSync(dest)) {
+          copyFileSync(join(wasmDir, file), dest);
+        }
+      }
     },
   };
 }
@@ -146,7 +184,7 @@ export default defineConfig(({ mode }) => {
       },
       dedupe: ['react', 'react-dom'],
     },
-    plugins: [react(), crossOriginIsolation()],
+    plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
     server: {
       port,
       strictPort: true,
