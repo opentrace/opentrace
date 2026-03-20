@@ -267,15 +267,40 @@ def stats(db_path: str | None, output_format: str) -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     """Start a stdio MCP server exposing graph query tools."""
+    import sys
+
     _configure_logging(verbose)
+    log = logging.getLogger("opentrace_agent.mcp")
+
+    log.debug("MCP server starting (pid=%d)", __import__("os").getpid())
 
     from opentrace_agent.cli.mcp_server import create_mcp_server
     from opentrace_agent.store import GraphStore
 
-    resolved_db = _resolve_db(db_path, must_exist=True)
-    store = GraphStore(resolved_db)
+    try:
+        resolved_db = _resolve_db(db_path, must_exist=True)
+    except click.UsageError as e:
+        log.error("Database discovery failed: %s", e)
+        print(str(e), file=sys.stderr)
+        raise SystemExit(1)
+
+    log.debug("Opening database: %s", resolved_db)
+    try:
+        store = GraphStore(resolved_db, read_only=True)
+    except Exception as e:
+        log.error("Failed to open database: %s", e, exc_info=True)
+        print(f"Failed to open database: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    stats = store.get_stats()
+    log.debug(
+        "Database ready: %d nodes, %d edges",
+        stats["total_nodes"],
+        stats["total_edges"],
+    )
 
     def _shutdown(signum: int, _frame: object) -> None:
+        log.debug("Received signal %d, shutting down", signum)
         store.close()
         raise SystemExit(0)
 
@@ -283,11 +308,16 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
 
     try:
         server = create_mcp_server(store)
+        log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:
-        pass
+        log.debug("Interrupted")
+    except Exception as e:
+        log.error("MCP server error: %s", e, exc_info=True)
+        raise
     finally:
         store.close()
+        log.debug("MCP server stopped")
 
 
 @app.command()

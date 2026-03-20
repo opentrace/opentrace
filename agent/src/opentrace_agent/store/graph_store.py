@@ -63,13 +63,78 @@ def _marshal_props(properties: dict[str, Any] | None) -> str:
 def _unmarshal_props(s: str) -> dict[str, Any] | None:
     if not s or s == "{}":
         return None
-    return json.loads(s)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    # LadybugDB auto-converts JSON strings into its internal MAP literal
+    # format on read: {key: value, key2: value2} (no quotes).
+    # Parse this format back into a Python dict.
+    return _parse_ladybug_map(s)
+
+
+def _parse_ladybug_map(s: str) -> dict[str, Any] | None:
+    """Parse LadybugDB's ``{key: value, key2: value2}`` map literal format."""
+    s = s.strip()
+    if not s.startswith("{") or not s.endswith("}"):
+        return None
+    inner = s[1:-1].strip()
+    if not inner:
+        return None
+    result: dict[str, Any] = {}
+    for pair in _split_top_level(inner):
+        pair = pair.strip()
+        if ": " not in pair:
+            continue
+        key, _, value = pair.partition(": ")
+        result[key.strip()] = _coerce_value(value.strip())
+    return result or None
+
+
+def _split_top_level(s: str) -> list[str]:
+    """Split on commas that are not inside braces or brackets."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(s):
+        if ch in ("{", "[", "("):
+            depth += 1
+        elif ch in ("}", "]", ")"):
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append(s[start:i])
+            start = i + 1
+    parts.append(s[start:])
+    return parts
+
+
+def _coerce_value(v: str) -> Any:
+    """Best-effort type coercion for LadybugDB map literal values."""
+    if v == "True":
+        return True
+    if v == "False":
+        return False
+    if v == "None" or v == "null":
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    return v
 
 
 def _parse_props(raw: Any) -> dict[str, Any] | None:
-    """Parse a properties value that may be a dict or a JSON string."""
+    """Parse a properties value that may be a dict, dict-like, or a JSON string."""
     if isinstance(raw, dict):
         return raw or None
+    # LadybugDB C++ bindings can return dict-like objects that aren't plain dicts.
+    if hasattr(raw, "keys"):
+        d = dict(raw)
+        return d or None
     return _unmarshal_props(str(raw) if raw else "")
 
 
@@ -91,10 +156,19 @@ class GraphStore:
     def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self._db = ladybug.Database(db_path, read_only=read_only)
         self._conn = ladybug.Connection(self._db)
+        self._load_extensions()
         if not read_only:
             self._ensure_schema()
 
     # -- schema ----------------------------------------------------------
+
+    def _load_extensions(self) -> None:
+        """Install and load the FTS extension (required for full-text search)."""
+        try:
+            self._conn.execute("INSTALL FTS")
+            self._conn.execute("LOAD EXTENSION FTS")
+        except RuntimeError:
+            pass  # already installed/loaded
 
     def _ensure_schema(self) -> None:
         stmts = [

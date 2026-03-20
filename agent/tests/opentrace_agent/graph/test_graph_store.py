@@ -22,6 +22,7 @@ import pytest
 
 from opentrace_agent.store.graph_store import (
     _marshal_props,
+    _parse_ladybug_map,
     _parse_props,
     _row_to_node,
     _unmarshal_props,
@@ -103,14 +104,51 @@ class TestUnmarshalProps:
     def test_valid_json(self):
         assert _unmarshal_props('{"a": 1}') == {"a": 1}
 
-    def test_invalid_json_raises(self):
-        with pytest.raises(json.JSONDecodeError):
-            _unmarshal_props("not json")
+    def test_ladybug_map_literal(self):
+        """LadybugDB returns {key: value} format instead of JSON."""
+        result = _unmarshal_props("{path: cmd/main.go, language: go}")
+        assert result == {"path": "cmd/main.go", "language": "go"}
 
-    def test_single_quoted_raises(self):
-        """This is the exact bug _parse_props was created to fix."""
-        with pytest.raises(json.JSONDecodeError):
-            _unmarshal_props("{'key': 'value'}")
+    def test_ladybug_map_with_integers(self):
+        result = _unmarshal_props("{start_line: 25, end_line: 38}")
+        assert result == {"start_line": 25, "end_line": 38}
+
+    def test_invalid_string_returns_none(self):
+        assert _unmarshal_props("not json or map") is None
+
+
+class TestParseLadybugMap:
+    """Tests for parsing LadybugDB's {key: value} map literal format."""
+
+    def test_simple(self):
+        assert _parse_ladybug_map("{path: src/main.go}") == {"path": "src/main.go"}
+
+    def test_multiple_keys(self):
+        result = _parse_ladybug_map("{path: cmd/main.go, extension: .go, language: go}")
+        assert result == {"path": "cmd/main.go", "extension": ".go", "language": "go"}
+
+    def test_integer_values(self):
+        result = _parse_ladybug_map("{start_line: 25, end_line: 38}")
+        assert result == {"start_line": 25, "end_line": 38}
+
+    def test_boolean_values(self):
+        result = _parse_ladybug_map("{exported: True, deprecated: False}")
+        assert result == {"exported": True, "deprecated": False}
+
+    def test_empty_braces(self):
+        assert _parse_ladybug_map("{}") is None
+
+    def test_not_a_map(self):
+        assert _parse_ladybug_map("hello") is None
+
+    def test_summary_with_spaces(self):
+        result = _parse_ladybug_map("{summary: Source code repository for project}")
+        assert result == {"summary": "Source code repository for project"}
+
+    def test_value_with_commas_in_nested_braces(self):
+        """Commas inside nested structures should not split the pair."""
+        result = _parse_ladybug_map("{signature: (name, email)}")
+        assert result == {"signature": "(name, email)"}
 
 
 class TestParseProps:
@@ -142,9 +180,17 @@ class TestParseProps:
         d = {"outer": {"inner": [1, 2, 3]}}
         assert _parse_props(d) == d
 
-    def test_invalid_string_raises(self):
-        with pytest.raises(json.JSONDecodeError):
-            _parse_props("not json")
+    def test_invalid_string_returns_none(self):
+        assert _parse_props("not json or map") is None
+
+    def test_ladybug_map_literal(self):
+        """LadybugDB's {key: value} format should be parsed correctly."""
+        result = _parse_props("{path: cmd/main.go, language: go}")
+        assert result == {"path": "cmd/main.go", "language": "go"}
+
+    def test_ladybug_map_with_numbers(self):
+        result = _parse_props("{start_line: 25, end_line: 38}")
+        assert result == {"start_line": 25, "end_line": 38}
 
 
 class TestRowToNode:
@@ -245,6 +291,60 @@ class TestGraphStoreGetNode:
         node = store.get_node("bare")
         assert node is not None
         assert node["properties"] is None
+
+    def test_properties_roundtrip_db_format(self, store):
+        """Properties survive write→read even if LadybugDB re-encodes them.
+
+        LadybugDB may auto-convert JSON strings into its internal MAP format
+        on storage, returning {key: value} (no quotes) on read. This test
+        verifies the full roundtrip produces valid dicts regardless.
+        """
+        props = {"path": "cmd/server/main.go", "extension": ".go", "language": "go"}
+        store.add_node("rt-1", "File", "main.go", props)
+        node = store.get_node("rt-1")
+        assert node["properties"] is not None
+        assert isinstance(node["properties"], dict)
+        assert node["properties"]["path"] == "cmd/server/main.go"
+        assert node["properties"]["language"] == "go"
+
+    def test_properties_roundtrip_with_integers(self, store):
+        """Integer values survive the roundtrip."""
+        props = {"start_line": 25, "end_line": 38, "language": "go"}
+        store.add_node("rt-2", "Function", "main", props)
+        node = store.get_node("rt-2")
+        assert node["properties"] is not None
+        assert node["properties"]["start_line"] == 25
+        assert node["properties"]["end_line"] == 38
+
+    def test_properties_roundtrip_with_booleans(self, store):
+        """Boolean values survive the roundtrip."""
+        props = {"exported": True, "deprecated": False}
+        store.add_node("rt-3", "Function", "Foo", props)
+        node = store.get_node("rt-3")
+        assert node["properties"] is not None
+        assert node["properties"]["exported"] is True
+        assert node["properties"]["deprecated"] is False
+
+    def test_properties_roundtrip_via_search(self, store):
+        """Properties are correct when accessed via search_nodes (not just get_node)."""
+        props = {"path": "pkg/db/store.go", "language": "go"}
+        store.add_node("rt-search", "File", "store.go", props)
+        results = store.search_nodes("store.go")
+        matching = [n for n in results if n["id"] == "rt-search"]
+        assert len(matching) == 1
+        assert isinstance(matching[0]["properties"], dict)
+        assert matching[0]["properties"]["path"] == "pkg/db/store.go"
+
+    def test_properties_roundtrip_via_traverse(self, store):
+        """Properties are correct on nodes reached via traversal."""
+        store.add_node("rt-src", "Class", "Handler", {"exported": True})
+        store.add_node("rt-tgt", "Function", "handle", {"start_line": 10})
+        store.add_relationship("rt-rel", "DEFINES", "rt-src", "rt-tgt")
+        results = store.traverse("rt-src", direction="outgoing", max_depth=1)
+        assert len(results) == 1
+        node_props = results[0]["node"]["properties"]
+        assert isinstance(node_props, dict)
+        assert node_props["start_line"] == 10
 
 
 class TestGraphStoreListNodes:
