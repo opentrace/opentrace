@@ -40,21 +40,17 @@ const mockExtractGeneric = vi.fn().mockReturnValue({
   rootNode: null,
 } satisfies ExtractionResult);
 
-vi.mock('../extractors/python', () => ({
-  extractPython: (...args: unknown[]) => mockExtractPython(...args),
-}));
-vi.mock('../extractors/typescript', () => ({
-  extractTypeScript: (...args: unknown[]) => mockExtractTypeScript(...args),
-}));
-vi.mock('../extractors/go', () => ({
-  extractGo: (...args: unknown[]) => mockExtractGo(...args),
-}));
-vi.mock('../extractors/generic', () => ({
-  extractGeneric: (...args: unknown[]) => mockExtractGeneric(...args),
-}));
-vi.mock('../importAnalyzer', () => ({
-  analyzeImports: () => ({ internal: {}, external: {} }),
-}));
+vi.mock('@opentrace/components/pipeline', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@opentrace/components/pipeline')>();
+  return {
+    ...original,
+    extractPython: (...args: unknown[]) => mockExtractPython(...args),
+    extractTypeScript: (...args: unknown[]) => mockExtractTypeScript(...args),
+    extractGo: (...args: unknown[]) => mockExtractGo(...args),
+    extractGeneric: (...args: unknown[]) => mockExtractGeneric(...args),
+    analyzeImports: () => ({ internal: {}, external: {} }),
+  };
+});
 
 import {
   runPipeline,

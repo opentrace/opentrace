@@ -28,12 +28,12 @@ import {
   createStrategy,
   type SummarizationStrategy,
 } from '../enricher/summarizer/strategy';
-import { DEFAULT_SUMMARIZER_CONFIG } from '../enricher/summarizer/types';
+import { DEFAULT_SUMMARIZER_CONFIG } from '@opentrace/components/pipeline';
 import {
   EXTENSION_LANGUAGE_MAP,
   PARSEABLE_LANGUAGES,
 } from '../loader/constants';
-import type { SummarizerConfig } from '../enricher/summarizer/types';
+import type { SummarizerConfig } from '@opentrace/components/pipeline';
 import type {
   IndexPhase,
   WorkerRequest,

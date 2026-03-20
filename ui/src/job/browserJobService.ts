@@ -29,8 +29,8 @@ import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 import type { GraphStore } from '../store/types';
 import { EventChannel } from './eventChannel';
 import type { JobMessage, JobService, JobStream } from './types';
-import { runPipeline, initParsers } from '../pipeline/pipeline';
-import type { PipelinePhase, RepoTree } from '../pipeline/types';
+import { runPipeline, initParsers } from '@opentrace/components/pipeline';
+import type { PipelinePhase, RepoTree } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 
 // --- Tree-sitter lazy initialization ---

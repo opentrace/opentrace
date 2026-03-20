@@ -24,15 +24,15 @@ import type {
   ParsingFileResult,
 } from '../types';
 import { detectLanguage, getExtension } from './loading';
-import { extractPython } from '../../runner/browser/parser/extractors/python';
-import { extractTypeScript } from '../../runner/browser/parser/extractors/typescript';
-import { extractGo } from '../../runner/browser/parser/extractors/go';
-import { extractGeneric } from '../../runner/browser/parser/extractors/generic';
+import { extractPython } from '../parser/extractors/python';
+import { extractTypeScript } from '../parser/extractors/typescript';
+import { extractGo } from '../parser/extractors/go';
+import { extractGeneric } from '../parser/extractors/generic';
 import type {
   Registries,
   CallInfo,
   SymbolNode,
-} from '../../runner/browser/parser/callResolver';
+} from '../parser/callResolver';
 
 // --- Parser registry (module-level) ---
 

@@ -36,13 +36,13 @@ export default defineConfig({
         'opentrace-components': resolve(__dirname, 'src/index.ts'),
         utils: resolve(__dirname, 'src/utils.ts'),
         indexing: resolve(__dirname, 'src/indexing/index.ts'),
+        pipeline: resolve(__dirname, 'src/pipeline/index.ts'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],
     },
     rollupOptions: {
-      // Only externalize React — everything else is bundled
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      external: ['react', 'react-dom', 'react/jsx-runtime', 'web-tree-sitter'],
       output: {
         globals: {
           react: 'React',

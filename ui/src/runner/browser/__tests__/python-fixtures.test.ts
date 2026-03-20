@@ -24,8 +24,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractPython } from '../parser/extractors/python';
-import { analyzePythonImports } from '../parser/importAnalyzer';
+import { extractPython, analyzePythonImports } from '@opentrace/components/pipeline';
 import { parsePy } from './helpers';
 import {
   normalizeSymbol,

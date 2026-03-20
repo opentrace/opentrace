@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { analyzeGoImports, resetDirIndexCache } from '../parser/importAnalyzer';
+import { analyzeGoImports, resetDirIndexCache } from '@opentrace/components/pipeline';
 import { parseGo } from './helpers';
 
 describe('analyzeGoImports', () => {

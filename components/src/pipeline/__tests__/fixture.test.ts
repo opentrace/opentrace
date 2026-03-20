@@ -28,7 +28,7 @@ beforeAll(async () => {
   initParsers(new Map([['python', pyParser]]));
 });
 
-const uiDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
 async function readAllFiles(
   dir: string,
@@ -89,7 +89,7 @@ function countDirs(files: Array<{ path: string }>): number {
 
 describe('fixture: Go project', () => {
   it('indexes Go project and saves to store', async () => {
-    const fixtureDir = join(uiDir, '..', 'tests', 'fixtures', 'go', 'project');
+    const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'go', 'project');
     const files = await readAllFiles(fixtureDir);
 
     const { events, store } = runAndLog(files, {
@@ -133,8 +133,7 @@ describe('fixture: Go project', () => {
 describe('fixture: Python project', () => {
   it('indexes Python project and saves to store', async () => {
     const fixtureDir = join(
-      uiDir,
-      '..',
+      repoRoot,
       'tests',
       'fixtures',
       'python',

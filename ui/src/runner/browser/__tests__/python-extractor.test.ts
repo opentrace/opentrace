@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractPython } from '../parser/extractors/python';
+import { extractPython } from '@opentrace/components/pipeline';
 import { parsePy } from './helpers';
 
 describe('extractPython', () => {

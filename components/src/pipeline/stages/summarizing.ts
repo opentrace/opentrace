@@ -24,8 +24,8 @@
  */
 
 import type { PipelineEvent, GraphNode } from '../types';
-import { summarizeFromMetadata } from '../../runner/browser/enricher/summarizer/templateSummarizer';
-import type { NodeKind } from '../../runner/browser/enricher/summarizer/types';
+import { summarizeFromMetadata } from '../summarizer/templateSummarizer';
+import type { NodeKind } from '../summarizer/types';
 
 const TYPE_TO_KIND: Record<string, NodeKind> = {
   Function: 'function',

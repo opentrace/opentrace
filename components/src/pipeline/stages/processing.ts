@@ -43,11 +43,8 @@ import {
   processSymbol,
   countSymbols,
 } from './parsing';
-import { analyzeImports } from '../../runner/browser/parser/importAnalyzer';
-import type {
-  Registries,
-  CallInfo,
-} from '../../runner/browser/parser/callResolver';
+import { analyzeImports } from '../parser/importAnalyzer';
+import type { Registries, CallInfo } from '../parser/callResolver';
 
 export function* execute(
   input: ScanResult,

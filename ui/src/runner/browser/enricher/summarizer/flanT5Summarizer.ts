@@ -26,7 +26,11 @@
  * - Reduced max_new_tokens (32 vs 64) — halves decoder steps for one-sentence output
  */
 
-import type { Summarizer, NodeKind, SummarizerConfig } from './types';
+import type {
+  Summarizer,
+  NodeKind,
+  SummarizerConfig,
+} from '@opentrace/components/pipeline';
 
 const PROMPT_TEMPLATES: Record<NodeKind, string> = {
   function: 'Summarize what this function does in one sentence:\n\n',

@@ -39,7 +39,7 @@ import {
   parseManifest,
   packageId,
   packageSourceUrl,
-} from '../../runner/browser/parser/manifestParser';
+} from '../parser/manifestParser';
 
 const PARSEABLE_LANGUAGES = new Set([
   'python',

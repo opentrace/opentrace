@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractGeneric } from '../parser/extractors/generic';
+import { extractGeneric } from '@opentrace/components/pipeline';
 import {
   parseCpp,
   parseRust,

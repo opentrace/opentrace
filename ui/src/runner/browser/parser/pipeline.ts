@@ -28,25 +28,25 @@ import {
   EXTENSION_LANGUAGE_MAP,
   PARSEABLE_LANGUAGES,
 } from '../loader/constants';
-import { extractPython } from './extractors/python';
-import { extractTypeScript } from './extractors/typescript';
-import { extractGo } from './extractors/go';
-import { extractGeneric } from './extractors/generic';
-import { analyzeImports } from './importAnalyzer';
 import {
+  extractPython,
+  extractTypeScript,
+  extractGo,
+  extractGeneric,
+  analyzeImports,
   isManifestFile,
   parseManifest,
   packageId,
   packageSourceUrl,
-} from './manifestParser';
-import {
   resolveCalls,
   resolvedCallsToRelationships,
-  type CallInfo,
-  type Registries,
-  type SymbolNode,
-} from './callResolver';
-import type { NodeKind, SymbolMetadata } from '../enricher/summarizer/types';
+} from '@opentrace/components/pipeline';
+import type {
+  CallInfo,
+  Registries,
+  SymbolNode,
+} from '@opentrace/components/pipeline';
+import type { NodeKind, SymbolMetadata } from '@opentrace/components/pipeline';
 import type { SummarizationStrategy } from '../enricher/summarizer/strategy';
 import type {
   CodeSymbol,

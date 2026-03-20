@@ -17,8 +17,8 @@
 import type {
   SummarizerConfig,
   SummarizationStrategyType,
-} from '../runner/browser/enricher/summarizer/types';
-import { DEFAULT_SUMMARIZER_CONFIG } from '../runner/browser/enricher/summarizer/types';
+} from '@opentrace/components/pipeline';
+import { DEFAULT_SUMMARIZER_CONFIG } from '@opentrace/components/pipeline';
 
 const ENABLED_KEY = 'ot_summarization_enabled';
 const MODEL_KEY = 'ot_summarization_model';
