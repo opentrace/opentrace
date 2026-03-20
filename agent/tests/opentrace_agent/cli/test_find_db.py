@@ -47,14 +47,25 @@ def test_finds_db_in_parent(tmp_path: Path) -> None:
 
 
 def test_stops_at_git_root(tmp_path: Path) -> None:
-    """DB above git root should not be found."""
+    """DB above the nearest git root should not be found.
+
+    Layout:
+        tmp_path/
+            .opentrace/index.db   ← DB is here (above the git root)
+            repo/
+                .git/             ← nearest git root = boundary
+                src/              ← start search here
+    """
     _make_db(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / ".git").mkdir()  # git root
+    (repo / ".git").mkdir()  # nearest git root — this is the boundary
     work = repo / "src"
     work.mkdir()
+
     result = find_db(work)
+
+    # DB at tmp_path is above repo/.git boundary, so must not be found.
     assert result is None
 
 

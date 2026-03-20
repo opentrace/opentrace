@@ -29,8 +29,8 @@ for _ in $(seq 1 10); do
   fi
   PARENT="$(dirname "$CURRENT")"
   [ "$PARENT" = "$CURRENT" ] && break
-  # Stop at git repo root
-  [ -d "$CURRENT/.git" ] && break
+  # Stop at git repo root (use -e: .git is a file in worktrees, not a directory)
+  [ -e "$CURRENT/.git" ] && break
   CURRENT="$PARENT"
 done
 
