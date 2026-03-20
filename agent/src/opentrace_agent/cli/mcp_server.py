@@ -17,11 +17,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import traceback
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from opentrace_agent.store import GraphStore
+
+logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4000
 
@@ -36,6 +40,12 @@ def _json_response(data: Any) -> str:
     return _truncate(json.dumps(data, default=str))
 
 
+def _error_response(tool_name: str, e: Exception) -> str:
+    tb = traceback.format_exception(e)
+    logger.error("Error executing tool %s: %s\n%s", tool_name, e, "".join(tb))
+    return json.dumps({"error": f"{type(e).__name__}: {e}"})
+
+
 def create_mcp_server(store: GraphStore) -> FastMCP:
     """Create a FastMCP server with graph query tools backed by *store*."""
     server = FastMCP("opentrace")
@@ -46,10 +56,15 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
 
         Returns matching nodes with their types and properties.
         """
-        node_types = [t.strip() for t in nodeTypes.split(",") if t.strip()] or None
-        limit = min(limit, 1000)
-        nodes = store.search_nodes(query, node_types=node_types, limit=limit)
-        return _json_response(nodes)
+        logger.debug("search_graph(query=%r, limit=%d, nodeTypes=%r)", query, limit, nodeTypes)
+        try:
+            node_types = [t.strip() for t in nodeTypes.split(",") if t.strip()] or None
+            limit = min(limit, 1000)
+            nodes = store.search_nodes(query, node_types=node_types, limit=limit)
+            logger.debug("search_graph → %d results", len(nodes))
+            return _json_response(nodes)
+        except Exception as e:
+            return _error_response("search_graph", e)
 
     @server.tool()
     def list_nodes(type: str, limit: int = 50, filters: dict[str, Any] | None = None) -> str:
@@ -58,26 +73,35 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
         Valid types include: Repository, Class, Function, File, Directory,
         Package, Module, Service, Endpoint, Database.
         """
-        limit = min(limit, 1000)
-        nodes = store.list_nodes(node_type=type, filters=filters, limit=limit)
-        return _json_response(nodes)
+        logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
+        try:
+            limit = min(limit, 1000)
+            nodes = store.list_nodes(node_type=type, filters=filters, limit=limit)
+            logger.debug("list_nodes → %d results", len(nodes))
+            return _json_response(nodes)
+        except Exception as e:
+            return _error_response("list_nodes", e)
 
     @server.tool()
     def get_node(nodeId: str) -> str:
         """Get full details of a single node by its ID, including all properties and immediate neighbors."""
-        node = store.get_node(nodeId)
-        if node is None:
-            return json.dumps({"error": f"Node not found: {nodeId}"})
-
+        logger.debug("get_node(nodeId=%r)", nodeId)
         try:
-            neighbors = store.traverse(nodeId, direction="both", max_depth=1)
-        except ValueError:
-            neighbors = []
-        result = {
-            "node": node,
-            "neighbors": [{"node": n["node"], "relationship": n["relationship"]} for n in neighbors],
-        }
-        return _json_response(result)
+            node = store.get_node(nodeId)
+            if node is None:
+                return json.dumps({"error": f"Node not found: {nodeId}"})
+
+            try:
+                neighbors = store.traverse(nodeId, direction="both", max_depth=1)
+            except ValueError:
+                neighbors = []
+            result = {
+                "node": node,
+                "neighbors": [{"node": n["node"], "relationship": n["relationship"]} for n in neighbors],
+            }
+            return _json_response(result)
+        except Exception as e:
+            return _error_response("get_node", e)
 
     @server.tool()
     def traverse_graph(
@@ -91,20 +115,31 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
         Direction can be 'outgoing', 'incoming', or 'both'.
         Optionally filter by relationship type (e.g. 'CALLS', 'DEFINES', 'CONTAINS').
         """
-        if direction not in ("outgoing", "incoming", "both"):
-            return json.dumps({"error": f"Invalid direction: {direction}. Must be 'outgoing', 'incoming', or 'both'."})
-        depth = min(depth, 10)
-        rel_type = relationship if relationship else None
+        logger.debug(
+            "traverse_graph(nodeId=%r, depth=%d, direction=%r, relationship=%r)",
+            nodeId,
+            depth,
+            direction,
+            relationship,
+        )
         try:
+            if direction not in ("outgoing", "incoming", "both"):
+                return json.dumps(
+                    {"error": f"Invalid direction: {direction}. Must be 'outgoing', 'incoming', or 'both'."}
+                )
+            depth = min(depth, 10)
+            rel_type = relationship if relationship else None
             results = store.traverse(
                 nodeId,
                 direction=direction,
                 max_depth=depth,
                 relationship_type=rel_type,
             )
+            return _json_response(results)
         except ValueError as e:
             return json.dumps({"error": str(e)})
-        return _json_response(results)
+        except Exception as e:
+            return _error_response("traverse_graph", e)
 
     @server.tool()
     def get_stats() -> str:
@@ -112,6 +147,12 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
 
         Use this as a first step to understand what has been indexed before running targeted queries.
         """
-        return _json_response(store.get_stats())
+        logger.debug("get_stats()")
+        try:
+            stats = store.get_stats()
+            logger.debug("get_stats → %d nodes, %d edges", stats["total_nodes"], stats["total_edges"])
+            return _json_response(stats)
+        except Exception as e:
+            return _error_response("get_stats", e)
 
     return server
