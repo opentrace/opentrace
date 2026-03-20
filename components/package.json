@@ -23,6 +23,11 @@
       "import": "./dist/utils.js",
       "require": "./dist/utils.cjs"
     },
+    "./indexing": {
+      "types": "./dist/src/indexing/index.d.ts",
+      "import": "./dist/indexing.js",
+      "require": "./dist/indexing.cjs"
+    },
     "./style.css": "./dist/components.css"
   },
   "publishConfig": {

@@ -22,24 +22,22 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { JobMessage } from '../job';
-import { normalizeRepoUrl } from '../runner/browser/loader/urlNormalize';
+import type { AddRepoModalProps } from './types';
+import './indexing-base.css';
 import './AddRepoModal.css';
 
 type SourceMode = 'url' | 'directory';
 
-export interface IndexedRepo {
-  name: string;
-  url: string;
-}
-
-interface Props {
-  onClose: () => void;
-  onSubmit: (message: JobMessage) => void;
-  /** When false, the backdrop click and Cancel button are hidden (e.g. empty-graph state). */
-  dismissable?: boolean;
-  /** Repos already indexed in the graph. Used to detect duplicates. */
-  indexedRepos?: IndexedRepo[];
+export function detectProvider(
+  url: string,
+): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
+  const lower = url.toLowerCase();
+  if (lower.includes('github')) return 'github';
+  if (lower.includes('gitlab')) return 'gitlab';
+  if (lower.includes('bitbucket')) return 'bitbucket';
+  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
+    return 'azuredevops';
+  return null;
 }
 
 const HISTORY_KEY = 'ot_repo_history';
@@ -71,18 +69,6 @@ function removeFromHistory(url: string): string[] {
   const updated = loadHistory().filter((u) => u !== url);
   localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
   return updated;
-}
-
-function detectProvider(
-  url: string,
-): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
-  const lower = url.toLowerCase();
-  if (lower.includes('github')) return 'github';
-  if (lower.includes('gitlab')) return 'gitlab';
-  if (lower.includes('bitbucket')) return 'bitbucket';
-  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
-    return 'azuredevops';
-  return null;
 }
 
 const PROVIDER_ORDER = [
@@ -296,8 +282,8 @@ export default function AddRepoModal({
   onClose,
   onSubmit,
   dismissable = true,
-  indexedRepos = [],
-}: Props) {
+  onValidate,
+}: AddRepoModalProps) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
   const [history, setHistory] = useState<string[]>(loadHistory);
@@ -341,17 +327,11 @@ export default function AddRepoModal({
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
   const patStorageKey = provider ? `ot_${provider}_pat` : null;
 
-  // Check if the entered URL matches an already-indexed repo
-  const alreadyIndexed = useMemo(() => {
-    if (source !== 'url' || !repoUrl.trim() || indexedRepos.length === 0)
-      return null;
-    const normalized = normalizeRepoUrl(repoUrl).toLowerCase();
-    return (
-      indexedRepos.find(
-        (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
-      ) ?? null
-    );
-  }, [source, repoUrl, indexedRepos]);
+  // Let the consumer validate the URL (e.g. duplicate detection)
+  const validationMessage = useMemo(() => {
+    if (source !== 'url' || !repoUrl.trim() || !onValidate) return null;
+    return onValidate(repoUrl);
+  }, [source, repoUrl, onValidate]);
 
   // Derive directory name from FileList
   const directoryName =
@@ -397,7 +377,7 @@ export default function AddRepoModal({
       );
       return;
     }
-    if (alreadyIndexed) {
+    if (validationMessage) {
       return;
     }
     setError(null);
@@ -736,7 +716,7 @@ export default function AddRepoModal({
             </div>
           )}
 
-          {alreadyIndexed && (
+          {validationMessage && (
             <div className="form-indexed">
               <svg
                 width="14"
@@ -751,16 +731,14 @@ export default function AddRepoModal({
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <span>
-                <strong>{alreadyIndexed.name}</strong> is already indexed
-              </span>
+              <span>{validationMessage}</span>
             </div>
           )}
 
           <button
             type="submit"
             className="btn-cta"
-            disabled={loading || !!alreadyIndexed}
+            disabled={loading || !!validationMessage}
           >
             {loading ? (
               <>
@@ -828,6 +806,3 @@ export default function AddRepoModal({
     </div>
   );
 }
-
-// eslint-disable-next-line react-refresh/only-export-components
-export { detectProvider };

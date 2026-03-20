@@ -102,6 +102,21 @@ export {
   getCommunityColor,
 } from './colors/communityColors';
 
+// ─── Indexing components ─────────────────────────────────────────────────
+export { AddRepoModal, IndexingProgress, normalizeRepoUrl, detectProvider } from './indexing';
+export type {
+  IndexingState,
+  StageState as IndexStageState,
+  StageStatus as IndexStageStatus,
+  StageConfig,
+  Provider,
+  JobMessage,
+  IndexRepoMessage,
+  IndexDirectoryMessage,
+  AddRepoModalProps,
+  IndexingProgressProps,
+} from './indexing';
+
 // ─── Panel components ───────────────────────────────────────────────────
 export { FilterPanel, GraphBadge, GraphLegend, DiscoverPanel } from './panels';
 export type {

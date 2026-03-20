@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/react';
 import React from 'react';
-import AddRepoModal, { detectProvider } from '../AddRepoModal';
+import { AddRepoModal, detectProvider } from '@opentrace/components/indexing';
 
 afterEach(() => {
   cleanup();
@@ -182,47 +182,28 @@ describe('AddRepoModal', () => {
       ).toHaveLength(1);
     });
 
-    it('shows already-indexed notice and disables submit for duplicate repo', () => {
+    it('shows validation notice and disables submit when onValidate blocks', () => {
       const onSubmit = vi.fn();
-      const indexedRepos = [
-        { name: 'my-repo', url: 'https://github.com/owner/repo' },
-      ];
+      const onValidate = (url: string) =>
+        url.includes('owner/repo') ? 'my-repo is already indexed' : null;
       const { getByTestId, getByText } = render(
         React.createElement(AddRepoModal, {
           ...defaultProps,
           onSubmit,
-          indexedRepos,
+          onValidate,
         }),
       );
       const input = getByTestId('repo-url-input');
       fireEvent.change(input, {
         target: { value: 'https://github.com/owner/repo' },
       });
-      expect(getByText('is already indexed')).toBeDefined();
-      expect(getByText('my-repo')).toBeDefined();
+      expect(getByText('my-repo is already indexed')).toBeDefined();
       // Submit button should be disabled
       const submitBtn = getByText('Add & Index').closest('button')!;
       expect(submitBtn.disabled).toBe(true);
       // Submitting should not call onSubmit
       fireEvent.click(submitBtn);
       expect(onSubmit).not.toHaveBeenCalled();
-    });
-
-    it('matches repos with different URL formats (SSH vs HTTPS)', () => {
-      const indexedRepos = [
-        { name: 'my-repo', url: 'https://github.com/owner/repo' },
-      ];
-      const { getByTestId, getByText } = render(
-        React.createElement(AddRepoModal, {
-          ...defaultProps,
-          indexedRepos,
-        }),
-      );
-      const input = getByTestId('repo-url-input');
-      fireEvent.change(input, {
-        target: { value: 'git@github.com:owner/repo.git' },
-      });
-      expect(getByText('is already indexed')).toBeDefined();
     });
 
     it('removes a history item when trash icon is clicked', () => {

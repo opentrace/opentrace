@@ -54,15 +54,66 @@ import { useStore } from '../store';
 import { useGraphData } from '../hooks/useGraphData';
 import type { JobState } from '../job';
 import type { JobMessage } from '../job';
-import { detectProvider } from './AddRepoModal';
-import AddRepoModal, { type IndexedRepo } from './AddRepoModal';
-import IndexingProgress from './IndexingProgress';
+import { JobPhase } from '../job';
+import {
+  AddRepoModal,
+  IndexingProgress,
+  detectProvider,
+  normalizeRepoUrl,
+  type IndexingState,
+} from '@opentrace/components';
+import { GitHubIcon, GitLabIcon } from './providerIcons';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
+
+const INDEXING_STAGES = [
+  { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
+  { key: String(JobPhase.JOB_PHASE_FETCHING), label: 'Fetching files' },
+  { key: String(JobPhase.JOB_PHASE_PARSING), label: 'Files & symbols' },
+  { key: String(JobPhase.JOB_PHASE_RESOLVING), label: 'Call resolution' },
+  { key: String(JobPhase.JOB_PHASE_SUMMARIZING), label: 'Summarizing' },
+  { key: String(JobPhase.JOB_PHASE_SUBMITTING), label: 'Persisting graph' },
+  { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
+];
+
+/** Map app-specific JobState to the generic IndexingState + title/message. */
+function toIndexingProps(job: JobState, repoUrl: string) {
+  let status: IndexingState['status'];
+  let title: string | undefined;
+  let message: string | undefined;
+
+  switch (job.status) {
+    case 'persisted':
+      status = 'done';
+      title = 'Indexing Complete';
+      message = 'Loading graph...';
+      break;
+    case 'enriching':
+      status = 'running';
+      title = 'Enriching Repository';
+      break;
+    default:
+      status = job.status;
+  }
+
+  const state: IndexingState = {
+    status,
+    nodesCreated: job.nodesCreated,
+    relationshipsCreated: job.relationshipsCreated,
+    error: job.error,
+    stages: job.stages as Record<string, IndexingState['stages'][string]>,
+  };
+
+  const provider = detectProvider(repoUrl);
+  const icon =
+    provider === 'gitlab' ? <GitLabIcon /> : provider ? <GitHubIcon /> : null;
+
+  return { state, title, message, icon };
+}
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
@@ -164,7 +215,11 @@ const GraphViewer = memo(
       const { store } = useStore();
       const canvasRef = useRef<GraphCanvasHandle>(null);
 
-      // Fetch indexed repos when the add-repo modal opens
+      // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
+      interface IndexedRepo {
+        name: string;
+        url: string;
+      }
       const [indexedRepos, setIndexedRepos] = useState<IndexedRepo[]>([]);
       useEffect(() => {
         if (!showAddRepo) return;
@@ -188,6 +243,18 @@ const GraphViewer = memo(
           cancelled = true;
         };
       }, [showAddRepo, store]);
+
+      const validateRepo = useCallback(
+        (url: string): string | null => {
+          if (indexedRepos.length === 0) return null;
+          const normalized = normalizeRepoUrl(url).toLowerCase();
+          const match = indexedRepos.find(
+            (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
+          );
+          return match ? `${match.name} is already indexed` : null;
+        },
+        [indexedRepos],
+      );
 
       const onGraphLoaded = useCallback(() => {
         setTimeout(() => {
@@ -793,7 +860,7 @@ const GraphViewer = memo(
                 onClose={onAddRepoClose}
                 onSubmit={onJobSubmit}
                 dismissable={false}
-                indexedRepos={indexedRepos}
+                onValidate={validateRepo}
               />
             )}
 
@@ -826,8 +893,8 @@ const GraphViewer = memo(
 
             {showFullModal && (
               <IndexingProgress
-                state={jobState}
-                provider={detectProvider(activeRepoUrl)}
+                {...toIndexingProps(jobState, activeRepoUrl)}
+                stages={INDEXING_STAGES}
                 onClose={onJobClose}
                 onCancel={onJobCancel}
                 onMinimize={onJobMinimize}
@@ -1339,7 +1406,7 @@ const GraphViewer = memo(
             <AddRepoModal
               onClose={onAddRepoClose}
               onSubmit={onJobSubmit}
-              indexedRepos={indexedRepos}
+              onValidate={validateRepo}
             />
           )}
 
@@ -1356,8 +1423,8 @@ const GraphViewer = memo(
 
           {showFullModal && (
             <IndexingProgress
-              state={jobState}
-              provider={detectProvider(activeRepoUrl)}
+              {...toIndexingProps(jobState, activeRepoUrl)}
+              stages={INDEXING_STAGES}
               onClose={onJobClose}
               onCancel={onJobCancel}
               onMinimize={onJobMinimize}
