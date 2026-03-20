@@ -392,6 +392,7 @@
   flex-direction: column;
   z-index: 10;
   position: relative;
+  padding-top: 64px;
 }
 
 /* Drag handle on the left edge */

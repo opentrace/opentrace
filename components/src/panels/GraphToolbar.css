@@ -17,11 +17,11 @@
 /* ── Toolbar layout ─────────────────────────── */
 
 .ot-toolbar {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 10;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 12px;
