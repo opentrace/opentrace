@@ -58,6 +58,27 @@
   display: none;
 }
 
+/* ── Search placement ──────────────────────── */
+/* Desktop: search inside nav is visible, tablet search is hidden */
+.ot-toolbar .ot-search-tablet {
+  display: none;
+}
+
+.ot-toolbar .ot-search-nav {
+  display: contents;
+}
+
+/* ── Persistent actions ─────────────────────── */
+/* On desktop: hidden here, shown inside nav via .ot-persistent-desktop */
+.ot-toolbar .ot-persistent-mobile {
+  display: none;
+  pointer-events: auto;
+}
+
+.ot-toolbar .ot-persistent-desktop {
+  display: contents;
+}
+
 /* ── Burger button ──────────────────────────── */
 
 .ot-toolbar .ot-burger-btn {
@@ -230,10 +251,42 @@
     gap: 0;
   }
 
+  /* Tablet search: visible outside the nav at 600–1024px */
+  .ot-toolbar .ot-search-tablet {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    pointer-events: auto;
+  }
+
+  .ot-toolbar .ot-search-tablet .ot-search-container {
+    flex: 1;
+    max-width: none;
+    margin: 0 8px;
+  }
+
+  /* Hide the in-nav copy of search */
+  .ot-toolbar .ot-search-nav {
+    display: none;
+  }
+
+  .ot-toolbar .ot-persistent-mobile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 0;
+    flex-shrink: 0;
+  }
+
+  .ot-toolbar .ot-persistent-desktop {
+    display: none;
+  }
+
   .ot-toolbar .ot-burger-btn {
     display: flex;
     align-items: center;
     justify-content: center;
+    margin-left: 8px;
   }
 
   .ot-toolbar-nav {
@@ -323,7 +376,23 @@
   }
 }
 
-/* ── Small mobile (≤ 640px) ─────────────────── */
+/* ── Small mobile (≤ 600px): search goes back into burger ── */
+
+@media (max-width: 600px) {
+  .ot-toolbar .ot-search-tablet {
+    display: none;
+  }
+
+  .ot-toolbar .ot-search-nav {
+    display: contents;
+  }
+
+  .ot-toolbar .ot-persistent-mobile {
+    margin-left: auto;
+  }
+}
+
+/* ── Extra small (≤ 640px) ──────────────────── */
 
 @media (max-width: 640px) {
   .ot-toolbar {

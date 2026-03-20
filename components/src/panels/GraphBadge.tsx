@@ -29,13 +29,13 @@ export default function GraphBadge({
       {totalNodes != null && (
         <span className="graph-badge-total">({totalNodes})</span>
       )}
-      <span>nodes</span>
+      <span className="graph-badge-label">nodes</span>
       <span className="graph-badge-sep">&middot;</span>
       <span className="graph-badge-rendered">{edgeCount}</span>
       {totalEdges != null && (
         <span className="graph-badge-total">({totalEdges})</span>
       )}
-      <span>edges</span>
+      <span className="graph-badge-label">edges</span>
     </span>
   );
 }

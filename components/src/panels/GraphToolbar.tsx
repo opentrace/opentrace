@@ -37,6 +37,7 @@ export default function GraphToolbar({
   mobilePanelTabs,
   onMobilePanelTab,
   actions,
+  persistentActions,
   className,
 }: GraphToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -78,9 +79,74 @@ export default function GraphToolbar({
 
   const visibleTabs = mobilePanelTabs?.filter((t) => t.visible !== false);
 
+  const searchMarkup = (id: string) => (
+    <div className="ot-search-container">
+      <input
+        type="text"
+        placeholder="Search nodes..."
+        value={searchQuery}
+        onChange={(e) => onSearchQueryChange(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && onSearch()}
+        className="ot-search-input"
+      />
+      <div className="ot-search-params">
+        <label htmlFor={`ot-hops-input-${id}`}>Hops:</label>
+        <input
+          id={`ot-hops-input-${id}`}
+          type="number"
+          min="0"
+          max={maxHops}
+          value={hops}
+          onChange={(e) =>
+            onHopsChange(
+              Math.min(maxHops, Math.max(0, parseInt(e.target.value) || 0)),
+            )
+          }
+          className="ot-hops-input"
+          title={`Number of connection hops to include (max ${maxHops})`}
+        />
+      </div>
+      <div className="ot-search-actions">
+        {searchQuery && (
+          <button
+            className="ot-clear-search"
+            onClick={onReset}
+            title="Clear search"
+          >
+            &times;
+          </button>
+        )}
+        <button
+          className="ot-search-btn"
+          onClick={onSearch}
+          title="Query API and rerender"
+          disabled={searchDisabled}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <header className={`ot-toolbar${className ? ` ${className}` : ''}`}>
       {logo}
+      <div className="ot-search-tablet">{searchMarkup('tablet')}</div>
+      {persistentActions && (
+        <div className="ot-persistent-mobile">{persistentActions}</div>
+      )}
       <button
         type="button"
         className="ot-burger-btn"
@@ -132,67 +198,7 @@ export default function GraphToolbar({
         {visibleTabs && visibleTabs.length > 0 && (
           <div className="ot-menu-divider" />
         )}
-        <div className="ot-search-container">
-          <input
-            type="text"
-            placeholder="Search nodes..."
-            value={searchQuery}
-            onChange={(e) => onSearchQueryChange(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-            className="ot-search-input"
-          />
-          <div className="ot-search-params">
-            <label htmlFor="ot-hops-input">Hops:</label>
-            <input
-              id="ot-hops-input"
-              type="number"
-              min="0"
-              max={maxHops}
-              value={hops}
-              onChange={(e) =>
-                onHopsChange(
-                  Math.min(
-                    maxHops,
-                    Math.max(0, parseInt(e.target.value) || 0),
-                  ),
-                )
-              }
-              className="ot-hops-input"
-              title={`Number of connection hops to include (max ${maxHops})`}
-            />
-          </div>
-          <div className="ot-search-actions">
-            {searchQuery && (
-              <button
-                className="ot-clear-search"
-                onClick={onReset}
-                title="Clear search"
-              >
-                &times;
-              </button>
-            )}
-            <button
-              className="ot-search-btn"
-              onClick={onSearch}
-              title="Query API and rerender"
-              disabled={searchDisabled}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-            </button>
-          </div>
-        </div>
+        <div className="ot-search-nav">{searchMarkup('nav')}</div>
         {showResetButton && (
           <button className="ot-reset-btn" onClick={onReset}>
             Show All
@@ -204,6 +210,9 @@ export default function GraphToolbar({
           totalNodes={totalNodes}
           totalEdges={totalEdges}
         />
+        {persistentActions && (
+          <div className="ot-persistent-desktop">{persistentActions}</div>
+        )}
         {actions}
       </nav>
     </header>

@@ -840,30 +840,6 @@
     color: var(--primary);
   }
 
-  /* GitHub Star as menu row */
-  .ot-toolbar-nav .github-star-btn {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    color: var(--foreground);
-    padding: 10px 16px;
-    height: auto;
-    justify-content: flex-start;
-    gap: 10px;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .ot-toolbar-nav .github-star-btn:hover {
-    background: var(--accent);
-  }
-
-  /* Hide the desktop-only "Star" text and second star icon */
-  .ot-toolbar-nav .github-star-btn .star-label,
-  .ot-toolbar-nav .github-star-btn svg:nth-of-type(2) {
-    display: none;
-  }
-
   /* Theme selector inline in dropdown */
   .ot-toolbar-nav .theme-selector-wrapper {
     width: 100%;

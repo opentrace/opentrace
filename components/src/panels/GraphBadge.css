@@ -43,3 +43,25 @@
 .graph-badge-sep {
   margin: 0 3px;
 }
+
+/* ── Compact badge (1100px–1300px) ──────────── */
+@media (max-width: 1300px) and (min-width: 1100px) {
+  .graph-badge-total,
+  .graph-badge-label {
+    display: none;
+  }
+
+  .graph-badge {
+    gap: 4px;
+    padding: 0 10px;
+  }
+}
+
+/* ── Hidden badge (1025px–1099px) ───────────── */
+/* Below 1024px the toolbar collapses to burger dropdown where the
+   badge reappears as a full-width menu row, so we stop hiding at 1025px. */
+@media (max-width: 1099px) and (min-width: 1025px) {
+  .graph-badge {
+    display: none;
+  }
+}

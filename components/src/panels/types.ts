@@ -124,6 +124,13 @@ export interface GraphToolbarProps {
    */
   actions?: React.ReactNode;
 
+  /**
+   * Always-visible actions that never collapse into the burger menu.
+   * On desktop: rendered between the Badge and actions inside the nav.
+   * On mobile: rendered next to the burger button, outside the dropdown.
+   */
+  persistentActions?: React.ReactNode;
+
   /** Optional className for the outer header element. */
   className?: string;
 }
