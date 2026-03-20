@@ -297,9 +297,7 @@ const GraphViewer = memo(
       );
       const [hops, setHops] = useState(2);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
-      const [hiddenLinkTypes, setHiddenLinkTypes] = useState(
-        new Set<string>(['DEPENDS_ON']),
-      );
+      const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
       const [hiddenCommunities, setHiddenCommunities] = useState(
         new Set<number>(),
