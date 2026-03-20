@@ -38,169 +38,7 @@
 }
 
 /* Header */
-header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 24px;
-  pointer-events: none;
-}
-
-/* .header-menu styles are in the responsive section below */
-
-header h1 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--foreground);
-  letter-spacing: -0.02em;
-  pointer-events: auto;
-}
-
-.search-container {
-  position: relative;
-  flex: 1;
-  max-width: 460px;
-  margin: 0 0.5rem;
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-}
-
-.search-input {
-  width: 100%;
-  height: 36px;
-  padding: 0 12px;
-  padding-right: 155px;
-  background: color-mix(in oklch, var(--card) 80%, transparent);
-  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
-  border-radius: calc(var(--radius) + 2px);
-  color: var(--foreground);
-  font-size: 0.8rem;
-  transition: all 0.2s;
-}
-
-.search-input:focus {
-  outline: none;
-  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 12%, transparent);
-}
-
-.search-input::placeholder {
-  color: var(--muted-foreground);
-}
-
-.search-params {
-  position: absolute;
-  right: 56px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.7rem;
-  color: var(--muted-foreground);
-  border-left: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
-  padding-left: 8px;
-}
-
-.hops-input {
-  width: 32px;
-  height: 22px;
-  background: color-mix(in oklch, var(--background) 60%, transparent);
-  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
-  border-radius: calc(var(--radius) - 2px);
-  color: var(--foreground);
-  font-size: 0.7rem;
-  padding: 0 4px;
-  text-align: center;
-}
-
-.hops-input:focus {
-  outline: none;
-  border-color: var(--primary);
-}
-
-/* Remove arrows from number input */
-.hops-input::-webkit-inner-spin-button,
-.hops-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.search-actions {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.clear-search {
-  background: none;
-  border: none;
-  color: var(--muted-foreground);
-  font-size: 1rem;
-  cursor: pointer;
-  padding: 2px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.clear-search:hover {
-  color: var(--foreground);
-}
-
-.api-search-btn {
-  background: var(--primary);
-  border: none;
-  border-radius: calc(var(--radius) - 2px);
-  color: var(--primary-foreground);
-  width: 24px;
-  height: 24px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s;
-}
-
-.api-search-btn:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--primary) 85%, black);
-}
-
-.api-search-btn:disabled {
-  background: color-mix(in oklch, var(--secondary) 60%, transparent);
-  color: var(--muted-foreground);
-  cursor: not-allowed;
-}
-
-.reset-btn {
-  pointer-events: auto;
-  background: color-mix(in oklch, var(--card) 80%, transparent);
-  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
-  color: var(--muted-foreground);
-  height: 36px;
-  padding: 0 12px;
-  border-radius: calc(var(--radius) + 2px);
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.reset-btn:hover {
-  background: color-mix(in oklch, var(--primary) 10%, transparent);
-  color: var(--primary);
-  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
-}
-
+/* Toolbar layout & search styles are now in @opentrace/components (GraphToolbar) */
 /* GraphBadge styles are now in @opentrace/components */
 
 .add-repo-btn {
@@ -939,52 +777,10 @@ header h1 {
   pointer-events: none;
 }
 
-/* ── Desktop: header-menu is inline flex ─────── */
-.header-menu {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: 1;
-  pointer-events: auto;
-}
+/* Toolbar nav, burger, and mobile panel styles are now in @opentrace/components (GraphToolbar) */
 
-/* Hidden on desktop by default */
-.menu-label {
-  display: none;
-}
-
-.mobile-panel-btn,
-.menu-divider {
-  display: none;
-}
-
-.burger-menu-btn {
-  display: none;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px;
-  cursor: pointer;
-  color: var(--foreground);
-  pointer-events: auto;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.burger-menu-btn:hover {
-  background: var(--accent);
-}
-
-/* ── Tablet + Mobile (≤ 1024px): burger dropdown ── */
+/* ── Tablet + Mobile (≤ 1024px) ── */
 @media (max-width: 1024px) {
-  header {
-    flex-wrap: wrap;
-    padding: max(12px, env(safe-area-inset-top))
-      max(16px, env(safe-area-inset-right)) 12px
-      max(16px, env(safe-area-inset-left));
-    gap: 0;
-  }
-
   .legend {
     left: max(24px, env(safe-area-inset-left));
     bottom: max(20px, env(safe-area-inset-bottom));
@@ -1010,76 +806,11 @@ header h1 {
     left: max(20px, env(safe-area-inset-left));
   }
 
-  .burger-menu-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  /* Dropdown menu — hidden by default, shown when .open */
-  .header-menu {
-    display: none;
-    flex-basis: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: calc(var(--radius) + 2px);
-    padding: 6px 0;
-    margin-top: 8px;
-    pointer-events: auto;
-  }
-
-  .header-menu.open {
-    display: flex;
-  }
-
-  /* Show panel shortcuts and dividers */
-  .mobile-panel-btn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 16px;
-    background: transparent;
-    border: none;
-    color: var(--foreground);
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    pointer-events: auto;
-  }
-
-  .mobile-panel-btn:hover {
-    background: var(--accent);
-  }
-
-  .menu-divider {
-    display: block;
-    height: 1px;
-    background: var(--border);
-    margin: 4px 0;
-  }
-
-  .menu-label {
-    display: inline;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  /* Search takes full width in dropdown */
-  .header-menu .search-container {
-    width: auto;
-    max-width: none;
-    min-width: 0;
-    margin: 4px 10px;
-  }
-
   /* Style all action buttons as full-width menu rows */
-  .header-menu .add-repo-btn,
-  .header-menu .chat-toggle-btn,
-  .header-menu .settings-toggle-btn,
-  .header-menu .theme-toggle-btn {
+  .ot-toolbar-nav .add-repo-btn,
+  .ot-toolbar-nav .chat-toggle-btn,
+  .ot-toolbar-nav .settings-toggle-btn,
+  .ot-toolbar-nav .theme-toggle-btn {
     width: auto;
     height: auto;
     padding: 10px 16px;
@@ -1093,80 +824,28 @@ header h1 {
     font-weight: 500;
   }
 
-  .header-menu .add-repo-btn:hover,
-  .header-menu .chat-toggle-btn:hover,
-  .header-menu .settings-toggle-btn:hover,
-  .header-menu .theme-toggle-btn:hover {
+  .ot-toolbar-nav .add-repo-btn:hover,
+  .ot-toolbar-nav .chat-toggle-btn:hover,
+  .ot-toolbar-nav .settings-toggle-btn:hover,
+  .ot-toolbar-nav .theme-toggle-btn:hover {
     background: var(--accent);
     color: var(--foreground);
     border-color: transparent;
   }
 
-  .header-menu .chat-toggle-btn.active,
-  .header-menu .settings-toggle-btn.active,
-  .header-menu .theme-toggle-btn.active {
+  .ot-toolbar-nav .chat-toggle-btn.active,
+  .ot-toolbar-nav .settings-toggle-btn.active,
+  .ot-toolbar-nav .theme-toggle-btn.active {
     background: color-mix(in oklch, var(--primary) 15%, transparent);
     color: var(--primary);
   }
 
-  /* Reset-btn as menu row */
-  .header-menu .reset-btn {
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    height: auto;
-    padding: 10px 16px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--foreground);
-  }
-
-  .header-menu .reset-btn:hover {
-    background: var(--accent);
-    border-color: transparent;
-  }
-
-  /* Badge as menu row */
-  .header-menu .graph-badge {
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    backdrop-filter: none;
-    height: auto;
-    padding: 10px 16px;
-    font-size: 13px;
-  }
-
-  /* GitHub Star as menu row */
-  .header-menu .github-star-btn {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    color: var(--foreground);
-    padding: 10px 16px;
-    height: auto;
-    justify-content: flex-start;
-    gap: 10px;
-    font-size: 14px;
-    font-weight: 500;
-  }
-
-  .header-menu .github-star-btn:hover {
-    background: var(--accent);
-  }
-
-  /* Hide the desktop-only "Star" text and second star icon */
-  .header-menu .github-star-btn .star-label,
-  .header-menu .github-star-btn svg:nth-of-type(2) {
-    display: none;
-  }
-
   /* Theme selector inline in dropdown */
-  .header-menu .theme-selector-wrapper {
+  .ot-toolbar-nav .theme-selector-wrapper {
     width: 100%;
   }
 
-  .header-menu .theme-dropdown {
+  .ot-toolbar-nav .theme-dropdown {
     position: static;
     box-shadow: none;
     border: none;
@@ -1175,12 +854,12 @@ header h1 {
     margin-top: 4px;
   }
 
-  .header-menu .add-repo-btn {
+  .ot-toolbar-nav .add-repo-btn {
     margin-left: 0;
   }
 
   /* Job minimized bar as menu row */
-  .header-menu .job-minimized-bar {
+  .ot-toolbar-nav .job-minimized-bar {
     margin-left: 0;
     border-radius: 0;
     border: none;
@@ -1241,20 +920,6 @@ header h1 {
 
 /* ── Mobile (≤ 640px): tighter spacing, icon-only logo ── */
 @media (max-width: 640px) {
-  header {
-    padding: max(10px, env(safe-area-inset-top))
-      max(12px, env(safe-area-inset-right)) 10px
-      max(12px, env(safe-area-inset-left));
-  }
-
-  header h1 {
-    display: none;
-  }
-
-  .header-menu .search-container {
-    margin: 4px 8px;
-  }
-
   .version-footer {
     display: none;
   }
@@ -1284,17 +949,6 @@ header h1 {
   .filter-dot {
     width: 10px;
     height: 10px;
-  }
-
-  /* Search buttons: larger touch targets */
-  .api-search-btn {
-    width: 32px;
-    height: 32px;
-  }
-
-  .hops-input {
-    width: 40px;
-    height: 28px;
   }
 
   /* Chat panel: tighter spacing on mobile */

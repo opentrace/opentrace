@@ -73,6 +73,68 @@ export interface GraphBadgeProps {
   totalEdges?: number;
 }
 
+// ─── GraphToolbar types ─────────────────────────────────────────────
+
+export interface MobilePanelTab {
+  /** Unique key identifying this tab. */
+  key: string;
+  /** Display label. */
+  label: string;
+  /** SVG icon rendered before the label. */
+  icon: React.ReactNode;
+  /** Whether this tab should be shown. Defaults to true. */
+  visible?: boolean;
+}
+
+export interface GraphToolbarProps {
+  /** Logo element rendered at the leading edge of the header. */
+  logo: React.ReactNode;
+
+  // ─── Search ────────────────────────────────────────────────
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
+  onSearch: () => void;
+  onReset: () => void;
+  /** Disable the search button (e.g. when query is unchanged). */
+  searchDisabled?: boolean;
+  /** Show a "Show All" reset button (e.g. when a search is active). */
+  showResetButton?: boolean;
+
+  // ─── Hops ──────────────────────────────────────────────────
+  hops: number;
+  onHopsChange: (hops: number) => void;
+  maxHops?: number;
+
+  // ─── Badge ─────────────────────────────────────────────────
+  nodeCount: number;
+  edgeCount: number;
+  totalNodes?: number;
+  totalEdges?: number;
+
+  // ─── Mobile panel tabs ─────────────────────────────────────
+  /** Tabs shown at the top of the mobile dropdown menu. */
+  mobilePanelTabs?: MobilePanelTab[];
+  onMobilePanelTab?: (key: string) => void;
+
+  // ─── App-specific actions slot ─────────────────────────────
+  /**
+   * Rendered after the GraphBadge in the nav.
+   * Intended for app-specific toolbar actions (theme toggle,
+   * chat button, settings, etc.).
+   */
+  actions?: React.ReactNode;
+
+  /**
+   * Always-visible actions that never collapse into the burger menu.
+   * On desktop: rendered between the Badge and actions inside the nav.
+   * On mobile: rendered next to the burger button, outside the dropdown.
+   */
+  persistentActions?: React.ReactNode;
+
+  /** Optional className for the outer header element. */
+  className?: string;
+}
+
 // ─── DiscoverPanel types ────────────────────────────────────────────
 
 export interface TreeNodeData {

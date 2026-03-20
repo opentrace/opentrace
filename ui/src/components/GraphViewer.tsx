@@ -39,8 +39,8 @@ import {
 } from '@opentrace/components/utils';
 import {
   GraphCanvas,
-  GraphBadge,
   GraphLegend,
+  GraphToolbar,
   type GraphCanvasHandle,
   type FilterItem,
   type FilterPanelProps,
@@ -292,31 +292,9 @@ const GraphViewer = memo(
       );
       const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
-      const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
       const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
         null,
       );
-      const menuRef = useRef<HTMLElement>(null);
-      const burgerRef = useRef<HTMLButtonElement>(null);
-
-      // Close burger menu on click-outside or Escape
-      useEffect(() => {
-        if (!mobileMenuOpen) return;
-        const onClickOutside = (e: MouseEvent) => {
-          if (menuRef.current?.contains(e.target as Node)) return;
-          if (burgerRef.current?.contains(e.target as Node)) return;
-          setMobileMenuOpen(false);
-        };
-        const onEscape = (e: KeyboardEvent) => {
-          if (e.key === 'Escape') setMobileMenuOpen(false);
-        };
-        document.addEventListener('mousedown', onClickOutside);
-        document.addEventListener('keydown', onEscape);
-        return () => {
-          document.removeEventListener('mousedown', onClickOutside);
-          document.removeEventListener('keydown', onEscape);
-        };
-      }, [mobileMenuOpen]);
       const [hops, setHops] = useState(2);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(
@@ -1090,105 +1068,36 @@ const GraphViewer = memo(
             onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}
           />
-          <header>
-            <button
-              type="button"
-              className="header-logo header-logo--clickable"
-              onClick={() => setShowResetConfirm(true)}
-            >
-              <img src="/opentrace-logo.svg" alt="OpenTrace" />
-              <h1>OpenTrace</h1>
-            </button>
-            <button
-              type="button"
-              className="burger-menu-btn"
-              ref={burgerRef}
-              onClick={() => setMobileMenuOpen((v) => !v)}
-              aria-label="Toggle menu"
-              aria-expanded={mobileMenuOpen}
-            >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                {mobileMenuOpen ? (
-                  <>
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </>
-                ) : (
-                  <>
-                    <line x1="3" y1="6" x2="21" y2="6" />
-                    <line x1="3" y1="12" x2="21" y2="12" />
-                    <line x1="3" y1="18" x2="21" y2="18" />
-                  </>
-                )}
-              </svg>
-            </button>
-            <nav
-              className={`header-menu${mobileMenuOpen ? ' open' : ''}`}
-              ref={menuRef}
-            >
+          <GraphToolbar
+            logo={
               <button
                 type="button"
-                className="mobile-panel-btn"
-                onClick={() => {
-                  setMobilePanelTab('filters');
-                  setMobileMenuOpen(false);
-                }}
+                className="header-logo header-logo--clickable"
+                onClick={() => setShowResetConfirm(true)}
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
-                </svg>
-                <span className="menu-label">Filters</span>
+                <img src="/opentrace-logo.svg" alt="OpenTrace" />
+                <h1>OpenTrace</h1>
               </button>
-              <button
-                type="button"
-                className="mobile-panel-btn"
-                onClick={() => {
-                  setMobilePanelTab('discover');
-                  setMobileMenuOpen(false);
-                }}
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
-                </svg>
-                <span className="menu-label">Discover</span>
-              </button>
-              {(selectedNode || selectedLink) && (
-                <button
-                  type="button"
-                  className="mobile-panel-btn"
-                  onClick={() => {
-                    setMobilePanelTab('details');
-                    setMobileMenuOpen(false);
-                  }}
-                >
+            }
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            onSearch={handleSearch}
+            onReset={handleReset}
+            searchDisabled={
+              !searchQuery.trim() || searchQuery === lastSearchQuery
+            }
+            showResetButton={!!lastSearchQuery}
+            hops={hops}
+            onHopsChange={setHops}
+            nodeCount={filteredGraphData.nodes.length}
+            edgeCount={filteredGraphData.links.length}
+            totalNodes={stats?.total_nodes}
+            totalEdges={stats?.total_edges}
+            mobilePanelTabs={[
+              {
+                key: 'filters',
+                label: 'Filters',
+                icon: (
                   <svg
                     width="20"
                     height="20"
@@ -1199,102 +1108,14 @@ const GraphViewer = memo(
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
                   </svg>
-                  <span className="menu-label">Details</span>
-                </button>
-              )}
-              <div className="menu-divider"></div>
-              <div className="search-container">
-                <input
-                  type="text"
-                  placeholder="Search nodes..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="search-input"
-                />
-                <div className="search-params">
-                  <label htmlFor="hops-input">Hops:</label>
-                  <input
-                    id="hops-input"
-                    type="number"
-                    min="0"
-                    max="5"
-                    value={hops}
-                    onChange={(e) =>
-                      setHops(
-                        Math.min(5, Math.max(0, parseInt(e.target.value) || 0)),
-                      )
-                    }
-                    className="hops-input"
-                    title="Number of connection hops to include (max 5)"
-                  />
-                </div>
-                <div className="search-actions">
-                  {searchQuery && (
-                    <button
-                      className="clear-search"
-                      onClick={handleReset}
-                      title="Clear search"
-                    >
-                      &times;
-                    </button>
-                  )}
-                  <button
-                    className="api-search-btn"
-                    onClick={handleSearch}
-                    title="Query API and rerender"
-                    disabled={
-                      !searchQuery.trim() || searchQuery === lastSearchQuery
-                    }
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="11" cy="11" r="8"></circle>
-                      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              {lastSearchQuery && (
-                <button className="reset-btn" onClick={handleReset}>
-                  Show All
-                </button>
-              )}
-              <GraphBadge
-                nodeCount={filteredGraphData.nodes.length}
-                edgeCount={filteredGraphData.links.length}
-                totalNodes={stats?.total_nodes}
-                totalEdges={stats?.total_edges}
-              />
-              {(jobState.status === 'enriching' ||
-                jobState.status === 'done') &&
-              !jobExpanded ? (
-                <JobMinimizedBar
-                  state={jobState}
-                  onClick={onJobExpand}
-                  onCancel={onJobCancel}
-                />
-              ) : (
-                <button
-                  className="add-repo-btn"
-                  onClick={() => {
-                    onAddRepoOpen();
-                    setMobileMenuOpen(false);
-                  }}
-                  title="Add Repository"
-                >
+                ),
+              },
+              {
+                key: 'discover',
+                label: 'Discover',
+                icon: (
                   <svg
                     width="20"
                     height="20"
@@ -1305,41 +1126,35 @@ const GraphViewer = memo(
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                    <circle cx="12" cy="12" r="10" />
+                    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
                   </svg>
-                  <span className="menu-label">Add Repository</span>
-                </button>
-              )}
-              <ThemeSelector />
-              <button
-                className={`chat-toggle-btn ${showChat ? 'active' : ''}`}
-                onClick={() => {
-                  onToggleChat();
-                  setMobileMenuOpen(false);
-                }}
-                title="Toggle AI Chat"
-                data-testid="chat-toggle-btn"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-                  <path d="M20 3v4" />
-                  <path d="M22 5h-4" />
-                  <path d="M4 17v2" />
-                  <path d="M5 18H3" />
-                </svg>
-                <span className="menu-label">AI Chat</span>
-              </button>
-
+                ),
+              },
+              {
+                key: 'details',
+                label: 'Details',
+                visible: !!(selectedNode || selectedLink),
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                ),
+              },
+            ]}
+            onMobilePanelTab={(key) => setMobilePanelTab(key as SidePanelTab)}
+            persistentActions={
               <a
                 className="github-star-btn"
                 href="https://github.com/opentrace/opentrace"
@@ -1363,37 +1178,91 @@ const GraphViewer = memo(
                   stroke="currentColor"
                   strokeWidth="1"
                 >
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                 </svg>
                 <span className="star-label">Star</span>
-                <span className="menu-label">Star on GitHub</span>
               </a>
-
-              <button
-                className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
-                onClick={() => {
-                  onToggleSettings();
-                  setMobileMenuOpen(false);
-                }}
-                title="Settings"
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+            }
+            actions={
+              <>
+                {(jobState.status === 'enriching' ||
+                  jobState.status === 'done') &&
+                !jobExpanded ? (
+                  <JobMinimizedBar
+                    state={jobState}
+                    onClick={onJobExpand}
+                    onCancel={onJobCancel}
+                  />
+                ) : (
+                  <button
+                    className="add-repo-btn"
+                    onClick={onAddRepoOpen}
+                    title="Add Repository"
+                  >
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span className="ot-menu-label">Add Repository</span>
+                  </button>
+                )}
+                <ThemeSelector />
+                <button
+                  className={`chat-toggle-btn ${showChat ? 'active' : ''}`}
+                  onClick={onToggleChat}
+                  title="Toggle AI Chat"
+                  data-testid="chat-toggle-btn"
                 >
-                  <circle cx="12" cy="12" r="3"></circle>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                </svg>
-                <span className="menu-label">Settings</span>
-              </button>
-            </nav>
-          </header>
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+                    <path d="M20 3v4" />
+                    <path d="M22 5h-4" />
+                    <path d="M4 17v2" />
+                    <path d="M5 18H3" />
+                  </svg>
+                  <span className="ot-menu-label">AI Chat</span>
+                </button>
+                <button
+                  className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
+                  onClick={onToggleSettings}
+                  title="Settings"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  <span className="ot-menu-label">Settings</span>
+                </button>
+              </>
+            }
+          />
 
           {showResetConfirm && (
             <ResetConfirmModal

@@ -17,6 +17,7 @@
 export { default as FilterPanel } from './FilterPanel';
 export { default as GraphBadge } from './GraphBadge';
 export { default as GraphLegend } from './GraphLegend';
+export { default as GraphToolbar } from './GraphToolbar';
 export { default as DiscoverPanel } from './DiscoverPanel';
 
 export type {
@@ -25,6 +26,8 @@ export type {
   GraphBadgeProps,
   LegendItem,
   GraphLegendProps,
+  MobilePanelTab,
+  GraphToolbarProps,
   TreeNodeData,
   DiscoverPanelProps,
 } from './types';

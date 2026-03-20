@@ -118,13 +118,21 @@ export type {
 } from './indexing';
 
 // ─── Panel components ───────────────────────────────────────────────────
-export { FilterPanel, GraphBadge, GraphLegend, DiscoverPanel } from './panels';
+export {
+  FilterPanel,
+  GraphBadge,
+  GraphLegend,
+  GraphToolbar,
+  DiscoverPanel,
+} from './panels';
 export type {
   FilterItem,
   FilterPanelProps,
   GraphBadgeProps,
   LegendItem,
   GraphLegendProps,
+  MobilePanelTab,
+  GraphToolbarProps,
   TreeNodeData,
   DiscoverPanelProps,
 } from './panels';
