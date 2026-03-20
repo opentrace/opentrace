@@ -1,6 +1,6 @@
 {
   "name": "opentrace-oss",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies.",
   "author": {
     "name": "OpenTrace"

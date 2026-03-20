@@ -290,6 +290,30 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
         store.close()
 
 
+@app.command()
+@click.argument("pattern")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+def augment(pattern: str, db_path: str | None) -> None:
+    """Query the graph for context about a search pattern.
+
+    Prints a short human-readable context block (< 50 lines) to stdout.
+    Exits 0 with no output when the pattern matches nothing or no index is found.
+    """
+    from opentrace_agent.cli.augment import run_augment
+
+    try:
+        resolved = _resolve_db(db_path, must_exist=True)
+    except click.UsageError:
+        resolved = None
+    run_augment(pattern, resolved)
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
