@@ -59,8 +59,9 @@ import {
   AddRepoModal,
   IndexingProgress,
   detectProvider,
-  type IndexedRepo,
+  normalizeRepoUrl,
   type IndexingState,
+  type RepoValidation,
 } from '@opentrace/components';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
@@ -210,7 +211,8 @@ const GraphViewer = memo(
       const { store } = useStore();
       const canvasRef = useRef<GraphCanvasHandle>(null);
 
-      // Fetch indexed repos when the add-repo modal opens
+      // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
+      interface IndexedRepo { name: string; url: string }
       const [indexedRepos, setIndexedRepos] = useState<IndexedRepo[]>([]);
       useEffect(() => {
         if (!showAddRepo) return;
@@ -234,6 +236,21 @@ const GraphViewer = memo(
           cancelled = true;
         };
       }, [showAddRepo, store]);
+
+      const validateRepo = useCallback(
+        (url: string): RepoValidation | null => {
+          if (indexedRepos.length === 0) return null;
+          const normalized = normalizeRepoUrl(url).toLowerCase();
+          const match = indexedRepos.find(
+            (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
+          );
+          if (match) {
+            return { ok: false, message: `${match.name} is already indexed` };
+          }
+          return null;
+        },
+        [indexedRepos],
+      );
 
       const onGraphLoaded = useCallback(() => {
         setTimeout(() => {
@@ -839,7 +856,7 @@ const GraphViewer = memo(
                 onClose={onAddRepoClose}
                 onSubmit={onJobSubmit}
                 dismissable={false}
-                indexedRepos={indexedRepos}
+                onValidate={validateRepo}
               />
             )}
 
@@ -1386,7 +1403,7 @@ const GraphViewer = memo(
             <AddRepoModal
               onClose={onAddRepoClose}
               onSubmit={onJobSubmit}
-              indexedRepos={indexedRepos}
+              onValidate={validateRepo}
             />
           )}
 

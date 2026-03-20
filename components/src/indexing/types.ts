@@ -59,10 +59,12 @@ export interface IndexDirectoryMessage {
 
 export type JobMessage = IndexRepoMessage | IndexDirectoryMessage;
 
-// Indexed repo (duplicate detection)
-export interface IndexedRepo {
-  name: string;
-  url: string;
+// Validation result returned by onValidate
+export interface RepoValidation {
+  /** Whether the URL is allowed (false blocks submit). */
+  ok: boolean;
+  /** Message shown to the user (e.g. "my-repo is already indexed"). */
+  message?: string;
 }
 
 // Component props
@@ -70,7 +72,8 @@ export interface AddRepoModalProps {
   onClose: () => void;
   onSubmit: (message: JobMessage) => void;
   dismissable?: boolean;
-  indexedRepos?: IndexedRepo[];
+  /** Called as the user types/selects a URL. Return null to skip validation. */
+  onValidate?: (url: string) => RepoValidation | null;
 }
 
 export interface IndexingProgressProps {

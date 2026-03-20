@@ -24,7 +24,7 @@ export type {
   StageStatus,
   StageConfig,
   Provider,
-  IndexedRepo,
+  RepoValidation,
   JobMessage,
   IndexRepoMessage,
   IndexDirectoryMessage,

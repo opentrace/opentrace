@@ -23,7 +23,6 @@ import {
   useState,
 } from 'react';
 import type { AddRepoModalProps } from './types';
-import { normalizeRepoUrl } from './urlNormalize';
 import './indexing-base.css';
 import './AddRepoModal.css';
 
@@ -283,7 +282,7 @@ export default function AddRepoModal({
   onClose,
   onSubmit,
   dismissable = true,
-  indexedRepos = [],
+  onValidate,
 }: AddRepoModalProps) {
   const [source, setSource] = useState<SourceMode>('url');
   const [repoUrl, setRepoUrl] = useState('');
@@ -328,17 +327,13 @@ export default function AddRepoModal({
   const provider = source === 'url' ? detectProvider(repoUrl) : null;
   const patStorageKey = provider ? `ot_${provider}_pat` : null;
 
-  // Check if the entered URL matches an already-indexed repo
-  const alreadyIndexed = useMemo(() => {
-    if (source !== 'url' || !repoUrl.trim() || indexedRepos.length === 0)
-      return null;
-    const normalized = normalizeRepoUrl(repoUrl).toLowerCase();
-    return (
-      indexedRepos.find(
-        (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
-      ) ?? null
-    );
-  }, [source, repoUrl, indexedRepos]);
+  // Let the consumer validate the URL (e.g. duplicate detection)
+  const validation = useMemo(() => {
+    if (source !== 'url' || !repoUrl.trim() || !onValidate) return null;
+    return onValidate(repoUrl);
+  }, [source, repoUrl, onValidate]);
+
+  const blocked = validation != null && !validation.ok;
 
   // Derive directory name from FileList
   const directoryName =
@@ -384,7 +379,7 @@ export default function AddRepoModal({
       );
       return;
     }
-    if (alreadyIndexed) {
+    if (blocked) {
       return;
     }
     setError(null);
@@ -723,7 +718,7 @@ export default function AddRepoModal({
             </div>
           )}
 
-          {alreadyIndexed && (
+          {blocked && validation.message && (
             <div className="form-indexed">
               <svg
                 width="14"
@@ -738,16 +733,14 @@ export default function AddRepoModal({
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <span>
-                <strong>{alreadyIndexed.name}</strong> is already indexed
-              </span>
+              <span>{validation.message}</span>
             </div>
           )}
 
           <button
             type="submit"
             className="btn-cta"
-            disabled={loading || !!alreadyIndexed}
+            disabled={loading || blocked}
           >
             {loading ? (
               <>
