@@ -60,10 +60,9 @@ import {
   IndexingProgress,
   detectProvider,
   normalizeRepoUrl,
-  GitHubIcon,
-  GitLabIcon,
   type IndexingState,
 } from '@opentrace/components';
+import { GitHubIcon, GitLabIcon } from './providerIcons';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';

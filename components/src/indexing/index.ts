@@ -18,7 +18,6 @@ export { default as AddRepoModal } from './AddRepoModal';
 export { default as IndexingProgress } from './IndexingProgress';
 export { normalizeRepoUrl } from './urlNormalize';
 export { detectProvider } from './AddRepoModal';
-export { GitHubIcon, GitLabIcon, BitbucketIcon, AzureDevOpsIcon } from './icons';
 export type {
   IndexingState,
   StageState,
