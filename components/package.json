@@ -33,14 +33,24 @@
       "import": "./dist/pipeline.js",
       "require": "./dist/pipeline.cjs"
     },
+    "./pipeline/wasm": {
+      "types": "./dist/src/pipeline/wasm.d.ts",
+      "import": "./dist/pipeline-wasm.js",
+      "require": "./dist/pipeline-wasm.cjs"
+    },
     "./style.css": "./dist/components.css"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
+  "bin": {
+    "opentrace-copy-wasm": "./bin/copy-wasm.js"
+  },
   "files": [
-    "dist"
+    "dist",
+    "public/wasm",
+    "bin"
   ],
   "sideEffects": [
     "**/*.css"

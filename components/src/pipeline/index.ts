@@ -121,3 +121,8 @@ export {
   parentDir,
   ensureDirChain,
 } from './stages/loading';
+
+// WASM file helpers are in ./wasm — import separately to avoid pulling
+// Node.js builtins into browser bundles:
+//
+//   import { getWasmDir, getWasmPath } from '@opentrace/components/pipeline/wasm';

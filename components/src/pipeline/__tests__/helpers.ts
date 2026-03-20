@@ -14,23 +14,19 @@
  * limitations under the License.
  */
 
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { Parser, Language, type Node as SyntaxNode } from 'web-tree-sitter';
 import type { RepoTree } from '../types';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const WASM_DIR = join(__dirname, '..', '..', '..', 'public', 'wasm');
+import { getWasmPath } from '../wasm';
 
 let initialized = false;
 
 export async function initTreeSitter(): Promise<void> {
   if (initialized) return;
-  const wasmBuf = await readFile(join(WASM_DIR, 'web-tree-sitter.wasm'));
+  const runtimePath = getWasmPath('runtime');
+  const wasmBuf = await readFile(runtimePath);
   await Parser.init({
-    locateFile: () => join(WASM_DIR, 'web-tree-sitter.wasm'),
+    locateFile: () => runtimePath,
     wasmBinary: wasmBuf,
   });
   initialized = true;
@@ -42,7 +38,7 @@ export async function getPythonParser(): Promise<Parser> {
   await initTreeSitter();
   if (!pyParser) {
     pyParser = new Parser();
-    const buf = await readFile(join(WASM_DIR, 'tree-sitter-python.wasm'));
+    const buf = await readFile(getWasmPath('python'));
     const lang = await Language.load(buf);
     pyParser.setLanguage(lang);
   }

@@ -37,12 +37,21 @@ export default defineConfig({
         utils: resolve(__dirname, 'src/utils.ts'),
         indexing: resolve(__dirname, 'src/indexing/index.ts'),
         pipeline: resolve(__dirname, 'src/pipeline/index.ts'),
+        'pipeline-wasm': resolve(__dirname, 'src/pipeline/wasm.ts'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],
     },
     rollupOptions: {
-      external: ['react', 'react-dom', 'react/jsx-runtime', 'web-tree-sitter'],
+      external: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        'web-tree-sitter',
+        'node:fs',
+        'node:path',
+        'node:url',
+      ],
       output: {
         globals: {
           react: 'React',
