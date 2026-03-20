@@ -1,0 +1,191 @@
+{
+  "suite_name": "Go Project — Graph Accuracy",
+  "description": "Validates indexing accuracy for a Go HTTP server with database layer.",
+  "fixture": "tests/fixtures/go/project",
+  "repo_id": "test/go-project",
+  "tasks": [
+    {
+      "id": "stats_has_nodes",
+      "category": "structure",
+      "description": "Graph should contain nodes after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "has_key", "value": "total_nodes"},
+        {"type": "key_gte", "key": "total_nodes", "value": 1}
+      ]
+    },
+    {
+      "id": "stats_has_edges",
+      "category": "structure",
+      "description": "Graph should contain relationships",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "key_gte", "key": "total_edges", "value": 1}
+      ]
+    },
+    {
+      "id": "find_main_go",
+      "category": "symbol_discovery",
+      "description": "Search should find main.go",
+      "tool": "search_graph",
+      "tool_args": {"query": "main.go", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "main.go"}
+      ]
+    },
+    {
+      "id": "find_handler_go",
+      "category": "symbol_discovery",
+      "description": "Search should find handler.go",
+      "tool": "search_graph",
+      "tool_args": {"query": "handler.go", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "handler.go"}
+      ]
+    },
+    {
+      "id": "find_db_go",
+      "category": "symbol_discovery",
+      "description": "Search should find db.go",
+      "tool": "search_graph",
+      "tool_args": {"query": "db.go", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "db.go"}
+      ]
+    },
+    {
+      "id": "list_all_files",
+      "category": "structure",
+      "description": "Project should have at least 3 Go files indexed",
+      "tool": "list_nodes",
+      "tool_args": {"type": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 3},
+        {"type": "result_contains_name", "value": "main.go"},
+        {"type": "result_contains_name", "value": "db.go"},
+        {"type": "result_contains_name", "value": "handler.go"}
+      ]
+    },
+    {
+      "id": "list_classes_structs",
+      "category": "structure",
+      "description": "Should have Go structs as Class nodes (Store, Handler, User)",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "find_store_struct",
+      "category": "symbol_discovery",
+      "description": "Search should find the Store struct",
+      "tool": "search_graph",
+      "tool_args": {"query": "Store", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "Store"}
+      ]
+    },
+    {
+      "id": "find_handler_struct",
+      "category": "symbol_discovery",
+      "description": "Search should find the Handler struct",
+      "tool": "search_graph",
+      "tool_args": {"query": "Handler", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "Handler"}
+      ]
+    },
+    {
+      "id": "find_user_struct",
+      "category": "symbol_discovery",
+      "description": "Search should find the User struct",
+      "tool": "search_graph",
+      "tool_args": {"query": "User", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "User"}
+      ]
+    },
+    {
+      "id": "list_functions",
+      "category": "structure",
+      "description": "Should have functions from the Go project",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 2}
+      ]
+    },
+    {
+      "id": "find_main_function",
+      "category": "symbol_discovery",
+      "description": "Search should find the main function",
+      "tool": "search_graph",
+      "tool_args": {"query": "main", "nodeTypes": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "find_get_all_users",
+      "category": "symbol_discovery",
+      "description": "Search should find the GetAllUsers method",
+      "tool": "search_graph",
+      "tool_args": {"query": "GetAllUsers"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "GetAllUsers"}
+      ]
+    },
+    {
+      "id": "find_insert_user",
+      "category": "symbol_discovery",
+      "description": "Search should find the InsertUser method",
+      "tool": "search_graph",
+      "tool_args": {"query": "InsertUser"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "InsertUser"}
+      ]
+    },
+    {
+      "id": "search_type_filter",
+      "category": "search_quality",
+      "description": "File type filter should restrict results",
+      "tool": "search_graph",
+      "tool_args": {"query": "handler", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "all_have_type", "value": "File"}
+      ]
+    },
+    {
+      "id": "has_repository_node",
+      "category": "structure",
+      "description": "Should have a Repository node",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Repository"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "has_directories",
+      "category": "structure",
+      "description": "Should have Directory nodes for project structure",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Directory"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    }
+  ]
+}
