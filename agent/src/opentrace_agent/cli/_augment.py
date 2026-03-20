@@ -23,9 +23,16 @@ from __future__ import annotations
 from typing import Any
 
 # Relationship types we surface in the context block.
-_INTERESTING_RELS = frozenset({
-    "CALLS", "IMPORTS", "DEPENDS_ON", "CONTAINS", "EXTENDS", "IMPLEMENTS",
-})
+_INTERESTING_RELS = frozenset(
+    {
+        "CALLS",
+        "IMPORTS",
+        "DEPENDS_ON",
+        "CONTAINS",
+        "EXTENDS",
+        "IMPLEMENTS",
+    }
+)
 
 # Maximum nodes / relationships to show to keep output < 50 lines.
 _MAX_NODES = 10
@@ -88,10 +95,7 @@ def run_augment(pattern: str, db_path: str | None) -> None:
                 if nb_rel["type"] not in _INTERESTING_RELS:
                     continue
                 if rel_count >= _MAX_RELS_PER_NODE:
-                    remaining = sum(
-                        1 for _, r in neighbors[idx:]
-                        if r["type"] in _INTERESTING_RELS
-                    )
+                    remaining = sum(1 for _, r in neighbors[idx:] if r["type"] in _INTERESTING_RELS)
                     if remaining > 0:
                         lines.append(f"    ... and {remaining} more relationships")
                     break
