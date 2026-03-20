@@ -37,8 +37,7 @@ functions/lib/
 *.log
 
 
-# OpenTrace index
-.opentrace/
+# OpenTrace index (legacy location)
 otindex.db
 otindex.db.wal
 
