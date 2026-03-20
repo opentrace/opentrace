@@ -23,6 +23,7 @@ functions/lib/
 
 # OS
 .DS_Store
+.entire/
 
 # Firebase
 .firebase/
@@ -35,6 +36,10 @@ functions/lib/
 # Logs
 *.log
 
+
+# OpenTrace index (legacy location)
+otindex.db
+otindex.db.wal
 
 # Developer Files
 config.yaml

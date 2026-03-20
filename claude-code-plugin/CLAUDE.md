@@ -57,11 +57,17 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 | `get_node` | Full node details + immediate neighbors |
 | `traverse_graph` | Walk relationships (outgoing/incoming/both) with depth control |
 
+## Database Convention
+
+The index database lives at `.opentrace/index.db` in the repo root. All CLI commands (`index`, `mcp`, `stats`) auto-discover it by walking up from cwd, stopping at the git root. You can override with `--db <path>`.
+
+Security: discovery rejects symlinks that resolve outside the git repo boundary, and caps traversal at 10 levels.
+
 ## Session-Start Hook
 
 `scripts/session-start.sh` runs at session init and:
-1. Searches for `otindex.db` in `.`, `..`, `../../`
-2. Runs `uvx opentraceai stats --db <path>` to get graph coverage (best-effort)
+1. Walks up from cwd looking for `.opentrace/index.db` (same logic as CLI)
+2. Runs `uvx opentraceai stats` to get graph coverage (best-effort, auto-discovers DB)
 3. Injects `additionalContext` JSON telling Claude what's indexed and which agents to use
 
 The stats call may fail if the MCP server already holds the DB lock — the hook falls back gracefully.
