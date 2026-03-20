@@ -287,10 +287,11 @@ export default function LayoutPipeline({
         });
       }
 
-      // Simple iterative push-apart within this community (10 iterations)
+      // Iterative push-apart within this community
       const margin = layoutConfig.noverlapMargin * scale;
+      const iters = layoutConfig.noverlapCommunityIterations ?? 20;
       const nodeArr = [...subGraph.entries()];
-      for (let iter = 0; iter < 10; iter++) {
+      for (let iter = 0; iter < iters; iter++) {
         for (let i = 0; i < nodeArr.length; i++) {
           const [, a] = nodeArr[i];
           for (let j = i + 1; j < nodeArr.length; j++) {

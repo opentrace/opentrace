@@ -19,17 +19,17 @@ import { getLinkColor } from '@opentrace/components/utils';
 
 describe('getLinkColor', () => {
   it('returns fixed color for known relationship types', () => {
-    expect(getLinkColor('CALLS')).toBe('#60a5fa');
-    expect(getLinkColor('READS')).toBe('#fbbf24');
-    expect(getLinkColor('WRITES')).toBe('#fb923c');
-    expect(getLinkColor('DEFINED_IN')).toBe('#34d399');
-    expect(getLinkColor('DEPENDS_ON')).toBe('#f472b6');
+    expect(getLinkColor('CALLS')).toBe('#93c5fd');
+    expect(getLinkColor('READS')).toBe('#fde68a');
+    expect(getLinkColor('WRITES')).toBe('#fdba74');
+    expect(getLinkColor('DEFINED_IN')).toBe('#6ee7b7');
+    expect(getLinkColor('DEPENDS_ON')).toBe('#f9a8d4');
   });
 
   it('uppercases input before lookup', () => {
-    expect(getLinkColor('calls')).toBe('#60a5fa');
-    expect(getLinkColor('Reads')).toBe('#fbbf24');
-    expect(getLinkColor('defined_in')).toBe('#34d399');
+    expect(getLinkColor('calls')).toBe('#93c5fd');
+    expect(getLinkColor('Reads')).toBe('#fde68a');
+    expect(getLinkColor('defined_in')).toBe('#6ee7b7');
   });
 
   it('returns deterministic color for unknown types', () => {

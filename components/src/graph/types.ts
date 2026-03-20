@@ -63,6 +63,8 @@ export interface LayoutConfig {
   noverlapRatio: number;
   noverlapMargin: number;
   noverlapExpansion: number;
+  /** Iterations for per-community noverlap push-apart */
+  noverlapCommunityIterations: number;
   // Louvain
   louvainResolution: number;
   // Rendering

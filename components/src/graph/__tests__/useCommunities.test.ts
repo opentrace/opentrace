@@ -17,12 +17,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useCommunities } from '@opentrace/components/utils';
-import type {
-  GraphNode,
-  GraphLink,
-  LayoutConfig,
-} from '@opentrace/components/utils';
+import { useCommunities } from '../useCommunities';
+import type { GraphNode, GraphLink, LayoutConfig } from '../types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -50,6 +46,7 @@ function makeMockConfig(overrides: Partial<LayoutConfig> = {}): LayoutConfig {
     noverlapRatio: 1.5,
     noverlapMargin: 10,
     noverlapExpansion: 1.5,
+    noverlapCommunityIterations: 20,
     louvainResolution: 1.0,
     edgeProgramThreshold: 50000,
     layoutEdgeType: 'DEFINED_IN',

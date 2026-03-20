@@ -24,10 +24,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { SigmaContainer, useSigma } from '@react-sigma/core';
-import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
-import { EdgeLineProgram } from 'sigma/rendering';
-import '@react-sigma/core/lib/style.css';
 import type {
   GraphNode,
   GraphLink,
@@ -42,26 +38,17 @@ import {
   useHighlights,
 } from '@opentrace/components/utils';
 import {
+  GraphCanvas,
   GraphBadge,
   GraphLegend,
+  type GraphCanvasHandle,
   type FilterItem,
   type FilterPanelProps,
 } from '@opentrace/components';
-import { useGraphInstance } from '../graph/useGraphInstance';
-import { useGraphFilters } from '../graph/useGraphFilters';
-import { useGraphVisuals } from '../graph/useGraphVisuals';
-import LayoutPipeline, { type OptimizeStatus } from '../graph/LayoutPipeline';
-import { drawNodeHover } from '../graph/drawNodeHover';
-import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   DEFAULT_LAYOUT_CONFIG,
-  ZOOM_SIZE_EXPONENT,
-  EDGE_PROGRAM_THRESHOLD,
-  LABEL_RENDERED_SIZE_THRESHOLD,
-  LABEL_SIZE,
-  LABEL_FONT,
-  LABEL_COLOR,
-} from '../config/graphLayout';
+  type OptimizeStatus,
+} from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useStore } from '../store';
 import { useGraphData } from '../hooks/useGraphData';
@@ -76,7 +63,6 @@ import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
-import GraphEvents from './sigma/GraphEvents';
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
@@ -150,28 +136,6 @@ export interface GraphViewerProps {
   }) => void;
 }
 
-/**
- * Inner component that accesses the sigma instance via useSigma().
- * Used for zoom controls and initial zoom-to-fit.
- */
-function SigmaZoomControls({
-  onReady,
-}: {
-  onReady: (sigma: ReturnType<typeof useSigma>) => void;
-}) {
-  const sigma = useSigma();
-  const readyRef = useRef(false);
-
-  useEffect(() => {
-    if (!readyRef.current) {
-      readyRef.current = true;
-      onReady(sigma);
-    }
-  }, [sigma, onReady]);
-
-  return null;
-}
-
 const GraphViewer = memo(
   forwardRef<GraphViewerHandle, GraphViewerProps>(
     function GraphViewer(props, ref) {
@@ -198,7 +162,7 @@ const GraphViewer = memo(
       } = props;
 
       const { store } = useStore();
-      const sigmaRef = useRef<ReturnType<typeof useSigma> | null>(null);
+      const canvasRef = useRef<GraphCanvasHandle>(null);
 
       // Fetch indexed repos when the add-repo modal opens
       const [indexedRepos, setIndexedRepos] = useState<IndexedRepo[]>([]);
@@ -227,12 +191,7 @@ const GraphViewer = memo(
 
       const onGraphLoaded = useCallback(() => {
         setTimeout(() => {
-          if (sigmaRef.current) {
-            zoomToFit(
-              sigmaRef.current as unknown as import('sigma').Sigma,
-              400,
-            );
-          }
+          canvasRef.current?.zoomToFit(400);
         }, 500);
       }, []);
 
@@ -324,8 +283,7 @@ const GraphViewer = memo(
         new Set(),
       );
 
-      // Optimize/spread button state
-      const [optimizeTick, setOptimizeTick] = useState(0);
+      // Optimize status (from GraphCanvas callback)
       const [optimizeStatus, setOptimizeStatus] =
         useState<OptimizeStatus | null>(null);
 
@@ -525,13 +483,7 @@ const GraphViewer = memo(
             });
             frontier = next;
           }
-          if (sigmaRef.current) {
-            zoomToNodes(
-              sigmaRef.current as unknown as import('sigma').Sigma,
-              neighborhood,
-              600,
-            );
-          }
+          canvasRef.current?.zoomToNodes(neighborhood, 600);
         },
         [hops, adjacency],
       );
@@ -563,13 +515,7 @@ const GraphViewer = memo(
         setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
         setEdgeLabelNodes(new Set([sourceId, targetId]));
         // Zoom to fit the two endpoints
-        if (sigmaRef.current) {
-          zoomToNodes(
-            sigmaRef.current as unknown as import('sigma').Sigma,
-            [sourceId, targetId],
-            600,
-          );
-        }
+        canvasRef.current?.zoomToNodes([sourceId, targetId], 600);
       }, []);
 
       // Fetch source code when a source-bearing node is selected.
@@ -618,44 +564,13 @@ const GraphViewer = memo(
         [graphData.nodes],
       );
 
-      const degreeMap = useMemo(() => {
-        const map = new Map<string, number>();
-        filteredGraphData.links.forEach((l) => {
-          const sourceId = linkId(l.source);
-          const targetId = linkId(l.target);
-          map.set(sourceId, (map.get(sourceId) || 0) + 1);
-          map.set(targetId, (map.get(targetId) || 0) + 1);
-        });
-        return map;
-      }, [filteredGraphData.links]);
-
-      // Adapts edge program and sizes based on graph size.
-      // Uses unfiltered count so filter toggles don't flip the edge program mid-layout.
-      const isLargeGraph = graphData.links.length > EDGE_PROGRAM_THRESHOLD;
-
       const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
 
-      // ─── New graph hooks architecture ─────────────────────────────────
-
-      const { graph, layoutReady } = useGraphInstance({
-        allNodes: graphData.nodes,
-        allLinks: graphData.links,
-        communityData,
-        layoutConfig: DEFAULT_LAYOUT_CONFIG,
-      });
-
-      useGraphFilters(
-        graph,
-        layoutReady,
-        filterState,
-        communityData.assignments,
-        availableSubTypes,
-        getSubType,
-      );
+      // ─── Highlights (computed from arrays, no sigma dependency) ────────
 
       const highlights = useHighlights(
-        graph,
-        layoutReady,
+        null as never, // _graph — unused
+        false, // _layoutReady — unused
         graphData.nodes,
         graphData.links,
         searchQuery,
@@ -664,84 +579,10 @@ const GraphViewer = memo(
         filterState,
       );
 
-      // Merge edge-click overrides with computed highlights
-      const effectiveHighlightNodes = useMemo(() => {
-        if (selectedLink && edgeHighlightNodes.size > 0)
-          return edgeHighlightNodes;
-        return highlights.highlightNodes;
-      }, [selectedLink, edgeHighlightNodes, highlights.highlightNodes]);
-
-      const effectiveHighlightLinks = useMemo(() => {
-        if (selectedLink && edgeHighlightLinks.size > 0)
-          return edgeHighlightLinks;
-        return highlights.highlightLinks;
-      }, [selectedLink, edgeHighlightLinks, highlights.highlightLinks]);
-
-      const effectiveLabelNodes = useMemo(() => {
-        if (selectedLink && edgeLabelNodes.size > 0) return edgeLabelNodes;
-        return highlights.labelNodes;
-      }, [selectedLink, edgeLabelNodes, highlights.labelNodes]);
-
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
         return highlights.hopMap;
       }, [selectedLink, highlights.hopMap]);
-
-      useGraphVisuals(
-        graph,
-        layoutReady,
-        {
-          colorMode,
-          highlightNodes: effectiveHighlightNodes,
-          highlightLinks: effectiveHighlightLinks,
-          labelNodes: effectiveLabelNodes,
-          selectedNodeId: selectedNode?.id ?? null,
-        },
-        DEFAULT_LAYOUT_CONFIG,
-        degreeMap,
-        isLargeGraph,
-      );
-
-      // When a selection is active, raise the edges canvas above the nodes canvas
-      // so dimmed nodes render behind edges. Highlighted nodes use sigma's
-      // hoverNodes layer (already above edges) via the `highlighted` attribute.
-      //
-      // Sigma's canvas stack (DOM order): edges → edgeLabels → nodes → labels →
-      // hovers → hoverNodes → mouse.  The mouse canvas captures all pointer
-      // events, so it MUST stay on top. We assign explicit z-indices to the
-      // full stack to keep everything consistent.
-      useEffect(() => {
-        const container = sigmaRef.current?.getContainer?.();
-        if (!container) return;
-
-        // All sigma layer class names in DOM order
-        const layers = [
-          'sigma-edges',
-          'sigma-edgeLabels',
-          'sigma-nodes',
-          'sigma-labels',
-          'sigma-hovers',
-          'sigma-hoverNodes',
-          'sigma-mouse',
-        ];
-        const els = layers.map(
-          (cls) => container.querySelector(`.${cls}`) as HTMLElement | null,
-        );
-
-        const hasSelection = effectiveHighlightNodes.size > 0;
-        if (hasSelection) {
-          // Reorder: nodes(1) < edges(2) < edgeLabels(3) < labels(4) <
-          //          hovers(5) < hoverNodes(6) < mouse(7)
-          const zMap = [2, 3, 1, 4, 5, 6, 7];
-          els.forEach((el, i) => {
-            if (el) el.style.zIndex = String(zMap[i]);
-          });
-        } else {
-          els.forEach((el) => {
-            if (el) el.style.zIndex = '';
-          });
-        }
-      }, [effectiveHighlightNodes]);
 
       const legendNodeItems = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -855,38 +696,6 @@ const GraphViewer = memo(
           onAddRepoOpen();
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
-
-      const sigmaSettings = useMemo(
-        () => ({
-          defaultNodeType: 'circle',
-          defaultEdgeType: isLargeGraph ? 'line' : 'curvedArrow',
-          edgeProgramClasses: {
-            ...(isLargeGraph
-              ? { line: EdgeLineProgram }
-              : { curvedArrow: EdgeCurvedArrowProgram }),
-          },
-          renderEdgeLabels: false,
-          // Edge hit-testing is O(edges) per mouse move — disable for large graphs
-          enableEdgeEvents: !isLargeGraph,
-          labelRenderedSizeThreshold: LABEL_RENDERED_SIZE_THRESHOLD,
-          labelFont: LABEL_FONT,
-          labelColor: { color: LABEL_COLOR },
-          labelSize: LABEL_SIZE,
-          defaultDrawNodeHover: drawNodeHover,
-          allowInvalidContainer: true,
-          zIndex: true,
-          zoomToSizeRatioFunction: (ratio: number) =>
-            Math.pow(ratio, ZOOM_SIZE_EXPONENT),
-        }),
-        [isLargeGraph],
-      );
-
-      const handleSigmaReady = useCallback(
-        (sigma: ReturnType<typeof useSigma>) => {
-          sigmaRef.current = sigma;
-        },
-        [],
-      );
 
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
@@ -1557,45 +1366,33 @@ const GraphViewer = memo(
 
           <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
-          {!layoutReady && !isEmpty && (
-            <div
-              className="loading"
-              style={{ position: 'absolute', inset: 0, zIndex: 1 }}
-            >
-              <OpenTraceLogo size={48} />
-              <span>
-                Computing layout (
-                {filteredGraphData.nodes.length.toLocaleString()} nodes)...
-              </span>
-            </div>
-          )}
-
-          <SigmaContainer
-            graph={graph}
-            style={{
-              width: graphWidth,
-              height,
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              isolation: 'isolate',
-            }}
-            settings={sigmaSettings}
-          >
-            <GraphEvents
-              onNodeClick={onNodeClick}
-              onEdgeClick={onLinkClick}
-              onStageClick={handleStageClick}
-            />
-            <LayoutPipeline
-              layoutReady={layoutReady}
-              layoutConfig={DEFAULT_LAYOUT_CONFIG}
-              optimizeTick={optimizeTick}
-              communityAssignments={communityData.assignments}
-              onOptimizeStatus={setOptimizeStatus}
-            />
-            <SigmaZoomControls onReady={handleSigmaReady} />
-          </SigmaContainer>
+          <GraphCanvas
+            ref={canvasRef}
+            nodes={graphData.nodes}
+            links={graphData.links}
+            width={graphWidth}
+            height={height}
+            colorMode={colorMode}
+            hiddenNodeTypes={hiddenNodeTypes}
+            hiddenLinkTypes={hiddenLinkTypes}
+            hiddenSubTypes={hiddenSubTypes}
+            hiddenCommunities={hiddenCommunities}
+            searchQuery={searchQuery}
+            selectedNodeId={selectedNode?.id}
+            hops={hops}
+            getSubType={getSubType}
+            highlightNodes={selectedLink ? edgeHighlightNodes : undefined}
+            highlightLinks={selectedLink ? edgeHighlightLinks : undefined}
+            labelNodes={selectedLink ? edgeLabelNodes : undefined}
+            availableSubTypes={availableSubTypes}
+            zIndex
+            communityData={communityData}
+            onNodeClick={onNodeClick}
+            onEdgeClick={onLinkClick}
+            onStageClick={handleStageClick}
+            onOptimizeStatus={setOptimizeStatus}
+            style={{ isolation: 'isolate' }}
+          />
 
           <div className="graph-controls">
             <button
@@ -1619,14 +1416,7 @@ const GraphViewer = memo(
             </button>
             <button
               className="graph-control-btn"
-              onClick={() => {
-                if (sigmaRef.current) {
-                  const camera = (
-                    sigmaRef.current as unknown as import('sigma').Sigma
-                  ).getCamera();
-                  camera.animatedZoom({ duration: 300 });
-                }
-              }}
+              onClick={() => canvasRef.current?.zoomIn()}
               title="Zoom in"
             >
               <svg
@@ -1645,14 +1435,7 @@ const GraphViewer = memo(
             </button>
             <button
               className="graph-control-btn"
-              onClick={() => {
-                if (sigmaRef.current) {
-                  const camera = (
-                    sigmaRef.current as unknown as import('sigma').Sigma
-                  ).getCamera();
-                  camera.animatedUnzoom({ duration: 300 });
-                }
-              }}
+              onClick={() => canvasRef.current?.zoomOut()}
               title="Zoom out"
             >
               <svg
@@ -1670,14 +1453,7 @@ const GraphViewer = memo(
             </button>
             <button
               className="graph-control-btn"
-              onClick={() => {
-                if (sigmaRef.current) {
-                  const camera = (
-                    sigmaRef.current as unknown as import('sigma').Sigma
-                  ).getCamera();
-                  camera.animatedReset({ duration: 400 });
-                }
-              }}
+              onClick={() => canvasRef.current?.resetCamera()}
               title="Zoom to fit"
             >
               <svg
@@ -1698,7 +1474,7 @@ const GraphViewer = memo(
             </button>
             <button
               className={`graph-control-btn${optimizeStatus?.phase === 'optimizing' ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setOptimizeTick((t) => t + 1)}
+              onClick={() => canvasRef.current?.optimize()}
               title={
                 optimizeStatus?.phase === 'optimizing'
                   ? `Optimizing... ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean`

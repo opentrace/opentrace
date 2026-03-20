@@ -16,12 +16,8 @@
 
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { shouldHideNode } from '@opentrace/components/utils';
-import type {
-  GraphNode,
-  FilterState,
-  GetSubTypeFn,
-} from '@opentrace/components/utils';
+import { shouldHideNode } from '../useGraphFilters';
+import type { GraphNode, FilterState, GetSubTypeFn } from '../types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 

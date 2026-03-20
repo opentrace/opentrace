@@ -29,7 +29,7 @@
 
 export const NODE_SIZE_MIN = 2;
 export const NODE_SIZE_MAX = 8;
-export const NODE_SIZE_DEGREE_SCALE = 1.1; // how much degree (connections) inflates size
+export const NODE_SIZE_DEGREE_SCALE = 1.0; // how much degree (connections) inflates size
 
 // Type-based multipliers applied to the base size
 export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {
@@ -94,8 +94,9 @@ export const FA2_DURATION = 3000; // ms to run before auto-stop
 
 export const NOVERLAP_MAX_ITERATIONS = 50;
 export const NOVERLAP_RATIO = 1.5;
-export const NOVERLAP_MARGIN = 10;
+export const NOVERLAP_MARGIN = 25;
 export const NOVERLAP_EXPANSION = 1.5;
+export const NOVERLAP_COMMUNITY_ITERATIONS = 20; // per-community push-apart passes
 
 // ─── Sigma Renderer ─────────────────────────────────────────────────────
 
@@ -147,6 +148,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   noverlapRatio: NOVERLAP_RATIO,
   noverlapMargin: NOVERLAP_MARGIN,
   noverlapExpansion: NOVERLAP_EXPANSION,
+  noverlapCommunityIterations: NOVERLAP_COMMUNITY_ITERATIONS,
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
