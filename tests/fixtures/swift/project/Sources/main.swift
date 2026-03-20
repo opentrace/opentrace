@@ -18,21 +18,89 @@ import Vapor
 import Fluent
 import FluentSQLiteDriver
 
-func configure(_ app: Application) async throws {
-    app.databases.use(.sqlite(.file("app.db")), as: .sqlite)
-    app.migrations.add(CreateUser())
+// -- constants --
+let defaultPort: Int = 8080
+let apiVersion: String = "v1"
 
+// -- configuration --
+struct AppConfig {
+    let port: Int
+    let dbPath: String
+    let debug: Bool
+
+    static let `default` = AppConfig(port: defaultPort, dbPath: "app.db", debug: false)
+}
+
+func configure(_ app: Application, config: AppConfig = .default) async throws {
+    app.databases.use(.sqlite(.file(config.dbPath)), as: .sqlite)
+    app.migrations.add(CreateUser())
     try await app.autoMigrate()
 
+    // -- list users --
     app.get("users") { req async throws -> [User] in
-        try await User.query(on: req.db).all()
+        let activeOnly: Bool = req.query["active"] ?? false
+        var query = User.query(on: req.db)
+        if activeOnly {
+            query = query.filter(\.$active == true)
+        }
+        return try await query.all()
     }
 
+    // -- get user by id --
+    app.get("users", ":id") { req async throws -> User in
+        guard let idParam = req.parameters.get("id"),
+              let id = Int(idParam) else {
+            throw Abort(.badRequest)
+        }
+        guard let user = try await User.find(id, on: req.db) else {
+            throw UserError.notFound(id)
+        }
+        return user
+    }
+
+    // -- create user --
     app.post("users") { req async throws -> Response in
         let input = try req.content.decode(CreateUserRequest.self)
-        let user = User(name: input.name, email: input.email)
+        let role: UserRole = input.userRole
+        let user = User(name: input.name, email: input.email, role: role)
         try await user.save(on: req.db)
         return try await user.encodeResponse(status: .created, for: req)
+    }
+
+    // -- update user --
+    app.put("users", ":id") { req async throws -> User in
+        guard let idParam = req.parameters.get("id"),
+              let id = Int(idParam) else {
+            throw Abort(.badRequest)
+        }
+        guard let user = try await User.find(id, on: req.db) else {
+            throw UserError.notFound(id)
+        }
+        let updates = try req.content.decode(UpdateUserRequest.self)
+        if let name = updates.name { user.name = name }
+        if let email = updates.email { user.email = email }
+        if let role = updates.role { user.role = role }
+        if let active = updates.active { user.active = active }
+        try await user.save(on: req.db)
+        return user
+    }
+
+    // -- delete user --
+    app.delete("users", ":id") { req async throws -> HTTPStatus in
+        guard let idParam = req.parameters.get("id"),
+              let id = Int(idParam) else {
+            throw Abort(.badRequest)
+        }
+        guard let user = try await User.find(id, on: req.db) else {
+            throw UserError.notFound(id)
+        }
+        try await user.delete(on: req.db)
+        return .noContent
+    }
+
+    // -- health check --
+    app.get("health") { _ -> [String: String] in
+        return ["status": "ok", "version": apiVersion]
     }
 }
 
@@ -40,7 +108,8 @@ func configure(_ app: Application) async throws {
 struct App {
     static func main() async throws {
         let app = try await Application.make(.detect())
-        try await configure(app)
+        let config = AppConfig.default
+        try await configure(app, config: config)
         try await app.execute()
     }
 }

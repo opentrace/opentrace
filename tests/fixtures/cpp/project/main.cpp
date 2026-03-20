@@ -16,40 +16,117 @@
 
 #include <httplib.h>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include "db.h"
 
-int main() {
-    Database db("app.db");
+// -- constants --
+static const int DEFAULT_PORT = 8080;
+static const char* DEFAULT_DB_PATH = "app.db";
+static const char* API_VERSION = "v1";
+static const char* CONTENT_TYPE_JSON = "application/json";
+
+// -- helpers --
+static std::string users_to_json(const std::vector<User> &users) {
+    std::ostringstream json;
+    json << "[";
+    for (size_t i = 0; i < users.size(); i++) {
+        if (i > 0) json << ",";
+        json << users[i].to_json();
+    }
+    json << "]";
+    return json.str();
+}
+
+static std::string extract_json_field(const std::string &body, const std::string &field) {
+    auto pos = body.find("\"" + field + "\"");
+    if (pos == std::string::npos) return "";
+    auto start = body.find('"', body.find(':', pos)) + 1;
+    auto end = body.find('"', start);
+    return body.substr(start, end - start);
+}
+
+static void send_error(httplib::Response &res, int status, const std::string &msg) {
+    res.status = status;
+    res.set_content("{\"error\":\"" + msg + "\"}", CONTENT_TYPE_JSON);
+}
+
+// -- main --
+int main(int argc, char *argv[]) {
+    int port = DEFAULT_PORT;
+    const char* db_path = DEFAULT_DB_PATH;
+
+    if (argc > 1) {
+        port = std::stoi(argv[1]);
+    }
+
+    Database db(db_path);
     db.initialize();
 
     httplib::Server server;
+    int request_count = 0;
 
-    server.Get("/users", [&db](const httplib::Request &, httplib::Response &res) {
-        auto users = db.get_all_users();
-        std::string json = "[";
-        for (size_t i = 0; i < users.size(); i++) {
-            if (i > 0) json += ",";
-            json += users[i].to_json();
+    // -- list users --
+    server.Get("/users", [&db, &request_count](const httplib::Request &req, httplib::Response &res) {
+        request_count++;
+        std::string role = req.get_param_value("role");
+        int limit = req.has_param("limit") ? std::stoi(req.get_param_value("limit")) : 100;
+        int offset = req.has_param("offset") ? std::stoi(req.get_param_value("offset")) : 0;
+
+        auto users = db.get_all_users(role, limit, offset);
+        std::string json = users_to_json(users);
+        res.set_content(json, CONTENT_TYPE_JSON);
+    });
+
+    // -- get user by id --
+    server.Get(R"(/users/(\d+))", [&db, &request_count](const httplib::Request &req, httplib::Response &res) {
+        request_count++;
+        int64_t id = std::stoll(req.matches[1]);
+        try {
+            auto user = db.get_user_by_id(id);
+            res.set_content(user.to_json(), CONTENT_TYPE_JSON);
+        } catch (const std::runtime_error &e) {
+            send_error(res, 404, e.what());
         }
-        json += "]";
-        res.set_content(json, "application/json");
     });
 
-    server.Post("/users", [&db](const httplib::Request &req, httplib::Response &res) {
-        // Minimal JSON parsing for fixture purposes
-        auto name_pos = req.body.find("\"name\"");
-        auto email_pos = req.body.find("\"email\"");
-        auto extract = [&](size_t pos) -> std::string {
-            auto start = req.body.find('"', req.body.find(':', pos)) + 1;
-            auto end = req.body.find('"', start);
-            return req.body.substr(start, end - start);
-        };
-        auto user = db.insert_user(extract(name_pos), extract(email_pos));
-        res.status = 201;
-        res.set_content(user.to_json(), "application/json");
+    // -- create user --
+    server.Post("/users", [&db, &request_count](const httplib::Request &req, httplib::Response &res) {
+        request_count++;
+        std::string name = extract_json_field(req.body, "name");
+        std::string email = extract_json_field(req.body, "email");
+        std::string role = extract_json_field(req.body, "role");
+        if (role.empty()) role = "user";
+
+        try {
+            auto user = db.insert_user(name, email, role);
+            res.status = 201;
+            res.set_content(user.to_json(), CONTENT_TYPE_JSON);
+        } catch (const std::runtime_error &e) {
+            send_error(res, 400, e.what());
+        }
     });
 
-    std::cout << "Server running on port 8080" << std::endl;
-    server.listen("127.0.0.1", 8080);
+    // -- delete user --
+    server.Delete(R"(/users/(\d+))", [&db](const httplib::Request &req, httplib::Response &res) {
+        int64_t id = std::stoll(req.matches[1]);
+        bool deleted = db.delete_user(id);
+        if (deleted) {
+            res.status = 204;
+        } else {
+            send_error(res, 404, "user not found");
+        }
+    });
+
+    // -- health check --
+    server.Get("/health", [&request_count](const httplib::Request &, httplib::Response &res) {
+        std::ostringstream json;
+        json << "{\"status\":\"ok\",\"version\":\"" << API_VERSION
+             << "\",\"requests\":" << request_count << "}";
+        res.set_content(json.str(), CONTENT_TYPE_JSON);
+    });
+
+    std::cout << "Server " << API_VERSION << " running on port " << port << std::endl;
+    server.listen("127.0.0.1", port);
     return 0;
 }

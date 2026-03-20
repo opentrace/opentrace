@@ -16,30 +16,90 @@
 
 package com.example.app;
 
+import java.time.Instant;
+import java.util.Objects;
+
 public class User {
+    // -- constants --
+    public static final String DEFAULT_ROLE = "user";
+    private static final int MAX_NAME_LENGTH = 255;
+
+    // -- instance fields (various visibility) --
     private final long id;
     private final String name;
     private final String email;
+    private String role;
+    private boolean active;
+    private final Instant createdAt;
 
+    // -- static field --
+    private static int instanceCount = 0;
+
+    // -- constructors (overloaded) --
     public User(long id, String name, String email) {
+        this(id, name, email, DEFAULT_ROLE, true, Instant.now());
+    }
+
+    public User(long id, String name, String email, String role) {
+        this(id, name, email, role, true, Instant.now());
+    }
+
+    public User(long id, String name, String email, String role, boolean active, Instant createdAt) {
+        if (name.length() > MAX_NAME_LENGTH) {
+            throw new IllegalArgumentException("Name too long");
+        }
         this.id = id;
         this.name = name;
         this.email = email;
+        this.role = role;
+        this.active = active;
+        this.createdAt = createdAt;
+        instanceCount++;
     }
 
-    public long getId() {
-        return id;
+    // -- getters (public) --
+    public long getId() { return id; }
+    public String getName() { return name; }
+    public String getEmail() { return email; }
+    public String getRole() { return role; }
+    public boolean isActive() { return active; }
+    public Instant getCreatedAt() { return createdAt; }
+
+    // -- setters (mutable fields only) --
+    public void setRole(String role) { this.role = role; }
+    public void setActive(boolean active) { this.active = active; }
+
+    // -- static method --
+    public static int getInstanceCount() { return instanceCount; }
+
+    // -- business logic --
+    public boolean isAdmin() {
+        return "admin".equals(this.role);
     }
 
-    public String getName() {
-        return name;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
+    // -- serialization --
     public String toJson() {
-        return String.format("{\"id\":%d,\"name\":\"%s\",\"email\":\"%s\"}", id, name, email);
+        return String.format(
+            "{\"id\":%d,\"name\":\"%s\",\"email\":\"%s\",\"role\":\"%s\",\"active\":%b}",
+            id, name, email, role, active
+        );
+    }
+
+    // -- Object overrides --
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof User other)) return false;
+        return id == other.id && Objects.equals(email, other.email);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, email);
+    }
+
+    @Override
+    public String toString() {
+        return String.format("User{id=%d, name='%s', email='%s', role='%s'}", id, name, email, role);
     }
 }

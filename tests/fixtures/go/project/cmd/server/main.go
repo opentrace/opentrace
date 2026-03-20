@@ -15,24 +15,78 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/example/user-service/internal/db"
 	"github.com/example/user-service/internal/handler"
 )
 
+// -- package constants --
+const (
+	defaultPort         = ":8080"
+	defaultDBPath       = "app.db"
+	shutdownTimeout     = 5 * time.Second
+	readTimeout         = 10 * time.Second
+	writeTimeout        = 15 * time.Second
+)
+
+// -- package variables --
+var version = "dev"
+
 func main() {
-	store, err := db.New("app.db")
+	port := getEnvOrDefault("PORT", defaultPort)
+	dbPath := getEnvOrDefault("DB_PATH", defaultDBPath)
+
+	store, err := db.New(dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer store.Close()
 
 	h := handler.New(store)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/users", h.Users)
+	mux.HandleFunc("/users/", h.UserByID)
+	mux.HandleFunc("/health", h.Health)
 
-	http.HandleFunc("/users", h.Users)
+	srv := &http.Server{
+		Addr:         port,
+		Handler:      mux,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+	}
 
-	log.Println("Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// graceful shutdown
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		log.Printf("Server %s listening on %s", version, port)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("listen: %v", err)
+		}
+	}()
+
+	sig := <-done
+	log.Printf("Received signal %v, shutting down", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("shutdown: %v", err)
+	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return fallback
 }
