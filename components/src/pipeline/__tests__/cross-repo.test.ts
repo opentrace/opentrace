@@ -28,8 +28,8 @@ beforeAll(async () => {
   initParsers(new Map([['python', pyParser]]));
 });
 
-const uiDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const fixtureDir = join(uiDir, '..', 'tests', 'fixtures', 'python', 'project');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'python', 'project');
 
 async function readAllFiles(
   dir: string,

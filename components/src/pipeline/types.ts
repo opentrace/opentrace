@@ -15,10 +15,7 @@
  */
 
 import type { Parser, Node as SyntaxNode } from 'web-tree-sitter';
-import type {
-  Registries,
-  CallInfo,
-} from '../runner/browser/parser/callResolver';
+import type { Registries, CallInfo } from './parser/callResolver';
 
 // --- Pipeline infrastructure ---
 

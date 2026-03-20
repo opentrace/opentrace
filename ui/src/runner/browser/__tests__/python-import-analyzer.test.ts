@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { analyzePythonImports } from '../parser/importAnalyzer';
+import { analyzePythonImports } from '@opentrace/components/pipeline';
 import { parsePy } from './helpers';
 
 describe('analyzePythonImports', () => {

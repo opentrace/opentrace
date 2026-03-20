@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createStrategy } from '../strategy';
-import { DEFAULT_SUMMARIZER_CONFIG } from '../types';
+import { DEFAULT_SUMMARIZER_CONFIG } from '@opentrace/components/pipeline';
 
 describe('createStrategy', () => {
   it('enabled:false returns NoopStrategy', () => {

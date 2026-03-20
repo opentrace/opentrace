@@ -14,5 +14,8 @@
  * limitations under the License.
  */
 
-export type { SummarizerConfig, SummarizationStrategyType } from './types';
-export { DEFAULT_SUMMARIZER_CONFIG } from './types';
+export type {
+  SummarizerConfig,
+  SummarizationStrategyType,
+} from '@opentrace/components/pipeline';
+export { DEFAULT_SUMMARIZER_CONFIG } from '@opentrace/components/pipeline';

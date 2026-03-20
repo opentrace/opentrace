@@ -21,7 +21,7 @@ import {
   loadSummarizerLlmConfig,
   saveSummarizerLlmConfig,
 } from '../config/summarization';
-import type { SummarizationStrategyType } from '../runner/browser/enricher/summarizer/types';
+import type { SummarizationStrategyType } from '@opentrace/components/pipeline';
 import { useStore } from '../store';
 import './SettingsDrawer.css';
 

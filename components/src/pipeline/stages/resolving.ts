@@ -27,7 +27,7 @@ import type { ProcessingOutput, PipelineEvent, PipelineResult } from '../types';
 import {
   resolveCalls,
   resolvedCallsToRelationships,
-} from '../../runner/browser/parser/callResolver';
+} from '../parser/callResolver';
 
 export function* execute(
   input: ProcessingOutput,

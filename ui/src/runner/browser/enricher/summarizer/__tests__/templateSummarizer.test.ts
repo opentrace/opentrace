@@ -23,7 +23,7 @@ import {
   summarizeFile,
   summarizeDirectory,
   summarizeFromMetadata,
-} from '../templateSummarizer';
+} from '@opentrace/components/pipeline';
 
 describe('splitIdentifier', () => {
   it('splits camelCase', () => {

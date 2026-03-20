@@ -26,8 +26,8 @@ import type {
   SummarizationStrategyType,
   SummarizerConfig,
   SymbolMetadata,
-} from './types';
-import { summarizeFromMetadata } from './templateSummarizer';
+} from '@opentrace/components/pipeline';
+import { summarizeFromMetadata } from '@opentrace/components/pipeline';
 
 /** Race a promise against a timeout. Rejects with a descriptive error on timeout. */
 function withTimeout<T>(

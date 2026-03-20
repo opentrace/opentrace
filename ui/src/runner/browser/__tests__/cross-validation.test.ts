@@ -25,7 +25,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { extractTypeScript } from '../parser/extractors/typescript';
+import { extractTypeScript } from '@opentrace/components/pipeline';
 import { parseTS } from './helpers';
 import { normalizeSymbol } from './normalizers';
 

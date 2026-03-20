@@ -25,7 +25,7 @@ import {
   npmPackageName,
   normalizePyName,
   packageId,
-} from '../parser/manifestParser';
+} from '@opentrace/components/pipeline';
 
 describe('isManifestFile', () => {
   it('accepts supported manifests', () => {

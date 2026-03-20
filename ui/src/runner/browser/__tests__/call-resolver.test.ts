@@ -20,7 +20,7 @@ import {
   type CallInfo,
   type Registries,
   type SymbolNode,
-} from '../parser/callResolver';
+} from '@opentrace/components/pipeline';
 import type { CallRef } from '../types';
 
 function makeNode(

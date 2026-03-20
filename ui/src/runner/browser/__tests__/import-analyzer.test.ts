@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { analyzeTypeScriptImports } from '../parser/importAnalyzer';
+import { analyzeTypeScriptImports } from '@opentrace/components/pipeline';
 import { parseTS } from './helpers';
 
 describe('analyzeTypeScriptImports', () => {

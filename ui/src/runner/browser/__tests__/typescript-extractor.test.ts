@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
-import { extractTypeScript } from '../parser/extractors/typescript';
+import { extractTypeScript } from '@opentrace/components/pipeline';
 import { parseTS, parseTSX } from './helpers';
 
 let rootNode: SyntaxNode;
