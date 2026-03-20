@@ -60,6 +60,8 @@ import {
   IndexingProgress,
   detectProvider,
   normalizeRepoUrl,
+  GitHubIcon,
+  GitLabIcon,
   type IndexingState,
 } from '@opentrace/components';
 import JobMinimizedBar from './JobMinimizedBar';
@@ -80,7 +82,7 @@ const INDEXING_STAGES = [
 ];
 
 /** Map app-specific JobState to the generic IndexingState + title/message. */
-function toIndexingProps(job: JobState) {
+function toIndexingProps(job: JobState, repoUrl: string) {
   let status: IndexingState['status'];
   let title: string | undefined;
   let message: string | undefined;
@@ -107,7 +109,11 @@ function toIndexingProps(job: JobState) {
     stages: job.stages as Record<string, IndexingState['stages'][string]>,
   };
 
-  return { state, title, message };
+  const provider = detectProvider(repoUrl);
+  const icon =
+    provider === 'gitlab' ? <GitLabIcon /> : provider ? <GitHubIcon /> : null;
+
+  return { state, title, message, icon };
 }
 
 /** Node types whose source code can be fetched and displayed. */
@@ -885,9 +891,8 @@ const GraphViewer = memo(
 
             {showFullModal && (
               <IndexingProgress
-                {...toIndexingProps(jobState)}
+                {...toIndexingProps(jobState, activeRepoUrl)}
                 stages={INDEXING_STAGES}
-                provider={detectProvider(activeRepoUrl)}
                 onClose={onJobClose}
                 onCancel={onJobCancel}
                 onMinimize={onJobMinimize}
@@ -1416,9 +1421,8 @@ const GraphViewer = memo(
 
           {showFullModal && (
             <IndexingProgress
-              {...toIndexingProps(jobState)}
+              {...toIndexingProps(jobState, activeRepoUrl)}
               stages={INDEXING_STAGES}
-              provider={detectProvider(activeRepoUrl)}
               onClose={onJobClose}
               onCancel={onJobCancel}
               onMinimize={onJobMinimize}

@@ -103,7 +103,10 @@ export {
 } from './colors/communityColors';
 
 // ─── Indexing components ─────────────────────────────────────────────────
-export { AddRepoModal, IndexingProgress, normalizeRepoUrl, detectProvider } from './indexing';
+export {
+  AddRepoModal, IndexingProgress, normalizeRepoUrl, detectProvider,
+  GitHubIcon, GitLabIcon, BitbucketIcon, AzureDevOpsIcon,
+} from './indexing';
 export type {
   IndexingState,
   StageState as IndexStageState,

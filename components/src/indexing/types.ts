@@ -72,7 +72,8 @@ export interface IndexingProgressProps {
   state: IndexingState;
   /** Ordered stage definitions — determines display order and labels */
   stages: StageConfig[];
-  provider: Provider | null;
+  /** Icon shown in the header while running (e.g. a provider logo). */
+  icon?: import('react').ReactNode;
   onClose: () => void;
   onCancel: () => void;
   onMinimize?: () => void;
