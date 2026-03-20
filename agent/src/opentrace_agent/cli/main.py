@@ -103,8 +103,7 @@ def _resolve_db(db_path: str | None, *, must_exist: bool = False) -> str:
 
     if must_exist:
         raise click.UsageError(
-            f"No {OPENTRACE_DIR}/{DB_NAME} found. "
-            "Run 'opentraceai index' first or pass --db explicitly."
+            f"No {OPENTRACE_DIR}/{DB_NAME} found. Run 'opentraceai index' first or pass --db explicitly."
         )
 
     # Default for index (write) — create in cwd.
