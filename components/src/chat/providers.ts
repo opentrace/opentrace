@@ -14,13 +14,6 @@
  * limitations under the License.
  */
 
-export type {
-  ChatMessage,
-  UserMessage,
-  AssistantMessage,
-  MessagePart,
-} from './types';
-
 export interface ModelInfo {
   id: string;
   name: string;

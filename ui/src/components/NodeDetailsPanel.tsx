@@ -22,7 +22,7 @@ import { IMAGE_MIME_TYPES } from '../runner/browser/loader/constants';
 import { Highlight, themes } from 'prism-react-renderer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { markdownComponents } from '../chat/markdownComponents';
+import { markdownComponents } from '@opentrace/components/chat';
 import {
   GitHubIcon,
   GitLabIcon,

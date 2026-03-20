@@ -22,7 +22,7 @@ import {
   saveProviderChoice,
   loadModelChoice,
   saveModelChoice,
-} from '../storage';
+} from '@opentrace/components/chat';
 
 describe('storage', () => {
   describe('loadApiKey / saveApiKey', () => {

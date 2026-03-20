@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { markdownComponents } from '../chat/markdownComponents';
+import { markdownComponents } from '@opentrace/components/chat';
 import type { PRDetail, PRFileDiff } from '../pr/types';
 import type { PRClient } from '../pr/client';
 import type { GraphStore } from '../store/types';
@@ -28,7 +28,6 @@ import ReviewResult, {
   stripReviewBlock,
   type ReviewData,
 } from '../chat/results/ReviewResult';
-import '../chat/markdown.css';
 import './PRDetailPanel.css';
 
 interface Props {

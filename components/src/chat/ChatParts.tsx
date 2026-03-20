@@ -14,28 +14,32 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ChatThought from './ChatThought';
 import ChatToolCall from './ChatToolCall';
 import { markdownComponents } from './markdownComponents';
 import type { MessagePart } from './types';
-import type { ReviewData } from './results/ReviewResult';
 
 interface Props {
   parts: MessagePart[];
   streaming?: boolean;
-  onNodeSelect?: (nodeId: string) => void;
-  onSubmitReview?: (data: ReviewData) => Promise<void>;
-  onPostComment?: (number: number, body: string) => Promise<void>;
+  toolNames?: Record<string, string>;
+  agentTools?: Set<string>;
+  renderToolResult?: (
+    name: string,
+    args: string,
+    result: string,
+  ) => ReactNode | null;
 }
 
 export default function ChatParts({
   parts,
   streaming,
-  onNodeSelect,
-  onSubmitReview,
-  onPostComment,
+  toolNames,
+  agentTools,
+  renderToolResult,
 }: Props) {
   return (
     <>
@@ -48,9 +52,9 @@ export default function ChatParts({
               <ChatToolCall
                 key={part.id}
                 part={part}
-                onNodeSelect={onNodeSelect}
-                onSubmitReview={onSubmitReview}
-                onPostComment={onPostComment}
+                toolNames={toolNames}
+                agentTools={agentTools}
+                renderToolResult={renderToolResult}
               />
             );
           case 'text':

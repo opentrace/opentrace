@@ -17,7 +17,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { markdownComponents } from '../markdownComponents';
+import { markdownComponents } from '@opentrace/components/chat';
 import './SuggestCommentResult.css';
 
 export interface SuggestCommentData {

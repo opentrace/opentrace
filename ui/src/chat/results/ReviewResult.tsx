@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { PRReviewComment } from '../../pr/types';
-import { markdownComponents } from '../markdownComponents';
+import { markdownComponents } from '@opentrace/components/chat';
 import './ReviewResult.css';
 
 export interface ReviewData {

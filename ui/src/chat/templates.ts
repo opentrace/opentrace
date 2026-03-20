@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-interface Props {
-  onSelect: (prompt: string) => void;
-}
+import type { ChatTemplate } from '@opentrace/components/chat';
 
-const TEMPLATES = [
+export const OPENTRACE_TEMPLATES: ChatTemplate[] = [
   {
     label: 'Overview',
     description: 'Architecture overview with node types and connections',
@@ -80,23 +78,3 @@ const TEMPLATES = [
       'Are there any performance issues in this system? Look for bottlenecks, slow queries, N+1 problems, or resource-heavy components.',
   },
 ];
-
-export default function ChatTemplates({ onSelect }: Props) {
-  return (
-    <div className="chat-templates" data-testid="chat-examples">
-      <div className="templates-grid">
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.label}
-            className="template-card"
-            onClick={() => onSelect(t.prompt)}
-            data-testid={`chat-example-${t.label.toLowerCase().replace(/\s+/g, '-')}`}
-          >
-            <span className="template-card-label">{t.label}</span>
-            <span className="template-card-desc">{t.description}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}

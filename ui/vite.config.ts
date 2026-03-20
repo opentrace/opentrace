@@ -173,6 +173,10 @@ export default defineConfig(({ mode }) => {
           __dirname,
           '../components/src/pipeline/index.ts',
         ),
+        '@opentrace/components/chat': resolve(
+          __dirname,
+          '../components/src/chat/index.ts',
+        ),
         '@opentrace/components/utils': resolve(
           __dirname,
           '../components/src/utils.ts',

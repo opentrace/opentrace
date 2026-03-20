@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
+
 /** Structured parts within an assistant message */
 
 export interface TextPart {
@@ -53,3 +55,54 @@ export interface AssistantMessage {
 }
 
 export type ChatMessage = UserMessage | AssistantMessage;
+
+/** Minimal contract between app and library for agent interaction */
+export interface ChatAgentHandle {
+  agent: {
+    stream(input: unknown, config: unknown): AsyncIterable<unknown>;
+  };
+  progress: {
+    setListener(fn: ((name: string, step: string) => void) | null): void;
+  };
+}
+
+/** Template prompt for the empty-state grid */
+export interface ChatTemplate {
+  label: string;
+  description: string;
+  prompt: string;
+}
+
+/** Extra tab beyond the default "Chat" tab */
+export interface ChatTab {
+  id: string;
+  label: string;
+  render: () => ReactNode;
+}
+
+/** Props for the generic ChatPanel */
+export interface ChatPanelProps {
+  onClose: () => void;
+  createAgent: (
+    providerId: string,
+    modelId: string,
+    apiKey: string,
+    baseUrl?: string,
+  ) => ChatAgentHandle;
+  title?: string;
+  templates?: ChatTemplate[];
+  toolNames?: Record<string, string>;
+  agentTools?: Set<string>;
+  renderToolResult?: (
+    name: string,
+    args: string,
+    result: string,
+  ) => ReactNode | null;
+  tabs?: ChatTab[];
+  onNodeSelect?: (nodeId: string) => void;
+  onWidthChange?: (width: number) => void;
+  defaultWidth?: number;
+  minWidth?: number;
+  maxWidth?: number;
+  storageKey?: string;
+}

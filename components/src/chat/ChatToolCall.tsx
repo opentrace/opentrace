@@ -14,57 +14,23 @@
  * limitations under the License.
  */
 
+import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ToolCallPart } from './types';
-import {
-  parseSearchResult,
-  parseListNodesResult,
-  parseGetNodeResult,
-  parseTraverseResult,
-} from './results/parsers';
 import { markdownComponents } from './markdownComponents';
-import NodeListResult from './results/NodeListResult';
-import GetNodeResultView from './results/GetNodeResult';
-import TraverseResultView from './results/TraverseResult';
-import ReviewResult, {
-  parseReviewResult,
-  stripReviewBlock,
-  type ReviewData,
-} from './results/ReviewResult';
-import SuggestCommentResult, {
-  parseSuggestComment,
-} from './results/SuggestCommentResult';
-import './results/results.css';
 
 interface Props {
   part: ToolCallPart;
-  onNodeSelect?: (nodeId: string) => void;
-  onSubmitReview?: (data: ReviewData) => Promise<void>;
-  onPostComment?: (number: number, body: string) => Promise<void>;
+  toolNames?: Record<string, string>;
+  agentTools?: Set<string>;
+  renderToolResult?: (
+    name: string,
+    args: string,
+    result: string,
+  ) => ReactNode | null;
 }
-
-/** User-friendly display names */
-const TOOL_NAMES: Record<string, string> = {
-  search_graph: 'Search Graph',
-  list_nodes: 'List Nodes',
-  get_node: 'Get Node',
-  traverse_graph: 'Traverse Graph',
-  load_source: 'Load Source',
-  code_explorer: 'Code Explorer',
-  dependency_analyzer: 'Dependency Analyzer',
-  code_reviewer: 'Code Reviewer',
-  suggest_comment: 'Suggest Comment',
-  comment_on_pr: 'Comment on PR',
-};
-
-/** Tools that are actually sub-agents — rendered with distinct styling */
-const AGENT_TOOLS = new Set([
-  'code_explorer',
-  'dependency_analyzer',
-  'code_reviewer',
-]);
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -118,58 +84,24 @@ function trimSteps(steps: string[], isActive: boolean): string[] {
 
 export default function ChatToolCall({
   part,
-  onNodeSelect,
-  onSubmitReview,
-  onPostComment,
+  toolNames,
+  agentTools,
+  renderToolResult,
 }: Props) {
-  const displayName = TOOL_NAMES[part.name] ?? part.name;
-  const isAgent = AGENT_TOOLS.has(part.name);
+  const displayName = toolNames?.[part.name] ?? part.name;
+  const isAgent = agentTools?.has(part.name) ?? false;
   const duration = part.endTime
     ? formatDuration(part.endTime - part.startTime)
     : null;
   const prettyArgs = part.args ? tryPrettyJson(part.args) : '';
   const agentQuery = isAgent ? extractQuery(part.args) : null;
 
-  // Attempt structured parsing per tool type
+  // Attempt structured rendering via the app-provided renderer
   const customResult = useMemo(() => {
-    if (!part.result || part.status === 'error') return null;
-
-    switch (part.name) {
-      case 'search_graph': {
-        const nodes = parseSearchResult(part.result);
-        return nodes ? (
-          <NodeListResult nodes={nodes} onNodeSelect={onNodeSelect} />
-        ) : null;
-      }
-      case 'list_nodes': {
-        const nodes = parseListNodesResult(part.result);
-        return nodes ? (
-          <NodeListResult nodes={nodes} onNodeSelect={onNodeSelect} />
-        ) : null;
-      }
-      case 'get_node': {
-        const node = parseGetNodeResult(part.result);
-        return node ? (
-          <GetNodeResultView node={node} onNodeSelect={onNodeSelect} />
-        ) : null;
-      }
-      case 'traverse_graph': {
-        const entries = parseTraverseResult(part.result);
-        return entries ? (
-          <TraverseResultView entries={entries} onNodeSelect={onNodeSelect} />
-        ) : null;
-      }
-      case 'suggest_comment':
-      case 'comment_on_pr': {
-        const comment = parseSuggestComment(part.result);
-        return comment ? (
-          <SuggestCommentResult comment={comment} onPost={onPostComment} />
-        ) : null;
-      }
-      default:
-        return null;
-    }
-  }, [part.name, part.result, part.status, onNodeSelect, onPostComment]);
+    if (!part.result || part.status === 'error' || !renderToolResult)
+      return null;
+    return renderToolResult(part.name, part.args, part.result);
+  }, [part.name, part.args, part.result, part.status, renderToolResult]);
 
   // Wrench icon for tools, sparkle icon for agents
   const icon = isAgent ? (
@@ -313,46 +245,16 @@ export default function ChatToolCall({
             );
           })()}
         {/* Agent: show result as rendered markdown when complete */}
-        {isAgent &&
-          part.status !== 'active' &&
-          part.result &&
-          (() => {
-            // For code_reviewer: parse structured review and render with submit button
-            if (part.name === 'code_reviewer') {
-              const reviewData = parseReviewResult(part.result);
-              const strippedText = reviewData
-                ? stripReviewBlock(part.result)
-                : part.result;
-              return (
-                <>
-                  <div className="agent-result markdown-body">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={markdownComponents}
-                    >
-                      {strippedText}
-                    </ReactMarkdown>
-                  </div>
-                  {reviewData && (
-                    <ReviewResult
-                      review={reviewData}
-                      onSubmit={onSubmitReview}
-                    />
-                  )}
-                </>
-              );
-            }
-            return (
-              <div className="agent-result markdown-body">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={markdownComponents}
-                >
-                  {part.result}
-                </ReactMarkdown>
-              </div>
-            );
-          })()}
+        {isAgent && part.status !== 'active' && part.result && (
+          <div className="agent-result markdown-body">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {part.result}
+            </ReactMarkdown>
+          </div>
+        )}
         {/* Non-agent tools: keep existing collapsible sections */}
         {!isAgent && prettyArgs && (
           <details className="tool-section">
