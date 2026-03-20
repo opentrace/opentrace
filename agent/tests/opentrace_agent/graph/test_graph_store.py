@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for KuzuStore helpers and integration."""
+"""Tests for GraphStore helpers and integration."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from opentrace_agent.store.kuzu_store import (
+from opentrace_agent.store.graph_store import (
     _marshal_props,
     _parse_props,
     _row_to_node,
@@ -159,7 +159,7 @@ class TestRowToNode:
         }
 
     def test_dict_properties(self):
-        """When KuzuDB returns properties already deserialized as a dict."""
+        """When LadybugDB returns properties already deserialized as a dict."""
         row = ["node-2", "Class", "Bar", {"language": "python"}]
         result = _row_to_node(row)
         assert result["properties"] == {"language": "python"}
@@ -191,23 +191,23 @@ class TestRowToNode:
 
 
 # ---------------------------------------------------------------------------
-# KuzuStore integration tests (require real_ladybug)
+# GraphStore integration tests (require real_ladybug)
 # ---------------------------------------------------------------------------
 
-kuzu = pytest.importorskip("real_ladybug")
+ladybug = pytest.importorskip("real_ladybug")
 
-from opentrace_agent.store import KuzuStore  # noqa: E402
+from opentrace_agent.store import GraphStore  # noqa: E402
 
 
 @pytest.fixture()
 def store(tmp_path):
     db_path = str(tmp_path / "testdb")
-    s = KuzuStore(db_path)
+    s = GraphStore(db_path)
     yield s
     s.close()
 
 
-def _seed(store: KuzuStore) -> None:
+def _seed(store: GraphStore) -> None:
     """Insert a small graph for testing."""
     store.add_node("svc-api", "Service", "api-gateway", {"language": "go", "port": 8080})
     store.add_node("svc-db", "Database", "postgres", {"engine": "postgresql", "version": "16"})
@@ -220,7 +220,7 @@ def _seed(store: KuzuStore) -> None:
     store.add_relationship("r4", "CONTAINS", "svc-api", "cls-user")
 
 
-class TestKuzuStoreGetNode:
+class TestGraphStoreGetNode:
     def test_get_existing(self, store):
         store.add_node("n1", "File", "main.py", {"language": "python"})
         node = store.get_node("n1")
@@ -247,7 +247,7 @@ class TestKuzuStoreGetNode:
         assert node["properties"] is None
 
 
-class TestKuzuStoreListNodes:
+class TestGraphStoreListNodes:
     def test_list_by_type(self, store):
         _seed(store)
         functions = store.list_nodes("Function")
@@ -271,7 +271,7 @@ class TestKuzuStoreListNodes:
         assert len(result) == 1
 
 
-class TestKuzuStoreSearchNodes:
+class TestGraphStoreSearchNodes:
     def test_substring_search(self, store):
         _seed(store)
         results = store.search_nodes("query")
@@ -300,7 +300,7 @@ class TestKuzuStoreSearchNodes:
         assert len(results) <= 2
 
 
-class TestKuzuStoreSearchGraph:
+class TestGraphStoreSearchGraph:
     def test_search_graph_returns_neighbors(self, store):
         _seed(store)
         nodes, rels = store.search_graph("handleRequest", hops=1)
@@ -333,7 +333,7 @@ class TestKuzuStoreSearchGraph:
         assert isinstance(nodes, list)
 
 
-class TestKuzuStoreTraverse:
+class TestGraphStoreTraverse:
     def test_outgoing(self, store):
         _seed(store)
         results = store.traverse("fn-handle", direction="outgoing", max_depth=1)
@@ -396,7 +396,7 @@ class TestKuzuStoreTraverse:
         assert depths.get("fn-query") == 2
 
 
-class TestKuzuStoreStats:
+class TestGraphStoreStats:
     def test_stats_empty(self, store):
         stats = store.get_stats()
         assert stats["total_nodes"] == 0
@@ -419,7 +419,7 @@ class TestKuzuStoreStats:
         assert stats["total_nodes"] == 1
 
 
-class TestKuzuStoreImportBatch:
+class TestGraphStoreImportBatch:
     def test_batch_import(self, store):
         nodes = [
             {"id": "b1", "type": "File", "name": "a.py", "properties": {"lang": "py"}},
@@ -437,12 +437,12 @@ class TestKuzuStoreImportBatch:
         assert summary["relationships_created"] == 0
 
 
-class TestKuzuStoreContextManager:
+class TestGraphStoreContextManager:
     def test_context_manager(self, tmp_path):
         db_path = str(tmp_path / "ctxdb")
-        with KuzuStore(db_path) as s:
+        with GraphStore(db_path) as s:
             s.add_node("cm-1", "File", "test.py")
             assert s.get_node("cm-1") is not None
         # After __exit__, re-opening should still see the data
-        with KuzuStore(db_path) as s2:
+        with GraphStore(db_path) as s2:
             assert s2.get_node("cm-1") is not None

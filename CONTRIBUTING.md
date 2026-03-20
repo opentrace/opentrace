@@ -65,7 +65,7 @@ Use concise, descriptive commit messages:
 ui/                   — React/TypeScript frontend
   src/pipeline/       — Indexing pipeline (scanning → processing → resolving)
   src/runner/         — Browser-based parser workers
-  src/store/          — Graph store implementations (KuzuDB WASM, in-memory)
+  src/store/          — Graph store implementations (LadybugDB WASM, in-memory)
   src/components/     — React components
   src/chat/           — Chat agent and graph tools
 proto/                — Protobuf definitions

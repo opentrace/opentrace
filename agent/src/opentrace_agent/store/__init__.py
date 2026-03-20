@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from opentrace_agent.store.kuzu_store import KuzuStore
+from opentrace_agent.store.graph_store import GraphStore
 
-__all__ = ["KuzuStore"]
+__all__ = ["GraphStore"]

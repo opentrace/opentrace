@@ -30,7 +30,7 @@ OpenTrace indexes source code directly in your browser — no server required. P
 
 1. **Parse** every file using tree-sitter WASM grammars (12 languages)
 2. **Extract** classes, functions, imports, and call relationships
-3. **Build** a knowledge graph stored in KuzuDB WASM (embedded graph database)
+3. **Build** a knowledge graph stored in LadybugDB WASM (embedded graph database)
 4. **Summarize** every node using template-based identifier analysis
 5. **Expose** the graph to an in-app chat agent via MCP tools
 
@@ -46,7 +46,7 @@ OpenTrace indexes source code directly in your browser — no server required. P
 │                                  │  WASM parsers   │ │
 │                                  └─────────────────┘ │
 │                                  ┌─────────────────┐ │
-│                                  │  KuzuDB WASM    │ │
+│                                  │  LadybugDB WASM    │ │
 │                                  │  graph store    │ │
 │                                  └─────────────────┘ │
 └──────────────────────────────────────────────────────┘

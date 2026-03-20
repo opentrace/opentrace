@@ -156,8 +156,8 @@ def index(
     _configure_logging(verbose)
 
     from opentrace_agent.pipeline import PipelineInput, run_pipeline
-    from opentrace_agent.pipeline.adapters import KuzuStoreAdapter
-    from opentrace_agent.store import KuzuStore
+    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
+    from opentrace_agent.store import GraphStore
 
     root = Path(path)
     if repo_id is None:
@@ -169,8 +169,8 @@ def index(
     _ensure_gitignore(db_dir)
 
     click.echo(f"Opening database at {resolved_db} ...")
-    kuzu_store = KuzuStore(resolved_db)
-    store = KuzuStoreAdapter(kuzu_store, batch_size=batch_size)
+    graph_store = GraphStore(resolved_db)
+    store = GraphStoreAdapter(graph_store, batch_size=batch_size)
 
     click.echo(f"Indexing {root} ...")
     t0 = time.monotonic()
@@ -237,10 +237,10 @@ def stats(db_path: str | None, output_format: str) -> None:
     """Display graph statistics."""
     import json
 
-    from opentrace_agent.store import KuzuStore
+    from opentrace_agent.store import GraphStore
 
     resolved_db = _resolve_db(db_path, must_exist=True)
-    store = KuzuStore(resolved_db, read_only=True)
+    store = GraphStore(resolved_db, read_only=True)
     try:
         data = store.get_stats()
     finally:
@@ -270,10 +270,10 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     _configure_logging(verbose)
 
     from opentrace_agent.cli.mcp_server import create_mcp_server
-    from opentrace_agent.store import KuzuStore
+    from opentrace_agent.store import GraphStore
 
     resolved_db = _resolve_db(db_path, must_exist=True)
-    store = KuzuStore(resolved_db)
+    store = GraphStore(resolved_db)
 
     def _shutdown(signum: int, _frame: object) -> None:
         store.close()

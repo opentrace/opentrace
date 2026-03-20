@@ -19,9 +19,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import React from 'react';
 
-// Mock KuzuGraphStore and crossOriginIsolated
-vi.mock('../kuzuStore', () => ({
-  KuzuGraphStore: vi.fn().mockImplementation(() => ({
+// Mock LadybugGraphStore and crossOriginIsolated
+vi.mock('../ladybugStore', () => ({
+  LadybugGraphStore: vi.fn().mockImplementation(() => ({
     fetchGraph: vi.fn().mockResolvedValue({ nodes: [], links: [] }),
     fetchStats: vi.fn().mockResolvedValue({
       total_nodes: 0,

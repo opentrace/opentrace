@@ -68,7 +68,7 @@ def test_run_augment_no_matches(tmp_path, capsys):
     mock_store = MagicMock()
     mock_store.search_nodes.return_value = []
 
-    with patch("opentrace_agent.store.KuzuStore", return_value=mock_store):
+    with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
         run_augment("nonexistent", str(tmp_path / "fake.db"))
 
     assert capsys.readouterr().out == ""
@@ -85,7 +85,7 @@ def test_run_augment_with_matches(tmp_path, capsys):
     mock_store.search_nodes.return_value = [node]
     mock_store._get_neighbors.return_value = [(neighbor, rel)]
 
-    with patch("opentrace_agent.store.KuzuStore", return_value=mock_store):
+    with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
         run_augment("handle_request", str(tmp_path / "fake.db"))
 
     out = capsys.readouterr().out
@@ -98,7 +98,7 @@ def test_run_augment_with_matches(tmp_path, capsys):
 
 def test_run_augment_db_open_fails(tmp_path, capsys):
     """Should silently no-op when the store can't be opened."""
-    with patch("opentrace_agent.store.KuzuStore", side_effect=RuntimeError("locked")):
+    with patch("opentrace_agent.store.GraphStore", side_effect=RuntimeError("locked")):
         run_augment("anything", str(tmp_path / "fake.db"))
 
     assert capsys.readouterr().out == ""
@@ -120,7 +120,7 @@ def test_run_augment_caps_relationships(tmp_path, capsys):
     mock_store.search_nodes.return_value = [node]
     mock_store._get_neighbors.return_value = neighbors
 
-    with patch("opentrace_agent.store.KuzuStore", return_value=mock_store):
+    with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
         run_augment("BigClass", str(tmp_path / "fake.db"))
 
     out = capsys.readouterr().out

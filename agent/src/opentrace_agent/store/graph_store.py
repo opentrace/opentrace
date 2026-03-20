@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LadybugDB-backed graph store — Python equivalent of ``api/pkg/graph/kuzu.go``.
+"""LadybugDB-backed graph store.
 
 Same schema, same Cypher queries, interoperable databases.
 """
@@ -24,12 +24,12 @@ import logging
 from collections import deque
 from typing import Any
 
-import real_ladybug as kuzu
+import real_ladybug as ladybug
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Helpers (mirrors Go helpers.go)
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -74,14 +74,14 @@ def _parse_props(raw: Any) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# KuzuStore
+# GraphStore
 # ---------------------------------------------------------------------------
 
 
-class KuzuStore:
+class GraphStore:
     """Embedded graph store backed by LadybugDB.
 
-    Schema matches the Go ``KuzuStore`` exactly::
+    Schema::
 
         Node(id PK, type, name, properties, search_text)
         RELATES(FROM Node TO Node, id STRING, type STRING, properties STRING)
@@ -89,8 +89,8 @@ class KuzuStore:
     """
 
     def __init__(self, db_path: str, *, read_only: bool = False) -> None:
-        self._db = kuzu.Database(db_path, read_only=read_only)
-        self._conn = kuzu.Connection(self._db)
+        self._db = ladybug.Database(db_path, read_only=read_only)
+        self._conn = ladybug.Connection(self._db)
         if not read_only:
             self._ensure_schema()
 
@@ -469,7 +469,7 @@ class KuzuStore:
         self._conn.close()
         self._db.close()
 
-    def __enter__(self) -> KuzuStore:
+    def __enter__(self) -> GraphStore:
         return self
 
     def __exit__(self, *exc: object) -> None:

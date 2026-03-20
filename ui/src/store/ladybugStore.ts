@@ -182,7 +182,7 @@ function unionAllTextSearch(escapedLower: string): string {
 
 // ---- Store implementation ----
 
-export class KuzuGraphStore implements GraphStore {
+export class LadybugGraphStore implements GraphStore {
   private lbug!: LbugModule;
   private conn!: WebConnection;
   private ready: Promise<void>;
@@ -339,7 +339,7 @@ export class KuzuGraphStore implements GraphStore {
     }
 
     console.log(
-      `[KuzuStore] fetchGraph: ${data.nodes.length} nodes, ${data.links.length} edges in ${(performance.now() - t0).toFixed(0)}ms`,
+      `[LadybugStore] fetchGraph: ${data.nodes.length} nodes, ${data.links.length} edges in ${(performance.now() - t0).toFixed(0)}ms`,
     );
     return data;
   }
@@ -363,7 +363,7 @@ export class KuzuGraphStore implements GraphStore {
       totalNodes > this.maxVisNodes || totalEdges > this.maxVisEdges;
     if (isLarge) {
       console.log(
-        `[KuzuStore] Graph large: ${totalNodes} nodes, ${totalEdges} edges. Limiting to ${this.maxVisNodes}/${this.maxVisEdges}.`,
+        `[LadybugStore] Graph large: ${totalNodes} nodes, ${totalEdges} edges. Limiting to ${this.maxVisNodes}/${this.maxVisEdges}.`,
       );
     }
 
@@ -626,7 +626,7 @@ export class KuzuGraphStore implements GraphStore {
 
     // Deduplicate nodes by ID, merging properties. The pipeline may emit
     // the same node twice (e.g. structure batch + summary update) which
-    // would cause KuzuDB COPY FROM primary-key violations.
+    // would cause LadybugDB COPY FROM primary-key violations.
     const nodeDedup = new Map<string, (typeof rawNodes)[0]>();
     for (const node of rawNodes) {
       const existing = nodeDedup.get(node.id);
@@ -670,7 +670,7 @@ export class KuzuGraphStore implements GraphStore {
       for (const node of nodes) {
         if (!NODE_TYPE_SET.has(node.type)) {
           console.warn(
-            `[KuzuStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
+            `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
           );
           continue;
         }
@@ -707,13 +707,13 @@ export class KuzuGraphStore implements GraphStore {
         const tgtType = this.nodeTypeMap.get(rel.target_id);
         if (!srcType || !tgtType) {
           console.warn(
-            `[KuzuStore] Skipping rel ${rel.id}: unknown node type (src=${srcType}, tgt=${tgtType})`,
+            `[LadybugStore] Skipping rel ${rel.id}: unknown node type (src=${srcType}, tgt=${tgtType})`,
           );
           continue;
         }
         if (!REL_PAIR_SET.has(`${srcType}_${tgtType}`)) {
           console.warn(
-            `[KuzuStore] Skipping rel ${rel.id}: unsupported pair ${srcType} → ${tgtType}`,
+            `[LadybugStore] Skipping rel ${rel.id}: unsupported pair ${srcType} → ${tgtType}`,
           );
           continue;
         }
@@ -727,7 +727,7 @@ export class KuzuGraphStore implements GraphStore {
 
     const elapsed = performance.now() - t0;
     console.log(
-      `[KuzuStore] flush: ${nodes.length} nodes, ${rels.length} rels in ${elapsed.toFixed(0)}ms`,
+      `[LadybugStore] flush: ${nodes.length} nodes, ${rels.length} rels in ${elapsed.toFixed(0)}ms`,
     );
   }
 
@@ -760,7 +760,7 @@ export class KuzuGraphStore implements GraphStore {
       } catch (err) {
         // Last resort: per-row INSERT
         console.warn(
-          `[KuzuStore] COPY RELATES_${key} failed, inserting rows individually:`,
+          `[LadybugStore] COPY RELATES_${key} failed, inserting rows individually:`,
           err,
         );
         const [srcType, tgtType] = key.split('_');
@@ -772,7 +772,10 @@ export class KuzuGraphStore implements GraphStore {
                 `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${esc(props)}'}]->(b)`,
             );
           } catch (insertErr) {
-            console.warn(`[KuzuStore] INSERT rel failed: ${rel.id}`, insertErr);
+            console.warn(
+              `[LadybugStore] INSERT rel failed: ${rel.id}`,
+              insertErr,
+            );
           }
         }
       }

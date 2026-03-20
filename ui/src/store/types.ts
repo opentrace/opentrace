@@ -16,7 +16,7 @@
 
 import type { GraphData, GraphStats } from '@opentrace/components/utils';
 
-// ---- Shared result types (previously in kuzuProtocol.ts) ----
+// ---- Shared result types ----
 
 export interface NodeResult {
   id: string;

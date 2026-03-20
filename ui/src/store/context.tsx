@@ -15,7 +15,7 @@
  */
 
 import { createContext, use, type ReactNode } from 'react';
-import { KuzuGraphStore } from './kuzuStore';
+import { LadybugGraphStore } from './ladybugStore';
 import type { GraphStore } from './types';
 
 interface StoreContextValue {
@@ -25,10 +25,10 @@ interface StoreContextValue {
 const StoreContext = createContext<StoreContextValue | null>(null);
 
 // Module-level singleton — survives React StrictMode double-invocation.
-// Without this, StrictMode creates two KuzuGraphStore instances (two workers,
+// Without this, StrictMode creates two LadybugGraphStore instances (two workers,
 // two independent in-memory databases), so imports go to one and reads to the other.
-let singletonStore: KuzuGraphStore | null = null;
-function getStore(): KuzuGraphStore {
+let singletonStore: LadybugGraphStore | null = null;
+function getStore(): LadybugGraphStore {
   if (!singletonStore) {
     if (!crossOriginIsolated) {
       throw new Error(
@@ -36,7 +36,7 @@ function getStore(): KuzuGraphStore {
           'for in-browser LadybugDB. Serve with appropriate headers.',
       );
     }
-    singletonStore = new KuzuGraphStore();
+    singletonStore = new LadybugGraphStore();
   }
   return singletonStore;
 }
