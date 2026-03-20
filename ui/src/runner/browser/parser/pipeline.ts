@@ -432,7 +432,7 @@ export async function runPipeline(
 
       // (c) Summarize each symbol inline (using symbolInfoOut + file content lines)
       //     Merge summaries into the existing nodes in fileBatch rather than
-      //     emitting duplicate nodes (which causes PK violations in KuzuDB
+      //     emitting duplicate nodes (which causes PK violations in LadybugDB
       //     and property loss in the in-memory store).
       const lines = file.content.split('\n');
       const symbolNames: string[] = [];

@@ -63,12 +63,12 @@ def run_augment(pattern: str, db_path: str | None) -> None:
         return
 
     try:
-        from opentrace_agent.store import KuzuStore
+        from opentrace_agent.store import GraphStore
     except Exception:
         return
 
     try:
-        store = KuzuStore(db_path, read_only=True)
+        store = GraphStore(db_path, read_only=True)
     except Exception:
         return
 

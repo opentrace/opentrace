@@ -199,9 +199,9 @@ describe('cross-repo: same project imported twice with different repo names', ()
     expect(flaskImports.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('pipeline emits duplicate Package nodes across runs (KuzuStore dedup required)', () => {
+  it('pipeline emits duplicate Package nodes across runs (LadybugStore dedup required)', () => {
     // The pipeline has no cross-run state, so each run independently emits
-    // shared Package nodes like pkg:pypi:flask. This is expected — KuzuStore
+    // shared Package nodes like pkg:pypi:flask. This is expected — LadybugStore
     // deduplicates Package nodes in flush() to avoid PK violations.
     const allEmittedNodes: { id: string; type: string; from: string }[] = [];
 

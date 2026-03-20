@@ -1,10 +1,10 @@
 services:
-  kuzu-explorer:
-    image: kuzudb/explorer:latest
+  ladybug-explorer:
+    image: ladybugdb/explorer:latest
     ports:
       - "8000:8000"
     volumes:
-      - ./db.kuzu:/database/db.kuzu
+      - ./db.ladybug:/database/db.ladybug
     environment:
       MODE: READ_ONLY
-      KUZU_FILE: db.kuzu
+      LADYBUG_FILE: db.ladybug

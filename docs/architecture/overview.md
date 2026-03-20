@@ -10,7 +10,7 @@
 │                                  │  WASM parsers   │ │
 │                                  └─────────────────┘ │
 │                                  ┌─────────────────┐ │
-│                                  │  KuzuDB WASM    │ │
+│                                  │  LadybugDB WASM    │ │
 │                                  │  graph store    │ │
 │                                  └─────────────────┘ │
 └──────────────────────────────────────────────────────┘
@@ -24,7 +24,7 @@ React/TypeScript frontend that runs entirely in the browser. Includes:
 
 - **Graph Explorer** — visual graph navigation and search
 - **Tree-sitter Web Worker** — parses source files using WASM grammars
-- **KuzuDB WASM** — embedded graph database for storing and querying the knowledge graph
+- **LadybugDB WASM** — embedded graph database for storing and querying the knowledge graph
 - **Chat Agent** — in-app AI agent with access to graph tools via MCP
 
 ### Protobuf Definitions (`proto/`)

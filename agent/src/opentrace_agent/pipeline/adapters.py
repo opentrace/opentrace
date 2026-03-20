@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Store adapter wrapping KuzuStore to conform to the pipeline Store protocol."""
+"""Store adapter wrapping GraphStore to conform to the pipeline Store protocol."""
 
 from __future__ import annotations
 
@@ -43,16 +43,16 @@ def _rel_to_dict(rel: GraphRelationship) -> dict[str, Any]:
     }
 
 
-class KuzuStoreAdapter:
-    """Wraps KuzuStore to conform to the pipeline Store protocol.
+class GraphStoreAdapter:
+    """Wraps GraphStore to conform to the pipeline Store protocol.
 
     Accumulates nodes/relationships and flushes in batches.
     Nodes are always flushed before relationships since rels
     reference nodes via MATCH.
     """
 
-    def __init__(self, kuzu_store: Any, batch_size: int = 200) -> None:
-        self._store = kuzu_store
+    def __init__(self, graph_store: Any, batch_size: int = 200) -> None:
+        self._store = graph_store
         self._batch_size = batch_size
         self._nodes: list[dict[str, Any]] = []
         self._rels: list[dict[str, Any]] = []

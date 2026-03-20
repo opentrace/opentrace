@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for KuzuStoreAdapter — verifies batching, flush ordering, and close."""
+"""Tests for GraphStoreAdapter — verifies batching, flush ordering, and close."""
 
 from __future__ import annotations
 
@@ -21,25 +21,25 @@ import pytest
 from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
 
 # Skip entire module if real_ladybug (LadybugDB) is not installed
-kuzu = pytest.importorskip("real_ladybug")
+ladybug = pytest.importorskip("real_ladybug")
 
-KuzuStoreAdapter = pytest.importorskip("opentrace_agent.pipeline.adapters").KuzuStoreAdapter
-KuzuStore = pytest.importorskip("opentrace_agent.store").KuzuStore
+GraphStoreAdapter = pytest.importorskip("opentrace_agent.pipeline.adapters").GraphStoreAdapter
+GraphStore = pytest.importorskip("opentrace_agent.store").GraphStore
 
 
 @pytest.fixture()
-def kuzu_store(tmp_path):
-    """Create a KuzuStore in a temp directory."""
+def graph_store(tmp_path):
+    """Create a GraphStore in a temp directory."""
     db_path = str(tmp_path / "testdb")
-    store = KuzuStore(db_path)
+    store = GraphStore(db_path)
     yield store
     store.close()
 
 
 @pytest.fixture()
-def adapter(kuzu_store):
-    """Create a KuzuStoreAdapter wrapping the kuzu_store fixture."""
-    return KuzuStoreAdapter(kuzu_store, batch_size=5)
+def adapter(graph_store):
+    """Create a GraphStoreAdapter wrapping the graph_store fixture."""
+    return GraphStoreAdapter(graph_store, batch_size=5)
 
 
 def _make_node(i: int) -> GraphNode:
@@ -60,46 +60,46 @@ def _make_rel(i: int, src: int, tgt: int) -> GraphRelationship:
     )
 
 
-class TestKuzuStoreAdapter:
-    def test_save_node_and_flush(self, adapter, kuzu_store):
+class TestGraphStoreAdapter:
+    def test_save_node_and_flush(self, adapter, graph_store):
         """Nodes saved via adapter should be retrievable after flush."""
         adapter.save_node(_make_node(1))
         adapter.save_node(_make_node(2))
         adapter.flush()
 
-        n1 = kuzu_store.get_node("node-1")
+        n1 = graph_store.get_node("node-1")
         assert n1 is not None
         assert n1["name"] == "func_1"
         assert n1["type"] == "Function"
 
-        n2 = kuzu_store.get_node("node-2")
+        n2 = graph_store.get_node("node-2")
         assert n2 is not None
 
-    def test_save_relationship_after_nodes(self, adapter, kuzu_store):
+    def test_save_relationship_after_nodes(self, adapter, graph_store):
         """Relationships should reference existing nodes after flush."""
         adapter.save_node(_make_node(1))
         adapter.save_node(_make_node(2))
         adapter.save_relationship(_make_rel(1, src=1, tgt=2))
         adapter.flush()
 
-        stats = kuzu_store.get_stats()
+        stats = graph_store.get_stats()
         assert stats["total_nodes"] == 2
         assert stats["total_edges"] == 1
 
-    def test_auto_flush_at_batch_size(self, adapter, kuzu_store):
+    def test_auto_flush_at_batch_size(self, adapter, graph_store):
         """Nodes should auto-flush when batch_size (5) is reached."""
         for i in range(5):
             adapter.save_node(_make_node(i))
 
         # Should have been auto-flushed
-        nodes = kuzu_store.list_nodes("Function")
+        nodes = graph_store.list_nodes("Function")
         assert len(nodes) == 5
 
     def test_close_flushes_and_closes(self, tmp_path):
         """close() should flush remaining items and close the DB."""
         db_path = str(tmp_path / "closedb")
-        store = KuzuStore(db_path)
-        adapter = KuzuStoreAdapter(store, batch_size=100)
+        store = GraphStore(db_path)
+        adapter = GraphStoreAdapter(store, batch_size=100)
 
         adapter.save_node(_make_node(1))
         adapter.save_node(_make_node(2))
@@ -107,7 +107,7 @@ class TestKuzuStoreAdapter:
         adapter.close()
 
         # Re-open and verify data persisted
-        store2 = KuzuStore(db_path)
+        store2 = GraphStore(db_path)
         try:
             assert store2.get_node("node-1") is not None
             assert store2.get_node("node-2") is not None
@@ -116,14 +116,14 @@ class TestKuzuStoreAdapter:
         finally:
             store2.close()
 
-    def test_empty_flush_is_noop(self, adapter, kuzu_store):
+    def test_empty_flush_is_noop(self, adapter, graph_store):
         """Flushing with no pending items should not error."""
         adapter.flush()
-        stats = kuzu_store.get_stats()
+        stats = graph_store.get_stats()
         assert stats["total_nodes"] == 0
 
-    def test_node_properties_roundtrip(self, adapter, kuzu_store):
-        """Properties should survive the adapter → KuzuDB → read roundtrip."""
+    def test_node_properties_roundtrip(self, adapter, graph_store):
+        """Properties should survive the adapter → LadybugDB → read roundtrip."""
         node = GraphNode(
             id="prop-test",
             type="File",
@@ -133,7 +133,7 @@ class TestKuzuStoreAdapter:
         adapter.save_node(node)
         adapter.flush()
 
-        result = kuzu_store.get_node("prop-test")
+        result = graph_store.get_node("prop-test")
         assert result is not None
         assert result["properties"]["language"] == "python"
         assert result["properties"]["lines"] == 42

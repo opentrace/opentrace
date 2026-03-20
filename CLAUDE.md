@@ -65,4 +65,3 @@ npm run dev
 ## Graph Node Types
 
 Service, Repo, Repository, Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable
-

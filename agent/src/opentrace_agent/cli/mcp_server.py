@@ -21,7 +21,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from opentrace_agent.store import KuzuStore
+from opentrace_agent.store import GraphStore
 
 MAX_RESULT_CHARS = 4000
 
@@ -36,7 +36,7 @@ def _json_response(data: Any) -> str:
     return _truncate(json.dumps(data, default=str))
 
 
-def create_mcp_server(store: KuzuStore) -> FastMCP:
+def create_mcp_server(store: GraphStore) -> FastMCP:
     """Create a FastMCP server with graph query tools backed by *store*."""
     server = FastMCP("opentrace")
 

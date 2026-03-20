@@ -23,5 +23,5 @@ When you add a repository, OpenTrace will:
 1. Fetch the source code via the GitHub/GitLab API
 2. Parse every file using tree-sitter WASM grammars
 3. Extract symbols (classes, functions, imports) and relationships
-4. Build a knowledge graph in an embedded KuzuDB instance
+4. Build a knowledge graph in an embedded LadybugDB instance
 5. Make the graph available for exploration and querying

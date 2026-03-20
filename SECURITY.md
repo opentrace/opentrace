@@ -20,7 +20,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 OpenTrace runs entirely in the browser. The primary attack surface is:
 
 - **GitHub/GitLab API tokens** — stored in browser localStorage, used to fetch repository contents
-- **KuzuDB WASM** — embedded database running in-browser
+- **LadybugDB WASM** — embedded database running in-browser
 - **tree-sitter WASM parsers** — parse untrusted source code in a Web Worker
 
 ## Supported Versions
