@@ -13,25 +13,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/opentrace-hook.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Glob",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/opentrace-hook.py"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
+        "matcher": "Grep|Glob|Bash",
         "hooks": [
           {
             "type": "command",
