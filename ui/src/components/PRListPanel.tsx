@@ -24,6 +24,35 @@ import PRDetailPanel from './PRDetailPanel';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import './PRListPanel.css';
 
+/**
+ * Parse user input that is either a bare PR/MR number or a full URL.
+ * Returns the extracted number, or null if unparseable.
+ */
+function parsePRInput(input: string): number | null {
+  const trimmed = input.trim().replace(/^#/, '');
+  // Plain number (with optional leading #)
+  const num = parseInt(trimmed, 10);
+  if (/^\d+$/.test(trimmed) && num > 0) return num;
+
+  // GitHub: /pull/123
+  const gh = trimmed.match(/\/pull\/(\d+)/);
+  if (gh) return parseInt(gh[1], 10);
+
+  // GitLab: /merge_requests/123 or /-/merge_requests/123
+  const gl = trimmed.match(/\/merge_requests\/(\d+)/);
+  if (gl) return parseInt(gl[1], 10);
+
+  // Bitbucket: /pull-requests/123
+  const bb = trimmed.match(/\/pull-requests\/(\d+)/);
+  if (bb) return parseInt(bb[1], 10);
+
+  // Azure DevOps: /pullrequest/123
+  const ado = trimmed.match(/\/pullrequest\/(\d+)/);
+  if (ado) return parseInt(ado[1], 10);
+
+  return null;
+}
+
 interface Props {
   prClient: PRClient;
   store: GraphStore;
@@ -58,6 +87,8 @@ export default function PRListPanel({
   const [selectedPR, setSelectedPR] = useState<PRDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [indexingAll, setIndexingAll] = useState(false);
+  const [lookupInput, setLookupInput] = useState('');
+  const [lookupError, setLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +158,25 @@ export default function PRListPanel({
     setIndexingAll(false);
   };
 
+  const handleLookup = async () => {
+    const prNumber = parsePRInput(lookupInput);
+    if (prNumber === null) {
+      setLookupError('Enter a PR number (e.g. 123) or a link');
+      return;
+    }
+    setLookupError(null);
+    setLoadingDetail(true);
+    try {
+      const detail = await prClient.getPRDetail(prNumber);
+      setSelectedPR(detail);
+      setLookupInput('');
+    } catch (err) {
+      setLookupError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
   if (selectedPR) {
     return (
       <PRDetailPanel
@@ -166,6 +216,29 @@ export default function PRListPanel({
 
   return (
     <div className="pr-list-panel">
+      <div className="pr-lookup-bar">
+        <input
+          className="pr-lookup-input"
+          type="text"
+          placeholder="Load PR by number or link..."
+          value={lookupInput}
+          onChange={(e) => {
+            setLookupInput(e.target.value);
+            setLookupError(null);
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && handleLookup()}
+          disabled={loadingDetail}
+        />
+        <button
+          className="pr-lookup-btn"
+          onClick={handleLookup}
+          disabled={loadingDetail || !lookupInput.trim()}
+        >
+          {loadingDetail ? 'Loading...' : 'Go'}
+        </button>
+      </div>
+      {lookupError && <div className="pr-lookup-error">{lookupError}</div>}
+
       <div className="pr-list-header">
         <span className="pr-list-count">
           {prs.length} open {prs.length === 1 ? 'PR' : 'PRs'}
