@@ -143,7 +143,7 @@ class TestSymbolAttacher:
         repo = RepoNode(id="test/repo", name="repo")
         attacher = SymbolAttacher([PythonExtractor()])
         counts = attacher.attach(repo)
-        assert counts == {"classes": 0, "functions": 0, "calls": 0, "summaries": 0}
+        assert counts == {"classes": 0, "functions": 0, "variables": 0, "calls": 0, "summaries": 0}
 
     def test_symbol_node_ids(self, tmp_path: Path):
         py_file = tmp_path / "mod.py"

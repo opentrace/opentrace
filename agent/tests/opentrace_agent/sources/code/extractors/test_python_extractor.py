@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from opentrace_agent.sources.code.extractors.base import CallRef
+from opentrace_agent.sources.code.extractors.base import CallArg, CallRef, VariableRef
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 
 
@@ -146,9 +146,10 @@ def process(self):
 """
         result = self.extractor.extract(source)
         calls = result.symbols[0].calls
-        assert CallRef("validate", receiver="self", kind="attribute") in calls
-        assert CallRef("join", receiver="os.path", kind="attribute") in calls
-        assert CallRef("helper") in calls
+        call_keys = [(c.name, c.receiver, c.kind) for c in calls]
+        assert ("validate", "self", "attribute") in call_keys
+        assert ("join", "os.path", "attribute") in call_keys
+        assert ("helper", None, "bare") in call_keys
 
     def test_extract_nested_calls(self):
         source = b"""\
@@ -157,8 +158,13 @@ def main():
 """
         result = self.extractor.extract(source)
         calls = result.symbols[0].calls
-        assert CallRef("foo") in calls
-        assert CallRef("bar") in calls
+        call_names = [c.name for c in calls]
+        assert "foo" in call_names
+        assert "bar" in call_names
+        # foo's argument should be the nested bar() call
+        foo_call = [c for c in calls if c.name == "foo"][0]
+        assert len(foo_call.arguments) == 1
+        assert foo_call.arguments[0].kind == "call"
 
     def test_extract_no_body_has_empty_calls(self):
         """A function stub still gets an empty calls list."""
@@ -193,3 +199,176 @@ class Service:
         handle = cls.children[0]
         assert CallRef("validate", receiver="self", kind="attribute") in handle.calls
         assert CallRef("save", receiver="self", kind="attribute") in handle.calls
+
+    # --- call arguments extraction tests ---
+
+    def test_call_arguments_with_variables(self):
+        """Call arguments capture variable references."""
+        source = b"""\
+def process():
+    data = load()
+    result = transform(data)
+"""
+        result = self.extractor.extract(source)
+        calls = result.symbols[0].calls
+        transform_call = [c for c in calls if c.name == "transform"][0]
+        assert len(transform_call.arguments) == 1
+        assert transform_call.arguments[0] == CallArg(name="data", kind="variable")
+
+    def test_call_arguments_with_literals(self):
+        """Literal arguments are classified correctly."""
+        source = b"""\
+def run():
+    print("hello", 42)
+"""
+        result = self.extractor.extract(source)
+        calls = result.symbols[0].calls
+        print_call = [c for c in calls if c.name == "print"][0]
+        assert len(print_call.arguments) == 2
+        assert print_call.arguments[0].kind == "literal"
+        assert print_call.arguments[1].kind == "literal"
+
+    def test_call_arguments_with_keyword(self):
+        """Keyword arguments capture the value side."""
+        source = b"""\
+def run():
+    x = 1
+    foo(key=x)
+"""
+        result = self.extractor.extract(source)
+        calls = result.symbols[0].calls
+        foo_call = [c for c in calls if c.name == "foo"][0]
+        assert len(foo_call.arguments) == 1
+        assert foo_call.arguments[0] == CallArg(name="x", kind="variable")
+
+    def test_call_arguments_mixed(self):
+        """Mixed argument types are all captured."""
+        source = b"""\
+def run():
+    a = 1
+    foo(a, "lit", bar())
+"""
+        result = self.extractor.extract(source)
+        calls = result.symbols[0].calls
+        foo_call = [c for c in calls if c.name == "foo"][0]
+        assert len(foo_call.arguments) == 3
+        assert foo_call.arguments[0].kind == "variable"
+        assert foo_call.arguments[1].kind == "literal"
+        assert foo_call.arguments[2].kind == "call"
+
+    def test_call_with_no_arguments(self):
+        """Calls with no arguments have empty arguments list."""
+        source = b"""\
+def run():
+    foo()
+"""
+        result = self.extractor.extract(source)
+        assert result.symbols[0].calls[0].arguments == []
+
+    # --- variable extraction tests ---
+
+    def test_extract_simple_variables(self):
+        """Simple assignments produce VariableRef entries."""
+        source = b"""\
+def process():
+    x = 1
+    y = "hello"
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        names = [v.name for v in variables]
+        assert "x" in names
+        assert "y" in names
+
+    def test_extract_annotated_variable(self):
+        """Annotated assignments capture the type annotation."""
+        source = b"""\
+def process():
+    x: int = 42
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        x_var = [v for v in variables if v.name == "x"][0]
+        assert x_var.type_annotation == "int"
+
+    def test_extract_tuple_unpacking(self):
+        """Tuple unpacking produces separate VariableRef entries."""
+        source = b"""\
+def process():
+    a, b = get_pair()
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        names = [v.name for v in variables]
+        assert "a" in names
+        assert "b" in names
+
+    def test_extract_for_loop_variable(self):
+        """For-loop targets are captured as variables."""
+        source = b"""\
+def process():
+    for item in items:
+        print(item)
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        names = [v.name for v in variables]
+        assert "item" in names
+
+    def test_extract_self_attribute_variable(self):
+        """self.x = ... is captured as a variable."""
+        source = b"""\
+class Foo:
+    def __init__(self):
+        self.x = 1
+        self.y = 2
+"""
+        result = self.extractor.extract(source)
+        init = result.symbols[0].children[0]
+        names = [v.name for v in init.variables]
+        assert "self.x" in names
+        assert "self.y" in names
+
+    def test_extract_augmented_assignment(self):
+        """Augmented assignments (+=, etc.) are captured."""
+        source = b"""\
+def process():
+    count = 0
+    count += 1
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        names = [v.name for v in variables]
+        assert names.count("count") == 2  # initial + augmented
+
+    def test_no_variables_for_empty_function(self):
+        """Function with no assignments has empty variables list."""
+        source = b"def stub(): pass\n"
+        result = self.extractor.extract(source)
+        assert result.symbols[0].variables == []
+
+    def test_variables_skip_self_and_underscore(self):
+        """self, cls, and _ are excluded from variable tracking."""
+        source = b"""\
+def process():
+    _ = ignore()
+    self = bad()
+"""
+        result = self.extractor.extract(source)
+        names = [v.name for v in result.symbols[0].variables]
+        assert "_" not in names
+        assert "self" not in names
+
+    def test_variable_line_numbers(self):
+        """Variables track their line numbers."""
+        source = b"""\
+def process():
+    x = 1
+    y = 2
+"""
+        result = self.extractor.extract(source)
+        variables = result.symbols[0].variables
+        x_var = [v for v in variables if v.name == "x"][0]
+        y_var = [v for v in variables if v.name == "y"][0]
+        assert x_var.line == 2
+        assert y_var.line == 3

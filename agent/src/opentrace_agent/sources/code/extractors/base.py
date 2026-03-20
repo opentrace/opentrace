@@ -22,6 +22,21 @@ from typing import Any, ClassVar, Literal
 
 
 @dataclass
+class CallArg:
+    """An argument passed to a function/method call.
+
+    Captures variable references used as arguments so we can trace
+    data flow from variable definitions through call sites.
+    """
+
+    name: str
+    """The argument text (variable name or expression)."""
+
+    kind: Literal["variable", "literal", "call", "other"] = "variable"
+    """What kind of argument: a variable reference, literal value, nested call, etc."""
+
+
+@dataclass
 class CallRef:
     """A reference to a function/method call found in source code.
 
@@ -38,6 +53,28 @@ class CallRef:
     kind: Literal["bare", "attribute"] = "bare"
     """Whether this is a bare call (foo()) or dotted call (obj.foo())."""
 
+    arguments: list[CallArg] = field(default_factory=list)
+    """Arguments passed to this call, for tracing variable usage."""
+
+
+@dataclass
+class VariableRef:
+    """A variable assignment found in source code.
+
+    Represents a local variable, attribute assignment, or annotated
+    assignment so we can build DEFINED_IN relationships from variables
+    back to their enclosing scope.
+    """
+
+    name: str
+    """The variable name (e.g. 'result', 'self.x')."""
+
+    line: int
+    """1-indexed line number of the assignment."""
+
+    type_annotation: str | None = None
+    """Type annotation if present (e.g. 'int', 'str')."""
+
 
 @dataclass
 class CodeSymbol:
@@ -50,6 +87,8 @@ class CodeSymbol:
     signature: str | None = None
     children: list[CodeSymbol] = field(default_factory=list)
     calls: list[CallRef] = field(default_factory=list)
+    variables: list[VariableRef] = field(default_factory=list)
+    """Variables defined within this symbol's scope."""
     receiver_var: str | None = None
     """Go-specific: the receiver variable name (e.g. 's' from '(s *Server)')."""
     receiver_type: str | None = None

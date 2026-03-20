@@ -22,10 +22,12 @@ import tree_sitter
 import tree_sitter_python
 
 from opentrace_agent.sources.code.extractors.base import (
+    CallArg,
     CallRef,
     CodeSymbol,
     ExtractionResult,
     SymbolExtractor,
+    VariableRef,
 )
 
 _PARSER: tree_sitter.Parser | None = None
@@ -125,6 +127,7 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
     param_types = _extract_param_types(params_node) if params_node else None
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
+    variables = _collect_variables(body_node) if body_node else []
     docs = _extract_docstring(node)
     return CodeSymbol(
         name=name_node.text.decode(),
@@ -133,6 +136,7 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         end_line=node.end_point.row + 1,
         signature=signature,
         calls=calls,
+        variables=variables,
         param_types=param_types,
         docs=docs,
     )
@@ -206,14 +210,16 @@ def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     """Collect function/method call references from a tree-sitter subtree.
 
     Captures both bare identifier calls (``foo()``) and attribute calls
-    (``self.foo()``, ``mod.func()``).
+    (``self.foo()``, ``mod.func()``).  Each call also records its arguments
+    so we can trace which variables flow into each call site.
     """
     calls: list[CallRef] = []
     for child in node.children:
         if child.type == "call":
             func_node = child.child_by_field_name("function")
+            arguments = _extract_call_arguments(child)
             if func_node and func_node.type == "identifier":
-                calls.append(CallRef(name=func_node.text.decode()))
+                calls.append(CallRef(name=func_node.text.decode(), arguments=arguments))
             elif func_node and func_node.type == "attribute":
                 obj_node = func_node.child_by_field_name("object")
                 attr_node = func_node.child_by_field_name("attribute")
@@ -223,7 +229,169 @@ def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
                             name=attr_node.text.decode(),
                             receiver=obj_node.text.decode(),
                             kind="attribute",
+                            arguments=arguments,
                         )
                     )
         calls.extend(_collect_calls(child))
     return calls
+
+
+def _extract_call_arguments(call_node: tree_sitter.Node) -> list[CallArg]:
+    """Extract arguments from a call node's argument_list."""
+    args_node = call_node.child_by_field_name("arguments")
+    if args_node is None:
+        return []
+    arguments: list[CallArg] = []
+    for child in args_node.children:
+        if child.type in (",", "(", ")"):
+            continue
+        if child.type == "identifier":
+            arguments.append(CallArg(name=child.text.decode(), kind="variable"))
+        elif child.type == "keyword_argument":
+            # e.g. key=value — capture the value side
+            value_node = child.child_by_field_name("value")
+            if value_node and value_node.type == "identifier":
+                arguments.append(CallArg(name=value_node.text.decode(), kind="variable"))
+            elif value_node:
+                arguments.append(CallArg(name=value_node.text.decode(), kind=_classify_arg(value_node)))
+        elif child.type == "call":
+            arguments.append(CallArg(name=child.text.decode(), kind="call"))
+        elif child.type == "attribute":
+            arguments.append(CallArg(name=child.text.decode(), kind="variable"))
+        elif child.type in ("string", "integer", "float", "true", "false", "none"):
+            arguments.append(CallArg(name=child.text.decode(), kind="literal"))
+        else:
+            arguments.append(CallArg(name=child.text.decode(), kind=_classify_arg(child)))
+    return arguments
+
+
+def _classify_arg(node: tree_sitter.Node) -> str:
+    """Classify an argument node into a CallArg kind."""
+    if node.type in ("string", "integer", "float", "true", "false", "none"):
+        return "literal"
+    if node.type == "call":
+        return "call"
+    if node.type in ("identifier", "attribute"):
+        return "variable"
+    return "other"
+
+
+def _collect_variables(node: tree_sitter.Node) -> list[VariableRef]:
+    """Collect variable assignments from a function/class body.
+
+    Handles:
+      - Simple assignments: ``x = ...``
+      - Annotated assignments: ``x: int = ...``
+      - Augmented assignments: ``x += ...``
+      - Multiple targets: ``a, b = ...`` (tuple unpacking)
+      - For-loop targets: ``for x in ...``
+      - With-statement targets: ``with open(...) as f``
+    """
+    variables: list[VariableRef] = []
+    _walk_for_variables(node, variables)
+    return variables
+
+
+def _walk_for_variables(node: tree_sitter.Node, variables: list[VariableRef]) -> None:
+    """Recursively walk nodes to find variable assignments."""
+    for child in node.children:
+        if child.type == "assignment":
+            _extract_assignment_targets(child, variables)
+        elif child.type == "augmented_assignment":
+            left = child.child_by_field_name("left")
+            if left and left.type == "identifier":
+                variables.append(VariableRef(
+                    name=left.text.decode(),
+                    line=child.start_point.row + 1,
+                ))
+        elif child.type == "type_alias_statement":
+            # type X = ... — skip type aliases
+            pass
+        elif child.type == "expression_statement":
+            # Check for assignments inside expression statements
+            for sub in child.children:
+                if sub.type == "assignment":
+                    _extract_assignment_targets(sub, variables)
+                elif sub.type == "augmented_assignment":
+                    left = sub.child_by_field_name("left")
+                    if left and left.type == "identifier":
+                        variables.append(VariableRef(
+                            name=left.text.decode(),
+                            line=sub.start_point.row + 1,
+                        ))
+        elif child.type == "for_statement":
+            left = child.child_by_field_name("left")
+            if left:
+                _extract_pattern_names(left, child.start_point.row + 1, variables)
+            # Walk the body for nested assignments
+            body = child.child_by_field_name("body")
+            if body:
+                _walk_for_variables(body, variables)
+        elif child.type == "with_statement":
+            # with expr as name — extract name
+            for sub in child.children:
+                if sub.type == "with_clause":
+                    for item in sub.children:
+                        if item.type == "with_item":
+                            alias_node = item.child_by_field_name("alias") or _find_child_by_type(item, "as_pattern")
+                            if alias_node:
+                                _extract_pattern_names(alias_node, child.start_point.row + 1, variables)
+            body = child.child_by_field_name("body")
+            if body:
+                _walk_for_variables(body, variables)
+        elif child.type in ("if_statement", "while_statement", "try_statement", "elif_clause", "else_clause"):
+            # Walk into compound statement bodies
+            _walk_for_variables(child, variables)
+        elif child.type == "block":
+            _walk_for_variables(child, variables)
+
+    # Also check for standalone annotated assignments (type: x: int = ...)
+    if node.type == "block":
+        for child in node.children:
+            if child.type == "type" and child.parent and child.parent.type == "assignment":
+                continue  # handled above
+
+
+def _extract_assignment_targets(
+    assign_node: tree_sitter.Node,
+    variables: list[VariableRef],
+) -> None:
+    """Extract variable names from the left side of an assignment."""
+    left = assign_node.child_by_field_name("left")
+    if left is None:
+        return
+    line = assign_node.start_point.row + 1
+
+    # Check for type annotation
+    type_node = assign_node.child_by_field_name("type")
+    type_ann = type_node.text.decode() if type_node else None
+
+    _extract_pattern_names(left, line, variables, type_ann)
+
+
+def _extract_pattern_names(
+    node: tree_sitter.Node,
+    line: int,
+    variables: list[VariableRef],
+    type_annotation: str | None = None,
+) -> None:
+    """Extract names from assignment patterns (identifier, tuple, list)."""
+    if node.type == "identifier":
+        name = node.text.decode()
+        if name not in ("_", "self", "cls"):
+            variables.append(VariableRef(name=name, line=line, type_annotation=type_annotation))
+    elif node.type in ("pattern_list", "tuple_pattern", "list_pattern"):
+        for child in node.children:
+            if child.type not in (",", "(", ")", "[", "]"):
+                _extract_pattern_names(child, line, variables)
+    elif node.type == "attribute":
+        # self.x = ... — capture as "self.x"
+        variables.append(VariableRef(name=node.text.decode(), line=line, type_annotation=type_annotation))
+
+
+def _find_child_by_type(node: tree_sitter.Node, type_name: str) -> tree_sitter.Node | None:
+    """Find a direct child node by its type."""
+    for child in node.children:
+        if child.type == type_name:
+            return child
+    return None
