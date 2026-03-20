@@ -233,12 +233,14 @@ def test_handle_pre_tool_use_passes_pattern_to_cli(tmp_path):
 
 def test_main_dispatches_pre_tool_use(capsys, monkeypatch, tmp_path):
     """Should dispatch PreToolUse events to handle_pre_tool_use."""
-    payload = json.dumps({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Grep",
-        "tool_input": {"pattern": "KuzuStore"},
-        "cwd": str(tmp_path),
-    })
+    payload = json.dumps(
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Grep",
+            "tool_input": {"pattern": "KuzuStore"},
+            "cwd": str(tmp_path),
+        }
+    )
     monkeypatch.setattr("sys.stdin", StringIO(payload))
 
     with patch.object(_hook, "run_opentraceai", return_value="context"):
