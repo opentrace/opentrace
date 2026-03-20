@@ -305,7 +305,7 @@ def augment(pattern: str, db_path: str | None) -> None:
     Prints a short human-readable context block (< 50 lines) to stdout.
     Exits 0 with no output when the pattern matches nothing or no index is found.
     """
-    from opentrace_agent.cli._augment import run_augment
+    from opentrace_agent.cli.augment import run_augment
 
     try:
         resolved = _resolve_db(db_path, must_exist=True)

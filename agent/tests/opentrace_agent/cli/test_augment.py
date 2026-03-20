@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from opentrace_agent.cli._augment import (
+from opentrace_agent.cli.augment import (
     _format_node,
     _format_rel,
     run_augment,

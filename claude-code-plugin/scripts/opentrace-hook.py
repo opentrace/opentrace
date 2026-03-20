@@ -28,7 +28,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Debug logging — only when OPENTRACE_DEBUG is set
@@ -40,30 +39,6 @@ _DEBUG = bool(os.environ.get("OPENTRACE_DEBUG"))
 def _debug(msg: str) -> None:
     if _DEBUG:
         print(f"[opentrace-hook] {msg}", file=sys.stderr)
-
-
-# ---------------------------------------------------------------------------
-# Index presence check (lightweight — full discovery is in the CLI)
-# ---------------------------------------------------------------------------
-
-_OPENTRACE_DIR = ".opentrace"
-_INDEX_NAME = "index.db"
-
-
-def _has_index(start_dir: str) -> bool:
-    """Quick check: does .opentrace/index.db exist at or above start_dir?"""
-    try:
-        current = Path(start_dir).resolve()
-        for _ in range(6):
-            if (current / _OPENTRACE_DIR / _INDEX_NAME).is_file():
-                return True
-            parent = current.parent
-            if parent == current:
-                break
-            current = parent
-    except Exception:
-        pass
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +153,6 @@ def handle_pre_tool_use(payload: dict) -> None:
 
         tool_name = payload.get("tool_name", "")
         if tool_name not in _AUGMENT_TOOLS:
-            return
-
-        if not _has_index(cwd):
-            _debug("no index found")
             return
 
         tool_input = payload.get("tool_input", {})
