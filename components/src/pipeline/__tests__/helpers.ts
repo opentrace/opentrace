@@ -22,15 +22,15 @@ import type { RepoTree } from '../types';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PUBLIC_DIR = join(__dirname, '..', '..', '..', '..', 'ui', 'public');
+const WASM_DIR = join(__dirname, '..', '..', '..', 'public', 'wasm');
 
 let initialized = false;
 
 export async function initTreeSitter(): Promise<void> {
   if (initialized) return;
-  const wasmBuf = await readFile(join(PUBLIC_DIR, 'web-tree-sitter.wasm'));
+  const wasmBuf = await readFile(join(WASM_DIR, 'web-tree-sitter.wasm'));
   await Parser.init({
-    locateFile: () => join(PUBLIC_DIR, 'web-tree-sitter.wasm'),
+    locateFile: () => join(WASM_DIR, 'web-tree-sitter.wasm'),
     wasmBinary: wasmBuf,
   });
   initialized = true;
@@ -42,7 +42,7 @@ export async function getPythonParser(): Promise<Parser> {
   await initTreeSitter();
   if (!pyParser) {
     pyParser = new Parser();
-    const buf = await readFile(join(PUBLIC_DIR, 'tree-sitter-python.wasm'));
+    const buf = await readFile(join(WASM_DIR, 'tree-sitter-python.wasm'));
     const lang = await Language.load(buf);
     pyParser.setLanguage(lang);
   }
