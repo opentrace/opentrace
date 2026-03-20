@@ -66,6 +66,13 @@ def _unmarshal_props(s: str) -> dict[str, Any] | None:
     return json.loads(s)
 
 
+def _parse_props(raw: Any) -> dict[str, Any] | None:
+    """Parse a properties value that may be a dict or a JSON string."""
+    if isinstance(raw, dict):
+        return raw or None
+    return _unmarshal_props(str(raw) if raw else "")
+
+
 # ---------------------------------------------------------------------------
 # KuzuStore
 # ---------------------------------------------------------------------------
@@ -507,8 +514,8 @@ class KuzuStore:
             while result.has_next():
                 vals = result.get_next()
                 # [r.id, r.type, r.props, src, tgt, nid, ntype, nname, nprops]
-                rel_props = _unmarshal_props(str(vals[2]) if vals[2] else "")
-                node_props = _unmarshal_props(str(vals[8]) if vals[8] else "")
+                rel_props = _parse_props(vals[2])
+                node_props = _parse_props(vals[8])
                 rel = {
                     "id": str(vals[0]),
                     "type": str(vals[1]),
@@ -533,7 +540,7 @@ class KuzuStore:
         rels: list[dict[str, Any]] = []
         while result.has_next():
             vals = result.get_next()
-            props = _unmarshal_props(str(vals[2]) if vals[2] else "")
+            props = _parse_props(vals[2])
             rels.append(
                 {
                     "id": str(vals[0]),
@@ -553,7 +560,7 @@ class KuzuStore:
 
 def _row_to_node(row: list) -> dict[str, Any]:
     """Convert a result row [id, type, name, properties] to a node dict."""
-    props = _unmarshal_props(str(row[3]) if row[3] else "")
+    props = _parse_props(row[3])
     return {
         "id": str(row[0]),
         "type": str(row[1]),
