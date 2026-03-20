@@ -202,7 +202,10 @@ export default function IndexingProgress({
   onClose,
   onCancel,
   onMinimize,
+  title,
+  message,
 }: IndexingProgressProps) {
+  // --- Error ---
   if (state.status === 'error') {
     return (
       <div className="modal-backdrop">
@@ -247,7 +250,7 @@ export default function IndexingProgress({
                   />
                 </svg>
               </div>
-              <h2>Indexing Failed</h2>
+              <h2>{title ?? 'Indexing Failed'}</h2>
               {state.error && <p className="failed-message">{state.error}</p>}
             </div>
 
@@ -267,100 +270,7 @@ export default function IndexingProgress({
     );
   }
 
-  // Persisted: structural data saved, waiting for graph to load
-  if (state.status === 'persisted') {
-    return (
-      <div className="modal-backdrop">
-        <div
-          className="modal-card modal-card-wide"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="indexing-progress">
-            <MultiStageProgress
-              stages={state.stages}
-              stageConfig={stageConfig}
-            />
-
-            <div className="done-content">
-              <div className="done-checkmark">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                  <circle
-                    cx="16"
-                    cy="16"
-                    r="14"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    fill="color-mix(in oklch, currentColor 15%, transparent)"
-                  />
-                  <polyline
-                    className="done-check-path"
-                    points="10,16.5 14,20.5 22,12"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                </svg>
-              </div>
-              <h2>Indexing Complete</h2>
-            </div>
-
-            <StatsGrid
-              nodes={state.nodesCreated}
-              relationships={state.relationshipsCreated}
-            />
-            <p className="indexing-message">Loading graph...</p>
-
-            <button
-              className="btn-cta btn-cta--secondary"
-              onClick={onMinimize ?? onClose}
-            >
-              {onMinimize ? 'Minimize' : 'Close'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Enriching (re-expanded from minimized bar)
-  if (state.status === 'enriching') {
-    return (
-      <div className="modal-backdrop">
-        <div
-          className="modal-card modal-card-wide"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="indexing-header">
-            <span className="indexing-header-icon">
-              {provider === 'gitlab' ? (
-                <GitLabIconSmall />
-              ) : (
-                <GitHubIconSmall />
-              )}
-            </span>
-            <h2>Enriching Repository</h2>
-          </div>
-          <div className="indexing-progress">
-            <MultiStageProgress
-              stages={state.stages}
-              stageConfig={stageConfig}
-            />
-            <StatsGrid
-              nodes={state.nodesCreated}
-              relationships={state.relationshipsCreated}
-            />
-            <button className="btn-cta btn-cta--secondary" onClick={onMinimize}>
-              Minimize
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Done (re-expanded from minimized bar)
+  // --- Done ---
   if (state.status === 'done') {
     return (
       <div className="modal-backdrop">
@@ -396,7 +306,7 @@ export default function IndexingProgress({
                   />
                 </svg>
               </div>
-              <h2>Indexing & Enrichment Complete</h2>
+              <h2>{title ?? 'Complete'}</h2>
             </div>
 
             <StatsGrid
@@ -404,8 +314,13 @@ export default function IndexingProgress({
               relationships={state.relationshipsCreated}
             />
 
-            <button className="btn-cta btn-cta--secondary" onClick={onClose}>
-              Close
+            {message && <p className="indexing-message">{message}</p>}
+
+            <button
+              className="btn-cta btn-cta--secondary"
+              onClick={onMinimize ?? onClose}
+            >
+              {onMinimize ? 'Minimize' : 'Close'}
             </button>
           </div>
         </div>
@@ -413,7 +328,7 @@ export default function IndexingProgress({
     );
   }
 
-  // Running state
+  // --- Running ---
   return (
     <div className="modal-backdrop">
       <div
@@ -424,7 +339,7 @@ export default function IndexingProgress({
           <span className="indexing-header-icon">
             {provider === 'gitlab' ? <GitLabIconSmall /> : <GitHubIconSmall />}
           </span>
-          <h2>Indexing Repository</h2>
+          <h2>{title ?? 'Indexing Repository'}</h2>
         </div>
         <div className="indexing-progress">
           <MultiStageProgress
@@ -435,8 +350,12 @@ export default function IndexingProgress({
             nodes={state.nodesCreated}
             relationships={state.relationshipsCreated}
           />
-          <button className="btn-cta btn-cta--secondary" onClick={onCancel}>
-            Cancel
+          {message && <p className="indexing-message">{message}</p>}
+          <button
+            className="btn-cta btn-cta--secondary"
+            onClick={onMinimize ?? onCancel}
+          >
+            {onMinimize ? 'Minimize' : 'Cancel'}
           </button>
         </div>
       </div>

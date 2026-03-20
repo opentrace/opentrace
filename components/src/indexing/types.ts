@@ -27,7 +27,7 @@ export interface StageState {
 
 // Overall indexing state (only what IndexingProgress reads)
 export interface IndexingState {
-  status: 'idle' | 'running' | 'persisted' | 'enriching' | 'done' | 'error';
+  status: 'idle' | 'running' | 'done' | 'error';
   nodesCreated: number;
   relationshipsCreated: number;
   error: string | null;
@@ -81,4 +81,8 @@ export interface IndexingProgressProps {
   onClose: () => void;
   onCancel: () => void;
   onMinimize?: () => void;
+  /** Override the header title (default: "Indexing Repository" when running, "Complete" when done). */
+  title?: string;
+  /** Supplementary message shown below stats (e.g. "Loading graph..."). */
+  message?: string;
 }

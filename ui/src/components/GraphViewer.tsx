@@ -60,6 +60,7 @@ import {
   IndexingProgress,
   detectProvider,
   type IndexedRepo,
+  type IndexingState,
 } from '@opentrace/components';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
@@ -77,6 +78,37 @@ const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_SUBMITTING), label: 'Persisting graph' },
   { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
 ];
+
+/** Map app-specific JobState to the generic IndexingState + title/message. */
+function toIndexingProps(job: JobState) {
+  let status: IndexingState['status'];
+  let title: string | undefined;
+  let message: string | undefined;
+
+  switch (job.status) {
+    case 'persisted':
+      status = 'done';
+      title = 'Indexing Complete';
+      message = 'Loading graph...';
+      break;
+    case 'enriching':
+      status = 'running';
+      title = 'Enriching Repository';
+      break;
+    default:
+      status = job.status;
+  }
+
+  const state: IndexingState = {
+    status,
+    nodesCreated: job.nodesCreated,
+    relationshipsCreated: job.relationshipsCreated,
+    error: job.error,
+    stages: job.stages as Record<string, IndexingState['stages'][string]>,
+  };
+
+  return { state, title, message };
+}
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
@@ -840,7 +872,7 @@ const GraphViewer = memo(
 
             {showFullModal && (
               <IndexingProgress
-                state={jobState}
+                {...toIndexingProps(jobState)}
                 stages={INDEXING_STAGES}
                 provider={detectProvider(activeRepoUrl)}
                 onClose={onJobClose}
@@ -1371,7 +1403,7 @@ const GraphViewer = memo(
 
           {showFullModal && (
             <IndexingProgress
-              state={jobState}
+              {...toIndexingProps(jobState)}
               stages={INDEXING_STAGES}
               provider={detectProvider(activeRepoUrl)}
               onClose={onJobClose}
