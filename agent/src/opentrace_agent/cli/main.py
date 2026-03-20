@@ -307,11 +307,9 @@ def augment(pattern: str, db_path: str | None) -> None:
     """
     from opentrace_agent.cli._augment import run_augment
 
-    resolved = _resolve_db(db_path, must_exist=False) if db_path else None
-    if resolved is None:
-        found = find_db()
-        resolved = str(found) if found else None
-    if resolved and not Path(resolved).is_file():
+    try:
+        resolved = _resolve_db(db_path, must_exist=True)
+    except click.UsageError:
         resolved = None
     run_augment(pattern, resolved)
 

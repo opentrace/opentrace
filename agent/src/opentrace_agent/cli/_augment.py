@@ -61,7 +61,7 @@ def run_augment(pattern: str, db_path: str | None) -> None:
         return
 
     try:
-        store = KuzuStore(resolved, read_only=True)
+        store = KuzuStore(db_path, read_only=True)
     except Exception:
         return
 
@@ -84,12 +84,12 @@ def run_augment(pattern: str, db_path: str | None) -> None:
                 continue
 
             rel_count = 0
-            for nb_node, nb_rel in neighbors:
+            for idx, (nb_node, nb_rel) in enumerate(neighbors):
                 if nb_rel["type"] not in _INTERESTING_RELS:
                     continue
                 if rel_count >= _MAX_RELS_PER_NODE:
                     remaining = sum(
-                        1 for _, r in neighbors[neighbors.index((nb_node, nb_rel)):]
+                        1 for _, r in neighbors[idx:]
                         if r["type"] in _INTERESTING_RELS
                     )
                     if remaining > 0:
