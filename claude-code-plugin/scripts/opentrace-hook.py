@@ -141,8 +141,6 @@ def send_hook_response(event: str, context: str) -> None:
 # Event handlers
 # ---------------------------------------------------------------------------
 
-_AUGMENT_TOOLS = frozenset({"Grep", "Glob", "Bash"})
-
 def handle_pre_tool_use(payload: dict) -> None:
     """Augment search tool calls with graph context."""
     try:
@@ -152,9 +150,6 @@ def handle_pre_tool_use(payload: dict) -> None:
             return
 
         tool_name = payload.get("tool_name", "")
-        if tool_name not in _AUGMENT_TOOLS:
-            return
-
         tool_input = payload.get("tool_input", {})
         pattern = extract_pattern(tool_name, tool_input)
         if not pattern or len(pattern) < 3:
