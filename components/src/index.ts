@@ -23,6 +23,7 @@
  */
 
 // ─── Main component ─────────────────────────────────────────────────────
+export { default as Graph } from './GraphCanvas';
 export { default as GraphCanvas } from './GraphCanvas';
 export type { GraphCanvasProps, GraphCanvasHandle } from './GraphCanvas';
 
@@ -44,7 +45,7 @@ export type { OptimizeStatus } from './graph/LayoutPipeline';
 
 // ─── Sigma utilities ────────────────────────────────────────────────────
 export { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
-export { drawNodeHover } from './graph/drawNodeHover';
+export { drawNodeHover, setHoveredNodeKey } from './graph/drawNodeHover';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export type {

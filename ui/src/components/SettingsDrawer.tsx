@@ -319,7 +319,7 @@ export default function SettingsDrawer({
             <button
               className="settings-back-btn"
               onClick={applyLimits}
-              disabled={!limitsChanged}
+              data-changed={limitsChanged || undefined}
               style={{ marginTop: 8, alignSelf: 'flex-start' }}
             >
               Redraw Graph

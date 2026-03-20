@@ -30,14 +30,19 @@ import { EdgeLineProgram } from 'sigma/rendering';
 import '@react-sigma/core/lib/style.css';
 
 import type { GraphNode, GraphLink, SelectedEdge } from './types/graph';
-import type { LayoutConfig, FilterState, VisualState } from './graph/types';
+import type {
+  LayoutConfig,
+  FilterState,
+  VisualState,
+  CommunityData,
+} from './graph/types';
 import { useGraphInstance } from './graph/useGraphInstance';
 import { useGraphFilters } from './graph/useGraphFilters';
 import { useGraphVisuals } from './graph/useGraphVisuals';
 import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
 import LayoutPipeline, { type OptimizeStatus } from './graph/LayoutPipeline';
-import { drawNodeHover } from './graph/drawNodeHover';
+import { drawNodeHover, setHoveredNodeKey } from './graph/drawNodeHover';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   ZOOM_SIZE_EXPONENT,
@@ -81,6 +86,18 @@ export interface GraphCanvasProps {
   hops?: number;
   /** Function to extract sub-type from a node (e.g. file extension). */
   getSubType?: GetSubTypeFn;
+  /** Override computed highlight nodes (e.g. for edge-click highlighting). */
+  highlightNodes?: Set<string>;
+  /** Override computed highlight links. */
+  highlightLinks?: Set<string>;
+  /** Override computed label nodes. */
+  labelNodes?: Set<string>;
+  /** Sub-type groupings for filter support. */
+  availableSubTypes?: Map<string, { subType: string; count: number }[]>;
+  /** Enable z-index layer reordering when highlights are active. */
+  zIndex?: boolean;
+  /** Pre-computed community data. If omitted, computed internally. */
+  communityData?: CommunityData;
   /** Called when a node is clicked. */
   onNodeClick?: (node: GraphNode) => void;
   /** Called when an edge is clicked. */
@@ -104,6 +121,12 @@ export interface GraphCanvasHandle {
   zoomToNodes: (nodeIds: Iterable<string>, duration?: number) => void;
   /** Trigger a layout re-optimization. */
   optimize: () => void;
+  /** Zoom in (reduce camera ratio). */
+  zoomIn: (duration?: number) => void;
+  /** Zoom out (increase camera ratio). */
+  zoomOut: (duration?: number) => void;
+  /** Reset camera to default position. */
+  resetCamera: (duration?: number) => void;
 }
 
 // ─── Internal components ────────────────────────────────────────────────
@@ -143,18 +166,39 @@ function GraphEventHandler({
     const container = sigma.getContainer();
     const graph = sigma.getGraph();
 
+    // The sigma-mouse canvas sits on top and captures all pointer events.
+    // Set cursor on both the container and the mouse canvas to ensure
+    // the pointer is visible regardless of stacking context.
+    const mouseCanvas = container.querySelector(
+      '.sigma-mouse',
+    ) as HTMLElement | null;
+    let overNode = false;
+    let overEdge = false;
+    function updateCursor() {
+      const value = overNode || overEdge ? 'pointer' : 'grab';
+      container.style.cursor = value;
+      if (mouseCanvas) mouseCanvas.style.cursor = value;
+    }
+    updateCursor();
+
     const handlers = {
-      enterNode: () => {
-        container.style.cursor = 'pointer';
+      enterNode: ({ node }: { node: string }) => {
+        setHoveredNodeKey(node);
+        overNode = true;
+        updateCursor();
       },
       leaveNode: () => {
-        container.style.cursor = 'default';
+        setHoveredNodeKey(null);
+        overNode = false;
+        updateCursor();
       },
       enterEdge: () => {
-        container.style.cursor = 'pointer';
+        overEdge = true;
+        updateCursor();
       },
       leaveEdge: () => {
-        container.style.cursor = 'default';
+        overEdge = false;
+        updateCursor();
       },
       clickNode: ({ node }: { node: string }) => {
         if (!onNodeClick) return;
@@ -236,6 +280,12 @@ const GraphCanvas = memo(
         selectedNodeId = null,
         hops = 2,
         getSubType = defaultGetSubType,
+        highlightNodes: highlightNodesProp,
+        highlightLinks: highlightLinksProp,
+        labelNodes: labelNodesProp,
+        availableSubTypes = EMPTY_SUB_TYPES,
+        zIndex: zIndexEnabled = false,
+        communityData: communityDataProp,
         onNodeClick,
         onEdgeClick,
         onStageClick,
@@ -247,8 +297,9 @@ const GraphCanvas = memo(
       const sigmaRef = useRef<ReturnType<typeof useSigma> | null>(null);
       const [optimizeTick, setOptimizeTick] = useState(0);
 
-      // Community detection
-      const communityData = useCommunities(nodes, links, layoutConfig);
+      // Community detection — use external data if provided, otherwise compute
+      const internalCommunityData = useCommunities(nodes, links, layoutConfig);
+      const communityData = communityDataProp ?? internalCommunityData;
 
       // Build filter state
       const filterState: FilterState = useMemo(
@@ -275,12 +326,12 @@ const GraphCanvas = memo(
         layoutReady,
         filterState,
         communityData.assignments,
-        EMPTY_SUB_TYPES,
+        availableSubTypes,
         getSubType,
       );
 
-      // Compute highlights
-      const highlights = useHighlights(
+      // Compute highlights internally
+      const internalHighlights = useHighlights(
         graph,
         layoutReady,
         nodes,
@@ -290,6 +341,14 @@ const GraphCanvas = memo(
         hops,
         filterState,
       );
+
+      // Use external overrides if provided, otherwise use internal highlights
+      const effectiveHighlightNodes =
+        highlightNodesProp ?? internalHighlights.highlightNodes;
+      const effectiveHighlightLinks =
+        highlightLinksProp ?? internalHighlights.highlightLinks;
+      const effectiveLabelNodes =
+        labelNodesProp ?? internalHighlights.labelNodes;
 
       // Compute degree map for visual sizing
       const degreeMap = useMemo(() => {
@@ -315,12 +374,18 @@ const GraphCanvas = memo(
       const visualState: VisualState = useMemo(
         () => ({
           colorMode,
-          highlightNodes: highlights.highlightNodes,
-          highlightLinks: highlights.highlightLinks,
-          labelNodes: highlights.labelNodes,
+          highlightNodes: effectiveHighlightNodes,
+          highlightLinks: effectiveHighlightLinks,
+          labelNodes: effectiveLabelNodes,
           selectedNodeId: selectedNodeId ?? null,
         }),
-        [colorMode, highlights, selectedNodeId],
+        [
+          colorMode,
+          effectiveHighlightNodes,
+          effectiveHighlightLinks,
+          effectiveLabelNodes,
+          selectedNodeId,
+        ],
       );
 
       useGraphVisuals(
@@ -331,6 +396,45 @@ const GraphCanvas = memo(
         degreeMap,
         isLargeGraph,
       );
+
+      // When zIndex is enabled and a selection is active, raise the edges
+      // canvas above the nodes canvas so dimmed nodes render behind edges.
+      // Highlighted nodes use sigma's hoverNodes layer (already above edges)
+      // via the `highlighted` attribute.
+      useEffect(() => {
+        if (!zIndexEnabled) return;
+        const container = sigmaRef.current?.getContainer?.();
+        if (!container) return;
+
+        const layers = [
+          'sigma-edges',
+          'sigma-edgeLabels',
+          'sigma-nodes',
+          'sigma-labels',
+          'sigma-hovers',
+          'sigma-hoverNodes',
+          'sigma-mouse',
+        ];
+        const els = layers.map(
+          (cls) => container.querySelector(`.${cls}`) as HTMLElement | null,
+        );
+
+        const hasSelection = effectiveHighlightNodes.size > 0;
+        if (hasSelection) {
+          // Reorder: nodes(1) < edges(2) < edgeLabels(3) < labels(4) <
+          //          hoverNodes(5) < hovers(6) < mouse(7)
+          // hovers (tooltips) must be ABOVE hoverNodes (highlighted nodes)
+          // so tooltips aren't occluded by the highlighted node circles.
+          const zMap = [2, 3, 1, 4, 6, 5, 7];
+          els.forEach((el, i) => {
+            if (el) el.style.zIndex = String(zMap[i]);
+          });
+        } else {
+          els.forEach((el) => {
+            if (el) el.style.zIndex = '';
+          });
+        }
+      }, [zIndexEnabled, effectiveHighlightNodes]);
 
       // Sigma settings
       const sigmaSettings = useMemo(
@@ -352,10 +456,11 @@ const GraphCanvas = memo(
           labelSize: LABEL_SIZE,
           defaultDrawNodeHover: drawNodeHover,
           allowInvalidContainer: true,
+          zIndex: zIndexEnabled,
           zoomToSizeRatioFunction: (ratio: number) =>
             Math.pow(ratio, ZOOM_SIZE_EXPONENT),
         }),
-        [isLargeGraph],
+        [isLargeGraph, zIndexEnabled],
       );
 
       const handleSigmaReady = useCallback(
@@ -432,6 +537,30 @@ const GraphCanvas = memo(
           },
           optimize: () => {
             setOptimizeTick((t) => t + 1);
+          },
+          zoomIn: (duration = 300) => {
+            if (sigmaRef.current) {
+              const camera = (
+                sigmaRef.current as unknown as import('sigma').Sigma
+              ).getCamera();
+              camera.animatedZoom({ duration });
+            }
+          },
+          zoomOut: (duration = 300) => {
+            if (sigmaRef.current) {
+              const camera = (
+                sigmaRef.current as unknown as import('sigma').Sigma
+              ).getCamera();
+              camera.animatedUnzoom({ duration });
+            }
+          },
+          resetCamera: (duration = 400) => {
+            if (sigmaRef.current) {
+              const camera = (
+                sigmaRef.current as unknown as import('sigma').Sigma
+              ).getCamera();
+              camera.animatedReset({ duration });
+            }
           },
         }),
         [nodes, links, hops, onNodeClick],

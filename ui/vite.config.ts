@@ -146,6 +146,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port,
       strictPort: true,
+      fs: {
+        allow: [resolve(__dirname), resolve(__dirname, '../components')],
+      },
       proxy: {
         '/api': {
           target: 'http://localhost:8080',

@@ -111,6 +111,15 @@ export function useGraphInstance({
     const { assignments, colorMap, names } = communityData;
     const { getNodeColor, getLinkColor, getCommunityColor } = layoutConfig;
 
+    // ── Pre-compute degree (connection count) per node ─────────────────
+    const degreeMap = new Map<string, number>();
+    for (const link of allLinks) {
+      const s = endpointId(link.source);
+      const t = endpointId(link.target);
+      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
+      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
+    }
+
     // ── Build ALL nodes with initial x:0, y:0 ──────────────────────────
     const nodeIdSet = new Set<string>();
     const serializedNodes = allNodes.map((node) => {
@@ -119,13 +128,17 @@ export function useGraphInstance({
       const commColor = getCommunityColor(assignments, colorMap, node.id);
       const cid = assignments[node.id];
       const commName = cid !== undefined ? names.get(cid) : undefined;
+      const degree = degreeMap.get(node.id) || 0;
+      const size = nodeSize(degree, node.type, structuralTypes);
       return {
         key: node.id,
         attributes: {
           label: node.name || node.id,
+          _originalLabel: node.name || node.id,
           x: 0,
           y: 0,
-          size: nodeSize(0, node.type, structuralTypes),
+          size,
+          _baseSize: size,
           nodeType: node.type,
           _graphNode: node,
           _typeColor: typeColor,
