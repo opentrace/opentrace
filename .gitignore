@@ -23,6 +23,7 @@ functions/lib/
 
 # OS
 .DS_Store
+.entire/
 
 # Firebase
 .firebase/
