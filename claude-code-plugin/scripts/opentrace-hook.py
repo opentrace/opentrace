@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenTrace hook for Claude Code PreToolUse / PostToolUse events.
+"""OpenTrace hook for Claude Code PreToolUse events.
 
-Reads a JSON payload from stdin, dispatches on ``hook_event_name``, and
-writes a JSON response to stdout when graph-enriched context is available.
+Reads a JSON payload from stdin, queries the graph for context about the
+search target, and writes a JSON response to stdout when available.
 """
 
 from __future__ import annotations
@@ -168,15 +168,6 @@ def send_hook_response(event: str, context: str) -> None:
 
 _AUGMENT_TOOLS = frozenset({"Grep", "Glob", "Bash"})
 
-_GIT_MUTATION_COMMANDS = (
-    "git commit",
-    "git merge",
-    "git rebase",
-    "git checkout",
-    "git switch",
-)
-
-
 def handle_pre_tool_use(payload: dict) -> None:
     """Augment search tool calls with graph context."""
     try:
@@ -208,36 +199,6 @@ def handle_pre_tool_use(payload: dict) -> None:
         _debug(f"handle_pre_tool_use error: {exc}")
 
 
-def handle_post_tool_use(payload: dict) -> None:
-    """Warn about potential index staleness after git mutations."""
-    try:
-        tool_name = payload.get("tool_name", "")
-        if tool_name != "Bash":
-            return
-
-        tool_input = payload.get("tool_input", {})
-        cmd = tool_input.get("command", "")
-        if not any(mutation in cmd for mutation in _GIT_MUTATION_COMMANDS):
-            return
-
-        cwd = payload.get("cwd", "")
-        if not cwd or not os.path.isabs(cwd):
-            return
-
-        if not _has_index(cwd):
-            return
-
-        _debug("git mutation detected, emitting staleness warning")
-        send_hook_response(
-            "PostToolUse",
-            "The OpenTrace graph index (.opentrace/index.db) may now be stale "
-            "after this git operation. If code structure has changed, suggest "
-            "re-indexing with: opentraceai index",
-        )
-    except Exception as exc:
-        _debug(f"handle_post_tool_use error: {exc}")
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -259,8 +220,6 @@ def main() -> None:
     try:
         if event == "PreToolUse":
             handle_pre_tool_use(payload)
-        elif event == "PostToolUse":
-            handle_post_tool_use(payload)
     except Exception as exc:
         _debug(f"unhandled error: {exc}")
 
