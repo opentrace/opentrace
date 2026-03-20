@@ -22,6 +22,61 @@
   padding: 0;
 }
 
+.pr-lookup-bar {
+  display: flex;
+  gap: 6px;
+  padding: 12px 20px 0;
+}
+
+.pr-lookup-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.pr-lookup-input:focus {
+  border-color: var(--primary);
+}
+
+.pr-lookup-input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.pr-lookup-btn {
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.pr-lookup-btn:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 20%, transparent);
+}
+
+.pr-lookup-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pr-lookup-error {
+  padding: 4px 20px;
+  font-size: 0.72rem;
+  color: var(--destructive);
+}
+
 .pr-list-header {
   display: flex;
   align-items: center;

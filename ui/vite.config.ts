@@ -185,6 +185,9 @@ export default defineConfig(({ mode }) => {
       dedupe: ['react', 'react-dom'],
     },
     plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
+    build: {
+      sourcemap: true,
+    },
     server: {
       port,
       strictPort: true,
