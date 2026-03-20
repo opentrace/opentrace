@@ -61,7 +61,6 @@ import {
   detectProvider,
   normalizeRepoUrl,
   type IndexingState,
-  type RepoValidation,
 } from '@opentrace/components';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
@@ -238,16 +237,13 @@ const GraphViewer = memo(
       }, [showAddRepo, store]);
 
       const validateRepo = useCallback(
-        (url: string): RepoValidation | null => {
+        (url: string): string | null => {
           if (indexedRepos.length === 0) return null;
           const normalized = normalizeRepoUrl(url).toLowerCase();
           const match = indexedRepos.find(
             (r) => normalizeRepoUrl(r.url).toLowerCase() === normalized,
           );
-          if (match) {
-            return { ok: false, message: `${match.name} is already indexed` };
-          }
-          return null;
+          return match ? `${match.name} is already indexed` : null;
         },
         [indexedRepos],
       );

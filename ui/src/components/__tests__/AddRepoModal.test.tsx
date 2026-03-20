@@ -184,11 +184,8 @@ describe('AddRepoModal', () => {
 
     it('shows validation notice and disables submit when onValidate blocks', () => {
       const onSubmit = vi.fn();
-      const onValidate = (url: string) => {
-        if (url.includes('owner/repo'))
-          return { ok: false, message: 'my-repo is already indexed' };
-        return null;
-      };
+      const onValidate = (url: string) =>
+        url.includes('owner/repo') ? 'my-repo is already indexed' : null;
       const { getByTestId, getByText } = render(
         React.createElement(AddRepoModal, {
           ...defaultProps,

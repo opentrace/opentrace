@@ -110,7 +110,6 @@ export type {
   StageStatus as IndexStageStatus,
   StageConfig,
   Provider,
-  RepoValidation,
   JobMessage,
   IndexRepoMessage,
   IndexDirectoryMessage,

@@ -59,21 +59,13 @@ export interface IndexDirectoryMessage {
 
 export type JobMessage = IndexRepoMessage | IndexDirectoryMessage;
 
-// Validation result returned by onValidate
-export interface RepoValidation {
-  /** Whether the URL is allowed (false blocks submit). */
-  ok: boolean;
-  /** Message shown to the user (e.g. "my-repo is already indexed"). */
-  message?: string;
-}
-
 // Component props
 export interface AddRepoModalProps {
   onClose: () => void;
   onSubmit: (message: JobMessage) => void;
   dismissable?: boolean;
-  /** Called as the user types/selects a URL. Return null to skip validation. */
-  onValidate?: (url: string) => RepoValidation | null;
+  /** Called as the user types a URL. Return a string to block submit (shown as notice), or null to allow. */
+  onValidate?: (url: string) => string | null;
 }
 
 export interface IndexingProgressProps {

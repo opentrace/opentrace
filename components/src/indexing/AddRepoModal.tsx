@@ -328,12 +328,10 @@ export default function AddRepoModal({
   const patStorageKey = provider ? `ot_${provider}_pat` : null;
 
   // Let the consumer validate the URL (e.g. duplicate detection)
-  const validation = useMemo(() => {
+  const validationMessage = useMemo(() => {
     if (source !== 'url' || !repoUrl.trim() || !onValidate) return null;
     return onValidate(repoUrl);
   }, [source, repoUrl, onValidate]);
-
-  const blocked = validation != null && !validation.ok;
 
   // Derive directory name from FileList
   const directoryName =
@@ -379,7 +377,7 @@ export default function AddRepoModal({
       );
       return;
     }
-    if (blocked) {
+    if (validationMessage) {
       return;
     }
     setError(null);
@@ -718,7 +716,7 @@ export default function AddRepoModal({
             </div>
           )}
 
-          {blocked && validation.message && (
+          {validationMessage && (
             <div className="form-indexed">
               <svg
                 width="14"
@@ -733,14 +731,14 @@ export default function AddRepoModal({
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <span>{validation.message}</span>
+              <span>{validationMessage}</span>
             </div>
           )}
 
           <button
             type="submit"
             className="btn-cta"
-            disabled={loading || blocked}
+            disabled={loading || !!validationMessage}
           >
             {loading ? (
               <>
