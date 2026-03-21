@@ -112,6 +112,13 @@ def accuracy(
     )
     from opentrace_agent.store import GraphStore
 
+    if codebase and not tasks_path:
+        click.echo(
+            "--codebase requires TASKS_PATH. Usage: opentraceai-bench accuracy --codebase PATH tasks.json",
+            err=True,
+        )
+        raise SystemExit(1)
+
     if codebase and tasks_path:
         report, idx_stats = index_and_benchmark(codebase, tasks_path, repo_id=repo_id, db_path=db_path)
         if verbose:

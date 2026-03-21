@@ -155,6 +155,8 @@ class GraphAccuracyBenchmark:
 
         self._store = store
         self._server = create_mcp_server(store)
+        # Access internal tool registry — no public API exists for calling
+        # tools directly outside the MCP protocol. Pinned to fastmcp internals.
         self._tools = self._server._tool_manager._tools
 
     def _call_tool(self, tool_name: str, **kwargs: Any) -> Any:
@@ -210,14 +212,16 @@ class GraphAccuracyBenchmark:
 
         passed = sum(1 for r in results if r.passed)
         errors = sum(1 for r in results if r.error)
-        failed = len(results) - passed
+        failed = len(results) - passed - errors
 
         by_category: dict[str, dict[str, int]] = {}
         for r in results:
-            cat = by_category.setdefault(r.category, {"total": 0, "passed": 0, "failed": 0})
+            cat = by_category.setdefault(r.category, {"total": 0, "passed": 0, "failed": 0, "errors": 0})
             cat["total"] += 1
             if r.passed:
                 cat["passed"] += 1
+            elif r.error:
+                cat["errors"] += 1
             else:
                 cat["failed"] += 1
 
@@ -269,7 +273,7 @@ class GraphAccuracyBenchmark:
             if isinstance(result, list):
                 names = {r.get("name") for r in result if isinstance(r, dict)}
                 if value not in names:
-                    return f"result_contains_name: '{value}' not in {sorted(names)}"
+                    return f"result_contains_name: '{value}' not in {sorted(n for n in names if n is not None)}"
             elif isinstance(result, dict) and "node" in result:
                 if result["node"].get("name") != value:
                     return f"result_contains_name: node name is '{result['node'].get('name')}', expected '{value}'"
@@ -281,7 +285,7 @@ class GraphAccuracyBenchmark:
                 return f"result_contains_type: expected list, got {type(result).__name__}"
             types = {r.get("type") for r in result if isinstance(r, dict)}
             if value not in types:
-                return f"result_contains_type: '{value}' not in {sorted(types)}"
+                return f"result_contains_type: '{value}' not in {sorted(t for t in types if t is not None)}"
 
         elif atype == "all_have_type":
             if not isinstance(result, list):
@@ -307,7 +311,8 @@ class GraphAccuracyBenchmark:
                 return "neighbor_has_name: expected dict with 'neighbors'"
             neighbor_names = {n.get("node", {}).get("name") for n in result.get("neighbors", []) if isinstance(n, dict)}
             if value not in neighbor_names:
-                return f"neighbor_has_name: '{value}' not in neighbor names {sorted(neighbor_names)}"
+                clean = sorted(n for n in neighbor_names if n is not None)
+                return f"neighbor_has_name: '{value}' not in neighbor names {clean}"
 
         elif atype == "traversal_reaches":
             if not isinstance(result, list):
@@ -319,7 +324,8 @@ class GraphAccuracyBenchmark:
                     if isinstance(node, dict):
                         reached_names.add(node.get("name"))
             if value not in reached_names:
-                return f"traversal_reaches: '{value}' not reachable, found {sorted(reached_names)}"
+                clean = sorted(n for n in reached_names if n is not None)
+                return f"traversal_reaches: '{value}' not reachable, found {clean}"
 
         else:
             return f"Unknown assertion type: {atype}"
@@ -396,8 +402,9 @@ def index_and_benchmark(
             idx_stats.classes_extracted = getattr(result, "classes_extracted", 0)
             idx_stats.functions_extracted = getattr(result, "functions_extracted", 0)
 
-    bench = GraphAccuracyBenchmark(store)
-    report = bench.run_suite(tasks_path)
-
-    store.close()
+    try:
+        bench = GraphAccuracyBenchmark(store)
+        report = bench.run_suite(tasks_path)
+    finally:
+        store.close()
     return report, idx_stats

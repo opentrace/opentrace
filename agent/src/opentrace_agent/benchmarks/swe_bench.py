@@ -493,7 +493,7 @@ def compare_reports(with_ot: SWEBenchReport, without_ot: SWEBenchReport) -> str:
         f"{'Errors':<25} {with_ot.errors:>10} {without_ot.errors:>12}",
         f"{'Total duration (s)':<25} {with_ot.duration_s:>10.1f} {without_ot.duration_s:>12.1f}",
     ]
-    if with_ot.results:
+    if with_ot.results and without_ot.results:
         avg_dur_with = sum(r.duration_s for r in with_ot.results) / len(with_ot.results)
         avg_dur_without = sum(r.duration_s for r in without_ot.results) / len(without_ot.results)
         lines.append(f"{'Avg duration (s)':<25} {avg_dur_with:>10.1f} {avg_dur_without:>12.1f}")
