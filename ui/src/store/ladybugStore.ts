@@ -121,54 +121,6 @@ function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-// ---- LadybugDB MAP literal parser ----
-
-/** Split on commas not inside braces/brackets. */
-function splitTopLevel(s: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (ch === '{' || ch === '[' || ch === '(') depth++;
-    else if (ch === '}' || ch === ']' || ch === ')') depth--;
-    else if (ch === ',' && depth === 0) {
-      parts.push(s.substring(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(s.substring(start));
-  return parts;
-}
-
-/** Coerce a MAP literal value string to a JS value. */
-function coerceValue(v: string): unknown {
-  if (v === 'True' || v === 'true') return true;
-  if (v === 'False' || v === 'false') return false;
-  if (v === 'None' || v === 'null') return null;
-  const n = Number(v);
-  if (!Number.isNaN(n) && v !== '') return n;
-  return v;
-}
-
-/** Parse LadybugDB's `{key: value, key2: value2}` MAP literal format. */
-function parseLadybugMap(s: string): Record<string, unknown> | undefined {
-  s = s.trim();
-  if (!s.startsWith('{') || !s.endsWith('}')) return undefined;
-  const inner = s.slice(1, -1).trim();
-  if (!inner) return undefined;
-  const result: Record<string, unknown> = {};
-  for (const pair of splitTopLevel(inner)) {
-    const trimmed = pair.trim();
-    const sep = trimmed.indexOf(': ');
-    if (sep === -1) continue;
-    result[trimmed.substring(0, sep).trim()] = coerceValue(
-      trimmed.substring(sep + 2).trim(),
-    );
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
 function parseProps(raw: unknown): Record<string, unknown> | undefined {
   if (raw == null) return undefined;
   // If getAllObjects() already returned a parsed object, use it directly
@@ -184,8 +136,7 @@ function parseProps(raw: unknown): Record<string, unknown> | undefined {
     const parsed = JSON.parse(json) as Record<string, unknown>;
     return Object.keys(parsed).length > 0 ? parsed : undefined;
   } catch {
-    // Fall back to LadybugDB MAP literal format: {key: value, key2: value2}
-    return parseLadybugMap(raw);
+    return undefined;
   }
 }
 
