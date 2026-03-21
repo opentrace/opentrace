@@ -288,8 +288,9 @@ function GraphEventHandler({
 
     function onMouseUp() {
       if (draggedNode) {
-        // Unfix node so FA2 can move it again
-        graph.setNodeAttribute(draggedNode, 'fixed', false);
+        // Keep node fixed so FA2's worker doesn't snap it back to
+        // its stale position. The node stays where it was dropped
+        // and acts as an anchor for its neighbors.
         draggedNode = null;
         s.getCamera().enable();
         updateCursor();
