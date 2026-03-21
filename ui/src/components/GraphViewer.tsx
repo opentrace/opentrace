@@ -1358,7 +1358,11 @@ const GraphViewer = memo(
             <button
               className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
               onClick={() => setZoomOnSelect((z) => !z)}
-              title={zoomOnSelect ? 'Zoom to node on click (on)' : 'Zoom to node on click (off)'}
+              title={
+                zoomOnSelect
+                  ? 'Zoom to node on click (on)'
+                  : 'Zoom to node on click (off)'
+              }
             >
               <svg
                 width="16"
