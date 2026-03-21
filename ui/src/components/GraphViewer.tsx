@@ -1370,8 +1370,8 @@ const GraphViewer = memo(
               onClick={() => setFlatMode((f) => !f)}
               title={
                 flatMode
-                  ? 'Flat layout (all edges, no hierarchy)'
-                  : 'Structured layout (DEFINED_IN edges, community spacing)'
+                  ? 'Switch to structured layout'
+                  : 'Switch to flat layout'
               }
             >
               <svg
