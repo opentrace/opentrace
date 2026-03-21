@@ -299,6 +299,7 @@ const GraphViewer = memo(
         null,
       );
       const [hops, setHops] = useState(2);
+      const [zoomOnSelect, setZoomOnSelect] = useState(true);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
@@ -529,9 +530,11 @@ const GraphViewer = memo(
             });
             frontier = next;
           }
-          canvasRef.current?.zoomToNodes(neighborhood, 600);
+          if (zoomOnSelect) {
+            canvasRef.current?.zoomToNodes(neighborhood, 600);
+          }
         },
-        [hops, adjacency],
+        [hops, adjacency, zoomOnSelect],
       );
 
       // Expose imperative handle for parent/sibling access
@@ -1350,6 +1353,31 @@ const GraphViewer = memo(
                 <circle cx="17" cy="7" r="3" />
                 <circle cx="7" cy="17" r="3" />
                 <circle cx="17" cy="17" r="3" />
+              </svg>
+            </button>
+            <button
+              className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
+              onClick={() => setZoomOnSelect((z) => !z)}
+              title={zoomOnSelect ? 'Zoom to node on click (on)' : 'Zoom to node on click (off)'}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                {zoomOnSelect && (
+                  <>
+                    <line x1="11" y1="8" x2="11" y2="14" />
+                    <line x1="8" y1="11" x2="14" y2="11" />
+                  </>
+                )}
               </svg>
             </button>
             <button
