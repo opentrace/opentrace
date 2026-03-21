@@ -51,6 +51,10 @@ export default function LayoutPipeline({
   const sigma = useSigma();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // outputReducer is an identity function that causes FA2 to read
+  // positions back from the graph after each iteration. This is needed
+  // so that dragged node positions are synced to the worker's matrix —
+  // without it, the worker would overwrite drag positions with stale data.
   const { start, stop } = useWorkerLayoutForceAtlas2({
     settings: {
       gravity: layoutConfig.fa2Gravity,
@@ -64,6 +68,7 @@ export default function LayoutPipeline({
       outboundAttractionDistribution: layoutConfig.fa2OutboundAttraction,
       adjustSizes: layoutConfig.fa2AdjustSizes,
     },
+    outputReducer: (_key: string, attrs: Record<string, unknown>) => attrs,
   });
 
   // ─── Cleanup helpers ─────────────────────────────────────────────
