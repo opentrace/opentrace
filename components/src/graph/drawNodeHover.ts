@@ -15,22 +15,22 @@
  */
 
 /**
- * Custom node hover renderer for Sigma.
+ * Custom node hover/tooltip renderer for Sigma.
  *
- * Theme-aware: reads --popover / --popover-foreground CSS variables.
- * Shows the node label + community name in the tooltip.
+ * Two-pass rendering to prevent node circles from overlapping tooltips:
+ * Pass 1 (drawNodeHover): Draw node circles + buffer tooltip commands
+ * Pass 2 (flushTooltips): Draw all buffered tooltips on top
+ *
+ * flushTooltips is called via sigma's afterRender event.
  */
 import type { Attributes } from 'graphology-types';
 import type { NodeDisplayData } from 'sigma/types';
 import type { Settings } from 'sigma/settings';
+import { overlapsExistingHover, pushHoverBox, resetHoverGrid } from './drawNodeLabel';
 
 type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 
 // ─── Hovered-node gate ──────────────────────────────────────────────
-// When nodes are `highlighted: true` (for z-ordering), sigma calls
-// drawHover for ALL of them. We only want the tooltip for the one
-// actually being hovered, so GraphEvents updates this key on
-// enterNode / leaveNode.
 
 export let _hoveredNodeKey: string | null = null;
 export function setHoveredNodeKey(key: string | null): void {
@@ -63,7 +63,94 @@ function resolveThemeColors(): ThemeColors {
   return cached;
 }
 
-// ─── Hover renderer ─────────────────────────────────────────────────
+// ─── Buffered tooltip commands ──────────────────────────────────────
+
+interface TooltipCommand {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label: string;
+  subtitle: string;
+  labelSize: number;
+  smallSize: number;
+  font: string;
+  weight: string;
+  lineHeight: number;
+  color: string;
+  isHovered: boolean;
+}
+
+let tooltipBuffer: TooltipCommand[] = [];
+let tooltipContext: CanvasRenderingContext2D | null = null;
+let flushScheduled = false;
+
+/** Draw all buffered tooltips on top of node circles. */
+export function flushTooltips(): void {
+  const ctx = tooltipContext;
+  if (!ctx || tooltipBuffer.length === 0) return;
+
+  const colors = resolveThemeColors();
+
+  for (const cmd of tooltipBuffer) {
+    const radius = 4;
+
+    // Tooltip background
+    ctx.fillStyle = colors.bg;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+
+    ctx.beginPath();
+    ctx.roundRect(cmd.x, cmd.y, cmd.w, cmd.h, radius);
+    ctx.fill();
+
+    // Hovered node: colored border
+    if (cmd.isHovered) {
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = cmd.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = 0;
+
+    // Label text
+    const textX = cmd.x + 4;
+    const centerY = cmd.y + cmd.h / 2;
+    if (cmd.label) {
+      ctx.fillStyle = colors.fg;
+      ctx.font = `${cmd.weight} ${cmd.labelSize}px ${cmd.font}`;
+      ctx.fillText(
+        cmd.label,
+        textX,
+        centerY + (cmd.subtitle ? -cmd.lineHeight / 2 + cmd.labelSize * 0.35 : cmd.labelSize / 3),
+      );
+    }
+
+    // Subtitle
+    if (cmd.subtitle) {
+      ctx.fillStyle = colors.muted;
+      ctx.font = `${cmd.smallSize}px ${cmd.font}`;
+      ctx.fillText(
+        cmd.subtitle,
+        textX,
+        centerY + cmd.lineHeight / 2,
+      );
+    }
+  }
+
+  tooltipBuffer = [];
+  tooltipContext = null;
+}
+
+// ─── Per-frame reset ────────────────────────────────────────────────
+let lastHoverFrameTime = 0;
+
+// ─── Tooltip renderer ───────────────────────────────────────────────
 
 export function drawNodeHover<
   N extends Attributes = Attributes,
@@ -71,45 +158,44 @@ export function drawNodeHover<
   G extends Attributes = Attributes,
 >(
   context: CanvasRenderingContext2D,
-  data: PartialButFor<NodeDisplayData, 'x' | 'y' | 'size' | 'label' | 'color'>,
+  data: PartialButFor<
+    NodeDisplayData,
+    'x' | 'y' | 'size' | 'label' | 'color'
+  >,
   settings: Settings<N, E, G>,
 ): void {
-  // Only draw hover tooltip for the actually hovered node, not all highlighted nodes.
-  // For non-hovered highlighted nodes, still draw the node circle (sigma moved them
-  // to the hoverNodes layer, so we must draw them or they disappear).
-  const key = (data as Record<string, unknown>).key as string | undefined;
-  const isHoveredNode = !key || _hoveredNodeKey === null || key === _hoveredNodeKey;
-  if (!isHoveredNode) {
-    // Just draw the node circle — no tooltip
-    context.beginPath();
-    context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
-    context.closePath();
-    context.fillStyle = data.color;
-    context.fill();
-    return;
+  // Reset on first call each frame
+  const now = performance.now();
+  if (now - lastHoverFrameTime > 8) {
+    resetHoverGrid();
+    tooltipBuffer = [];
+    lastHoverFrameTime = now;
   }
+  tooltipContext = context;
+
+  const extras = data as Record<string, unknown>;
+  const key = extras.key as string | undefined;
+  const isActuallyHovered =
+    key != null && _hoveredNodeKey != null && key === _hoveredNodeKey;
+  const isSelected =
+    extras.borderSize != null && (extras.borderSize as number) > 0;
 
   const size = settings.labelSize;
   const font = settings.labelFont;
   const weight = settings.labelWeight;
-  const colors = resolveThemeColors();
   const PADDING = 4;
 
-  const extras = data as Record<string, unknown>;
-  // label may be null on dimmed nodes — fall back to the preserved original
   const label =
     typeof data.label === 'string'
       ? data.label
       : typeof extras._originalLabel === 'string'
-        ? extras._originalLabel
+        ? (extras._originalLabel as string)
         : '';
   const nodeType = extras.nodeType as string | undefined;
   const communityName = extras._communityName as string | undefined;
   const subtitle = [nodeType, communityName].filter(Boolean).join(' · ');
 
   context.font = `${weight} ${size}px ${font}`;
-
-  // Measure text
   const labelWidth = label ? context.measureText(label).width : 0;
 
   let subtitleWidth = 0;
@@ -120,79 +206,69 @@ export function drawNodeHover<
   }
 
   const textWidth = Math.max(labelWidth, subtitleWidth);
-
-  if (textWidth === 0 && !subtitle) {
-    // No label — just draw the node circle highlight
-    context.beginPath();
-    context.arc(data.x, data.y, data.size + PADDING, 0, Math.PI * 2);
-    context.closePath();
-    context.fillStyle = colors.bg;
-    context.shadowBlur = 10;
-    context.shadowColor = 'rgba(0,0,0,0.5)';
-    context.fill();
-    context.shadowBlur = 0;
-
-    // Node circle
-    context.beginPath();
-    context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
-    context.closePath();
-    context.fillStyle = data.color;
-    context.fill();
-    return;
-  }
-
-  // Box dimensions
   const boxWidth = Math.round(textWidth + 8);
   const lineHeight = size + 2;
   const lines = subtitle ? 2 : 1;
   const boxHeight = Math.round(lineHeight * lines + PADDING * 2);
-  const nodeRadius = Math.max(data.size, size / 2) + PADDING;
 
-  // Draw background box (capsule shape attached to node circle)
-  const angleRadian = Math.asin(Math.min(1, boxHeight / 2 / nodeRadius));
-  const xDelta = Math.sqrt(
-    Math.abs(Math.pow(nodeRadius, 2) - Math.pow(boxHeight / 2, 2)),
-  );
+  // Tooltip position: to the right of the node
+  const tooltipGap = 4;
+  const tx = data.x + data.size + tooltipGap;
+  const ty = data.y - boxHeight / 2;
 
-  context.fillStyle = colors.bg;
-  context.shadowOffsetX = 0;
-  context.shadowOffsetY = 2;
-  context.shadowBlur = 10;
-  context.shadowColor = 'rgba(0,0,0,0.5)';
+  // Density culling
+  const hasTooltip = textWidth > 0 || subtitle;
+  let drawTooltip: boolean = hasTooltip as boolean;
 
-  context.beginPath();
-  context.moveTo(data.x + xDelta, data.y + boxHeight / 2);
-  context.lineTo(data.x + nodeRadius + boxWidth, data.y + boxHeight / 2);
-  context.lineTo(data.x + nodeRadius + boxWidth, data.y - boxHeight / 2);
-  context.lineTo(data.x + xDelta, data.y - boxHeight / 2);
-  context.arc(data.x, data.y, nodeRadius, angleRadian, -angleRadian);
-  context.closePath();
-  context.fill();
+  const pad = 8;
+  const cullX = data.x - data.size - pad;
+  const cullY = data.y - Math.max(boxHeight / 2, data.size) - pad;
+  const cullW = data.size * 2 + boxWidth + tooltipGap + pad * 2;
+  const cullH = Math.max(boxHeight, data.size * 2) + pad * 2;
 
-  // Reset shadow
-  context.shadowOffsetX = 0;
-  context.shadowOffsetY = 0;
-  context.shadowBlur = 0;
-
-  // Draw label text
-  const textX = data.x + nodeRadius + 4;
-  if (label) {
-    context.fillStyle = colors.fg;
-    context.font = `${weight} ${size}px ${font}`;
-    context.fillText(label, textX, data.y + (subtitle ? -1 : size / 3));
+  if (hasTooltip && !isActuallyHovered && !isSelected) {
+    if (overlapsExistingHover(cullX, cullY, cullW, cullH)) {
+      drawTooltip = false;
+    } else {
+      pushHoverBox(cullX, cullY, cullW, cullH);
+    }
+  } else if (hasTooltip) {
+    pushHoverBox(cullX, cullY, cullW, cullH);
   }
 
-  // Draw subtitle (type · community, smaller, muted)
-  if (subtitle) {
-    context.fillStyle = colors.muted;
-    context.font = `${smallSize}px ${font}`;
-    context.fillText(subtitle, textX, data.y + lineHeight - 2);
-  }
-
-  // Draw node circle on top
+  // Pass 1: Draw node circle immediately
   context.beginPath();
   context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
   context.closePath();
   context.fillStyle = data.color;
   context.fill();
+
+  // Pass 2: Buffer tooltip for deferred drawing (after all circles)
+  if (drawTooltip) {
+    tooltipBuffer.push({
+      x: tx,
+      y: ty,
+      w: boxWidth,
+      h: boxHeight,
+      label,
+      subtitle,
+      labelSize: size,
+      smallSize,
+      font,
+      weight,
+      lineHeight,
+      color: data.color,
+      isHovered: isActuallyHovered,
+    });
+  }
+
+  // Schedule a microtask to flush tooltips after sigma finishes
+  // calling drawNodeHover for all highlighted nodes in this frame.
+  if (!flushScheduled) {
+    flushScheduled = true;
+    queueMicrotask(() => {
+      flushScheduled = false;
+      flushTooltips();
+    });
+  }
 }

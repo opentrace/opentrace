@@ -17,16 +17,17 @@
 /**
  * Custom node label renderer for Sigma.
  *
- * Improvements over sigma's default:
- * 1. Theme-aware: reads --foreground CSS variable for label color
- * 2. Hovered labels get a glow backdrop so they stand out from neighbors
- * 3. Density-aware: limits labels rendered in dense regions to avoid overlap
+ * Labels = simple node name text, shown when no selection is active.
+ * Rendered based on zoom level / node size threshold (sigma default behavior).
+ * Theme-aware color, dark text stroke for readability, overlap culling.
+ *
+ * When a node is selected, labels are hidden — tooltips (drawNodeHover)
+ * take over for highlighted nodes.
  */
 
 import type { Attributes } from 'graphology-types';
 import type { NodeDisplayData } from 'sigma/types';
 import type { Settings } from 'sigma/settings';
-import { _hoveredNodeKey } from './drawNodeHover';
 
 type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 
@@ -45,15 +46,12 @@ function resolveLabelColor(): string {
   if (cached && cached.key === key) return cached.fg;
 
   const style = getComputedStyle(root);
-  const fg =
-    style.getPropertyValue('--foreground').trim() || '#e2e8f0';
+  const fg = style.getPropertyValue('--foreground').trim() || '#e2e8f0';
   cached = { fg, key };
   return fg;
 }
 
 // ─── Label density tracking ─────────────────────────────────────────
-// Track bounding boxes of rendered labels per frame to avoid overlap.
-// Reset each frame via resetLabelGrid().
 
 interface LabelBox {
   x: number;
@@ -63,13 +61,24 @@ interface LabelBox {
 }
 
 let renderedBoxes: LabelBox[] = [];
+let hoverBoxes: LabelBox[] = [];
 
 export function resetLabelGrid(): void {
   renderedBoxes = [];
 }
 
-function overlapsExisting(x: number, y: number, w: number, h: number): boolean {
-  for (const box of renderedBoxes) {
+export function resetHoverGrid(): void {
+  hoverBoxes = [];
+}
+
+function overlaps(
+  boxes: LabelBox[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): boolean {
+  for (const box of boxes) {
     if (
       x < box.x + box.w &&
       x + w > box.x &&
@@ -80,6 +89,26 @@ function overlapsExisting(x: number, y: number, w: number, h: number): boolean {
     }
   }
   return false;
+}
+
+/** Check overlap against the hover layer's tooltip boxes. */
+export function overlapsExistingHover(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): boolean {
+  return overlaps(hoverBoxes, x, y, w, h);
+}
+
+/** Register a tooltip box on the hover layer. */
+export function pushHoverBox(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  hoverBoxes.push({ x, y, w, h });
 }
 
 // ─── Label renderer ─────────────────────────────────────────────────
@@ -98,6 +127,11 @@ export function drawNodeLabel<
 ): void {
   if (!data.label) return;
 
+  // Highlighted nodes are rendered on sigma's hover layer where
+  // drawNodeHover draws tooltips. Skip plain labels for those.
+  const extras = data as Record<string, unknown>;
+  if (extras.highlighted) return;
+
   const size = settings.labelSize;
   const font = settings.labelFont;
   const weight = settings.labelWeight;
@@ -109,42 +143,27 @@ export function drawNodeLabel<
   const x = data.x + data.size + 3;
   const y = data.y + size / 3;
 
-  // Density check: skip if this label overlaps an already-rendered one.
-  // forceLabel nodes (highlighted neighbors) bypass the check.
-  const extras = data as Record<string, unknown>;
-  const forced = extras.forceLabel === true;
+  // Bounding box for overlap detection
   const boxX = x - 1;
   const boxY = y - size;
   const boxW = textWidth + 2;
   const boxH = size + 4;
 
-  if (!forced && overlapsExisting(boxX, boxY, boxW, boxH)) {
+  // Density check — skip if overlapping an already-rendered label
+  if (overlaps(renderedBoxes, boxX, boxY, boxW, boxH)) {
     return;
   }
   renderedBoxes.push({ x: boxX, y: boxY, w: boxW, h: boxH });
 
-  // If this is the hovered node, draw a glow backdrop behind the label
-  const key = extras.key as string | undefined;
-  const isHovered = key != null && key === _hoveredNodeKey;
+  // Dark stroke behind text for readability on any background
+  context.save();
+  context.strokeStyle = 'rgba(0,0,0,0.7)';
+  context.lineWidth = 3;
+  context.lineJoin = 'round';
+  context.strokeText(data.label, x, y);
+  context.restore();
 
-  if (isHovered) {
-    context.save();
-    context.shadowColor = data.color;
-    context.shadowBlur = 8;
-    context.fillStyle = 'rgba(0,0,0,0.6)';
-    const pad = 3;
-    context.beginPath();
-    context.roundRect(
-      boxX - pad,
-      boxY - pad,
-      boxW + pad * 2,
-      boxH + pad * 2,
-      4,
-    );
-    context.fill();
-    context.restore();
-  }
-
+  // Label text in theme foreground color
   context.fillStyle = fg;
   context.fillText(data.label, x, y);
 }
