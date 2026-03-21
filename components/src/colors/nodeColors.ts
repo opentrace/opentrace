@@ -25,27 +25,27 @@
 const PALETTE_SIZE = 12;
 
 const FALLBACK_PALETTE = [
-  '#818cf8', // Indigo
-  '#fbbf24', // Amber
-  '#4ade80', // Green
-  '#c084fc', // Violet
-  '#fb7185', // Rose
-  '#60a5fa', // Blue
-  '#f472b6', // Pink
-  '#2dd4bf', // Teal
-  '#fb923c', // Orange
-  '#a3e635', // Lime
-  '#e879f9', // Fuchsia
-  '#22d3ee', // Cyan
+  '#6366f1', // Indigo
+  '#eab308', // Amber
+  '#22c55e', // Green
+  '#a855f7', // Violet
+  '#f43f5e', // Rose
+  '#3b82f6', // Blue
+  '#ec4899', // Pink
+  '#14b8a6', // Teal
+  '#f97316', // Orange
+  '#84cc16', // Lime
+  '#d946ef', // Fuchsia
+  '#06b6d4', // Cyan
 ];
 
 /** Well-known node types → fallback colors (used when no CSS variable set) */
 const FALLBACK_KNOWN: Record<string, string> = {
-  Repository: '#4ade80',
-  Class: '#60a5fa',
-  Function: '#c084fc',
-  File: '#a3e635',
-  Directory: '#22d3ee',
+  Repository: '#22c55e',
+  Class: '#3b82f6',
+  Function: '#a855f7',
+  File: '#84cc16',
+  Directory: '#06b6d4',
 };
 
 function djb2(str: string): number {

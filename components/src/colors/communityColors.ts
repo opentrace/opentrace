@@ -21,22 +21,22 @@
  */
 
 const COMMUNITY_PALETTE = [
-  '#f472b6', // Pink
-  '#38bdf8', // Sky
-  '#fb923c', // Orange
-  '#4ade80', // Green
-  '#c084fc', // Purple
-  '#fbbf24', // Amber
-  '#22d3ee', // Cyan
-  '#f87171', // Red
-  '#a3e635', // Lime
-  '#818cf8', // Indigo
-  '#fb7185', // Rose
-  '#2dd4bf', // Teal
-  '#e879f9', // Fuchsia
-  '#60a5fa', // Blue
-  '#facc15', // Yellow
-  '#34d399', // Emerald
+  '#f9a8d4', // Pink (300-level, brighter)
+  '#7dd3fc', // Sky (300-level)
+  '#fdba74', // Orange (300-level)
+  '#86efac', // Green (300-level)
+  '#d8b4fe', // Purple (300-level)
+  '#fcd34d', // Amber (300-level)
+  '#67e8f9', // Cyan (300-level)
+  '#fca5a5', // Red (300-level)
+  '#bef264', // Lime (300-level)
+  '#a5b4fc', // Indigo (300-level)
+  '#fda4af', // Rose (300-level)
+  '#5eead4', // Teal (300-level)
+  '#f0abfc', // Fuchsia (300-level)
+  '#7dd3fc', // Blue (300-level)
+  '#fde047', // Yellow (300-level)
+  '#6ee7b7', // Emerald (300-level)
 ];
 
 const FALLBACK_COLOR = '#64748b'; // Slate grey
@@ -180,17 +180,18 @@ export function buildCommunityNames(
  */
 function findHubNode(members: NameableNode[]): string | null {
   if (members.length === 0) return null;
-  if (members.length === 1) return members[0].name;
+  if (members.length === 1) return members[0].name ?? members[0].id;
 
   // Score each node by how many other members' names contain it as substring
   const scores: { name: string; score: number; len: number }[] = [];
   for (const node of members) {
+    if (!node.name) continue;
     const lowerName = node.name.toLowerCase();
     // Skip very short names (single char, empty) — they'd match everything
     if (lowerName.length <= 1) continue;
     let score = 0;
     for (const other of members) {
-      if (other === node) continue;
+      if (other === node || !other.name) continue;
       if (other.name.toLowerCase().includes(lowerName)) score++;
     }
     scores.push({ name: node.name, score, len: node.name.length });
@@ -198,8 +199,9 @@ function findHubNode(members: NameableNode[]): string | null {
 
   if (scores.length === 0) {
     // All names are very short — pick the shortest
-    return members.reduce((a, b) => (a.name.length <= b.name.length ? a : b))
-      .name;
+    return members.reduce((a, b) =>
+      (a.name ?? '').length <= (b.name ?? '').length ? a : b,
+    ).name ?? members[0].id;
   }
 
   // Sort by: highest score, then shortest name

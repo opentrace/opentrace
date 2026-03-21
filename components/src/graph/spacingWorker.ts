@@ -39,6 +39,10 @@ export interface SpacingRequest {
   maxIterations: number;
   /** Stop when max overlap between any two communities is below this (0–1) */
   overlapThreshold: number;
+  /** Delay between iterations in ms (enables smooth animation on main thread) */
+  iterationDelay?: number;
+  /** Fraction of overlap resolved per iteration (0–1). Lower = smoother animation. Default 0.5. */
+  pushFactor?: number;
 }
 
 export interface SpacingProgress {
@@ -68,8 +72,41 @@ interface Community {
   radius: number;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 self.onmessage = (e: MessageEvent<SpacingRequest>) => {
-  const { nodes, radiusScale, gap, maxIterations, overlapThreshold } = e.data;
+  const {
+    nodes,
+    radiusScale,
+    gap,
+    maxIterations,
+    overlapThreshold,
+    iterationDelay = 0,
+    pushFactor = 0.5,
+  } = e.data;
+
+  void runSpacing(
+    nodes,
+    radiusScale,
+    gap,
+    maxIterations,
+    overlapThreshold,
+    iterationDelay,
+    pushFactor,
+  );
+};
+
+async function runSpacing(
+  nodes: SpacingNode[],
+  radiusScale: number,
+  gap: number,
+  maxIterations: number,
+  overlapThreshold: number,
+  iterationDelay: number,
+  pushFactor: number,
+) {
   const t0 = performance.now();
 
   if (nodes.length === 0) {
@@ -144,7 +181,7 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
           const overlap = (minDist - dist) / minDist; // 0..1
           if (overlap > maxOverlap) maxOverlap = overlap;
 
-          const push = (minDist - dist) * 0.5;
+          const push = (minDist - dist) * pushFactor;
           if (dist > 0.001) {
             const nx = dx / dist;
             const ny = dy / dist;
@@ -203,6 +240,11 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
       } satisfies SpacingDone);
       return;
     }
+
+    // Pace iterations so the main thread can animate each update
+    if (iterationDelay > 0) {
+      await delay(iterationDelay);
+    }
   }
 
   // Max iterations
@@ -212,4 +254,4 @@ self.onmessage = (e: MessageEvent<SpacingRequest>) => {
     maxOverlap: lastMaxOverlap,
     totalMs: performance.now() - t0,
   } satisfies SpacingDone);
-};
+}

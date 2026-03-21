@@ -185,6 +185,8 @@ export interface GraphViewerProps {
     nodes: GraphNode[];
     links: GraphLink[];
   }) => void;
+  /** Animation settings from SettingsDrawer */
+  animationSettings?: import('@opentrace/components').AnimationSettings;
 }
 
 const GraphViewer = memo(
@@ -210,6 +212,7 @@ const GraphViewer = memo(
         showSettings,
         onToggleSettings,
         onGraphDataChange,
+        animationSettings,
       } = props;
 
       const { store } = useStore();
@@ -1325,6 +1328,7 @@ const GraphViewer = memo(
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
             onOptimizeStatus={setOptimizeStatus}
+            animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
 
@@ -1407,14 +1411,12 @@ const GraphViewer = memo(
               </svg>
             </button>
             <button
-              className={`graph-control-btn${optimizeStatus?.phase === 'optimizing' ? ' graph-control-btn--active' : ''}`}
+              className={`graph-control-btn${optimizeStatus?.phase === 'fa2' ? ' graph-control-btn--active' : ''}`}
               onClick={() => canvasRef.current?.optimize()}
               title={
-                optimizeStatus?.phase === 'optimizing'
-                  ? `Optimizing... ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean`
-                  : optimizeStatus?.phase === 'fa2'
-                    ? 'Running physics...'
-                    : 'Optimize layout'
+                optimizeStatus?.phase === 'fa2'
+                  ? 'Running physics...'
+                  : 'Optimize layout'
               }
             >
               <svg
@@ -1450,15 +1452,6 @@ const GraphViewer = memo(
               }}
             >
               {optimizeStatus.phase === 'fa2' && 'Running physics...'}
-              {optimizeStatus.phase === 'noverlap' && 'Resolving overlaps...'}
-              {optimizeStatus.phase === 'spacing' &&
-                `Spacing communities${optimizeStatus.iteration !== undefined ? ` (iter ${optimizeStatus.iteration})` : ''}...`}
-              {optimizeStatus.phase === 'optimizing' &&
-                `Optimizing: ${((optimizeStatus.cleanRatio ?? 0) * 100).toFixed(0)}% clean${
-                  optimizeStatus.totalOverlaps
-                    ? ` · ${optimizeStatus.totalOverlaps} overlaps`
-                    : ''
-                }`}
             </div>
           )}
         </div>

@@ -60,6 +60,198 @@ function endpointId(endpoint: string | number | GraphNode | undefined): string {
   return String(endpoint);
 }
 
+// ─── Pre-render community spacing ────────────────────────────────────────
+// Same algorithm as spacingWorker.ts but runs synchronously on the main
+// thread before sigma renders. Mutates the position map in-place.
+
+function applySpacing(
+  pos: Map<string, { x: number; y: number }>,
+  assignments: Record<string, number>,
+  radiusScale: number,
+  gap: number,
+  maxIterations: number,
+  pushFactor: number,
+) {
+  // Group by community
+  const groups = new Map<number, string[]>();
+  for (const [id] of pos) {
+    const cid = assignments[id];
+    if (cid === undefined) continue;
+    let list = groups.get(cid);
+    if (!list) {
+      list = [];
+      groups.set(cid, list);
+    }
+    list.push(id);
+  }
+
+  if (groups.size < 2) return;
+
+  // Build community centroids and radii
+  const comms: {
+    nodeIds: string[];
+    cx: number;
+    cy: number;
+    radius: number;
+  }[] = [];
+  for (const [, ids] of groups) {
+    let cx = 0,
+      cy = 0;
+    for (const id of ids) {
+      const p = pos.get(id)!;
+      cx += p.x;
+      cy += p.y;
+    }
+    cx /= ids.length;
+    cy /= ids.length;
+    comms.push({
+      nodeIds: ids,
+      cx,
+      cy,
+      radius: Math.sqrt(ids.length) * radiusScale,
+    });
+  }
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    const pushX = new Float64Array(comms.length);
+    const pushY = new Float64Array(comms.length);
+    let maxOverlap = 0;
+
+    for (let i = 0; i < comms.length; i++) {
+      for (let j = i + 1; j < comms.length; j++) {
+        const a = comms[i];
+        const b = comms[j];
+        const dx = b.cx - a.cx;
+        const dy = b.cy - a.cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const minDist = a.radius + b.radius + gap;
+
+        if (dist < minDist) {
+          const overlap = (minDist - dist) / minDist;
+          if (overlap > maxOverlap) maxOverlap = overlap;
+
+          const push = (minDist - dist) * pushFactor;
+          if (dist > 0.001) {
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const totalSize = a.nodeIds.length + b.nodeIds.length;
+            const aRatio = b.nodeIds.length / totalSize;
+            const bRatio = a.nodeIds.length / totalSize;
+            pushX[i] -= nx * push * aRatio;
+            pushY[i] -= ny * push * aRatio;
+            pushX[j] += nx * push * bRatio;
+            pushY[j] += ny * push * bRatio;
+          } else {
+            const angle = Math.random() * Math.PI * 2;
+            pushX[i] -= Math.cos(angle) * minDist * 0.5;
+            pushY[i] -= Math.sin(angle) * minDist * 0.5;
+            pushX[j] += Math.cos(angle) * minDist * 0.5;
+            pushY[j] += Math.sin(angle) * minDist * 0.5;
+          }
+        }
+      }
+    }
+
+    if (maxOverlap <= 0.05) break;
+
+    // Apply pushes to centroids and member positions
+    for (let i = 0; i < comms.length; i++) {
+      const ox = pushX[i];
+      const oy = pushY[i];
+      if (Math.abs(ox) < 0.01 && Math.abs(oy) < 0.01) continue;
+      comms[i].cx += ox;
+      comms[i].cy += oy;
+      for (const id of comms[i].nodeIds) {
+        const p = pos.get(id)!;
+        p.x += ox;
+        p.y += oy;
+      }
+    }
+  }
+}
+
+// ─── Pre-render per-community noverlap ───────────────────────────────────
+// Pushes overlapping nodes apart within each community. Runs after spacing
+// so nodes don't start stacked on top of each other.
+
+function applyNoverlap(
+  pos: Map<string, { x: number; y: number }>,
+  sizes: Map<string, number>,
+  assignments: Record<string, number>,
+  margin: number,
+  iterations: number,
+) {
+  // Group by community
+  const groups = new Map<number, string[]>();
+  for (const [id] of pos) {
+    const cid = assignments[id];
+    if (cid === undefined) continue;
+    let list = groups.get(cid);
+    if (!list) {
+      list = [];
+      groups.set(cid, list);
+    }
+    list.push(id);
+  }
+
+  // Compute a scale factor from the position bounding box
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (const [, p] of pos) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const scale = Math.max(maxX - minX, maxY - minY, 1) / 4000;
+  const scaledMargin = margin * scale;
+
+  const MAX_INLINE = 500;
+
+  for (const [, ids] of groups) {
+    if (ids.length < 3 || ids.length > MAX_INLINE) continue;
+
+    // Build local position/size array
+    const nodes = ids.map((id) => ({
+      id,
+      x: pos.get(id)!.x,
+      y: pos.get(id)!.y,
+      size: (sizes.get(id) ?? 3) * scale,
+    }));
+
+    for (let iter = 0; iter < iterations; iter++) {
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const minDist = a.size + b.size + scaledMargin;
+          if (dist < minDist && dist > 0.001) {
+            const push = (minDist - dist) * 0.5;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            a.x -= nx * push;
+            a.y -= ny * push;
+            b.x += nx * push;
+            b.y += ny * push;
+          }
+        }
+      }
+    }
+
+    // Write back
+    for (const n of nodes) {
+      const p = pos.get(n.id)!;
+      p.x = n.x;
+      p.y = n.y;
+    }
+  }
+}
+
 // ─── Hook ───────────────────────────────────────────────────────────────
 
 export interface UseGraphInstanceResult {
@@ -182,6 +374,55 @@ export function useGraphInstance({
       });
     }
 
+    // ── Add virtual community edges for FA2 intra-community attraction ──
+    // Each node gets 1–2 edges to random same-community neighbors.
+    // Hidden from rendering, but FA2 uses them for attraction.
+    const { assignments: communityAssignments } = communityData;
+    if (communityAssignments) {
+      const communityGroups = new Map<number, string[]>();
+      for (const node of allNodes) {
+        const cid = communityAssignments[node.id];
+        if (cid === undefined) continue;
+        let list = communityGroups.get(cid);
+        if (!list) {
+          list = [];
+          communityGroups.set(cid, list);
+        }
+        list.push(node.id);
+      }
+
+      let vcIdx = 0;
+      for (const [, members] of communityGroups) {
+        if (members.length < 2) continue;
+        // Scale ties with community size: small=2, medium=3, large=3
+        const baseTies = members.length >= 10 ? 3 : 2;
+        for (const nodeId of members) {
+          const count = Math.min(baseTies, members.length - 1);
+          for (let c = 0; c < count; c++) {
+            // Pick a random neighbor (simple deterministic shuffle via index)
+            const targetIdx = (members.indexOf(nodeId) + c + 1) % members.length;
+            const targetId = members[targetIdx];
+            if (targetId === nodeId) continue;
+            const vcKey = `_vc_${vcIdx++}`;
+            if (seenEdges.has(`${nodeId}-_COMMUNITY_-${targetId}`)) continue;
+            seenEdges.add(`${nodeId}-_COMMUNITY_-${targetId}`);
+            serializedEdges.push({
+              key: vcKey,
+              source: nodeId,
+              target: targetId,
+              attributes: {
+                label: '_COMMUNITY_',
+                color: 'transparent',
+                size: 0,
+                hidden: true,
+                _virtual: true,
+              },
+            });
+          }
+        }
+      }
+    }
+
     // Bulk import — single set of graphology events
     graph.import({
       nodes: serializedNodes,
@@ -237,6 +478,20 @@ export function useGraphInstance({
       if (process.env.NODE_ENV === 'development') {
         console.timeEnd('[graph] d3-force worker layout');
         console.log(`[graph] layout computed for ${pos.size} nodes`);
+      }
+
+      // ── Pre-render spacing + noverlap ──────────────────────────────────
+      // Run synchronously so the first frame has well-separated, non-overlapping nodes.
+      const { assignments } = communityData;
+      if (assignments && Object.keys(assignments).length > 0) {
+        applySpacing(pos, assignments, 40, 100, 50, 0.5);
+
+        // Build size lookup from serialized nodes
+        const sizeMap = new Map<string, number>();
+        for (const sn of serializedNodes) {
+          sizeMap.set(sn.key, sn.attributes.size);
+        }
+        applyNoverlap(pos, sizeMap, assignments, layoutConfig.noverlapMargin, layoutConfig.noverlapCommunityIterations ?? 20);
       }
 
       // Seed positions into graph — batched, single event

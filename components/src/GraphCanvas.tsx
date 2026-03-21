@@ -28,6 +28,7 @@ import { SigmaContainer, useSigma } from '@react-sigma/core';
 import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
 import { EdgeLineProgram } from 'sigma/rendering';
 import '@react-sigma/core/lib/style.css';
+import { useSelectionPulse } from './sigma/useSelectionPulse';
 
 import type { GraphNode, GraphLink, SelectedEdge } from './types/graph';
 import type {
@@ -56,6 +57,10 @@ import {
 import type { GetSubTypeFn } from './graph/types';
 
 // ─── Types ──────────────────────────────────────────────────────────────
+
+export interface AnimationSettings {
+  selectionPulse: boolean;
+}
 
 export interface GraphCanvasProps {
   /** Graph nodes to render. */
@@ -98,6 +103,8 @@ export interface GraphCanvasProps {
   zIndex?: boolean;
   /** Pre-computed community data. If omitted, computed internally. */
   communityData?: CommunityData;
+  /** Animation settings (glow, pulse, particles, smooth layout). */
+  animationSettings?: AnimationSettings;
   /** Called when a node is clicked. */
   onNodeClick?: (node: GraphNode) => void;
   /** Called when an edge is clicked. */
@@ -252,6 +259,25 @@ function GraphEventHandler({
   return null;
 }
 
+/** Renders animation hooks that require useSigma() context. */
+function AnimationEffects({
+  selectedNodeId,
+  animationSettings,
+}: {
+  selectedNodeId: string | null;
+  animationSettings: AnimationSettings;
+}) {
+  const sigma = useSigma() as unknown as import('sigma').Sigma;
+
+  useSelectionPulse(
+    sigma,
+    selectedNodeId,
+    animationSettings.selectionPulse,
+  );
+
+  return null;
+}
+
 // ─── Default sub-type extractor ─────────────────────────────────────────
 
 const defaultGetSubType: GetSubTypeFn = () => null;
@@ -261,6 +287,9 @@ const defaultGetSubType: GetSubTypeFn = () => null;
 const EMPTY_STRING_SET = new Set<string>();
 const EMPTY_NUMBER_SET = new Set<number>();
 const EMPTY_SUB_TYPES = new Map<string, { subType: string; count: number }[]>();
+const DEFAULT_ANIMATION: AnimationSettings = {
+  selectionPulse: true,
+};
 
 const GraphCanvas = memo(
   forwardRef<GraphCanvasHandle, GraphCanvasProps>(
@@ -286,6 +315,7 @@ const GraphCanvas = memo(
         availableSubTypes = EMPTY_SUB_TYPES,
         zIndex: zIndexEnabled = false,
         communityData: communityDataProp,
+        animationSettings = DEFAULT_ANIMATION,
         onNodeClick,
         onEdgeClick,
         onStageClick,
@@ -463,9 +493,28 @@ const GraphCanvas = memo(
         [isLargeGraph, zIndexEnabled],
       );
 
+      // Keep edge widths constant in screen space by compensating for camera zoom.
+      // Sigma's edge shader divides size by sizeRatio; multiplying by camera ratio
+      // here cancels that out, so edges stay the same pixel width at all zoom levels.
+      const edgeReducer = useCallback(
+        (_edge: string, data: Record<string, unknown>) => {
+          if (!sigmaRef.current) return data;
+          const ratio = (
+            sigmaRef.current as unknown as import('sigma').Sigma
+          ).getCamera().ratio;
+          return { ...data, size: ((data.size as number) || 1) * ratio };
+        },
+        [],
+      );
+
       const handleSigmaReady = useCallback(
         (sigma: ReturnType<typeof useSigma>) => {
           sigmaRef.current = sigma;
+          // Set the edge reducer once sigma is ready
+          (sigma as unknown as import('sigma').Sigma).setSetting(
+            'edgeReducer',
+            edgeReducer,
+          );
         },
         [],
       );
@@ -613,8 +662,11 @@ const GraphCanvas = memo(
               layoutReady={layoutReady}
               layoutConfig={layoutConfig}
               optimizeTick={optimizeTick}
-              communityAssignments={communityData.assignments}
               onOptimizeStatus={onOptimizeStatus}
+            />
+            <AnimationEffects
+              selectedNodeId={selectedNodeId ?? null}
+              animationSettings={animationSettings}
             />
             <SigmaRefCapture onReady={handleSigmaReady} />
           </SigmaContainer>

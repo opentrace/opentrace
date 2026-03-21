@@ -27,8 +27,8 @@
 // Base size is computed as: clamp(NODE_SIZE_MIN, NODE_SIZE_MIN + sqrt(degree) * NODE_SIZE_DEGREE_SCALE, NODE_SIZE_MAX)
 // Then multiplied by the type multiplier below.
 
-export const NODE_SIZE_MIN = 2;
-export const NODE_SIZE_MAX = 8;
+export const NODE_SIZE_MIN = 3;
+export const NODE_SIZE_MAX = 12;
 export const NODE_SIZE_DEGREE_SCALE = 1.0; // how much degree (connections) inflates size
 
 // Type-based multipliers applied to the base size
@@ -49,20 +49,20 @@ export const EDGE_SIZE_DIMMED = 0.5; // when another node is selected
 // ─── Edge Opacity ───────────────────────────────────────────────────────
 // Alpha blend against dark background (0 = invisible, 1 = full color)
 
-export const EDGE_OPACITY_DEFAULT = 0.6; // normal state
+export const EDGE_OPACITY_DEFAULT = 0.78; // normal state
 export const EDGE_OPACITY_HIGHLIGHTED = 1.0; // when part of a selected neighborhood
-export const EDGE_OPACITY_DIMMED = 0.05; // when another node is selected
+export const EDGE_OPACITY_DIMMED = 0.08; // when another node is selected
 
 // ─── Node Opacity ───────────────────────────────────────────────────────
 
-export const NODE_OPACITY_DIMMED = 0.15; // when another node is selected
+export const NODE_OPACITY_DIMMED = 0.22; // when another node is selected
 export const NODE_SIZE_DIMMED_SCALE = 0.35; // shrink non-highlighted nodes so edges show through
 
 // ─── Zoom Scaling ───────────────────────────────────────────────────────
 // Controls how node sizes scale when zooming out.
 // Default sigma uses Math.sqrt (exponent 0.5). Higher = nodes shrink faster when zooming out.
 
-export const ZOOM_SIZE_EXPONENT = 0.9;
+export const ZOOM_SIZE_EXPONENT = 0.7;
 
 // ─── d3-Force Layout ────────────────────────────────────────────────────
 // Layout uses only DEFINED_IN edges. These control the force simulation.
@@ -79,15 +79,15 @@ export const FORCE_CLUSTER_TICKS = 40; // additional ticks for clustering phase
 
 export const FA2_ENABLED = true;
 export const FA2_GRAVITY = 0.1;
-export const FA2_SCALING_RATIO = 30;
-export const FA2_SLOW_DOWN = 2;
+export const FA2_SCALING_RATIO = 120;
+export const FA2_SLOW_DOWN = 0.5;
 export const FA2_BARNES_HUT_THRESHOLD = 300; // use Barnes-Hut when nodeCount > this
 export const FA2_BARNES_HUT_THETA = 0.5;
 export const FA2_STRONG_GRAVITY = false;
 export const FA2_LIN_LOG_MODE = true;
 export const FA2_OUTBOUND_ATTRACTION = true;
 export const FA2_ADJUST_SIZES = true;
-export const FA2_DURATION = 3000; // ms to run before auto-stop
+export const FA2_DURATION = 20000; // ms to run before auto-stop
 
 // ─── Noverlap Post-Processing ───────────────────────────────────────────
 // Runs after FA2 stops (or after d3-force if FA2 disabled) to push apart remaining overlaps.

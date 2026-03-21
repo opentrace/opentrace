@@ -101,6 +101,12 @@ export function useGraphFilters(
     // graphology but haven't been indexed by sigma's async process() yet.
     graph.updateEachEdgeAttributes(
       (_id, attrs, source, target) => {
+        // Virtual community edges must always stay hidden
+        if (attrs._virtual) {
+          attrs.hidden = true;
+          return attrs;
+        }
+
         // Hide edge if either endpoint is hidden
         if (hiddenNodes.has(source) || hiddenNodes.has(target)) {
           attrs.hidden = true;
