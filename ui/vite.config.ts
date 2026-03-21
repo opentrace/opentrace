@@ -194,17 +194,6 @@ export default defineConfig(({ mode }) => {
       fs: {
         allow: [resolve(__dirname), resolve(__dirname, '../components')],
       },
-      proxy: {
-        '/api': {
-          target: 'http://localhost:8080',
-          changeOrigin: true,
-        },
-        '/fn': {
-          target:
-            'http://localhost:5001/handy-amplifier-455315-e6/europe-west1',
-          changeOrigin: true,
-        },
-      },
     },
     optimizeDeps: {
       exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
