@@ -85,7 +85,7 @@ class BenchmarkReport:
     def pass_rate(self) -> float:
         return self.passed / self.total if self.total > 0 else 0.0
 
-    def summary(self) -> str:
+    def summary(self, *, verbose: bool = False) -> str:
         lines = [
             f"Benchmark: {self.suite_name}",
             f"  Total: {self.total}  Passed: {self.passed}  Failed: {self.failed}  Errors: {self.errors}",
@@ -95,11 +95,21 @@ class BenchmarkReport:
             lines.append("  By category:")
             for cat, counts in sorted(self.by_category.items()):
                 lines.append(f"    {cat}: {counts['passed']}/{counts['total']}")
-        for r in self.results:
-            if not r.passed:
-                status = "ERROR" if r.error else "FAIL"
-                detail = r.error or "; ".join(r.failures)
-                lines.append(f"  [{status}] {r.task_id}: {detail}")
+        if verbose:
+            lines.append("")
+            lines.append("  Tasks:")
+            for r in self.results:
+                icon = "PASS" if r.passed else ("ERROR" if r.error else "FAIL")
+                lines.append(f"    [{icon:>5}] {r.task_id} ({r.category}, {r.duration_ms:.0f}ms)")
+                if not r.passed:
+                    detail = r.error or "; ".join(r.failures)
+                    lines.append(f"           {detail}")
+        else:
+            for r in self.results:
+                if not r.passed:
+                    status = "ERROR" if r.error else "FAIL"
+                    detail = r.error or "; ".join(r.failures)
+                    lines.append(f"  [{status}] {r.task_id}: {detail}")
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
@@ -319,16 +329,38 @@ class GraphAccuracyBenchmark:
         return None
 
 
+@dataclass
+class IndexStats:
+    """Stats about what was indexed, attached to the report for verbose output."""
+
+    total_nodes: int = 0
+    total_edges: int = 0
+    nodes_by_type: dict[str, int] = field(default_factory=dict)
+    files_processed: int = 0
+    classes_extracted: int = 0
+    functions_extracted: int = 0
+
+    def summary(self) -> str:
+        parts = [f"{count} {ntype}" for ntype, count in sorted(self.nodes_by_type.items(), key=lambda x: -x[1])]
+        return (
+            f"  Indexed: {self.total_nodes} nodes, {self.total_edges} edges "
+            f"({self.files_processed} files, {self.classes_extracted} classes, "
+            f"{self.functions_extracted} functions)\n"
+            f"  Types: {', '.join(parts)}"
+        )
+
+
 def index_and_benchmark(
     codebase_path: str,
     tasks_path: str,
     *,
     repo_id: str | None = None,
     db_path: str | None = None,
-) -> BenchmarkReport:
+) -> tuple[BenchmarkReport, IndexStats]:
     """Convenience: index a codebase and run a benchmark suite against it.
 
     If *db_path* is None, creates a temporary database.
+    Returns ``(report, index_stats)``.
     """
     import tempfile
 
@@ -348,12 +380,26 @@ def index_and_benchmark(
     adapter = GraphStoreAdapter(store, batch_size=500)
 
     inp = PipelineInput(path=str(root), repo_id=repo_id)
-    for _event in collect_pipeline(inp, store=adapter)[0]:
-        pass
+    events, all_nodes, all_rels = collect_pipeline(inp, store=adapter)
     adapter.flush()
+
+    # Gather index stats
+    stats_data = store.get_stats()
+    idx_stats = IndexStats(
+        total_nodes=stats_data.get("total_nodes", 0),
+        total_edges=stats_data.get("total_edges", 0),
+        nodes_by_type=stats_data.get("nodes_by_type", {}),
+    )
+    # Pull counts from the pipeline result if available
+    for ev in events:
+        result = getattr(ev, "result", None)
+        if result is not None:
+            idx_stats.files_processed = getattr(result, "files_processed", 0)
+            idx_stats.classes_extracted = getattr(result, "classes_extracted", 0)
+            idx_stats.functions_extracted = getattr(result, "functions_extracted", 0)
 
     bench = GraphAccuracyBenchmark(store)
     report = bench.run_suite(tasks_path)
 
     store.close()
-    return report
+    return report, idx_stats

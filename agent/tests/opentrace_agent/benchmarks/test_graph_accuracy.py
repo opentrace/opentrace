@@ -33,9 +33,10 @@ from opentrace_agent.benchmarks.graph_accuracy import (  # noqa: E402
 )
 from opentrace_agent.store import GraphStore  # noqa: E402
 
-FIXTURES_ROOT = Path(__file__).resolve().parents[4] / "tests" / "fixtures"
-PYTHON_PROJECT = FIXTURES_ROOT / "python" / "project"
-GO_PROJECT = FIXTURES_ROOT / "go" / "project"
+FIXTURES_ROOT = Path(__file__).resolve().parents[2] / "fixtures"
+LEVEL1 = FIXTURES_ROOT / "level1"
+LEVEL2 = FIXTURES_ROOT / "level2"
+LEVEL3 = FIXTURES_ROOT / "level3"
 TASKS_DIR = Path(__file__).resolve().parents[3] / "src" / "opentrace_agent" / "benchmarks" / "tasks"
 
 
@@ -44,30 +45,38 @@ TASKS_DIR = Path(__file__).resolve().parents[3] / "src" / "opentrace_agent" / "b
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def python_store(tmp_path_factory):
-    """Index the Python fixture project."""
-    db_path = str(tmp_path_factory.mktemp("bench_py") / "test.db")
+def _index_fixture(tmp_path_factory, name, fixture_path, repo_id):
+    """Index a fixture project and return a GraphStore."""
+    db_path = str(tmp_path_factory.mktemp(f"bench_{name}") / "test.db")
     store = GraphStore(db_path)
     adapter = GraphStoreAdapter(store, batch_size=500)
-    inp = PipelineInput(path=str(PYTHON_PROJECT), repo_id="test/py-project")
+    inp = PipelineInput(path=str(fixture_path), repo_id=repo_id)
     for _event in collect_pipeline(inp, store=adapter)[0]:
         pass
     adapter.flush()
+    return store
+
+
+@pytest.fixture(scope="module")
+def level1_store(tmp_path_factory):
+    """Index the Level 1 fixture project."""
+    store = _index_fixture(tmp_path_factory, "l1", LEVEL1, "test/level1")
     yield store
     store.close()
 
 
 @pytest.fixture(scope="module")
-def go_store(tmp_path_factory):
-    """Index the Go fixture project."""
-    db_path = str(tmp_path_factory.mktemp("bench_go") / "test.db")
-    store = GraphStore(db_path)
-    adapter = GraphStoreAdapter(store, batch_size=500)
-    inp = PipelineInput(path=str(GO_PROJECT), repo_id="test/go-project")
-    for _event in collect_pipeline(inp, store=adapter)[0]:
-        pass
-    adapter.flush()
+def level2_store(tmp_path_factory):
+    """Index the Level 2 fixture project."""
+    store = _index_fixture(tmp_path_factory, "l2", LEVEL2, "test/level2")
+    yield store
+    store.close()
+
+
+@pytest.fixture(scope="module")
+def level3_store(tmp_path_factory):
+    """Index the Level 3 fixture project."""
+    store = _index_fixture(tmp_path_factory, "l3", LEVEL3, "test/level3")
     yield store
     store.close()
 
@@ -80,8 +89,8 @@ def go_store(tmp_path_factory):
 class TestAssertionEngine:
     """Test individual assertion types against known data."""
 
-    def test_min_count_pass(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_min_count_pass(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_min_count",
@@ -92,8 +101,8 @@ class TestAssertionEngine:
         )
         assert result.passed
 
-    def test_min_count_fail(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_min_count_fail(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_min_count_fail",
@@ -105,8 +114,8 @@ class TestAssertionEngine:
         assert not result.passed
         assert any("min_count" in f for f in result.failures)
 
-    def test_exact_count(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_exact_count(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_exact_count",
@@ -117,32 +126,32 @@ class TestAssertionEngine:
         )
         assert result.passed
 
-    def test_result_contains_name(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_result_contains_name(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_contains_name",
                 "tool": "search_graph",
-                "tool_args": {"query": "Database", "nodeTypes": "Class"},
-                "assertions": [{"type": "result_contains_name", "value": "Database"}],
+                "tool_args": {"query": "Calculator", "nodeTypes": "Class"},
+                "assertions": [{"type": "result_contains_name", "value": "Calculator"}],
             }
         )
         assert result.passed
 
-    def test_all_have_type(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_all_have_type(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_all_have_type",
                 "tool": "search_graph",
-                "tool_args": {"query": "main", "nodeTypes": "File"},
+                "tool_args": {"query": "app", "nodeTypes": "File"},
                 "assertions": [{"type": "all_have_type", "value": "File"}],
             }
         )
         assert result.passed
 
-    def test_has_key(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_has_key(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_has_key",
@@ -153,8 +162,8 @@ class TestAssertionEngine:
         )
         assert result.passed
 
-    def test_key_gte(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_key_gte(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_key_gte",
@@ -165,8 +174,8 @@ class TestAssertionEngine:
         )
         assert result.passed
 
-    def test_tool_error_captured(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
+    def test_tool_error_captured(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
         result = bench.run_task(
             {
                 "id": "test_error",
@@ -187,27 +196,36 @@ class TestAssertionEngine:
 class TestSuiteRunner:
     """Test running full task suites."""
 
-    def test_python_suite(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
-        report = bench.run_suite(TASKS_DIR / "python_project.json")
+    def test_level1_suite(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
+        report = bench.run_suite(TASKS_DIR / "level1_smoke.json")
 
         assert isinstance(report, BenchmarkReport)
         assert report.total > 0
-        assert report.suite_name == "Python Project — Graph Accuracy"
-        # Most tasks should pass against the fixture
+        assert report.suite_name == "Level 1 — Smoke"
         assert report.pass_rate >= 0.5, f"Pass rate too low: {report.summary()}"
 
-    def test_go_suite(self, go_store):
-        bench = GraphAccuracyBenchmark(go_store)
-        report = bench.run_suite(TASKS_DIR / "go_project.json")
+    def test_level2_suite(self, level2_store):
+        bench = GraphAccuracyBenchmark(level2_store)
+        report = bench.run_suite(TASKS_DIR / "level2_multifile.json")
 
         assert isinstance(report, BenchmarkReport)
         assert report.total > 0
+        assert report.suite_name == "Level 2 — Multi-file"
         assert report.pass_rate >= 0.5, f"Pass rate too low: {report.summary()}"
 
-    def test_report_has_categories(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
-        report = bench.run_suite(TASKS_DIR / "python_project.json")
+    def test_level3_suite(self, level3_store):
+        bench = GraphAccuracyBenchmark(level3_store)
+        report = bench.run_suite(TASKS_DIR / "level3_polyglot.json")
+
+        assert isinstance(report, BenchmarkReport)
+        assert report.total > 0
+        assert report.suite_name == "Level 3 — Polyglot"
+        assert report.pass_rate >= 0.5, f"Pass rate too low: {report.summary()}"
+
+    def test_report_has_categories(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
+        report = bench.run_suite(TASKS_DIR / "level1_smoke.json")
 
         assert "symbol_discovery" in report.by_category
         assert "structure" in report.by_category
@@ -215,18 +233,18 @@ class TestSuiteRunner:
             assert "total" in cat_stats
             assert "passed" in cat_stats
 
-    def test_report_summary_text(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
-        report = bench.run_suite(TASKS_DIR / "python_project.json")
+    def test_report_summary_text(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
+        report = bench.run_suite(TASKS_DIR / "level1_smoke.json")
         summary = report.summary()
 
-        assert "Python Project" in summary
+        assert "Level 1" in summary
         assert "Pass rate" in summary
         assert "Total" in summary
 
-    def test_report_to_dict(self, python_store):
-        bench = GraphAccuracyBenchmark(python_store)
-        report = bench.run_suite(TASKS_DIR / "python_project.json")
+    def test_report_to_dict(self, level1_store):
+        bench = GraphAccuracyBenchmark(level1_store)
+        report = bench.run_suite(TASKS_DIR / "level1_smoke.json")
         d = report.to_dict()
 
         assert isinstance(d, dict)
@@ -235,12 +253,12 @@ class TestSuiteRunner:
         assert "results" in d
         assert isinstance(d["results"], list)
 
-    def test_run_all_builtin(self, python_store):
+    def test_run_all_builtin(self, level1_store):
         """run_all_builtin should find and run the shipped task suites."""
-        bench = GraphAccuracyBenchmark(python_store)
+        bench = GraphAccuracyBenchmark(level1_store)
         reports = bench.run_all_builtin()
-        # At least our two task files should be found
-        assert len(reports) >= 2
+        # At least our three task files should be found
+        assert len(reports) >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +268,16 @@ class TestSuiteRunner:
 
 class TestIndexAndBenchmark:
     def test_indexes_and_runs(self, tmp_path):
-        report = index_and_benchmark(
-            str(PYTHON_PROJECT),
-            str(TASKS_DIR / "python_project.json"),
-            repo_id="test/py-project",
+        report, idx_stats = index_and_benchmark(
+            str(LEVEL1),
+            str(TASKS_DIR / "level1_smoke.json"),
+            repo_id="test/level1",
             db_path=str(tmp_path / "bench.db"),
         )
         assert report.total > 0
         assert report.pass_rate >= 0.5
+        assert idx_stats.total_nodes > 0
+        assert idx_stats.total_edges > 0
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +286,7 @@ class TestIndexAndBenchmark:
 
 
 class TestCustomTasks:
-    def test_custom_task_file(self, python_store, tmp_path):
+    def test_custom_task_file(self, level1_store, tmp_path):
         """A user-defined task file should work."""
         tasks = {
             "suite_name": "Custom Suite",
@@ -290,7 +310,7 @@ class TestCustomTasks:
         task_file = tmp_path / "custom_tasks.json"
         task_file.write_text(json.dumps(tasks))
 
-        bench = GraphAccuracyBenchmark(python_store)
+        bench = GraphAccuracyBenchmark(level1_store)
         report = bench.run_suite(task_file)
         assert report.total == 2
         assert report.passed == 2

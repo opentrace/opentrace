@@ -93,6 +93,8 @@ class SWEBenchResult:
     index_duration_s: float = 0.0
     agent_duration_s: float = 0.0
     tool_calls: int = 0
+    num_turns: int = 0
+    cost_usd: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -117,7 +119,7 @@ class SWEBenchReport:
     def errors(self) -> int:
         return sum(1 for r in self.results if r.error)
 
-    def summary(self) -> str:
+    def summary(self, *, verbose: bool = False) -> str:
         label = "WITH OpenTrace" if self.use_opentrace else "WITHOUT OpenTrace"
         lines = [
             f"SWE-bench Results ({label})",
@@ -131,9 +133,31 @@ class SWEBenchReport:
             if self.use_opentrace:
                 avg_index = sum(r.index_duration_s for r in self.results) / len(self.results)
                 lines.append(f"  Avg index duration: {avg_index:.1f}s")
-        for r in self.results:
-            if r.error:
-                lines.append(f"  [ERROR] {r.instance_id}: {r.error}")
+        if verbose:
+            lines.append("")
+            lines.append("  Instances:")
+            for r in self.results:
+                if r.error:
+                    icon = "ERROR"
+                elif r.success:
+                    icon = "PASS"
+                else:
+                    icon = "FAIL"
+                patch_info = f", patch={len(r.generated_patch)}B" if r.generated_patch else ""
+                index_info = f", index={r.index_duration_s:.1f}s" if r.index_duration_s else ""
+                agent_info = f", agent={r.agent_duration_s:.1f}s" if r.agent_duration_s else ""
+                turns_info = f", {r.num_turns}t" if r.num_turns else ""
+                cost_info = f", ${r.cost_usd:.4f}" if r.cost_usd else ""
+                lines.append(
+                    f"    [{icon:>5}] {r.instance_id} "
+                    f"({r.duration_s:.1f}s{index_info}{agent_info}{turns_info}{cost_info}{patch_info})"
+                )
+                if r.error:
+                    lines.append(f"           {r.error}")
+        else:
+            for r in self.results:
+                if r.error:
+                    lines.append(f"  [ERROR] {r.instance_id}: {r.error}")
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,6 +177,8 @@ class SWEBenchReport:
                     "index_duration_s": r.index_duration_s,
                     "agent_duration_s": r.agent_duration_s,
                     "tool_calls": r.tool_calls,
+                    "num_turns": r.num_turns,
+                    "cost_usd": r.cost_usd,
                 }
                 for r in self.results
             ],
@@ -302,41 +328,51 @@ class SWEBenchHarness:
             mcp_config is None when use_opentrace=False.
         use_opentrace : bool
             Whether to index and provide MCP tools.
+
+        Flow:
+            1. Clone the repo at ``base_commit``.
+            2. If *use_opentrace*: index with ``opentraceai index``, pass
+               ``mcp_config`` with ``db_path`` and ``command`` to the agent.
+               The agent decides how to use the index:
+               - **API backend**: opens the GraphStore in-process.
+               - **Claude Code backend**: spawns its own MCP server via
+                 ``--mcp-config``.
+            3. Call ``agent_fn(problem_statement, repo_path, mcp_config)``.
+            4. Collect the generated patch.
         """
         t0 = time.monotonic()
         result = SWEBenchResult(instance_id=instance.instance_id, use_opentrace=use_opentrace)
 
         try:
-            # Clone
+            # 1. Clone
             repo_dir = self.clone_repo(instance)
 
-            # Index (if using OpenTrace)
+            # 2. Index (if using OpenTrace)
             mcp_config = None
-            mcp_proc = None
             if use_opentrace:
                 t_index = time.monotonic()
                 db_path = self.index_repo(repo_dir, instance)
                 result.index_duration_s = time.monotonic() - t_index
 
-                mcp_proc = self.start_mcp_server(db_path)
                 mcp_config = {
-                    "server_type": "stdio",
                     "command": self.opentraceai_cmd,
-                    "args": ["mcp", "--db", str(db_path)],
-                    "pid": mcp_proc.pid,
                     "db_path": str(db_path),
                 }
 
-            # Run the agent
+            # 3. Run the agent
             t_agent = time.monotonic()
             try:
                 patch = agent_fn(instance.problem_statement, repo_dir, mcp_config)
                 result.generated_patch = patch
                 result.success = bool(patch and patch.strip())
+                # Pull cost/turns from agent if available (set by claude-code backend)
+                last_stats = getattr(agent_fn, "last_stats", None)
+                if last_stats:
+                    result.num_turns = last_stats.get("num_turns", 0)
+                    result.cost_usd = last_stats.get("cost_usd", 0.0)
+                    result.tool_calls = last_stats.get("tool_calls", 0)
             finally:
                 result.agent_duration_s = time.monotonic() - t_agent
-                if mcp_proc:
-                    self.stop_mcp_server(mcp_proc)
 
         except Exception as e:
             result.error = f"{type(e).__name__}: {e}"
@@ -352,6 +388,8 @@ class SWEBenchHarness:
         *,
         use_opentrace: bool = True,
         limit: int | None = None,
+        on_progress: Callable[[int, int, SWEBenchResult], None] | None = None,
+        workers: int = 1,
     ) -> SWEBenchReport:
         """Run the full SWE-bench evaluation.
 
@@ -365,28 +403,64 @@ class SWEBenchHarness:
             Whether to provide OpenTrace tools.
         limit : int or None
             Max instances to run (for quick testing).
+        on_progress : callable or None
+            Called after each instance with ``(completed, total, result)``.
+        workers : int
+            Number of instances to run in parallel (default 1 = sequential).
         """
         instances = self.load_instances(instances_path)
         if limit:
             instances = instances[:limit]
 
         t0 = time.monotonic()
-        results = []
-        for i, instance in enumerate(instances):
-            logger.info(
-                "[%d/%d] Running %s (opentrace=%s)",
-                i + 1,
-                len(instances),
-                instance.instance_id,
-                use_opentrace,
-            )
-            result = self.run_instance(instance, agent_fn, use_opentrace=use_opentrace)
-            results.append(result)
+        total = len(instances)
+
+        if workers <= 1:
+            # Sequential
+            results = []
+            for i, instance in enumerate(instances):
+                logger.info(
+                    "[%d/%d] Running %s (opentrace=%s)",
+                    i + 1,
+                    total,
+                    instance.instance_id,
+                    use_opentrace,
+                )
+                result = self.run_instance(instance, agent_fn, use_opentrace=use_opentrace)
+                results.append(result)
+                if on_progress is not None:
+                    on_progress(i + 1, total, result)
+        else:
+            # Parallel with thread pool
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            results = [None] * total  # type: ignore[list-item]
+            completed = 0
+
+            def _run(idx: int, inst: Any) -> tuple[int, SWEBenchResult]:
+                logger.info(
+                    "[worker] Running %s (opentrace=%s)",
+                    inst.instance_id,
+                    use_opentrace,
+                )
+                return idx, self.run_instance(inst, agent_fn, use_opentrace=use_opentrace)
+
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_run, i, inst): i
+                    for i, inst in enumerate(instances)
+                }
+                for future in as_completed(futures):
+                    idx, result = future.result()
+                    results[idx] = result
+                    completed += 1
+                    if on_progress is not None:
+                        on_progress(completed, total, result)
 
         return SWEBenchReport(
-            total=len(results),
+            total=total,
             use_opentrace=use_opentrace,
-            results=results,
+            results=results,  # type: ignore[arg-type]
             duration_s=time.monotonic() - t0,
         )
 
@@ -429,6 +503,29 @@ def compare_reports(with_ot: SWEBenchReport, without_ot: SWEBenchReport) -> str:
 
         avg_index = sum(r.index_duration_s for r in with_ot.results) / len(with_ot.results)
         lines.append(f"{'Avg index time (s)':<25} {avg_index:>10.1f} {'N/A':>12}")
+
+        # Turns
+        avg_turns_with = sum(r.num_turns for r in with_ot.results) / len(with_ot.results)
+        avg_turns_without = sum(r.num_turns for r in without_ot.results) / len(without_ot.results)
+        delta_turns = avg_turns_with - avg_turns_without
+        lines.append(
+            f"{'Avg turns':<25} {avg_turns_with:>10.1f} {avg_turns_without:>12.1f}"
+            f" {delta_turns:>+8.1f}"
+        )
+
+        # Cost
+        total_cost_with = sum(r.cost_usd for r in with_ot.results)
+        total_cost_without = sum(r.cost_usd for r in without_ot.results)
+        lines.append(
+            f"{'Total cost ($)':<25} {total_cost_with:>10.4f} {total_cost_without:>12.4f}"
+            f" {total_cost_with - total_cost_without:>+8.4f}"
+        )
+        avg_cost_with = total_cost_with / len(with_ot.results)
+        avg_cost_without = total_cost_without / len(without_ot.results)
+        lines.append(
+            f"{'Avg cost/instance ($)':<25} {avg_cost_with:>10.4f} {avg_cost_without:>12.4f}"
+            f" {avg_cost_with - avg_cost_without:>+8.4f}"
+        )
 
     # Per-instance comparison
     with_map = {r.instance_id: r for r in with_ot.results}

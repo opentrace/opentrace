@@ -33,6 +33,9 @@ summarization = [
     "optimum[onnxruntime]>=1.17",
     "transformers>=4.38",
 ]
+swe-bench = [
+    "anthropic>=0.40",
+]
 
 [project.urls]
 Homepage = "https://github.com/opentrace/opentrace"
@@ -42,6 +45,7 @@ Issues = "https://github.com/opentrace/opentrace/issues"
 [project.scripts]
 opentrace = "opentrace_agent.cli.main:app"
 opentraceai = "opentrace_agent.cli.main:app"
+opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
 dev = ["pytest", "pytest-anyio", "ruff"]

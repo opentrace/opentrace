@@ -17,4 +17,11 @@
 from opentrace_agent.benchmarks.graph_accuracy import GraphAccuracyBenchmark, TaskResult
 from opentrace_agent.benchmarks.swe_bench import SWEBenchHarness
 
-__all__ = ["GraphAccuracyBenchmark", "SWEBenchHarness", "TaskResult"]
+__all__ = ["GraphAccuracyBenchmark", "SWEBenchHarness", "TaskResult", "create_agent_fn"]
+
+
+def create_agent_fn(**kwargs):  # noqa: ANN001, ANN003
+    """Lazy import to avoid requiring anthropic at import time."""
+    from opentrace_agent.benchmarks.agent import create_agent_fn as _create
+
+    return _create(**kwargs)

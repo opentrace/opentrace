@@ -1,0 +1,283 @@
+{
+  "suite_name": "Level 3 — Polyglot",
+  "description": "Traversal, Go receivers, dependencies, all call resolution strategies, Python + Go.",
+  "fixture": "tests/fixtures/level3",
+  "repo_id": "test/level3",
+  "tasks": [
+    {
+      "id": "stats_exist",
+      "category": "structure",
+      "description": "Graph should contain nodes after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "has_key", "value": "total_nodes"},
+        {"type": "key_gte", "key": "total_nodes", "value": 1}
+      ]
+    },
+    {
+      "id": "stats_has_edges",
+      "category": "structure",
+      "description": "Graph should contain relationships after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "key_gte", "key": "total_edges", "value": 1}
+      ]
+    },
+    {
+      "id": "has_repository_node",
+      "category": "structure",
+      "description": "Should have a Repository node",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Repository"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "find_go_files",
+      "category": "structure",
+      "description": "Should index all Go files",
+      "tool": "search_graph",
+      "tool_args": {"query": ".go", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 3},
+        {"type": "result_contains_name", "value": "main.go"},
+        {"type": "result_contains_name", "value": "handler.go"},
+        {"type": "result_contains_name", "value": "store.go"}
+      ]
+    },
+    {
+      "id": "find_python_files",
+      "category": "structure",
+      "description": "Should index all Python files",
+      "tool": "search_graph",
+      "tool_args": {"query": ".py", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 2},
+        {"type": "result_contains_name", "value": "models.py"},
+        {"type": "result_contains_name", "value": "client.py"}
+      ]
+    },
+    {
+      "id": "find_handler_struct",
+      "category": "symbol_discovery",
+      "description": "Search should find the Handler struct",
+      "tool": "search_graph",
+      "tool_args": {"query": "Handler", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "Handler"}
+      ]
+    },
+    {
+      "id": "find_store_struct",
+      "category": "symbol_discovery",
+      "description": "Search should find the Store struct",
+      "tool": "search_graph",
+      "tool_args": {"query": "Store", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "Store"}
+      ]
+    },
+    {
+      "id": "find_base_model",
+      "category": "symbol_discovery",
+      "description": "Search should find the BaseModel class",
+      "tool": "search_graph",
+      "tool_args": {"query": "BaseModel", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "BaseModel"}
+      ]
+    },
+    {
+      "id": "find_user_model",
+      "category": "symbol_discovery",
+      "description": "Search should find the UserModel class",
+      "tool": "search_graph",
+      "tool_args": {"query": "UserModel", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "UserModel"}
+      ]
+    },
+    {
+      "id": "find_new_handler",
+      "category": "symbol_discovery",
+      "description": "Search should find the NewHandler function",
+      "tool": "search_graph",
+      "tool_args": {"query": "NewHandler", "nodeTypes": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "NewHandler"}
+      ]
+    },
+    {
+      "id": "find_new_store",
+      "category": "symbol_discovery",
+      "description": "Search should find the NewStore function",
+      "tool": "search_graph",
+      "tool_args": {"query": "NewStore", "nodeTypes": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "NewStore"}
+      ]
+    },
+    {
+      "id": "list_all_functions",
+      "category": "structure",
+      "description": "Should have functions from both languages",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 6}
+      ]
+    },
+    {
+      "id": "has_directories",
+      "category": "structure",
+      "description": "Should have Directory nodes for handler/ and store/",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Directory"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "go_mod_depends_on_mux",
+      "category": "dependencies",
+      "description": "Go module should depend on gorilla/mux",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level3/go.mod"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "github.com/gorilla/mux"}
+      ]
+    },
+    {
+      "id": "handler_start_neighbors",
+      "category": "call_graph",
+      "description": "Handler.Start should have neighbors (calls store methods)",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level3/handler/handler.go::Handler.Start"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "All"}
+      ]
+    },
+    {
+      "id": "new_handler_calls_new_store",
+      "category": "call_graph",
+      "description": "NewHandler calls store.NewStore (import-based attribute call)",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level3/handler/handler.go::NewHandler"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "NewStore"}
+      ]
+    },
+    {
+      "id": "new_handler_calls_init",
+      "category": "call_graph",
+      "description": "NewHandler calls s.Init() (Go receiver call)",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level3/handler/handler.go::NewHandler"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "Init"}
+      ]
+    },
+    {
+      "id": "batch_create_calls_create_and_validate",
+      "category": "call_graph",
+      "description": "batch_create should call create_and_validate (intra-file bare call)",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level3/client.py::batch_create"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "create_and_validate"}
+      ]
+    },
+    {
+      "id": "traverse_from_handler_depth2",
+      "category": "traversal",
+      "description": "Traversing from Handler struct at depth 2 should reach store-related nodes",
+      "tool": "traverse_graph",
+      "tool_args": {"nodeId": "test/level3/handler/handler.go::Handler", "depth": 2, "direction": "outgoing"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "traverse_from_main_go_depth3",
+      "category": "traversal",
+      "description": "Traversing from main.go at depth 3 should reach multiple nodes",
+      "tool": "traverse_graph",
+      "tool_args": {"nodeId": "test/level3/main.go", "depth": 3, "direction": "outgoing"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "traverse_from_store_depth5",
+      "category": "traversal",
+      "description": "Traversing from Store struct at depth 5 should reach nodes",
+      "tool": "traverse_graph",
+      "tool_args": {"nodeId": "test/level3/store/store.go::Store", "depth": 5, "direction": "outgoing"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "traverse_incoming_store",
+      "category": "traversal",
+      "description": "Incoming traversal to Store should find callers",
+      "tool": "traverse_graph",
+      "tool_args": {"nodeId": "test/level3/store/store.go::Store", "depth": 3, "direction": "incoming"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "traverse_contains_relationships",
+      "category": "traversal",
+      "description": "Traversing from handler.go with CONTAINS filter should find defined symbols",
+      "tool": "traverse_graph",
+      "tool_args": {"nodeId": "test/level3/handler/handler.go", "depth": 2, "direction": "outgoing", "relationship": "CONTAINS"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "search_inheritance",
+      "category": "symbol_discovery",
+      "description": "Search for 'Model' should find both BaseModel and UserModel",
+      "tool": "search_graph",
+      "tool_args": {"query": "Model", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 2},
+        {"type": "result_contains_name", "value": "BaseModel"},
+        {"type": "result_contains_name", "value": "UserModel"}
+      ]
+    },
+    {
+      "id": "search_type_filter",
+      "category": "search_quality",
+      "description": "File type filter should restrict results",
+      "tool": "search_graph",
+      "tool_args": {"query": "handler", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "all_have_type", "value": "File"}
+      ]
+    },
+    {
+      "id": "search_no_results",
+      "category": "search_quality",
+      "description": "Searching for nonsense should return empty",
+      "tool": "search_graph",
+      "tool_args": {"query": "zzz_nonexistent_zzz"},
+      "assertions": [
+        {"type": "exact_count", "value": 0}
+      ]
+    }
+  ]
+}
