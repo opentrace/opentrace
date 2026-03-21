@@ -70,7 +70,8 @@ async function fetchViaZipball(
     provider: 'github',
     mode: 'resolve',
   });
-  const base = import.meta.env.VITE_ARCHIVE_URL || 'https://oss.opentrace.ai/fn/archive';
+  const base =
+    import.meta.env.VITE_ARCHIVE_URL || 'https://oss.opentrace.ai/fn/archive';
   const resolveUrl = `${base}?${params}`;
   const fetchHeaders: Record<string, string> = {};
   if (token) {
