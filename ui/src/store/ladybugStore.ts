@@ -649,27 +649,20 @@ export class LadybugGraphStore implements GraphStore {
   ): Promise<ImportBatchResponse> {
     await this.ready;
 
-    const log = (msg: string) => {
-      console.log(`[importDatabase] ${msg}`);
-      onProgress?.(msg);
-    };
-
     // Close current database, write the uploaded file to the WASM FS,
-    // and open it directly. The agent now uses the same typed-table schema
+    // and open it directly. The agent uses the same typed-table schema
     // as the browser, so no migration is needed.
 
-    log('Closing current database');
     this.conn.close();
     this.db.close();
 
-    log(`Writing ${(data.byteLength / 1024 / 1024).toFixed(1)} MB to WASM FS`);
+    onProgress?.('Writing database to virtual filesystem');
     this.lbug.FS.writeFile(DB_PATH, data);
 
     try {
-      log('Opening imported database...');
+      onProgress?.('Opening database');
       this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
       this.conn = await this.lbug.Connection(this.db);
-      log('Database open');
 
       // Reset all caches
       this.bm25Index = new BM25Index();
@@ -684,7 +677,7 @@ export class LadybugGraphStore implements GraphStore {
       this.totalRelsBuffered = 0;
 
       // Rebuild nodeTypeMap and BM25 index from the typed tables
-      log('Rebuilding search indexes...');
+      onProgress?.('Rebuilding search indexes');
       let totalNodes = 0;
       let totalRels = 0;
 
@@ -712,8 +705,6 @@ export class LadybugGraphStore implements GraphStore {
           totalRels = Number(row.toJSON().cnt) || 0;
         }
       }
-
-      log(`Done: ${totalNodes} nodes, ${totalRels} relationships imported`);
 
       return {
         nodes_created: totalNodes,

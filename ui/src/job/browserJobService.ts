@@ -387,8 +387,6 @@ export class BrowserJobService implements JobService {
     let cancelled = false;
 
     const run = async () => {
-      console.log('[import-file] Starting import job for:', name);
-
       // 1. Read the binary database file
       channel.push({
         ...emptyEvent(),
@@ -397,12 +395,8 @@ export class BrowserJobService implements JobService {
         message: `Reading ${name}`,
       });
 
-      console.log('[import-file] Reading file as ArrayBuffer...');
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
-      console.log(
-        `[import-file] File read: ${data.byteLength} bytes (${(data.byteLength / 1024 / 1024).toFixed(1)} MB)`,
-      );
 
       channel.push({
         ...emptyEvent(),
@@ -418,7 +412,6 @@ export class BrowserJobService implements JobService {
         throw new Error('Store does not support database file import');
       }
 
-      console.log('[import-file] Calling store.importDatabase()...');
       const result = await this.store.importDatabase(data, (msg) => {
         channel.push({
           ...emptyEvent(),
@@ -427,7 +420,6 @@ export class BrowserJobService implements JobService {
           message: msg,
         });
       });
-      console.log('[import-file] importDatabase() returned:', result);
 
       channel.push({
         ...emptyEvent(),
