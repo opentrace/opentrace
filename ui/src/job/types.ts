@@ -34,7 +34,10 @@ import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 
 // --- Job messages (what to do) ---
 
-export type JobMessage = IndexRepoMessage | IndexDirectoryMessage;
+export type JobMessage =
+  | IndexRepoMessage
+  | IndexDirectoryMessage
+  | ImportFileMessage;
 
 export interface IndexRepoMessage {
   type: 'index-repo';
@@ -46,6 +49,12 @@ export interface IndexRepoMessage {
 export interface IndexDirectoryMessage {
   type: 'index-directory';
   files: FileList;
+  name: string;
+}
+
+export interface ImportFileMessage {
+  type: 'import-file';
+  file: File;
   name: string;
 }
 

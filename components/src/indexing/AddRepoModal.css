@@ -363,6 +363,88 @@
   background: color-mix(in oklch, #f87171 12%, transparent);
 }
 
+/* ── Import Picker ─────────────────────────── */
+.import-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.import-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 18px;
+  border: 2px dashed color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: 14px;
+  background: color-mix(in oklch, var(--foreground) 3%, transparent);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.import-dropzone:hover {
+  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+  background: color-mix(in oklch, var(--primary) 5%, transparent);
+}
+
+.import-dropzone--active {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.import-dropzone--has-file {
+  flex-direction: row;
+  padding: 14px 18px;
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+  background: color-mix(in oklch, var(--primary) 5%, transparent);
+}
+
+.import-dropzone-icon {
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.import-dropzone--has-file .import-dropzone-icon {
+  color: var(--primary);
+  opacity: 0.8;
+}
+
+.import-dropzone-label {
+  font-size: 0.82rem;
+  color: var(--muted-foreground);
+}
+
+.import-dropzone-filename {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--foreground);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-dropzone-size {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.form-info-code {
+  font-family: monospace;
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  border-radius: 4px;
+}
+
 /* ── Directory Picker ───────────────────────── */
 .directory-picker {
   position: relative;

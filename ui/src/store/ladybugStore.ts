@@ -180,10 +180,17 @@ function unionAllTextSearch(escapedLower: string): string {
   ).join(' UNION ALL ');
 }
 
+// ---- Database path ----
+
+/** File-backed database on the WASM virtual filesystem.
+ *  Using a file (not :memory:) enables import/export via FS.readFile/writeFile. */
+const DB_PATH = '/opentrace.db';
+
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
   private lbug!: LbugModule;
+  private db!: import('@lbug/lbug-wasm').WebDatabase;
   private conn!: WebConnection;
   private ready: Promise<void>;
   private embedder: Embedder | null = null;
@@ -224,8 +231,8 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initModule(): Promise<void> {
     this.lbug = await lbugInit();
-    const db = await this.lbug.Database(':memory:', 512 * 1024 * 1024);
-    this.conn = await this.lbug.Connection(db);
+    this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+    this.conn = await this.lbug.Connection(this.db);
     await this.initSchema();
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
@@ -585,6 +592,94 @@ export class LadybugGraphStore implements GraphStore {
     this.nodeTypeMap.clear();
     this.flushedPackageIds.clear();
     this.sourceCache.clear();
+  }
+
+  async importDatabase(
+    data: Uint8Array,
+    onProgress?: (msg: string) => void,
+  ): Promise<ImportBatchResponse> {
+    await this.ready;
+
+    // Close current database, write the uploaded file to the WASM FS,
+    // and open it directly. The agent uses the same typed-table schema
+    // as the browser, so no migration is needed.
+
+    this.conn.close();
+    this.db.close();
+
+    onProgress?.('Writing database to virtual filesystem');
+    this.lbug.FS.writeFile(DB_PATH, data);
+
+    try {
+      onProgress?.('Opening database');
+      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+      this.conn = await this.lbug.Connection(this.db);
+
+      // Reset all caches
+      this.bm25Index = new BM25Index();
+      this.vectorIndex = null;
+      this.nodePropsCache.clear();
+      this.nodeTypeMap.clear();
+      this.flushedPackageIds.clear();
+      this.sourceCache.clear();
+      this.pendingNodes = [];
+      this.pendingRels = [];
+      this.totalNodesBuffered = 0;
+      this.totalRelsBuffered = 0;
+
+      // Rebuild nodeTypeMap and BM25 index from the typed tables
+      onProgress?.('Rebuilding search indexes');
+      let totalNodes = 0;
+      let totalRels = 0;
+
+      for (const type of NODE_TYPES) {
+        const result = await this.conn.execute(
+          `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
+        );
+        if (!result) continue;
+        for (const row of result.table) {
+          const r = row.toJSON();
+          const id = String(r.id);
+          const name = String(r.name ?? '');
+          this.nodeTypeMap.set(id, type);
+          this.bm25Index.addDocument(id, `${name} ${type}`);
+          totalNodes++;
+        }
+      }
+
+      // Count relationships
+      const relResult = await this.conn.execute(
+        'MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt',
+      );
+      if (relResult) {
+        for (const row of relResult.table) {
+          totalRels = Number(row.toJSON().cnt) || 0;
+        }
+      }
+
+      return {
+        nodes_created: totalNodes,
+        relationships_created: totalRels,
+      };
+    } catch (err) {
+      console.error('[importDatabase] Import failed, reinitializing:', err);
+      try {
+        this.conn.close();
+        this.db.close();
+      } catch {
+        /* ignore */
+      }
+      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+      this.conn = await this.lbug.Connection(this.db);
+      await this.initSchema();
+      throw err;
+    }
+  }
+
+  async exportDatabase(): Promise<Uint8Array> {
+    await this.ready;
+    await this.flush();
+    return this.lbug.FS.readFile(DB_PATH);
   }
 
   /**

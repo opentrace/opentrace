@@ -87,6 +87,13 @@ export interface GraphStore {
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   /** Flush any buffered writes to the backing store. No-op if unbuffered. */
   flush(): Promise<void>;
+  /** Import a LadybugDB binary database file into the store. */
+  importDatabase?(
+    data: Uint8Array,
+    onProgress?: (msg: string) => void,
+  ): Promise<ImportBatchResponse>;
+  /** Export the database as a binary file. */
+  exportDatabase?(): Promise<Uint8Array>;
   storeSource(files: SourceFile[]): void;
   fetchSource(
     nodeId: string,
