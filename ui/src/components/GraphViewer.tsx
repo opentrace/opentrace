@@ -1220,7 +1220,10 @@ const GraphViewer = memo(
                     onClick={async () => {
                       if (!store.exportDatabase) return;
                       const data = await store.exportDatabase();
-                      const blob = new Blob([data], {
+                      // Copy to a standard ArrayBuffer — the WASM FS may
+                      // return a Uint8Array backed by SharedArrayBuffer.
+                      const buf = new Uint8Array(data).buffer as ArrayBuffer;
+                      const blob = new Blob([buf], {
                         type: 'application/octet-stream',
                       });
                       const url = URL.createObjectURL(blob);
