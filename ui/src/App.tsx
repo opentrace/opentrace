@@ -22,6 +22,8 @@ import type { GraphViewerHandle } from './components/GraphViewer';
 import ChatPanel from './components/ChatPanel';
 import SettingsDrawer from './components/SettingsDrawer';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
+import { loadAnimationSettings } from './config/animation';
+import type { AnimationSettings } from '@opentrace/components';
 import './App.css';
 
 const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
@@ -45,6 +47,9 @@ function App() {
   const [showChat, setShowChat] = useState(true);
   const [chatWidth, setChatWidth] = useState(480);
   const [showSettings, setShowSettings] = useState(false);
+  const [animationSettings, setAnimationSettings] = useState<AnimationSettings>(
+    loadAnimationSettings,
+  );
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   const [jobExpanded, setJobExpanded] = useState(false);
@@ -119,6 +124,7 @@ function App() {
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
           onGraphDataChange={setChatGraphData}
+          animationSettings={animationSettings}
         />
 
         {showChat && (
@@ -152,6 +158,7 @@ function App() {
             graphViewerRef.current?.reload();
           }}
           onLimitsChanged={() => graphViewerRef.current?.reload()}
+          onAnimationSettingsChanged={setAnimationSettings}
         />
       )}
 

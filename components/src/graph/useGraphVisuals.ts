@@ -126,6 +126,12 @@ export function useGraphVisuals(
     // but haven't been indexed by sigma's async process() yet.
     graph.updateEachEdgeAttributes(
       (_id, attrs, source, target) => {
+        // Skip virtual community edges — they must stay hidden
+        if (attrs._virtual) {
+          attrs.hidden = true;
+          return attrs;
+        }
+
         const linkKey = `${source}-${target}`;
         const isHighlighted = highlightLinks.has(linkKey);
         const baseColor = getLinkColor(attrs.label as string);

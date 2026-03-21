@@ -33,28 +33,28 @@
 
 /* ── Graph node & edge colors (overridable per theme) ────────────────────── */
 :root {
-  /* Node type colors — vivid, high-saturation */
-  --graph-node-repository: #4ade80;
-  --graph-node-class: #60a5fa;
-  --graph-node-function: #c084fc;
-  --graph-node-file: #a3e635;
-  --graph-node-directory: #22d3ee;
-  --graph-node-service: #818cf8;
-  --graph-node-module: #fbbf24;
-  --graph-node-package: #2dd4bf;
+  /* Node type colors — vibrant, 300-level for high luminance on dark bg */
+  --graph-node-repository: #86efac;
+  --graph-node-class: #7dd3fc;
+  --graph-node-function: #d8b4fe;
+  --graph-node-file: #bef264;
+  --graph-node-directory: #67e8f9;
+  --graph-node-service: #a5b4fc;
+  --graph-node-module: #fcd34d;
+  --graph-node-package: #5eead4;
   /* Node palette (DJB2 hash fallback for unknown types) */
-  --graph-node-palette-0: #818cf8;
-  --graph-node-palette-1: #fbbf24;
-  --graph-node-palette-2: #4ade80;
-  --graph-node-palette-3: #c084fc;
-  --graph-node-palette-4: #fb7185;
-  --graph-node-palette-5: #60a5fa;
-  --graph-node-palette-6: #f472b6;
-  --graph-node-palette-7: #2dd4bf;
-  --graph-node-palette-8: #fb923c;
-  --graph-node-palette-9: #a3e635;
-  --graph-node-palette-10: #e879f9;
-  --graph-node-palette-11: #22d3ee;
+  --graph-node-palette-0: #a5b4fc;
+  --graph-node-palette-1: #fcd34d;
+  --graph-node-palette-2: #86efac;
+  --graph-node-palette-3: #d8b4fe;
+  --graph-node-palette-4: #fda4af;
+  --graph-node-palette-5: #7dd3fc;
+  --graph-node-palette-6: #f9a8d4;
+  --graph-node-palette-7: #5eead4;
+  --graph-node-palette-8: #fdba74;
+  --graph-node-palette-9: #bef264;
+  --graph-node-palette-10: #f0abfc;
+  --graph-node-palette-11: #67e8f9;
   /* Edge type colors — lighter/brighter for visibility on dark backgrounds */
   --graph-edge-calls: #93c5fd;
   --graph-edge-reads: #fde68a;
@@ -87,15 +87,15 @@
 :root,
 [data-theme='clean'] {
   --radius: 0.5rem;
-  /* Graph colors — vivid cool tones to match indigo UI */
-  --graph-node-repository: #4ade80;
-  --graph-node-class: #60a5fa;
-  --graph-node-function: #c084fc;
-  --graph-node-file: #a3e635;
-  --graph-node-directory: #22d3ee;
-  --graph-node-service: #818cf8;
-  --graph-node-module: #fbbf24;
-  --graph-node-package: #2dd4bf;
+  /* Graph colors — vibrant cool tones to match indigo UI */
+  --graph-node-repository: #86efac;
+  --graph-node-class: #7dd3fc;
+  --graph-node-function: #d8b4fe;
+  --graph-node-file: #bef264;
+  --graph-node-directory: #67e8f9;
+  --graph-node-service: #a5b4fc;
+  --graph-node-module: #fcd34d;
+  --graph-node-package: #5eead4;
   --background: oklch(0.2077 0.0398 265.7549);
   --foreground: oklch(0.9288 0.0126 255.5078);
   --card: oklch(0.2795 0.0368 260.031);
@@ -130,17 +130,17 @@
 /* ── Default (Neutral) — monochrome with muted accents ───────────────────── */
 [data-theme='default'] {
   --radius: 0.625rem;
-  --graph-node-repository: #d4d4d8;
+  --graph-node-repository: #99f6e4;
   --graph-node-class: #7dd3fc;
-  --graph-node-function: #e2e8f0;
-  --graph-node-file: #cbd5e1;
+  --graph-node-function: #c4b5fd;
+  --graph-node-file: #bef264;
   --graph-node-directory: #a5f3fc;
-  --graph-node-service: #f0f0f0;
-  --graph-node-module: #d6d3d1;
+  --graph-node-service: #a5b4fc;
+  --graph-node-module: #fcd34d;
   --graph-node-package: #bae6fd;
-  --graph-node-palette-0: #cbd5e1;
-  --graph-node-palette-1: #d6d3d1;
-  --graph-node-palette-2: #7dd3fc;
+  --graph-node-palette-0: #a5b4fc;
+  --graph-node-palette-1: #fcd34d;
+  --graph-node-palette-2: #99f6e4;
   --graph-node-palette-3: #d8b4fe;
   --graph-node-palette-4: #fca5a5;
   --graph-node-palette-5: #bae6fd;
@@ -190,26 +190,26 @@
 /* ── Amethyst Haze — purple/violet palette ───────────────────────────────── */
 [data-theme='amethyst-haze'] {
   --radius: 0.5rem;
-  --graph-node-repository: #c084fc;
+  --graph-node-repository: #d8b4fe;
   --graph-node-class: #67e8f9;
   --graph-node-function: #f0abfc;
-  --graph-node-file: #d8b4fe;
+  --graph-node-file: #e9d5ff;
   --graph-node-directory: #a5f3fc;
-  --graph-node-service: #a5b4fc;
-  --graph-node-module: #e879f9;
+  --graph-node-service: #c4b5fd;
+  --graph-node-module: #f0abfc;
   --graph-node-package: #7dd3fc;
-  --graph-node-palette-0: #a5b4fc;
+  --graph-node-palette-0: #c4b5fd;
   --graph-node-palette-1: #f0abfc;
-  --graph-node-palette-2: #c084fc;
-  --graph-node-palette-3: #d8b4fe;
-  --graph-node-palette-4: #fb7185;
+  --graph-node-palette-2: #d8b4fe;
+  --graph-node-palette-3: #e9d5ff;
+  --graph-node-palette-4: #fda4af;
   --graph-node-palette-5: #67e8f9;
-  --graph-node-palette-6: #e879f9;
+  --graph-node-palette-6: #f0abfc;
   --graph-node-palette-7: #a5f3fc;
   --graph-node-palette-8: #fcd34d;
   --graph-node-palette-9: #bef264;
-  --graph-node-palette-10: #d946ef;
-  --graph-node-palette-11: #38bdf8;
+  --graph-node-palette-10: #e879f9;
+  --graph-node-palette-11: #7dd3fc;
   --graph-edge-calls: #c4b5fd;
   --graph-edge-reads: #fde68a;
   --graph-edge-writes: #fdba74;
@@ -250,25 +250,25 @@
 /* ── Sunset Horizon — warm orange/rose/amber ─────────────────────────────── */
 [data-theme='sunset-horizon'] {
   --radius: 0.625rem;
-  --graph-node-repository: #fb923c;
-  --graph-node-class: #fb7185;
-  --graph-node-function: #fcd34d;
-  --graph-node-file: #fdba74;
-  --graph-node-directory: #fda4af;
-  --graph-node-service: #f87171;
-  --graph-node-module: #fde047;
-  --graph-node-package: #f472b6;
-  --graph-node-palette-0: #f87171;
-  --graph-node-palette-1: #fcd34d;
-  --graph-node-palette-2: #fb923c;
-  --graph-node-palette-3: #fb7185;
+  --graph-node-repository: #fdba74;
+  --graph-node-class: #fda4af;
+  --graph-node-function: #fde047;
+  --graph-node-file: #fed7aa;
+  --graph-node-directory: #fecdd3;
+  --graph-node-service: #fca5a5;
+  --graph-node-module: #fef08a;
+  --graph-node-package: #f9a8d4;
+  --graph-node-palette-0: #fca5a5;
+  --graph-node-palette-1: #fde047;
+  --graph-node-palette-2: #fdba74;
+  --graph-node-palette-3: #fda4af;
   --graph-node-palette-4: #f0abfc;
-  --graph-node-palette-5: #fdba74;
-  --graph-node-palette-6: #f472b6;
-  --graph-node-palette-7: #fde047;
-  --graph-node-palette-8: #f97316;
-  --graph-node-palette-9: #fda4af;
-  --graph-node-palette-10: #e879f9;
+  --graph-node-palette-5: #fed7aa;
+  --graph-node-palette-6: #f9a8d4;
+  --graph-node-palette-7: #fef08a;
+  --graph-node-palette-8: #fb923c;
+  --graph-node-palette-9: #fecdd3;
+  --graph-node-palette-10: #f0abfc;
   --graph-node-palette-11: #67e8f9;
   --graph-edge-calls: #fecaca;
   --graph-edge-reads: #fef9c3;
@@ -310,26 +310,26 @@
 /* ── Tangerine — bold orange/blue complementary ──────────────────────────── */
 [data-theme='tangerine'] {
   --radius: 0.75rem;
-  --graph-node-repository: #fb923c;
-  --graph-node-class: #38bdf8;
-  --graph-node-function: #fcd34d;
-  --graph-node-file: #fdba74;
+  --graph-node-repository: #fdba74;
+  --graph-node-class: #7dd3fc;
+  --graph-node-function: #fde047;
+  --graph-node-file: #fed7aa;
   --graph-node-directory: #67e8f9;
-  --graph-node-service: #f97316;
-  --graph-node-module: #fde047;
-  --graph-node-package: #7dd3fc;
-  --graph-node-palette-0: #f97316;
-  --graph-node-palette-1: #38bdf8;
-  --graph-node-palette-2: #fcd34d;
+  --graph-node-service: #fb923c;
+  --graph-node-module: #fef08a;
+  --graph-node-package: #a5f3fc;
+  --graph-node-palette-0: #fb923c;
+  --graph-node-palette-1: #7dd3fc;
+  --graph-node-palette-2: #fde047;
   --graph-node-palette-3: #67e8f9;
-  --graph-node-palette-4: #fb7185;
-  --graph-node-palette-5: #fdba74;
-  --graph-node-palette-6: #f472b6;
-  --graph-node-palette-7: #7dd3fc;
-  --graph-node-palette-8: #fde047;
-  --graph-node-palette-9: #a3e635;
-  --graph-node-palette-10: #e879f9;
-  --graph-node-palette-11: #22d3ee;
+  --graph-node-palette-4: #fda4af;
+  --graph-node-palette-5: #fed7aa;
+  --graph-node-palette-6: #f9a8d4;
+  --graph-node-palette-7: #a5f3fc;
+  --graph-node-palette-8: #fef08a;
+  --graph-node-palette-9: #bef264;
+  --graph-node-palette-10: #f0abfc;
+  --graph-node-palette-11: #67e8f9;
   --graph-edge-calls: #bae6fd;
   --graph-edge-reads: #fef9c3;
   --graph-edge-writes: #fed7aa;
@@ -370,26 +370,26 @@
 /* ── Emerald — green/teal/cyan nature palette ────────────────────────────── */
 [data-theme='emerald'] {
   --radius: 0.75rem;
-  --graph-node-repository: #4ade80;
-  --graph-node-class: #22d3ee;
-  --graph-node-function: #bef264;
-  --graph-node-file: #86efac;
-  --graph-node-directory: #5eead4;
-  --graph-node-service: #34d399;
-  --graph-node-module: #a3e635;
-  --graph-node-package: #67e8f9;
-  --graph-node-palette-0: #34d399;
-  --graph-node-palette-1: #bef264;
-  --graph-node-palette-2: #4ade80;
-  --graph-node-palette-3: #22d3ee;
-  --graph-node-palette-4: #86efac;
-  --graph-node-palette-5: #5eead4;
-  --graph-node-palette-6: #67e8f9;
-  --graph-node-palette-7: #a3e635;
+  --graph-node-repository: #86efac;
+  --graph-node-class: #67e8f9;
+  --graph-node-function: #d9f99d;
+  --graph-node-file: #bbf7d0;
+  --graph-node-directory: #99f6e4;
+  --graph-node-service: #6ee7b7;
+  --graph-node-module: #bef264;
+  --graph-node-package: #a5f3fc;
+  --graph-node-palette-0: #6ee7b7;
+  --graph-node-palette-1: #d9f99d;
+  --graph-node-palette-2: #86efac;
+  --graph-node-palette-3: #67e8f9;
+  --graph-node-palette-4: #bbf7d0;
+  --graph-node-palette-5: #99f6e4;
+  --graph-node-palette-6: #a5f3fc;
+  --graph-node-palette-7: #bef264;
   --graph-node-palette-8: #fcd34d;
   --graph-node-palette-9: #d9f99d;
-  --graph-node-palette-10: #c084fc;
-  --graph-node-palette-11: #2dd4bf;
+  --graph-node-palette-10: #d8b4fe;
+  --graph-node-palette-11: #5eead4;
   --graph-edge-calls: #a7f3d0;
   --graph-edge-reads: #fef9c3;
   --graph-edge-writes: #fed7aa;
@@ -431,26 +431,26 @@
 /* ── Midnight Tokyo — neon-on-dark cyberpunk ─────────────────────────────── */
 [data-theme='midnight-tokyo'] {
   --radius: 0.5rem;
-  --graph-node-repository: #38bdf8;
-  --graph-node-class: #f472b6;
-  --graph-node-function: #c084fc;
-  --graph-node-file: #67e8f9;
-  --graph-node-directory: #a5f3fc;
-  --graph-node-service: #a5b4fc;
-  --graph-node-module: #e879f9;
-  --graph-node-package: #5eead4;
-  --graph-node-palette-0: #a5b4fc;
-  --graph-node-palette-1: #f472b6;
-  --graph-node-palette-2: #38bdf8;
-  --graph-node-palette-3: #c084fc;
-  --graph-node-palette-4: #fb7185;
-  --graph-node-palette-5: #67e8f9;
-  --graph-node-palette-6: #e879f9;
-  --graph-node-palette-7: #5eead4;
-  --graph-node-palette-8: #fcd34d;
+  --graph-node-repository: #7dd3fc;
+  --graph-node-class: #f9a8d4;
+  --graph-node-function: #d8b4fe;
+  --graph-node-file: #a5f3fc;
+  --graph-node-directory: #ccfbf1;
+  --graph-node-service: #c4b5fd;
+  --graph-node-module: #f0abfc;
+  --graph-node-package: #99f6e4;
+  --graph-node-palette-0: #c4b5fd;
+  --graph-node-palette-1: #f9a8d4;
+  --graph-node-palette-2: #7dd3fc;
+  --graph-node-palette-3: #d8b4fe;
+  --graph-node-palette-4: #fda4af;
+  --graph-node-palette-5: #a5f3fc;
+  --graph-node-palette-6: #f0abfc;
+  --graph-node-palette-7: #99f6e4;
+  --graph-node-palette-8: #fde047;
   --graph-node-palette-9: #bef264;
-  --graph-node-palette-10: #d946ef;
-  --graph-node-palette-11: #22d3ee;
+  --graph-node-palette-10: #e879f9;
+  --graph-node-palette-11: #67e8f9;
   --graph-edge-calls: #a5f3fc;
   --graph-edge-reads: #fef9c3;
   --graph-edge-writes: #fdba74;

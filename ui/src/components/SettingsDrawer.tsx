@@ -21,6 +21,11 @@ import {
   loadSummarizerLlmConfig,
   saveSummarizerLlmConfig,
 } from '../config/summarization';
+import {
+  loadAnimationSettings,
+  saveAnimationSetting,
+  type AnimationSettings,
+} from '../config/animation';
 import type { SummarizationStrategyType } from '@opentrace/components/pipeline';
 import { useStore } from '../store';
 import './SettingsDrawer.css';
@@ -41,12 +46,14 @@ interface SettingsDrawerProps {
   onClose: () => void;
   onGraphCleared: () => void;
   onLimitsChanged?: () => void;
+  onAnimationSettingsChanged?: (settings: AnimationSettings) => void;
 }
 
 export default function SettingsDrawer({
   onClose,
   onGraphCleared,
   onLimitsChanged,
+  onAnimationSettingsChanged,
 }: SettingsDrawerProps) {
   const { store } = useStore();
   const [clearing, setClearing] = useState(false);
@@ -63,6 +70,14 @@ export default function SettingsDrawer({
   const [maxEdges, setMaxEdges] = useState(() =>
     loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES),
   );
+  const [animSettings, setAnimSettings] = useState(loadAnimationSettings);
+
+  const handleAnimToggle = (key: keyof AnimationSettings) => {
+    const next = { ...animSettings, [key]: !animSettings[key] };
+    setAnimSettings(next);
+    saveAnimationSetting(key, next[key]);
+    onAnimationSettingsChanged?.(next);
+  };
 
   const handleClear = async () => {
     setClearing(true);
@@ -328,6 +343,47 @@ export default function SettingsDrawer({
               Defaults: {DEFAULT_MAX_NODES.toLocaleString()} nodes /{' '}
               {DEFAULT_MAX_EDGES.toLocaleString()} edges.
             </p>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h4>Graph Animation</h4>
+          <div className="setting-card">
+            {(
+              [
+                [
+                  'selectionPulse',
+                  'Selection Pulse',
+                  'Pulsing ring on selected node',
+                ] as const,
+              ] as const
+            ).map(([key, label, hint]) => (
+              <div key={key} className="limit-row" style={{ flexWrap: 'wrap' }}>
+                <label className="limit-label" style={{ flex: 1 }}>
+                  {label}
+                </label>
+                <button
+                  type="button"
+                  className={`toggle-btn${animSettings[key] ? ' active' : ''}`}
+                  style={{
+                    width: 48,
+                    flex: 'none',
+                    borderRadius: 'var(--radius)',
+                    border:
+                      '1px solid color-mix(in oklch, var(--border) 50%, transparent)',
+                  }}
+                  onClick={() => handleAnimToggle(key)}
+                >
+                  {animSettings[key] ? 'On' : 'Off'}
+                </button>
+                <p
+                  className="setting-hint"
+                  style={{ width: '100%', marginTop: 2 }}
+                >
+                  {hint}
+                </p>
+              </div>
+            ))}
           </div>
         </section>
 

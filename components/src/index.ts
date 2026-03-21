@@ -25,7 +25,7 @@
 // ─── Main component ─────────────────────────────────────────────────────
 export { default as Graph } from './GraphCanvas';
 export { default as GraphCanvas } from './GraphCanvas';
-export type { GraphCanvasProps, GraphCanvasHandle } from './GraphCanvas';
+export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './GraphCanvas';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';
