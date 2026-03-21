@@ -48,7 +48,7 @@ jobs:
           packages-dir: agent/dist/
 
       - name: Comment on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const marker = '<!-- opentraceai-preview -->';
