@@ -30,7 +30,6 @@ from opentrace_agent.benchmarks.agent import (
     create_claude_code_agent_fn,
 )
 
-
 FIXTURES_ROOT = Path(__file__).resolve().parents[2] / "fixtures"
 LEVEL1 = FIXTURES_ROOT / "level1"
 
