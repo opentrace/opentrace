@@ -67,9 +67,7 @@ export default function ChatPanel({
   createAgent,
   title = 'AI Assistant',
   templates,
-  toolNames,
-  agentTools,
-  renderToolResult,
+  tools,
   tabs,
   onWidthChange,
   defaultWidth = 480,
@@ -281,9 +279,7 @@ export default function ChatPanel({
             messages={messages}
             streaming={streaming}
             templates={activeTemplates}
-            toolNames={toolNames}
-            agentTools={agentTools}
-            renderToolResult={renderToolResult}
+            tools={tools}
             onTemplate={handleTemplate}
           />
           <ChatInput

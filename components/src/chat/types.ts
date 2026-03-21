@@ -80,6 +80,16 @@ export interface ChatTab {
   render: () => ReactNode;
 }
 
+/** Per-tool display configuration */
+export interface ChatToolConfig {
+  /** Human-readable name shown in the tool call header */
+  displayName: string;
+  /** Whether this tool is a sub-agent (sparkle icon, markdown result, "Thinking" status) */
+  isAgent?: boolean;
+  /** Custom result renderer — return null to fall back to raw JSON */
+  renderResult?: (args: string, result: string) => ReactNode | null;
+}
+
 /** Props for the generic ChatPanel */
 export interface ChatPanelProps {
   onClose: () => void;
@@ -91,13 +101,8 @@ export interface ChatPanelProps {
   ) => ChatAgentHandle;
   title?: string;
   templates?: ChatTemplate[];
-  toolNames?: Record<string, string>;
-  agentTools?: Set<string>;
-  renderToolResult?: (
-    name: string,
-    args: string,
-    result: string,
-  ) => ReactNode | null;
+  /** Tool display config keyed by tool name */
+  tools?: Record<string, ChatToolConfig>;
   tabs?: ChatTab[];
   onNodeSelect?: (nodeId: string) => void;
   onWidthChange?: (width: number) => void;

@@ -14,23 +14,21 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import ChatParts from './ChatParts';
 import ChatTemplates from './ChatTemplates';
-import type { ChatMessage, AssistantMessage, ChatTemplate } from './types';
+import type {
+  ChatMessage,
+  AssistantMessage,
+  ChatTemplate,
+  ChatToolConfig,
+} from './types';
 
 interface Props {
   messages: ChatMessage[];
   streaming: boolean;
   templates: ChatTemplate[];
-  toolNames?: Record<string, string>;
-  agentTools?: Set<string>;
-  renderToolResult?: (
-    name: string,
-    args: string,
-    result: string,
-  ) => ReactNode | null;
+  tools?: Record<string, ChatToolConfig>;
   onTemplate: (prompt: string) => void;
 }
 
@@ -38,9 +36,7 @@ export default function ChatMessages({
   messages,
   streaming,
   templates,
-  toolNames,
-  agentTools,
-  renderToolResult,
+  tools,
   onTemplate,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -81,9 +77,7 @@ export default function ChatMessages({
               <ChatParts
                 parts={(m as AssistantMessage).parts}
                 streaming={streaming && i === messages.length - 1}
-                toolNames={toolNames}
-                agentTools={agentTools}
-                renderToolResult={renderToolResult}
+                tools={tools}
               />
             ) : (
               m.content

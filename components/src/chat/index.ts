@@ -36,6 +36,7 @@ export type {
   ChatAgentHandle,
   ChatTemplate,
   ChatTab,
+  ChatToolConfig,
   ChatPanelProps,
 } from './types';
 

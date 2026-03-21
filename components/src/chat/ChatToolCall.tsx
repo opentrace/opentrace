@@ -14,22 +14,15 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ToolCallPart } from './types';
+import type { ToolCallPart, ChatToolConfig } from './types';
 import { markdownComponents } from './markdownComponents';
 
 interface Props {
   part: ToolCallPart;
-  toolNames?: Record<string, string>;
-  agentTools?: Set<string>;
-  renderToolResult?: (
-    name: string,
-    args: string,
-    result: string,
-  ) => ReactNode | null;
+  config?: ChatToolConfig;
 }
 
 function formatDuration(ms: number): string {
@@ -82,14 +75,9 @@ function trimSteps(steps: string[], isActive: boolean): string[] {
   return isActive ? steps.slice(-(MAX_OLD + 1)) : steps.slice(-MAX_OLD);
 }
 
-export default function ChatToolCall({
-  part,
-  toolNames,
-  agentTools,
-  renderToolResult,
-}: Props) {
-  const displayName = toolNames?.[part.name] ?? part.name;
-  const isAgent = agentTools?.has(part.name) ?? false;
+export default function ChatToolCall({ part, config }: Props) {
+  const displayName = config?.displayName ?? part.name;
+  const isAgent = config?.isAgent ?? false;
   const duration = part.endTime
     ? formatDuration(part.endTime - part.startTime)
     : null;
@@ -98,10 +86,10 @@ export default function ChatToolCall({
 
   // Attempt structured rendering via the app-provided renderer
   const customResult = useMemo(() => {
-    if (!part.result || part.status === 'error' || !renderToolResult)
+    if (!part.result || part.status === 'error' || !config?.renderResult)
       return null;
-    return renderToolResult(part.name, part.args, part.result);
-  }, [part.name, part.args, part.result, part.status, renderToolResult]);
+    return config.renderResult(part.args, part.result);
+  }, [part.args, part.result, part.status, config]);
 
   // Wrench icon for tools, sparkle icon for agents
   const icon = isAgent ? (

@@ -26,8 +26,7 @@ import { PRClient, parseRepoUrl } from '../pr/client';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
 import { OPENTRACE_TEMPLATES } from '../chat/templates';
-import { TOOL_NAMES, AGENT_TOOLS } from '../chat/toolConfig';
-import { createRenderToolResult } from '../chat/renderToolResult';
+import { buildToolConfig } from '../chat/toolConfig';
 import PRListPanel from './PRListPanel';
 
 interface Props {
@@ -91,19 +90,14 @@ export default function ChatPanel({
     [prClient],
   );
 
-  const renderToolResult = useMemo(
+  const tools = useMemo(
     () =>
-      createRenderToolResult(
-        onNodeSelect,
-        prClient ? handlePostComment : undefined,
-      ),
+      buildToolConfig(onNodeSelect, prClient ? handlePostComment : undefined),
     [onNodeSelect, prClient, handlePostComment],
   );
 
   // LLM instance for PR reviews (run directly, not through chat)
   const llm = useMemo(() => {
-    // We need provider state to create LLM — but the library owns that now.
-    // For PR reviews, we read from localStorage directly as a lightweight approach.
     const providerId = localStorage.getItem('ot_chat_provider') ?? 'gemini';
     const modelId = localStorage.getItem('ot_chat_model_' + providerId) ?? '';
     const apiKey = localStorage.getItem('ot_chat_apikey_' + providerId) ?? '';
@@ -145,9 +139,7 @@ export default function ChatPanel({
       createAgent={createAgent}
       title="AI Assistant"
       templates={OPENTRACE_TEMPLATES}
-      toolNames={TOOL_NAMES}
-      agentTools={AGENT_TOOLS}
-      renderToolResult={renderToolResult}
+      tools={tools}
       tabs={tabs}
       onNodeSelect={onNodeSelect}
       onWidthChange={onWidthChange}

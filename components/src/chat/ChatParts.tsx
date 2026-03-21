@@ -14,33 +14,20 @@
  * limitations under the License.
  */
 
-import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ChatThought from './ChatThought';
 import ChatToolCall from './ChatToolCall';
 import { markdownComponents } from './markdownComponents';
-import type { MessagePart } from './types';
+import type { MessagePart, ChatToolConfig } from './types';
 
 interface Props {
   parts: MessagePart[];
   streaming?: boolean;
-  toolNames?: Record<string, string>;
-  agentTools?: Set<string>;
-  renderToolResult?: (
-    name: string,
-    args: string,
-    result: string,
-  ) => ReactNode | null;
+  tools?: Record<string, ChatToolConfig>;
 }
 
-export default function ChatParts({
-  parts,
-  streaming,
-  toolNames,
-  agentTools,
-  renderToolResult,
-}: Props) {
+export default function ChatParts({ parts, streaming, tools }: Props) {
   return (
     <>
       {parts.map((part, i) => {
@@ -52,9 +39,7 @@ export default function ChatParts({
               <ChatToolCall
                 key={part.id}
                 part={part}
-                toolNames={toolNames}
-                agentTools={agentTools}
-                renderToolResult={renderToolResult}
+                config={tools?.[part.name]}
               />
             );
           case 'text':

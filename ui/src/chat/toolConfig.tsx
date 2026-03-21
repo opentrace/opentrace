@@ -15,6 +15,7 @@
  */
 
 import type { ReactNode } from 'react';
+import type { ChatToolConfig } from '@opentrace/components/chat';
 import {
   parseSearchResult,
   parseListNodesResult,
@@ -28,45 +29,82 @@ import SuggestCommentResult, {
   parseSuggestComment,
 } from './results/SuggestCommentResult';
 
-export function createRenderToolResult(
+/** Build the OpenTrace tool config with result renderers wired to callbacks. */
+export function buildToolConfig(
   onNodeSelect?: (nodeId: string) => void,
   onPostComment?: (number: number, body: string) => Promise<void>,
-): (name: string, args: string, result: string) => ReactNode | null {
-  return (name: string, _args: string, result: string) => {
-    switch (name) {
-      case 'search_graph': {
-        const nodes = parseSearchResult(result);
-        return nodes ? (
-          <NodeListResult nodes={nodes} onNodeSelect={onNodeSelect} />
-        ) : null;
-      }
-      case 'list_nodes': {
+): Record<string, ChatToolConfig> {
+  function nodeListRenderer(_args: string, result: string): ReactNode | null {
+    const nodes = parseSearchResult(result);
+    return nodes ? (
+      <NodeListResult nodes={nodes} onNodeSelect={onNodeSelect} />
+    ) : null;
+  }
+
+  return {
+    search_graph: {
+      displayName: 'Search Graph',
+      renderResult: nodeListRenderer,
+    },
+    list_nodes: {
+      displayName: 'List Nodes',
+      renderResult: (_args, result) => {
         const nodes = parseListNodesResult(result);
         return nodes ? (
           <NodeListResult nodes={nodes} onNodeSelect={onNodeSelect} />
         ) : null;
-      }
-      case 'get_node': {
+      },
+    },
+    get_node: {
+      displayName: 'Get Node',
+      renderResult: (_args, result) => {
         const node = parseGetNodeResult(result);
         return node ? (
           <GetNodeResultView node={node} onNodeSelect={onNodeSelect} />
         ) : null;
-      }
-      case 'traverse_graph': {
+      },
+    },
+    traverse_graph: {
+      displayName: 'Traverse Graph',
+      renderResult: (_args, result) => {
         const entries = parseTraverseResult(result);
         return entries ? (
           <TraverseResultView entries={entries} onNodeSelect={onNodeSelect} />
         ) : null;
-      }
-      case 'suggest_comment':
-      case 'comment_on_pr': {
+      },
+    },
+    load_source: {
+      displayName: 'Load Source',
+    },
+    code_explorer: {
+      displayName: 'Code Explorer',
+      isAgent: true,
+    },
+    dependency_analyzer: {
+      displayName: 'Dependency Analyzer',
+      isAgent: true,
+    },
+    code_reviewer: {
+      displayName: 'Code Reviewer',
+      isAgent: true,
+    },
+    suggest_comment: {
+      displayName: 'Suggest Comment',
+      renderResult: (_args, result) => {
         const comment = parseSuggestComment(result);
         return comment ? (
           <SuggestCommentResult comment={comment} onPost={onPostComment} />
         ) : null;
-      }
-      default:
-        return null;
-    }
+      },
+    },
+    comment_on_pr: {
+      displayName: 'Comment on PR',
+      renderResult: (_args, result) => {
+        const comment = parseSuggestComment(result);
+        return comment ? (
+          <SuggestCommentResult comment={comment} onPost={onPostComment} />
+        ) : null;
+      },
+    },
   };
 }
