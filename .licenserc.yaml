@@ -44,5 +44,7 @@ header:
     - ".entire/**"
     - ".idea/**"
     - ".git"
+    - "benchmark/data/**"
+    - "benchmark/workdir/**"
 
   comment: on-failure
