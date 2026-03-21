@@ -168,7 +168,7 @@ function SigmaRefCapture({
   return null;
 }
 
-/** Registers click events inside the SigmaContainer context. */
+/** Registers click/drag events inside the SigmaContainer context. */
 function GraphEventHandler({
   onNodeClick,
   onEdgeClick,
@@ -183,17 +183,24 @@ function GraphEventHandler({
   useEffect(() => {
     const container = sigma.getContainer();
     const graph = sigma.getGraph();
+    const s = sigma as unknown as import('sigma').Sigma;
 
-    // The sigma-mouse canvas sits on top and captures all pointer events.
-    // Set cursor on both the container and the mouse canvas to ensure
-    // the pointer is visible regardless of stacking context.
     const mouseCanvas = container.querySelector(
       '.sigma-mouse',
     ) as HTMLElement | null;
     let overNode = false;
     let overEdge = false;
+
+    // ── Drag state ────────────────────────────────────────────────
+    let draggedNode: string | null = null;
+    let isDragging = false;
+
     function updateCursor() {
-      const value = overNode || overEdge ? 'pointer' : 'grab';
+      const value = isDragging
+        ? 'grabbing'
+        : overNode || overEdge
+          ? 'pointer'
+          : 'grab';
       container.style.cursor = value;
       if (mouseCanvas) mouseCanvas.style.cursor = value;
     }
@@ -218,7 +225,21 @@ function GraphEventHandler({
         overEdge = false;
         updateCursor();
       },
+      // Start drag on mousedown over a node
+      downNode: ({ node }: { node: string }) => {
+        draggedNode = node;
+        isDragging = false; // not dragging yet — only on mousemove
+        // Fix node so FA2 doesn't fight the drag
+        graph.setNodeAttribute(node, 'fixed', true);
+        // Disable sigma's built-in camera drag while we're dragging a node
+        s.getCamera().disable();
+      },
       clickNode: ({ node }: { node: string }) => {
+        // If we were dragging, don't fire click
+        if (isDragging) {
+          isDragging = false;
+          return;
+        }
         if (!onNodeClick) return;
         const attrs = graph.getNodeAttributes(node);
         const graphNode = attrs._graphNode as GraphNode | undefined;
@@ -247,23 +268,63 @@ function GraphEventHandler({
       },
     };
 
+    // ── Mouse move/up for drag (on the container, not sigma events) ──
+    function onMouseMove(e: MouseEvent) {
+      if (!draggedNode) return;
+      isDragging = true;
+      updateCursor();
+
+      // Convert viewport coords to graph coords
+      const pos = s.viewportToGraph({
+        x: e.offsetX,
+        y: e.offsetY,
+      });
+      graph.setNodeAttribute(draggedNode, 'x', pos.x);
+      graph.setNodeAttribute(draggedNode, 'y', pos.y);
+
+      // Prevent sigma from processing this as a camera pan
+      e.preventDefault();
+    }
+
+    function onMouseUp() {
+      if (draggedNode) {
+        // Unfix node so FA2 can move it again
+        graph.setNodeAttribute(draggedNode, 'fixed', false);
+        draggedNode = null;
+        s.getCamera().enable();
+        updateCursor();
+      }
+    }
+
     // Register sigma events
     sigma.on('enterNode', handlers.enterNode);
     sigma.on('leaveNode', handlers.leaveNode);
     sigma.on('enterEdge', handlers.enterEdge);
     sigma.on('leaveEdge', handlers.leaveEdge);
+    sigma.on('downNode', handlers.downNode);
     sigma.on('clickNode', handlers.clickNode);
     sigma.on('clickEdge', handlers.clickEdge);
     sigma.on('clickStage', handlers.clickStage);
+
+    // Mouse events on the container for drag tracking
+    const mouseTarget = mouseCanvas ?? container;
+    mouseTarget.addEventListener('mousemove', onMouseMove);
+    mouseTarget.addEventListener('mouseup', onMouseUp);
+    mouseTarget.addEventListener('mouseleave', onMouseUp);
 
     return () => {
       sigma.off('enterNode', handlers.enterNode);
       sigma.off('leaveNode', handlers.leaveNode);
       sigma.off('enterEdge', handlers.enterEdge);
       sigma.off('leaveEdge', handlers.leaveEdge);
+      sigma.off('downNode', handlers.downNode);
       sigma.off('clickNode', handlers.clickNode);
       sigma.off('clickEdge', handlers.clickEdge);
       sigma.off('clickStage', handlers.clickStage);
+
+      mouseTarget.removeEventListener('mousemove', onMouseMove);
+      mouseTarget.removeEventListener('mouseup', onMouseUp);
+      mouseTarget.removeEventListener('mouseleave', onMouseUp);
     };
   }, [sigma, onNodeClick, onEdgeClick, onStageClick]);
 
