@@ -31,6 +31,7 @@ import { useChatAgent } from './useChatAgent';
 import ChatSettings from './ChatSettings';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
+import ChatTemplates from './ChatTemplates';
 import type { ChatPanelProps, ChatAgentHandle } from './types';
 import './ChatPanel.css';
 import './chat.css';
@@ -275,13 +276,23 @@ export default function ChatPanel({
         activeExtraTab.render()
       ) : (
         <>
-          <ChatMessages
-            messages={messages}
-            streaming={streaming}
-            templates={activeTemplates}
-            tools={tools}
-            onTemplate={handleTemplate}
-          />
+          {messages.length === 0 ? (
+            <div className="messages">
+              <div className="empty-chat">
+                <p>Ask me anything about your graph!</p>
+                <ChatTemplates
+                  templates={activeTemplates}
+                  onSelect={handleTemplate}
+                />
+              </div>
+            </div>
+          ) : (
+            <ChatMessages
+              messages={messages}
+              streaming={streaming}
+              tools={tools}
+            />
+          )}
           <ChatInput
             input={input}
             streaming={streaming}

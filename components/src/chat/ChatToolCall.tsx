@@ -17,11 +17,11 @@
 import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ToolCallPart, ChatToolConfig } from './types';
+import type { ToolCallMessage, ChatToolConfig } from './types';
 import { markdownComponents } from './markdownComponents';
 
 interface Props {
-  part: ToolCallPart;
+  part: ToolCallMessage;
   config?: ChatToolConfig;
 }
 

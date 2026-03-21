@@ -28,11 +28,9 @@ export { default as ChatPanel } from './ChatPanel';
 export type {
   ChatMessage,
   UserMessage,
-  AssistantMessage,
-  MessagePart,
-  TextPart,
-  ThoughtPart,
-  ToolCallPart,
+  TextMessage,
+  ThoughtMessage,
+  ToolCallMessage,
   ChatAgentHandle,
   ChatTemplate,
   ChatTab,
@@ -63,7 +61,6 @@ export { useResizablePanel } from './useResizablePanel';
 export { default as ChatSettings } from './ChatSettings';
 export { default as ChatMessages } from './ChatMessages';
 export { default as ChatInput } from './ChatInput';
-export { default as ChatParts } from './ChatParts';
 export { default as ChatThought } from './ChatThought';
 export { default as ChatToolCall } from './ChatToolCall';
 export { default as ChatTemplates } from './ChatTemplates';

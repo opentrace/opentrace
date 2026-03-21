@@ -17,15 +17,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
-import type {
-  ChatMessage,
-  AssistantMessage,
-  MessagePart,
-  ChatAgentHandle,
-} from './types';
+import type { ChatMessage, ToolCallMessage, ChatAgentHandle } from './types';
 
 interface UseChatAgentOptions {
   getAgentHandle: () => ChatAgentHandle;
+}
+
+/** Build LangChain message history from a flat message list.
+ *  Groups consecutive non-user messages into a single AIMessage. */
+function toLangChainMessages(messages: ChatMessage[]) {
+  const result: (HumanMessage | AIMessage)[] = [];
+  let aiBuffer = '';
+
+  const flushAI = () => {
+    if (aiBuffer) {
+      result.push(new AIMessage(aiBuffer));
+      aiBuffer = '';
+    }
+  };
+
+  for (const msg of messages) {
+    if (msg.type === 'user') {
+      flushAI();
+      result.push(new HumanMessage(msg.content));
+    } else if (msg.type === 'text') {
+      aiBuffer += msg.content;
+    }
+    // thoughts and tool calls don't contribute to LangChain history
+  }
+  flushAI();
+  return result;
 }
 
 export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
@@ -38,24 +59,80 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
     return () => abortRef.current?.abort();
   }, []);
 
-  /** Update the parts array in the last (assistant) message */
-  const updateLastParts = useCallback(
-    (fn: (parts: MessagePart[]) => MessagePart[]) => {
+  /** Append a new message to the list */
+  const appendMessage = useCallback((msg: ChatMessage) => {
+    setMessages((prev) => [...prev, msg]);
+  }, []);
+
+  /** Update the last message of a given type, or append if not found */
+  const updateLast = useCallback(
+    <T extends ChatMessage>(
+      type: T['type'],
+      updater: (msg: T) => T,
+    ) => {
       setMessages((prev) => {
         const updated = [...prev];
-        const last = updated[updated.length - 1] as AssistantMessage;
-        const newParts = fn([...last.parts]);
-        // Recompute content from text parts for LangChain history
-        const content = newParts
-          .filter((p) => p.type === 'text')
-          .map((p) => p.content)
-          .join('');
-        updated[updated.length - 1] = { ...last, parts: newParts, content };
-        return updated;
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (updated[i].type === type) {
+            updated[i] = updater(updated[i] as T);
+            return updated;
+          }
+        }
+        return prev;
       });
     },
     [],
   );
+
+  /** Update a specific tool call message by ID */
+  const updateToolCall = useCallback(
+    (id: string, updater: (msg: ToolCallMessage) => ToolCallMessage) => {
+      setMessages((prev) => {
+        const updated = [...prev];
+        for (let i = updated.length - 1; i >= 0; i--) {
+          const msg = updated[i];
+          if (msg.type === 'tool_call' && msg.id === id) {
+            updated[i] = updater(msg);
+            return updated;
+          }
+        }
+        return prev;
+      });
+    },
+    [],
+  );
+
+  /** Append text to the last text message, or create a new one */
+  const appendText = useCallback((content: string) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.type === 'text') {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...last,
+          content: last.content + content,
+        };
+        return updated;
+      }
+      return [...prev, { type: 'text' as const, content }];
+    });
+  }, []);
+
+  /** Append thought content to the last thought message, or create a new one */
+  const appendThought = useCallback((content: string) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.type === 'thought') {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          ...last,
+          content: last.content + content,
+        };
+        return updated;
+      }
+      return [...prev, { type: 'thought' as const, content }];
+    });
+  }, []);
 
   const sendMessage = useCallback(
     async (text: string, apiKey: string, providerId: string) => {
@@ -67,47 +144,39 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const userMsg: ChatMessage = { role: 'user', content: trimmed };
-      const assistantMsg: AssistantMessage = {
-        role: 'assistant',
-        content: '',
-        parts: [],
-      };
+      const userMsg: ChatMessage = { type: 'user', content: trimmed };
       const newMessages: ChatMessage[] = [...messages, userMsg];
-      setMessages([...newMessages, assistantMsg]);
+      setMessages(newMessages);
       setStreaming(true);
 
-      // Track in-flight tool calls by ID to match results later
-      const pendingTools = new Map<string, number>();
+      // Track in-flight tool calls by ID
+      const pendingToolIds = new Set<string>();
       const { agent, progress } = getAgentHandle();
 
       // Subscribe to sub-agent progress
       progress.setListener((agentName, step) => {
-        updateLastParts((parts) => {
-          for (let i = parts.length - 1; i >= 0; i--) {
-            const p = parts[i];
+        setMessages((prev) => {
+          const updated = [...prev];
+          for (let i = updated.length - 1; i >= 0; i--) {
+            const msg = updated[i];
             if (
-              p.type === 'tool_call' &&
-              p.name === agentName &&
-              p.status === 'active'
+              msg.type === 'tool_call' &&
+              msg.name === agentName &&
+              msg.status === 'active'
             ) {
-              parts[i] = {
-                ...p,
-                progressSteps: [...(p.progressSteps || []), step],
+              updated[i] = {
+                ...msg,
+                progressSteps: [...(msg.progressSteps || []), step],
               };
-              break;
+              return updated;
             }
           }
-          return parts;
+          return prev;
         });
       });
 
       try {
-        const lcMessages = newMessages.map((m) =>
-          m.role === 'user'
-            ? new HumanMessage(m.content)
-            : new AIMessage(m.content),
-        );
+        const lcMessages = toLangChainMessages(newMessages);
 
         const stream = await agent.stream(
           { messages: lcMessages },
@@ -136,23 +205,16 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
                 ? chunk.content
                 : JSON.stringify(chunk.content);
 
-            if (toolCallId && pendingTools.has(toolCallId)) {
-              const partIdx = pendingTools.get(toolCallId)!;
+            if (toolCallId && pendingToolIds.has(toolCallId)) {
               const isError =
                 resultContent.startsWith('API error') ||
                 resultContent.startsWith('Fetch failed');
-              updateLastParts((parts) => {
-                const tc = parts[partIdx];
-                if (tc.type === 'tool_call') {
-                  parts[partIdx] = {
-                    ...tc,
-                    result: resultContent,
-                    status: isError ? 'error' : 'success',
-                    endTime: Date.now(),
-                  };
-                }
-                return parts;
-              });
+              updateToolCall(toolCallId, (tc) => ({
+                ...tc,
+                result: resultContent,
+                status: isError ? 'error' : 'success',
+                endTime: Date.now(),
+              }));
             }
             continue;
           }
@@ -171,18 +233,7 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
             );
             for (const block of thinkingBlocks) {
               if (block.thinking) {
-                updateLastParts((parts) => {
-                  const last = parts[parts.length - 1];
-                  if (last?.type === 'thought') {
-                    parts[parts.length - 1] = {
-                      ...last,
-                      content: last.content + block.thinking,
-                    };
-                  } else {
-                    parts.push({ type: 'thought', content: block.thinking });
-                  }
-                  return parts;
-                });
+                appendThought(block.thinking);
               }
             }
           }
@@ -193,31 +244,22 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
               if (tc.name) {
                 // New tool call starting
                 const toolId = tc.id || `tc_${Date.now()}_${tc.name}`;
-                updateLastParts((parts) => {
-                  const idx = parts.length;
-                  pendingTools.set(toolId, idx);
-                  parts.push({
-                    type: 'tool_call',
-                    id: toolId,
-                    name: tc.name!,
-                    args: tc.args || '',
-                    status: 'active',
-                    startTime: Date.now(),
-                  });
-                  return parts;
+                pendingToolIds.add(toolId);
+                appendMessage({
+                  type: 'tool_call',
+                  id: toolId,
+                  name: tc.name,
+                  args: tc.args || '',
+                  status: 'active',
+                  startTime: Date.now(),
                 });
               } else if (tc.args) {
-                // Streaming args for existing tool call
-                updateLastParts((parts) => {
-                  for (let i = parts.length - 1; i >= 0; i--) {
-                    const p = parts[i];
-                    if (p.type === 'tool_call' && p.status === 'active') {
-                      parts[i] = { ...p, args: p.args + tc.args };
-                      break;
-                    }
-                  }
-                  return parts;
-                });
+                // Streaming args for existing tool call — update last active
+                updateLast<ToolCallMessage>('tool_call', (msg) =>
+                  msg.status === 'active'
+                    ? { ...msg, args: msg.args + tc.args }
+                    : msg,
+                );
               }
             }
             continue;
@@ -241,33 +283,27 @@ export function useChatAgent({ getAgentHandle }: UseChatAgentOptions) {
                 : '';
 
           if (content) {
-            updateLastParts((parts) => {
-              const last = parts[parts.length - 1];
-              if (last?.type === 'text') {
-                parts[parts.length - 1] = {
-                  ...last,
-                  content: last.content + content,
-                };
-              } else {
-                parts.push({ type: 'text', content });
-              }
-              return parts;
-            });
+            appendText(content);
           }
         }
       } catch (err: unknown) {
         if (controller.signal.aborted) return;
         const msg = err instanceof Error ? err.message : String(err);
-        updateLastParts((parts) => {
-          parts.push({ type: 'text', content: `Error: ${msg}` });
-          return parts;
-        });
+        appendText(`Error: ${msg}`);
       } finally {
         progress.setListener(null);
         setStreaming(false);
       }
     },
-    [messages, getAgentHandle, updateLastParts],
+    [
+      messages,
+      getAgentHandle,
+      appendMessage,
+      appendText,
+      appendThought,
+      updateLast,
+      updateToolCall,
+    ],
   );
 
   const clearChat = useCallback(() => {

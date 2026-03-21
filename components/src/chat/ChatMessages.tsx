@@ -15,30 +15,20 @@
  */
 
 import { useEffect, useRef } from 'react';
-import ChatParts from './ChatParts';
-import ChatTemplates from './ChatTemplates';
-import type {
-  ChatMessage,
-  AssistantMessage,
-  ChatTemplate,
-  ChatToolConfig,
-} from './types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import ChatThought from './ChatThought';
+import ChatToolCall from './ChatToolCall';
+import { markdownComponents } from './markdownComponents';
+import type { ChatMessage, ChatToolConfig } from './types';
 
 interface Props {
   messages: ChatMessage[];
   streaming: boolean;
-  templates: ChatTemplate[];
   tools?: Record<string, ChatToolConfig>;
-  onTemplate: (prompt: string) => void;
 }
 
-export default function ChatMessages({
-  messages,
-  streaming,
-  templates,
-  tools,
-  onTemplate,
-}: Props) {
+export default function ChatMessages({ messages, streaming, tools }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
 
@@ -58,33 +48,56 @@ export default function ChatMessages({
 
   return (
     <div className="messages" ref={scrollRef} onScroll={handleScroll}>
-      {messages.length === 0 && (
-        <div className="empty-chat">
-          <p>Ask me anything about your graph!</p>
-          <ChatTemplates templates={templates} onSelect={onTemplate} />
-        </div>
-      )}
-      {messages.map((m, i) => (
-        <div
-          key={i}
-          className={`message ${m.role === 'user' ? 'user' : 'ai'}`}
-          {...(m.role === 'assistant' && i === messages.length - 1 && !streaming
-            ? { 'data-testid': 'chat-response-done' }
-            : {})}
-        >
-          <div className="message-content">
-            {m.role === 'assistant' ? (
-              <ChatParts
-                parts={(m as AssistantMessage).parts}
-                streaming={streaming && i === messages.length - 1}
-                tools={tools}
-              />
-            ) : (
-              m.content
-            )}
-          </div>
-        </div>
-      ))}
+      {messages.map((msg, i) => {
+        switch (msg.type) {
+          case 'user':
+            return (
+              <div key={i} className="message user">
+                <div className="message-content">{msg.content}</div>
+              </div>
+            );
+          case 'text':
+            return (
+              <div
+                key={i}
+                className="message ai"
+                {...(!streaming && i === messages.length - 1
+                  ? { 'data-testid': 'chat-response-done' }
+                  : {})}
+              >
+                <div className="message-content">
+                  <div className="markdown-body">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownComponents}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                    {streaming && i === messages.length - 1 && (
+                      <span className="streaming-cursor" />
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          case 'thought':
+            return (
+              <div key={i} className="message ai">
+                <div className="message-content">
+                  <ChatThought content={msg.content} />
+                </div>
+              </div>
+            );
+          case 'tool_call':
+            return (
+              <div key={msg.id} className="message ai">
+                <div className="message-content">
+                  <ChatToolCall part={msg} config={tools?.[msg.name]} />
+                </div>
+              </div>
+            );
+        }
+      })}
     </div>
   );
 }

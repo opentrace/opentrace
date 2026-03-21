@@ -16,19 +16,24 @@
 
 import type { ReactNode } from 'react';
 
-/** Structured parts within an assistant message */
+/** Flat message types — each message in the list is one renderable unit */
 
-export interface TextPart {
+export interface UserMessage {
+  type: 'user';
+  content: string;
+}
+
+export interface TextMessage {
   type: 'text';
   content: string;
 }
 
-export interface ThoughtPart {
+export interface ThoughtMessage {
   type: 'thought';
   content: string;
 }
 
-export interface ToolCallPart {
+export interface ToolCallMessage {
   type: 'tool_call';
   id: string;
   name: string;
@@ -41,20 +46,11 @@ export interface ToolCallPart {
   progressSteps?: string[];
 }
 
-export type MessagePart = TextPart | ThoughtPart | ToolCallPart;
-
-export interface UserMessage {
-  role: 'user';
-  content: string;
-}
-
-export interface AssistantMessage {
-  role: 'assistant';
-  content: string;
-  parts: MessagePart[];
-}
-
-export type ChatMessage = UserMessage | AssistantMessage;
+export type ChatMessage =
+  | UserMessage
+  | TextMessage
+  | ThoughtMessage
+  | ToolCallMessage;
 
 /** Minimal contract between app and library for agent interaction */
 export interface ChatAgentHandle {

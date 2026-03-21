@@ -17,10 +17,8 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { markdownComponents } from './markdownComponents';
-import type { ThoughtPart } from './types';
-
 interface Props {
-  part: ThoughtPart;
+  content: string;
 }
 
 /** Strip markdown syntax for a compact preview */
@@ -31,8 +29,8 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-export default function ChatThought({ part }: Props) {
-  const preview = stripMarkdown(part.content).slice(0, 80);
+export default function ChatThought({ content }: Props) {
+  const preview = stripMarkdown(content).slice(0, 80);
 
   return (
     <details className="chat-thought">
@@ -55,7 +53,7 @@ export default function ChatThought({ part }: Props) {
         <span className="thought-label">Thought</span>
         <span className="thought-preview">
           {preview}
-          {part.content.length > 80 ? '\u2026' : ''}
+          {content.length > 80 ? '\u2026' : ''}
         </span>
       </summary>
       <div className="thought-content markdown-body">
@@ -63,7 +61,7 @@ export default function ChatThought({ part }: Props) {
           remarkPlugins={[remarkGfm]}
           components={markdownComponents}
         >
-          {part.content}
+          {content}
         </ReactMarkdown>
       </div>
     </details>
