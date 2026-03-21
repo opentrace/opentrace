@@ -25,27 +25,27 @@
 const PALETTE_SIZE = 12;
 
 const FALLBACK_PALETTE = [
-  '#a5b4fc', // Indigo (brighter, more luminous)
-  '#fcd34d', // Amber (warmer gold)
-  '#86efac', // Green (green-300, pops on dark)
-  '#d8b4fe', // Violet (lighter, more glow)
-  '#fda4af', // Rose (rose-300, softer)
-  '#7dd3fc', // Blue (sky-300, pops on dark)
-  '#f9a8d4', // Pink (pink-300, brighter)
-  '#5eead4', // Teal (teal-300, electric)
-  '#fdba74', // Orange (orange-300, warm)
-  '#bef264', // Lime (lime-300, vivid)
-  '#f0abfc', // Fuchsia (fuchsia-300, neon)
-  '#67e8f9', // Cyan (cyan-300, electric)
+  '#6366f1', // Indigo
+  '#eab308', // Amber
+  '#22c55e', // Green
+  '#a855f7', // Violet
+  '#f43f5e', // Rose
+  '#3b82f6', // Blue
+  '#ec4899', // Pink
+  '#14b8a6', // Teal
+  '#f97316', // Orange
+  '#84cc16', // Lime
+  '#d946ef', // Fuchsia
+  '#06b6d4', // Cyan
 ];
 
 /** Well-known node types → fallback colors (used when no CSS variable set) */
 const FALLBACK_KNOWN: Record<string, string> = {
-  Repository: '#86efac',
-  Class: '#7dd3fc',
-  Function: '#d8b4fe',
-  File: '#bef264',
-  Directory: '#67e8f9',
+  Repository: '#22c55e',
+  Class: '#3b82f6',
+  Function: '#a855f7',
+  File: '#84cc16',
+  Directory: '#06b6d4',
 };
 
 function djb2(str: string): number {
