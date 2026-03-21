@@ -446,10 +446,7 @@ class SWEBenchHarness:
                 return idx, self.run_instance(inst, agent_fn, use_opentrace=use_opentrace)
 
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {
-                    pool.submit(_run, i, inst): i
-                    for i, inst in enumerate(instances)
-                }
+                futures = {pool.submit(_run, i, inst): i for i, inst in enumerate(instances)}
                 for future in as_completed(futures):
                     idx, result = future.result()
                     results[idx] = result
@@ -508,10 +505,7 @@ def compare_reports(with_ot: SWEBenchReport, without_ot: SWEBenchReport) -> str:
         avg_turns_with = sum(r.num_turns for r in with_ot.results) / len(with_ot.results)
         avg_turns_without = sum(r.num_turns for r in without_ot.results) / len(without_ot.results)
         delta_turns = avg_turns_with - avg_turns_without
-        lines.append(
-            f"{'Avg turns':<25} {avg_turns_with:>10.1f} {avg_turns_without:>12.1f}"
-            f" {delta_turns:>+8.1f}"
-        )
+        lines.append(f"{'Avg turns':<25} {avg_turns_with:>10.1f} {avg_turns_without:>12.1f} {delta_turns:>+8.1f}")
 
         # Cost
         total_cost_with = sum(r.cost_usd for r in with_ot.results)

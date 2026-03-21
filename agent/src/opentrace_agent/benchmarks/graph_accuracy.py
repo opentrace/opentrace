@@ -305,9 +305,7 @@ class GraphAccuracyBenchmark:
         elif atype == "neighbor_has_name":
             if not isinstance(result, dict) or "neighbors" not in result:
                 return "neighbor_has_name: expected dict with 'neighbors'"
-            neighbor_names = {
-                n.get("node", {}).get("name") for n in result.get("neighbors", []) if isinstance(n, dict)
-            }
+            neighbor_names = {n.get("node", {}).get("name") for n in result.get("neighbors", []) if isinstance(n, dict)}
             if value not in neighbor_names:
                 return f"neighbor_has_name: '{value}' not in neighbor names {sorted(neighbor_names)}"
 

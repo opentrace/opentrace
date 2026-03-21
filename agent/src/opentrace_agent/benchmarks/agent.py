@@ -223,12 +223,9 @@ Additionally, you have OpenTrace graph tools for understanding the codebase stru
 """
 
 GRAPH_STRATEGY = (
-    "Use OpenTrace tools to quickly find relevant files and understand "
-    "code structure before reading files."
+    "Use OpenTrace tools to quickly find relevant files and understand code structure before reading files."
 )
-NO_GRAPH_STRATEGY = (
-    "Use list_directory and read_file to explore the codebase."
-)
+NO_GRAPH_STRATEGY = "Use list_directory and read_file to explore the codebase."
 
 MAX_TURNS = 30
 MAX_OUTPUT_TOKENS = 4096
@@ -336,15 +333,13 @@ def create_agent_fn(
         import anthropic
     except ImportError:
         raise ImportError(
-            "The 'anthropic' package is required for the SWE-bench agent. "
-            "Install it with: uv add anthropic"
+            "The 'anthropic' package is required for the SWE-bench agent. Install it with: uv add anthropic"
         ) from None
 
     key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise ValueError(
-            "ANTHROPIC_API_KEY environment variable is required. "
-            "Set it or pass api_key= to create_agent_fn()."
+            "ANTHROPIC_API_KEY environment variable is required. Set it or pass api_key= to create_agent_fn()."
         )
 
     client = anthropic.Anthropic(api_key=key)
@@ -540,7 +535,7 @@ def _run_claude_code_traced(args: list[str], cwd: str, prompt: str, out: Any) ->
             tools = event.get("tools", [])
             mcp = event.get("mcp_servers", [])
             connected = [s["name"] for s in mcp if s.get("status") == "connected"]
-            failed = [f'{s["name"]}({s.get("status")})' for s in mcp if s.get("status") != "connected"]
+            failed = [f"{s['name']}({s.get('status')})" for s in mcp if s.get("status") != "connected"]
             ot_tools = [t for t in tools if "opentrace" in t.lower()]
             out.write(f"        {_DIM}init: model={model}, {len(tools)} tools")
             if connected:
@@ -703,9 +698,7 @@ def create_claude_code_agent_fn(
     """
     cmd = shutil.which(claude_cmd)
     if cmd is None:
-        raise FileNotFoundError(
-            f"'{claude_cmd}' not found on PATH. Install Claude Code first."
-        )
+        raise FileNotFoundError(f"'{claude_cmd}' not found on PATH. Install Claude Code first.")
 
     # Resolve plugin directory
     resolved_plugin_dir = Path(plugin_dir) if plugin_dir else PLUGIN_DIR
@@ -735,7 +728,8 @@ def create_claude_code_agent_fn(
             claude_cmd,
             "--print",
             "--bare",  # Clean env: no other plugins/hooks. Requires ANTHROPIC_API_KEY.
-            "--model", model,
+            "--model",
+            model,
             "--no-session-persistence",
         ]
 
@@ -780,6 +774,7 @@ def create_claude_code_agent_fn(
                 }
             }
             import tempfile
+
             mcp_config_file = Path(tempfile.mktemp(suffix=".json", prefix="ot_mcp_"))
             mcp_config_file.write_text(json.dumps(mcp_config_data, indent=2))
             args.extend(["--mcp-config", str(mcp_config_file)])
@@ -940,15 +935,23 @@ def run_swe_bench_cli(
         if verbose:
             click.echo("--- Pass 1: WITH OpenTrace ---")
         report_with = harness.run(
-            instances_path, agent_fn, use_opentrace=True, limit=limit,
-            on_progress=progress, workers=workers,
+            instances_path,
+            agent_fn,
+            use_opentrace=True,
+            limit=limit,
+            on_progress=progress,
+            workers=workers,
         )
         if verbose:
             click.echo()
             click.echo("--- Pass 2: WITHOUT OpenTrace ---")
         report_without = harness.run(
-            instances_path, agent_fn, use_opentrace=False, limit=limit,
-            on_progress=progress, workers=workers,
+            instances_path,
+            agent_fn,
+            use_opentrace=False,
+            limit=limit,
+            on_progress=progress,
+            workers=workers,
         )
         if verbose:
             click.echo()
@@ -959,8 +962,12 @@ def run_swe_bench_cli(
         click.echo(compare_reports(report_with, report_without))
     else:
         report = harness.run(
-            instances_path, agent_fn, use_opentrace=use_opentrace, limit=limit,
-            on_progress=progress, workers=workers,
+            instances_path,
+            agent_fn,
+            use_opentrace=use_opentrace,
+            limit=limit,
+            on_progress=progress,
+            workers=workers,
         )
         if verbose:
             click.echo()

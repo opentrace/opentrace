@@ -128,8 +128,7 @@ def accuracy(
         nodes_by_type = stats_data.get("nodes_by_type", {})
         parts = [f"{c} {t}" for t, c in sorted(nodes_by_type.items(), key=lambda x: -x[1])]
         click.echo(
-            f"  Database: {stats_data['total_nodes']} nodes, "
-            f"{stats_data['total_edges']} edges ({', '.join(parts)})"
+            f"  Database: {stats_data['total_nodes']} nodes, {stats_data['total_edges']} edges ({', '.join(parts)})"
         )
         click.echo()
 
