@@ -44,6 +44,7 @@ import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
 import LayoutPipeline, { type OptimizeStatus } from './graph/LayoutPipeline';
 import { drawNodeHover, setHoveredNodeKey } from './graph/drawNodeHover';
+import { drawNodeLabel, resetLabelGrid } from './graph/drawNodeLabel';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 import {
   ZOOM_SIZE_EXPONENT,
@@ -153,6 +154,16 @@ function SigmaRefCapture({
       onReady(sigma);
     }
   }, [sigma, onReady]);
+
+  // Reset label density grid before each render
+  useEffect(() => {
+    const s = sigma as unknown as import('sigma').Sigma;
+    const handler = () => resetLabelGrid();
+    s.on('beforeRender', handler);
+    return () => {
+      s.off('beforeRender', handler);
+    };
+  }, [sigma]);
 
   return null;
 }
@@ -484,6 +495,7 @@ const GraphCanvas = memo(
           labelFont: LABEL_FONT,
           labelColor: { color: LABEL_COLOR },
           labelSize: LABEL_SIZE,
+          defaultDrawNodeLabel: drawNodeLabel,
           defaultDrawNodeHover: drawNodeHover,
           allowInvalidContainer: true,
           zIndex: zIndexEnabled,
