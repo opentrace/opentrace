@@ -288,9 +288,10 @@ export function useGraphInstance({
   const [layoutReady, setLayoutReady] = useState(false);
 
   // Derived from config
+  const flatMode = layoutConfig.flatMode ?? false;
   const structuralTypes = useMemo(
-    () => new Set(layoutConfig.structuralTypes),
-    [layoutConfig.structuralTypes],
+    () => (flatMode ? new Set<string>() : new Set(layoutConfig.structuralTypes)),
+    [layoutConfig.structuralTypes, flatMode],
   );
 
   // Single effect: rebuild graph and run d3-force worker when data changes.
@@ -377,8 +378,9 @@ export function useGraphInstance({
     // ── Add virtual community edges for FA2 intra-community attraction ──
     // Each node gets 1–2 edges to random same-community neighbors.
     // Hidden from rendering, but FA2 uses them for attraction.
+    // Skipped in flat mode — all real edges drive layout directly.
     const { assignments: communityAssignments } = communityData;
-    if (communityAssignments) {
+    if (communityAssignments && !flatMode) {
       const communityGroups = new Map<number, string[]>();
       for (const node of allNodes) {
         const cid = communityAssignments[node.id];
@@ -433,7 +435,9 @@ export function useGraphInstance({
     const nodeIds = allNodes.map((n) => n.id);
     const simLinks: { source: string; target: string }[] = [];
     for (const link of allLinks) {
-      if (link.label !== layoutConfig.layoutEdgeType) continue;
+      // In flat mode, all edges drive the force layout.
+      // In structured mode, only layoutEdgeType edges (e.g. DEFINED_IN) are used.
+      if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
       const source = endpointId(link.source);
       const target = endpointId(link.target);
       if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
@@ -482,8 +486,9 @@ export function useGraphInstance({
 
       // ── Pre-render spacing + noverlap ──────────────────────────────────
       // Run synchronously so the first frame has well-separated, non-overlapping nodes.
+      // Skipped in flat mode — all edges drive layout, no structural hierarchy.
       const { assignments } = communityData;
-      if (assignments && Object.keys(assignments).length > 0) {
+      if (!flatMode && assignments && Object.keys(assignments).length > 0) {
         applySpacing(pos, assignments, 40, 100, 50, 0.5);
 
         // Build size lookup from serialized nodes

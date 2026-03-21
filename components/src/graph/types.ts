@@ -73,6 +73,8 @@ export interface LayoutConfig {
   layoutEdgeType: string;
   // Node types considered structural (affect sizing)
   structuralTypes: string[];
+  /** Flat mode: use all edges for layout, no structural sizing, no virtual community edges */
+  flatMode?: boolean;
   // Color functions — consumers provide their own palettes
   getNodeColor: (type: string) => string;
   getLinkColor: (label: string) => string;

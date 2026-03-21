@@ -300,6 +300,7 @@ const GraphViewer = memo(
       );
       const [hops, setHops] = useState(2);
       const [zoomOnSelect, setZoomOnSelect] = useState(true);
+      const [flatMode, setFlatMode] = useState(false);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
@@ -370,12 +371,20 @@ const GraphViewer = memo(
         }
       };
 
+      const layoutConfig = useMemo(
+        () =>
+          flatMode
+            ? { ...DEFAULT_LAYOUT_CONFIG, flatMode: true }
+            : DEFAULT_LAYOUT_CONFIG,
+        [flatMode],
+      );
+
       // Compute Louvain communities on the full graph (before filtering, so
       // community assignments are available for the community filter).
       const communityData = useCommunities(
         graphData.nodes,
         graphData.links,
-        DEFAULT_LAYOUT_CONFIG,
+        layoutConfig,
       );
 
       // Derive available types from raw graph data (for filter panel)
@@ -1312,6 +1321,7 @@ const GraphViewer = memo(
             links={graphData.links}
             width={graphWidth}
             height={height}
+            layoutConfig={layoutConfig}
             colorMode={colorMode}
             hiddenNodeTypes={hiddenNodeTypes}
             hiddenLinkTypes={hiddenLinkTypes}
@@ -1353,6 +1363,43 @@ const GraphViewer = memo(
                 <circle cx="17" cy="7" r="3" />
                 <circle cx="7" cy="17" r="3" />
                 <circle cx="17" cy="17" r="3" />
+              </svg>
+            </button>
+            <button
+              className={`graph-control-btn${flatMode ? ' graph-control-btn--active' : ''}`}
+              onClick={() => setFlatMode((f) => !f)}
+              title={
+                flatMode
+                  ? 'Switch to structured layout'
+                  : 'Switch to flat layout'
+              }
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {flatMode ? (
+                  <>
+                    <circle cx="12" cy="12" r="2" fill="currentColor" />
+                    <line x1="12" y1="2" x2="12" y2="10" />
+                    <line x1="12" y1="14" x2="12" y2="22" />
+                    <line x1="2" y1="12" x2="10" y2="12" />
+                    <line x1="14" y1="12" x2="22" y2="12" />
+                  </>
+                ) : (
+                  <>
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </>
+                )}
               </svg>
             </button>
             <button
