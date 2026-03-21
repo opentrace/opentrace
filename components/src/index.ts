@@ -46,6 +46,7 @@ export type { OptimizeStatus } from './graph/LayoutPipeline';
 // ─── Sigma utilities ────────────────────────────────────────────────────
 export { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
 export { drawNodeHover, setHoveredNodeKey } from './graph/drawNodeHover';
+export { drawNodeLabel, resetLabelGrid } from './graph/drawNodeLabel';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export type {

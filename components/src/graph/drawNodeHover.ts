@@ -32,7 +32,7 @@ type PartialButFor<T, K extends keyof T> = Pick<T, K> & Partial<T>;
 // actually being hovered, so GraphEvents updates this key on
 // enterNode / leaveNode.
 
-let _hoveredNodeKey: string | null = null;
+export let _hoveredNodeKey: string | null = null;
 export function setHoveredNodeKey(key: string | null): void {
   _hoveredNodeKey = key;
 }
@@ -74,9 +74,20 @@ export function drawNodeHover<
   data: PartialButFor<NodeDisplayData, 'x' | 'y' | 'size' | 'label' | 'color'>,
   settings: Settings<N, E, G>,
 ): void {
-  // Only draw hover tooltip for the actually hovered node, not all highlighted nodes
+  // Only draw hover tooltip for the actually hovered node, not all highlighted nodes.
+  // For non-hovered highlighted nodes, still draw the node circle (sigma moved them
+  // to the hoverNodes layer, so we must draw them or they disappear).
   const key = (data as Record<string, unknown>).key as string | undefined;
-  if (key && _hoveredNodeKey !== null && key !== _hoveredNodeKey) return;
+  const isHoveredNode = !key || _hoveredNodeKey === null || key === _hoveredNodeKey;
+  if (!isHoveredNode) {
+    // Just draw the node circle — no tooltip
+    context.beginPath();
+    context.arc(data.x, data.y, data.size, 0, Math.PI * 2);
+    context.closePath();
+    context.fillStyle = data.color;
+    context.fill();
+    return;
+  }
 
   const size = settings.labelSize;
   const font = settings.labelFont;
