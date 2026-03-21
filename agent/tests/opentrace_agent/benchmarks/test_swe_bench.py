@@ -171,8 +171,11 @@ class TestCompareReports:
             use_opentrace=True,
             results=[
                 SWEBenchResult(
-                    instance_id=f"test-{i}", use_opentrace=True, success=i < 7,
-                    duration_s=10.0, index_duration_s=2.0,
+                    instance_id=f"test-{i}",
+                    use_opentrace=True,
+                    success=i < 7,
+                    duration_s=10.0,
+                    index_duration_s=2.0,
                 )
                 for i in range(10)
             ],
