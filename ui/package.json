@@ -18,7 +18,7 @@
     "@langchain/core": "^1.1.32",
     "@langchain/google-genai": "^2.1.26",
     "@langchain/langgraph": "^1.2.2",
-    "@langchain/openai": "^1.2.12",
+    "@langchain/openai": "^1.3.0",
     "@lbug/lbug-wasm": "^0.13.1",
     "@opentrace/components": "file:../components",
     "@react-sigma/core": "^5.0.6",
