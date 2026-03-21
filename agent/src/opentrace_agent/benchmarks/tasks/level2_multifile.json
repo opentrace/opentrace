@@ -1,0 +1,180 @@
+{
+  "suite_name": "Level 2 — Multi-file",
+  "description": "Cross-file imports, call resolution, and neighbor relationships across 4 Python files.",
+  "fixture": "tests/fixtures/level2",
+  "repo_id": "test/level2",
+  "tasks": [
+    {
+      "id": "stats_exist",
+      "category": "structure",
+      "description": "Graph should contain nodes after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "has_key", "value": "total_nodes"},
+        {"type": "key_gte", "key": "total_nodes", "value": 1}
+      ]
+    },
+    {
+      "id": "stats_has_edges",
+      "category": "structure",
+      "description": "Graph should contain relationships after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "key_gte", "key": "total_edges", "value": 1}
+      ]
+    },
+    {
+      "id": "has_repository_node",
+      "category": "structure",
+      "description": "Should have a Repository node",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Repository"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "find_all_files",
+      "category": "structure",
+      "description": "Should index all 4 Python files",
+      "tool": "list_nodes",
+      "tool_args": {"type": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 4},
+        {"type": "result_contains_name", "value": "app.py"},
+        {"type": "result_contains_name", "value": "service.py"},
+        {"type": "result_contains_name", "value": "models.py"},
+        {"type": "result_contains_name", "value": "validator.py"}
+      ]
+    },
+    {
+      "id": "find_user_class",
+      "category": "symbol_discovery",
+      "description": "Search should find the User class",
+      "tool": "search_graph",
+      "tool_args": {"query": "User", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "User"}
+      ]
+    },
+    {
+      "id": "find_user_service_class",
+      "category": "symbol_discovery",
+      "description": "Search should find the UserService class",
+      "tool": "search_graph",
+      "tool_args": {"query": "UserService", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "UserService"}
+      ]
+    },
+    {
+      "id": "find_validate_email",
+      "category": "symbol_discovery",
+      "description": "Search should find validate_email function",
+      "tool": "search_graph",
+      "tool_args": {"query": "validate_email", "nodeTypes": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "validate_email"}
+      ]
+    },
+    {
+      "id": "find_validate_name",
+      "category": "symbol_discovery",
+      "description": "Search should find validate_name function",
+      "tool": "search_graph",
+      "tool_args": {"query": "validate_name", "nodeTypes": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "validate_name"}
+      ]
+    },
+    {
+      "id": "list_functions",
+      "category": "structure",
+      "description": "Should have functions from multiple files",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 4}
+      ]
+    },
+    {
+      "id": "list_classes",
+      "category": "structure",
+      "description": "Should have User and UserService classes",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 2},
+        {"type": "result_contains_name", "value": "User"},
+        {"type": "result_contains_name", "value": "UserService"}
+      ]
+    },
+    {
+      "id": "service_neighbors_models",
+      "category": "relationships",
+      "description": "service.py should have import relationship to models.py",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level2/service.py"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "models.py"}
+      ]
+    },
+    {
+      "id": "service_neighbors_validator",
+      "category": "relationships",
+      "description": "service.py should have import relationship to validator.py",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level2/service.py"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "validator.py"}
+      ]
+    },
+    {
+      "id": "app_neighbors_service",
+      "category": "relationships",
+      "description": "app.py should have import relationship to service.py",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level2/app.py"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "service.py"}
+      ]
+    },
+    {
+      "id": "create_user_calls_validate_name",
+      "category": "call_graph",
+      "description": "create_user should call validate_name (cross-file bare call)",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level2/service.py::UserService::create_user"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "validate_name"}
+      ]
+    },
+    {
+      "id": "search_type_filter",
+      "category": "search_quality",
+      "description": "Searching for 'User' with Class filter should only return Classes",
+      "tool": "search_graph",
+      "tool_args": {"query": "User", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "all_have_type", "value": "Class"}
+      ]
+    },
+    {
+      "id": "search_no_results",
+      "category": "search_quality",
+      "description": "Searching for nonsense should return empty",
+      "tool": "search_graph",
+      "tool_args": {"query": "zzz_nonexistent_zzz"},
+      "assertions": [
+        {"type": "exact_count", "value": 0}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Downloaded datasets
+data/
+
+# Cloned repos and index databases
+workdir/

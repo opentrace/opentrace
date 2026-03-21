@@ -1,0 +1,92 @@
+{
+  "suite_name": "Level 1 — Smoke",
+  "description": "Basic indexing: files, classes, functions in a single Python file.",
+  "fixture": "tests/fixtures/level1",
+  "repo_id": "test/level1",
+  "tasks": [
+    {
+      "id": "stats_exist",
+      "category": "structure",
+      "description": "Graph should contain nodes after indexing",
+      "tool": "get_stats",
+      "tool_args": {},
+      "assertions": [
+        {"type": "has_key", "value": "total_nodes"},
+        {"type": "key_gte", "key": "total_nodes", "value": 1}
+      ]
+    },
+    {
+      "id": "has_repository_node",
+      "category": "structure",
+      "description": "Should have a Repository node",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Repository"},
+      "assertions": [
+        {"type": "min_count", "value": 1}
+      ]
+    },
+    {
+      "id": "find_app_py",
+      "category": "symbol_discovery",
+      "description": "Search should find app.py",
+      "tool": "search_graph",
+      "tool_args": {"query": "app.py", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "app.py"}
+      ]
+    },
+    {
+      "id": "find_calculator_class",
+      "category": "symbol_discovery",
+      "description": "Search should find the Calculator class",
+      "tool": "search_graph",
+      "tool_args": {"query": "Calculator", "nodeTypes": "Class"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "result_contains_name", "value": "Calculator"}
+      ]
+    },
+    {
+      "id": "list_functions",
+      "category": "structure",
+      "description": "Should have functions from the project (main + Calculator methods)",
+      "tool": "list_nodes",
+      "tool_args": {"type": "Function"},
+      "assertions": [
+        {"type": "min_count", "value": 2}
+      ]
+    },
+    {
+      "id": "calculator_neighbors",
+      "category": "structure",
+      "description": "Calculator class should have DEFINED_IN relationship to app.py",
+      "tool": "get_node",
+      "tool_args": {"nodeId": "test/level1/app.py::Calculator"},
+      "assertions": [
+        {"type": "neighbor_has_name", "value": "app.py"}
+      ]
+    },
+    {
+      "id": "search_no_results",
+      "category": "search_quality",
+      "description": "Searching for nonsense should return empty",
+      "tool": "search_graph",
+      "tool_args": {"query": "zzz_nonexistent_zzz"},
+      "assertions": [
+        {"type": "exact_count", "value": 0}
+      ]
+    },
+    {
+      "id": "search_type_filter",
+      "category": "search_quality",
+      "description": "Searching for 'app' with File filter should only return Files",
+      "tool": "search_graph",
+      "tool_args": {"query": "app", "nodeTypes": "File"},
+      "assertions": [
+        {"type": "min_count", "value": 1},
+        {"type": "all_have_type", "value": "File"}
+      ]
+    }
+  ]
+}
