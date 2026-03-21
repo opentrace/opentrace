@@ -26,7 +26,7 @@ import type { AddRepoModalProps } from './types';
 import './indexing-base.css';
 import './AddRepoModal.css';
 
-type SourceMode = 'url' | 'directory';
+type SourceMode = 'url' | 'directory' | 'import';
 
 export function detectProvider(
   url: string,
@@ -221,6 +221,25 @@ function FolderIcon() {
   );
 }
 
+function ImportIcon() {
+  return (
+    <svg
+      width="38"
+      height="38"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </svg>
+  );
+}
+
 const PROVIDER_DISPLAY_NAME: Record<string, string> = {
   github: 'GitHub',
   gitlab: 'GitLab',
@@ -294,7 +313,10 @@ export default function AddRepoModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -355,6 +377,21 @@ export default function AddRepoModal({
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
 
+    if (source === 'import') {
+      if (!importFile) {
+        setError('Select a .db file first.');
+        return;
+      }
+      setError(null);
+      setLoading(true);
+      onSubmit({
+        type: 'import-file',
+        file: importFile,
+        name: importFile.name.replace(/\.json$/i, ''),
+      });
+      return;
+    }
+
     if (source === 'directory') {
       if (!selectedFiles || selectedFiles.length === 0) {
         setError('Select a directory first.');
@@ -401,7 +438,11 @@ export default function AddRepoModal({
   // --- Hero content based on source mode ---
 
   const heroIcon =
-    source === 'directory' ? (
+    source === 'import' ? (
+      <div className="hero-icon hero-icon--provider">
+        <ImportIcon />
+      </div>
+    ) : source === 'directory' ? (
       <div className="hero-icon hero-icon--provider">
         <FolderIcon />
       </div>
@@ -410,18 +451,22 @@ export default function AddRepoModal({
     );
 
   const title =
-    source === 'directory'
-      ? 'Add Local Directory'
-      : provider
-        ? `Add from ${PROVIDER_DISPLAY_NAME[provider]}`
-        : 'Add Repository';
+    source === 'import'
+      ? 'Import Graph'
+      : source === 'directory'
+        ? 'Add Local Directory'
+        : provider
+          ? `Add from ${PROVIDER_DISPLAY_NAME[provider]}`
+          : 'Add Repository';
 
   const subtitle =
-    source === 'directory'
-      ? 'Select a directory to index its structure into the graph'
-      : provider
-        ? `Enter a ${PROVIDER_DISPLAY_NAME[provider]} repository URL to index`
-        : 'Enter a repository URL to index its structure into the graph';
+    source === 'import'
+      ? 'Upload a LadybugDB file to load into the graph'
+      : source === 'directory'
+        ? 'Select a directory to index its structure into the graph'
+        : provider
+          ? `Enter a ${PROVIDER_DISPLAY_NAME[provider]} repository URL to index`
+          : 'Enter a repository URL to index its structure into the graph';
 
   return (
     <div className="modal-backdrop" onClick={dismissable ? onClose : undefined}>
@@ -443,6 +488,13 @@ export default function AddRepoModal({
             >
               Directory
             </button>
+            <button
+              type="button"
+              className={`chip-toggle-btn${source === 'import' ? ' active' : ''}`}
+              onClick={() => setSource('import')}
+            >
+              Import
+            </button>
           </div>
         </div>
 
@@ -454,7 +506,111 @@ export default function AddRepoModal({
 
         <form onSubmit={handleSubmit}>
           <div className="form-fields">
-            {source === 'url' ? (
+            {source === 'import' ? (
+              <div className="import-picker">
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".db"
+                  className="directory-input"
+                  onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+                />
+                <div
+                  className={`import-dropzone${dragging ? ' import-dropzone--active' : ''}${importFile ? ' import-dropzone--has-file' : ''}`}
+                  onClick={() => importInputRef.current?.click()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragging(true);
+                  }}
+                  onDragEnter={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragging(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragging(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragging(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) setImportFile(file);
+                  }}
+                >
+                  {importFile ? (
+                    <>
+                      <svg
+                        className="import-dropzone-icon"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <ellipse cx="12" cy="5" rx="9" ry="3" />
+                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+                      </svg>
+                      <span className="import-dropzone-filename">
+                        {importFile.name}
+                      </span>
+                      <span className="import-dropzone-size">
+                        {(importFile.size / 1024 / 1024).toFixed(1)} MB
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <svg
+                        className="import-dropzone-icon"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span className="import-dropzone-label">
+                        Drop .db file here or click to browse
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="form-info">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  <span>
+                    Upload a LadybugDB database file (typically{' '}
+                    <code className="form-info-code">.opentrace/index.db</code>)
+                    generated by the OpenTrace agent.
+                  </span>
+                </div>
+              </div>
+            ) : source === 'url' ? (
               <>
                 <div className="form-info">
                   <svg
@@ -743,11 +899,11 @@ export default function AddRepoModal({
             {loading ? (
               <>
                 <span className="btn-spinner" />
-                Indexing...
+                {source === 'import' ? 'Importing...' : 'Indexing...'}
               </>
             ) : (
               <>
-                Add & Index
+                {source === 'import' ? 'Import' : 'Add & Index'}
                 <svg
                   width="16"
                   height="16"

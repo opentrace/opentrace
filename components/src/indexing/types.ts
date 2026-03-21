@@ -57,7 +57,16 @@ export interface IndexDirectoryMessage {
   name: string;
 }
 
-export type JobMessage = IndexRepoMessage | IndexDirectoryMessage;
+export interface ImportFileMessage {
+  type: 'import-file';
+  file: File;
+  name: string;
+}
+
+export type JobMessage =
+  | IndexRepoMessage
+  | IndexDirectoryMessage
+  | ImportFileMessage;
 
 // Component props
 export interface AddRepoModalProps {

@@ -146,6 +146,8 @@ export class BrowserJobService implements JobService {
         files: message.files,
         name: message.name,
       };
+    } else if (message.type === 'import-file') {
+      return this.startImportFileJob(message.file, message.name);
     } else {
       throw new Error(
         `Unsupported job type: ${(message as { type: string }).type}`,
@@ -372,6 +374,106 @@ export class BrowserJobService implements JobService {
       cancel() {
         cancelled = true;
         abortController.abort();
+        channel.close();
+      },
+    };
+  }
+
+  private async startImportFileJob(
+    file: File,
+    name: string,
+  ): Promise<JobStream> {
+    const channel = new EventChannel<JobEvent>();
+    let cancelled = false;
+
+    const run = async () => {
+      console.log('[import-file] Starting import job for:', name);
+
+      // 1. Read the binary database file
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+        phase: JobPhase.JOB_PHASE_FETCHING,
+        message: `Reading ${name}`,
+      });
+
+      console.log('[import-file] Reading file as ArrayBuffer...');
+      const buffer = await file.arrayBuffer();
+      const data = new Uint8Array(buffer);
+      console.log(
+        `[import-file] File read: ${data.byteLength} bytes (${(data.byteLength / 1024 / 1024).toFixed(1)} MB)`,
+      );
+
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+        phase: JobPhase.JOB_PHASE_FETCHING,
+        message: `Read ${(data.byteLength / 1024 / 1024).toFixed(1)} MB`,
+      });
+
+      if (cancelled) return;
+
+      // 2. Import the database via the store's importDatabase method
+      if (!this.store.importDatabase) {
+        throw new Error('Store does not support database file import');
+      }
+
+      console.log('[import-file] Calling store.importDatabase()...');
+      const result = await this.store.importDatabase(data, (msg) => {
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+          phase: JobPhase.JOB_PHASE_SUBMITTING,
+          message: msg,
+        });
+      });
+      console.log('[import-file] importDatabase() returned:', result);
+
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+        phase: JobPhase.JOB_PHASE_SUBMITTING,
+        message: `Imported ${result.nodes_created} nodes, ${result.relationships_created} relationships`,
+      });
+
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+        result: {
+          nodesCreated: result.nodes_created,
+          relationshipsCreated: result.relationships_created,
+          reposProcessed: 1,
+        },
+      });
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_DONE,
+        phase: JobPhase.JOB_PHASE_DONE,
+        result: {
+          nodesCreated: result.nodes_created,
+          relationshipsCreated: result.relationships_created,
+          reposProcessed: 1,
+        },
+      });
+    };
+
+    run()
+      .catch((err) => {
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+          message: err instanceof Error ? err.message : String(err),
+          errors: [err instanceof Error ? err.message : String(err)],
+        });
+      })
+      .finally(() => {
+        channel.close();
+      });
+
+    return {
+      [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
+      cancel() {
+        cancelled = true;
         channel.close();
       },
     };

@@ -27,6 +27,7 @@ export type {
   JobMessage,
   IndexRepoMessage,
   IndexDirectoryMessage,
+  ImportFileMessage,
   AddRepoModalProps,
   IndexingProgressProps,
 } from './types';

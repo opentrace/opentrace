@@ -1213,6 +1213,41 @@ const GraphViewer = memo(
                     <span className="ot-menu-label">Add Repository</span>
                   </button>
                 )}
+                {graphData.nodes.length > 0 && store.exportDatabase && (
+                  <button
+                    className="export-db-btn"
+                    title="Export database"
+                    onClick={async () => {
+                      if (!store.exportDatabase) return;
+                      const data = await store.exportDatabase();
+                      const blob = new Blob([data], {
+                        type: 'application/octet-stream',
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'opentrace.db';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span className="ot-menu-label">Export</span>
+                  </button>
+                )}
                 <ThemeSelector />
                 <button
                   className={`chat-toggle-btn ${showChat ? 'active' : ''}`}

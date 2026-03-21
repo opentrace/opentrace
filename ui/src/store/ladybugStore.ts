@@ -121,6 +121,54 @@ function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+// ---- LadybugDB MAP literal parser ----
+
+/** Split on commas not inside braces/brackets. */
+function splitTopLevel(s: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '{' || ch === '[' || ch === '(') depth++;
+    else if (ch === '}' || ch === ']' || ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(s.substring(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(s.substring(start));
+  return parts;
+}
+
+/** Coerce a MAP literal value string to a JS value. */
+function coerceValue(v: string): unknown {
+  if (v === 'True' || v === 'true') return true;
+  if (v === 'False' || v === 'false') return false;
+  if (v === 'None' || v === 'null') return null;
+  const n = Number(v);
+  if (!Number.isNaN(n) && v !== '') return n;
+  return v;
+}
+
+/** Parse LadybugDB's `{key: value, key2: value2}` MAP literal format. */
+function parseLadybugMap(s: string): Record<string, unknown> | undefined {
+  s = s.trim();
+  if (!s.startsWith('{') || !s.endsWith('}')) return undefined;
+  const inner = s.slice(1, -1).trim();
+  if (!inner) return undefined;
+  const result: Record<string, unknown> = {};
+  for (const pair of splitTopLevel(inner)) {
+    const trimmed = pair.trim();
+    const sep = trimmed.indexOf(': ');
+    if (sep === -1) continue;
+    result[trimmed.substring(0, sep).trim()] = coerceValue(
+      trimmed.substring(sep + 2).trim(),
+    );
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function parseProps(raw: unknown): Record<string, unknown> | undefined {
   if (raw == null) return undefined;
   // If getAllObjects() already returned a parsed object, use it directly
@@ -136,7 +184,8 @@ function parseProps(raw: unknown): Record<string, unknown> | undefined {
     const parsed = JSON.parse(json) as Record<string, unknown>;
     return Object.keys(parsed).length > 0 ? parsed : undefined;
   } catch {
-    return undefined;
+    // Fall back to LadybugDB MAP literal format: {key: value, key2: value2}
+    return parseLadybugMap(raw);
   }
 }
 
@@ -180,10 +229,17 @@ function unionAllTextSearch(escapedLower: string): string {
   ).join(' UNION ALL ');
 }
 
+// ---- Database path ----
+
+/** File-backed database on the WASM virtual filesystem.
+ *  Using a file (not :memory:) enables import/export via FS.readFile/writeFile. */
+const DB_PATH = '/opentrace.db';
+
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
   private lbug!: LbugModule;
+  private db!: import('@lbug/lbug-wasm').WebDatabase;
   private conn!: WebConnection;
   private ready: Promise<void>;
   private embedder: Embedder | null = null;
@@ -224,8 +280,8 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initModule(): Promise<void> {
     this.lbug = await lbugInit();
-    const db = await this.lbug.Database(':memory:', 512 * 1024 * 1024);
-    this.conn = await this.lbug.Connection(db);
+    this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+    this.conn = await this.lbug.Connection(this.db);
     await this.initSchema();
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
@@ -585,6 +641,103 @@ export class LadybugGraphStore implements GraphStore {
     this.nodeTypeMap.clear();
     this.flushedPackageIds.clear();
     this.sourceCache.clear();
+  }
+
+  async importDatabase(
+    data: Uint8Array,
+    onProgress?: (msg: string) => void,
+  ): Promise<ImportBatchResponse> {
+    await this.ready;
+
+    const log = (msg: string) => {
+      console.log(`[importDatabase] ${msg}`);
+      onProgress?.(msg);
+    };
+
+    // Close current database, write the uploaded file to the WASM FS,
+    // and open it directly. The agent now uses the same typed-table schema
+    // as the browser, so no migration is needed.
+
+    log('Closing current database');
+    this.conn.close();
+    this.db.close();
+
+    log(`Writing ${(data.byteLength / 1024 / 1024).toFixed(1)} MB to WASM FS`);
+    this.lbug.FS.writeFile(DB_PATH, data);
+
+    try {
+      log('Opening imported database...');
+      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+      this.conn = await this.lbug.Connection(this.db);
+      log('Database open');
+
+      // Reset all caches
+      this.bm25Index = new BM25Index();
+      this.vectorIndex = null;
+      this.nodePropsCache.clear();
+      this.nodeTypeMap.clear();
+      this.flushedPackageIds.clear();
+      this.sourceCache.clear();
+      this.pendingNodes = [];
+      this.pendingRels = [];
+      this.totalNodesBuffered = 0;
+      this.totalRelsBuffered = 0;
+
+      // Rebuild nodeTypeMap and BM25 index from the typed tables
+      log('Rebuilding search indexes...');
+      let totalNodes = 0;
+      let totalRels = 0;
+
+      for (const type of NODE_TYPES) {
+        const result = await this.conn.execute(
+          `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
+        );
+        if (!result) continue;
+        for (const row of result.table) {
+          const r = row.toJSON();
+          const id = String(r.id);
+          const name = String(r.name ?? '');
+          this.nodeTypeMap.set(id, type);
+          this.bm25Index.addDocument(id, `${name} ${type}`);
+          totalNodes++;
+        }
+      }
+
+      // Count relationships
+      const relResult = await this.conn.execute(
+        'MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt',
+      );
+      if (relResult) {
+        for (const row of relResult.table) {
+          totalRels = Number(row.toJSON().cnt) || 0;
+        }
+      }
+
+      log(`Done: ${totalNodes} nodes, ${totalRels} relationships imported`);
+
+      return {
+        nodes_created: totalNodes,
+        relationships_created: totalRels,
+      };
+    } catch (err) {
+      console.error('[importDatabase] Import failed, reinitializing:', err);
+      try {
+        this.conn.close();
+        this.db.close();
+      } catch {
+        /* ignore */
+      }
+      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+      this.conn = await this.lbug.Connection(this.db);
+      await this.initSchema();
+      throw err;
+    }
+  }
+
+  async exportDatabase(): Promise<Uint8Array> {
+    await this.ready;
+    await this.flush();
+    return this.lbug.FS.readFile(DB_PATH);
   }
 
   /**
