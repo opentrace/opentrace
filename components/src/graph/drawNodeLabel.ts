@@ -52,6 +52,9 @@ function resolveLabelColor(): string {
 }
 
 // ─── Label density tracking ─────────────────────────────────────────
+// Note: module-level state is a singleton shared across all GraphCanvas
+// instances. Fine for single-graph apps; if multi-graph support is needed,
+// these would need to be per-instance (e.g. WeakMap keyed on sigma context).
 
 interface LabelBox {
   x: number;
@@ -163,7 +166,8 @@ export function drawNodeLabel<
   context.strokeText(data.label, x, y);
   context.restore();
 
-  // Label text in theme foreground color
+  // Re-apply font after restore() rolled it back
+  context.font = `${weight} ${size}px ${font}`;
   context.fillStyle = fg;
   context.fillText(data.label, x, y);
 }
