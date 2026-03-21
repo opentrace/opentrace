@@ -19,14 +19,14 @@ import { getNodeColor } from '@opentrace/components/utils';
 
 describe('getNodeColor', () => {
   it('returns fixed color for known node types', () => {
-    expect(getNodeColor('Class')).toBe('#60a5fa');
-    expect(getNodeColor('Function')).toBe('#c084fc');
-    expect(getNodeColor('File')).toBe('#a3e635');
-    expect(getNodeColor('Directory')).toBe('#22d3ee');
+    expect(getNodeColor('Class')).toBe('#3b82f6');
+    expect(getNodeColor('Function')).toBe('#a855f7');
+    expect(getNodeColor('File')).toBe('#84cc16');
+    expect(getNodeColor('Directory')).toBe('#06b6d4');
   });
 
   it('returns fixed color for Repository', () => {
-    expect(getNodeColor('Repository')).toBe('#4ade80');
+    expect(getNodeColor('Repository')).toBe('#22c55e');
   });
 
   it('returns a deterministic color for unknown types', () => {
