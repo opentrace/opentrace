@@ -53,11 +53,11 @@ export default function PhysicsPanel({
   }, [repulsion]);
 
   const handleRepulsionInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = Number(e.target.value);
+    (e: React.FormEvent<HTMLInputElement>) => {
+      const value = Number(e.currentTarget.value);
       localRef.current = value;
       // Update the displayed value immediately via the input
-      e.target.parentElement
+      e.currentTarget.parentElement
         ?.querySelector('.physics-slider-value')
         ?.replaceChildren(String(value));
 
