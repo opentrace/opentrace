@@ -23,7 +23,9 @@ import ChatPanel from './components/ChatPanel';
 import SettingsDrawer from './components/SettingsDrawer';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import { loadAnimationSettings } from './config/animation';
+import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
+import { useStore } from './store';
 import './App.css';
 
 const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
@@ -32,6 +34,7 @@ const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
 };
 
 function App() {
+  const { store } = useStore();
   const jobService = useJobService();
   const {
     state: jobState,
@@ -43,6 +46,9 @@ function App() {
 
   const graphViewerRef = useRef<GraphViewerHandle>(null);
   const [chatGraphData, setChatGraphData] = useState(EMPTY_GRAPH);
+  const hasRepoParam = useRef(
+    new URLSearchParams(window.location.search).has('repo'),
+  );
 
   const [showChat, setShowChat] = useState(true);
   const [chatWidth, setChatWidth] = useState(480);
@@ -63,6 +69,55 @@ function App() {
       setDimensions({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Handle ?repo= query parameter — auto-index or navigate to existing repo
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const repoParam = params.get('repo');
+    if (!repoParam) {
+      hasRepoParam.current = false;
+      return;
+    }
+
+    // Clean URL so the param doesn't persist on refresh
+    window.history.replaceState({}, '', window.location.pathname);
+
+    const normalized = normalizeRepoUrl(repoParam);
+
+    (async () => {
+      const repos = await store.listNodes('Repository');
+      const existing = repos.find((r) => {
+        const nodeUrl = r.properties?.url;
+        return (
+          typeof nodeUrl === 'string' &&
+          normalizeRepoUrl(nodeUrl) === normalized
+        );
+      });
+
+      if (existing) {
+        // Repo already indexed — show it
+        setActiveRepoUrl(repoParam);
+        await graphViewerRef.current?.reload(existing.id, 2);
+        setTimeout(() => {
+          graphViewerRef.current?.selectNode(existing.id);
+          hasRepoParam.current = false;
+        }, 100);
+      } else {
+        // Not indexed — auto-trigger indexing with stored PAT if available
+        const provider = detectProvider(repoParam);
+        const token = provider
+          ? (localStorage.getItem(`ot_${provider}_pat`) ?? undefined)
+          : undefined;
+        handleJobSubmit({
+          type: 'index-repo',
+          repoUrl: repoParam,
+          token,
+        });
+        hasRepoParam.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time mount effect
   }, []);
 
   const handleJobSubmit = useCallback(
@@ -91,7 +146,10 @@ function App() {
 
   const handleJobMinimize = useCallback(() => minimizeJob(), [minimizeJob]);
   const handleJobExpand = useCallback(() => setJobExpanded(true), []);
-  const handleAddRepoOpen = useCallback(() => setShowAddRepo(true), []);
+  const handleAddRepoOpen = useCallback(() => {
+    if (hasRepoParam.current) return; // suppress while deep link is being handled
+    setShowAddRepo(true);
+  }, []);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
   const handleToggleChat = useCallback(() => setShowChat((v) => !v), []);
   const handleChatWidthChange = useCallback((w: number) => setChatWidth(w), []);
