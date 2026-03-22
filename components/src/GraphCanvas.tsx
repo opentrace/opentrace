@@ -146,6 +146,16 @@ export interface GraphCanvasHandle {
   startPhysics: () => void;
   /** Returns whether FA2 physics is currently running. */
   isPhysicsRunning: () => boolean;
+  // ── Pixi-specific (optional, no-op in Sigma) ──
+  setEdgesEnabled?: (enabled: boolean) => void;
+  setShowLabels?: (show: boolean) => void;
+  setChargeStrength?: (strength: number) => void;
+  setLinkDistance?: (distance: number) => void;
+  setCenterStrength?: (strength: number) => void;
+  setCommunityGravity?: (enabled: boolean, strength?: number) => void;
+  reheat?: () => void;
+  fitToScreen?: () => void;
+  setZoomSizeExponent?: (exponent: number) => void;
 }
 
 // ─── Internal components ────────────────────────────────────────────────

@@ -27,6 +27,9 @@ export { default as Graph } from './GraphCanvas';
 export { default as GraphCanvas } from './GraphCanvas';
 export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './GraphCanvas';
 
+// ─── Pixi.js renderer (alternative to Sigma.js GraphCanvas) ────────────
+export { default as PixiGraphCanvas } from './PixiGraphCanvas';
+
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';
 export type {

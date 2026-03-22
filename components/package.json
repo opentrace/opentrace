@@ -72,21 +72,29 @@
     "web-tree-sitter": ">=0.24.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true },
-    "web-tree-sitter": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "web-tree-sitter": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@react-sigma/core": "^5.0.6",
     "@react-sigma/layout-forceatlas2": "^5.0.6",
     "@sigma/edge-curve": "^3.1.0",
     "d3-force": "^3.0.0",
+    "d3-quadtree": "^3.0.1",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
     "mermaid": "^11.6.0",
+    "pixi.js": "^8.17.1",
     "react-markdown": "^10.1.0",
     "react-window": "^2.2.7",
     "remark-gfm": "^4.0.1",
@@ -96,6 +104,7 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/d3-force": "^3.0.10",
+    "@types/d3-quadtree": "^3.0.6",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

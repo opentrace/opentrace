@@ -27,9 +27,9 @@
 // Base size is computed as: clamp(NODE_SIZE_MIN, NODE_SIZE_MIN + sqrt(degree) * NODE_SIZE_DEGREE_SCALE, NODE_SIZE_MAX)
 // Then multiplied by the type multiplier below.
 
-export const NODE_SIZE_MIN = 3;
-export const NODE_SIZE_MAX = 12;
-export const NODE_SIZE_DEGREE_SCALE = 1.0; // how much degree (connections) inflates size
+export const NODE_SIZE_MIN = 4;
+export const NODE_SIZE_MAX = 20;
+export const NODE_SIZE_DEGREE_SCALE = 1.8; // how much degree (connections) inflates size
 
 // Type-based multipliers applied to the base size
 export const NODE_SIZE_MULTIPLIERS: Record<string, number> = {

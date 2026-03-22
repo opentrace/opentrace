@@ -29,6 +29,23 @@ interface PhysicsPanelProps {
   isPhysicsRunning: boolean;
   onStopPhysics: () => void;
   onStartPhysics: () => void;
+
+  // ── Pixi-specific (optional — only shown when renderer is 'pixi') ──
+  pixiMode?: boolean;
+  linkDistance?: number;
+  onLinkDistanceChange?: (value: number) => void;
+  centerStrength?: number;
+  onCenterStrengthChange?: (value: number) => void;
+  edgesEnabled?: boolean;
+  onEdgesEnabledChange?: (enabled: boolean) => void;
+  communityGravityEnabled?: boolean;
+  onCommunityGravityEnabledChange?: (enabled: boolean) => void;
+  communityGravityStrength?: number;
+  onCommunityGravityStrengthChange?: (value: number) => void;
+  zoomSizeExponent?: number;
+  onZoomSizeExponentChange?: (value: number) => void;
+  onReheat?: () => void;
+  onFitToScreen?: () => void;
 }
 
 export default function PhysicsPanel({
@@ -43,6 +60,22 @@ export default function PhysicsPanel({
   isPhysicsRunning,
   onStopPhysics,
   onStartPhysics,
+  // Pixi-specific
+  pixiMode,
+  linkDistance = 200,
+  onLinkDistanceChange,
+  centerStrength = 0.3,
+  onCenterStrengthChange,
+  edgesEnabled = true,
+  onEdgesEnabledChange,
+  communityGravityEnabled = false,
+  onCommunityGravityEnabledChange,
+  communityGravityStrength = 0.1,
+  onCommunityGravityStrengthChange,
+  zoomSizeExponent = 0.8,
+  onZoomSizeExponentChange,
+  onReheat,
+  onFitToScreen,
 }: PhysicsPanelProps) {
   // Debounce repulsion slider changes (200ms)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,6 +146,59 @@ export default function PhysicsPanel({
         </div>
       </div>
 
+      {/* Pixi: show edges toggle */}
+      {pixiMode && onEdgesEnabledChange && (
+        <div
+          className="physics-toggle-row"
+          onClick={() => onEdgesEnabledChange(!edgesEnabled)}
+        >
+          <span className="physics-toggle-label">Show edges</span>
+          <div className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}>
+            <div className="physics-toggle-thumb" />
+          </div>
+        </div>
+      )}
+
+      {/* Pixi: community clusters toggle + gravity */}
+      {pixiMode && onCommunityGravityEnabledChange && (
+        <>
+          <div
+            className="physics-toggle-row"
+            onClick={() =>
+              onCommunityGravityEnabledChange(!communityGravityEnabled)
+            }
+          >
+            <span className="physics-toggle-label">Community clusters</span>
+            <div
+              className={`physics-toggle-track${communityGravityEnabled ? ' on' : ''}`}
+            >
+              <div className="physics-toggle-thumb" />
+            </div>
+          </div>
+          {communityGravityEnabled && onCommunityGravityStrengthChange && (
+            <div className="physics-slider-row">
+              <div className="physics-slider-label">
+                <span>Cluster gravity</span>
+                <span className="physics-slider-value">
+                  {Math.round(communityGravityStrength * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={50}
+                value={Math.round(communityGravityStrength * 100)}
+                onInput={(e) =>
+                  onCommunityGravityStrengthChange(
+                    Number(e.currentTarget.value) / 100,
+                  )
+                }
+              />
+            </div>
+          )}
+        </>
+      )}
+
       <div className="physics-divider" />
 
       <h4 className="physics-panel-title">Physics</h4>
@@ -132,7 +218,86 @@ export default function PhysicsPanel({
         />
       </div>
 
+      {/* Pixi: link distance slider */}
+      {pixiMode && onLinkDistanceChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Link distance</span>
+            <span className="physics-slider-value">{linkDistance}</span>
+          </div>
+          <input
+            type="range"
+            min={5}
+            max={500}
+            value={linkDistance}
+            onInput={(e) => onLinkDistanceChange(Number(e.currentTarget.value))}
+          />
+        </div>
+      )}
+
+      {/* Pixi: center strength slider */}
+      {pixiMode && onCenterStrengthChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Center pull</span>
+            <span className="physics-slider-value">
+              {Math.round(centerStrength * 100)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={100}
+            value={Math.round(centerStrength * 100)}
+            onInput={(e) =>
+              onCenterStrengthChange(Number(e.currentTarget.value) / 100)
+            }
+          />
+        </div>
+      )}
+
+      {/* Pixi: zoom-size exponent slider */}
+      {pixiMode && onZoomSizeExponentChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Zoom scaling</span>
+            <span className="physics-slider-value">
+              {Math.round(zoomSizeExponent * 100)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(zoomSizeExponent * 100)}
+            onInput={(e) =>
+              onZoomSizeExponentChange(Number(e.currentTarget.value) / 100)
+            }
+          />
+        </div>
+      )}
+
       <div className="physics-divider" />
+
+      {/* Pixi: reheat + fit buttons */}
+      {pixiMode && onReheat && onFitToScreen && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+          <button
+            className="physics-action-btn"
+            style={{ flex: 1 }}
+            onClick={onReheat}
+          >
+            Reheat
+          </button>
+          <button
+            className="physics-action-btn"
+            style={{ flex: 1 }}
+            onClick={onFitToScreen}
+          >
+            Fit to screen
+          </button>
+        </div>
+      )}
 
       <button
         className="physics-action-btn"
