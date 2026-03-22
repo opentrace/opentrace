@@ -24,14 +24,21 @@
 import { Graphics, type Application, type Texture } from 'pixi.js';
 
 const CIRCLE_RADIUS = 16; // texture size in pixels (sprites scale via .scale)
-const textureCache = new Map<string, Texture>();
 
 /**
  * Get (or create) a circle texture for the given hex color string.
  * The color should be a CSS hex string like '#3b82f6'.
+ *
+ * @param cache - Per-renderer texture cache map. Each PixiRenderer instance
+ *   owns its own cache so that clearing it on destroy doesn't break other
+ *   live renderers.
  */
-export function getCircleTexture(app: Application, color: string): Texture {
-  const cached = textureCache.get(color);
+export function getCircleTexture(
+  app: Application,
+  color: string,
+  cache: Map<string, Texture>,
+): Texture {
+  const cached = cache.get(color);
   if (cached) return cached;
 
   const g = new Graphics();
@@ -39,16 +46,16 @@ export function getCircleTexture(app: Application, color: string): Texture {
   g.fill({ color });
   const tex = app.renderer.generateTexture(g);
   g.destroy();
-  textureCache.set(color, tex);
+  cache.set(color, tex);
   return tex;
 }
 
-/** Clear the texture cache (call on renderer destroy). */
-export function clearTextureCache(): void {
-  for (const tex of textureCache.values()) {
+/** Clear and destroy all textures in the given cache. */
+export function clearTextureCache(cache: Map<string, Texture>): void {
+  for (const tex of cache.values()) {
     tex.destroy(true);
   }
-  textureCache.clear();
+  cache.clear();
 }
 
 export { CIRCLE_RADIUS };

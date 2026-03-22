@@ -117,7 +117,9 @@ function toIndexingProps(job: JobState, repoUrl: string) {
 
 /** Node types whose source code can be fetched and displayed. */
 const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
-const EMPTY_SET = new Set<string>();
+// WARNING: Module-level singleton — do NOT mutate (add/delete). Used as a
+// stable empty default for highlight props to avoid unnecessary re-renders.
+const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
 
 /**
  * Extract a sub-type value from a node based on its type.

@@ -37,6 +37,7 @@ import {
   TextStyle,
 } from 'pixi.js';
 import { quadtree, type Quadtree } from 'd3-quadtree';
+import type { Texture } from 'pixi.js';
 import type { GraphNode, GraphLink } from '../graph/types';
 import type { SelectedEdge } from '../types/graph';
 import { getCircleTexture, clearTextureCache, CIRCLE_RADIUS } from './spriteTextures';
@@ -161,6 +162,12 @@ export class PixiRenderer {
   // Set to true when destroy() is called — prevents async _init() from continuing
   private destroyed = false;
 
+  // Per-instance texture cache — avoids cross-renderer interference on destroy
+  private textureCache: Map<string, Texture> = new Map();
+
+  // AbortController for canvas event listeners — aborted on destroy()
+  private interactionAbort: AbortController | null = null;
+
   // ─── Lifecycle ──────────────────────────────────────────────────────
 
   init(
@@ -237,8 +244,9 @@ export class PixiRenderer {
       }
     });
 
-    // Pointer events on the canvas
-    this.setupInteraction(app.canvas);
+    // Pointer events on the canvas — cleaned up via AbortController in destroy()
+    this.interactionAbort = new AbortController();
+    this.setupInteraction(app.canvas, this.interactionAbort.signal);
   }
 
   resize(width: number, height: number): void {
@@ -250,7 +258,9 @@ export class PixiRenderer {
   destroy(): void {
     this.destroyed = true;
     this.cancelAnimation?.();
-    clearTextureCache();
+    this.interactionAbort?.abort();
+    this.interactionAbort = null;
+    clearTextureCache(this.textureCache);
     this.nodes.clear();
     this.edges = [];
     this.edgeIndex.clear();
@@ -292,7 +302,7 @@ export class PixiRenderer {
       const pos = positions.get(gn.id) ?? { x: 0, y: 0 };
       const color = nodeColors.get(gn.id) ?? '#888888';
       const size = nodeSizes.get(gn.id) ?? 4;
-      const tex = getCircleTexture(this.app, color);
+      const tex = getCircleTexture(this.app, color, this.textureCache);
 
       const sprite = new Sprite(tex);
       sprite.anchor.set(0.5);
@@ -461,7 +471,7 @@ export class PixiRenderer {
       const node = this.nodes.get(id);
       if (!node) continue;
       node.color = color;
-      node.sprite.texture = getCircleTexture(this.app, color);
+      node.sprite.texture = getCircleTexture(this.app, color, this.textureCache);
     }
   }
 
@@ -615,6 +625,8 @@ export class PixiRenderer {
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
         if (this.hiddenLinkTypes.has(e.label)) continue;
+        // Key format "sourceId-targetId" matches useHighlights adjacency (line 76).
+        // Note: edge dedup uses "sourceId-label-targetId" — that's intentionally different.
         const linkKey = `${e.sourceId}-${e.targetId}`;
         if (!this.highlightLinks.has(linkKey)) continue;
         const s = this.nodes.get(e.sourceId);
@@ -917,16 +929,16 @@ export class PixiRenderer {
     this.callbacks = callbacks;
   }
 
-  private setupInteraction(canvas: HTMLCanvasElement): void {
-    // Wheel zoom
+  private setupInteraction(canvas: HTMLCanvasElement, signal: AbortSignal): void {
+    // Wheel zoom — deltaY-proportional for smooth, magnitude-aware zooming
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // Zoom centered on cursor
-      const zoomFactor = e.deltaY > 0 ? 0.97 : 1.03;
+      // Smooth zoom: larger deltaY → bigger zoom step
+      const zoomFactor = Math.pow(0.999, e.deltaY);
       const newScale = this.vp.scale * zoomFactor;
       // Adjust position so world point under cursor stays fixed
       this.vp.x = mouseX - (mouseX - this.vp.x) * (newScale / this.vp.scale);
@@ -935,15 +947,22 @@ export class PixiRenderer {
 
       // Edges stay visible during zoom — they're in world space so they
       // transform with the viewport automatically. No redraw needed.
-    }, { passive: false });
+    }, { passive: false, signal });
 
     // Pointer events for pan / drag / click
     let pointerDown = false;
     let movedDistance = 0;
+    // Track last pointer position to compute pan deltas manually,
+    // avoiding movementX/Y which includes the full distance since pointerdown
+    // on the first pointermove event after crossing the drag threshold.
+    let lastPointerX = 0;
+    let lastPointerY = 0;
 
     canvas.addEventListener('pointerdown', (e) => {
       pointerDown = true;
       movedDistance = 0;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
       this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
       // Hit test
@@ -958,7 +977,7 @@ export class PixiRenderer {
       } else {
         this.pendingDragNode = null;
       }
-    });
+    }, { signal });
 
     let lastHoverCheck = 0;
     canvas.addEventListener('pointermove', (e) => {
@@ -1007,13 +1026,18 @@ export class PixiRenderer {
           this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
           this.redrawDragEdges(this.dragNode);
         } else {
-          // Pan — just move the viewport. Edges are in world space
-          // so they follow automatically, no need to hide/redraw.
-          this.vp.x += e.movementX;
-          this.vp.y += e.movementY;
+          // Pan — compute delta from last pointer position (not movementX/Y)
+          // to avoid a jump on the first move after crossing the drag threshold.
+          const panDx = e.clientX - lastPointerX;
+          const panDy = e.clientY - lastPointerY;
+          this.vp.x += panDx;
+          this.vp.y += panDy;
         }
       }
-    });
+
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+    }, { signal });
 
     const pointerUp = (e: PointerEvent) => {
       if (!pointerDown) return;
@@ -1043,8 +1067,8 @@ export class PixiRenderer {
       this.pointerDownPos = null;
     };
 
-    canvas.addEventListener('pointerup', pointerUp);
-    canvas.addEventListener('pointerleave', pointerUp);
+    canvas.addEventListener('pointerup', pointerUp, { signal });
+    canvas.addEventListener('pointerleave', pointerUp, { signal });
   }
 
   // ─── Node Access ──────────────────────────────────────────────────

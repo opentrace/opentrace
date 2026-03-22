@@ -66,6 +66,10 @@ export interface UsePixiLayoutResult {
   restart: () => void;
   /** Stop or resume the simulation. */
   toggleSim: () => void;
+  /** Unconditionally stop the simulation. */
+  stopSim: () => void;
+  /** Unconditionally start the simulation. */
+  startSim: () => void;
   /** Pin a node to a fixed position (for dragging). */
   fixNode: (nodeId: string, x: number, y: number) => void;
   /** Unpin a node (after drag ends). */
@@ -91,6 +95,7 @@ export function usePixiLayout(
 ): UsePixiLayoutResult {
   const [layoutReady, setLayoutReady] = useState(false);
   const [simRunning, setSimRunning] = useState(true);
+  const simRunningRef = useRef(true);
   const simulationRef = useRef<Simulation<SimNode, SimLink> | null>(null);
   const communityDataRef = useRef(communityData);
   communityDataRef.current = communityData;
@@ -209,25 +214,46 @@ export function usePixiLayout(
 
   const restart = useCallback(() => {
     simulationRef.current?.alpha(0.5).restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
   const reheat = useCallback(() => {
     simulationRef.current?.alpha(1).restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
   const toggleSim = useCallback(() => {
     const sim = simulationRef.current;
     if (!sim) return;
-    if (simRunning) {
+    // Use ref to avoid stale closure over simRunning state
+    if (simRunningRef.current) {
       sim.stop();
+      simRunningRef.current = false;
       setSimRunning(false);
     } else {
       sim.restart();
+      simRunningRef.current = true;
       setSimRunning(true);
     }
-  }, [simRunning]);
+  }, []);
+
+  const stopSim = useCallback(() => {
+    const sim = simulationRef.current;
+    if (!sim) return;
+    sim.stop();
+    simRunningRef.current = false;
+    setSimRunning(false);
+  }, []);
+
+  const startSim = useCallback(() => {
+    const sim = simulationRef.current;
+    if (!sim) return;
+    sim.alpha(0.5).restart();
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, []);
 
   const fixNode = useCallback((nodeId: string, x: number, y: number) => {
     const node = simNodeMapRef.current.get(nodeId);
@@ -235,6 +261,7 @@ export function usePixiLayout(
       node.fx = x;
       node.fy = y;
       simulationRef.current?.alpha(0.1).restart();
+      simRunningRef.current = true;
       setSimRunning(true);
     }
   }, []);
@@ -252,6 +279,7 @@ export function usePixiLayout(
     if (!sim) return;
     sim.force('charge', forceManyBody().strength(strength));
     sim.alpha(0.3).restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
@@ -261,6 +289,7 @@ export function usePixiLayout(
     const link = sim.force('link') as ReturnType<typeof forceLink<SimNode, SimLink>> | undefined;
     if (link) link.distance(distance);
     sim.alpha(0.3).restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
@@ -270,6 +299,7 @@ export function usePixiLayout(
     const center = sim.force('center') as ReturnType<typeof forceCenter> | undefined;
     if (center) center.strength(strength);
     sim.alpha(0.3).restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
@@ -281,6 +311,7 @@ export function usePixiLayout(
       sim.force('clusterX', null);
       sim.force('clusterY', null);
       sim.alpha(0.3).restart();
+      simRunningRef.current = true;
       setSimRunning(true);
       return;
     }
@@ -316,6 +347,7 @@ export function usePixiLayout(
       .force('clusterY', forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(strength))
       .alpha(0.5)
       .restart();
+    simRunningRef.current = true;
     setSimRunning(true);
   }, []);
 
@@ -327,6 +359,8 @@ export function usePixiLayout(
     reheat,
     restart,
     toggleSim,
+    stopSim,
+    startSim,
     fixNode,
     unfixNode,
     setChargeStrength,

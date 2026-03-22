@@ -161,6 +161,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const {
       layoutReady, positions, nodeSizes,
       simRunning, reheat, restart, toggleSim,
+      stopSim, startSim,
       fixNode, unfixNode,
       setChargeStrength, setLinkDistance, setCenterStrength,
       setCommunityGravity,
@@ -209,6 +210,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         if (!cancelled) setDataVersion((v) => v + 1);
       });
       return () => { cancelled = true; };
+      // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
+      // It never changes identity — the effect re-runs via `layoutReady` or when
+      // nodes/links/colors change. This is intentional: we snapshot `positions`
+      // above to avoid reading a mutated Map during the async setData call.
     }, [layoutReady, nodes, links, positions, nodeColors, nodeSizes, linkColors]);
 
     // ── Update node colors when colorMode changes ───────────────────────
@@ -308,10 +313,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           rendererRef.current?.resetCamera(duration ?? 300);
         },
         stopPhysics: () => {
-          toggleSim();
+          stopSim();
         },
         startPhysics: () => {
-          restart();
+          startSim();
         },
         isPhysicsRunning: () => simRunning,
         // Pixi-specific
@@ -333,7 +338,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           rendererRef.current?.setZoomSizeExponent(exponent);
         },
       }),
-      [onNodeClick, restart, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity],
+      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity],
     );
 
     return (
