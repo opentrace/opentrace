@@ -71,55 +71,6 @@ function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Handle ?repo= query parameter — auto-index or navigate to existing repo
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const repoParam = params.get('repo');
-    if (!repoParam) {
-      hasRepoParam.current = false;
-      return;
-    }
-
-    // Clean URL so the param doesn't persist on refresh
-    window.history.replaceState({}, '', window.location.pathname);
-
-    const normalized = normalizeRepoUrl(repoParam);
-
-    (async () => {
-      const repos = await store.listNodes('Repository');
-      const existing = repos.find((r) => {
-        const nodeUrl = r.properties?.url;
-        return (
-          typeof nodeUrl === 'string' &&
-          normalizeRepoUrl(nodeUrl) === normalized
-        );
-      });
-
-      if (existing) {
-        // Repo already indexed — show it
-        setActiveRepoUrl(repoParam);
-        await graphViewerRef.current?.reload(existing.id, 2);
-        setTimeout(() => {
-          graphViewerRef.current?.selectNode(existing.id);
-          hasRepoParam.current = false;
-        }, 100);
-      } else {
-        // Not indexed — auto-trigger indexing with stored PAT if available
-        const provider = detectProvider(repoParam);
-        const token = provider
-          ? (localStorage.getItem(`ot_${provider}_pat`) ?? undefined)
-          : undefined;
-        handleJobSubmit({
-          type: 'index-repo',
-          repoUrl: repoParam,
-          token,
-        });
-        hasRepoParam.current = false;
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time mount effect
-  }, []);
-
   const handleJobSubmit = useCallback(
     (message: JobMessage) => {
       if (message.type === 'index-repo') {
@@ -133,6 +84,72 @@ function App() {
     },
     [startJob],
   );
+
+  // Index or navigate to a repo by URL — shared by ?repo= param and postMessage
+  const handleRepoDeepLink = useCallback(
+    async (repoUrl: string) => {
+      const normalized = normalizeRepoUrl(repoUrl);
+      const repos = await store.listNodes('Repository');
+      const existing = repos.find((r) => {
+        const nodeUrl = r.properties?.url;
+        return (
+          typeof nodeUrl === 'string' &&
+          normalizeRepoUrl(nodeUrl) === normalized
+        );
+      });
+
+      if (existing) {
+        setActiveRepoUrl(repoUrl);
+        await graphViewerRef.current?.reload(existing.id, 2);
+        setTimeout(
+          () => graphViewerRef.current?.selectNode(existing.id),
+          100,
+        );
+      } else {
+        const provider = detectProvider(repoUrl);
+        const token = provider
+          ? (localStorage.getItem(`ot_${provider}_pat`) ?? undefined)
+          : undefined;
+        handleJobSubmit({
+          type: 'index-repo',
+          repoUrl,
+          token,
+        });
+      }
+    },
+    [store, handleJobSubmit],
+  );
+
+  // Handle ?repo= query parameter on initial load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const repoParam = params.get('repo');
+    if (!repoParam) {
+      hasRepoParam.current = false;
+      return;
+    }
+
+    // Clean URL so the param doesn't persist on refresh
+    window.history.replaceState({}, '', window.location.pathname);
+
+    handleRepoDeepLink(repoParam).then(() => {
+      hasRepoParam.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time mount effect
+  }, []);
+
+  // Listen for postMessage from the Chrome extension (reuses existing tab)
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'opentrace:index-repo') return;
+      const repoUrl = event.data.repoUrl;
+      if (typeof repoUrl === 'string' && repoUrl) {
+        handleRepoDeepLink(repoUrl);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [handleRepoDeepLink]);
 
   const handleJobClose = useCallback(() => {
     resetJob();
