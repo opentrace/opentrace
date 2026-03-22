@@ -1,5 +1,5 @@
 ---
-name: status
+name: devstatus
 description: |
   Report the current session state: branch, changes, PR status, and a summary.
   Use when: "what's the status", "where are we", "session status", "what have we done"
