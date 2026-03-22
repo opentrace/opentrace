@@ -224,4 +224,93 @@ describe('AddRepoModal', () => {
       expect(stored).toEqual(['https://gitlab.com/baz/qux']);
     });
   });
+
+  describe('import tab', () => {
+    function switchToImport(result: ReturnType<typeof render>) {
+      // Click the Import toggle (third chip-toggle button)
+      const toggleBtns = result.container.querySelectorAll('.chip-toggle-btn');
+      fireEvent.click(toggleBtns[2]); // URL=0, Directory=1, Import=2
+      return result;
+    }
+
+    it('switches to import view when Import toggle is clicked', () => {
+      const result = switchToImport(
+        render(React.createElement(AddRepoModal, defaultProps)),
+      );
+      expect(result.queryByTestId('repo-url-input')).toBeNull();
+      expect(result.getByText('Import Graph')).toBeDefined();
+      // File input for .db files should be present
+      expect(
+        result.container.querySelector('input[type="file"][accept=".db"]'),
+      ).not.toBeNull();
+    });
+
+    it('shows error when submitting without a file', () => {
+      const onSubmit = vi.fn();
+      const result = switchToImport(
+        render(
+          React.createElement(AddRepoModal, { ...defaultProps, onSubmit }),
+        ),
+      );
+      const form = result.container.querySelector('form')!;
+      fireEvent.submit(form);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(result.getByText('Select a .db file first.')).toBeDefined();
+    });
+
+    it('shows file name after file selection', () => {
+      const result = switchToImport(
+        render(React.createElement(AddRepoModal, defaultProps)),
+      );
+      const fileInput = result.container.querySelector(
+        'input[type="file"][accept=".db"]',
+      ) as HTMLInputElement;
+      expect(fileInput).toBeDefined();
+
+      const file = new File(['x'.repeat(1024)], 'test.db', {
+        type: 'application/octet-stream',
+      });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      expect(result.getByText('test.db')).toBeDefined();
+    });
+
+    it('submits import-file message with selected file', () => {
+      const onSubmit = vi.fn();
+      const result = switchToImport(
+        render(
+          React.createElement(AddRepoModal, { ...defaultProps, onSubmit }),
+        ),
+      );
+      const fileInput = result.container.querySelector(
+        'input[type="file"][accept=".db"]',
+      ) as HTMLInputElement;
+      const file = new File(['data'], 'graph.db', {
+        type: 'application/octet-stream',
+      });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      const form = result.container.querySelector('form')!;
+      fireEvent.submit(form);
+
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'import-file',
+          name: 'graph',
+        }),
+      );
+      expect(onSubmit.mock.calls[0][0].file).toBeInstanceOf(File);
+    });
+
+    it('shows Import submit button instead of Add & Index', () => {
+      const result = switchToImport(
+        render(React.createElement(AddRepoModal, defaultProps)),
+      );
+      const submitBtn = result.container.querySelector(
+        'button[type="submit"]',
+      )!;
+      expect(submitBtn.textContent).toContain('Import');
+      expect(submitBtn.textContent).not.toContain('Add & Index');
+    });
+  });
 });
