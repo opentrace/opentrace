@@ -69,6 +69,7 @@ import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
+import PhysicsPanel from './PhysicsPanel';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -335,6 +336,12 @@ const GraphViewer = memo(
       const [optimizeStatus, setOptimizeStatus] =
         useState<OptimizeStatus | null>(null);
 
+      // Physics panel state
+      const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      const [repulsion, setRepulsion] = useState(120);
+      const [labelsVisible, setLabelsVisible] = useState(true);
+      const [physicsRunning, setPhysicsRunning] = useState(false);
+
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
         if (jobState.status === 'persisted') {
@@ -372,11 +379,12 @@ const GraphViewer = memo(
       };
 
       const layoutConfig = useMemo(
-        () =>
-          flatMode
-            ? { ...DEFAULT_LAYOUT_CONFIG, flatMode: true }
-            : DEFAULT_LAYOUT_CONFIG,
-        [flatMode],
+        () => ({
+          ...DEFAULT_LAYOUT_CONFIG,
+          ...(flatMode ? { flatMode: true } : {}),
+          fa2ScalingRatio: repulsion,
+        }),
+        [flatMode, repulsion],
       );
 
       // Compute Louvain communities on the full graph (before filtering, so
@@ -1378,68 +1386,38 @@ const GraphViewer = memo(
             onNodeClick={onNodeClick}
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
-            onOptimizeStatus={setOptimizeStatus}
+            labelsVisible={labelsVisible}
+            onOptimizeStatus={(status) => {
+              setOptimizeStatus(status);
+              setPhysicsRunning(status?.phase === 'fa2');
+            }}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
 
+          {showPhysicsPanel && (
+            <PhysicsPanel
+              repulsion={repulsion}
+              onRepulsionChange={setRepulsion}
+              labelsVisible={labelsVisible}
+              onLabelsVisibleChange={setLabelsVisible}
+              colorMode={colorMode}
+              onColorModeChange={setColorMode}
+              flatMode={flatMode}
+              onFlatModeChange={setFlatMode}
+              isPhysicsRunning={physicsRunning}
+              onStopPhysics={() => {
+                canvasRef.current?.stopPhysics();
+                setPhysicsRunning(false);
+              }}
+              onStartPhysics={() => {
+                canvasRef.current?.startPhysics();
+                setPhysicsRunning(true);
+              }}
+            />
+          )}
+
           <div className="graph-controls">
-            <button
-              className={`graph-control-btn${colorMode === 'community' ? ' graph-control-btn--active' : ''}`}
-              onClick={() =>
-                setColorMode((m) => (m === 'type' ? 'community' : 'type'))
-              }
-              title={`Color by ${colorMode === 'type' ? 'community' : 'type'} (${communityData.count} communities)`}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <circle cx="7" cy="7" r="3" />
-                <circle cx="17" cy="7" r="3" />
-                <circle cx="7" cy="17" r="3" />
-                <circle cx="17" cy="17" r="3" />
-              </svg>
-            </button>
-            <button
-              className={`graph-control-btn${flatMode ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setFlatMode((f) => !f)}
-              title={
-                flatMode
-                  ? 'Switch to structured layout'
-                  : 'Switch to flat layout'
-              }
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                {flatMode ? (
-                  <>
-                    <circle cx="12" cy="12" r="2" fill="currentColor" />
-                    <line x1="12" y1="2" x2="12" y2="10" />
-                    <line x1="12" y1="14" x2="12" y2="22" />
-                    <line x1="2" y1="12" x2="10" y2="12" />
-                    <line x1="14" y1="12" x2="22" y2="12" />
-                  </>
-                ) : (
-                  <>
-                    <rect x="3" y="3" width="7" height="7" rx="1" />
-                    <rect x="14" y="3" width="7" height="7" rx="1" />
-                    <rect x="3" y="14" width="7" height="7" rx="1" />
-                    <rect x="14" y="14" width="7" height="7" rx="1" />
-                  </>
-                )}
-              </svg>
-            </button>
             <button
               className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
               onClick={() => setZoomOnSelect((z) => !z)}
@@ -1525,6 +1503,32 @@ const GraphViewer = memo(
                 <polyline points="9 21 3 21 3 15" />
                 <line x1="21" y1="3" x2="14" y2="10" />
                 <line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            </button>
+            <button
+              className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
+              onClick={() => setShowPhysicsPanel((v) => !v)}
+              title="Physics tuner"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="4" y1="21" x2="4" y2="14" />
+                <line x1="4" y1="10" x2="4" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12" y2="3" />
+                <line x1="20" y1="21" x2="20" y2="16" />
+                <line x1="20" y1="12" x2="20" y2="3" />
+                <line x1="1" y1="14" x2="7" y2="14" />
+                <line x1="9" y1="8" x2="15" y2="8" />
+                <line x1="17" y1="16" x2="23" y2="16" />
               </svg>
             </button>
             <button
