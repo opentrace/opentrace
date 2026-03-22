@@ -42,11 +42,10 @@ import {
   PixiGraphCanvas,
   GraphLegend,
   GraphToolbar,
+  PhysicsPanel,
   type GraphCanvasHandle,
   type FilterItem,
   type FilterPanelProps,
-} from '@opentrace/components';
-import {
   DEFAULT_LAYOUT_CONFIG,
   type OptimizeStatus,
 } from '@opentrace/components';
@@ -70,7 +69,6 @@ import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
-import PhysicsPanel from './PhysicsPanel';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -305,7 +303,9 @@ const GraphViewer = memo(
       const [zoomOnSelect, setZoomOnSelect] = useState(true);
       const [flatMode, setFlatMode] = useState(false);
       const [renderer, setRenderer] = useState<'sigma' | 'pixi'>(
-        () => (localStorage.getItem('graph-renderer') as 'sigma' | 'pixi') || 'sigma',
+        () =>
+          (localStorage.getItem('graph-renderer') as 'sigma' | 'pixi') ||
+          'sigma',
       );
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
@@ -346,31 +346,61 @@ const GraphViewer = memo(
       // Persisted graph settings — restored from localStorage on mount
       const stored = useMemo(() => {
         try {
-          return JSON.parse(localStorage.getItem('graph-settings') ?? '{}') as Record<string, unknown>;
-        } catch { return {}; }
+          return JSON.parse(
+            localStorage.getItem('graph-settings') ?? '{}',
+          ) as Record<string, unknown>;
+        } catch {
+          return {};
+        }
       }, []);
       const ps = <T,>(key: string, def: T): T => (stored[key] as T) ?? def;
       const [repulsion, setRepulsion] = useState(() => ps('repulsion', 120));
-      const [labelsVisible, setLabelsVisible] = useState(() => ps('labelsVisible', true));
+      const [labelsVisible, setLabelsVisible] = useState(() =>
+        ps('labelsVisible', true),
+      );
       const [physicsRunning, setPhysicsRunning] = useState(false);
       // Pixi-specific control state
-      const [pixiLinkDist, setPixiLinkDist] = useState(() => ps('pixiLinkDist', 200));
+      const [pixiLinkDist, setPixiLinkDist] = useState(() =>
+        ps('pixiLinkDist', 200),
+      );
       const [pixiCenter, setPixiCenter] = useState(() => ps('pixiCenter', 0.3));
-      const [pixiEdgesEnabled, setPixiEdgesEnabled] = useState(() => ps('pixiEdgesEnabled', true));
-      const [pixiCommunityGravity, setPixiCommunityGravity] = useState(() => ps('pixiCommunityGravity', false));
-      const [pixiCommunityStr, setPixiCommunityStr] = useState(() => ps('pixiCommunityStr', 0.1));
-      const [pixiZoomExponent, setPixiZoomExponent] = useState(() => ps('pixiZoomExponent', 0.8));
+      const [pixiEdgesEnabled, setPixiEdgesEnabled] = useState(() =>
+        ps('pixiEdgesEnabled', true),
+      );
+      const [pixiCommunityGravity, setPixiCommunityGravity] = useState(() =>
+        ps('pixiCommunityGravity', false),
+      );
+      const [pixiCommunityStr, setPixiCommunityStr] = useState(() =>
+        ps('pixiCommunityStr', 0.1),
+      );
+      const [pixiZoomExponent, setPixiZoomExponent] = useState(() =>
+        ps('pixiZoomExponent', 0.8),
+      );
       const isPixi = renderer === 'pixi';
 
       // Persist settings to localStorage when they change
       useEffect(() => {
         const settings = {
-          repulsion, labelsVisible,
-          pixiLinkDist, pixiCenter, pixiEdgesEnabled,
-          pixiCommunityGravity, pixiCommunityStr, pixiZoomExponent,
+          repulsion,
+          labelsVisible,
+          pixiLinkDist,
+          pixiCenter,
+          pixiEdgesEnabled,
+          pixiCommunityGravity,
+          pixiCommunityStr,
+          pixiZoomExponent,
         };
         localStorage.setItem('graph-settings', JSON.stringify(settings));
-      }, [repulsion, labelsVisible, pixiLinkDist, pixiCenter, pixiEdgesEnabled, pixiCommunityGravity, pixiCommunityStr, pixiZoomExponent]);
+      }, [
+        repulsion,
+        labelsVisible,
+        pixiLinkDist,
+        pixiCenter,
+        pixiEdgesEnabled,
+        pixiCommunityGravity,
+        pixiCommunityStr,
+        pixiZoomExponent,
+      ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
@@ -547,15 +577,8 @@ const GraphViewer = memo(
           setEdgeHighlightNodes(EMPTY_SET);
           setEdgeHighlightLinks(EMPTY_SET);
           setEdgeLabelNodes(EMPTY_SET);
-          // Zoom to highlight neighborhood (will be computed by useHighlights on next render)
-          // Use current highlights as a close approximation for immediate zoom
           if (zoomOnSelect) {
-            const hl = highlightsRef.current.highlightNodes;
-            if (hl.size > 0) {
-              canvasRef.current?.zoomToNodes(hl, 600);
-            } else {
-              canvasRef.current?.zoomToNodes([node.id], 600);
-            }
+            canvasRef.current?.zoomToNodes([node.id], 600);
           }
         },
         [zoomOnSelect],
@@ -651,10 +674,6 @@ const GraphViewer = memo(
         hops,
         filterState,
       );
-
-      // Ref for immediate access in onNodeClick (avoids stale closure)
-      const highlightsRef = useRef(highlights);
-      highlightsRef.current = highlights;
 
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
@@ -1389,8 +1408,12 @@ const GraphViewer = memo(
               selectedNodeId={selectedNode?.id}
               hops={hops}
               getSubType={getSubType}
-              highlightNodes={selectedLink ? edgeHighlightNodes : highlights.highlightNodes}
-              highlightLinks={selectedLink ? edgeHighlightLinks : highlights.highlightLinks}
+              highlightNodes={
+                selectedLink ? edgeHighlightNodes : highlights.highlightNodes
+              }
+              highlightLinks={
+                selectedLink ? edgeHighlightLinks : highlights.highlightLinks
+              }
               labelNodes={selectedLink ? edgeLabelNodes : highlights.labelNodes}
               availableSubTypes={availableSubTypes}
               zIndex
@@ -1488,7 +1511,8 @@ const GraphViewer = memo(
               communityGravityStrength={pixiCommunityStr}
               onCommunityGravityStrengthChange={(v) => {
                 setPixiCommunityStr(v);
-                if (pixiCommunityGravity) canvasRef.current?.setCommunityGravity?.(true, v);
+                if (pixiCommunityGravity)
+                  canvasRef.current?.setCommunityGravity?.(true, v);
               }}
               zoomSizeExponent={pixiZoomExponent}
               onZoomSizeExponentChange={(v) => {

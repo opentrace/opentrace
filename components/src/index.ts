@@ -128,6 +128,7 @@ export {
   GraphLegend,
   GraphToolbar,
   DiscoverPanel,
+  PhysicsPanel,
 } from './panels';
 export type {
   FilterItem,
