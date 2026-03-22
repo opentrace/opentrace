@@ -16,7 +16,7 @@
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { PRReviewComment } from '../../pr/types';
+import type { PRReviewComment } from '../types';
 import { markdownComponents } from '../markdownComponents';
 import './ReviewResult.css';
 

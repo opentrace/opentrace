@@ -38,6 +38,11 @@
       "import": "./dist/pipeline-wasm.js",
       "require": "./dist/pipeline-wasm.cjs"
     },
+    "./chat": {
+      "types": "./dist/src/chat/index.d.ts",
+      "import": "./dist/chat.js",
+      "require": "./dist/chat.cjs"
+    },
     "./style.css": "./dist/components.css"
   },
   "publishConfig": {
@@ -81,7 +86,10 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
+    "mermaid": "^11.6.0",
+    "react-markdown": "^10.1.0",
     "react-window": "^2.2.7",
+    "remark-gfm": "^4.0.1",
     "sigma": "^3.0.2"
   },
   "devDependencies": {

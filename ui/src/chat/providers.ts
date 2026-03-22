@@ -19,7 +19,7 @@ export type {
   UserMessage,
   AssistantMessage,
   MessagePart,
-} from './types';
+} from '@opentrace/components/chat';
 
 export interface ModelInfo {
   id: string;
