@@ -335,6 +335,12 @@ function GraphEventHandler({
     mouseTarget.addEventListener('mouseleave', onMouseUp);
 
     return () => {
+      // If a drag was in progress when the effect cleans up, restore state
+      if (draggedNode) {
+        graph.setNodeAttribute(draggedNode, 'fixed', false);
+        s.getCamera().enable();
+      }
+
       sigma.off('enterNode', handlers.enterNode);
       sigma.off('leaveNode', handlers.leaveNode);
       sigma.off('enterEdge', handlers.enterEdge);
