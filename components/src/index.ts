@@ -41,7 +41,7 @@ export { useHighlights } from './graph/useHighlights';
 
 // ─── Layout pipeline ────────────────────────────────────────────────────
 export { default as LayoutPipeline } from './graph/LayoutPipeline';
-export type { OptimizeStatus } from './graph/LayoutPipeline';
+export type { OptimizeStatus, LayoutControl } from './graph/LayoutPipeline';
 
 // ─── Sigma utilities ────────────────────────────────────────────────────
 export { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';

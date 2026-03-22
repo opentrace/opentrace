@@ -42,7 +42,10 @@ import { useGraphFilters } from './graph/useGraphFilters';
 import { useGraphVisuals } from './graph/useGraphVisuals';
 import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
-import LayoutPipeline, { type OptimizeStatus } from './graph/LayoutPipeline';
+import LayoutPipeline, {
+  type OptimizeStatus,
+  type LayoutControl,
+} from './graph/LayoutPipeline';
 import { drawNodeHover, setHoveredNodeKey } from './graph/drawNodeHover';
 import { drawNodeLabel, resetLabelGrid } from './graph/drawNodeLabel';
 import { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
@@ -104,6 +107,8 @@ export interface GraphCanvasProps {
   zIndex?: boolean;
   /** Pre-computed community data. If omitted, computed internally. */
   communityData?: CommunityData;
+  /** When false, all node labels are hidden. */
+  labelsVisible?: boolean;
   /** Animation settings (glow, pulse, particles, smooth layout). */
   animationSettings?: AnimationSettings;
   /** Called when a node is clicked. */
@@ -135,6 +140,12 @@ export interface GraphCanvasHandle {
   zoomOut: (duration?: number) => void;
   /** Reset camera to default position. */
   resetCamera: (duration?: number) => void;
+  /** Stop FA2 physics simulation. */
+  stopPhysics: () => void;
+  /** Start FA2 physics simulation. */
+  startPhysics: () => void;
+  /** Returns whether FA2 physics is currently running. */
+  isPhysicsRunning: () => boolean;
 }
 
 // ─── Internal components ────────────────────────────────────────────────
@@ -229,8 +240,12 @@ function GraphEventHandler({
       downNode: ({ node }: { node: string }) => {
         draggedNode = node;
         isDragging = false; // not dragging yet — only on mousemove
-        // Fix node so FA2 doesn't fight the drag
+        // Pin node so FA2's outputReducer preserves its position.
+        // _pinnedX/_pinnedY survive the worker's in-place x/y overwrite.
+        const attrs = graph.getNodeAttributes(node);
         graph.setNodeAttribute(node, 'fixed', true);
+        graph.setNodeAttribute(node, '_pinnedX', attrs.x);
+        graph.setNodeAttribute(node, '_pinnedY', attrs.y);
         // Disable sigma's built-in camera drag while we're dragging a node
         s.getCamera().disable();
       },
@@ -281,6 +296,9 @@ function GraphEventHandler({
       });
       graph.setNodeAttribute(draggedNode, 'x', pos.x);
       graph.setNodeAttribute(draggedNode, 'y', pos.y);
+      // Keep pinned position in sync so the outputReducer restores it
+      graph.setNodeAttribute(draggedNode, '_pinnedX', pos.x);
+      graph.setNodeAttribute(draggedNode, '_pinnedY', pos.y);
 
       // Prevent sigma from processing this as a camera pan
       e.preventDefault();
@@ -288,9 +306,11 @@ function GraphEventHandler({
 
     function onMouseUp() {
       if (draggedNode) {
-        // Unfix node so FA2 can move it again. The outputReducer
-        // in LayoutPipeline syncs graph positions back to the worker
-        // matrix each iteration, so the new position is preserved.
+        // Release the node back to physics. _pinnedX/_pinnedY are kept
+        // for one more outputReducer iteration so readGraphPositions
+        // syncs the correct position into the worker matrix. The
+        // outputReducer then clears them (because fixed is false) and
+        // the node participates in physics from its new location.
         graph.setNodeAttribute(draggedNode, 'fixed', false);
         draggedNode = null;
         s.getCamera().enable();
@@ -389,6 +409,7 @@ const GraphCanvas = memo(
         availableSubTypes = EMPTY_SUB_TYPES,
         zIndex: zIndexEnabled = false,
         communityData: communityDataProp,
+        labelsVisible = true,
         animationSettings = DEFAULT_ANIMATION,
         onNodeClick,
         onEdgeClick,
@@ -399,6 +420,7 @@ const GraphCanvas = memo(
       } = props;
 
       const sigmaRef = useRef<ReturnType<typeof useSigma> | null>(null);
+      const layoutControlRef = useRef<LayoutControl | null>(null);
       const [optimizeTick, setOptimizeTick] = useState(0);
 
       // Community detection — use external data if provided, otherwise compute
@@ -554,18 +576,20 @@ const GraphCanvas = memo(
           },
           renderEdgeLabels: false,
           enableEdgeEvents: !isLargeGraph,
-          labelRenderedSizeThreshold: LABEL_RENDERED_SIZE_THRESHOLD,
+          labelRenderedSizeThreshold: labelsVisible
+            ? LABEL_RENDERED_SIZE_THRESHOLD
+            : Infinity,
           labelFont: LABEL_FONT,
           labelColor: { color: LABEL_COLOR },
           labelSize: LABEL_SIZE,
-          defaultDrawNodeLabel: drawNodeLabel,
+          defaultDrawNodeLabel: labelsVisible ? drawNodeLabel : () => {},
           defaultDrawNodeHover: drawNodeHover,
           allowInvalidContainer: true,
           zIndex: zIndexEnabled,
           zoomToSizeRatioFunction: (ratio: number) =>
             Math.pow(ratio, ZOOM_SIZE_EXPONENT),
         }),
-        [isLargeGraph, zIndexEnabled],
+        [isLargeGraph, zIndexEnabled, labelsVisible],
       );
 
       // Keep edge widths constant in screen space by compensating for camera zoom.
@@ -581,6 +605,10 @@ const GraphCanvas = memo(
         },
         [],
       );
+
+      const handleLayoutControl = useCallback((control: LayoutControl) => {
+        layoutControlRef.current = control;
+      }, []);
 
       const handleSigmaReady = useCallback(
         (sigma: ReturnType<typeof useSigma>) => {
@@ -686,6 +714,15 @@ const GraphCanvas = memo(
               camera.animatedReset({ duration });
             }
           },
+          stopPhysics: () => {
+            layoutControlRef.current?.stop();
+          },
+          startPhysics: () => {
+            layoutControlRef.current?.start();
+          },
+          isPhysicsRunning: () => {
+            return layoutControlRef.current?.isRunning() ?? false;
+          },
         }),
         [nodes, links, hops, onNodeClick],
       );
@@ -738,6 +775,7 @@ const GraphCanvas = memo(
               layoutConfig={layoutConfig}
               optimizeTick={optimizeTick}
               onOptimizeStatus={onOptimizeStatus}
+              onLayoutControl={handleLayoutControl}
             />
             <AnimationEffects
               selectedNodeId={selectedNodeId ?? null}

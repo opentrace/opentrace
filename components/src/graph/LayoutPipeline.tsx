@@ -20,12 +20,21 @@ import { useWorkerLayoutForceAtlas2 } from '@react-sigma/layout-forceatlas2';
 import { zoomToFit } from '../sigma/zoomToNodes';
 import type { LayoutConfig } from './types';
 
+/** Control handle exposed by LayoutPipeline for stop/start physics. */
+export interface LayoutControl {
+  stop: () => void;
+  start: () => void;
+  isRunning: () => boolean;
+}
+
 interface LayoutPipelineProps {
   layoutReady: boolean;
   layoutConfig: LayoutConfig;
   optimizeTick: number;
   /** Called with the current optimize status for UI display */
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
+  /** Called once the FA2 worker is ready, exposing stop/start controls. */
+  onLayoutControl?: (control: LayoutControl) => void;
 }
 
 export interface OptimizeStatus {
@@ -47,14 +56,18 @@ export default function LayoutPipeline({
   layoutConfig,
   optimizeTick,
   onOptimizeStatus,
+  onLayoutControl,
 }: LayoutPipelineProps) {
   const sigma = useSigma();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runningRef = useRef(false);
 
-  // outputReducer is an identity function that causes FA2 to read
-  // positions back from the graph after each iteration. This is needed
-  // so that dragged node positions are synced to the worker's matrix —
-  // without it, the worker would overwrite drag positions with stale data.
+  // The outputReducer runs inside assignLayoutChanges after the worker's
+  // x/y have already been written to attrs (in-place mutation).  For pinned
+  // (dragged) nodes we restore the position from _pinnedX/_pinnedY — separate
+  // attributes the worker never touches.  readGraphPositions then feeds the
+  // corrected position back into the worker matrix so it converges around
+  // the pinned location on subsequent iterations.
   const { start, stop } = useWorkerLayoutForceAtlas2({
     settings: {
       gravity: layoutConfig.fa2Gravity,
@@ -68,8 +81,46 @@ export default function LayoutPipeline({
       outboundAttractionDistribution: layoutConfig.fa2OutboundAttraction,
       adjustSizes: layoutConfig.fa2AdjustSizes,
     },
-    outputReducer: (_key: string, attrs: Record<string, unknown>) => attrs,
+    outputReducer: (_key: string, attrs: Record<string, unknown>) => {
+      if (attrs._pinnedX != null) {
+        // Restore the drag position so the worker can't overwrite it.
+        attrs.x = attrs._pinnedX;
+        attrs.y = attrs._pinnedY;
+
+        // Once the node is released (fixed → false), clear the pin.
+        // readGraphPositions (called right after this) syncs the correct
+        // position into the worker matrix, so subsequent iterations
+        // compute forces from the right location.
+        if (!attrs.fixed) {
+          attrs._pinnedX = undefined;
+          attrs._pinnedY = undefined;
+        }
+      }
+      return attrs;
+    },
   });
+
+  // Expose layout control to parent
+  useEffect(() => {
+    onLayoutControl?.({
+      stop: () => {
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        stop();
+        runningRef.current = false;
+        onOptimizeStatus?.(null);
+      },
+      start: () => {
+        start();
+        runningRef.current = true;
+        onOptimizeStatus?.({ phase: 'fa2' });
+      },
+      isRunning: () => runningRef.current,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, stop, onLayoutControl]);
 
   // ─── Cleanup helpers ─────────────────────────────────────────────
 
@@ -79,6 +130,7 @@ export default function LayoutPipeline({
       timerRef.current = null;
     }
     stop();
+    runningRef.current = false;
   }
 
   // ─── Main effect ─────────────────────────────────────────────────
@@ -98,8 +150,10 @@ export default function LayoutPipeline({
     if (layoutConfig.fa2Enabled && graph.order > 0) {
       onOptimizeStatus?.({ phase: 'fa2' });
       start();
+      runningRef.current = true;
       timerRef.current = setTimeout(() => {
         stop();
+        runningRef.current = false;
         onOptimizeStatus?.(null);
       }, layoutConfig.fa2Duration);
     } else {
