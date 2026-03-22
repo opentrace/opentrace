@@ -17,18 +17,18 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { markdownComponents } from '../chat/markdownComponents';
+import {
+  markdownComponents,
+  ReviewResult,
+  parseReviewResult,
+  stripReviewBlock,
+  type ReviewData,
+} from '@opentrace/components/chat';
 import type { PRDetail, PRFileDiff } from '../pr/types';
 import type { PRClient } from '../pr/client';
 import type { GraphStore } from '../store/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { runPRReview } from '../pr/reviewRunner';
-import ReviewResult, {
-  parseReviewResult,
-  stripReviewBlock,
-  type ReviewData,
-} from '../chat/results/ReviewResult';
-import '../chat/markdown.css';
 import './PRDetailPanel.css';
 
 interface Props {

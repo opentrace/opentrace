@@ -53,3 +53,10 @@ export interface AssistantMessage {
 }
 
 export type ChatMessage = UserMessage | AssistantMessage;
+
+export interface PRReviewComment {
+  body: string;
+  path?: string;
+  line?: number;
+  side?: 'LEFT' | 'RIGHT';
+}

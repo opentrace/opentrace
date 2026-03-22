@@ -36,16 +36,13 @@ import {
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
-import ChatTemplates from '../chat/ChatTemplates';
-import ChatParts from '../chat/ChatParts';
+import { ChatTemplates, ChatParts } from '@opentrace/components/chat';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
 import { PRClient, parseRepoUrl } from '../pr/client';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import PRListPanel from './PRListPanel';
-import '../chat/markdown.css';
-import '../chat/parts.css';
 import './ChatPanel.css';
 
 type TabId = 'chat' | 'prs';

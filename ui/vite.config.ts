@@ -169,6 +169,10 @@ export default defineConfig(({ mode }) => {
         // Resolve through source so Vite processes workers & CSS correctly.
         // Without this, production builds pick up the pre-built dist bundle
         // which has baked-in worker URLs that Rollup can't resolve.
+        '@opentrace/components/chat': resolve(
+          __dirname,
+          '../components/src/chat/index.ts',
+        ),
         '@opentrace/components/pipeline': resolve(
           __dirname,
           '../components/src/pipeline/index.ts',
