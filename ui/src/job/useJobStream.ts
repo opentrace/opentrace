@@ -211,8 +211,10 @@ export function useJobStream(jobService: JobService) {
                 break;
             }
           }
-        } catch {
-          // Stream was cancelled or errored — already handled by channel
+        } catch (err) {
+          // Log stream errors — cancelled streams are expected, but other
+          // errors (e.g. stack overflow) need to be visible for debugging
+          console.error('[useJobStream] stream error:', err);
         } finally {
           streamRef.current = null;
         }

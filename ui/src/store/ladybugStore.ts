@@ -116,6 +116,9 @@ function generateRelCSV(rels: ImportBatchRequest['relationships']): string {
   return lines.join('\n');
 }
 
+/** Maximum rows per COPY FROM call. Keeps peak CSV string + WASM allocation bounded. */
+const FLUSH_CHUNK_SIZE = 500;
+
 // ---- Cypher helpers ----
 
 /** Escape a string for use inside a Cypher single-quoted literal. */
@@ -813,8 +816,12 @@ export class LadybugGraphStore implements GraphStore {
    * Returns immediately with the buffered counts (no DB call).
    */
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
-    this.pendingNodes.push(...batch.nodes);
-    this.pendingRels.push(...batch.relationships);
+    for (let i = 0; i < batch.nodes.length; i++) {
+      this.pendingNodes.push(batch.nodes[i]);
+    }
+    for (let i = 0; i < batch.relationships.length; i++) {
+      this.pendingRels.push(batch.relationships[i]);
+    }
     this.totalNodesBuffered += batch.nodes.length;
     this.totalRelsBuffered += batch.relationships.length;
 
@@ -831,8 +838,13 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Flush all buffered writes to LadybugDB via CSV + COPY FROM.
-   * Nodes are bucketed by type and written to per-type CSVs.
-   * Relationships are written via the RELATES REL TABLE GROUP.
+   *
+   * Nodes are deduplicated, bucketed by type, then written in chunks
+   * of {@link FLUSH_CHUNK_SIZE} rows per COPY call to keep peak CSV
+   * string size and WASM memory bounded.
+   *
+   * Relationships are flushed after all nodes (endpoints must exist)
+   * using the same chunked approach.
    */
   async flush(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
@@ -845,9 +857,7 @@ export class LadybugGraphStore implements GraphStore {
 
     const t0 = performance.now();
 
-    // Deduplicate nodes by ID, merging properties. The pipeline may emit
-    // the same node twice (e.g. structure batch + summary update) which
-    // would cause LadybugDB COPY FROM primary-key violations.
+    // --- Deduplicate nodes by ID, merging properties ---
     const nodeDedup = new Map<string, (typeof rawNodes)[0]>();
     for (const node of rawNodes) {
       const existing = nodeDedup.get(node.id);
@@ -861,10 +871,12 @@ export class LadybugGraphStore implements GraphStore {
         nodeDedup.set(node.id, { ...node, properties: { ...node.properties } });
       }
     }
-    const nodes = Array.from(nodeDedup.values());
 
-    // Update JS-side indexes before writing to DB
-    for (const node of nodes) {
+    // --- Update JS-side indexes + bucket by type ---
+    const buckets = new Map<string, ImportBatchRequest['nodes']>();
+    let nodeCount = 0;
+
+    for (const node of nodeDedup.values()) {
       const props = node.properties ?? {};
       this.nodePropsCache.set(node.id, props);
       this.nodeTypeMap.set(node.id, node.type);
@@ -881,37 +893,35 @@ export class LadybugGraphStore implements GraphStore {
           this.vectorIndex = new VectorIndex(node.embedding.length);
         this.vectorIndex.addVector(node.id, node.embedding);
       }
-    }
 
-    // Bucket nodes by type and write per-type CSVs.
-    // Package nodes are shared across repos — deduplicate within this batch
-    // and against previously flushed packages to avoid LadybugDB PK violations.
-    if (nodes.length > 0) {
-      const buckets = new Map<string, ImportBatchRequest['nodes']>();
-      for (const node of nodes) {
-        if (!NODE_TYPE_SET.has(node.type)) {
-          console.warn(
-            `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
-          );
-          continue;
-        }
-        if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
-          continue;
-        }
-        // Mark early so intra-batch duplicates are caught
-        if (node.type === 'Package') {
-          this.flushedPackageIds.add(node.id);
-        }
-        let bucket = buckets.get(node.type);
-        if (!bucket) {
-          bucket = [];
-          buckets.set(node.type, bucket);
-        }
-        bucket.push(node);
+      // Bucket by type, skipping unknown types and duplicate packages
+      if (!NODE_TYPE_SET.has(node.type)) {
+        console.warn(
+          `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
+        );
+        continue;
+      }
+      if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
+        continue;
+      }
+      if (node.type === 'Package') {
+        this.flushedPackageIds.add(node.id);
       }
 
-      for (const [type, bucket] of buckets) {
-        const csv = generateTypedNodeCSV(bucket);
+      let bucket = buckets.get(node.type);
+      if (!bucket) {
+        bucket = [];
+        buckets.set(node.type, bucket);
+      }
+      bucket.push(node);
+      nodeCount++;
+    }
+
+    // --- Flush nodes: chunked COPY FROM per type ---
+    for (const [type, bucket] of buckets) {
+      for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+        const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+        const csv = generateTypedNodeCSV(chunk);
         const path = `/nodes_${type}.csv`;
         this.lbug.FS.writeFile(path, csv);
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
@@ -919,90 +929,65 @@ export class LadybugGraphStore implements GraphStore {
       }
     }
 
-    // Write relationships — try group COPY, fall back to per-subtable COPY
+    // --- Flush relationships: filter, bucket by subtable, chunked COPY ---
+    let relCount = 0;
     if (rels.length > 0) {
-      // Filter to supported type pairs
-      const validRels: ImportBatchRequest['relationships'] = [];
+      const relBuckets = new Map<string, ImportBatchRequest['relationships']>();
       for (const rel of rels) {
         const srcType = this.nodeTypeMap.get(rel.source_id);
         const tgtType = this.nodeTypeMap.get(rel.target_id);
-        if (!srcType || !tgtType) {
-          console.warn(
-            `[LadybugStore] Skipping rel ${rel.id}: unknown node type (src=${srcType}, tgt=${tgtType})`,
-          );
-          continue;
+        if (!srcType || !tgtType) continue;
+        const key = `${srcType}_${tgtType}`;
+        if (!REL_PAIR_SET.has(key)) continue;
+        let bucket = relBuckets.get(key);
+        if (!bucket) {
+          bucket = [];
+          relBuckets.set(key, bucket);
         }
-        if (!REL_PAIR_SET.has(`${srcType}_${tgtType}`)) {
-          console.warn(
-            `[LadybugStore] Skipping rel ${rel.id}: unsupported pair ${srcType} → ${tgtType}`,
-          );
-          continue;
-        }
-        validRels.push(rel);
+        bucket.push(rel);
+        relCount++;
       }
 
-      if (validRels.length > 0) {
-        await this.copyRelsBySubtable(validRels);
+      for (const [key, bucket] of relBuckets) {
+        for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+          const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const csv = generateRelCSV(chunk);
+          const path = `/rels_${key}.csv`;
+          this.lbug.FS.writeFile(path, csv);
+          try {
+            await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
+          } catch (err) {
+            console.warn(
+              `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
+              err,
+            );
+            const [srcType, tgtType] = key.split('_');
+            for (const rel of chunk) {
+              const props = JSON.stringify(rel.properties ?? {});
+              try {
+                await this.exec(
+                  `MATCH (a:${srcType} {id: '${esc(rel.source_id)}'}), (b:${tgtType} {id: '${esc(rel.target_id)}'}) ` +
+                    `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${esc(props)}'}]->(b)`,
+                );
+              } catch (insertErr) {
+                console.warn(
+                  `[LadybugStore] INSERT rel failed: ${rel.id}`,
+                  insertErr,
+                );
+              }
+            }
+          }
+          this.lbug.FS.unlink(path);
+        }
       }
     }
 
     const elapsed = performance.now() - t0;
     console.log(
-      `[LadybugStore] flush: ${nodes.length} nodes, ${rels.length} rels in ${elapsed.toFixed(0)}ms`,
+      `[LadybugStore] flush: ${nodeCount} nodes, ${relCount} rels in ${elapsed.toFixed(0)}ms`,
     );
   }
 
-  /**
-   * Fallback: bucket relationships by (srcType, tgtType) and COPY each
-   * sub-table of the REL TABLE GROUP individually.
-   */
-  private async copyRelsBySubtable(
-    rels: ImportBatchRequest['relationships'],
-  ): Promise<void> {
-    const buckets = new Map<string, ImportBatchRequest['relationships']>();
-    for (const rel of rels) {
-      const srcType = this.nodeTypeMap.get(rel.source_id)!;
-      const tgtType = this.nodeTypeMap.get(rel.target_id)!;
-      const key = `${srcType}_${tgtType}`;
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = [];
-        buckets.set(key, bucket);
-      }
-      bucket.push(rel);
-    }
-
-    for (const [key, bucket] of buckets) {
-      const csv = generateRelCSV(bucket);
-      const path = `/rels_${key}.csv`;
-      this.lbug.FS.writeFile(path, csv);
-      try {
-        await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
-      } catch (err) {
-        // Last resort: per-row INSERT
-        console.warn(
-          `[LadybugStore] COPY RELATES_${key} failed, inserting rows individually:`,
-          err,
-        );
-        const [srcType, tgtType] = key.split('_');
-        for (const rel of bucket) {
-          const props = JSON.stringify(rel.properties ?? {});
-          try {
-            await this.exec(
-              `MATCH (a:${srcType} {id: '${esc(rel.source_id)}'}), (b:${tgtType} {id: '${esc(rel.target_id)}'}) ` +
-                `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${esc(props)}'}]->(b)`,
-            );
-          } catch (insertErr) {
-            console.warn(
-              `[LadybugStore] INSERT rel failed: ${rel.id}`,
-              insertErr,
-            );
-          }
-        }
-      }
-      this.lbug.FS.unlink(path);
-    }
-  }
 
   storeSource(files: SourceFile[]): void {
     for (const f of files) {
