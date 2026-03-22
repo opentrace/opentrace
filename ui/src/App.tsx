@@ -101,10 +101,7 @@ function App() {
       if (existing) {
         setActiveRepoUrl(repoUrl);
         await graphViewerRef.current?.reload(existing.id, 2);
-        setTimeout(
-          () => graphViewerRef.current?.selectNode(existing.id),
-          100,
-        );
+        setTimeout(() => graphViewerRef.current?.selectNode(existing.id), 100);
       } else {
         const provider = detectProvider(repoUrl);
         const token = provider
