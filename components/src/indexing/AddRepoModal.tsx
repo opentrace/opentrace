@@ -387,7 +387,7 @@ export default function AddRepoModal({
       onSubmit({
         type: 'import-file',
         file: importFile,
-        name: importFile.name.replace(/\.json$/i, ''),
+        name: importFile.name.replace(/\.db$/i, ''),
       });
       return;
     }
