@@ -26,6 +26,7 @@ export default function FilterPanel({
   onHideAll,
   indicator = 'dot',
   emptyMessage,
+  onFocus,
 }: FilterPanelProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
@@ -130,6 +131,33 @@ export default function FilterPanel({
                 )}
                 <span className="filter-type-name">{item.label}</span>
                 <span className="filter-count">{item.count}</span>
+                {onFocus && (
+                  <button
+                    className="filter-focus-btn"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onFocus(item.key);
+                    }}
+                    title={`Focus on ${item.label}`}
+                  >
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <circle cx="8" cy="8" r="5.5" />
+                      <circle cx="8" cy="8" r="2" />
+                      <line x1="8" y1="0" x2="8" y2="3" />
+                      <line x1="8" y1="13" x2="8" y2="16" />
+                      <line x1="0" y1="8" x2="3" y2="8" />
+                      <line x1="13" y1="8" x2="16" y2="8" />
+                    </svg>
+                  </button>
+                )}
               </label>
               {hasChildren && isExpanded && (
                 <div className="filter-subtypes">
