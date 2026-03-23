@@ -128,8 +128,6 @@ function toPRSummary(pr: any): PRSummary {
     updated_at: pr.updated_at,
     base_branch: pr.base?.ref ?? '',
     head_branch: pr.head?.ref ?? '',
-    additions: pr.additions ?? 0,
-    deletions: pr.deletions ?? 0,
     draft: pr.draft,
   };
 }
@@ -167,6 +165,8 @@ export async function fetchGitHubPRDetail(
   return {
     ...toPRSummary(pr),
     body: pr.body ?? '',
+    additions: pr.additions ?? 0,
+    deletions: pr.deletions ?? 0,
     comments_count: pr.comments ?? 0,
     review_comments_count: pr.review_comments ?? 0,
     mergeable: pr.mergeable ?? undefined,

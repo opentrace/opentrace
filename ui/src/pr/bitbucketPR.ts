@@ -69,8 +69,6 @@ function toPRSummary(pr: any): PRSummary {
     updated_at: pr.updated_on,
     base_branch: pr.destination?.branch?.name ?? '',
     head_branch: pr.source?.branch?.name ?? '',
-    additions: 0,
-    deletions: 0,
   };
 }
 
@@ -116,6 +114,8 @@ export async function fetchBitbucketPRDetail(
   return {
     ...toPRSummary(pr),
     body: pr.description ?? '',
+    additions: 0,
+    deletions: 0,
     files,
     comments_count: pr.comment_count ?? 0,
     review_comments_count: 0,

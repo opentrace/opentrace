@@ -72,8 +72,6 @@ function toMRSummary(mr: any): PRSummary {
     updated_at: mr.updated_at,
     base_branch: mr.target_branch ?? '',
     head_branch: mr.source_branch ?? '',
-    additions: 0,
-    deletions: 0,
     draft: mr.draft,
   };
 }
@@ -125,6 +123,8 @@ export async function fetchGitLabMRDetail(
   return {
     ...toMRSummary(mr),
     body: mr.description ?? '',
+    additions: 0,
+    deletions: 0,
     files,
     comments_count: mr.user_notes_count ?? 0,
     review_comments_count: 0,
