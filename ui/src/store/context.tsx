@@ -55,3 +55,11 @@ export function useStore(): StoreContextValue {
   }
   return ctx;
 }
+
+// Clean up WASM resources on Vite HMR to prevent memory leaks.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    singletonStore?.dispose();
+    singletonStore = null;
+  });
+}

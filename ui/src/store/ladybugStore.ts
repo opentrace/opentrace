@@ -25,10 +25,9 @@
  * zip archive for cross-tool portability.
  */
 
-import { deflateSync, inflateSync } from 'fflate';
+import { deflateSync, inflateSync, zipSync, unzipSync } from 'fflate';
 import lbugInit from '@lbug/lbug-wasm';
 import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
-import { zipSync, unzipSync } from 'fflate';
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -91,7 +90,12 @@ function csvEscape(value: string): string {
   // Always quote to avoid ambiguity — LadybugDB's CSV parser can misparse
   // fields containing JSON with nested commas + quotes.
   // Strip newlines — LadybugDB's parallel CSV reader rejects quoted newlines.
-  return '"' + value.replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
+  // Strip null bytes + non-printable control chars — can cause WASM unaligned access traps.
+  const safe = (value ?? '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '') // strip control chars except \t \n \r
+    .replace(/[\r\n]+/g, ' ')                        // flatten newlines
+    .replace(/"/g, '""');                             // escape quotes
+  return '"' + safe + '"';
 }
 
 /** Generate CSV for a typed node table (no type column — table name IS the type). */
@@ -119,6 +123,11 @@ function generateRelCSV(rels: ImportBatchRequest['relationships']): string {
 
 /** Maximum rows per COPY FROM call. Keeps peak CSV string + WASM allocation bounded. */
 const FLUSH_CHUNK_SIZE = 500;
+
+/** Encode a CSV string to UTF-8 bytes for FS.writeFile.
+ *  Emscripten's string writeFile can produce misaligned WASM accesses
+ *  with certain characters — explicit UTF-8 encoding avoids this. */
+const CSV_ENCODER = new TextEncoder();
 
 // ---- Cypher helpers ----
 
@@ -260,12 +269,13 @@ export class LadybugGraphStore implements GraphStore {
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
       const result = this.conn.query(stmt);
-      if (!result.isSuccess()) {
-        const err = result.getErrorMessage();
+      try {
+        if (!result.isSuccess()) {
+          throw new Error(result.getErrorMessage());
+        }
+      } finally {
         result.close();
-        throw new Error(err);
       }
-      result.close();
     }
   }
 
@@ -294,13 +304,19 @@ export class LadybugGraphStore implements GraphStore {
           if (!result) {
             throw new Error(`Query failed: ${cypher.slice(0, 120)}`);
           }
-          // execute() returns { table: ArrowTable }
-          const table = result.table;
-          const rows: Record<string, unknown>[] = [];
-          for (const row of table) {
-            rows.push(row.toJSON());
+          try {
+            const table = result.table;
+            const rows: Record<string, unknown>[] = [];
+            for (const row of table) {
+              rows.push(row.toJSON());
+            }
+            resolve(rows);
+          } finally {
+            // Always close the WASM-side result handle to prevent memory leaks.
+            // execute() returns a QueryResult with .close() but the TS types
+            // don't declare it — cast to access the underlying handle.
+            (result as unknown as { close?: () => void }).close?.();
           }
-          resolve(rows);
         })
         .catch((err) => {
           reject(err);
@@ -318,18 +334,39 @@ export class LadybugGraphStore implements GraphStore {
       this.queue = this.queue
         .then(() => {
           const result = this.conn.query(cypher);
-          if (!result.isSuccess()) {
-            const err = result.getErrorMessage();
+          try {
+            if (!result.isSuccess()) {
+              throw new Error(result.getErrorMessage());
+            }
+            resolve();
+          } finally {
             result.close();
-            throw new Error(err);
           }
-          result.close();
-          resolve();
         })
         .catch((err) => {
           reject(err);
         });
     });
+  }
+
+  /** Close the database connection and release WASM resources. */
+  dispose(): void {
+    try {
+      this.conn?.close();
+    } catch { /* ignore */ }
+    try {
+      this.db?.close();
+    } catch { /* ignore */ }
+  }
+
+  /** Current WASM linear memory size in MB (for diagnostics). */
+  getWasmMemoryMB(): number {
+    try {
+      const mem = this.lbug.wasmMemory;
+      return mem.buffer.byteLength / (1024 * 1024);
+    } catch {
+      return -1;
+    }
   }
 
   /** Set an embedder for generating query embeddings during search. */
@@ -725,19 +762,22 @@ export class LadybugGraphStore implements GraphStore {
           totalRels++;
         }
 
-        // Write per-subtable CSVs and COPY FROM
+        // Write per-subtable CSVs and COPY FROM (chunked to bound memory)
         for (const [key, bucket] of buckets) {
-          const csv = generateRelCSV(bucket);
-          const csvPath = `/rels_${key}.csv`;
-          this.lbug.FS.writeFile(csvPath, csv);
-          try {
-            await this.exec(
-              `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
-            );
-          } catch (err) {
-            console.warn(`[LadybugStore] COPY RELATES_${key} failed:`, err);
+          for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+            const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+            const csv = generateRelCSV(chunk);
+            const csvPath = `/rels_${key}.csv`;
+            this.lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+            try {
+              await this.exec(
+                `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
+              );
+            } catch (err) {
+              console.warn(`[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}):`, err);
+            }
+            this.lbug.FS.unlink(csvPath);
           }
-          this.lbug.FS.unlink(csvPath);
         }
       } catch (err) {
         console.error('[LadybugStore] relationship import failed:', err);
@@ -921,7 +961,7 @@ export class LadybugGraphStore implements GraphStore {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(chunk);
         const path = `/nodes_${type}.csv`;
-        this.lbug.FS.writeFile(path, csv);
+        this.lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
         this.lbug.FS.unlink(path);
       }
@@ -951,7 +991,7 @@ export class LadybugGraphStore implements GraphStore {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = `/rels_${key}.csv`;
-          this.lbug.FS.writeFile(path, csv);
+          this.lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
           try {
             await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
           } catch (err) {

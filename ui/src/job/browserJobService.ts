@@ -389,11 +389,17 @@ export class BrowserJobService implements JobService {
       // Track per-stage last-yield time so each stage gets throttled independently
       const stageLastYield: Record<string, number> = {};
 
+      // WASM memory diagnostics (only available on LadybugGraphStore)
+      const wasmMB = () => {
+        const s = this.store as { getWasmMemoryMB?: () => number };
+        return s.getWasmMemoryMB ? s.getWasmMemoryMB() : -1;
+      };
+
       /** Drain buffered nodes from the store stage and persist them. */
       const drainNodesToStore = async () => {
         const nodes = storeStage!.drainNodes();
         if (nodes.length === 0) return;
-        debug.log('store', `draining ${nodes.length} nodes`);
+        debug.log('store', `draining ${nodes.length} nodes (wasm=${wasmMB().toFixed(0)}MB)`);
         await this.store.importBatch({
           nodes: nodes.map((n) => ({
             id: n.id,
@@ -620,31 +626,22 @@ export class BrowserJobService implements JobService {
         debug.log('error', `uncaught: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
         debug.dump();
 
-        const isOOM = err instanceof Error &&
-          (err.message.includes('memory') || err.message.includes('out of bounds'));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const isOOM = (err instanceof Error &&
+          (errMsg.includes('memory') || errMsg.includes('out of bounds')))
+          || typeof err === 'number'; // WASM abort codes are thrown as raw numbers
         const totalStats = storeStage?.stats();
         const userMessage = isOOM
-          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes.`
-          : (err instanceof Error ? err.message : String(err));
+          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
+          : errMsg;
 
-        // If we persisted anything, show the partial graph before the error
-        if (persistedNodes > 0) {
-          channel.push({
-            ...emptyEvent(),
-            kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
-            result: {
-              nodesCreated: persistedNodes,
-              relationshipsCreated: persistedRels,
-              reposProcessed: 1,
-            },
-          });
-        }
-
+        // Don't emit GRAPH_READY on OOM — the WASM instance is likely
+        // corrupted and fetchGraph() would trigger another crash.
         channel.push({
           ...emptyEvent(),
           kind: JobEventKind.JOB_EVENT_KIND_ERROR,
           message: userMessage,
-          errors: [err instanceof Error ? err.stack ?? err.message : String(err)],
+          errors: [err instanceof Error ? err.stack ?? errMsg : errMsg],
         });
       })
       .finally(() => {
