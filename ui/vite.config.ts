@@ -138,7 +138,6 @@ function copyComponentsWasm(): Plugin {
       mkdirSync(outDir, { recursive: true });
       for (const file of readdirSync(wasmDir)) {
         if (!file.endsWith('.wasm')) continue;
-        // Don't overwrite files already in ui/public/ (copied by Vite)
         const dest = join(outDir, file);
         if (!existsSync(dest)) {
           copyFileSync(join(wasmDir, file), dest);
@@ -200,7 +199,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
+      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core'],
     },
     worker: {
       format: 'es',

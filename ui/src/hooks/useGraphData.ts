@@ -78,9 +78,16 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
-    loadGraph();
-  }, [loadGraph]);
+    // Only fetch on mount if the DB has been initialized (i.e. data has been
+    // imported before). Skip the initial fetch for fresh sessions — this avoids
+    // triggering WASM worker init (8+ seconds) before the user adds a repo.
+    if (store.hasData()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
+      loadGraph();
+    } else {
+      setLoading(false);
+    }
+  }, [loadGraph, store]);
 
   return {
     graphData,

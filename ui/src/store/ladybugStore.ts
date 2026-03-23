@@ -15,7 +15,7 @@
  */
 
 /**
- * LadybugDB graph store using @lbug/lbug-wasm with typed node tables.
+ * LadybugDB graph store using @ladybugdb/wasm-core with typed node tables.
  *
  * Uses an in-memory database with typed node tables (Repository, Directory,
  * File, Package, Class, Function) instead of a single Node table, enabling
@@ -25,9 +25,12 @@
  * zip archive for cross-tool portability.
  */
 
-import lbugInit from '@lbug/lbug-wasm';
-import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
-import { zipSync, unzipSync } from 'fflate';
+import { deflateSync, inflateSync, zipSync, unzipSync } from 'fflate';
+
+import lbug from '@ladybugdb/wasm-core';
+
+type Database = InstanceType<typeof lbug.Database>;
+type Connection = InstanceType<typeof lbug.Connection>;
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -86,11 +89,15 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 
 // ---- CSV helpers ----
 
+// eslint-disable-next-line no-control-regex -- intentional: strip non-printable control chars from CSV values
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
+
 function csvEscape(value: string): string {
-  // Always quote to avoid ambiguity — LadybugDB's CSV parser can misparse
-  // fields containing JSON with nested commas + quotes.
-  // Strip newlines — LadybugDB's parallel CSV reader rejects quoted newlines.
-  return '"' + value.replace(/"/g, '""').replace(/[\r\n]+/g, ' ') + '"';
+  const safe = (value ?? '')
+    .replace(CONTROL_CHARS_RE, '') // strip control chars except \t \n \r
+    .replace(/[\r\n]+/g, ' ') // flatten newlines
+    .replace(/"/g, '""'); // escape quotes
+  return '"' + safe + '"';
 }
 
 /** Generate CSV for a typed node table (no type column — table name IS the type). */
@@ -115,6 +122,14 @@ function generateRelCSV(rels: ImportBatchRequest['relationships']): string {
   }
   return lines.join('\n');
 }
+
+/** Maximum rows per COPY FROM call. Keeps peak CSV string + WASM allocation bounded. */
+const FLUSH_CHUNK_SIZE = 500;
+
+/** Encode a CSV string to UTF-8 bytes for FS.writeFile.
+ *  Emscripten's string writeFile can produce misaligned WASM accesses
+ *  with certain characters — explicit UTF-8 encoding avoids this. */
+const CSV_ENCODER = new TextEncoder();
 
 // ---- Cypher helpers ----
 
@@ -196,14 +211,13 @@ const REL_PARQUET_PATH = `${PARQUET_DIR}/relationships.parquet`;
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
-  private lbug!: LbugModule;
-  private db!: import('@lbug/lbug-wasm').WebDatabase;
-  private conn!: WebConnection;
-  private ready: Promise<void>;
+  private db!: Database;
+  private conn!: Connection;
+  private ready: Promise<void> | null = null;
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
     string,
-    { content: string; path: string; binary?: boolean }
+    { compressed: Uint8Array; path: string; binary?: boolean }
   >();
 
   // --- Write buffer ---
@@ -215,7 +229,6 @@ export class LadybugGraphStore implements GraphStore {
   // --- JS-side indexes ---
   private bm25Index = new BM25Index();
   private vectorIndex: VectorIndex | null = null;
-  private nodePropsCache = new Map<string, Record<string, unknown>>();
 
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
@@ -233,15 +246,36 @@ export class LadybugGraphStore implements GraphStore {
   private queue: Promise<void> = Promise.resolve();
 
   constructor() {
-    this.ready = this.initModule();
+    // Don't init WASM here — the constructor runs at app startup.
+    // WASM loads lazily on first DB operation via ensureReady().
+  }
+
+  /** True if any data has been imported (synchronous, no WASM). */
+  hasData(): boolean {
+    return this.nodeTypeMap.size > 0 || this.totalNodesBuffered > 0;
+  }
+
+  /** Start WASM init if not already started. Safe to call multiple times. */
+  ensureReady(): Promise<void> {
+    if (!this.ready) {
+      this.ready = this.initModule();
+    }
+    return this.ready;
   }
 
   private async initModule(): Promise<void> {
-    this.lbug = await lbugInit();
-    this.db = await this.lbug.Database();
-    this.conn = await this.lbug.Connection(this.db);
+    const t0 = performance.now();
+    lbug.setWorkerPath('/lbug_wasm_worker.js');
+    await lbug.init();
+    this.db = new lbug.Database(':memory:');
+    await this.db.init();
+    this.conn = new lbug.Connection(this.db);
+    await this.conn.init();
     await this.initSchema();
-    this.ensureParquetDir();
+    await this.ensureParquetDir();
+    console.log(
+      `[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`,
+    );
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
     if (savedNodes || savedEdges) {
@@ -256,20 +290,15 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
-      const result = this.conn.query(stmt);
-      if (!result.isSuccess()) {
-        const err = result.getErrorMessage();
-        result.close();
-        throw new Error(err);
-      }
-      result.close();
+      const result = await this.conn.query(stmt);
+      await result.close();
     }
   }
 
   /** Ensure the /parquet directory exists on the WASM virtual filesystem. */
-  private ensureParquetDir(): void {
+  private async ensureParquetDir(): Promise<void> {
     try {
-      this.lbug.FS.mkdir(PARQUET_DIR);
+      await lbug.FS.mkdir(PARQUET_DIR);
     } catch {
       // Already exists — ignore
     }
@@ -277,27 +306,21 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Uses conn.execute() which returns { table: ArrowTable }.
-   * Rows are extracted via the Arrow Table's toArray()/toJSON() or
-   * JSON.parse(table.toString()) as a fallback.
+   * Uses conn.query() + getAllObjects() for row extraction.
    * Serialized through a queue to prevent concurrent calls.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
-    await this.ready;
+    await this.ensureReady();
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const result = await this.conn.execute(cypher);
-          if (!result) {
-            throw new Error(`Query failed: ${cypher.slice(0, 120)}`);
+          const result = await this.conn.query(cypher);
+          try {
+            const rows = await result.getAllObjects();
+            resolve(rows);
+          } finally {
+            await result.close();
           }
-          // execute() returns { table: ArrowTable }
-          const table = result.table;
-          const rows: Record<string, unknown>[] = [];
-          for (const row of table) {
-            rows.push(row.toJSON());
-          }
-          resolve(rows);
         })
         .catch((err) => {
           reject(err);
@@ -307,26 +330,50 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher statement that doesn't return rows (DDL, COPY, etc.).
-   * Uses raw conn.query() for synchronous execution with error reporting.
    */
   private async exec(cypher: string): Promise<void> {
-    await this.ready;
+    await this.ensureReady();
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
-        .then(() => {
-          const result = this.conn.query(cypher);
-          if (!result.isSuccess()) {
-            const err = result.getErrorMessage();
-            result.close();
-            throw new Error(err);
-          }
-          result.close();
+        .then(async () => {
+          const result = await this.conn.query(cypher);
+          await result.close();
           resolve();
         })
         .catch((err) => {
           reject(err);
         });
     });
+  }
+
+  /** Close the database connection and release WASM resources. */
+  async dispose(): Promise<void> {
+    try {
+      await this.conn?.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await this.db?.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await lbug.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Current WASM linear memory size in MB (for diagnostics). */
+  getWasmMemoryMB(): number {
+    try {
+      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory })
+        .wasmMemory;
+      return mem ? mem.buffer.byteLength / (1024 * 1024) : -1;
+    } catch {
+      return -1;
+    }
   }
 
   /** Set an embedder for generating query embeddings during search. */
@@ -336,7 +383,7 @@ export class LadybugGraphStore implements GraphStore {
 
   /** Update visualization node/edge limits. */
   async setLimits(maxNodes: number, maxEdges: number): Promise<void> {
-    await this.ready;
+    await this.ensureReady();
     this.maxVisNodes = maxNodes;
     this.maxVisEdges = maxEdges;
   }
@@ -475,7 +522,7 @@ export class LadybugGraphStore implements GraphStore {
   ): Promise<GraphData> {
     let seedIds: Set<string>;
 
-    if (this.nodePropsCache.has(search)) {
+    if (this.nodeTypeMap.has(search)) {
       seedIds = new Set([search]);
     } else {
       const rankedLists: { id: string; score: number }[][] = [];
@@ -605,7 +652,6 @@ export class LadybugGraphStore implements GraphStore {
     }
     this.vectorIndex = null;
     this.bm25Index = new BM25Index();
-    this.nodePropsCache.clear();
     this.nodeTypeMap.clear();
     this.flushedPackageIds.clear();
     this.sourceCache.clear();
@@ -615,7 +661,7 @@ export class LadybugGraphStore implements GraphStore {
     data: Uint8Array,
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse> {
-    await this.ready;
+    await this.ensureReady();
 
     // Unzip the Parquet archive and COPY FROM each file into the in-memory DB.
     onProgress?.('Unpacking Parquet archive');
@@ -662,11 +708,11 @@ export class LadybugGraphStore implements GraphStore {
 
       onProgress?.(`Importing ${type} nodes`);
       const path = nodeParquetPath(type);
-      this.lbug.FS.writeFile(path, fileData);
+      await lbug.FS.writeFile(path, fileData);
       try {
         await this.exec(`COPY ${type} FROM '${path}'`);
       } finally {
-        this.lbug.FS.unlink(path);
+        await lbug.FS.unlink(path);
       }
 
       // Rebuild nodeTypeMap and BM25 index for this type
@@ -687,7 +733,7 @@ export class LadybugGraphStore implements GraphStore {
     const relData = entries['relationships.parquet'];
     if (relData) {
       onProgress?.('Importing relationships');
-      this.lbug.FS.writeFile(REL_PARQUET_PATH, relData);
+      await lbug.FS.writeFile(REL_PARQUET_PATH, relData);
 
       try {
         // Scan the Parquet file and bucket rows by (srcType, tgtType)
@@ -723,25 +769,35 @@ export class LadybugGraphStore implements GraphStore {
           totalRels++;
         }
 
-        // Write per-subtable CSVs and COPY FROM
+        // Write per-subtable CSVs and COPY FROM (chunked to bound memory)
         for (const [key, bucket] of buckets) {
-          const csv = generateRelCSV(bucket);
-          const csvPath = `/rels_${key}.csv`;
-          this.lbug.FS.writeFile(csvPath, csv);
-          try {
-            await this.exec(
-              `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
-            );
-          } catch (err) {
-            console.warn(`[LadybugStore] COPY RELATES_${key} failed:`, err);
+          for (
+            let offset = 0;
+            offset < bucket.length;
+            offset += FLUSH_CHUNK_SIZE
+          ) {
+            const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+            const csv = generateRelCSV(chunk);
+            const csvPath = `/rels_${key}.csv`;
+            await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+            try {
+              await this.exec(
+                `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
+              );
+            } catch (err) {
+              console.warn(
+                `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}):`,
+                err,
+              );
+            }
+            await lbug.FS.unlink(csvPath);
           }
-          this.lbug.FS.unlink(csvPath);
         }
       } catch (err) {
         console.error('[LadybugStore] relationship import failed:', err);
       }
 
-      this.lbug.FS.unlink(REL_PARQUET_PATH);
+      await lbug.FS.unlink(REL_PARQUET_PATH);
     }
 
     console.log(
@@ -755,7 +811,7 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   async exportDatabase(): Promise<Uint8Array> {
-    await this.ready;
+    await this.ensureReady();
     await this.flush();
 
     this.ensureParquetDir();
@@ -776,8 +832,8 @@ export class LadybugGraphStore implements GraphStore {
       await this.exec(
         `COPY (MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties) TO '${path}'`,
       );
-      files[`nodes_${type}.parquet`] = this.lbug.FS.readFile(path);
-      this.lbug.FS.unlink(path);
+      files[`nodes_${type}.parquet`] = await lbug.FS.readFile(path);
+      await lbug.FS.unlink(path);
       console.log(`[LadybugStore] exported ${type}: ${count} nodes`);
     }
 
@@ -792,8 +848,8 @@ export class LadybugGraphStore implements GraphStore {
       await this.exec(
         `COPY (MATCH (a)-[r:RELATES]->(b) RETURN a.id AS \`from\`, b.id AS \`to\`, r.id AS id, r.type AS type, r.properties AS properties) TO '${REL_PARQUET_PATH}'`,
       );
-      files['relationships.parquet'] = this.lbug.FS.readFile(REL_PARQUET_PATH);
-      this.lbug.FS.unlink(REL_PARQUET_PATH);
+      files['relationships.parquet'] = await lbug.FS.readFile(REL_PARQUET_PATH);
+      await lbug.FS.unlink(REL_PARQUET_PATH);
       console.log(`[LadybugStore] exported ${relCount} relationships`);
     }
 
@@ -813,8 +869,12 @@ export class LadybugGraphStore implements GraphStore {
    * Returns immediately with the buffered counts (no DB call).
    */
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
-    this.pendingNodes.push(...batch.nodes);
-    this.pendingRels.push(...batch.relationships);
+    for (let i = 0; i < batch.nodes.length; i++) {
+      this.pendingNodes.push(batch.nodes[i]);
+    }
+    for (let i = 0; i < batch.relationships.length; i++) {
+      this.pendingRels.push(batch.relationships[i]);
+    }
     this.totalNodesBuffered += batch.nodes.length;
     this.totalRelsBuffered += batch.relationships.length;
 
@@ -831,12 +891,17 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Flush all buffered writes to LadybugDB via CSV + COPY FROM.
-   * Nodes are bucketed by type and written to per-type CSVs.
-   * Relationships are written via the RELATES REL TABLE GROUP.
+   *
+   * Nodes are deduplicated, bucketed by type, then written in chunks
+   * of {@link FLUSH_CHUNK_SIZE} rows per COPY call to keep peak CSV
+   * string size and WASM memory bounded.
+   *
+   * Relationships are flushed after all nodes (endpoints must exist)
+   * using the same chunked approach.
    */
   async flush(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
-    await this.ready;
+    await this.ensureReady();
 
     const rawNodes = this.pendingNodes;
     const rels = this.pendingRels;
@@ -845,9 +910,7 @@ export class LadybugGraphStore implements GraphStore {
 
     const t0 = performance.now();
 
-    // Deduplicate nodes by ID, merging properties. The pipeline may emit
-    // the same node twice (e.g. structure batch + summary update) which
-    // would cause LadybugDB COPY FROM primary-key violations.
+    // --- Deduplicate nodes by ID, merging properties ---
     const nodeDedup = new Map<string, (typeof rawNodes)[0]>();
     for (const node of rawNodes) {
       const existing = nodeDedup.get(node.id);
@@ -861,12 +924,13 @@ export class LadybugGraphStore implements GraphStore {
         nodeDedup.set(node.id, { ...node, properties: { ...node.properties } });
       }
     }
-    const nodes = Array.from(nodeDedup.values());
 
-    // Update JS-side indexes before writing to DB
-    for (const node of nodes) {
+    // --- Update JS-side indexes + bucket by type ---
+    const buckets = new Map<string, ImportBatchRequest['nodes']>();
+    let nodeCount = 0;
+
+    for (const node of nodeDedup.values()) {
       const props = node.properties ?? {};
-      this.nodePropsCache.set(node.id, props);
       this.nodeTypeMap.set(node.id, node.type);
 
       // BM25 index
@@ -881,133 +945,110 @@ export class LadybugGraphStore implements GraphStore {
           this.vectorIndex = new VectorIndex(node.embedding.length);
         this.vectorIndex.addVector(node.id, node.embedding);
       }
-    }
 
-    // Bucket nodes by type and write per-type CSVs.
-    // Package nodes are shared across repos — deduplicate within this batch
-    // and against previously flushed packages to avoid LadybugDB PK violations.
-    if (nodes.length > 0) {
-      const buckets = new Map<string, ImportBatchRequest['nodes']>();
-      for (const node of nodes) {
-        if (!NODE_TYPE_SET.has(node.type)) {
-          console.warn(
-            `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
-          );
-          continue;
-        }
-        if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
-          continue;
-        }
-        // Mark early so intra-batch duplicates are caught
-        if (node.type === 'Package') {
-          this.flushedPackageIds.add(node.id);
-        }
-        let bucket = buckets.get(node.type);
-        if (!bucket) {
-          bucket = [];
-          buckets.set(node.type, bucket);
-        }
-        bucket.push(node);
+      // Bucket by type, skipping unknown types and duplicate packages
+      if (!NODE_TYPE_SET.has(node.type)) {
+        console.warn(
+          `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
+        );
+        continue;
+      }
+      if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
+        continue;
+      }
+      if (node.type === 'Package') {
+        this.flushedPackageIds.add(node.id);
       }
 
-      for (const [type, bucket] of buckets) {
-        const csv = generateTypedNodeCSV(bucket);
+      let bucket = buckets.get(node.type);
+      if (!bucket) {
+        bucket = [];
+        buckets.set(node.type, bucket);
+      }
+      bucket.push(node);
+      nodeCount++;
+    }
+
+    // --- Flush nodes: chunked COPY FROM per type ---
+    for (const [type, bucket] of buckets) {
+      for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+        const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+        const csv = generateTypedNodeCSV(chunk);
         const path = `/nodes_${type}.csv`;
-        this.lbug.FS.writeFile(path, csv);
+        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
-        this.lbug.FS.unlink(path);
+        await lbug.FS.unlink(path);
       }
     }
 
-    // Write relationships — try group COPY, fall back to per-subtable COPY
+    // --- Flush relationships: filter, bucket by subtable, chunked COPY ---
+    let relCount = 0;
     if (rels.length > 0) {
-      // Filter to supported type pairs
-      const validRels: ImportBatchRequest['relationships'] = [];
+      const relBuckets = new Map<string, ImportBatchRequest['relationships']>();
       for (const rel of rels) {
         const srcType = this.nodeTypeMap.get(rel.source_id);
         const tgtType = this.nodeTypeMap.get(rel.target_id);
-        if (!srcType || !tgtType) {
-          console.warn(
-            `[LadybugStore] Skipping rel ${rel.id}: unknown node type (src=${srcType}, tgt=${tgtType})`,
-          );
-          continue;
+        if (!srcType || !tgtType) continue;
+        const key = `${srcType}_${tgtType}`;
+        if (!REL_PAIR_SET.has(key)) continue;
+        let bucket = relBuckets.get(key);
+        if (!bucket) {
+          bucket = [];
+          relBuckets.set(key, bucket);
         }
-        if (!REL_PAIR_SET.has(`${srcType}_${tgtType}`)) {
-          console.warn(
-            `[LadybugStore] Skipping rel ${rel.id}: unsupported pair ${srcType} → ${tgtType}`,
-          );
-          continue;
-        }
-        validRels.push(rel);
+        bucket.push(rel);
+        relCount++;
       }
 
-      if (validRels.length > 0) {
-        await this.copyRelsBySubtable(validRels);
+      for (const [key, bucket] of relBuckets) {
+        for (
+          let offset = 0;
+          offset < bucket.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
+          const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const csv = generateRelCSV(chunk);
+          const path = `/rels_${key}.csv`;
+          await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+          try {
+            await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
+          } catch (err) {
+            console.warn(
+              `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
+              err,
+            );
+            const [srcType, tgtType] = key.split('_');
+            for (const rel of chunk) {
+              const props = JSON.stringify(rel.properties ?? {});
+              try {
+                await this.exec(
+                  `MATCH (a:${srcType} {id: '${esc(rel.source_id)}'}), (b:${tgtType} {id: '${esc(rel.target_id)}'}) ` +
+                    `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${esc(props)}'}]->(b)`,
+                );
+              } catch (insertErr) {
+                console.warn(
+                  `[LadybugStore] INSERT rel failed: ${rel.id}`,
+                  insertErr,
+                );
+              }
+            }
+          }
+          await lbug.FS.unlink(path);
+        }
       }
     }
 
     const elapsed = performance.now() - t0;
     console.log(
-      `[LadybugStore] flush: ${nodes.length} nodes, ${rels.length} rels in ${elapsed.toFixed(0)}ms`,
+      `[LadybugStore] flush: ${nodeCount} nodes, ${relCount} rels in ${elapsed.toFixed(0)}ms`,
     );
   }
 
-  /**
-   * Fallback: bucket relationships by (srcType, tgtType) and COPY each
-   * sub-table of the REL TABLE GROUP individually.
-   */
-  private async copyRelsBySubtable(
-    rels: ImportBatchRequest['relationships'],
-  ): Promise<void> {
-    const buckets = new Map<string, ImportBatchRequest['relationships']>();
-    for (const rel of rels) {
-      const srcType = this.nodeTypeMap.get(rel.source_id)!;
-      const tgtType = this.nodeTypeMap.get(rel.target_id)!;
-      const key = `${srcType}_${tgtType}`;
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = [];
-        buckets.set(key, bucket);
-      }
-      bucket.push(rel);
-    }
-
-    for (const [key, bucket] of buckets) {
-      const csv = generateRelCSV(bucket);
-      const path = `/rels_${key}.csv`;
-      this.lbug.FS.writeFile(path, csv);
-      try {
-        await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
-      } catch (err) {
-        // Last resort: per-row INSERT
-        console.warn(
-          `[LadybugStore] COPY RELATES_${key} failed, inserting rows individually:`,
-          err,
-        );
-        const [srcType, tgtType] = key.split('_');
-        for (const rel of bucket) {
-          const props = JSON.stringify(rel.properties ?? {});
-          try {
-            await this.exec(
-              `MATCH (a:${srcType} {id: '${esc(rel.source_id)}'}), (b:${tgtType} {id: '${esc(rel.target_id)}'}) ` +
-                `CREATE (a)-[:RELATES {id: '${esc(rel.id)}', type: '${esc(rel.type)}', properties: '${esc(props)}'}]->(b)`,
-            );
-          } catch (insertErr) {
-            console.warn(
-              `[LadybugStore] INSERT rel failed: ${rel.id}`,
-              insertErr,
-            );
-          }
-        }
-      }
-      this.lbug.FS.unlink(path);
-    }
-  }
-
   storeSource(files: SourceFile[]): void {
+    const encoder = new TextEncoder();
     for (const f of files) {
       this.sourceCache.set(f.id, {
-        content: f.content,
+        compressed: deflateSync(encoder.encode(f.content)),
         path: f.path,
         binary: f.binary,
       });
@@ -1025,16 +1066,19 @@ export class LadybugGraphStore implements GraphStore {
     const entry = this.sourceCache.get(fileId);
     if (!entry) return null;
 
+    // Decompress on demand
+    const content = new TextDecoder().decode(inflateSync(entry.compressed));
+
     if (entry.binary) {
       return {
-        content: entry.content,
+        content,
         path: entry.path,
         line_count: 0,
         binary: true,
       };
     }
 
-    const allLines = entry.content.split('\n');
+    const allLines = content.split('\n');
     const totalLines = allLines.length;
 
     if (startLine != null && endLine != null) {
@@ -1049,7 +1093,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     return {
-      content: entry.content,
+      content,
       path: entry.path,
       line_count: totalLines,
     };

@@ -17,8 +17,9 @@
 /**
  * Browser-based JobService implementation.
  *
- * Uses the loader registry to fetch files, then runs the new
- * pipeline (fetching → parsing) and submits graph batches to the store.
+ * Uses the loader registry to fetch files, then runs the concurrent
+ * node pipeline (cache → extract → resolve → summarize → store)
+ * and submits graph batches to the store.
  * Events are pushed into an EventChannel for async iteration.
  */
 
@@ -29,8 +30,24 @@ import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 import type { GraphStore } from '../store/types';
 import { EventChannel } from './eventChannel';
 import type { JobMessage, JobService, JobStream } from './types';
-import { runPipeline, initParsers } from '@opentrace/components/pipeline';
-import type { PipelinePhase, RepoTree } from '@opentrace/components/pipeline';
+import {
+  initParsers,
+  executeScanning,
+  runNodePipeline,
+  FileCacheStage,
+  ExtractStage,
+  ResolveStage,
+  SummarizeStage,
+  StoreStage,
+  PipelineDebugLog,
+} from '@opentrace/components/pipeline';
+import type {
+  PipelinePhase,
+  RepoTree,
+  ScanResult,
+  PipelineEvent,
+  GraphNode,
+} from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 
 // --- Tree-sitter lazy initialization ---
@@ -110,6 +127,15 @@ function toProtoPhase(phase: PipelinePhase): JobPhase {
   return PHASE_MAP[phase] ?? JobPhase.JOB_PHASE_UNSPECIFIED;
 }
 
+/** Map concurrent stage names → JobPhase for the UI.
+ *  `cache` is omitted — it's an internal optimization, not user-visible. */
+const CONCURRENT_PHASE_MAP: Record<string, JobPhase> = {
+  extract: JobPhase.JOB_PHASE_PARSING,
+  resolve: JobPhase.JOB_PHASE_RESOLVING,
+  summarize: JobPhase.JOB_PHASE_SUMMARIZING,
+  store: JobPhase.JOB_PHASE_SUBMITTING,
+};
+
 /** Build a default empty JobEvent shell (proto fields are always present). */
 function emptyEvent(): JobEvent {
   return {
@@ -158,25 +184,39 @@ export class BrowserJobService implements JobService {
     const abortController = new AbortController();
     let cancelled = false;
 
+    // Debug log — attached to window for console access
+    const debug = new PipelineDebugLog({ enabled: true });
+    (globalThis as Record<string, unknown>).__pipelineDebug = debug;
+
+    // Hoisted so the catch handler can report partial progress
+    let persistedNodes = 0;
+    let persistedRels = 0;
+    let storeStage: StoreStage | undefined;
+
     const run = async () => {
-      // 1. Initialize parsers
+      debug.start();
+
+      // 1. Initialize parsers + DB in parallel
+      debug.log('init', 'loading tree-sitter parsers + DB');
       channel.push({
         ...emptyEvent(),
         kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
         phase: JobPhase.JOB_PHASE_INITIALIZING,
-        message: 'Initializing parsers',
+        message: 'Initializing',
       });
-      await ensureParsers();
+      await Promise.all([ensureParsers(), this.store.ensureReady?.()]);
+      debug.log('init', 'parsers + DB ready');
       channel.push({
         ...emptyEvent(),
         kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
         phase: JobPhase.JOB_PHASE_INITIALIZING,
-        message: 'Parsers ready',
+        message: 'Ready',
       });
 
       if (cancelled) return;
 
       // 2. Fetch files via loader
+      debug.log('fetch', 'finding loader');
       const loader = loaderRegistry.find((l) => l.canHandle(input));
       if (!loader) {
         throw new Error('No loader found for input');
@@ -184,6 +224,7 @@ export class BrowserJobService implements JobService {
 
       if (cancelled) return;
 
+      debug.log('fetch', 'loading files');
       const repoTree: RepoTree = await loader.load(input, {
         signal: abortController.signal,
         onProgress: (progress) => {
@@ -204,6 +245,7 @@ export class BrowserJobService implements JobService {
           });
         },
       });
+      debug.log('fetch', `loaded ${repoTree.files.length} files`);
 
       if (cancelled) return;
 
@@ -217,140 +259,409 @@ export class BrowserJobService implements JobService {
         })),
       );
 
-      // 3. Run pipeline and submit graph data
+      // 3. Run scanning stage (builds structural graph + lookup maps)
+      debug.log('scanning', 'starting');
       const ctx = {
         get cancelled() {
           return cancelled;
         },
       };
-      const pipeline = runPipeline({ repo: repoTree }, ctx);
-      let totalNodesCreated = 0;
-      let totalRelsCreated = 0;
       let lastYieldTime = performance.now();
 
-      for (const event of pipeline) {
-        if (cancelled) break;
+      const scanGen = executeScanning({ repo: repoTree }, ctx);
+      let scanResult: ScanResult | undefined;
+      const scanningRels: {
+        id: string;
+        type: string;
+        source_id: string;
+        target_id: string;
+        properties?: Record<string, unknown>;
+      }[] = [];
 
-        // Submit graph data to store as it flows through
-        if (event.nodes?.length || event.relationships?.length) {
-          const result = await this.store.importBatch({
-            nodes: (event.nodes ?? []).map((n) => ({
-              id: n.id,
-              type: n.type,
-              name: n.name,
-              properties: n.properties,
-            })),
-            relationships: (event.relationships ?? []).map((r) => ({
+      // Drive the scanning generator, forwarding events to the channel
+      for (;;) {
+        const { value, done } = scanGen.next();
+        if (done) {
+          scanResult = value;
+          break;
+        }
+        const event = value as PipelineEvent;
+
+        // Collect structural rels for the store stage
+        if (event.relationships?.length) {
+          for (const r of event.relationships) {
+            scanningRels.push({
               id: r.id,
               type: r.type,
               source_id: r.source_id,
               target_id: r.target_id,
-            })),
-          });
-          totalNodesCreated += result.nodes_created;
-          totalRelsCreated += result.relationships_created;
+              properties: r.properties,
+            });
+          }
         }
 
-        // Map pipeline events to proto JobEvents
-        switch (event.kind) {
-          case 'stage_start':
-            // Emit as progress to mark the stage active in the UI
+        if (event.kind === 'stage_start' || event.kind === 'stage_progress') {
+          const now = performance.now();
+          const isLast = event.detail?.current === event.detail?.total;
+          if (
+            event.kind === 'stage_start' ||
+            isLast ||
+            now - lastYieldTime >= 100
+          ) {
             channel.push({
               ...emptyEvent(),
               kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
               phase: toProtoPhase(event.phase),
               message: event.message,
+              detail: event.detail
+                ? {
+                    current: event.detail.current,
+                    total: event.detail.total,
+                    fileName: event.detail.fileName ?? '',
+                    nodesCreated: 0,
+                    relationshipsCreated: 0,
+                  }
+                : undefined,
             });
-            break;
+            await new Promise((r) => setTimeout(r, 0));
+            lastYieldTime = performance.now();
+          }
+        } else if (event.kind === 'stage_stop') {
+          debug.log('scanning', `done: ${event.message}`);
+          channel.push({
+            ...emptyEvent(),
+            kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+            phase: toProtoPhase(event.phase),
+            message: event.message,
+          });
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
 
-          case 'stage_progress': {
-            // Throttle progress events to avoid flooding the channel.
-            // Only push if enough wall-clock time has elapsed or this is
-            // the last item in the batch.
+      if (cancelled || !scanResult) return;
+
+      // 4. Build concurrent pipeline stages
+      debug.log('pipeline', 'building stages');
+
+      const fileContentMap = new Map<string, string>();
+      for (const file of scanResult.parseableFiles) {
+        fileContentMap.set(`${scanResult.repoId}/${file.path}`, file.content);
+      }
+
+      // Release raw file strings — source is now compressed in the store's
+      // sourceCache, and parseable content is in fileContentMap (consumed
+      // below by FileCacheStage, then cleared).
+      repoTree.files.length = 0;
+      scanResult.parseableFiles.length = 0;
+
+      const fileCacheStage = new FileCacheStage({ fileContentMap });
+
+      // fileContentMap has been consumed by FileCacheStage — clear it so
+      // the raw strings can be GC'd once the cache holds them.
+      fileContentMap.clear();
+      const extractStage = new ExtractStage({
+        scanResult,
+        getContent: (fileId) => fileCacheStage.getContent(fileId),
+      });
+      const resolveStage = new ResolveStage(extractStage);
+      const summarizeStage = new SummarizeStage();
+      storeStage = new StoreStage();
+
+      // Pre-feed scanning rels into the store stage
+      storeStage.addRelationships(scanningRels);
+
+      // Seed nodes: all structural nodes from scanning
+      const seeds: GraphNode[] = [scanResult.repoNode];
+      for (const dir of scanResult.dirNodes.values()) seeds.push(dir);
+      for (const file of scanResult.fileNodes) seeds.push(file);
+      for (const pkg of scanResult.packageNodes.values()) seeds.push(pkg);
+
+      debug.log(
+        'pipeline',
+        `${seeds.length} seed nodes, ${scanningRels.length} scanning rels`,
+      );
+      debug.log(
+        'pipeline',
+        `file cache limit: ${(fileCacheStage.stats().byteLimit / 1024 / 1024).toFixed(0)} MB`,
+      );
+
+      // 5. Run concurrent pipeline
+      const concurrentPipeline = runNodePipeline({
+        ctx,
+        stages: [
+          fileCacheStage,
+          extractStage,
+          resolveStage,
+          summarizeStage,
+          storeStage,
+        ],
+        seeds,
+      });
+
+      // Reset persisted counts for this pipeline run
+      persistedNodes = 0;
+      persistedRels = 0;
+
+      // Per-stage counters for UI progress
+      const stageCounts: Record<string, number> = {};
+      // Total items each stage will process (estimated from seed count;
+      // extract produces children so downstream stages see more items)
+      const stageTotals: Record<string, number> = {};
+      const totalSeeds = seeds.length;
+      // Track per-stage last-yield time so each stage gets throttled independently
+      const stageLastYield: Record<string, number> = {};
+
+      // WASM memory diagnostics (only available on LadybugGraphStore)
+      const wasmMB = () => {
+        const s = this.store as { getWasmMemoryMB?: () => number };
+        return s.getWasmMemoryMB ? s.getWasmMemoryMB() : -1;
+      };
+
+      /** Drain buffered nodes from the store stage and persist them. */
+      const drainNodesToStore = async () => {
+        const nodes = storeStage!.drainNodes();
+        if (nodes.length === 0) return;
+        debug.log(
+          'store',
+          `draining ${nodes.length} nodes (wasm=${wasmMB().toFixed(0)}MB)`,
+        );
+        await this.store.importBatch({
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            type: n.type,
+            name: n.name,
+            properties: n.properties,
+          })),
+          relationships: [],
+        });
+        await this.store.flush();
+        persistedNodes += nodes.length;
+      };
+
+      /** Drain buffered relationships from the store stage and persist them. */
+      const drainRelsToStore = async () => {
+        const rels = storeStage!.drainRelationships();
+        if (rels.length === 0) return;
+        debug.log('store', `draining ${rels.length} rels`);
+        await this.store.importBatch({
+          nodes: [],
+          relationships: rels.map((r) => ({
+            id: r.id,
+            type: r.type,
+            source_id: r.source_id,
+            target_id: r.target_id,
+            properties: r.properties,
+          })),
+        });
+        await this.store.flush();
+        persistedRels += rels.length;
+      };
+
+      for (const event of concurrentPipeline) {
+        if (cancelled) break;
+
+        debug.logEvent(event);
+
+        if ('action' in event) {
+          const phase = CONCURRENT_PHASE_MAP[event.stage];
+
+          if (event.action === 'end') {
+            // Feed relationships from non-store stages into the store stage
+            const mutation = event.mutation;
+            if (
+              mutation &&
+              mutation.relationships.length > 0 &&
+              event.stage !== 'store'
+            ) {
+              storeStage.addRelationships(mutation.relationships);
+            }
+
+            // After extraction, evict the raw file content from the cache —
+            // the compressed copy in sourceCache is the long-lived version.
+            if (event.stage === 'extract') {
+              fileCacheStage.evict(event.node);
+            }
+
+            // Incrementally persist nodes when the store stage buffer fills
+            if (storeStage.needsDrain()) {
+              await drainNodesToStore();
+            }
+
+            // Skip UI events for stages without a phase mapping (e.g. cache)
+            if (!phase) continue;
+
+            // Track per-stage progress
+            stageCounts[event.stage] = (stageCounts[event.stage] ?? 0) + 1;
+
+            // Extract has a known total (seed count); downstream stages
+            // process variable numbers of items so use 0 (indeterminate bar)
+            if (event.stage === 'extract') {
+              stageTotals[event.stage] = totalSeeds;
+            } else {
+              stageTotals[event.stage] = 0;
+            }
+
+            // Throttle progress per stage (100ms)
             const now = performance.now();
-            const isLast = event.detail?.current === event.detail?.total;
-            if (isLast || now - lastYieldTime >= 100) {
+            const stageYield = stageLastYield[event.stage] ?? 0;
+            const count = stageCounts[event.stage];
+            const total = stageTotals[event.stage];
+            const isLast = total > 0 && count === total;
+
+            if (isLast || now - stageYield >= 100) {
+              const storeStats = storeStage.stats();
               channel.push({
                 ...emptyEvent(),
                 kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-                phase: toProtoPhase(event.phase),
-                message: event.message,
-                detail: event.detail
-                  ? {
-                      current: event.detail.current,
-                      total: event.detail.total,
-                      fileName: event.detail.fileName ?? '',
-                      nodesCreated: totalNodesCreated,
-                      relationshipsCreated: totalRelsCreated,
-                    }
-                  : undefined,
+                phase,
+                message: `Processing ${event.node}`,
+                detail: {
+                  current: count,
+                  total,
+                  fileName: event.node,
+                  nodesCreated: storeStats.nodes,
+                  relationshipsCreated: storeStats.relationships,
+                },
               });
-              // Yield to let the UI repaint
-              await new Promise((r) => setTimeout(r, 0));
-              lastYieldTime = performance.now();
+              stageLastYield[event.stage] = now;
+
+              // Yield to UI periodically (not on every event — batch up)
+              if (now - lastYieldTime >= 100) {
+                await new Promise((r) => setTimeout(r, 0));
+                lastYieldTime = now;
+              }
             }
-            break;
           }
+        } else if ('kind' in event) {
+          switch (event.kind) {
+            case 'flush_start': {
+              const phase = CONCURRENT_PHASE_MAP[event.stage];
+              if (phase) {
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                  phase,
+                  message: `Finalizing ${event.stage}`,
+                });
+              }
+              break;
+            }
 
-          case 'stage_stop':
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
-              phase: toProtoPhase(event.phase),
-              message: event.message,
-            });
-            // Yield at stage boundaries so the UI can repaint
-            await new Promise((r) => setTimeout(r, 0));
-            break;
+            case 'flush_end': {
+              const phase = CONCURRENT_PHASE_MAP[event.stage];
 
-          case 'done': {
-            // Flush buffered writes to the store
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-              phase: JobPhase.JOB_PHASE_SUBMITTING,
-              message: `Persisting ${totalNodesCreated} nodes, ${totalRelsCreated} relationships`,
-            });
-            await this.store.flush();
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
-              phase: JobPhase.JOB_PHASE_SUBMITTING,
-              message: `Persisted ${totalNodesCreated} nodes, ${totalRelsCreated} relationships`,
-            });
+              // Feed flush relationships into store stage (e.g. CALLS from resolve)
+              if (
+                event.mutation &&
+                event.mutation.relationships.length > 0 &&
+                event.stage !== 'store'
+              ) {
+                storeStage.addRelationships(event.mutation.relationships);
+              }
 
-            // Emit GRAPH_READY so the UI transitions to 'persisted' state
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
-              result: {
-                nodesCreated: totalNodesCreated,
-                relationshipsCreated: totalRelsCreated,
-                reposProcessed: 1,
-              },
-            });
-            // Then emit DONE
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_DONE,
-              phase: JobPhase.JOB_PHASE_DONE,
-              result: {
-                nodesCreated: totalNodesCreated,
-                relationshipsCreated: totalRelsCreated,
-                reposProcessed: 1,
-              },
-            });
-            break;
+              // When the store stage flushes, persist remaining nodes then rels
+              if (event.stage === 'store') {
+                const storeStats = storeStage.stats();
+                debug.log(
+                  'store',
+                  `final flush — ${storeStats.nodes} total nodes, ${storeStats.relationships} total rels`,
+                );
+
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                  phase: JobPhase.JOB_PHASE_SUBMITTING,
+                  message: `Persisting ${storeStats.nodes} nodes, ${storeStats.relationships} relationships`,
+                });
+
+                // Drain any remaining buffered nodes
+                await drainNodesToStore();
+                // Now all nodes are in the DB — safe to persist relationships
+                await drainRelsToStore();
+
+                debug.log(
+                  'store',
+                  `persisted ${persistedNodes} nodes, ${persistedRels} rels`,
+                );
+
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase: JobPhase.JOB_PHASE_SUBMITTING,
+                  message: `Persisted ${persistedNodes} nodes, ${persistedRels} relationships`,
+                });
+                await new Promise((r) => setTimeout(r, 0));
+                continue;
+              }
+
+              if (phase) {
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase,
+                  message: `Completed ${event.stage}`,
+                });
+                await new Promise((r) => setTimeout(r, 0));
+              }
+              break;
+            }
+
+            case 'item_error':
+              debug.log(
+                'error',
+                `${event.stage}/${event.node}: ${event.error}`,
+              );
+              console.warn(
+                `[pipeline] ${event.stage} error on ${event.node}: ${event.error}`,
+              );
+              break;
+
+            case 'pipeline_error':
+              debug.log('error', `pipeline: ${event.error}`);
+              channel.push({
+                ...emptyEvent(),
+                kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+                message: event.error,
+                errors: [event.error],
+              });
+              debug.dump();
+              return;
+
+            case 'pipeline_done': {
+              const cacheStats = fileCacheStage.stats();
+              debug.log(
+                'pipeline',
+                `done — persisted: ${persistedNodes} nodes, ${persistedRels} rels`,
+              );
+              debug.log(
+                'pipeline',
+                `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
+              );
+
+              channel.push({
+                ...emptyEvent(),
+                kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+                result: {
+                  nodesCreated: persistedNodes,
+                  relationshipsCreated: persistedRels,
+                  reposProcessed: 1,
+                },
+              });
+              channel.push({
+                ...emptyEvent(),
+                kind: JobEventKind.JOB_EVENT_KIND_DONE,
+                phase: JobPhase.JOB_PHASE_DONE,
+                result: {
+                  nodesCreated: persistedNodes,
+                  relationshipsCreated: persistedRels,
+                  reposProcessed: 1,
+                },
+              });
+
+              debug.dump();
+              break;
+            }
           }
-
-          case 'error':
-            channel.push({
-              ...emptyEvent(),
-              kind: JobEventKind.JOB_EVENT_KIND_ERROR,
-              message: event.message,
-              errors: event.errors ?? [event.message],
-            });
-            break;
         }
       }
     };
@@ -358,11 +669,31 @@ export class BrowserJobService implements JobService {
     // Fire-and-forget so the stream is returned immediately
     run()
       .catch((err) => {
+        // Log full error with stack trace to console for debugging
+        console.error('[BrowserJobService] pipeline error:', err);
+        debug.log(
+          'error',
+          `uncaught: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+        );
+        debug.dump();
+
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const isOOM =
+          (err instanceof Error &&
+            (errMsg.includes('memory') || errMsg.includes('out of bounds'))) ||
+          typeof err === 'number'; // WASM abort codes are thrown as raw numbers
+        const totalStats = storeStage?.stats();
+        const userMessage = isOOM
+          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
+          : errMsg;
+
+        // Don't emit GRAPH_READY on OOM — the WASM instance is likely
+        // corrupted and fetchGraph() would trigger another crash.
         channel.push({
           ...emptyEvent(),
           kind: JobEventKind.JOB_EVENT_KIND_ERROR,
-          message: err instanceof Error ? err.message : String(err),
-          errors: [err instanceof Error ? err.message : String(err)],
+          message: userMessage,
+          errors: [err instanceof Error ? (err.stack ?? errMsg) : errMsg],
         });
       })
       .finally(() => {

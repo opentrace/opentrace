@@ -19,8 +19,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { createMockStore } from '../../__tests__/mockStore';
 
-// Mock the store module to return our mock store
-const mockStore = createMockStore();
+// Mock the store module to return our mock store.
+// hasData() returns true so the hook fetches on mount (simulates existing data).
+const mockStore = createMockStore({ hasData: () => true });
 vi.mock('../../store', () => ({
   useStore: () => ({ store: mockStore }),
 }));

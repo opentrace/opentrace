@@ -106,6 +106,9 @@ export type {
 } from './summarizer/types';
 export { DEFAULT_SUMMARIZER_CONFIG } from './summarizer/types';
 
+// Stages
+export { execute as executeScanning } from './stages/scanning';
+
 // Stage helpers (useful for tests)
 export {
   parseFile,
@@ -121,6 +124,27 @@ export {
   parentDir,
   ensureDirChain,
 } from './stages/loading';
+
+// Concurrent node pipeline
+export { runNodePipeline } from './concurrent/scheduler';
+export type {
+  INodeStage,
+  StageMutation,
+  StageEvent,
+  ConcurrentPipelineEvent,
+  ConcurrentPipelineOptions,
+} from './concurrent/types';
+export { EMPTY_MUTATION } from './concurrent/types';
+export {
+  FileCacheStage,
+  ExtractStage,
+  ResolveStage,
+  SummarizeStage,
+  StoreStage,
+} from './concurrent/stages';
+export type { FileCacheStageConfig, ExtractStageConfig } from './concurrent/stages';
+export { PipelineDebugLog } from './concurrent/debug';
+export type { DebugEntry } from './concurrent/debug';
 
 // WASM file helpers are in ./wasm — import separately to avoid pulling
 // Node.js builtins into browser bundles:
