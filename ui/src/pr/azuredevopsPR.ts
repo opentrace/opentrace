@@ -80,8 +80,6 @@ function toPRSummary(pr: any): PRSummary {
     head_branch: sourceRef.startsWith(refPrefix)
       ? sourceRef.slice(refPrefix.length)
       : sourceRef,
-    additions: 0,
-    deletions: 0,
     draft: pr.isDraft,
   };
 }
@@ -152,6 +150,8 @@ export async function fetchAzureDevOpsPRDetail(
   return {
     ...toPRSummary(pr),
     body: pr.description ?? '',
+    additions: 0,
+    deletions: 0,
     files,
     comments_count: 0,
     review_comments_count: 0,

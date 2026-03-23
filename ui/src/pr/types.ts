@@ -26,8 +26,6 @@ export interface PRSummary {
   updated_at: string;
   base_branch: string;
   head_branch: string;
-  additions: number;
-  deletions: number;
   draft?: boolean;
 }
 
@@ -42,6 +40,8 @@ export interface PRFileDiff {
 
 export interface PRDetail extends PRSummary {
   body: string;
+  additions: number;
+  deletions: number;
   files: PRFileDiff[];
   comments_count: number;
   review_comments_count: number;

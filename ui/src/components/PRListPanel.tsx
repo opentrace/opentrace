@@ -280,10 +280,6 @@ export default function PRListPanel({
               <div className="pr-item-meta">
                 <span className="pr-item-author">{pr.author}</span>
                 <span className="pr-item-branch">{pr.head_branch}</span>
-                <span className="pr-item-stats">
-                  <span className="pr-stat-add">+{pr.additions}</span>
-                  <span className="pr-stat-del">-{pr.deletions}</span>
-                </span>
                 <span className="pr-item-time">{timeAgo(pr.updated_at)}</span>
               </div>
             </button>
