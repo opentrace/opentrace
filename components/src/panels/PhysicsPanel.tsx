@@ -24,8 +24,8 @@ interface PhysicsPanelProps {
   onLabelsVisibleChange: (visible: boolean) => void;
   colorMode: 'type' | 'community';
   onColorModeChange: (mode: 'type' | 'community') => void;
-  flatMode: boolean;
-  onFlatModeChange: (flat: boolean) => void;
+  flatMode?: boolean;
+  onFlatModeChange?: (flat: boolean) => void;
   isPhysicsRunning: boolean;
   onStopPhysics: () => void;
   onStartPhysics: () => void;
@@ -38,10 +38,17 @@ interface PhysicsPanelProps {
   onCenterStrengthChange?: (value: number) => void;
   edgesEnabled?: boolean;
   onEdgesEnabledChange?: (enabled: boolean) => void;
-  communityGravityEnabled?: boolean;
-  onCommunityGravityEnabledChange?: (enabled: boolean) => void;
-  communityGravityStrength?: number;
-  onCommunityGravityStrengthChange?: (value: number) => void;
+  layoutMode?: 'spread' | 'compact';
+  onLayoutModeChange?: (mode: 'spread' | 'compact') => void;
+  // Compact-mode-specific
+  radialStrength?: number;
+  onRadialStrengthChange?: (value: number) => void;
+  communityPull?: number;
+  onCommunityPullChange?: (value: number) => void;
+  centeringStrength?: number;
+  onCenteringStrengthChange?: (value: number) => void;
+  circleRadius?: number;
+  onCircleRadiusChange?: (value: number) => void;
   zoomSizeExponent?: number;
   onZoomSizeExponentChange?: (value: number) => void;
   onReheat?: () => void;
@@ -55,8 +62,7 @@ export default function PhysicsPanel({
   onLabelsVisibleChange,
   colorMode,
   onColorModeChange,
-  flatMode,
-  onFlatModeChange,
+  // flatMode and onFlatModeChange kept in type for backwards compat but not rendered
   isPhysicsRunning,
   onStopPhysics,
   onStartPhysics,
@@ -66,12 +72,16 @@ export default function PhysicsPanel({
   onLinkDistanceChange,
   centerStrength = 0.3,
   onCenterStrengthChange,
-  edgesEnabled = true,
-  onEdgesEnabledChange,
-  communityGravityEnabled = false,
-  onCommunityGravityEnabledChange,
-  communityGravityStrength = 0.1,
-  onCommunityGravityStrengthChange,
+  layoutMode = 'spread',
+  onLayoutModeChange,
+  radialStrength = 8,
+  onRadialStrengthChange,
+  communityPull = 10,
+  onCommunityPullChange,
+  centeringStrength = 5,
+  onCenteringStrengthChange,
+  circleRadius = 32,
+  onCircleRadiusChange,
   zoomSizeExponent = 0.8,
   onZoomSizeExponentChange,
   onReheat,
@@ -128,16 +138,6 @@ export default function PhysicsPanel({
 
       <div
         className="physics-toggle-row"
-        onClick={() => onFlatModeChange(!flatMode)}
-      >
-        <span className="physics-toggle-label">Flat layout</span>
-        <div className={`physics-toggle-track${flatMode ? ' on' : ''}`}>
-          <div className="physics-toggle-thumb" />
-        </div>
-      </div>
-
-      <div
-        className="physics-toggle-row"
         onClick={() => onLabelsVisibleChange(!labelsVisible)}
       >
         <span className="physics-toggle-label">Show labels</span>
@@ -146,57 +146,21 @@ export default function PhysicsPanel({
         </div>
       </div>
 
-      {/* Pixi: show edges toggle */}
-      {pixiMode && onEdgesEnabledChange && (
+      {/* Pixi: layout mode toggle (spread vs compact) */}
+      {pixiMode && onLayoutModeChange && (
         <div
           className="physics-toggle-row"
-          onClick={() => onEdgesEnabledChange(!edgesEnabled)}
+          onClick={() =>
+            onLayoutModeChange(layoutMode === 'spread' ? 'compact' : 'spread')
+          }
         >
-          <span className="physics-toggle-label">Show edges</span>
-          <div className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}>
+          <span className="physics-toggle-label">Community clusters</span>
+          <div
+            className={`physics-toggle-track${layoutMode === 'compact' ? ' on' : ''}`}
+          >
             <div className="physics-toggle-thumb" />
           </div>
         </div>
-      )}
-
-      {/* Pixi: community clusters toggle + gravity */}
-      {pixiMode && onCommunityGravityEnabledChange && (
-        <>
-          <div
-            className="physics-toggle-row"
-            onClick={() =>
-              onCommunityGravityEnabledChange(!communityGravityEnabled)
-            }
-          >
-            <span className="physics-toggle-label">Community clusters</span>
-            <div
-              className={`physics-toggle-track${communityGravityEnabled ? ' on' : ''}`}
-            >
-              <div className="physics-toggle-thumb" />
-            </div>
-          </div>
-          {communityGravityEnabled && onCommunityGravityStrengthChange && (
-            <div className="physics-slider-row">
-              <div className="physics-slider-label">
-                <span>Cluster gravity</span>
-                <span className="physics-slider-value">
-                  {Math.round(communityGravityStrength * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={50}
-                value={Math.round(communityGravityStrength * 100)}
-                onInput={(e) =>
-                  onCommunityGravityStrengthChange(
-                    Number(e.currentTarget.value) / 100,
-                  )
-                }
-              />
-            </div>
-          )}
-        </>
       )}
 
       <div className="physics-divider" />
@@ -218,7 +182,7 @@ export default function PhysicsPanel({
         />
       </div>
 
-      {/* Pixi: link distance slider */}
+      {/* Link distance — both modes */}
       {pixiMode && onLinkDistanceChange && (
         <div className="physics-slider-row">
           <div className="physics-slider-label">
@@ -235,8 +199,8 @@ export default function PhysicsPanel({
         </div>
       )}
 
-      {/* Pixi: center strength slider */}
-      {pixiMode && onCenterStrengthChange && (
+      {/* Spread-only: center pull */}
+      {pixiMode && layoutMode === 'spread' && onCenterStrengthChange && (
         <div className="physics-slider-row">
           <div className="physics-slider-label">
             <span>Center pull</span>
@@ -252,6 +216,74 @@ export default function PhysicsPanel({
             onInput={(e) =>
               onCenterStrengthChange(Number(e.currentTarget.value) / 100)
             }
+          />
+        </div>
+      )}
+
+      {/* Compact-only: radial pull */}
+      {pixiMode && layoutMode === 'compact' && onRadialStrengthChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Radial pull</span>
+            <span className="physics-slider-value">{radialStrength}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={50}
+            value={radialStrength}
+            onInput={(e) => onRadialStrengthChange(Number(e.currentTarget.value))}
+          />
+        </div>
+      )}
+
+      {/* Compact-only: community pull */}
+      {pixiMode && layoutMode === 'compact' && onCommunityPullChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Community pull</span>
+            <span className="physics-slider-value">{communityPull}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={50}
+            value={communityPull}
+            onInput={(e) => onCommunityPullChange(Number(e.currentTarget.value))}
+          />
+        </div>
+      )}
+
+      {/* Compact-only: circle radius */}
+      {pixiMode && layoutMode === 'compact' && onCircleRadiusChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Circle size</span>
+            <span className="physics-slider-value">{circleRadius}</span>
+          </div>
+          <input
+            type="range"
+            min={8}
+            max={80}
+            value={circleRadius}
+            onInput={(e) => onCircleRadiusChange(Number(e.currentTarget.value))}
+          />
+        </div>
+      )}
+
+      {/* Compact-only: centering strength */}
+      {pixiMode && layoutMode === 'compact' && onCenteringStrengthChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Centering</span>
+            <span className="physics-slider-value">{centeringStrength}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={30}
+            value={centeringStrength}
+            onInput={(e) => onCenteringStrengthChange(Number(e.currentTarget.value))}
           />
         </div>
       )}

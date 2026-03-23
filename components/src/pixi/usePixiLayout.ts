@@ -26,7 +26,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
-import type { WorkerInMessage, WorkerOutMessage } from '../workers/pixiLayoutWorker';
+import type { WorkerInMessage, WorkerOutMessage, LayoutMode } from '../workers/pixiLayoutWorker';
 import { type PixiScaleBreakpoint, selectBreakpoint } from './scaleBreakpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -66,6 +66,10 @@ export interface UsePixiLayoutResult {
   boostTheta: () => void;
   /** Restore default Barnes-Hut theta after drag. */
   resetTheta: () => void;
+  /** Switch layout mode ('spread' = standard force-directed, 'compact' = radial/circular). */
+  setLayoutMode: (mode: LayoutMode) => void;
+  /** Update compact-mode-specific config (radial strength, community pull, centering). */
+  updateCompactConfig: (config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => void;
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────
@@ -76,6 +80,7 @@ export function usePixiLayout(
   communityData: CommunityData,
   layoutConfig: LayoutConfig,
   onTick: (positions: Map<string, { x: number; y: number }>, buffer?: Float64Array) => void,
+  initialLayoutMode: LayoutMode = 'spread',
 ): UsePixiLayoutResult {
   const [layoutReady, setLayoutReady] = useState(false);
   const [simRunning, setSimRunning] = useState(true);
@@ -227,6 +232,7 @@ export function usePixiLayout(
         linkDistance: layoutConfig.linkDistance,
         barnesHutTheta: bp.barnesHutTheta,
         dragTheta: bp.dragTheta,
+        layoutMode: initialLayoutMode,
       },
     } satisfies WorkerInMessage);
 
@@ -326,6 +332,18 @@ export function usePixiLayout(
     postToWorker({ type: 'reset-theta' });
   }, [postToWorker]);
 
+  const setLayoutMode = useCallback((mode: LayoutMode) => {
+    postToWorker({ type: 'set-layout-mode', mode });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
+  const updateCompactConfig = useCallback((config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => {
+    postToWorker({ type: 'update-compact-config', ...config });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
   return {
     layoutReady,
     positions: positionsRef.current,
@@ -344,5 +362,7 @@ export function usePixiLayout(
     setCommunityGravity,
     boostTheta,
     resetTheta,
+    setLayoutMode,
+    updateCompactConfig,
   };
 }

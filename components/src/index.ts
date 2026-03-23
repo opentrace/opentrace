@@ -28,6 +28,7 @@ export { default as GraphCanvas } from './PixiGraphCanvas';
 export { default as PixiGraphCanvas } from './PixiGraphCanvas';
 export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './types/canvas';
 export { type PixiScaleBreakpoint, DEFAULT_BREAKPOINTS, selectBreakpoint } from './pixi/scaleBreakpoints';
+export type { LayoutMode } from './workers/pixiLayoutWorker';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';
