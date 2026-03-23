@@ -15,10 +15,78 @@
  */
 
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, waitFor } from '@testing-library/react';
 import { useCommunities } from '../useCommunities';
 import type { GraphNode, GraphLink, LayoutConfig } from '../types';
+
+// ─── Worker Mock ─────────────────────────────────────────────────────
+
+/**
+ * Mock Worker that synchronously runs Louvain inline (same logic as the worker).
+ * This avoids needing real Web Worker support in jsdom.
+ */
+class MockWorker {
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  onerror: ((e: ErrorEvent) => void) | null = null;
+
+  postMessage(data: unknown): void {
+    // Dynamically import graphology + louvain to compute assignments
+    // Use a microtask to simulate async behavior
+    Promise.resolve().then(async () => {
+      try {
+        const { UndirectedGraph } = await import('graphology');
+        const { default: louvain } = await import('graphology-communities-louvain');
+
+        const { nodes, links, resolution } = data as {
+          nodes: { id: string; type: string }[];
+          links: { source: string; target: string; label: string }[];
+          resolution: number;
+        };
+
+        const tempGraph = new UndirectedGraph();
+        const nodeIdSet = new Set<string>();
+        for (const node of nodes) {
+          if (!nodeIdSet.has(node.id)) {
+            tempGraph.addNode(node.id);
+            nodeIdSet.add(node.id);
+          }
+        }
+        for (const link of links) {
+          if (link.source === link.target) continue;
+          if (!nodeIdSet.has(link.source) || !nodeIdSet.has(link.target)) continue;
+          if (tempGraph.hasEdge(link.source, link.target)) {
+            const w = (tempGraph.getEdgeAttribute(link.source, link.target, 'weight') as number) ?? 1;
+            tempGraph.setEdgeAttribute(link.source, link.target, 'weight', w + 1);
+          } else {
+            tempGraph.addEdge(link.source, link.target, { weight: 1 });
+          }
+        }
+
+        const assignments = louvain(tempGraph, {
+          resolution,
+          getEdgeWeight: 'weight',
+        });
+
+        this.onmessage?.({ data: { assignments } } as MessageEvent);
+      } catch (err) {
+        this.onerror?.({ message: String(err) } as ErrorEvent);
+      }
+    });
+  }
+
+  terminate(): void {
+    // noop
+  }
+}
+
+beforeEach(() => {
+  vi.stubGlobal('Worker', MockWorker);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -80,9 +148,8 @@ describe('useCommunities', () => {
     expect(result.current.names.size).toBe(0);
   });
 
-  it('detects communities from disconnected components', () => {
+  it('detects communities from disconnected components', async () => {
     const config = makeMockConfig();
-    // Two disconnected clusters: {a,b} and {c,d}
     const nodes: GraphNode[] = [
       { id: 'a', name: 'A', type: 'Service' },
       { id: 'b', name: 'B', type: 'Service' },
@@ -96,23 +163,22 @@ describe('useCommunities', () => {
 
     const { result } = renderHook(() => useCommunities(nodes, links, config));
 
-    // Should detect at least 2 communities (disconnected components)
-    expect(result.current.count).toBeGreaterThanOrEqual(2);
-    // a and b should be in the same community
+    await waitFor(() => {
+      expect(result.current.count).toBeGreaterThanOrEqual(2);
+    });
+
     expect(result.current.assignments['a']).toBe(
       result.current.assignments['b'],
     );
-    // c and d should be in the same community
     expect(result.current.assignments['c']).toBe(
       result.current.assignments['d'],
     );
-    // The two clusters should be in different communities
     expect(result.current.assignments['a']).not.toBe(
       result.current.assignments['c'],
     );
   });
 
-  it('returns correct count matching unique community IDs', () => {
+  it('returns correct count matching unique community IDs', async () => {
     const config = makeMockConfig();
     const nodes: GraphNode[] = [
       { id: 'a', name: 'A', type: 'Service' },
@@ -123,11 +189,15 @@ describe('useCommunities', () => {
 
     const { result } = renderHook(() => useCommunities(nodes, links, config));
 
+    await waitFor(() => {
+      expect(result.current.count).toBeGreaterThan(0);
+    });
+
     const uniqueIds = new Set(Object.values(result.current.assignments));
     expect(result.current.count).toBe(uniqueIds.size);
   });
 
-  it('uses layoutConfig callbacks for color and naming', () => {
+  it('uses layoutConfig callbacks for color and naming', async () => {
     const config = makeMockConfig({
       buildCommunityColorMap: (assignments) => {
         const ids = [...new Set(Object.values(assignments))];
@@ -146,7 +216,10 @@ describe('useCommunities', () => {
 
     const { result } = renderHook(() => useCommunities(nodes, links, config));
 
-    // Verify the custom callbacks were used
+    await waitFor(() => {
+      expect(result.current.count).toBeGreaterThan(0);
+    });
+
     for (const [cid, color] of result.current.colorMap) {
       expect(color).toBe(`custom-${cid}`);
     }

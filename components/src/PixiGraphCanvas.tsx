@@ -152,8 +152,15 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     // ── Layout (d3-force simulation) ────────────────────────────────────
     const onLayoutTick = useCallback(
-      (positions: Map<string, { x: number; y: number }>) => {
-        rendererRef.current?.updatePositions(positions);
+      (positions: Map<string, { x: number; y: number }>, buffer?: Float64Array) => {
+        const renderer = rendererRef.current;
+        if (!renderer) return;
+        // Fast path: use indexed Float64Array (avoids 20k Map lookups per tick)
+        if (buffer) {
+          renderer.updatePositionsFromBuffer(buffer);
+        } else {
+          renderer.updatePositions(positions);
+        }
       },
       [],
     );
@@ -163,9 +170,15 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       simRunning, reheat, restart, toggleSim,
       stopSim, startSim,
       fixNode, unfixNode,
+      boostTheta, resetTheta,
       setChargeStrength, setLinkDistance, setCenterStrength,
       setCommunityGravity,
     } = usePixiLayout(nodes, links, communityData, layoutConfig, onLayoutTick);
+
+    // ── Sync layout settled state to renderer for edge redraw gating ────
+    useEffect(() => {
+      rendererRef.current?.setLayoutSettled(!simRunning);
+    }, [simRunning]);
 
     // ── Initialize Pixi renderer ────────────────────────────────────────
     useEffect(() => {
@@ -197,11 +210,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     // ── Set data when layout is ready ───────────────────────────────────
     // setData is async — it awaits the Pixi init promise internally.
-    // We snapshot positions because the Map is shared with the simulation
-    // tick handler which clears/refills it on each tick.
+    // Snapshot positions because the worker may update entries in-place
+    // during the async gap.
     useEffect(() => {
       if (!layoutReady || !rendererRef.current) return;
-      // Snapshot positions — the live Map may be mutated during async await
       const posSnapshot = new Map(positions);
       let cancelled = false;
       rendererRef.current.setData(
@@ -212,8 +224,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       return () => { cancelled = true; };
       // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
       // It never changes identity — the effect re-runs via `layoutReady` or when
-      // nodes/links/colors change. This is intentional: we snapshot `positions`
-      // above to avoid reading a mutated Map during the async setData call.
+      // nodes/links/colors change.
     }, [layoutReady, nodes, links, positions, nodeColors, nodeSizes, linkColors]);
 
     // ── Update node colors when colorMode changes ───────────────────────
@@ -271,15 +282,17 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         onStageClick,
         onNodeDragStart: (nodeId) => {
           fixNode(nodeId, 0, 0); // will be updated on move
+          boostTheta(); // faster Barnes-Hut during drag
         },
         onNodeDragMove: (nodeId, x, y) => {
           fixNode(nodeId, x, y);
         },
         onNodeDragEnd: (_nodeId) => {
           // Keep pinned (like reference implementation)
+          resetTheta(); // restore accuracy
         },
       });
-    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode]);
+    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta]);
 
     // ── Imperative handle (same as GraphCanvas) ─────────────────────────
     useImperativeHandle(

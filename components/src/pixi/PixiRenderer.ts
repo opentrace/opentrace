@@ -49,6 +49,11 @@ import {
   screenToWorld,
 } from './viewport';
 import {
+  type PixiScaleBreakpoint,
+  selectBreakpoint,
+  DEFAULT_BREAKPOINTS,
+} from './scaleBreakpoints';
+import {
   NODE_OPACITY_DIMMED,
   NODE_SIZE_DIMMED_SCALE,
   EDGE_OPACITY_DEFAULT,
@@ -93,10 +98,10 @@ interface InteractionCallbacks {
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
-const EDGE_REDRAW_INTERVAL = 100; // ms — 10fps for edge redraws
 const CLICK_THRESHOLD = 5; // px — distinguish click from drag
 const QUADTREE_REBUILD_INTERVAL = 500; // ms
 const EDGE_FALLBACK_COLOR = 0x3b4048;
+const VIEWPORT_CULL_MARGIN = 0.1; // 10% margin outside viewport
 
 /** Convert CSS hex color string ('#3b82f6') to numeric (0x3b82f6). */
 function hexToNum(hex: string): number {
@@ -116,8 +121,11 @@ export class PixiRenderer {
 
   // Data
   private nodes: Map<string, PixiNode> = new Map();
+  private nodeArray: PixiNode[] = []; // ordered array for indexed access (set at setData time)
+  private nodeIdToIndex: Map<string, number> = new Map(); // id → index into nodeArray
   private edges: PixiEdge[] = [];
   private edgeIndex: Map<string, number[]> = new Map(); // nodeId → edge indices
+  private edgeColorGroups: Map<string, number[]> = new Map(); // color → edge indices (pre-computed)
 
   // Viewport
   private vp: Viewport = { x: 0, y: 0, scale: 1 };
@@ -129,15 +137,23 @@ export class PixiRenderer {
   // Interaction state
   private _quadtree: Quadtree<PixiNode> | null = null;
   private lastQuadtreeRebuild = 0;
+  private quadtreeDirty = false; // set true on position update, cleared on rebuild
   private dragNode: PixiNode | null = null;
   private pendingDragNode: PixiNode | null = null;
   private pointerDownPos: { x: number; y: number } | null = null;
   private callbacks: InteractionCallbacks = {};
 
+  // Performance breakpoint — selected at setData() based on graph size
+  private bp: PixiScaleBreakpoint = DEFAULT_BREAKPOINTS[0];
+  private breakpoints: PixiScaleBreakpoint[] = DEFAULT_BREAKPOINTS;
+
   // Edge drawing state
   private lastEdgeRedraw = 0;
   private edgesEnabled = true;
   private hiddenLinkTypes: Set<string> = new Set();
+  private layoutSettled = false; // set by consumer when worker reports settled
+  private edgesHiddenForInteraction = false; // edges hidden during zoom/pan
+  private interactionResumeTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Highlight state
   private highlightNodes: Set<string> = new Set();
@@ -258,12 +274,19 @@ export class PixiRenderer {
   destroy(): void {
     this.destroyed = true;
     this.cancelAnimation?.();
+    if (this.interactionResumeTimer !== null) {
+      clearTimeout(this.interactionResumeTimer);
+      this.interactionResumeTimer = null;
+    }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     clearTextureCache(this.textureCache);
     this.nodes.clear();
+    this.nodeArray = [];
+    this.nodeIdToIndex.clear();
     this.edges = [];
     this.edgeIndex.clear();
+    this.edgeColorGroups.clear();
     if (this.app) {
       try {
         this.app.destroy({ removeView: true }, { children: true, texture: true });
@@ -294,6 +317,8 @@ export class PixiRenderer {
     this.nodeContainer.removeChildren();
     this.labelContainer.removeChildren();
     this.nodes.clear();
+    this.nodeArray = [];
+    this.nodeIdToIndex.clear();
     this.edges = [];
     this.edgeIndex.clear();
 
@@ -321,6 +346,8 @@ export class PixiRenderer {
         sprite,
         visible: true,
       };
+      this.nodeIdToIndex.set(gn.id, this.nodeArray.length);
+      this.nodeArray.push(node);
       this.nodes.set(gn.id, node);
     }
 
@@ -351,6 +378,20 @@ export class PixiRenderer {
       if (!tIdx) { tIdx = []; this.edgeIndex.set(targetId, tIdx); }
       tIdx.push(idx);
     }
+
+    // Pre-group edges by color for batched rendering
+    this.edgeColorGroups.clear();
+    for (let i = 0; i < this.edges.length; i++) {
+      const color = this.edges[i].color;
+      let group = this.edgeColorGroups.get(color);
+      if (!group) { group = []; this.edgeColorGroups.set(color, group); }
+      group.push(i);
+    }
+
+    // Select performance breakpoint based on graph size
+    this.bp = selectBreakpoint(graphNodes.length, this.breakpoints);
+
+    this.layoutSettled = false;
 
     // Initial edge draw
     this.redrawAllEdges();
@@ -425,9 +466,43 @@ export class PixiRenderer {
       }
     }
 
-    // Throttled edge redraw
+    this.postPositionUpdate();
+  }
+
+  /**
+   * Update positions from a Float64Array buffer (indexed by node order from setData).
+   * Avoids Map lookups — pure indexed array access for maximum throughput at 20k+ nodes.
+   */
+  updatePositionsFromBuffer(buffer: Float64Array): void {
+    const arr = this.nodeArray;
+    const invScale = this.zoomInvScale();
+    const len = Math.min(arr.length, buffer.length / 2);
+
+    for (let i = 0; i < len; i++) {
+      const node = arr[i];
+      if (!node.visible) continue;
+      const x = buffer[i * 2];
+      const y = buffer[i * 2 + 1];
+      node.x = x;
+      node.y = y;
+      node.sprite.position.set(x, y);
+      if (node.label?.visible) {
+        const gap = (node.size + 4) * invScale;
+        node.label.position.set(x + gap, y);
+      }
+    }
+
+    this.postPositionUpdate();
+  }
+
+  /** Shared tail for position updates: throttled edge redraw + quadtree rebuild. */
+  private postPositionUpdate(): void {
+    this.quadtreeDirty = true;
+
+    // Throttled edge redraw — skip entirely when settled (if alpha-gated)
     const now = performance.now();
-    if (now - this.lastEdgeRedraw >= EDGE_REDRAW_INTERVAL) {
+    const skipForSettle = this.bp.edgeAlphaGate && this.layoutSettled;
+    if (!skipForSettle && now - this.lastEdgeRedraw >= this.bp.edgeRedrawInterval) {
       if (this.dragNode) {
         this.redrawDragEdges(this.dragNode);
       } else {
@@ -435,9 +510,10 @@ export class PixiRenderer {
       }
     }
 
-    // Throttled quadtree rebuild
-    if (now - this.lastQuadtreeRebuild > QUADTREE_REBUILD_INTERVAL) {
+    // Throttled quadtree rebuild — skip if positions haven't changed
+    if (this.quadtreeDirty && now - this.lastQuadtreeRebuild > QUADTREE_REBUILD_INTERVAL) {
       this.rebuildQuadtree();
+      this.quadtreeDirty = false;
     }
   }
 
@@ -562,29 +638,40 @@ export class PixiRenderer {
 
   // ─── Edge Drawing ─────────────────────────────────────────────────
 
-  // Curvature factor — fraction of edge length used as control point offset.
-  // 0 = straight lines, 0.2 = gentle curves.
+  // Curvature factor for bezier edges (fraction of edge length for control point offset).
   private readonly curvature = 0.15;
 
-  /** Draw a quadratic bezier curve between two points on a Graphics object. */
-  private drawCurvedEdge(
+  /** Draw an edge between two points, using the current breakpoint's edge style. */
+  private drawEdge(
     gfx: Graphics,
     sx: number, sy: number,
     tx: number, ty: number,
   ): void {
-    const mx = (sx + tx) / 2;
-    const my = (sy + ty) / 2;
-    // Perpendicular offset for the control point
-    const dx = tx - sx;
-    const dy = ty - sy;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 0.001) return;
-    const offset = len * this.curvature;
-    // Perpendicular direction (rotated 90°)
-    const cpx = mx + (-dy / len) * offset;
-    const cpy = my + (dx / len) * offset;
-    gfx.moveTo(sx, sy);
-    gfx.quadraticCurveTo(cpx, cpy, tx, ty);
+    if (this.bp.edgeStyle === 'curve') {
+      const mx = (sx + tx) / 2;
+      const my = (sy + ty) / 2;
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 0.001) return;
+      const offset = len * this.curvature;
+      const cpx = mx + (-dy / len) * offset;
+      const cpy = my + (dx / len) * offset;
+      gfx.moveTo(sx, sy);
+      gfx.quadraticCurveTo(cpx, cpy, tx, ty);
+    } else {
+      gfx.moveTo(sx, sy);
+      gfx.lineTo(tx, ty);
+    }
+  }
+
+  /** Check if a point is within the visible viewport (with margin). */
+  private isInViewport(wx: number, wy: number): boolean {
+    const sx = wx * this.vp.scale + this.vp.x;
+    const sy = wy * this.vp.scale + this.vp.y;
+    const mx = this.width * VIEWPORT_CULL_MARGIN;
+    const my = this.height * VIEWPORT_CULL_MARGIN;
+    return sx >= -mx && sx <= this.width + mx && sy >= -my && sy <= this.height + my;
   }
 
   private redrawAllEdges(): void {
@@ -596,27 +683,29 @@ export class PixiRenderer {
     if (!this.edgesEnabled) return;
 
     const bgAlpha = this.hasHighlight ? EDGE_OPACITY_DIMMED : EDGE_OPACITY_DEFAULT;
-
-    // Group background edges by color for batched stroke calls
-    const colorGroups = new Map<string, { sx: number; sy: number; tx: number; ty: number }[]>();
-    for (let i = 0; i < this.edges.length; i++) {
-      const e = this.edges[i];
-      if (this.hiddenLinkTypes.has(e.label)) continue;
-      const s = this.nodes.get(e.sourceId);
-      const t = this.nodes.get(e.targetId);
-      if (!s?.visible || !t?.visible) continue;
-      let group = colorGroups.get(e.color);
-      if (!group) { group = []; colorGroups.set(e.color, group); }
-      group.push({ sx: s.x, sy: s.y, tx: t.x, ty: t.y });
-    }
-
-    // Draw each color group with one stroke call
     const edgeWidth = 0.5 * this.zoomInvScale();
-    for (const [color, lines] of colorGroups) {
-      for (const l of lines) {
-        this.drawCurvedEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
+    const doCull = this.bp.edgeViewportCulling;
+
+    // Draw background edges using pre-computed color groups
+    for (const [color, indices] of this.edgeColorGroups) {
+      let drawn = false;
+      for (const i of indices) {
+        const e = this.edges[i];
+        if (this.hiddenLinkTypes.has(e.label)) continue;
+        const s = this.nodes.get(e.sourceId);
+        const t = this.nodes.get(e.targetId);
+        if (!s?.visible || !t?.visible) continue;
+        // Viewport culling: skip edges where both endpoints are off-screen.
+        // Note: this can miss edges that cross the viewport diagonally (both endpoints
+        // outside but the line segment passes through). A full segment-rect intersection
+        // test is more expensive; this heuristic is sufficient for layout animation.
+        if (doCull && !this.isInViewport(s.x, s.y) && !this.isInViewport(t.x, t.y)) continue;
+        this.drawEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
+        drawn = true;
       }
-      this.edgeBgGfx.stroke({ width: edgeWidth, color: hexToNum(color), alpha: bgAlpha });
+      if (drawn) {
+        this.edgeBgGfx.stroke({ width: edgeWidth, color: hexToNum(color), alpha: bgAlpha });
+      }
     }
 
     // Foreground highlight edges
@@ -625,8 +714,6 @@ export class PixiRenderer {
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
         if (this.hiddenLinkTypes.has(e.label)) continue;
-        // Key format "sourceId-targetId" matches useHighlights adjacency (line 76).
-        // Note: edge dedup uses "sourceId-label-targetId" — that's intentionally different.
         const linkKey = `${e.sourceId}-${e.targetId}`;
         if (!this.highlightLinks.has(linkKey)) continue;
         const s = this.nodes.get(e.sourceId);
@@ -638,7 +725,7 @@ export class PixiRenderer {
       }
       for (const [color, lines] of hlColorGroups) {
         for (const l of lines) {
-          this.drawCurvedEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
+          this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
         }
         this.edgeFgGfx.stroke({ width: 1.5 * this.zoomInvScale(), color: hexToNum(color), alpha: EDGE_OPACITY_HIGHLIGHTED });
       }
@@ -672,7 +759,7 @@ export class PixiRenderer {
     }
     for (const [color, lines] of dragGroups) {
       for (const l of lines) {
-        this.drawCurvedEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
+        this.drawEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
       }
       this.edgeBgGfx.stroke({ width: 1 * this.zoomInvScale(), color: hexToNum(color), alpha: 0.6 });
     }
@@ -686,7 +773,7 @@ export class PixiRenderer {
           const s = this.nodes.get(e.sourceId);
           const t = this.nodes.get(e.targetId);
           if (s && t) {
-            this.drawCurvedEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
+            this.drawEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
           }
         }
       }
@@ -694,6 +781,49 @@ export class PixiRenderer {
     this.edgeBgGfx.stroke({ width: 0.4 * this.zoomInvScale(), color: EDGE_FALLBACK_COLOR, alpha: 0.2 });
 
     this.lastEdgeRedraw = performance.now();
+  }
+
+  /**
+   * Hide edges during zoom/pan for instant interaction response.
+   * Edges redraw after a 1300ms settle delay (Grafana pattern).
+   * At 60k edges, hiding the Graphics layer is instant while redrawing
+   * takes 5-15ms — this eliminates all edge overhead during interaction.
+   */
+  private hideEdgesForInteraction(): void {
+    if (!this.bp.hideEdgesOnInteraction) return;
+    if (!this.edgeBgGfx || !this.edgeFgGfx) return;
+    if (!this.edgesHiddenForInteraction) {
+      this.edgeBgGfx.visible = false;
+      this.edgeFgGfx.visible = false;
+      this.edgesHiddenForInteraction = true;
+    }
+    // Reset the settle timer
+    if (this.interactionResumeTimer !== null) {
+      clearTimeout(this.interactionResumeTimer);
+    }
+    this.interactionResumeTimer = setTimeout(() => {
+      this.showEdgesAfterInteraction();
+    }, this.bp.interactionSettleDelay);
+  }
+
+  private showEdgesAfterInteraction(): void {
+    if (this.destroyed) return;
+    if (!this.edgesHiddenForInteraction) return;
+    this.edgesHiddenForInteraction = false;
+    this.interactionResumeTimer = null;
+    if (this.edgeBgGfx) this.edgeBgGfx.visible = true;
+    if (this.edgeFgGfx) this.edgeFgGfx.visible = true;
+    this.redrawAllEdges();
+    this.applyCounterScale();
+  }
+
+  /** Notify renderer that the layout simulation has settled (skip edge redraws). */
+  setLayoutSettled(settled: boolean): void {
+    this.layoutSettled = settled;
+    if (!settled) {
+      // Layout restarted — force one edge redraw
+      this.redrawAllEdges();
+    }
   }
 
   setEdgesEnabled(enabled: boolean): void {
@@ -799,36 +929,8 @@ export class PixiRenderer {
   /** Find the nearest node to (worldX, worldY) within maxDistance. */
   findNodeAt(worldX: number, worldY: number, maxDistance = 20): PixiNode | null {
     if (!this._quadtree) return null;
-    let closest: PixiNode | null = null;
-    let closestDist = maxDistance;
-    this._quadtree.visit((node, x1, y1, x2, y2) => {
-      // Skip branches too far away
-      const nearestX = Math.max(x1, Math.min(worldX, x2));
-      const nearestY = Math.max(y1, Math.min(worldY, y2));
-      const branchDist = Math.sqrt(
-        (worldX - nearestX) ** 2 + (worldY - nearestY) ** 2,
-      );
-      if (branchDist > closestDist) return true; // prune
-
-      if (!node.length) {
-        // Leaf — check data points
-        let d = node as { data?: PixiNode; next?: unknown };
-        while (d) {
-          if (d.data) {
-            const dx = worldX - d.data.x;
-            const dy = worldY - d.data.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < closestDist) {
-              closestDist = dist;
-              closest = d.data;
-            }
-          }
-          d = d.next as typeof d;
-        }
-      }
-      return false;
-    });
-    return closest;
+    // d3-quadtree.find() is a native optimized nearest-neighbor search
+    return this._quadtree.find(worldX, worldY, maxDistance) ?? null;
   }
 
   // ─── Viewport ─────────────────────────────────────────────────────
@@ -945,8 +1047,11 @@ export class PixiRenderer {
       this.vp.y = mouseY - (mouseY - this.vp.y) * (newScale / this.vp.scale);
       this.vp.scale = newScale;
 
-      // Edges stay visible during zoom — they're in world space so they
-      // transform with the viewport automatically. No redraw needed.
+      // Hide edges during zoom for instant response (Grafana pattern).
+      // Sprite transforms are instant; edges redraw after 1300ms settle.
+      if (!this.dragNode) {
+        this.hideEdgesForInteraction();
+      }
     }, { passive: false, signal });
 
     // Pointer events for pan / drag / click
@@ -1032,6 +1137,8 @@ export class PixiRenderer {
           const panDy = e.clientY - lastPointerY;
           this.vp.x += panDx;
           this.vp.y += panDy;
+          // Hide edges during pan for instant response
+          this.hideEdgesForInteraction();
         }
       }
 
@@ -1087,5 +1194,15 @@ export class PixiRenderer {
 
   getEdgeCount(): number {
     return this.edges.length;
+  }
+
+  /** Get the currently active performance breakpoint. */
+  getBreakpoint(): PixiScaleBreakpoint {
+    return this.bp;
+  }
+
+  /** Override the default breakpoint tiers. Takes effect on next setData(). */
+  setBreakpoints(breakpoints: PixiScaleBreakpoint[]): void {
+    this.breakpoints = breakpoints;
   }
 }
