@@ -16,8 +16,6 @@
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 import {
   existsSync,
   readFileSync,
@@ -189,22 +187,9 @@ export default defineConfig(({ mode }) => {
       },
       dedupe: ['react', 'react-dom'],
     },
-    plugins: [
-      wasm(),
-      topLevelAwait(),
-      react(),
-      crossOriginIsolation(),
-      copyComponentsWasm(),
-    ],
+    plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
     build: {
       sourcemap: true,
-      commonjsOptions: {
-        // @ladybugdb/wasm-core is a CJS bundle with internal require()
-        // chains that break Rollup's default CJS-to-ESM conversion.
-        // Force it through the CJS plugin with proper require handling.
-        include: [/node_modules/],
-        transformMixedEsModules: true,
-      },
     },
     server: {
       port,
