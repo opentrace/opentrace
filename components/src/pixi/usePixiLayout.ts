@@ -15,41 +15,21 @@
  */
 
 /**
- * Hook that runs d3-force simulation on the main thread for the Pixi renderer.
+ * Hook that runs d3-force simulation in a Web Worker for the Pixi renderer.
  *
- * Unlike the Sigma path (which runs d3-force in a Web Worker, computes all
- * positions upfront, then feeds them to Sigma), this hook runs live: each
- * simulation tick triggers a callback so the PixiRenderer can update sprite
- * positions immediately, giving a smooth "growing graph" animation.
+ * The worker streams position snapshots at ~15fps via transferable Float64Array.
+ * The main thread reads positions and updates sprites, keeping the render loop
+ * free from simulation computation. At 20k nodes, this moves ~50-200ms/tick of
+ * d3-force work off the main thread entirely.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceX,
-  forceY,
-  type Simulation,
-  type SimulationNodeDatum,
-  type SimulationLinkDatum,
-} from 'd3-force';
 import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
+import type { WorkerInMessage, WorkerOutMessage } from '../workers/pixiLayoutWorker';
+import { type PixiScaleBreakpoint, selectBreakpoint } from './scaleBreakpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────
-
-interface SimNode extends SimulationNodeDatum {
-  id: string;
-  fx?: number | null;
-  fy?: number | null;
-}
-
-interface SimLink extends SimulationLinkDatum<SimNode> {
-  source: string | SimNode;
-  target: string | SimNode;
-}
 
 export interface UsePixiLayoutResult {
   /** True once the initial layout pass has completed. */
@@ -82,6 +62,10 @@ export interface UsePixiLayoutResult {
   setCenterStrength: (strength: number) => void;
   /** Enable/disable community cluster gravity force. */
   setCommunityGravity: (enabled: boolean, strength?: number) => void;
+  /** Increase Barnes-Hut theta for faster (less accurate) charge computation during drag. */
+  boostTheta: () => void;
+  /** Restore default Barnes-Hut theta after drag. */
+  resetTheta: () => void;
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────
@@ -91,16 +75,18 @@ export function usePixiLayout(
   allLinks: GraphLink[],
   communityData: CommunityData,
   layoutConfig: LayoutConfig,
-  onTick: (positions: Map<string, { x: number; y: number }>) => void,
+  onTick: (positions: Map<string, { x: number; y: number }>, buffer?: Float64Array) => void,
 ): UsePixiLayoutResult {
   const [layoutReady, setLayoutReady] = useState(false);
   const [simRunning, setSimRunning] = useState(true);
   const simRunningRef = useRef(true);
-  const simulationRef = useRef<Simulation<SimNode, SimLink> | null>(null);
-  const communityDataRef = useRef(communityData);
-  communityDataRef.current = communityData;
-  const simNodesRef = useRef<SimNode[]>([]);
-  const simNodeMapRef = useRef<Map<string, SimNode>>(new Map());
+  const workerRef = useRef<Worker | null>(null);
+  const unmountedRef = useRef(false);
+  const requestIdRef = useRef(0);
+
+  // Stable refs for node order (set during init, used to decode Float64Array)
+  const nodeOrderRef = useRef<string[]>([]);
+  const breakpointRef = useRef<PixiScaleBreakpoint | null>(null);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodeSizesRef = useRef<Map<string, number>>(new Map());
   const onTickRef = useRef(onTick);
@@ -108,6 +94,16 @@ export function usePixiLayout(
 
   const flatMode = layoutConfig.flatMode ?? false;
   const structuralTypes = new Set(flatMode ? [] : layoutConfig.structuralTypes);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, []);
 
   // Compute node sizes
   useEffect(() => {
@@ -126,230 +122,205 @@ export function usePixiLayout(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks]);
 
+  // Apply Float64Array positions to the position map (in-place update, no allocation)
+  const applyPositionBuffer = useCallback((buffer: Float64Array) => {
+    const nodeOrder = nodeOrderRef.current;
+    const pos = positionsRef.current;
+    for (let i = 0; i < nodeOrder.length; i++) {
+      const id = nodeOrder[i];
+      const existing = pos.get(id);
+      if (existing) {
+        existing.x = buffer[i * 2];
+        existing.y = buffer[i * 2 + 1];
+      } else {
+        pos.set(id, { x: buffer[i * 2], y: buffer[i * 2 + 1] });
+      }
+    }
+  }, []);
+
+  // Main effect: spawn worker and init simulation
   useEffect(() => {
-    // Teardown previous
-    simulationRef.current?.stop();
+    // Terminate previous worker
+    workerRef.current?.terminate();
+    workerRef.current = null;
     setLayoutReady(false);
 
     if (allNodes.length === 0) return;
 
-    // Build simulation nodes
-    const nodeIdSet = new Set(allNodes.map((n) => n.id));
-    const simNodes: SimNode[] = allNodes.map((n) => ({
-      id: n.id,
-    }));
-    simNodesRef.current = simNodes;
-    const simNodeMap = new Map<string, SimNode>();
-    for (const n of simNodes) simNodeMap.set(n.id, n);
-    simNodeMapRef.current = simNodeMap;
+    const reqId = ++requestIdRef.current;
 
-    // Build simulation links — only layout edges (or all in flat mode)
-    const simLinks: SimLink[] = [];
+    // Build node order
+    const nodeIds = allNodes.map((n) => n.id);
+    nodeOrderRef.current = nodeIds;
+
+    // Seed position map entries
+    const pos = positionsRef.current;
+    pos.clear();
+    for (const id of nodeIds) {
+      pos.set(id, { x: 0, y: 0 });
+    }
+
+    // Build layout-only links
+    const nodeIdSet = new Set(nodeIds);
+    const links: { source: string; target: string }[] = [];
     for (const link of allLinks) {
       if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
       const source = endpointId(link.source);
       const target = endpointId(link.target);
       if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
-        simLinks.push({ source, target });
+        links.push({ source, target });
       }
     }
 
-    // Compute community centroids for clustering phase (after initial ticks)
-    const { assignments } = communityData;
-    const clusterStrength = layoutConfig.clusterStrength;
+    // Create worker
+    const worker = new Worker(
+      new URL('../workers/pixiLayoutWorker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    workerRef.current = worker;
 
-    // Create simulation
-    const sim = forceSimulation<SimNode, SimLink>(simNodes)
-      .force(
-        'link',
-        forceLink<SimNode, SimLink>(simLinks)
-          .id((d) => d.id)
-          .distance(layoutConfig.linkDistance),
-      )
-      .force('charge', forceManyBody().strength(layoutConfig.chargeStrength))
-      .force('center', forceCenter(0, 0));
+    worker.onerror = (err) => {
+      if (reqId !== requestIdRef.current || unmountedRef.current) return;
+      console.error('[pixi] layout worker failed:', err);
+      setLayoutReady(true);
+    };
 
-    // Add community clustering forces if we have assignments
-    if (assignments && Object.keys(assignments).length > 0 && clusterStrength > 0 && !flatMode) {
-      // We'll add cluster forces after initial layout settles a bit
-      // For now, just add center to keep things bounded
-    }
+    worker.onmessage = (e: MessageEvent<WorkerOutMessage>) => {
+      if (reqId !== requestIdRef.current || unmountedRef.current) return;
 
-    // Tick a few frames synchronously so positions spread out from the
-    // phyllotaxis default, then mark ready so sprites appear immediately.
-    // The simulation continues running via rAF — nodes animate into position.
-    const INITIAL_TICKS = 10;
-    sim.stop(); // pause auto-ticking
-    for (let i = 0; i < INITIAL_TICKS; i++) sim.tick();
-    sim.restart(); // resume auto-ticking from here
+      switch (e.data.type) {
+        case 'ready':
+          // Initial positions from sync ticks
+          applyPositionBuffer(e.data.buffer);
+          setLayoutReady(true);
+          break;
 
-    // Seed initial positions
-    const pos = positionsRef.current;
-    for (const node of simNodes) {
-      pos.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
-    }
-    // Mark ready immediately — sprites appear and animate as simulation runs
-    setLayoutReady(true);
+        case 'positions':
+          // Streaming position update — in-place map update + pass raw buffer
+          applyPositionBuffer(e.data.buffer);
+          onTickRef.current(positionsRef.current, e.data.buffer);
+          break;
 
-    // On each tick, update positions and call callback
-    sim.on('tick', () => {
-      pos.clear();
-      for (const node of simNodes) {
-        pos.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+        case 'settled':
+          simRunningRef.current = false;
+          setSimRunning(false);
+          break;
       }
-      onTickRef.current(pos);
-    });
+    };
 
-    // No end handler — the live simulation just settles naturally.
-    // Community clustering is available on-demand via the control panel's
-    // "Community clusters" toggle (setCommunityGravity).
+    // Select breakpoint for theta config
+    const bp = selectBreakpoint(allNodes.length);
+    breakpointRef.current = bp;
 
-    simulationRef.current = sim;
+    // Send init message
+    worker.postMessage({
+      type: 'init',
+      nodeIds,
+      links,
+      communities: communityData.assignments,
+      config: {
+        chargeStrength: layoutConfig.chargeStrength,
+        linkDistance: layoutConfig.linkDistance,
+        barnesHutTheta: bp.barnesHutTheta,
+        dragTheta: bp.dragTheta,
+      },
+    } satisfies WorkerInMessage);
+
+    simRunningRef.current = true;
+    setSimRunning(true);
 
     return () => {
-      sim.stop();
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNodes, allLinks, communityData, layoutConfig]);
+  }, [allNodes, allLinks, communityData, layoutConfig, applyPositionBuffer]);
+
+  // ── Control callbacks (all just postMessage to worker) ────────────────
+
+  const postToWorker = useCallback((msg: WorkerInMessage) => {
+    workerRef.current?.postMessage(msg);
+  }, []);
 
   const restart = useCallback(() => {
-    simulationRef.current?.alpha(0.5).restart();
+    postToWorker({ type: 'start' });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const reheat = useCallback(() => {
-    simulationRef.current?.alpha(1).restart();
+    postToWorker({ type: 'reheat' });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const toggleSim = useCallback(() => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    // Use ref to avoid stale closure over simRunning state
     if (simRunningRef.current) {
-      sim.stop();
+      postToWorker({ type: 'stop' });
       simRunningRef.current = false;
       setSimRunning(false);
     } else {
-      sim.restart();
+      postToWorker({ type: 'start' });
       simRunningRef.current = true;
       setSimRunning(true);
     }
-  }, []);
+  }, [postToWorker]);
 
   const stopSim = useCallback(() => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    sim.stop();
+    postToWorker({ type: 'stop' });
     simRunningRef.current = false;
     setSimRunning(false);
-  }, []);
+  }, [postToWorker]);
 
   const startSim = useCallback(() => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    sim.alpha(0.5).restart();
+    postToWorker({ type: 'start' });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const fixNode = useCallback((nodeId: string, x: number, y: number) => {
-    const node = simNodeMapRef.current.get(nodeId);
-    if (node) {
-      node.fx = x;
-      node.fy = y;
-      simulationRef.current?.alpha(0.1).restart();
+    postToWorker({ type: 'fix-node', nodeId, x, y });
+    if (!simRunningRef.current) {
       simRunningRef.current = true;
       setSimRunning(true);
     }
-  }, []);
+  }, [postToWorker]);
 
   const unfixNode = useCallback((nodeId: string) => {
-    const node = simNodeMapRef.current.get(nodeId);
-    if (node) {
-      node.fx = null;
-      node.fy = null;
-    }
-  }, []);
+    postToWorker({ type: 'unfix-node', nodeId });
+  }, [postToWorker]);
 
   const setChargeStrength = useCallback((strength: number) => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    sim.force('charge', forceManyBody().strength(strength));
-    sim.alpha(0.3).restart();
+    postToWorker({ type: 'update-config', chargeStrength: strength });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const setLinkDistance = useCallback((distance: number) => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    const link = sim.force('link') as ReturnType<typeof forceLink<SimNode, SimLink>> | undefined;
-    if (link) link.distance(distance);
-    sim.alpha(0.3).restart();
+    postToWorker({ type: 'update-config', linkDistance: distance });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const setCenterStrength = useCallback((strength: number) => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-    const center = sim.force('center') as ReturnType<typeof forceCenter> | undefined;
-    if (center) center.strength(strength);
-    sim.alpha(0.3).restart();
+    postToWorker({ type: 'update-config', centerStrength: strength });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
 
   const setCommunityGravity = useCallback((enabled: boolean, strength = 0.1) => {
-    const sim = simulationRef.current;
-    if (!sim) return;
-
-    if (!enabled) {
-      sim.force('clusterX', null);
-      sim.force('clusterY', null);
-      sim.alpha(0.3).restart();
-      simRunningRef.current = true;
-      setSimRunning(true);
-      return;
-    }
-
-    // Compute centroids from current positions
-    const { assignments } = communityDataRef.current;
-    if (!assignments) return;
-
-    const centroidSums = new Map<number, { x: number; y: number; count: number }>();
-    for (const node of simNodesRef.current) {
-      const cid = assignments[node.id];
-      if (cid === undefined) continue;
-      const entry = centroidSums.get(cid) || { x: 0, y: 0, count: 0 };
-      entry.x += node.x ?? 0;
-      entry.y += node.y ?? 0;
-      entry.count += 1;
-      centroidSums.set(cid, entry);
-    }
-    const centroids = new Map<number, { x: number; y: number }>();
-    for (const [cid, { x, y, count }] of centroidSums) {
-      centroids.set(cid, { x: x / count, y: y / count });
-    }
-    const nodeCentroid = new Map<string, { x: number; y: number }>();
-    for (const node of simNodesRef.current) {
-      const cid = assignments[node.id];
-      if (cid !== undefined && centroids.has(cid)) {
-        nodeCentroid.set(node.id, centroids.get(cid)!);
-      }
-    }
-
-    sim
-      .force('clusterX', forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(strength))
-      .force('clusterY', forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(strength))
-      .alpha(0.5)
-      .restart();
+    postToWorker({ type: 'set-community-gravity', enabled, strength });
     simRunningRef.current = true;
     setSimRunning(true);
-  }, []);
+  }, [postToWorker]);
+
+  const boostTheta = useCallback(() => {
+    postToWorker({ type: 'boost-theta' });
+  }, [postToWorker]);
+
+  const resetTheta = useCallback(() => {
+    postToWorker({ type: 'reset-theta' });
+  }, [postToWorker]);
 
   return {
     layoutReady,
@@ -367,5 +338,7 @@ export function usePixiLayout(
     setLinkDistance,
     setCenterStrength,
     setCommunityGravity,
+    boostTheta,
+    resetTheta,
   };
 }

@@ -29,6 +29,7 @@ export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './G
 
 // ─── Pixi.js renderer (alternative to Sigma.js GraphCanvas) ────────────
 export { default as PixiGraphCanvas } from './PixiGraphCanvas';
+export { type PixiScaleBreakpoint, DEFAULT_BREAKPOINTS, selectBreakpoint } from './pixi/scaleBreakpoints';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';
