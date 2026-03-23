@@ -640,6 +640,12 @@ export class LadybugGraphStore implements GraphStore {
       );
     }
 
+    // Drain any pending buffered writes so they don't leak into the import
+    this.pendingNodes = [];
+    this.pendingRels = [];
+    this.totalNodesBuffered = 0;
+    this.totalRelsBuffered = 0;
+
     // Clear current data and reset caches
     await this.clearGraph();
 
@@ -657,22 +663,20 @@ export class LadybugGraphStore implements GraphStore {
       onProgress?.(`Importing ${type} nodes`);
       const path = nodeParquetPath(type);
       this.lbug.FS.writeFile(path, fileData);
-      await this.exec(`COPY ${type} FROM '${path}'`);
-      this.lbug.FS.unlink(path);
+      try {
+        await this.exec(`COPY ${type} FROM '${path}'`);
+      } finally {
+        this.lbug.FS.unlink(path);
+      }
 
       // Rebuild nodeTypeMap and BM25 index for this type
-      const result = await this.conn.execute(
+      const rows = await this.query(
         `MATCH (n:${type}) RETURN n.id AS id, n.name AS name`,
       );
-      if (result) {
-        for (const row of result.table) {
-          const r = row.toJSON();
-          const id = String(r.id);
-          const name = String(r.name ?? '');
-          this.nodeTypeMap.set(id, type);
-          this.bm25Index.addDocument(id, `${name} ${type}`);
-          totalNodes++;
-        }
+      for (const r of rows as Record<string, string>[]) {
+        this.nodeTypeMap.set(r.id, type);
+        this.bm25Index.addDocument(r.id, `${r.name ?? ''} ${type}`);
+        totalNodes++;
       }
       console.log(
         `[LadybugStore] imported ${type}: ${totalNodes} nodes so far`,
