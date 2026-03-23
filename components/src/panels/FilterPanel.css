@@ -199,3 +199,31 @@
   width: 6px !important;
   height: 6px !important;
 }
+
+/* Focus / target button */
+.filter-focus-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 3px;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s,
+    background 0.1s;
+}
+
+.filter-item:hover .filter-focus-btn {
+  opacity: 1;
+}
+
+.filter-focus-btn:hover {
+  color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+}

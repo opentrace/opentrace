@@ -41,6 +41,8 @@ export interface FilterPanelProps {
   indicator?: 'dot' | 'line';
   /** Message when items is empty. */
   emptyMessage?: string;
+  /** Called when the focus/target button is clicked for an item. */
+  onFocus?: (key: string) => void;
 }
 
 // ─── GraphLegend types ──────────────────────────────────────────────

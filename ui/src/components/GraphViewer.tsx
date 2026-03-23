@@ -333,6 +333,10 @@ const GraphViewer = memo(
         new Set(),
       );
 
+      // Community-focus highlight override state
+      const [focusedCommunityNodes, setFocusedCommunityNodes] =
+        useState<Set<string>>(EMPTY_SET);
+
       // Optimize status (from GraphCanvas callback)
       const [optimizeStatus, setOptimizeStatus] =
         useState<OptimizeStatus | null>(null);
@@ -568,16 +572,39 @@ const GraphViewer = memo(
         (node: GraphNode) => {
           setSelectedNode(node);
           setSelectedLink(null);
-          // Clear edge-click highlights (use stable empty sets)
+          // Clear edge-click and community-focus highlights (use stable empty sets)
           setEdgeHighlightNodes(EMPTY_SET);
           setEdgeHighlightLinks(EMPTY_SET);
           setEdgeLabelNodes(EMPTY_SET);
+          setFocusedCommunityNodes(EMPTY_SET);
           if (zoomOnSelect) {
             canvasRef.current?.zoomToNodes([node.id], 600);
           }
         },
         [zoomOnSelect],
       );
+
+      const onCommunityFocus = useCallback(
+        (key: string) => {
+          const cid = Number(key);
+          const nodeIds = Object.entries(communityData.assignments)
+            .filter(([, id]) => id === cid)
+            .map(([nodeId]) => nodeId);
+          if (nodeIds.length > 0) {
+            setFocusedCommunityNodes(new Set(nodeIds));
+            setSelectedNode(null);
+            setSelectedLink(null);
+          }
+        },
+        [communityData.assignments],
+      );
+
+      // Zoom camera to focused community nodes when they change
+      useEffect(() => {
+        if (focusedCommunityNodes.size > 0) {
+          canvasRef.current?.zoomToNodes(focusedCommunityNodes, 600);
+        }
+      }, [focusedCommunityNodes]);
 
       // Expose imperative handle for parent/sibling access
       useImperativeHandle(
@@ -791,10 +818,11 @@ const GraphViewer = memo(
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
-        // Clear edge-click highlights
-        setEdgeHighlightNodes(new Set());
-        setEdgeHighlightLinks(new Set());
-        setEdgeLabelNodes(new Set());
+        // Clear edge-click and community-focus highlights
+        setEdgeHighlightNodes(EMPTY_SET);
+        setEdgeHighlightLinks(EMPTY_SET);
+        setFocusedCommunityNodes(EMPTY_SET);
+        setEdgeLabelNodes(EMPTY_SET);
       }, []);
 
       // --- Early returns for loading/error/empty states ---
@@ -1046,6 +1074,7 @@ const GraphViewer = memo(
             setHiddenCommunities(
               new Set(availableCommunities.map((c) => c.communityId)),
             ),
+          onFocus: onCommunityFocus,
         });
       }
 
@@ -1400,12 +1429,26 @@ const GraphViewer = memo(
             hops={hops}
             getSubType={getSubType}
             highlightNodes={
-              selectedLink ? edgeHighlightNodes : highlights.highlightNodes
+              selectedLink
+                ? edgeHighlightNodes
+                : focusedCommunityNodes.size > 0
+                  ? focusedCommunityNodes
+                  : highlights.highlightNodes
             }
             highlightLinks={
-              selectedLink ? edgeHighlightLinks : highlights.highlightLinks
+              selectedLink
+                ? edgeHighlightLinks
+                : focusedCommunityNodes.size > 0
+                  ? EMPTY_SET
+                  : highlights.highlightLinks
             }
-            labelNodes={selectedLink ? edgeLabelNodes : highlights.labelNodes}
+            labelNodes={
+              selectedLink
+                ? edgeLabelNodes
+                : focusedCommunityNodes.size > 0
+                  ? focusedCommunityNodes
+                  : highlights.labelNodes
+            }
             availableSubTypes={availableSubTypes}
             zIndex
             communityData={communityData}
