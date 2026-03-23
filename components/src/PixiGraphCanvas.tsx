@@ -76,6 +76,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onNodeClick,
       onEdgeClick,
       onStageClick,
+      onOptimizeStatus,
       className,
       style,
     } = props;
@@ -177,7 +178,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // ── Sync layout settled state to renderer for edge redraw gating ────
     useEffect(() => {
       rendererRef.current?.setLayoutSettled(!simRunning);
-    }, [simRunning]);
+      // Notify consumer of physics status (replaces Sigma's LayoutPipeline callback)
+      onOptimizeStatus?.(simRunning ? { phase: 'fa2' } : { phase: 'done' });
+    }, [simRunning, onOptimizeStatus]);
 
     // ── Initialize Pixi renderer ────────────────────────────────────────
     useEffect(() => {
