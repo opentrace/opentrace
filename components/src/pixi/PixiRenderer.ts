@@ -695,7 +695,10 @@ export class PixiRenderer {
         const s = this.nodes.get(e.sourceId);
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
-        // Viewport culling: skip edges where both endpoints are off-screen
+        // Viewport culling: skip edges where both endpoints are off-screen.
+        // Note: this can miss edges that cross the viewport diagonally (both endpoints
+        // outside but the line segment passes through). A full segment-rect intersection
+        // test is more expensive; this heuristic is sufficient for layout animation.
         if (doCull && !this.isInViewport(s.x, s.y) && !this.isInViewport(t.x, t.y)) continue;
         this.drawEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
         drawn = true;
@@ -804,6 +807,7 @@ export class PixiRenderer {
   }
 
   private showEdgesAfterInteraction(): void {
+    if (this.destroyed) return;
     if (!this.edgesHiddenForInteraction) return;
     this.edgesHiddenForInteraction = false;
     this.interactionResumeTimer = null;

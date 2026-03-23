@@ -181,7 +181,11 @@ export function usePixiLayout(
 
     worker.onerror = (err) => {
       if (reqId !== requestIdRef.current || unmountedRef.current) return;
-      console.error('[pixi] layout worker failed:', err);
+      console.error(
+        '[pixi] layout worker failed — nodes will be placed at (0,0).',
+        'The graph will render but without force-directed layout.',
+        err,
+      );
       setLayoutReady(true);
     };
 

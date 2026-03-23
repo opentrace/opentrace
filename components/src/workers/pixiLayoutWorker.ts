@@ -126,6 +126,8 @@ function startStreaming(): void {
   streamInterval = setInterval(() => {
     if (!sim) return;
     if (sim.alpha() < SETTLE_ALPHA) {
+      // Send one final position snapshot so the last ~66ms of movement isn't dropped
+      postPositions();
       stopStreaming();
       settled = true;
       (self as unknown as Worker).postMessage({ type: 'settled' } satisfies WorkerOutMessage);
@@ -206,7 +208,7 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     case 'update-config': {
       if (!sim) break;
       if (msg.chargeStrength !== undefined) {
-        sim.force('charge', forceManyBody().strength(msg.chargeStrength));
+        sim.force('charge', forceManyBody().strength(msg.chargeStrength).theta(defaultTheta));
       }
       if (msg.linkDistance !== undefined) {
         const link = sim.force('link') as ReturnType<typeof forceLink<SimNode, SimLink>> | undefined;

@@ -34,6 +34,11 @@ const EMPTY_COMMUNITY: CommunityData = {
  * Compute Louvain communities in a Web Worker.
  * Color and naming functions are provided via layoutConfig and run on the
  * main thread after the worker returns assignments.
+ *
+ * **Important:** `layoutConfig` must have a stable identity (e.g. via `useMemo`
+ * or a module-level constant). If a new object is created every render, the
+ * worker will be re-spawned on each render, causing repeated Louvain passes
+ * and brief loss of community colouring.
  */
 export function useCommunities(
   allNodes: GraphNode[],
