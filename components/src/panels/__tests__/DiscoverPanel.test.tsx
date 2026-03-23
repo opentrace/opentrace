@@ -319,6 +319,58 @@ describe('DiscoverPanel', () => {
     });
   });
 
+  describe('collapse/expand all controls', () => {
+    it('renders expand all and collapse all buttons when callbacks provided', () => {
+      const { container } = render(
+        React.createElement(
+          DiscoverPanel,
+          makeProps({
+            onExpandAll: vi.fn(),
+            onCollapseAll: vi.fn(),
+          }),
+        ),
+      );
+      const controls = container.querySelectorAll(
+        '.discover-tree-control-btn',
+      );
+      expect(controls.length).toBe(2);
+    });
+
+    it('does not render controls when callbacks are not provided', () => {
+      const { container } = render(
+        React.createElement(DiscoverPanel, makeProps()),
+      );
+      const controls = container.querySelector('.discover-tree-controls');
+      expect(controls).toBeNull();
+    });
+
+    it('fires onExpandAll when expand all button is clicked', () => {
+      const onExpandAll = vi.fn();
+      const { container } = render(
+        React.createElement(
+          DiscoverPanel,
+          makeProps({ onExpandAll, onCollapseAll: vi.fn() }),
+        ),
+      );
+      const btns = container.querySelectorAll('.discover-tree-control-btn');
+      fireEvent.click(btns[0]); // expand all is first
+      expect(onExpandAll).toHaveBeenCalledOnce();
+    });
+
+    it('fires onCollapseAll when collapse all button is clicked', () => {
+      const onCollapseAll = vi.fn();
+      const { container } = render(
+        React.createElement(
+          DiscoverPanel,
+          makeProps({ onCollapseAll, onExpandAll: vi.fn() }),
+        ),
+      );
+      const btns = container.querySelectorAll('.discover-tree-control-btn');
+      fireEvent.click(btns[1]); // collapse all is second
+      expect(onCollapseAll).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('displayName', () => {
     it('shows only the last path segment', () => {
       const deepFile: TreeNodeData = {

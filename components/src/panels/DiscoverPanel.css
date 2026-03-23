@@ -70,6 +70,35 @@
   color: var(--foreground);
 }
 
+/* Expand / Collapse all controls */
+.discover-tree-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.discover-tree-control-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.discover-tree-control-btn:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+  border-color: color-mix(in oklch, var(--border) 30%, transparent);
+}
+
 .discover-panel-empty {
   padding: 24px 16px;
   color: var(--muted-foreground);
@@ -125,8 +154,11 @@
   opacity: 0.7;
 }
 
-/* Graph-only toggle */
+/* Graph-only toggle + tree controls row */
 .discover-graph-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 0 10px 8px;
 }
 

@@ -326,6 +326,20 @@ export default function DiscoverPanelContainer({
     };
   }, [selectedNodeId, store, loadChildren, findNodeType, expanded]);
 
+  const handleCollapseAll = useCallback(() => {
+    setExpanded(new Set());
+  }, []);
+
+  const handleExpandAll = useCallback(() => {
+    const allExpandable = new Set<string>();
+    for (const [parentId, children] of childrenMap.entries()) {
+      if (children.length > 0) {
+        allExpandable.add(parentId);
+      }
+    }
+    setExpanded(allExpandable);
+  }, [childrenMap]);
+
   if (loading) {
     return (
       <div className="discover-panel">
@@ -340,6 +354,8 @@ export default function DiscoverPanelContainer({
       childrenMap={childrenMap}
       expanded={expanded}
       onToggleExpand={handleToggle}
+      onCollapseAll={handleCollapseAll}
+      onExpandAll={handleExpandAll}
       onSelectNode={onSelectNode}
       selectedNodeId={isActive ? selectedNodeId : undefined}
       graphNodeIds={graphNodeIds}

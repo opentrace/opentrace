@@ -270,6 +270,8 @@ export default function DiscoverPanel({
   childrenMap,
   expanded,
   onToggleExpand,
+  onCollapseAll,
+  onExpandAll,
   onSelectNode,
   selectedNodeId,
   graphNodeIds,
@@ -383,17 +385,71 @@ export default function DiscoverPanel({
           </button>
         )}
       </div>
-      {graphNodeIdSet && (
+      {(graphNodeIdSet || onExpandAll || onCollapseAll) && (
         <div className="discover-graph-toggle">
-          <label className="discover-graph-toggle-label">
-            <input
-              type="checkbox"
-              checked={hideOffGraph}
-              onChange={(e) => setHideOffGraph(e.target.checked)}
-            />
-            <span className="discover-toggle-track" />
-            <span>In graph only</span>
-          </label>
+          {graphNodeIdSet && (
+            <label className="discover-graph-toggle-label">
+              <input
+                type="checkbox"
+                checked={hideOffGraph}
+                onChange={(e) => setHideOffGraph(e.target.checked)}
+              />
+              <span className="discover-toggle-track" />
+              <span>In graph only</span>
+            </label>
+          )}
+          {(onExpandAll || onCollapseAll) && (
+            <div className="discover-tree-controls">
+              {onExpandAll && (
+                <button
+                  className="discover-tree-control-btn"
+                  onClick={onExpandAll}
+                  title="Expand all"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M4 5.5L7 8.5L10 5.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M4 2L7 5L10 2"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              )}
+              {onCollapseAll && (
+                <button
+                  className="discover-tree-control-btn"
+                  onClick={onCollapseAll}
+                  title="Collapse all"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M4 8.5L7 5.5L10 8.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M4 12L7 9L10 12"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
       {flatRows.length === 0 ? (
