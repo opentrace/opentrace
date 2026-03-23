@@ -34,7 +34,10 @@ declare module '@ladybugdb/wasm-core' {
     constructor(database: Database, numThreads?: number | null);
     init(): Promise<void>;
     query(statement: string): Promise<QueryResult>;
-    execute(preparedStatement: PreparedStatement, params?: Record<string, unknown>): Promise<QueryResult>;
+    execute(
+      preparedStatement: PreparedStatement,
+      params?: Record<string, unknown>,
+    ): Promise<QueryResult>;
     prepare(statement: string): Promise<PreparedStatement>;
     close(): Promise<void>;
   }

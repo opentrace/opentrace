@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /**
  * Isolated LadybugDB WASM test — no React, no pipeline.
  *
@@ -24,10 +40,23 @@ function mulberry32(seed: number) {
   };
 }
 
-interface TestNode { id: string; name: string; type: string; properties?: Record<string, unknown> }
-interface TestRel { id: string; source_id: string; target_id: string; type: string }
+interface TestNode {
+  id: string;
+  name: string;
+  type: string;
+  properties?: Record<string, unknown>;
+}
+interface TestRel {
+  id: string;
+  source_id: string;
+  target_id: string;
+  type: string;
+}
 
-function generateDataset(nodeCount: number): { nodes: TestNode[]; rels: TestRel[] } {
+function generateDataset(nodeCount: number): {
+  nodes: TestNode[];
+  rels: TestRel[];
+} {
   const rand = mulberry32(nodeCount * 31 + 7);
   const nodes: TestNode[] = [];
   const rels: TestRel[] = [];
@@ -35,8 +64,8 @@ function generateDataset(nodeCount: number): { nodes: TestNode[]; rels: TestRel[
   const typeWeights = [
     { type: 'Repository', weight: 0.02 },
     { type: 'Directory', weight: 0.08 },
-    { type: 'File', weight: 0.30 },
-    { type: 'Class', weight: 0.20 },
+    { type: 'File', weight: 0.3 },
+    { type: 'Class', weight: 0.2 },
     { type: 'Function', weight: 0.35 },
     { type: 'Package', weight: 0.05 },
   ];
@@ -52,7 +81,12 @@ function generateDataset(nodeCount: number): { nodes: TestNode[]; rels: TestRel[
   }
 
   const byType: Record<string, number[]> = {
-    Repository: [], Directory: [], File: [], Class: [], Function: [], Package: [],
+    Repository: [],
+    Directory: [],
+    File: [],
+    Class: [],
+    Function: [],
+    Package: [],
   };
 
   for (let i = 0; i < nodeCount; i++) {
@@ -74,26 +108,54 @@ function generateDataset(nodeCount: number): { nodes: TestNode[]; rels: TestRel[
   const functions = byType.Function;
 
   for (const d of dirs) {
-    const parent = repos.length > 0 ? repos[Math.floor(rand() * repos.length)] : 0;
-    rels.push({ id: `r-di-${d}`, source_id: `n-${d}`, target_id: `n-${parent}`, type: 'DEFINED_IN' });
+    const parent =
+      repos.length > 0 ? repos[Math.floor(rand() * repos.length)] : 0;
+    rels.push({
+      id: `r-di-${d}`,
+      source_id: `n-${d}`,
+      target_id: `n-${parent}`,
+      type: 'DEFINED_IN',
+    });
   }
   for (const f of files) {
     const parent = dirs.length > 0 ? dirs[Math.floor(rand() * dirs.length)] : 0;
-    rels.push({ id: `r-di-${f}`, source_id: `n-${f}`, target_id: `n-${parent}`, type: 'DEFINED_IN' });
+    rels.push({
+      id: `r-di-${f}`,
+      source_id: `n-${f}`,
+      target_id: `n-${parent}`,
+      type: 'DEFINED_IN',
+    });
   }
   for (const c of classes) {
-    const parent = files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
-    rels.push({ id: `r-di-${c}`, source_id: `n-${c}`, target_id: `n-${parent}`, type: 'DEFINED_IN' });
+    const parent =
+      files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
+    rels.push({
+      id: `r-di-${c}`,
+      source_id: `n-${c}`,
+      target_id: `n-${parent}`,
+      type: 'DEFINED_IN',
+    });
   }
   for (const fn of functions) {
-    const parent = files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
-    rels.push({ id: `r-di-${fn}`, source_id: `n-${fn}`, target_id: `n-${parent}`, type: 'DEFINED_IN' });
+    const parent =
+      files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
+    rels.push({
+      id: `r-di-${fn}`,
+      source_id: `n-${fn}`,
+      target_id: `n-${parent}`,
+      type: 'DEFINED_IN',
+    });
   }
   for (let i = 0; i < functions.length * 0.3; i++) {
     const a = functions[Math.floor(rand() * functions.length)];
     const b = functions[Math.floor(rand() * functions.length)];
     if (a !== b) {
-      rels.push({ id: `r-call-${i}`, source_id: `n-${a}`, target_id: `n-${b}`, type: 'CALLS' });
+      rels.push({
+        id: `r-call-${i}`,
+        source_id: `n-${a}`,
+        target_id: `n-${b}`,
+        type: 'CALLS',
+      });
     }
   }
 
@@ -102,9 +164,12 @@ function generateDataset(nodeCount: number): { nodes: TestNode[]; rels: TestRel[
 
 // ── CSV helpers ──
 
+// eslint-disable-next-line no-control-regex -- intentional: strip non-printable control chars
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
+
 function csvEscape(value: string): string {
   const safe = (value ?? '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '')
+    .replace(CONTROL_CHARS_RE, '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/"/g, '""');
   return '"' + safe + '"';
@@ -122,10 +187,17 @@ function nodeCSV(nodes: TestNode[]): Uint8Array {
 }
 
 const REL_PAIRS = [
-  'Function_Function', 'Function_File', 'Function_Class',
-  'Class_File', 'Class_Class',
-  'File_Directory', 'File_File', 'File_Package', 'File_Repository',
-  'Directory_Directory', 'Directory_Repository',
+  'Function_Function',
+  'Function_File',
+  'Function_Class',
+  'Class_File',
+  'Class_Class',
+  'File_Directory',
+  'File_File',
+  'File_Package',
+  'File_Repository',
+  'Directory_Directory',
+  'Directory_Repository',
   'Repository_Package',
 ];
 const REL_PAIR_SET = new Set(REL_PAIRS);
@@ -135,8 +207,11 @@ function relCSV(rels: TestRel[], nodeTypeMap: Map<string, string>): Uint8Array {
   for (const r of rels) {
     const srcType = nodeTypeMap.get(r.source_id);
     const tgtType = nodeTypeMap.get(r.target_id);
-    if (!srcType || !tgtType || !REL_PAIR_SET.has(`${srcType}_${tgtType}`)) continue;
-    lines.push([r.source_id, r.target_id, r.id, r.type, '{}'].map(csvEscape).join(','));
+    if (!srcType || !tgtType || !REL_PAIR_SET.has(`${srcType}_${tgtType}`))
+      continue;
+    lines.push(
+      [r.source_id, r.target_id, r.id, r.type, '{}'].map(csvEscape).join(','),
+    );
   }
   return encoder.encode(lines.join('\n'));
 }
@@ -155,7 +230,14 @@ function log(msg: string, cls: 'ok' | 'err' | 'info' = 'info') {
 // ── Main test ──
 
 const CHUNK = 500;
-const NODE_TYPES = ['Repository', 'Directory', 'File', 'Package', 'Class', 'Function'];
+const NODE_TYPES = [
+  'Repository',
+  'Directory',
+  'File',
+  'Package',
+  'Class',
+  'Function',
+];
 
 async function runTest(nodeCount: number) {
   logEl.innerHTML = '';
@@ -192,17 +274,28 @@ async function runTest(nodeCount: number) {
   // 2. Schema
   log('Creating schema...');
   for (const type of NODE_TYPES) {
-    const r = await conn.query(`CREATE NODE TABLE IF NOT EXISTS ${type}(id STRING PRIMARY KEY, name STRING, properties STRING)`);
+    const r = await conn.query(
+      `CREATE NODE TABLE IF NOT EXISTS ${type}(id STRING PRIMARY KEY, name STRING, properties STRING)`,
+    );
     await r.close();
   }
   const pairs = [
-    'FROM Function TO Function', 'FROM Function TO File', 'FROM Function TO Class',
-    'FROM Class TO File', 'FROM Class TO Class',
-    'FROM File TO Directory', 'FROM File TO File', 'FROM File TO Package', 'FROM File TO Repository',
-    'FROM Directory TO Directory', 'FROM Directory TO Repository',
+    'FROM Function TO Function',
+    'FROM Function TO File',
+    'FROM Function TO Class',
+    'FROM Class TO File',
+    'FROM Class TO Class',
+    'FROM File TO Directory',
+    'FROM File TO File',
+    'FROM File TO Package',
+    'FROM File TO Repository',
+    'FROM Directory TO Directory',
+    'FROM Directory TO Repository',
     'FROM Repository TO Package',
   ].join(', ');
-  const relResult = await conn.query(`CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`);
+  const relResult = await conn.query(
+    `CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`,
+  );
   await relResult.close();
   log('Schema ready', 'ok');
 
@@ -218,7 +311,10 @@ async function runTest(nodeCount: number) {
   const buckets = new Map<string, TestNode[]>();
   for (const n of nodes) {
     let b = buckets.get(n.type);
-    if (!b) { b = []; buckets.set(n.type, b); }
+    if (!b) {
+      b = [];
+      buckets.set(n.type, b);
+    }
     b.push(n);
   }
 
@@ -237,7 +333,11 @@ async function runTest(nodeCount: number) {
         await lbug.FS.unlink(path);
       } catch (err) {
         log(`COPY ${type} CRASHED at offset ${offset}: ${err}`, 'err');
-        try { await lbug.FS.unlink(path); } catch { /* */ }
+        try {
+          await lbug.FS.unlink(path);
+        } catch {
+          /* */
+        }
         return;
       }
     }
@@ -253,7 +353,10 @@ async function runTest(nodeCount: number) {
     const key = `${srcType}_${tgtType}`;
     if (!REL_PAIR_SET.has(key)) continue;
     let b = relBuckets.get(key);
-    if (!b) { b = []; relBuckets.set(key, b); }
+    if (!b) {
+      b = [];
+      relBuckets.set(key, b);
+    }
     b.push(r);
   }
 
@@ -265,13 +368,19 @@ async function runTest(nodeCount: number) {
       const path = `/rels_${key}.csv`;
       await lbug.FS.writeFile(path, csv);
       try {
-        const r = await conn.query(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
+        const r = await conn.query(
+          `COPY RELATES_${key} FROM '${path}' (HEADER=true)`,
+        );
         await r.close();
         totalRels += chunk.length;
         await lbug.FS.unlink(path);
       } catch (err) {
         log(`COPY RELATES_${key} CRASHED at ${offset}: ${err}`, 'err');
-        try { await lbug.FS.unlink(path); } catch { /* */ }
+        try {
+          await lbug.FS.unlink(path);
+        } catch {
+          /* */
+        }
         return;
       }
     }
@@ -288,7 +397,9 @@ async function runTest(nodeCount: number) {
     }
   }
 
-  const relCountResult = await conn.query('MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt');
+  const relCountResult = await conn.query(
+    'MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt',
+  );
   const relCountRows = await relCountResult.getAllObjects();
   await relCountResult.close();
   if (relCountRows.length > 0) {

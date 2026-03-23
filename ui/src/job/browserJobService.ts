@@ -204,10 +204,7 @@ export class BrowserJobService implements JobService {
         phase: JobPhase.JOB_PHASE_INITIALIZING,
         message: 'Initializing',
       });
-      await Promise.all([
-        ensureParsers(),
-        this.store.ensureReady?.(),
-      ]);
+      await Promise.all([ensureParsers(), this.store.ensureReady?.()]);
       debug.log('init', 'parsers + DB ready');
       channel.push({
         ...emptyEvent(),
@@ -273,7 +270,13 @@ export class BrowserJobService implements JobService {
 
       const scanGen = executeScanning({ repo: repoTree }, ctx);
       let scanResult: ScanResult | undefined;
-      const scanningRels: { id: string; type: string; source_id: string; target_id: string; properties?: Record<string, unknown> }[] = [];
+      const scanningRels: {
+        id: string;
+        type: string;
+        source_id: string;
+        target_id: string;
+        properties?: Record<string, unknown>;
+      }[] = [];
 
       // Drive the scanning generator, forwarding events to the channel
       for (;;) {
@@ -300,7 +303,11 @@ export class BrowserJobService implements JobService {
         if (event.kind === 'stage_start' || event.kind === 'stage_progress') {
           const now = performance.now();
           const isLast = event.detail?.current === event.detail?.total;
-          if (event.kind === 'stage_start' || isLast || now - lastYieldTime >= 100) {
+          if (
+            event.kind === 'stage_start' ||
+            isLast ||
+            now - lastYieldTime >= 100
+          ) {
             channel.push({
               ...emptyEvent(),
               kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
@@ -369,13 +376,25 @@ export class BrowserJobService implements JobService {
       for (const file of scanResult.fileNodes) seeds.push(file);
       for (const pkg of scanResult.packageNodes.values()) seeds.push(pkg);
 
-      debug.log('pipeline', `${seeds.length} seed nodes, ${scanningRels.length} scanning rels`);
-      debug.log('pipeline', `file cache limit: ${(fileCacheStage.stats().byteLimit / 1024 / 1024).toFixed(0)} MB`);
+      debug.log(
+        'pipeline',
+        `${seeds.length} seed nodes, ${scanningRels.length} scanning rels`,
+      );
+      debug.log(
+        'pipeline',
+        `file cache limit: ${(fileCacheStage.stats().byteLimit / 1024 / 1024).toFixed(0)} MB`,
+      );
 
       // 5. Run concurrent pipeline
       const concurrentPipeline = runNodePipeline({
         ctx,
-        stages: [fileCacheStage, extractStage, resolveStage, summarizeStage, storeStage],
+        stages: [
+          fileCacheStage,
+          extractStage,
+          resolveStage,
+          summarizeStage,
+          storeStage,
+        ],
         seeds,
       });
 
@@ -402,7 +421,10 @@ export class BrowserJobService implements JobService {
       const drainNodesToStore = async () => {
         const nodes = storeStage!.drainNodes();
         if (nodes.length === 0) return;
-        debug.log('store', `draining ${nodes.length} nodes (wasm=${wasmMB().toFixed(0)}MB)`);
+        debug.log(
+          'store',
+          `draining ${nodes.length} nodes (wasm=${wasmMB().toFixed(0)}MB)`,
+        );
         await this.store.importBatch({
           nodes: nodes.map((n) => ({
             id: n.id,
@@ -446,7 +468,11 @@ export class BrowserJobService implements JobService {
           if (event.action === 'end') {
             // Feed relationships from non-store stages into the store stage
             const mutation = event.mutation;
-            if (mutation && mutation.relationships.length > 0 && event.stage !== 'store') {
+            if (
+              mutation &&
+              mutation.relationships.length > 0 &&
+              event.stage !== 'store'
+            ) {
               storeStage.addRelationships(mutation.relationships);
             }
 
@@ -525,14 +551,21 @@ export class BrowserJobService implements JobService {
               const phase = CONCURRENT_PHASE_MAP[event.stage];
 
               // Feed flush relationships into store stage (e.g. CALLS from resolve)
-              if (event.mutation && event.mutation.relationships.length > 0 && event.stage !== 'store') {
+              if (
+                event.mutation &&
+                event.mutation.relationships.length > 0 &&
+                event.stage !== 'store'
+              ) {
                 storeStage.addRelationships(event.mutation.relationships);
               }
 
               // When the store stage flushes, persist remaining nodes then rels
               if (event.stage === 'store') {
                 const storeStats = storeStage.stats();
-                debug.log('store', `final flush — ${storeStats.nodes} total nodes, ${storeStats.relationships} total rels`);
+                debug.log(
+                  'store',
+                  `final flush — ${storeStats.nodes} total nodes, ${storeStats.relationships} total rels`,
+                );
 
                 channel.push({
                   ...emptyEvent(),
@@ -546,7 +579,10 @@ export class BrowserJobService implements JobService {
                 // Now all nodes are in the DB — safe to persist relationships
                 await drainRelsToStore();
 
-                debug.log('store', `persisted ${persistedNodes} nodes, ${persistedRels} rels`);
+                debug.log(
+                  'store',
+                  `persisted ${persistedNodes} nodes, ${persistedRels} rels`,
+                );
 
                 channel.push({
                   ...emptyEvent(),
@@ -571,7 +607,10 @@ export class BrowserJobService implements JobService {
             }
 
             case 'item_error':
-              debug.log('error', `${event.stage}/${event.node}: ${event.error}`);
+              debug.log(
+                'error',
+                `${event.stage}/${event.node}: ${event.error}`,
+              );
               console.warn(
                 `[pipeline] ${event.stage} error on ${event.node}: ${event.error}`,
               );
@@ -590,8 +629,14 @@ export class BrowserJobService implements JobService {
 
             case 'pipeline_done': {
               const cacheStats = fileCacheStage.stats();
-              debug.log('pipeline', `done — persisted: ${persistedNodes} nodes, ${persistedRels} rels`);
-              debug.log('pipeline', `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`);
+              debug.log(
+                'pipeline',
+                `done — persisted: ${persistedNodes} nodes, ${persistedRels} rels`,
+              );
+              debug.log(
+                'pipeline',
+                `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
+              );
 
               channel.push({
                 ...emptyEvent(),
@@ -626,13 +671,17 @@ export class BrowserJobService implements JobService {
       .catch((err) => {
         // Log full error with stack trace to console for debugging
         console.error('[BrowserJobService] pipeline error:', err);
-        debug.log('error', `uncaught: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+        debug.log(
+          'error',
+          `uncaught: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+        );
         debug.dump();
 
         const errMsg = err instanceof Error ? err.message : String(err);
-        const isOOM = (err instanceof Error &&
-          (errMsg.includes('memory') || errMsg.includes('out of bounds')))
-          || typeof err === 'number'; // WASM abort codes are thrown as raw numbers
+        const isOOM =
+          (err instanceof Error &&
+            (errMsg.includes('memory') || errMsg.includes('out of bounds'))) ||
+          typeof err === 'number'; // WASM abort codes are thrown as raw numbers
         const totalStats = storeStage?.stats();
         const userMessage = isOOM
           ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
@@ -644,7 +693,7 @@ export class BrowserJobService implements JobService {
           ...emptyEvent(),
           kind: JobEventKind.JOB_EVENT_KIND_ERROR,
           message: userMessage,
-          errors: [err instanceof Error ? err.stack ?? errMsg : errMsg],
+          errors: [err instanceof Error ? (err.stack ?? errMsg) : errMsg],
         });
       })
       .finally(() => {

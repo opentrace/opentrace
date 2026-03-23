@@ -89,15 +89,14 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 
 // ---- CSV helpers ----
 
+// eslint-disable-next-line no-control-regex -- intentional: strip non-printable control chars from CSV values
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
+
 function csvEscape(value: string): string {
-  // Always quote to avoid ambiguity — LadybugDB's CSV parser can misparse
-  // fields containing JSON with nested commas + quotes.
-  // Strip newlines — LadybugDB's parallel CSV reader rejects quoted newlines.
-  // Strip null bytes + non-printable control chars — can cause WASM unaligned access traps.
   const safe = (value ?? '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '') // strip control chars except \t \n \r
-    .replace(/[\r\n]+/g, ' ')                        // flatten newlines
-    .replace(/"/g, '""');                             // escape quotes
+    .replace(CONTROL_CHARS_RE, '') // strip control chars except \t \n \r
+    .replace(/[\r\n]+/g, ' ') // flatten newlines
+    .replace(/"/g, '""'); // escape quotes
   return '"' + safe + '"';
 }
 
@@ -274,7 +273,9 @@ export class LadybugGraphStore implements GraphStore {
     await this.conn.init();
     await this.initSchema();
     await this.ensureParquetDir();
-    console.log(`[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`);
+    console.log(
+      `[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`,
+    );
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
     if (savedNodes || savedEdges) {
@@ -349,19 +350,26 @@ export class LadybugGraphStore implements GraphStore {
   async dispose(): Promise<void> {
     try {
       await this.conn?.close();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     try {
       await this.db?.close();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     try {
       await lbug.close();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   /** Current WASM linear memory size in MB (for diagnostics). */
   getWasmMemoryMB(): number {
     try {
-      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory }).wasmMemory;
+      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory })
+        .wasmMemory;
       return mem ? mem.buffer.byteLength / (1024 * 1024) : -1;
     } catch {
       return -1;
@@ -763,7 +771,11 @@ export class LadybugGraphStore implements GraphStore {
 
         // Write per-subtable CSVs and COPY FROM (chunked to bound memory)
         for (const [key, bucket] of buckets) {
-          for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+          for (
+            let offset = 0;
+            offset < bucket.length;
+            offset += FLUSH_CHUNK_SIZE
+          ) {
             const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
             const csv = generateRelCSV(chunk);
             const csvPath = `/rels_${key}.csv`;
@@ -773,7 +785,10 @@ export class LadybugGraphStore implements GraphStore {
                 `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
               );
             } catch (err) {
-              console.warn(`[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}):`, err);
+              console.warn(
+                `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}):`,
+                err,
+              );
             }
             await lbug.FS.unlink(csvPath);
           }
@@ -986,7 +1001,11 @@ export class LadybugGraphStore implements GraphStore {
       }
 
       for (const [key, bucket] of relBuckets) {
-        for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
+        for (
+          let offset = 0;
+          offset < bucket.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = `/rels_${key}.csv`;
@@ -1024,7 +1043,6 @@ export class LadybugGraphStore implements GraphStore {
       `[LadybugStore] flush: ${nodeCount} nodes, ${relCount} rels in ${elapsed.toFixed(0)}ms`,
     );
   }
-
 
   storeSource(files: SourceFile[]): void {
     const encoder = new TextEncoder();
