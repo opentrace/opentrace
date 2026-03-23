@@ -52,6 +52,9 @@ function getDB(): Promise<IDBPDatabase> {
           }
         }
       },
+    }).catch((err) => {
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;
@@ -64,8 +67,12 @@ export function generateId(): string {
 export function titleFromFirstMessage(messages: ChatMessage[]): string {
   const first = messages.find((m) => m.role === 'user');
   if (!first) return 'New conversation';
-  const text = first.content.trim();
-  if (text.length <= 50) return text;
+  // Use only the first line, strip markdown formatting
+  const text = first.content
+    .trim()
+    .split('\n')[0]
+    .replace(/[#*_`~>]/g, '');
+  if (text.length <= 50) return text || 'New conversation';
   return text.slice(0, 47) + '...';
 }
 

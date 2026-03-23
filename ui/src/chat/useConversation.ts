@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from './providers';
 import {
   type Conversation,
@@ -26,8 +26,6 @@ import {
   deleteConversation as deleteConv,
   titleFromFirstMessage,
 } from './chatHistory';
-
-const ACTIVE_CONV_KEY = 'ot_chat_active_conversation';
 
 export interface UseConversationReturn {
   conversationId: string | null;
@@ -51,16 +49,30 @@ export function useConversation(projectKey?: string): UseConversationReturn {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
+
+  // Ref to track the live conversation ID — avoids stale closures in callbacks
+  const conversationIdRef = useRef<string | null>(null);
+  // Cancel token for switchConversation to prevent race conditions
+  const switchTokenRef = useRef(0);
+
   // When project changes, reset chat and reload the conversation list.
   useEffect(() => {
+    let cancelled = false;
+
     setConversationId(null);
+    conversationIdRef.current = null;
     setMessages([]);
-    localStorage.removeItem(ACTIVE_CONV_KEY);
 
     (async () => {
       const list = await listConversations(projectKey);
-      setConversations(list);
+      if (!cancelled) {
+        setConversations(list);
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [projectKey]);
 
   const refreshList = useCallback(async () => {
@@ -70,47 +82,54 @@ export function useConversation(projectKey?: string): UseConversationReturn {
 
   const startNewConversation = useCallback(() => {
     setConversationId(null);
+    conversationIdRef.current = null;
     setMessages([]);
-    localStorage.removeItem(ACTIVE_CONV_KEY);
   }, []);
 
   const switchConversation = useCallback(async (id: string) => {
+    const token = ++switchTokenRef.current;
     setLoadingConversation(true);
     try {
       const conv = await getConversation(id);
+      // Only apply if this is still the most recent switch request
+      if (token !== switchTokenRef.current) return;
       if (conv) {
         setConversationId(conv.id);
+        conversationIdRef.current = conv.id;
         setMessages(conv.messages);
-        localStorage.setItem(ACTIVE_CONV_KEY, conv.id);
       }
     } finally {
-      setLoadingConversation(false);
+      if (token === switchTokenRef.current) {
+        setLoadingConversation(false);
+      }
     }
   }, []);
 
   const deleteConversation = useCallback(
     async (id: string) => {
       await deleteConv(id);
-      if (conversationId === id) {
+      if (conversationIdRef.current === id) {
         setConversationId(null);
+        conversationIdRef.current = null;
         setMessages([]);
-        localStorage.removeItem(ACTIVE_CONV_KEY);
       }
       await refreshList();
     },
-    [conversationId, refreshList],
+    [refreshList],
   );
 
   const persistMessages = useCallback(
     async (msgs: ChatMessage[], provider: string, model: string) => {
       if (msgs.length === 0) return;
 
-      let id = conversationId;
+      // Use the ref to get the live ID, not the stale closure value
+      let id = conversationIdRef.current;
       const now = Date.now();
 
       if (!id) {
         id = generateId();
         setConversationId(id);
+        conversationIdRef.current = id;
       }
 
       const conv: Conversation = {
@@ -131,10 +150,9 @@ export function useConversation(projectKey?: string): UseConversationReturn {
       }
 
       await saveConversation(conv);
-      localStorage.setItem(ACTIVE_CONV_KEY, id);
       await refreshList();
     },
-    [conversationId, projectKey, refreshList],
+    [projectKey, refreshList],
   );
 
   return {
