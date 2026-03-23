@@ -37,7 +37,7 @@ import {
   FileCacheStage,
   ExtractStage,
   ResolveStage,
-  // SummarizeStage,
+  SummarizeStage,
   StoreStage,
   PipelineDebugLog,
 } from '@opentrace/components/pipeline';
@@ -196,21 +196,24 @@ export class BrowserJobService implements JobService {
     const run = async () => {
       debug.start();
 
-      // 1. Initialize parsers
-      debug.log('init', 'loading tree-sitter parsers');
+      // 1. Initialize parsers + DB in parallel
+      debug.log('init', 'loading tree-sitter parsers + DB');
       channel.push({
         ...emptyEvent(),
         kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
         phase: JobPhase.JOB_PHASE_INITIALIZING,
-        message: 'Initializing parsers',
+        message: 'Initializing',
       });
-      await ensureParsers();
-      debug.log('init', 'parsers ready');
+      await Promise.all([
+        ensureParsers(),
+        this.store.ensureReady?.(),
+      ]);
+      debug.log('init', 'parsers + DB ready');
       channel.push({
         ...emptyEvent(),
         kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
         phase: JobPhase.JOB_PHASE_INITIALIZING,
-        message: 'Parsers ready',
+        message: 'Ready',
       });
 
       if (cancelled) return;
@@ -354,7 +357,7 @@ export class BrowserJobService implements JobService {
         getContent: (fileId) => fileCacheStage.getContent(fileId),
       });
       const resolveStage = new ResolveStage(extractStage);
-      // const summarizeStage = new SummarizeStage(); // disabled for memory testing
+      const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
 
       // Pre-feed scanning rels into the store stage
@@ -372,7 +375,7 @@ export class BrowserJobService implements JobService {
       // 5. Run concurrent pipeline
       const concurrentPipeline = runNodePipeline({
         ctx,
-        stages: [fileCacheStage, extractStage, resolveStage, /* summarizeStage, */ storeStage],
+        stages: [fileCacheStage, extractStage, resolveStage, summarizeStage, storeStage],
         seeds,
       });
 

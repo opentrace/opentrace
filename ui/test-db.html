@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LadybugDB WASM Test</title>
+  <style>
+    body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 2rem; }
+    h1 { color: #7dd3fc; }
+    #log { white-space: pre-wrap; line-height: 1.6; }
+    .ok { color: #86efac; }
+    .err { color: #fca5a5; }
+    .info { color: #93c5fd; }
+    button { background: #334155; color: white; border: 1px solid #475569; padding: 0.5rem 1rem; margin: 0.25rem; cursor: pointer; font-family: monospace; }
+    button:hover { background: #475569; }
+  </style>
+</head>
+<body>
+  <h1>LadybugDB WASM Test</h1>
+  <p>Isolated test page — no React, no pipeline. Tests CSV COPY FROM with storybook datasets.</p>
+  <div>
+    <button onclick="runTest(100)">100 nodes</button>
+    <button onclick="runTest(500)">500 nodes</button>
+    <button onclick="runTest(2000)">2,000 nodes</button>
+    <button onclick="runTest(5000)">5,000 nodes</button>
+    <button onclick="runTest(10000)">10,000 nodes</button>
+    <button onclick="runTest(20000)">20,000 nodes</button>
+    <button onclick="runTest(30000)">30,000 nodes</button>
+  </div>
+  <div id="log"></div>
+  <script type="module" src="/src/test-db.ts"></script>
+</body>
+</html>

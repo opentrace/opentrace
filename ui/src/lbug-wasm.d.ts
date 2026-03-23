@@ -14,82 +14,69 @@
  * limitations under the License.
  */
 
-declare module '@lbug/lbug-wasm' {
-  /** Row returned by iterating an Arrow Table from execute(). */
-  interface ArrowRow {
-    toJSON(): Record<string, unknown>;
-  }
-
-  /** Arrow Table returned within an ExecuteResult. */
-  interface ArrowTable {
-    [Symbol.iterator](): Iterator<ArrowRow>;
-    toArray(): ArrowRow[];
-    numRows: number;
-    numCols: number;
-    toString(): string;
-  }
-
-  /** Wrapper returned by Connection.execute(). */
-  interface ExecuteResult {
-    table: ArrowTable;
-  }
-
-  interface WebDatabase {
-    close(): void;
-  }
-
-  interface WebQueryResult {
-    isSuccess(): boolean;
-    getErrorMessage(): string;
-    getNumTuples(): number;
-    hasNext(): boolean;
-    hasNextQueryResult(): boolean;
-    getNextQueryResult(): WebQueryResult;
-    resetIterator(): void;
-    getColumnNames(): unknown;
-    getColumnDataTypes(): unknown;
-    getArrowSchema(): number;
-    getArrowChunk(): number;
-    getCompilingTime(): number;
-    getExecutionTime(): number;
-    toString(): string;
-    close(): void;
-  }
-
-  interface WebConnection {
-    /** Raw synchronous query — returns a WebQueryResult with error info. */
-    query(statement: string): WebQueryResult;
-    /** High-level async query — returns an ExecuteResult wrapper, or undefined on failure. */
-    execute(statement: string): Promise<ExecuteResult | undefined>;
-    close(): void;
-    setQueryTimeout(ms: number): void;
-    setMaxNumThreadForExec(n: number): void;
-    getNumNodes(tableName: string): number;
-    getNumRels(tableName: string): number;
-  }
-
-  interface LbugFS {
-    writeFile(path: string, data: string | Uint8Array): void;
-    readFile(path: string): Uint8Array;
-    mkdir(path: string): void;
-    unlink(path: string): void;
-    rename(oldPath: string, newPath: string): void;
-    rmdir(path: string): void;
-  }
-
-  interface LbugModule {
-    Database(
-      path?: string,
+declare module '@ladybugdb/wasm-core' {
+  class Database {
+    constructor(
+      databasePath?: string,
       bufferPoolSize?: number,
       maxNumThreads?: number,
-      compression?: boolean,
+      enableCompression?: boolean,
       readOnly?: boolean,
-      maxDBSize?: number,
-    ): Promise<WebDatabase>;
-    Connection(db: WebDatabase, numThreads?: number): Promise<WebConnection>;
-    FS: LbugFS;
-    wasmMemory: WebAssembly.Memory;
+      autoCheckpoint?: boolean,
+      checkpointThreshold?: number,
+    );
+    init(): Promise<void>;
+    close(): Promise<void>;
+    _getDatabaseObjectId(): Promise<string>;
   }
 
-  export default function lbugInit(): Promise<LbugModule>;
+  class Connection {
+    constructor(database: Database, numThreads?: number | null);
+    init(): Promise<void>;
+    query(statement: string): Promise<QueryResult>;
+    execute(preparedStatement: PreparedStatement, params?: Record<string, unknown>): Promise<QueryResult>;
+    prepare(statement: string): Promise<PreparedStatement>;
+    close(): Promise<void>;
+  }
+
+  class PreparedStatement {
+    close(): Promise<void>;
+    isSuccess(): boolean;
+    getErrorMessage(): string;
+  }
+
+  class QueryResult {
+    close(): Promise<void>;
+    hasNext(): boolean;
+    hasNextQueryResult(): boolean;
+    getNext(): Promise<Record<string, unknown>>;
+    getNextQueryResult(): Promise<QueryResult>;
+    getAllRows(): Promise<unknown[][]>;
+    getAllObjects(): Promise<Record<string, unknown>[]>;
+    getColumnNames(): Promise<string[]>;
+    resetIterator(): Promise<void>;
+  }
+
+  class FS {
+    static writeFile(path: string, data: string | Uint8Array): Promise<void>;
+    static readFile(path: string): Promise<Uint8Array>;
+    static mkdir(path: string): Promise<void>;
+    static unlink(path: string): Promise<void>;
+    static rename(oldPath: string, newPath: string): Promise<void>;
+  }
+
+  const _default: {
+    init(): Promise<void>;
+    getVersion(): Promise<string>;
+    setWorkerPath(workerPath: string): void;
+    close(): Promise<void>;
+    Database: typeof Database;
+    Connection: typeof Connection;
+    PreparedStatement: typeof PreparedStatement;
+    QueryResult: typeof QueryResult;
+    FS: typeof FS;
+  };
+
+  export default _default;
+  export { Database, Connection, PreparedStatement, QueryResult, FS };
 }

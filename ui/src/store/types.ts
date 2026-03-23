@@ -80,6 +80,10 @@ export interface SourceFile {
 }
 
 export interface GraphStore {
+  /** True if any data has been imported (synchronous, no DB call). */
+  hasData(): boolean;
+  /** Start DB init if not already started. No-op if already ready. */
+  ensureReady?(): Promise<void>;
   fetchGraph(query?: string, hops?: number): Promise<GraphData>;
   fetchStats(): Promise<GraphStats>;
   clearGraph(): Promise<void>;

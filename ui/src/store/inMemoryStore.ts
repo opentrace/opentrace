@@ -55,6 +55,10 @@ export class InMemoryGraphStore implements GraphStore {
     { content: string; path: string; binary?: boolean }
   >();
 
+  hasData(): boolean {
+    return this.nodes.size > 0;
+  }
+
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
     let nodesCreated = 0;
     let relsCreated = 0;

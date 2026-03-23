@@ -15,7 +15,7 @@
  */
 
 /**
- * LadybugDB graph store using @lbug/lbug-wasm with typed node tables.
+ * LadybugDB graph store using @ladybugdb/wasm-core with typed node tables.
  *
  * Uses an in-memory database with typed node tables (Repository, Directory,
  * File, Package, Class, Function) instead of a single Node table, enabling
@@ -26,8 +26,11 @@
  */
 
 import { deflateSync, inflateSync, zipSync, unzipSync } from 'fflate';
-import lbugInit from '@lbug/lbug-wasm';
-import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
+
+import lbug from '@ladybugdb/wasm-core';
+
+type Database = InstanceType<typeof lbug.Database>;
+type Connection = InstanceType<typeof lbug.Connection>;
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -209,10 +212,9 @@ const REL_PARQUET_PATH = `${PARQUET_DIR}/relationships.parquet`;
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
-  private lbug!: LbugModule;
-  private db!: import('@lbug/lbug-wasm').WebDatabase;
-  private conn!: WebConnection;
-  private ready: Promise<void>;
+  private db!: Database;
+  private conn!: Connection;
+  private ready: Promise<void> | null = null;
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
     string,
@@ -245,15 +247,34 @@ export class LadybugGraphStore implements GraphStore {
   private queue: Promise<void> = Promise.resolve();
 
   constructor() {
-    this.ready = this.initModule();
+    // Don't init WASM here — the constructor runs at app startup.
+    // WASM loads lazily on first DB operation via ensureReady().
+  }
+
+  /** True if any data has been imported (synchronous, no WASM). */
+  hasData(): boolean {
+    return this.nodeTypeMap.size > 0 || this.totalNodesBuffered > 0;
+  }
+
+  /** Start WASM init if not already started. Safe to call multiple times. */
+  ensureReady(): Promise<void> {
+    if (!this.ready) {
+      this.ready = this.initModule();
+    }
+    return this.ready;
   }
 
   private async initModule(): Promise<void> {
-    this.lbug = await lbugInit();
-    this.db = await this.lbug.Database();
-    this.conn = await this.lbug.Connection(this.db);
+    const t0 = performance.now();
+    lbug.setWorkerPath('/lbug_wasm_worker.js');
+    await lbug.init();
+    this.db = new lbug.Database(':memory:');
+    await this.db.init();
+    this.conn = new lbug.Connection(this.db);
+    await this.conn.init();
     await this.initSchema();
-    this.ensureParquetDir();
+    await this.ensureParquetDir();
+    console.log(`[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`);
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
     if (savedNodes || savedEdges) {
@@ -268,21 +289,15 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
-      const result = this.conn.query(stmt);
-      try {
-        if (!result.isSuccess()) {
-          throw new Error(result.getErrorMessage());
-        }
-      } finally {
-        result.close();
-      }
+      const result = await this.conn.query(stmt);
+      await result.close();
     }
   }
 
   /** Ensure the /parquet directory exists on the WASM virtual filesystem. */
-  private ensureParquetDir(): void {
+  private async ensureParquetDir(): Promise<void> {
     try {
-      this.lbug.FS.mkdir(PARQUET_DIR);
+      await lbug.FS.mkdir(PARQUET_DIR);
     } catch {
       // Already exists — ignore
     }
@@ -290,32 +305,20 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Uses conn.execute() which returns { table: ArrowTable }.
-   * Rows are extracted via the Arrow Table's toArray()/toJSON() or
-   * JSON.parse(table.toString()) as a fallback.
+   * Uses conn.query() + getAllObjects() for row extraction.
    * Serialized through a queue to prevent concurrent calls.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
-    await this.ready;
+    await this.ensureReady();
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const result = await this.conn.execute(cypher);
-          if (!result) {
-            throw new Error(`Query failed: ${cypher.slice(0, 120)}`);
-          }
+          const result = await this.conn.query(cypher);
           try {
-            const table = result.table;
-            const rows: Record<string, unknown>[] = [];
-            for (const row of table) {
-              rows.push(row.toJSON());
-            }
+            const rows = await result.getAllObjects();
             resolve(rows);
           } finally {
-            // Always close the WASM-side result handle to prevent memory leaks.
-            // execute() returns a QueryResult with .close() but the TS types
-            // don't declare it — cast to access the underlying handle.
-            (result as unknown as { close?: () => void }).close?.();
+            await result.close();
           }
         })
         .catch((err) => {
@@ -326,22 +329,15 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher statement that doesn't return rows (DDL, COPY, etc.).
-   * Uses raw conn.query() for synchronous execution with error reporting.
    */
   private async exec(cypher: string): Promise<void> {
-    await this.ready;
+    await this.ensureReady();
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
-        .then(() => {
-          const result = this.conn.query(cypher);
-          try {
-            if (!result.isSuccess()) {
-              throw new Error(result.getErrorMessage());
-            }
-            resolve();
-          } finally {
-            result.close();
-          }
+        .then(async () => {
+          const result = await this.conn.query(cypher);
+          await result.close();
+          resolve();
         })
         .catch((err) => {
           reject(err);
@@ -350,20 +346,23 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   /** Close the database connection and release WASM resources. */
-  dispose(): void {
+  async dispose(): Promise<void> {
     try {
-      this.conn?.close();
+      await this.conn?.close();
     } catch { /* ignore */ }
     try {
-      this.db?.close();
+      await this.db?.close();
+    } catch { /* ignore */ }
+    try {
+      await lbug.close();
     } catch { /* ignore */ }
   }
 
   /** Current WASM linear memory size in MB (for diagnostics). */
   getWasmMemoryMB(): number {
     try {
-      const mem = this.lbug.wasmMemory;
-      return mem.buffer.byteLength / (1024 * 1024);
+      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory }).wasmMemory;
+      return mem ? mem.buffer.byteLength / (1024 * 1024) : -1;
     } catch {
       return -1;
     }
@@ -376,7 +375,7 @@ export class LadybugGraphStore implements GraphStore {
 
   /** Update visualization node/edge limits. */
   async setLimits(maxNodes: number, maxEdges: number): Promise<void> {
-    await this.ready;
+    await this.ensureReady();
     this.maxVisNodes = maxNodes;
     this.maxVisEdges = maxEdges;
   }
@@ -654,7 +653,7 @@ export class LadybugGraphStore implements GraphStore {
     data: Uint8Array,
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse> {
-    await this.ready;
+    await this.ensureReady();
 
     // Unzip the Parquet archive and COPY FROM each file into the in-memory DB.
     onProgress?.('Unpacking Parquet archive');
@@ -701,11 +700,11 @@ export class LadybugGraphStore implements GraphStore {
 
       onProgress?.(`Importing ${type} nodes`);
       const path = nodeParquetPath(type);
-      this.lbug.FS.writeFile(path, fileData);
+      await lbug.FS.writeFile(path, fileData);
       try {
         await this.exec(`COPY ${type} FROM '${path}'`);
       } finally {
-        this.lbug.FS.unlink(path);
+        await lbug.FS.unlink(path);
       }
 
       // Rebuild nodeTypeMap and BM25 index for this type
@@ -726,7 +725,7 @@ export class LadybugGraphStore implements GraphStore {
     const relData = entries['relationships.parquet'];
     if (relData) {
       onProgress?.('Importing relationships');
-      this.lbug.FS.writeFile(REL_PARQUET_PATH, relData);
+      await lbug.FS.writeFile(REL_PARQUET_PATH, relData);
 
       try {
         // Scan the Parquet file and bucket rows by (srcType, tgtType)
@@ -768,7 +767,7 @@ export class LadybugGraphStore implements GraphStore {
             const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
             const csv = generateRelCSV(chunk);
             const csvPath = `/rels_${key}.csv`;
-            this.lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+            await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
             try {
               await this.exec(
                 `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
@@ -776,14 +775,14 @@ export class LadybugGraphStore implements GraphStore {
             } catch (err) {
               console.warn(`[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}):`, err);
             }
-            this.lbug.FS.unlink(csvPath);
+            await lbug.FS.unlink(csvPath);
           }
         }
       } catch (err) {
         console.error('[LadybugStore] relationship import failed:', err);
       }
 
-      this.lbug.FS.unlink(REL_PARQUET_PATH);
+      await lbug.FS.unlink(REL_PARQUET_PATH);
     }
 
     console.log(
@@ -797,7 +796,7 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   async exportDatabase(): Promise<Uint8Array> {
-    await this.ready;
+    await this.ensureReady();
     await this.flush();
 
     this.ensureParquetDir();
@@ -818,8 +817,8 @@ export class LadybugGraphStore implements GraphStore {
       await this.exec(
         `COPY (MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties) TO '${path}'`,
       );
-      files[`nodes_${type}.parquet`] = this.lbug.FS.readFile(path);
-      this.lbug.FS.unlink(path);
+      files[`nodes_${type}.parquet`] = await lbug.FS.readFile(path);
+      await lbug.FS.unlink(path);
       console.log(`[LadybugStore] exported ${type}: ${count} nodes`);
     }
 
@@ -834,8 +833,8 @@ export class LadybugGraphStore implements GraphStore {
       await this.exec(
         `COPY (MATCH (a)-[r:RELATES]->(b) RETURN a.id AS \`from\`, b.id AS \`to\`, r.id AS id, r.type AS type, r.properties AS properties) TO '${REL_PARQUET_PATH}'`,
       );
-      files['relationships.parquet'] = this.lbug.FS.readFile(REL_PARQUET_PATH);
-      this.lbug.FS.unlink(REL_PARQUET_PATH);
+      files['relationships.parquet'] = await lbug.FS.readFile(REL_PARQUET_PATH);
+      await lbug.FS.unlink(REL_PARQUET_PATH);
       console.log(`[LadybugStore] exported ${relCount} relationships`);
     }
 
@@ -887,7 +886,7 @@ export class LadybugGraphStore implements GraphStore {
    */
   async flush(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
-    await this.ready;
+    await this.ensureReady();
 
     const rawNodes = this.pendingNodes;
     const rels = this.pendingRels;
@@ -961,9 +960,9 @@ export class LadybugGraphStore implements GraphStore {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(chunk);
         const path = `/nodes_${type}.csv`;
-        this.lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
-        this.lbug.FS.unlink(path);
+        await lbug.FS.unlink(path);
       }
     }
 
@@ -991,7 +990,7 @@ export class LadybugGraphStore implements GraphStore {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = `/rels_${key}.csv`;
-          this.lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+          await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
           try {
             await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
           } catch (err) {
@@ -1015,7 +1014,7 @@ export class LadybugGraphStore implements GraphStore {
               }
             }
           }
-          this.lbug.FS.unlink(path);
+          await lbug.FS.unlink(path);
         }
       }
     }

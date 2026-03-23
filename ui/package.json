@@ -14,12 +14,12 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
+    "@ladybugdb/wasm-core": "0.15.2",
     "@langchain/anthropic": "^1.3.23",
     "@langchain/core": "^1.1.32",
     "@langchain/google-genai": "^2.1.26",
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.3.0",
-    "@lbug/lbug-wasm": "^0.13.1",
     "@opentrace/components": "file:../components",
     "@react-sigma/core": "^5.0.6",
     "@react-sigma/layout-forceatlas2": "^5.0.6",
@@ -38,6 +38,8 @@
     "react-window": "^2.2.7",
     "remark-gfm": "^4.0.1",
     "sigma": "^3.0.2",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0",
     "web-tree-sitter": "^0.26.6",
     "zod": "^4.3.6"
   },

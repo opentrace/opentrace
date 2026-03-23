@@ -21,6 +21,7 @@ export function createMockStore(
   overrides?: Partial<Record<keyof GraphStore, unknown>>,
 ): GraphStore {
   return {
+    hasData: vi.fn().mockReturnValue(false),
     fetchGraph: vi.fn().mockResolvedValue({ nodes: [], links: [] }),
     fetchStats: vi
       .fn()
@@ -29,6 +30,7 @@ export function createMockStore(
     importBatch: vi
       .fn()
       .mockResolvedValue({ nodes_created: 0, relationships_created: 0 }),
+    flush: vi.fn().mockResolvedValue(undefined),
     storeSource: vi.fn(),
     fetchSource: vi.fn().mockResolvedValue(null),
     searchNodes: vi.fn().mockResolvedValue([]),

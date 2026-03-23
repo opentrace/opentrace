@@ -16,6 +16,8 @@
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 import {
   existsSync,
   readFileSync,
@@ -138,7 +140,6 @@ function copyComponentsWasm(): Plugin {
       mkdirSync(outDir, { recursive: true });
       for (const file of readdirSync(wasmDir)) {
         if (!file.endsWith('.wasm')) continue;
-        // Don't overwrite files already in ui/public/ (copied by Vite)
         const dest = join(outDir, file);
         if (!existsSync(dest)) {
           copyFileSync(join(wasmDir, file), dest);
@@ -188,7 +189,13 @@ export default defineConfig(({ mode }) => {
       },
       dedupe: ['react', 'react-dom'],
     },
-    plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
+    plugins: [
+      wasm(),
+      topLevelAwait(),
+      react(),
+      crossOriginIsolation(),
+      copyComponentsWasm(),
+    ],
     build: {
       sourcemap: true,
     },
@@ -200,7 +207,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      exclude: ['web-tree-sitter', '@lbug/lbug-wasm'],
+      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core'],
     },
     worker: {
       format: 'es',
