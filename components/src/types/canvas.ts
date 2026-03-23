@@ -79,6 +79,8 @@ export interface GraphCanvasProps {
   onStageClick?: () => void;
   /** Called when the optimize status changes. */
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
+  /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
+  layoutMode?: 'spread' | 'compact';
   /** CSS class name for the container div. */
   className?: string;
   /** Inline styles for the container div. */
@@ -115,4 +117,8 @@ export interface GraphCanvasHandle {
   reheat?: () => void;
   fitToScreen?: () => void;
   setZoomSizeExponent?: (exponent: number) => void;
+  /** Switch layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
+  setLayoutMode?: (mode: 'spread' | 'compact') => void;
+  /** Update compact-mode-specific parameters. */
+  updateCompactConfig?: (config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => void;
 }

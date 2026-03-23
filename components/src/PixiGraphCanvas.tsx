@@ -77,6 +77,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onEdgeClick,
       onStageClick,
       onOptimizeStatus,
+      layoutMode: layoutModeProp = 'spread',
       className,
       style,
     } = props;
@@ -173,7 +174,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       boostTheta, resetTheta,
       setChargeStrength, setLinkDistance, setCenterStrength,
       setCommunityGravity,
-    } = usePixiLayout(nodes, links, communityData, layoutConfig, onLayoutTick);
+      setLayoutMode, updateCompactConfig,
+    } = usePixiLayout(nodes, links, communityData, layoutConfig, onLayoutTick, layoutModeProp);
 
     // ── Sync layout settled state to renderer for edge redraw gating ────
     useEffect(() => {
@@ -352,8 +354,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         setZoomSizeExponent: (exponent: number) => {
           rendererRef.current?.setZoomSizeExponent(exponent);
         },
+        setLayoutMode,
+        updateCompactConfig,
       }),
-      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity],
+      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig],
     );
 
     return (

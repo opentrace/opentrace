@@ -301,8 +301,6 @@ const GraphViewer = memo(
         null,
       );
       const [hops, setHops] = useState(2);
-      const [zoomOnSelect, setZoomOnSelect] = useState(true);
-      const [flatMode, setFlatMode] = useState(false);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
@@ -354,6 +352,9 @@ const GraphViewer = memo(
         }
       }, []);
       const ps = <T,>(key: string, def: T): T => (stored[key] as T) ?? def;
+      const [zoomOnSelect, setZoomOnSelect] = useState(() =>
+        ps('zoomOnSelect', true),
+      );
       const [repulsion, setRepulsion] = useState(() => ps('repulsion', 120));
       const [labelsVisible, setLabelsVisible] = useState(() =>
         ps('labelsVisible', true),
@@ -364,17 +365,24 @@ const GraphViewer = memo(
         ps('pixiLinkDist', 200),
       );
       const [pixiCenter, setPixiCenter] = useState(() => ps('pixiCenter', 0.3));
-      const [pixiEdgesEnabled, setPixiEdgesEnabled] = useState(() =>
-        ps('pixiEdgesEnabled', true),
-      );
-      const [pixiCommunityGravity, setPixiCommunityGravity] = useState(() =>
-        ps('pixiCommunityGravity', false),
-      );
-      const [pixiCommunityStr, setPixiCommunityStr] = useState(() =>
-        ps('pixiCommunityStr', 0.1),
-      );
       const [pixiZoomExponent, setPixiZoomExponent] = useState(() =>
         ps('pixiZoomExponent', 0.8),
+      );
+      // Layout mode + compact-specific config
+      const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>(() =>
+        ps('layoutMode', 'spread'),
+      );
+      const [compactRadial, setCompactRadial] = useState(() =>
+        ps('compactRadial', 8),
+      );
+      const [compactCommunity, setCompactCommunity] = useState(() =>
+        ps('compactCommunity', 10),
+      );
+      const [compactCentering, setCompactCentering] = useState(() =>
+        ps('compactCentering', 5),
+      );
+      const [compactRadius, setCompactRadius] = useState(() =>
+        ps('compactRadius', 32),
       );
 
       // Persist settings to localStorage when they change
@@ -382,23 +390,29 @@ const GraphViewer = memo(
         const settings = {
           repulsion,
           labelsVisible,
+          zoomOnSelect,
           pixiLinkDist,
           pixiCenter,
-          pixiEdgesEnabled,
-          pixiCommunityGravity,
-          pixiCommunityStr,
           pixiZoomExponent,
+          layoutMode,
+          compactRadial,
+          compactCommunity,
+          compactCentering,
+          compactRadius,
         };
         localStorage.setItem('graph-settings', JSON.stringify(settings));
       }, [
         repulsion,
         labelsVisible,
+        zoomOnSelect,
         pixiLinkDist,
         pixiCenter,
-        pixiEdgesEnabled,
-        pixiCommunityGravity,
-        pixiCommunityStr,
         pixiZoomExponent,
+        layoutMode,
+        compactRadial,
+        compactCommunity,
+        compactCentering,
+        compactRadius,
       ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
@@ -440,10 +454,9 @@ const GraphViewer = memo(
       const layoutConfig = useMemo(
         () => ({
           ...DEFAULT_LAYOUT_CONFIG,
-          ...(flatMode ? { flatMode: true } : {}),
           fa2ScalingRatio: repulsion,
         }),
-        [flatMode, repulsion],
+        [repulsion],
       );
 
       // Compute Louvain communities on the full graph (before filtering, so
@@ -1456,6 +1469,7 @@ const GraphViewer = memo(
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
             onOptimizeStatus={setOptimizeStatus}
+            layoutMode={layoutMode}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
@@ -1474,8 +1488,6 @@ const GraphViewer = memo(
               }}
               colorMode={colorMode}
               onColorModeChange={setColorMode}
-              flatMode={flatMode}
-              onFlatModeChange={setFlatMode}
               isPhysicsRunning={physicsRunning}
               onStopPhysics={() => {
                 canvasRef.current?.stopPhysics();
@@ -1497,21 +1509,36 @@ const GraphViewer = memo(
                 setPixiCenter(v);
                 canvasRef.current?.setCenterStrength?.(v);
               }}
-              edgesEnabled={pixiEdgesEnabled}
-              onEdgesEnabledChange={(v) => {
-                setPixiEdgesEnabled(v);
-                canvasRef.current?.setEdgesEnabled?.(v);
+              layoutMode={layoutMode}
+              onLayoutModeChange={(mode) => {
+                setLayoutMode(mode);
+                canvasRef.current?.setLayoutMode?.(mode);
               }}
-              communityGravityEnabled={pixiCommunityGravity}
-              onCommunityGravityEnabledChange={(v) => {
-                setPixiCommunityGravity(v);
-                canvasRef.current?.setCommunityGravity?.(v, pixiCommunityStr);
+              radialStrength={compactRadial}
+              onRadialStrengthChange={(v) => {
+                setCompactRadial(v);
+                canvasRef.current?.updateCompactConfig?.({
+                  radialStrength: v / 100,
+                });
               }}
-              communityGravityStrength={pixiCommunityStr}
-              onCommunityGravityStrengthChange={(v) => {
-                setPixiCommunityStr(v);
-                if (pixiCommunityGravity)
-                  canvasRef.current?.setCommunityGravity?.(true, v);
+              communityPull={compactCommunity}
+              onCommunityPullChange={(v) => {
+                setCompactCommunity(v);
+                canvasRef.current?.updateCompactConfig?.({
+                  communityPull: v / 100,
+                });
+              }}
+              centeringStrength={compactCentering}
+              onCenteringStrengthChange={(v) => {
+                setCompactCentering(v);
+                canvasRef.current?.updateCompactConfig?.({
+                  centeringStrength: v / 100,
+                });
+              }}
+              circleRadius={compactRadius}
+              onCircleRadiusChange={(v) => {
+                setCompactRadius(v);
+                canvasRef.current?.updateCompactConfig?.({ radiusScale: v });
               }}
               zoomSizeExponent={pixiZoomExponent}
               onZoomSizeExponentChange={(v) => {
@@ -1635,6 +1662,40 @@ const GraphViewer = memo(
                 <line x1="1" y1="14" x2="7" y2="14" />
                 <line x1="9" y1="8" x2="15" y2="8" />
                 <line x1="17" y1="16" x2="23" y2="16" />
+              </svg>
+            </button>
+            <button
+              className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
+              onClick={() => {
+                const next = layoutMode === 'spread' ? 'compact' : 'spread';
+                setLayoutMode(next);
+                canvasRef.current?.setLayoutMode?.(next);
+              }}
+              title={
+                layoutMode === 'compact'
+                  ? 'Switch to spread layout'
+                  : 'Switch to compact layout'
+              }
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {layoutMode === 'compact' ? (
+                  /* Expand/spread icon */
+                  <>
+                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                  </>
+                ) : (
+                  /* Compact/circle icon */
+                  <circle cx="12" cy="12" r="9" />
+                )}
               </svg>
             </button>
             <button

@@ -68,7 +68,6 @@ export default function GraphPlayground({
   // ── Color / Display ────────────────────────────────────────────────
   const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
   const [labelsVisible, setLabelsVisible] = useState(true);
-  const [flatMode, setFlatMode] = useState(false);
 
   // ── Physics ────────────────────────────────────────────────────────
   const [repulsion, setRepulsion] = useState(100);
@@ -78,8 +77,7 @@ export default function GraphPlayground({
   const [linkDistance, setLinkDistance] = useState(200);
   const [centerStrength, setCenterStrength] = useState(0.3);
   const [edgesEnabled, setEdgesEnabled] = useState(true);
-  const [communityGravityEnabled, setCommunityGravityEnabled] = useState(false);
-  const [communityGravityStrength, setCommunityGravityStrength] = useState(0.1);
+  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>('spread');
   const [zoomSizeExponent, setZoomSizeExponent] = useState(0.8);
 
   // ── Filters ────────────────────────────────────────────────────────
@@ -369,8 +367,6 @@ export default function GraphPlayground({
                 onLabelsVisibleChange={setLabelsVisible}
                 colorMode={colorMode}
                 onColorModeChange={setColorMode}
-                flatMode={flatMode}
-                onFlatModeChange={setFlatMode}
                 isPhysicsRunning={isPhysicsRunning}
                 onStopPhysics={handleStopPhysics}
                 onStartPhysics={handleStartPhysics}
@@ -390,15 +386,10 @@ export default function GraphPlayground({
                   setEdgesEnabled(v);
                   graphRef.current?.setEdgesEnabled?.(v);
                 }}
-                communityGravityEnabled={communityGravityEnabled}
-                onCommunityGravityEnabledChange={(v) => {
-                  setCommunityGravityEnabled(v);
-                  graphRef.current?.setCommunityGravity?.(v, communityGravityStrength);
-                }}
-                communityGravityStrength={communityGravityStrength}
-                onCommunityGravityStrengthChange={(v) => {
-                  setCommunityGravityStrength(v);
-                  graphRef.current?.setCommunityGravity?.(communityGravityEnabled, v);
+                layoutMode={layoutMode}
+                onLayoutModeChange={(mode) => {
+                  setLayoutMode(mode);
+                  graphRef.current?.setLayoutMode?.(mode);
                 }}
                 zoomSizeExponent={zoomSizeExponent}
                 onZoomSizeExponentChange={(v) => {
