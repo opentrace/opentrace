@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import GraphPlayground from './GraphPlayground';
 import { DATASETS } from './datasets';
@@ -27,18 +43,20 @@ type Story = StoryObj<typeof GraphPlayground>;
 /** Helper to find dataset by name */
 const ds = (name: string) => DATASETS.find((d) => d.name === name)!;
 
-export const Microservices: Story = {
+export const WebApp: Story = {
+  name: 'Web App',
   args: {
-    dataset: ds('Microservices'),
+    dataset: ds('Web App'),
     renderer: 'sigma',
     width: 900,
     height: 600,
   },
 };
 
-export const CodeStructure: Story = {
+export const GoMonorepo: Story = {
+  name: 'Go Monorepo',
   args: {
-    dataset: ds('Code Structure'),
+    dataset: ds('Go Monorepo'),
     renderer: 'sigma',
     width: 900,
     height: 600,
@@ -151,7 +169,7 @@ export const PixiRenderer: Story = {
   name: 'Pixi.js Renderer',
   tags: ['!test'],
   args: {
-    dataset: ds('Microservices'),
+    dataset: ds('Web App'),
     renderer: 'pixi',
     width: 900,
     height: 600,

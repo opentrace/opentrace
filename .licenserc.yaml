@@ -46,5 +46,6 @@ header:
     - ".git"
     - "benchmark/data/**"
     - "benchmark/workdir/**"
+    - "*.log"
 
   comment: on-failure
