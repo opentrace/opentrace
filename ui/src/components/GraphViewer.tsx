@@ -927,8 +927,6 @@ const GraphViewer = memo(
                 {...toIndexingProps(jobState, activeRepoUrl)}
                 stages={INDEXING_STAGES}
                 onClose={onJobClose}
-                onCancel={onJobCancel}
-                onMinimize={onJobMinimize}
               />
             )}
 
@@ -1250,6 +1248,7 @@ const GraphViewer = memo(
                   <button
                     className="add-repo-btn"
                     onClick={onAddRepoOpen}
+                    disabled
                     title="Add Repository"
                   >
                     <svg
@@ -1386,8 +1385,6 @@ const GraphViewer = memo(
               {...toIndexingProps(jobState, activeRepoUrl)}
               stages={INDEXING_STAGES}
               onClose={onJobClose}
-              onCancel={onJobCancel}
-              onMinimize={onJobMinimize}
             />
           )}
 

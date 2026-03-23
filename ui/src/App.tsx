@@ -89,7 +89,10 @@ function App() {
     setJobExpanded(false);
   }, [cancelJob]);
 
-  const handleJobMinimize = useCallback(() => minimizeJob(), [minimizeJob]);
+  const handleJobMinimize = useCallback(() => {
+    minimizeJob();
+    setJobExpanded(false);
+  }, [minimizeJob]);
   const handleJobExpand = useCallback(() => setJobExpanded(true), []);
   const handleAddRepoOpen = useCallback(() => setShowAddRepo(true), []);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);

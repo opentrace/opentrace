@@ -57,10 +57,15 @@
   transition: all 0.2s;
 }
 
-.add-repo-btn:hover {
+.add-repo-btn:hover:not(:disabled) {
   background: color-mix(in oklch, var(--primary) 10%, transparent);
   color: var(--primary);
   border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.add-repo-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* FilterPanel styles are now in @opentrace/components */
