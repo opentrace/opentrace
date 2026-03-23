@@ -162,7 +162,10 @@ export default function ChatPanel({
   useEffect(() => {
     if (!showHistory) return;
     const handler = (e: MouseEvent) => {
-      if (historyRef.current && !historyRef.current.contains(e.target as Node)) {
+      if (
+        historyRef.current &&
+        !historyRef.current.contains(e.target as Node)
+      ) {
         setShowHistory(false);
       }
     };
