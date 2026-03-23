@@ -1,0 +1,23 @@
+name: Cleanup Preview
+
+on:
+  pull_request_target:
+    types: [closed, unlabeled]
+
+jobs:
+  trigger-cleanup:
+    name: Cleanup Preview
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'deploy-preview')) ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview')
+    steps:
+      - name: Trigger preview cleanup
+        run: |
+          gh api repos/opentrace/opentrace-deployment/dispatches \
+            -f event_type=submodule-preview-cleanup \
+            -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}' \
+            -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}' \
+            -f 'client_payload[trigger_run_id]=${{ github.run_id }}'
+        env:
+          GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
