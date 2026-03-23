@@ -104,6 +104,7 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
+    "idb": "^8.0.3",
     "mermaid": "^11.6.0",
     "parquet-wasm": "^0.7.1",
     "prism-react-renderer": "^2.4.1",
