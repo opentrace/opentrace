@@ -228,6 +228,59 @@ describe('indexPRIntoGraph', () => {
     await indexPRIntoGraph(store, makePR({ body: '' }), meta);
     expect(store.storeSource).not.toHaveBeenCalled();
   });
+
+  it('skips File/Directory nodes that already exist in the store', async () => {
+    const store = createMockStore({
+      importBatch: vi
+        .fn()
+        .mockResolvedValue({ nodes_created: 1, relationships_created: 2 }),
+      // Simulate src/main.ts and the src/ directory already indexed
+      getNode: vi.fn().mockImplementation((id: string) => {
+        if (id === 'owner/repo/src/main.ts')
+          return Promise.resolve({ id, type: 'File', name: 'main.ts' });
+        if (id === 'owner/repo/src')
+          return Promise.resolve({ id, type: 'Directory', name: 'src' });
+        return Promise.resolve(null);
+      }),
+    });
+    const pr = makePR({
+      files: [
+        {
+          path: 'src/main.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+    });
+    await indexPRIntoGraph(store, pr, meta);
+
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+
+    // Should NOT include the existing File or Directory node
+    const fileNodes = batch.nodes.filter(
+      (n: { type: string }) => n.type === 'File',
+    );
+    const dirNodes = batch.nodes.filter(
+      (n: { type: string }) => n.type === 'Directory',
+    );
+    expect(fileNodes).toHaveLength(0);
+    expect(dirNodes).toHaveLength(0);
+
+    // Should still include the CHANGES edge
+    const changesEdges = batch.relationships.filter(
+      (r: { type: string }) => r.type === 'CHANGES',
+    );
+    expect(changesEdges).toHaveLength(1);
+    expect(changesEdges[0].target_id).toBe('owner/repo/src/main.ts');
+
+    // Should NOT include defined_in edges for existing nodes
+    const definedInEdges = batch.relationships.filter(
+      (r: { type: string }) => r.type === 'defined_in',
+    );
+    expect(definedInEdges).toHaveLength(0);
+  });
 });
 
 describe('indexMultiplePRs', () => {

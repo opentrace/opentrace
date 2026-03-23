@@ -98,26 +98,47 @@ export async function indexPRIntoGraph(
     ],
   };
 
-  // Collect all directory paths we need to ensure exist.
-  // Use a Set to avoid creating duplicate nodes/edges.
+  // Build the set of File/Directory IDs we need, then check which already
+  // exist in the store so we only create genuinely new nodes. The store's
+  // COPY FROM does not support MERGE, so duplicate primary keys throw.
   const ensuredDirs = new Set<string>();
+  const neededIds = new Set<string>();
+
+  for (const file of pr.files) {
+    neededIds.add(`${repoId}/${file.path}`);
+    const parts = file.path.split('/');
+    for (let i = parts.length - 1; i >= 1; i--) {
+      neededIds.add(`${repoId}/${parts.slice(0, i).join('/')}`);
+    }
+  }
+
+  // Probe the store for existing nodes — getNode returns null for missing
+  const existingIds = new Set<string>();
+  await Promise.all(
+    [...neededIds].map(async (id) => {
+      try {
+        const node = await store.getNode(id);
+        if (node) existingIds.add(id);
+      } catch {
+        /* treat lookup failure as "not found" */
+      }
+    }),
+  );
 
   for (const file of pr.files) {
     const fileId = `${repoId}/${file.path}`;
 
-    // Ensure the File node exists — the store uses MERGE so this is
-    // safe even if the file was already indexed during repo ingestion.
-    // Use basename as name to match the code indexer convention.
-    const fileName = file.path.split('/').pop() || file.path;
-    batch.nodes.push({
-      id: fileId,
-      type: 'File',
-      name: fileName,
-      properties: { path: file.path },
-    });
+    if (!existingIds.has(fileId)) {
+      const fileName = file.path.split('/').pop() || file.path;
+      batch.nodes.push({
+        id: fileId,
+        type: 'File',
+        name: fileName,
+        properties: { path: file.path },
+      });
+    }
 
     // Ensure the full directory chain exists so defined_in edges connect.
-    // Walk from the file's parent dir up to the repo root.
     const parts = file.path.split('/');
     for (let i = parts.length - 1; i >= 1; i--) {
       const dirPath = parts.slice(0, i).join('/');
@@ -125,36 +146,43 @@ export async function indexPRIntoGraph(
       ensuredDirs.add(dirPath);
 
       const dirId = `${repoId}/${dirPath}`;
-      const dirName = dirPath.split('/').pop() || dirPath;
-      batch.nodes.push({
-        id: dirId,
-        type: 'Directory',
-        name: dirName,
-        properties: { path: dirPath },
-      });
+      if (!existingIds.has(dirId)) {
+        const dirName = dirPath.split('/').pop() || dirPath;
+        batch.nodes.push({
+          id: dirId,
+          type: 'Directory',
+          name: dirName,
+          properties: { path: dirPath },
+        });
+      }
 
-      // Link directory to its parent (or repo root)
-      const parentDirPath = parts.slice(0, i - 1).join('/');
-      const parentId = parentDirPath ? `${repoId}/${parentDirPath}` : repoId;
+      // Only add defined_in edge if the directory node is new
+      if (!existingIds.has(dirId)) {
+        const parentDirPath = parts.slice(0, i - 1).join('/');
+        const parentId = parentDirPath ? `${repoId}/${parentDirPath}` : repoId;
+        batch.relationships.push({
+          id: `${dirId}->defined_in->${parentId}`,
+          type: 'defined_in',
+          source_id: dirId,
+          target_id: parentId,
+        });
+      }
+    }
+
+    // Only add file→directory edge if the file node is new
+    if (!existingIds.has(fileId)) {
+      const lastSlash = file.path.lastIndexOf('/');
+      const parentId =
+        lastSlash > 0 ? `${repoId}/${file.path.slice(0, lastSlash)}` : repoId;
       batch.relationships.push({
-        id: `${dirId}->defined_in->${parentId}`,
+        id: `${fileId}->defined_in->${parentId}`,
         type: 'defined_in',
-        source_id: dirId,
+        source_id: fileId,
         target_id: parentId,
       });
     }
 
-    // Link file to its immediate parent directory (or repo root)
-    const lastSlash = file.path.lastIndexOf('/');
-    const parentId =
-      lastSlash > 0 ? `${repoId}/${file.path.slice(0, lastSlash)}` : repoId;
-    batch.relationships.push({
-      id: `${fileId}->defined_in->${parentId}`,
-      type: 'defined_in',
-      source_id: fileId,
-      target_id: parentId,
-    });
-
+    // Always add the CHANGES edge — this is the PR-specific data
     batch.relationships.push({
       id: `${prId}->changes:${fileId}`,
       type: 'CHANGES',
