@@ -198,6 +198,13 @@ export default defineConfig(({ mode }) => {
     ],
     build: {
       sourcemap: true,
+      commonjsOptions: {
+        // @ladybugdb/wasm-core is a CJS bundle with internal require()
+        // chains that break Rollup's default CJS-to-ESM conversion.
+        // Force it through the CJS plugin with proper require handling.
+        include: [/node_modules/],
+        transformMixedEsModules: true,
+      },
     },
     server: {
       port,
