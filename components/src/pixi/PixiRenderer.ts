@@ -166,7 +166,7 @@ export class PixiRenderer {
 
   // Zoom-size exponent: controls how nodes/edges scale with zoom.
   // 0 = nodes scale fully with zoom (world-space), 1 = fixed screen size.
-  // Default 0.5 matches Sigma's ZOOM_SIZE_EXPONENT=0.7 feel.
+  // Default 0.5 matches ZOOM_SIZE_EXPONENT=0.7 feel.
   private zoomSizeExponent = 0.8;
 
   // Animation cancel
@@ -863,7 +863,7 @@ export class PixiRenderer {
 
   // ─── Labels ───────────────────────────────────────────────────────
 
-  /** Create a label Text for a node. Positioned to the right, matching Sigma style. */
+  /** Create a label Text for a node. Positioned to the right of the node. */
   private createLabel(node: PixiNode): Text {
     const invScale = this.zoomInvScale();
     const label = new Text({

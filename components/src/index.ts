@@ -22,13 +22,11 @@
  *   import '@opentrace/components/style.css'; // optional base styles
  */
 
-// ─── Main component ─────────────────────────────────────────────────────
-export { default as Graph } from './GraphCanvas';
-export { default as GraphCanvas } from './GraphCanvas';
-export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './GraphCanvas';
-
-// ─── Pixi.js renderer (alternative to Sigma.js GraphCanvas) ────────────
+// ─── Main component (Pixi.js renderer) ──────────────────────────────────
+export { default as Graph } from './PixiGraphCanvas';
+export { default as GraphCanvas } from './PixiGraphCanvas';
 export { default as PixiGraphCanvas } from './PixiGraphCanvas';
+export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './types/canvas';
 export { type PixiScaleBreakpoint, DEFAULT_BREAKPOINTS, selectBreakpoint } from './pixi/scaleBreakpoints';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
@@ -43,14 +41,8 @@ export { useGraphVisuals } from './graph/useGraphVisuals';
 export { useCommunities } from './graph/useCommunities';
 export { useHighlights } from './graph/useHighlights';
 
-// ─── Layout pipeline ────────────────────────────────────────────────────
-export { default as LayoutPipeline } from './graph/LayoutPipeline';
-export type { OptimizeStatus, LayoutControl } from './graph/LayoutPipeline';
-
-// ─── Sigma utilities ────────────────────────────────────────────────────
-export { zoomToNodes, zoomToFit } from './sigma/zoomToNodes';
-export { drawNodeHover, setHoveredNodeKey, flushTooltips } from './graph/drawNodeHover';
-export { drawNodeLabel, resetLabelGrid } from './graph/drawNodeLabel';
+// ─── Layout types ────────────────────────────────────────────────────────
+export type { OptimizeStatus, LayoutControl } from './graph/LayoutPipelineTypes';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export type {

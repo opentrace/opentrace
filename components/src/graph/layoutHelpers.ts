@@ -15,8 +15,7 @@
  */
 
 /**
- * Shared layout helpers used by both the Sigma (useGraphInstance) and
- * Pixi (usePixiLayout) rendering paths.
+ * Shared layout helpers used by the rendering pipeline.
  */
 
 import type { GraphNode } from './types';

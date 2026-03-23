@@ -95,10 +95,6 @@ export function useGraphFilters(
       return attrs;
     });
 
-    // Passing hints with a layout-affecting field ('type') forces sigma to
-    // use skipIndexation: false, which re-indexes edges during refresh.
-    // This avoids the "edge can't be repaint" race when edges exist in
-    // graphology but haven't been indexed by sigma's async process() yet.
     graph.updateEachEdgeAttributes(
       (_id, attrs, source, target) => {
         // Virtual community edges must always stay hidden

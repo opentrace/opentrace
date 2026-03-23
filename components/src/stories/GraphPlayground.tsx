@@ -16,8 +16,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { GraphNode } from '../types/graph';
-import type { GraphCanvasHandle } from '../GraphCanvas';
-import GraphCanvas from '../GraphCanvas';
+import type { GraphCanvasHandle } from '../types/canvas';
 import PixiGraphCanvas from '../PixiGraphCanvas';
 import GraphLegend from '../panels/GraphLegend';
 import FilterPanel from '../panels/FilterPanel';
@@ -32,8 +31,6 @@ import { DATASETS } from './datasets';
 export interface GraphPlaygroundProps {
   /** Initial dataset to display */
   dataset?: Dataset;
-  /** Initial renderer to use */
-  renderer?: 'sigma' | 'pixi';
   /** Width override (defaults to 100% of container) */
   width?: number;
   /** Height override */
@@ -42,7 +39,6 @@ export interface GraphPlaygroundProps {
 
 export default function GraphPlayground({
   dataset: initialDataset,
-  renderer: initialRenderer = 'sigma',
   width: widthProp,
   height: heightProp,
 }: GraphPlaygroundProps) {
@@ -51,9 +47,6 @@ export default function GraphPlayground({
     initialDataset ?? DATASETS[0],
   );
   const { nodes, links } = currentDataset;
-
-  // ── Renderer selection ─────────────────────────────────────────────
-  const [renderer, setRenderer] = useState(initialRenderer);
 
   // ── Dimensions ─────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
@@ -234,11 +227,9 @@ export default function GraphPlayground({
   const handleRepulsionChange = useCallback(
     (value: number) => {
       setRepulsion(value);
-      if (renderer === 'pixi') {
-        graphRef.current?.setChargeStrength?.(-value);
-      }
+      graphRef.current?.setChargeStrength?.(-value);
     },
-    [renderer],
+    [],
   );
 
   // ── Visible counts (after filtering) ───────────────────────────────
@@ -254,7 +245,6 @@ export default function GraphPlayground({
 
   // ── Render ─────────────────────────────────────────────────────────
 
-  const Canvas = renderer === 'pixi' ? PixiGraphCanvas : GraphCanvas;
 
   return (
     <div
@@ -270,7 +260,7 @@ export default function GraphPlayground({
         overflow: 'hidden',
       }}
     >
-      {/* Dataset & renderer selector */}
+      {/* Dataset selector */}
       <div
         style={{
           display: 'flex',
@@ -306,24 +296,6 @@ export default function GraphPlayground({
           {currentDataset.description}
         </span>
         <span style={{ flex: 1 }} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          Renderer:
-          <select
-            value={renderer}
-            onChange={(e) => setRenderer(e.target.value as 'sigma' | 'pixi')}
-            style={{
-              background: '#21262d',
-              color: '#e6edf3',
-              border: '1px solid #30363d',
-              borderRadius: 4,
-              padding: '3px 8px',
-              fontSize: 12,
-            }}
-          >
-            <option value="sigma">Sigma.js</option>
-            <option value="pixi">Pixi.js</option>
-          </select>
-        </label>
         <button
           onClick={() => setShowFilters((v) => !v)}
           style={{
@@ -402,7 +374,7 @@ export default function GraphPlayground({
                 isPhysicsRunning={isPhysicsRunning}
                 onStopPhysics={handleStopPhysics}
                 onStartPhysics={handleStartPhysics}
-                pixiMode={renderer === 'pixi'}
+                pixiMode
                 linkDistance={linkDistance}
                 onLinkDistanceChange={(v) => {
                   setLinkDistance(v);
@@ -442,8 +414,8 @@ export default function GraphPlayground({
 
         {/* Graph area */}
         <div style={{ position: 'relative', flex: 1 }}>
-          <Canvas
-            key={`${renderer}-${currentDataset.name}`}
+          <PixiGraphCanvas
+            key={currentDataset.name}
             ref={graphRef}
             nodes={nodes}
             links={links}
