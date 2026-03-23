@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from '@storybook/test';
+import { fn } from 'storybook/test';
 import DiscoverPanel from './DiscoverPanel';
 import type { TreeNodeData } from './types';
 

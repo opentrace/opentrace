@@ -116,6 +116,7 @@ export const Nodes15000: Story = {
 
 export const Nodes20000: Story = {
   name: '20,000 nodes',
+  tags: ['!test'],
   args: {
     dataset: ds('20,000 nodes'),
     renderer: 'pixi',
@@ -126,6 +127,7 @@ export const Nodes20000: Story = {
 
 export const Nodes25000: Story = {
   name: '25,000 nodes',
+  tags: ['!test'],
   args: {
     dataset: ds('25,000 nodes'),
     renderer: 'pixi',
@@ -136,6 +138,7 @@ export const Nodes25000: Story = {
 
 export const Nodes30000: Story = {
   name: '30,000 nodes',
+  tags: ['!test'],
   args: {
     dataset: ds('30,000 nodes'),
     renderer: 'pixi',
@@ -146,6 +149,7 @@ export const Nodes30000: Story = {
 
 export const PixiRenderer: Story = {
   name: 'Pixi.js Renderer',
+  tags: ['!test'],
   args: {
     dataset: ds('Microservices'),
     renderer: 'pixi',
