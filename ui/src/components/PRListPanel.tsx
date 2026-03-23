@@ -127,6 +127,7 @@ export default function PRListPanel({
 
   const handleIndexPR = async (pr: PRDetail) => {
     await indexPRIntoGraph(store, pr, prClient.meta);
+    await store.flush();
     const prId = `${prClient.meta.owner}/${prClient.meta.repo}/pr/${pr.number}`;
     await onGraphChange?.(prId);
   };
@@ -154,6 +155,7 @@ export default function PRListPanel({
     if (errors.length) {
       setError(`Failed to index ${errors.length} PR(s): ${errors.join('; ')}`);
     }
+    await store.flush();
     await onGraphChange?.(lastPrId);
     setIndexingAll(false);
   };

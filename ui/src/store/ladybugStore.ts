@@ -61,6 +61,7 @@ const NODE_TYPES = [
   'Package',
   'Class',
   'Function',
+  'PullRequest',
 ] as const;
 type NodeType = (typeof NODE_TYPES)[number];
 
@@ -80,6 +81,8 @@ const REL_PAIRS: readonly [NodeType, NodeType][] = [
   ['Directory', 'Directory'],
   ['Directory', 'Repository'],
   ['Repository', 'Package'],
+  ['PullRequest', 'Repository'],
+  ['PullRequest', 'File'],
 ];
 
 /** Set of valid "FromType_ToType" keys for fast lookup. */
