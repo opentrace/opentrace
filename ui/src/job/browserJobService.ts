@@ -37,7 +37,7 @@ import {
   FileCacheStage,
   ExtractStage,
   ResolveStage,
-  SummarizeStage,
+  // SummarizeStage,
   StoreStage,
   PipelineDebugLog,
 } from '@opentrace/components/pipeline';
@@ -46,7 +46,6 @@ import type {
   RepoTree,
   ScanResult,
   PipelineEvent,
-  ConcurrentPipelineEvent,
   GraphNode,
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
@@ -188,6 +187,11 @@ export class BrowserJobService implements JobService {
     // Debug log — attached to window for console access
     const debug = new PipelineDebugLog({ enabled: true });
     (globalThis as Record<string, unknown>).__pipelineDebug = debug;
+
+    // Hoisted so the catch handler can report partial progress
+    let persistedNodes = 0;
+    let persistedRels = 0;
+    let storeStage: StoreStage | undefined;
 
     const run = async () => {
       debug.start();
@@ -334,14 +338,24 @@ export class BrowserJobService implements JobService {
         fileContentMap.set(`${scanResult.repoId}/${file.path}`, file.content);
       }
 
+      // Release raw file strings — source is now compressed in the store's
+      // sourceCache, and parseable content is in fileContentMap (consumed
+      // below by FileCacheStage, then cleared).
+      repoTree.files.length = 0;
+      scanResult.parseableFiles.length = 0;
+
       const fileCacheStage = new FileCacheStage({ fileContentMap });
+
+      // fileContentMap has been consumed by FileCacheStage — clear it so
+      // the raw strings can be GC'd once the cache holds them.
+      fileContentMap.clear();
       const extractStage = new ExtractStage({
         scanResult,
         getContent: (fileId) => fileCacheStage.getContent(fileId),
       });
       const resolveStage = new ResolveStage(extractStage);
-      const summarizeStage = new SummarizeStage();
-      const storeStage = new StoreStage();
+      // const summarizeStage = new SummarizeStage(); // disabled for memory testing
+      storeStage = new StoreStage();
 
       // Pre-feed scanning rels into the store stage
       storeStage.addRelationships(scanningRels);
@@ -358,13 +372,13 @@ export class BrowserJobService implements JobService {
       // 5. Run concurrent pipeline
       const concurrentPipeline = runNodePipeline({
         ctx,
-        stages: [fileCacheStage, extractStage, resolveStage, summarizeStage, storeStage],
+        stages: [fileCacheStage, extractStage, resolveStage, /* summarizeStage, */ storeStage],
         seeds,
       });
 
-      // Final persisted counts — set once by store stage flush, used for DONE
-      let persistedNodes = 0;
-      let persistedRels = 0;
+      // Reset persisted counts for this pipeline run
+      persistedNodes = 0;
+      persistedRels = 0;
 
       // Per-stage counters for UI progress
       const stageCounts: Record<string, number> = {};
@@ -374,6 +388,43 @@ export class BrowserJobService implements JobService {
       const totalSeeds = seeds.length;
       // Track per-stage last-yield time so each stage gets throttled independently
       const stageLastYield: Record<string, number> = {};
+
+      /** Drain buffered nodes from the store stage and persist them. */
+      const drainNodesToStore = async () => {
+        const nodes = storeStage!.drainNodes();
+        if (nodes.length === 0) return;
+        debug.log('store', `draining ${nodes.length} nodes`);
+        await this.store.importBatch({
+          nodes: nodes.map((n) => ({
+            id: n.id,
+            type: n.type,
+            name: n.name,
+            properties: n.properties,
+          })),
+          relationships: [],
+        });
+        await this.store.flush();
+        persistedNodes += nodes.length;
+      };
+
+      /** Drain buffered relationships from the store stage and persist them. */
+      const drainRelsToStore = async () => {
+        const rels = storeStage!.drainRelationships();
+        if (rels.length === 0) return;
+        debug.log('store', `draining ${rels.length} rels`);
+        await this.store.importBatch({
+          nodes: [],
+          relationships: rels.map((r) => ({
+            id: r.id,
+            type: r.type,
+            source_id: r.source_id,
+            target_id: r.target_id,
+            properties: r.properties,
+          })),
+        });
+        await this.store.flush();
+        persistedRels += rels.length;
+      };
 
       for (const event of concurrentPipeline) {
         if (cancelled) break;
@@ -388,6 +439,17 @@ export class BrowserJobService implements JobService {
             const mutation = event.mutation;
             if (mutation && mutation.relationships.length > 0 && event.stage !== 'store') {
               storeStage.addRelationships(mutation.relationships);
+            }
+
+            // After extraction, evict the raw file content from the cache —
+            // the compressed copy in sourceCache is the long-lived version.
+            if (event.stage === 'extract') {
+              fileCacheStage.evict(event.node);
+            }
+
+            // Incrementally persist nodes when the store stage buffer fills
+            if (storeStage.needsDrain()) {
+              await drainNodesToStore();
             }
 
             // Skip UI events for stages without a phase mapping (e.g. cache)
@@ -458,40 +520,22 @@ export class BrowserJobService implements JobService {
                 storeStage.addRelationships(event.mutation.relationships);
               }
 
-              // When the store stage flushes, persist everything to the graph store
-              if (event.stage === 'store' && event.mutation) {
-                const batch = event.mutation;
-                debug.log('store', `flushing ${batch.nodes.length} nodes, ${batch.relationships.length} rels`);
+              // When the store stage flushes, persist remaining nodes then rels
+              if (event.stage === 'store') {
+                const storeStats = storeStage.stats();
+                debug.log('store', `final flush — ${storeStats.nodes} total nodes, ${storeStats.relationships} total rels`);
 
                 channel.push({
                   ...emptyEvent(),
                   kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
                   phase: JobPhase.JOB_PHASE_SUBMITTING,
-                  message: `Persisting ${batch.nodes.length} nodes, ${batch.relationships.length} relationships`,
+                  message: `Persisting ${storeStats.nodes} nodes, ${storeStats.relationships} relationships`,
                 });
 
-                const importResult = await this.store.importBatch({
-                  nodes: batch.nodes.map((n) => ({
-                    id: n.id,
-                    type: n.type,
-                    name: n.name,
-                    properties: n.properties,
-                  })),
-                  relationships: batch.relationships.map((r) => ({
-                    id: r.id,
-                    type: r.type,
-                    source_id: r.source_id,
-                    target_id: r.target_id,
-                    properties: r.properties,
-                  })),
-                });
-
-                await this.store.flush();
-
-                // Use importBatch response as the single source of truth for
-                // persisted counts — may differ from buffer if store deduplicates
-                persistedNodes = importResult.nodes_created;
-                persistedRels = importResult.relationships_created;
+                // Drain any remaining buffered nodes
+                await drainNodesToStore();
+                // Now all nodes are in the DB — safe to persist relationships
+                await drainRelsToStore();
 
                 debug.log('store', `persisted ${persistedNodes} nodes, ${persistedRels} rels`);
 
@@ -575,10 +619,31 @@ export class BrowserJobService implements JobService {
         console.error('[BrowserJobService] pipeline error:', err);
         debug.log('error', `uncaught: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
         debug.dump();
+
+        const isOOM = err instanceof Error &&
+          (err.message.includes('memory') || err.message.includes('out of bounds'));
+        const totalStats = storeStage?.stats();
+        const userMessage = isOOM
+          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes.`
+          : (err instanceof Error ? err.message : String(err));
+
+        // If we persisted anything, show the partial graph before the error
+        if (persistedNodes > 0) {
+          channel.push({
+            ...emptyEvent(),
+            kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+            result: {
+              nodesCreated: persistedNodes,
+              relationshipsCreated: persistedRels,
+              reposProcessed: 1,
+            },
+          });
+        }
+
         channel.push({
           ...emptyEvent(),
           kind: JobEventKind.JOB_EVENT_KIND_ERROR,
-          message: err instanceof Error ? err.message : String(err),
+          message: userMessage,
           errors: [err instanceof Error ? err.stack ?? err.message : String(err)],
         });
       })

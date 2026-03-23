@@ -61,7 +61,6 @@ export interface FileCacheStageConfig {
  * Provides a `getContent(fileId)` method for ExtractStage.
  */
 export class FileCacheStage implements INodeStage {
-  private readonly sourceContentMap: Map<string, string>;
   private readonly cache = new Map<string, string>();
   private bytesUsed = 0;
   private readonly byteLimit: number;
@@ -70,8 +69,21 @@ export class FileCacheStage implements INodeStage {
   private skippedCount = 0;
 
   constructor(config: FileCacheStageConfig) {
-    this.sourceContentMap = config.fileContentMap;
     this.byteLimit = config.byteLimit ?? DEFAULT_CACHE_LIMIT;
+
+    // Eagerly copy content into the cache so the caller can clear the
+    // source map immediately to free memory.
+    for (const [fileId, content] of config.fileContentMap) {
+      const byteSize = content.length * 2;
+      if (this.bytesUsed + byteSize <= this.byteLimit) {
+        this.cache.set(fileId, content);
+        this.bytesUsed += byteSize;
+        this.cachedCount++;
+      } else {
+        this.full = true;
+        this.skippedCount++;
+      }
+    }
   }
 
   name(): string {
@@ -79,31 +91,7 @@ export class FileCacheStage implements INodeStage {
   }
 
   process(node: GraphNode): StageMutation {
-    if (node.type !== 'File') {
-      return { nodes: [node], relationships: [] };
-    }
-
-    const fileId = node.id;
-    const content = this.sourceContentMap.get(fileId);
-    if (content === undefined) {
-      return { nodes: [node], relationships: [] };
-    }
-
-    // Estimate byte size (2 bytes per char for JS strings is conservative;
-    // use length as a good-enough heuristic for UTF-8-heavy codebases)
-    const byteSize = content.length * 2;
-
-    if (!this.full && this.bytesUsed + byteSize <= this.byteLimit) {
-      this.cache.set(fileId, content);
-      this.bytesUsed += byteSize;
-      this.cachedCount++;
-    } else {
-      if (!this.full) {
-        this.full = true;
-      }
-      this.skippedCount++;
-    }
-
+    // Passthrough — caching was done eagerly in the constructor
     return { nodes: [node], relationships: [] };
   }
 
@@ -114,6 +102,18 @@ export class FileCacheStage implements INodeStage {
   /** Read cached content for a file. Returns undefined if not cached. */
   getContent(fileId: string): string | undefined {
     return this.cache.get(fileId);
+  }
+
+  /**
+   * Remove a file from the raw cache (e.g. after extraction is done).
+   * Frees the JS string so GC can reclaim the memory.
+   */
+  evict(fileId: string): void {
+    const content = this.cache.get(fileId);
+    if (content) {
+      this.bytesUsed -= content.length * 2;
+      this.cache.delete(fileId);
+    }
   }
 
   /** Current bytes used by the cache. */
@@ -404,16 +404,31 @@ export class SummarizeStage implements INodeStage {
 
 // --- StoreStage ---
 
+/** Default number of nodes to buffer before signalling a drain. */
+const DEFAULT_DRAIN_THRESHOLD = 500;
+
 /**
- * Terminal stage that accumulates all graph data for batch persistence.
+ * Terminal stage that accumulates graph data for incremental persistence.
  *
  * During process(), nodes are buffered internally (not forwarded further).
- * Upstream stages can push relationships via `addRelationships()`.
- * On flush(), returns the complete batch for the caller to persist.
+ * When the buffer reaches `drainThreshold`, the caller should drain it
+ * via {@link drainNodes} and persist the batch to the store. This keeps
+ * peak memory bounded — the DB ingests data incrementally instead of in
+ * one giant batch at the end.
+ *
+ * Relationships are accumulated separately via `addRelationships()` and
+ * flushed at the end (they require all endpoint nodes to already exist).
  */
 export class StoreStage implements INodeStage {
   private bufferedNodes: GraphNode[] = [];
   private bufferedRelationships: GraphRelationship[] = [];
+  private totalNodes = 0;
+  private totalRelationships = 0;
+  private readonly drainThreshold: number;
+
+  constructor(drainThreshold = DEFAULT_DRAIN_THRESHOLD) {
+    this.drainThreshold = drainThreshold;
+  }
 
   name(): string {
     return 'store';
@@ -421,6 +436,7 @@ export class StoreStage implements INodeStage {
 
   process(node: GraphNode): StageMutation {
     this.bufferedNodes.push(node);
+    this.totalNodes++;
     // Terminal — do not forward nodes
     return { nodes: [], relationships: [] };
   }
@@ -432,21 +448,49 @@ export class StoreStage implements INodeStage {
   addRelationships(rels: GraphRelationship[]): void {
     for (let i = 0; i < rels.length; i++) {
       this.bufferedRelationships.push(rels[i]);
+      this.totalRelationships++;
     }
   }
 
+  /** True when the node buffer has reached the drain threshold. */
+  needsDrain(): boolean {
+    return this.bufferedNodes.length >= this.drainThreshold;
+  }
+
+  /**
+   * Return and clear buffered nodes. The caller should persist these
+   * to the store (importBatch + flush). Called periodically from the
+   * event loop, not just at the end.
+   */
+  drainNodes(): GraphNode[] {
+    const nodes = this.bufferedNodes;
+    this.bufferedNodes = [];
+    return nodes;
+  }
+
+  /**
+   * Return and clear buffered relationships. Called once at the end
+   * after all nodes have been persisted.
+   */
+  drainRelationships(): GraphRelationship[] {
+    const rels = this.bufferedRelationships;
+    this.bufferedRelationships = [];
+    return rels;
+  }
+
   flush(): StageMutation {
+    // Any remaining nodes + all relationships
     return {
       nodes: this.bufferedNodes,
       relationships: this.bufferedRelationships,
     };
   }
 
-  /** Current buffer sizes for debug/progress reporting. */
+  /** Cumulative counts (including already-drained items). */
   stats(): { nodes: number; relationships: number } {
     return {
-      nodes: this.bufferedNodes.length,
-      relationships: this.bufferedRelationships.length,
+      nodes: this.totalNodes,
+      relationships: this.totalRelationships,
     };
   }
 }

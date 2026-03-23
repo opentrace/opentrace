@@ -424,54 +424,46 @@ describe('concurrent pipeline', () => {
   });
 
   describe('FileCacheStage', () => {
-    it('caches file content up to byte limit', () => {
+    it('caches file content eagerly up to byte limit', () => {
       const contentMap = new Map([
         ['repo/a.ts', 'const a = 1;'],
         ['repo/b.ts', 'const b = 2;'],
         ['repo/c.ts', 'const c = 3;'],
       ]);
 
-      // Set a tiny limit so we hit it
+      // Set a tiny limit so only the first file fits
+      // 'const a = 1;' = 13 chars * 2 bytes = 26 bytes
       const cache = new FileCacheStage({
         fileContentMap: contentMap,
-        byteLimit: 30, // ~15 chars * 2 bytes = 30 bytes for first file
+        byteLimit: 30,
       });
 
-      const fileA = { id: 'repo/a.ts', type: 'File', name: 'a.ts', properties: { path: 'a.ts' } };
-      const fileB = { id: 'repo/b.ts', type: 'File', name: 'b.ts', properties: { path: 'b.ts' } };
-      const fileC = { id: 'repo/c.ts', type: 'File', name: 'c.ts', properties: { path: 'c.ts' } };
-
-      // First file fits
-      cache.process(fileA);
+      // Caching happens eagerly in the constructor
       expect(cache.getContent('repo/a.ts')).toBe('const a = 1;');
-      expect(cache.isFull()).toBe(false);
-
-      // Second file exceeds limit
-      cache.process(fileB);
       expect(cache.getContent('repo/b.ts')).toBeUndefined();
-      expect(cache.isFull()).toBe(true);
-
-      // Third file also skipped
-      cache.process(fileC);
       expect(cache.getContent('repo/c.ts')).toBeUndefined();
+      expect(cache.isFull()).toBe(true);
 
       const stats = cache.stats();
       expect(stats.cached).toBe(1);
       expect(stats.skipped).toBe(2);
     });
 
-    it('passes non-File nodes through unchanged', () => {
+    it('process is passthrough', () => {
       const cache = new FileCacheStage({ fileContentMap: new Map() });
       const dirNode = node('repo/src', 'Directory');
       const result = cache.process(dirNode);
       expect(result.nodes).toEqual([dirNode]);
     });
 
-    it('passes File nodes through even when content not found', () => {
-      const cache = new FileCacheStage({ fileContentMap: new Map() });
-      const fileNode = { id: 'repo/x.ts', type: 'File', name: 'x.ts', properties: { path: 'x.ts' } };
-      const result = cache.process(fileNode);
-      expect(result.nodes).toEqual([fileNode]);
+    it('evict removes file from cache', () => {
+      const contentMap = new Map([['repo/a.ts', 'const a = 1;']]);
+      const cache = new FileCacheStage({ fileContentMap: contentMap });
+
+      expect(cache.getContent('repo/a.ts')).toBe('const a = 1;');
+      cache.evict('repo/a.ts');
+      expect(cache.getContent('repo/a.ts')).toBeUndefined();
+      expect(cache.getBytesUsed()).toBe(0);
     });
   });
 

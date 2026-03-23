@@ -25,6 +25,7 @@
  * zip archive for cross-tool portability.
  */
 
+import { deflateSync, inflateSync } from 'fflate';
 import lbugInit from '@lbug/lbug-wasm';
 import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
 import { zipSync, unzipSync } from 'fflate';
@@ -206,7 +207,7 @@ export class LadybugGraphStore implements GraphStore {
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
     string,
-    { content: string; path: string; binary?: boolean }
+    { compressed: Uint8Array; path: string; binary?: boolean }
   >();
 
   // --- Write buffer ---
@@ -218,7 +219,6 @@ export class LadybugGraphStore implements GraphStore {
   // --- JS-side indexes ---
   private bm25Index = new BM25Index();
   private vectorIndex: VectorIndex | null = null;
-  private nodePropsCache = new Map<string, Record<string, unknown>>();
 
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
@@ -478,7 +478,7 @@ export class LadybugGraphStore implements GraphStore {
   ): Promise<GraphData> {
     let seedIds: Set<string>;
 
-    if (this.nodePropsCache.has(search)) {
+    if (this.nodeTypeMap.has(search)) {
       seedIds = new Set([search]);
     } else {
       const rankedLists: { id: string; score: number }[][] = [];
@@ -608,7 +608,6 @@ export class LadybugGraphStore implements GraphStore {
     }
     this.vectorIndex = null;
     this.bm25Index = new BM25Index();
-    this.nodePropsCache.clear();
     this.nodeTypeMap.clear();
     this.flushedPackageIds.clear();
     this.sourceCache.clear();
@@ -878,7 +877,6 @@ export class LadybugGraphStore implements GraphStore {
 
     for (const node of nodeDedup.values()) {
       const props = node.properties ?? {};
-      this.nodePropsCache.set(node.id, props);
       this.nodeTypeMap.set(node.id, node.type);
 
       // BM25 index
@@ -990,9 +988,10 @@ export class LadybugGraphStore implements GraphStore {
 
 
   storeSource(files: SourceFile[]): void {
+    const encoder = new TextEncoder();
     for (const f of files) {
       this.sourceCache.set(f.id, {
-        content: f.content,
+        compressed: deflateSync(encoder.encode(f.content)),
         path: f.path,
         binary: f.binary,
       });
@@ -1010,16 +1009,19 @@ export class LadybugGraphStore implements GraphStore {
     const entry = this.sourceCache.get(fileId);
     if (!entry) return null;
 
+    // Decompress on demand
+    const content = new TextDecoder().decode(inflateSync(entry.compressed));
+
     if (entry.binary) {
       return {
-        content: entry.content,
+        content,
         path: entry.path,
         line_count: 0,
         binary: true,
       };
     }
 
-    const allLines = entry.content.split('\n');
+    const allLines = content.split('\n');
     const totalLines = allLines.length;
 
     if (startLine != null && endLine != null) {
@@ -1034,7 +1036,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     return {
-      content: entry.content,
+      content,
       path: entry.path,
       line_count: totalLines,
     };
