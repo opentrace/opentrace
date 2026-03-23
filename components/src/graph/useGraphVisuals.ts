@@ -110,7 +110,7 @@ export function useGraphVisuals(
       attrs.label = hasHighlight && !isHighlighted ? null : originalLabel;
       attrs.forceLabel = showLabel && hasHighlight;
       attrs.zIndex = isSelected ? 2 : isHighlighted && hasHighlight ? 1 : 0;
-      // highlighted → renders on sigma's hoverNodes layer (above edges canvas)
+      // highlighted → renders on the hover layer (above edges canvas)
       attrs.highlighted = hasHighlight && isHighlighted;
       return attrs;
     });
@@ -120,10 +120,7 @@ export function useGraphVisuals(
       ? EDGE_SIZE_DEFAULT_LINE
       : EDGE_SIZE_DEFAULT;
 
-    // The hints tell sigma which fields changed. Including 'zIndex' forces
-    // skipIndexation: false in sigma's refresh, which re-indexes edges and
-    // avoids the "edge can't be repaint" error when edges exist in graphology
-    // but haven't been indexed by sigma's async process() yet.
+    // Including 'zIndex' in hints forces edge re-indexation during refresh.
     graph.updateEachEdgeAttributes(
       (_id, attrs, source, target) => {
         // Skip virtual community edges — they must stay hidden

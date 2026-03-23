@@ -15,7 +15,7 @@
  */
 
 /**
- * Lightweight re-exports that don't pull in sigma/WebGL.
+ * Lightweight re-exports that don't pull in WebGL dependencies.
  * Use this entry point in non-browser contexts (tests, SSR, Node).
  *
  * Usage:
@@ -52,7 +52,7 @@ export {
 // ─── Filter logic (pure function, no React) ─────────────────────────────
 export { shouldHideNode } from './graph/useGraphFilters';
 
-// ─── Hooks that don't depend on sigma/WebGL ─────────────────────────────
+// ─── Hooks that don't depend on WebGL ────────────────────────────────────
 export { useCommunities } from './graph/useCommunities';
 export { useHighlights } from './graph/useHighlights';
 

@@ -60,7 +60,7 @@ export const NODE_SIZE_DIMMED_SCALE = 0.35; // shrink non-highlighted nodes so e
 
 // ─── Zoom Scaling ───────────────────────────────────────────────────────
 // Controls how node sizes scale when zooming out.
-// Default sigma uses Math.sqrt (exponent 0.5). Higher = nodes shrink faster when zooming out.
+// Higher = nodes shrink faster when zooming out.
 
 export const ZOOM_SIZE_EXPONENT = 0.7;
 
@@ -98,7 +98,7 @@ export const NOVERLAP_MARGIN = 25;
 export const NOVERLAP_EXPANSION = 1.5;
 export const NOVERLAP_COMMUNITY_ITERATIONS = 20; // per-community push-apart passes
 
-// ─── Sigma Renderer ─────────────────────────────────────────────────────
+// ─── Renderer ───────────────────────────────────────────────────────────
 
 // Above this edge count, use simple line edges instead of curved arrows
 export const EDGE_PROGRAM_THRESHOLD = 50000;

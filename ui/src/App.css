@@ -34,7 +34,6 @@
   min-width: 0;
   overflow: hidden;
   touch-action: none;
-  --sigma-background-color: var(--background);
 }
 
 /* Header */

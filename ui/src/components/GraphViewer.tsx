@@ -38,7 +38,6 @@ import {
   useHighlights,
 } from '@opentrace/components/utils';
 import {
-  GraphCanvas,
   PixiGraphCanvas,
   GraphLegend,
   GraphToolbar,
@@ -304,11 +303,6 @@ const GraphViewer = memo(
       const [hops, setHops] = useState(2);
       const [zoomOnSelect, setZoomOnSelect] = useState(true);
       const [flatMode, setFlatMode] = useState(false);
-      const [renderer, setRenderer] = useState<'sigma' | 'pixi'>(
-        () =>
-          (localStorage.getItem('graph-renderer') as 'sigma' | 'pixi') ||
-          'sigma',
-      );
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
@@ -378,7 +372,6 @@ const GraphViewer = memo(
       const [pixiZoomExponent, setPixiZoomExponent] = useState(() =>
         ps('pixiZoomExponent', 0.8),
       );
-      const isPixi = renderer === 'pixi';
 
       // Persist settings to localStorage when they change
       useEffect(() => {
@@ -664,7 +657,7 @@ const GraphViewer = memo(
 
       const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
 
-      // ─── Highlights (computed from arrays, no sigma dependency) ────────
+      // ─── Highlights (computed from arrays) ────────────────────────────
 
       const highlights = useHighlights(
         null as never, // _graph — unused
@@ -1390,87 +1383,51 @@ const GraphViewer = memo(
 
           <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
-          {renderer === 'pixi' ? (
-            <PixiGraphCanvas
-              ref={canvasRef}
-              nodes={graphData.nodes}
-              links={graphData.links}
-              width={graphWidth}
-              height={height}
-              layoutConfig={layoutConfig}
-              colorMode={colorMode}
-              hiddenNodeTypes={hiddenNodeTypes}
-              hiddenLinkTypes={hiddenLinkTypes}
-              hiddenSubTypes={hiddenSubTypes}
-              hiddenCommunities={hiddenCommunities}
-              searchQuery={searchQuery}
-              selectedNodeId={selectedNode?.id}
-              hops={hops}
-              getSubType={getSubType}
-              highlightNodes={
-                selectedLink ? edgeHighlightNodes : highlights.highlightNodes
-              }
-              highlightLinks={
-                selectedLink ? edgeHighlightLinks : highlights.highlightLinks
-              }
-              labelNodes={selectedLink ? edgeLabelNodes : highlights.labelNodes}
-              availableSubTypes={availableSubTypes}
-              zIndex
-              communityData={communityData}
-              onNodeClick={onNodeClick}
-              onEdgeClick={onLinkClick}
-              onStageClick={handleStageClick}
-              onOptimizeStatus={setOptimizeStatus}
-              animationSettings={animationSettings}
-              style={{ isolation: 'isolate' }}
-            />
-          ) : (
-            <GraphCanvas
-              ref={canvasRef}
-              nodes={graphData.nodes}
-              links={graphData.links}
-              width={graphWidth}
-              height={height}
-              layoutConfig={layoutConfig}
-              colorMode={colorMode}
-              hiddenNodeTypes={hiddenNodeTypes}
-              hiddenLinkTypes={hiddenLinkTypes}
-              hiddenSubTypes={hiddenSubTypes}
-              hiddenCommunities={hiddenCommunities}
-              searchQuery={searchQuery}
-              selectedNodeId={selectedNode?.id}
-              hops={hops}
-              getSubType={getSubType}
-              highlightNodes={selectedLink ? edgeHighlightNodes : undefined}
-              highlightLinks={selectedLink ? edgeHighlightLinks : undefined}
-              labelNodes={selectedLink ? edgeLabelNodes : undefined}
-              availableSubTypes={availableSubTypes}
-              zIndex
-              communityData={communityData}
-              onNodeClick={onNodeClick}
-              onEdgeClick={onLinkClick}
-              onStageClick={handleStageClick}
-              labelsVisible={labelsVisible}
-              onOptimizeStatus={(status) => {
-                setOptimizeStatus(status);
-                setPhysicsRunning(status?.phase === 'fa2');
-              }}
-              animationSettings={animationSettings}
-              style={{ isolation: 'isolate' }}
-            />
-          )}
+          <PixiGraphCanvas
+            ref={canvasRef}
+            nodes={graphData.nodes}
+            links={graphData.links}
+            width={graphWidth}
+            height={height}
+            layoutConfig={layoutConfig}
+            colorMode={colorMode}
+            hiddenNodeTypes={hiddenNodeTypes}
+            hiddenLinkTypes={hiddenLinkTypes}
+            hiddenSubTypes={hiddenSubTypes}
+            hiddenCommunities={hiddenCommunities}
+            searchQuery={searchQuery}
+            selectedNodeId={selectedNode?.id}
+            hops={hops}
+            getSubType={getSubType}
+            highlightNodes={
+              selectedLink ? edgeHighlightNodes : highlights.highlightNodes
+            }
+            highlightLinks={
+              selectedLink ? edgeHighlightLinks : highlights.highlightLinks
+            }
+            labelNodes={selectedLink ? edgeLabelNodes : highlights.labelNodes}
+            availableSubTypes={availableSubTypes}
+            zIndex
+            communityData={communityData}
+            onNodeClick={onNodeClick}
+            onEdgeClick={onLinkClick}
+            onStageClick={handleStageClick}
+            onOptimizeStatus={setOptimizeStatus}
+            animationSettings={animationSettings}
+            style={{ isolation: 'isolate' }}
+          />
 
           {showPhysicsPanel && (
             <PhysicsPanel
               repulsion={repulsion}
               onRepulsionChange={(v) => {
                 setRepulsion(v);
-                if (isPixi) canvasRef.current?.setChargeStrength?.(-v);
+                canvasRef.current?.setChargeStrength?.(-v);
               }}
               labelsVisible={labelsVisible}
               onLabelsVisibleChange={(v) => {
                 setLabelsVisible(v);
-                if (isPixi) canvasRef.current?.setShowLabels?.(v);
+                canvasRef.current?.setShowLabels?.(v);
               }}
               colorMode={colorMode}
               onColorModeChange={setColorMode}
@@ -1486,7 +1443,7 @@ const GraphViewer = memo(
                 setPhysicsRunning(true);
               }}
               // Pixi-specific props
-              pixiMode={isPixi}
+              pixiMode={true}
               linkDistance={pixiLinkDist}
               onLinkDistanceChange={(v) => {
                 setPixiLinkDist(v);
@@ -1524,36 +1481,6 @@ const GraphViewer = memo(
           )}
 
           <div className="graph-controls">
-            <button
-              className={`graph-control-btn${renderer === 'pixi' ? ' graph-control-btn--active' : ''}`}
-              onClick={() => {
-                const next = renderer === 'sigma' ? 'pixi' : 'sigma';
-                setRenderer(next);
-                localStorage.setItem('graph-renderer', next);
-              }}
-              title={`Renderer: ${renderer === 'sigma' ? 'Sigma.js' : 'Pixi.js'} (click to switch)`}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                {renderer === 'pixi' ? (
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                ) : (
-                  <>
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                    <line x1="2" y1="12" x2="22" y2="12" />
-                  </>
-                )}
-              </svg>
-            </button>
             <button
               className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
               onClick={() => setZoomOnSelect((z) => !z)}

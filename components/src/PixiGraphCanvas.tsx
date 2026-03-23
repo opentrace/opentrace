@@ -17,9 +17,8 @@
 /**
  * PixiGraphCanvas — Pixi.js v8 + d3-force graph renderer.
  *
- * Drop-in alternative to GraphCanvas (Sigma.js). Same props interface and
- * imperative handle, different rendering engine. The consumer (GraphViewer)
- * can toggle between renderers without changing any other code.
+ * Primary graph visualization component using Pixi.js for WebGL rendering
+ * and d3-force for layout simulation.
  */
 
 import {
@@ -34,7 +33,7 @@ import {
 } from 'react';
 
 import type { GetSubTypeFn } from './graph/types';
-import type { GraphCanvasHandle, GraphCanvasProps } from './GraphCanvas';
+import type { GraphCanvasHandle, GraphCanvasProps } from './types/canvas';
 import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
 import { shouldHideNode } from './graph/useGraphFilters';
