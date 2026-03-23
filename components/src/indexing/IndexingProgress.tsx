@@ -164,8 +164,6 @@ export default function IndexingProgress({
   stages: stageConfig,
   icon,
   onClose,
-  onCancel,
-  onMinimize,
   title,
   message,
 }: IndexingProgressProps) {
@@ -280,11 +278,8 @@ export default function IndexingProgress({
 
             {message && <p className="indexing-message">{message}</p>}
 
-            <button
-              className="btn-cta btn-cta--secondary"
-              onClick={onMinimize ?? onClose}
-            >
-              {onMinimize ? 'Minimize' : 'Close'}
+            <button className="btn-cta btn-cta--secondary" onClick={onClose}>
+              Close
             </button>
           </div>
         </div>
@@ -313,12 +308,6 @@ export default function IndexingProgress({
             relationships={state.relationshipsCreated}
           />
           {message && <p className="indexing-message">{message}</p>}
-          <button
-            className="btn-cta btn-cta--secondary"
-            onClick={onMinimize ?? onCancel}
-          >
-            {onMinimize ? 'Minimize' : 'Cancel'}
-          </button>
         </div>
       </div>
     </div>

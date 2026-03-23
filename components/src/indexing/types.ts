@@ -75,8 +75,6 @@ export interface IndexingProgressProps {
   /** Icon shown in the header while running (e.g. a provider logo). */
   icon?: import('react').ReactNode;
   onClose: () => void;
-  onCancel: () => void;
-  onMinimize?: () => void;
   /** Override the header title (default: "Indexing Repository" when running, "Complete" when done). */
   title?: string;
   /** Supplementary message shown below stats (e.g. "Loading graph..."). */
