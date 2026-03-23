@@ -15,6 +15,7 @@ jobs:
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-preview \
             -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}' \
+            -f 'client_payload[clone_url]=${{ github.event.pull_request.head.repo.clone_url }}' \
             -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}' \
             -f 'client_payload[trigger_run_id]=${{ github.run_id }}'
         env:
