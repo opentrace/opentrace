@@ -157,6 +157,10 @@ export interface DiscoverPanelProps {
   onToggleExpand: (nodeId: string) => void;
   /** Called when a node name is clicked */
   onSelectNode: (nodeId: string) => void;
+  /** Collapse all expanded nodes */
+  onCollapseAll?: () => void;
+  /** Expand all loaded expandable nodes */
+  onExpandAll?: () => void;
   /** Currently selected node ID */
   selectedNodeId?: string;
   /** Node IDs currently visible in the graph */
