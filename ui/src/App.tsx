@@ -71,6 +71,8 @@ function App() {
         setActiveRepoUrl(message.repoUrl);
       } else if (message.type === 'index-directory') {
         setActiveRepoUrl(`local/${message.name}`);
+      } else if (message.type === 'import-file') {
+        setActiveRepoUrl(`import/${message.name}`);
       }
       setShowAddRepo(false);
       setJobExpanded(false);

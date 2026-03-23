@@ -1283,7 +1283,7 @@ const GraphViewer = memo(
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = 'opentrace.db';
+                      a.download = 'opentrace.parquet.zip';
                       a.click();
                       URL.revokeObjectURL(url);
                     }}

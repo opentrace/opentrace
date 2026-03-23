@@ -239,9 +239,9 @@ describe('AddRepoModal', () => {
       );
       expect(result.queryByTestId('repo-url-input')).toBeNull();
       expect(result.getByText('Import Graph')).toBeDefined();
-      // File input for .db files should be present
+      // File input for .parquet.zip files should be present
       expect(
-        result.container.querySelector('input[type="file"][accept=".db"]'),
+        result.container.querySelector('input[type="file"][accept=".zip"]'),
       ).not.toBeNull();
     });
 
@@ -255,7 +255,9 @@ describe('AddRepoModal', () => {
       const form = result.container.querySelector('form')!;
       fireEvent.submit(form);
       expect(onSubmit).not.toHaveBeenCalled();
-      expect(result.getByText('Select a .db file first.')).toBeDefined();
+      expect(
+        result.getByText('Select a .parquet.zip file first.'),
+      ).toBeDefined();
     });
 
     it('shows file name after file selection', () => {
@@ -263,16 +265,16 @@ describe('AddRepoModal', () => {
         render(React.createElement(AddRepoModal, defaultProps)),
       );
       const fileInput = result.container.querySelector(
-        'input[type="file"][accept=".db"]',
+        'input[type="file"][accept=".zip"]',
       ) as HTMLInputElement;
       expect(fileInput).toBeDefined();
 
-      const file = new File(['x'.repeat(1024)], 'test.db', {
+      const file = new File(['x'.repeat(1024)], 'test.parquet.zip', {
         type: 'application/octet-stream',
       });
       fireEvent.change(fileInput, { target: { files: [file] } });
 
-      expect(result.getByText('test.db')).toBeDefined();
+      expect(result.getByText('test.parquet.zip')).toBeDefined();
     });
 
     it('submits import-file message with selected file', () => {
@@ -283,9 +285,9 @@ describe('AddRepoModal', () => {
         ),
       );
       const fileInput = result.container.querySelector(
-        'input[type="file"][accept=".db"]',
+        'input[type="file"][accept=".zip"]',
       ) as HTMLInputElement;
-      const file = new File(['data'], 'graph.db', {
+      const file = new File(['data'], 'graph.parquet.zip', {
         type: 'application/octet-stream',
       });
       fireEvent.change(fileInput, { target: { files: [file] } });
