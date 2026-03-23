@@ -17,15 +17,17 @@
 /**
  * LadybugDB graph store using @lbug/lbug-wasm with typed node tables.
  *
- * Uses typed node tables (Repository, Directory, File, Package, Class,
- * Function) instead of a single Node table, enabling direct MATCH by type
- * without WHERE filters.  Relationships use a REL TABLE GROUP spanning all
- * observed FROM→TO pairs.  Bulk imports use CSV + COPY FROM via the virtual
- * filesystem.
+ * Uses an in-memory database with typed node tables (Repository, Directory,
+ * File, Package, Class, Function) instead of a single Node table, enabling
+ * direct MATCH by type without WHERE filters.  Relationships use a REL TABLE
+ * GROUP spanning all observed FROM→TO pairs.  Bulk imports use CSV + COPY FROM
+ * via the virtual filesystem.  Export/import uses Parquet files bundled in a
+ * zip archive for cross-tool portability.
  */
 
 import lbugInit from '@lbug/lbug-wasm';
 import type { LbugModule, WebConnection } from '@lbug/lbug-wasm';
+import { zipSync, unzipSync } from 'fflate';
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -180,11 +182,16 @@ function unionAllTextSearch(escapedLower: string): string {
   ).join(' UNION ALL ');
 }
 
-// ---- Database path ----
+// ---- Parquet export helpers ----
 
-/** File-backed database on the WASM virtual filesystem.
- *  Using a file (not :memory:) enables import/export via FS.readFile/writeFile. */
-const DB_PATH = '/opentrace.db';
+/** Parquet file names inside the export zip archive. */
+const PARQUET_DIR = '/parquet';
+
+function nodeParquetPath(type: string): string {
+  return `${PARQUET_DIR}/nodes_${type}.parquet`;
+}
+
+const REL_PARQUET_PATH = `${PARQUET_DIR}/relationships.parquet`;
 
 // ---- Store implementation ----
 
@@ -231,9 +238,10 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initModule(): Promise<void> {
     this.lbug = await lbugInit();
-    this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
+    this.db = await this.lbug.Database();
     this.conn = await this.lbug.Connection(this.db);
     await this.initSchema();
+    this.ensureParquetDir();
     const savedNodes = localStorage.getItem('ot:maxVisNodes');
     const savedEdges = localStorage.getItem('ot:maxVisEdges');
     if (savedNodes || savedEdges) {
@@ -255,6 +263,15 @@ export class LadybugGraphStore implements GraphStore {
         throw new Error(err);
       }
       result.close();
+    }
+  }
+
+  /** Ensure the /parquet directory exists on the WASM virtual filesystem. */
+  private ensureParquetDir(): void {
+    try {
+      this.lbug.FS.mkdir(PARQUET_DIR);
+    } catch {
+      // Already exists — ignore
     }
   }
 
@@ -600,43 +617,54 @@ export class LadybugGraphStore implements GraphStore {
   ): Promise<ImportBatchResponse> {
     await this.ready;
 
-    // Close current database, write the uploaded file to the WASM FS,
-    // and open it directly. The agent uses the same typed-table schema
-    // as the browser, so no migration is needed.
-
-    this.conn.close();
-    this.db.close();
-
-    onProgress?.('Writing database to virtual filesystem');
-    this.lbug.FS.writeFile(DB_PATH, data);
-
+    // Unzip the Parquet archive and COPY FROM each file into the in-memory DB.
+    onProgress?.('Unpacking Parquet archive');
+    let entries: Record<string, Uint8Array>;
     try {
-      onProgress?.('Opening database');
-      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
-      this.conn = await this.lbug.Connection(this.db);
+      entries = unzipSync(data);
+    } catch (err) {
+      throw new Error(
+        `Failed to unzip archive. Make sure the file is a .parquet.zip exported from OpenTrace. (${err})`,
+      );
+    }
 
-      // Reset all caches
-      this.bm25Index = new BM25Index();
-      this.vectorIndex = null;
-      this.nodePropsCache.clear();
-      this.nodeTypeMap.clear();
-      this.flushedPackageIds.clear();
-      this.sourceCache.clear();
-      this.pendingNodes = [];
-      this.pendingRels = [];
-      this.totalNodesBuffered = 0;
-      this.totalRelsBuffered = 0;
+    const fileNames = Object.keys(entries);
+    console.log(
+      `[LadybugStore] importDatabase: archive contains ${fileNames.length} files:`,
+      fileNames,
+    );
 
-      // Rebuild nodeTypeMap and BM25 index from the typed tables
-      onProgress?.('Rebuilding search indexes');
-      let totalNodes = 0;
-      let totalRels = 0;
+    if (fileNames.length === 0) {
+      throw new Error(
+        'Archive contains no files. Make sure you are importing a .parquet.zip exported from OpenTrace.',
+      );
+    }
 
-      for (const type of NODE_TYPES) {
-        const result = await this.conn.execute(
-          `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
-        );
-        if (!result) continue;
+    // Clear current data and reset caches
+    await this.clearGraph();
+
+    this.ensureParquetDir();
+
+    let totalNodes = 0;
+    let totalRels = 0;
+
+    // Import node tables from Parquet files
+    for (const type of NODE_TYPES) {
+      const fileName = `nodes_${type}.parquet`;
+      const fileData = entries[fileName];
+      if (!fileData) continue;
+
+      onProgress?.(`Importing ${type} nodes`);
+      const path = nodeParquetPath(type);
+      this.lbug.FS.writeFile(path, fileData);
+      await this.exec(`COPY ${type} FROM '${path}'`);
+      this.lbug.FS.unlink(path);
+
+      // Rebuild nodeTypeMap and BM25 index for this type
+      const result = await this.conn.execute(
+        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name`,
+      );
+      if (result) {
         for (const row of result.table) {
           const r = row.toJSON();
           const id = String(r.id);
@@ -646,40 +674,134 @@ export class LadybugGraphStore implements GraphStore {
           totalNodes++;
         }
       }
-
-      // Count relationships
-      const relResult = await this.conn.execute(
-        'MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt',
+      console.log(
+        `[LadybugStore] imported ${type}: ${totalNodes} nodes so far`,
       );
-      if (relResult) {
-        for (const row of relResult.table) {
-          totalRels = Number(row.toJSON().cnt) || 0;
+    }
+
+    // Import relationships from Parquet
+    const relData = entries['relationships.parquet'];
+    if (relData) {
+      onProgress?.('Importing relationships');
+      this.lbug.FS.writeFile(REL_PARQUET_PATH, relData);
+
+      try {
+        // Scan the Parquet file and bucket rows by (srcType, tgtType)
+        const allRows = await this.query(
+          `LOAD FROM '${REL_PARQUET_PATH}' RETURN *`,
+        );
+
+        console.log(
+          `[LadybugStore] relationship parquet has ${allRows.length} rows`,
+        );
+
+        const buckets = new Map<string, ImportBatchRequest['relationships']>();
+
+        for (const row of allRows as Record<string, string>[]) {
+          const srcType = this.nodeTypeMap.get(row.from);
+          const tgtType = this.nodeTypeMap.get(row.to);
+          if (!srcType || !tgtType) continue;
+          const key = `${srcType}_${tgtType}`;
+          if (!REL_PAIR_SET.has(key)) continue;
+
+          let bucket = buckets.get(key);
+          if (!bucket) {
+            bucket = [];
+            buckets.set(key, bucket);
+          }
+          bucket.push({
+            id: row.id,
+            type: row.type,
+            source_id: row.from,
+            target_id: row.to,
+            properties: parseProps(row.properties) ?? {},
+          });
+          totalRels++;
         }
+
+        // Write per-subtable CSVs and COPY FROM
+        for (const [key, bucket] of buckets) {
+          const csv = generateRelCSV(bucket);
+          const csvPath = `/rels_${key}.csv`;
+          this.lbug.FS.writeFile(csvPath, csv);
+          try {
+            await this.exec(
+              `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
+            );
+          } catch (err) {
+            console.warn(`[LadybugStore] COPY RELATES_${key} failed:`, err);
+          }
+          this.lbug.FS.unlink(csvPath);
+        }
+      } catch (err) {
+        console.error('[LadybugStore] relationship import failed:', err);
       }
 
-      return {
-        nodes_created: totalNodes,
-        relationships_created: totalRels,
-      };
-    } catch (err) {
-      console.error('[importDatabase] Import failed, reinitializing:', err);
-      try {
-        this.conn.close();
-        this.db.close();
-      } catch {
-        /* ignore */
-      }
-      this.db = await this.lbug.Database(DB_PATH, 512 * 1024 * 1024);
-      this.conn = await this.lbug.Connection(this.db);
-      await this.initSchema();
-      throw err;
+      this.lbug.FS.unlink(REL_PARQUET_PATH);
     }
+
+    console.log(
+      `[LadybugStore] importDatabase complete: ${totalNodes} nodes, ${totalRels} rels`,
+    );
+    onProgress?.('Rebuilding search indexes');
+    return {
+      nodes_created: totalNodes,
+      relationships_created: totalRels,
+    };
   }
 
   async exportDatabase(): Promise<Uint8Array> {
     await this.ready;
     await this.flush();
-    return this.lbug.FS.readFile(DB_PATH);
+
+    this.ensureParquetDir();
+
+    const files: Record<string, Uint8Array> = {};
+
+    // Export each typed node table as a Parquet file
+    for (const type of NODE_TYPES) {
+      const countRows = await this.query(
+        `MATCH (n:${type}) RETURN count(n) AS cnt`,
+      );
+      const count = Number(
+        (countRows as Record<string, number>[])[0]?.cnt ?? 0,
+      );
+      if (count === 0) continue;
+
+      const path = nodeParquetPath(type);
+      await this.exec(
+        `COPY (MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties) TO '${path}'`,
+      );
+      files[`nodes_${type}.parquet`] = this.lbug.FS.readFile(path);
+      this.lbug.FS.unlink(path);
+      console.log(`[LadybugStore] exported ${type}: ${count} nodes`);
+    }
+
+    // Export all relationships as a single Parquet file
+    const relCountRows = await this.query(
+      `MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt`,
+    );
+    const relCount = Number(
+      (relCountRows as Record<string, number>[])[0]?.cnt ?? 0,
+    );
+    if (relCount > 0) {
+      await this.exec(
+        `COPY (MATCH (a)-[r:RELATES]->(b) RETURN a.id AS \`from\`, b.id AS \`to\`, r.id AS id, r.type AS type, r.properties AS properties) TO '${REL_PARQUET_PATH}'`,
+      );
+      files['relationships.parquet'] = this.lbug.FS.readFile(REL_PARQUET_PATH);
+      this.lbug.FS.unlink(REL_PARQUET_PATH);
+      console.log(`[LadybugStore] exported ${relCount} relationships`);
+    }
+
+    console.log(
+      `[LadybugStore] exportDatabase: ${Object.keys(files).length} parquet files`,
+    );
+
+    if (Object.keys(files).length === 0) {
+      throw new Error('Nothing to export — the graph is empty.');
+    }
+
+    return zipSync(files);
   }
 
   /**
