@@ -1241,7 +1241,6 @@ const GraphViewer = memo(
                   <button
                     className="add-repo-btn"
                     onClick={onAddRepoOpen}
-                    disabled
                     title="Add Repository"
                   >
                     <svg
