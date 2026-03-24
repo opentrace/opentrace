@@ -15,50 +15,19 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb';
+import type {
+  ChatHistoryStore,
+  Conversation,
+  ConversationSummary,
+} from './chatHistoryStore';
 import type { ChatMessage } from './providers';
+
+// Re-export types so existing consumers don't need to change imports
+export type { Conversation, ConversationSummary, ChatHistoryStore };
 
 const DB_NAME = 'opentrace_chat';
 const DB_VERSION = 2;
 const STORE_NAME = 'conversations';
-
-export interface Conversation {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  provider: string;
-  model: string;
-  /** Scopes the conversation to a project (typically the repo URL) */
-  projectKey: string;
-  messages: ChatMessage[];
-}
-
-export type ConversationSummary = Omit<Conversation, 'messages'>;
-
-let dbPromise: Promise<IDBPDatabase> | null = null;
-
-function getDB(): Promise<IDBPDatabase> {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-          store.createIndex('updatedAt', 'updatedAt');
-          store.createIndex('projectKey', 'projectKey');
-        } else if (oldVersion < 2) {
-          const store = transaction.objectStore(STORE_NAME);
-          if (!store.indexNames.contains('projectKey')) {
-            store.createIndex('projectKey', 'projectKey');
-          }
-        }
-      },
-    }).catch((err) => {
-      dbPromise = null;
-      throw err;
-    });
-  }
-  return dbPromise;
-}
 
 export function generateId(): string {
   return crypto.randomUUID();
@@ -76,35 +45,94 @@ export function titleFromFirstMessage(messages: ChatMessage[]): string {
   return text.slice(0, 47) + '...';
 }
 
+/**
+ * IndexedDB-backed implementation of ChatHistoryStore.
+ * Stores conversations entirely in the user's browser.
+ */
+export class IDBChatHistoryStore implements ChatHistoryStore {
+  private dbPromise: Promise<IDBPDatabase> | null = null;
+
+  private getDB(): Promise<IDBPDatabase> {
+    if (!this.dbPromise) {
+      this.dbPromise = openDB(DB_NAME, DB_VERSION, {
+        upgrade(db, oldVersion, _newVersion, transaction) {
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            store.createIndex('updatedAt', 'updatedAt');
+            store.createIndex('projectKey', 'projectKey');
+          } else if (oldVersion < 2) {
+            const store = transaction.objectStore(STORE_NAME);
+            if (!store.indexNames.contains('projectKey')) {
+              store.createIndex('projectKey', 'projectKey');
+            }
+          }
+        },
+      }).catch((err) => {
+        this.dbPromise = null;
+        throw err;
+      });
+    }
+    return this.dbPromise;
+  }
+
+  async save(conv: Conversation): Promise<void> {
+    const db = await this.getDB();
+    await db.put(STORE_NAME, conv);
+  }
+
+  async get(id: string): Promise<Conversation | undefined> {
+    const db = await this.getDB();
+    return db.get(STORE_NAME, id);
+  }
+
+  async delete(id: string): Promise<void> {
+    const db = await this.getDB();
+    await db.delete(STORE_NAME, id);
+  }
+
+  async list(projectKey?: string): Promise<ConversationSummary[]> {
+    const db = await this.getDB();
+    let all: Conversation[];
+    if (projectKey) {
+      all = await db.getAllFromIndex(STORE_NAME, 'projectKey', projectKey);
+    } else {
+      all = await db.getAll(STORE_NAME);
+    }
+    return all
+      .map(({ messages: _, ...summary }) => summary) // eslint-disable-line @typescript-eslint/no-unused-vars
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+}
+
+/** Default store instance — swap this to change the persistence layer. */
+let activeStore: ChatHistoryStore = new IDBChatHistoryStore();
+
+export function getChatHistoryStore(): ChatHistoryStore {
+  return activeStore;
+}
+
+export function setChatHistoryStore(store: ChatHistoryStore): void {
+  activeStore = store;
+}
+
+// Convenience functions that delegate to the active store.
+// These preserve the existing API so consumers don't need to change.
 export async function saveConversation(conv: Conversation): Promise<void> {
-  const db = await getDB();
-  await db.put(STORE_NAME, conv);
+  return activeStore.save(conv);
 }
 
 export async function getConversation(
   id: string,
 ): Promise<Conversation | undefined> {
-  const db = await getDB();
-  return db.get(STORE_NAME, id);
+  return activeStore.get(id);
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete(STORE_NAME, id);
+  return activeStore.delete(id);
 }
 
 export async function listConversations(
   projectKey?: string,
 ): Promise<ConversationSummary[]> {
-  const db = await getDB();
-  let all: Conversation[];
-  if (projectKey) {
-    all = await db.getAllFromIndex(STORE_NAME, 'projectKey', projectKey);
-  } else {
-    all = await db.getAll(STORE_NAME);
-  }
-  // Return newest first, without messages to keep it lightweight
-  return all
-    .map(({ messages: _, ...summary }) => summary) // eslint-disable-line @typescript-eslint/no-unused-vars
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  return activeStore.list(projectKey);
 }
