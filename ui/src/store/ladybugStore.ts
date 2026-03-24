@@ -38,11 +38,17 @@ import {
   Utf8,
   Struct,
 } from 'apache-arrow';
-import {
-  writeParquet,
-  readParquet,
-  Table as ParquetTable,
-} from 'parquet-wasm/bundler';
+/** Lazy-loaded parquet-wasm module. WASM must be instantiated before use;
+ *  dynamic import ensures the binary is fetched and compiled on first call. */
+let _parquetMod: typeof import('parquet-wasm/bundler') | null = null;
+async function getParquetWasm(): Promise<
+  typeof import('parquet-wasm/bundler')
+> {
+  if (!_parquetMod) {
+    _parquetMod = await import('parquet-wasm/bundler');
+  }
+  return _parquetMod;
+}
 
 import lbug from '@ladybugdb/wasm-core';
 
@@ -232,10 +238,11 @@ function safeJsonParse(
 }
 
 /** Convert an array of row objects to Parquet bytes via Arrow IPC → parquet-wasm. */
-function rowsToParquet(
+async function rowsToParquet(
   rows: Record<string, unknown>[],
   columns: string[],
-): Uint8Array {
+): Promise<Uint8Array> {
+  const pw = await getParquetWasm();
   const fields = columns.map((c) => new Field(c, new Utf8()));
   const schema = new Schema(fields);
   const children = columns.map(
@@ -254,8 +261,17 @@ function rowsToParquet(
   const batch = new RecordBatch(schema, batchData);
   const arrowTable = new ArrowTable(batch);
   const ipc = tableToIPC(arrowTable, 'stream');
-  const wasmTable = ParquetTable.fromIPCStream(ipc);
-  return writeParquet(wasmTable);
+  const wasmTable = pw.Table.fromIPCStream(ipc);
+  return pw.writeParquet(wasmTable);
+}
+
+/** Read a Parquet file into an Arrow JS table via parquet-wasm. */
+async function parquetToArrow(
+  data: Uint8Array,
+): Promise<import('apache-arrow').Table> {
+  const pw = await getParquetWasm();
+  const wasmTable = pw.readParquet(data);
+  return tableFromIPC(wasmTable.intoIPCStream());
 }
 
 // ---- Store implementation ----
@@ -747,8 +763,7 @@ export class LadybugGraphStore implements GraphStore {
 
       onProgress?.(`Importing ${type} nodes`);
       // Read Parquet → Arrow IPC → JS Arrow table → CSV for COPY FROM
-      const wasmTable = readParquet(fileData);
-      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      const arrowTable = await parquetToArrow(fileData);
       const csv = generateTypedNodeCSV(
         Array.from({ length: arrowTable.numRows }, (_, i) => ({
           id: String(arrowTable.getChild('id')?.get(i) ?? ''),
@@ -787,8 +802,7 @@ export class LadybugGraphStore implements GraphStore {
       onProgress?.('Importing relationships');
 
       // Read Parquet → Arrow → row objects
-      const wasmTable = readParquet(relData);
-      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      const arrowTable = await parquetToArrow(relData);
       const allRows: Record<string, string>[] = Array.from(
         { length: arrowTable.numRows },
         (_, i) => ({
@@ -881,7 +895,7 @@ export class LadybugGraphStore implements GraphStore {
       );
       if (rows.length === 0) continue;
 
-      const data = rowsToParquet(rows as Record<string, string>[], [
+      const data = await rowsToParquet(rows as Record<string, string>[], [
         'id',
         'name',
         'properties',
@@ -897,7 +911,7 @@ export class LadybugGraphStore implements GraphStore {
       'MATCH (a)-[r:RELATES]->(b) RETURN a.id AS `from`, b.id AS `to`, r.id AS id, r.type AS type, r.properties AS properties',
     );
     if (relRows.length > 0) {
-      const data = rowsToParquet(relRows as Record<string, string>[], [
+      const data = await rowsToParquet(relRows as Record<string, string>[], [
         'from',
         'to',
         'id',

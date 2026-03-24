@@ -323,10 +323,15 @@
   transition: all 0.2s;
 }
 
-.export-db-btn:hover {
+.export-db-btn:hover:not(:disabled) {
   background: color-mix(in oklch, var(--primary) 10%, transparent);
   color: var(--primary);
   border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.export-db-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .settings-toggle-btn {
