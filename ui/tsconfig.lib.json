@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "strict": true,
+    "erasableSyntaxOnly": true,
+    "outDir": "dist/lib",
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/components"],
+  "exclude": [
+    "src/components/**/__tests__",
+    "src/components/**/*.test.*",
+    "src/components/**/*.stories.*"
+  ]
+}
