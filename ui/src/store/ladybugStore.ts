@@ -26,7 +26,18 @@
  */
 
 import { deflateSync, inflateSync, zipSync, unzipSync } from 'fflate';
-import { tableToIPC, tableFromIPC, tableFromArrays } from 'apache-arrow';
+import {
+  tableToIPC,
+  tableFromIPC,
+  vectorFromArray,
+  makeData,
+  RecordBatch,
+  Table as ArrowTable,
+  Schema,
+  Field,
+  Utf8,
+  Struct,
+} from 'apache-arrow';
 import {
   writeParquet,
   readParquet,
@@ -225,18 +236,26 @@ function rowsToParquet(
   rows: Record<string, unknown>[],
   columns: string[],
 ): Uint8Array {
-  const arrays: Record<string, string[]> = {};
-  for (const col of columns) {
-    arrays[col] = rows.map((r) => String(r[col] ?? ''));
-  }
-  const arrowTable = tableFromArrays(arrays);
+  const fields = columns.map((c) => new Field(c, new Utf8()));
+  const schema = new Schema(fields);
+  const children = columns.map(
+    (col) =>
+      vectorFromArray(
+        rows.map((r) => String(r[col] ?? '')),
+        new Utf8(),
+      ).data[0],
+  );
+  const structType = new Struct(fields);
+  const batchData = makeData({
+    type: structType,
+    length: rows.length,
+    children,
+  });
+  const batch = new RecordBatch(schema, batchData);
+  const arrowTable = new ArrowTable(batch);
   const ipc = tableToIPC(arrowTable, 'stream');
   const wasmTable = ParquetTable.fromIPCStream(ipc);
-  try {
-    return writeParquet(wasmTable);
-  } finally {
-    wasmTable.free();
-  }
+  return writeParquet(wasmTable);
 }
 
 // ---- Store implementation ----
@@ -729,12 +748,7 @@ export class LadybugGraphStore implements GraphStore {
       onProgress?.(`Importing ${type} nodes`);
       // Read Parquet → Arrow IPC → JS Arrow table → CSV for COPY FROM
       const wasmTable = readParquet(fileData);
-      let arrowTable;
-      try {
-        arrowTable = tableFromIPC(wasmTable.intoIPCStream());
-      } finally {
-        wasmTable.free();
-      }
+      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
       const csv = generateTypedNodeCSV(
         Array.from({ length: arrowTable.numRows }, (_, i) => ({
           id: String(arrowTable.getChild('id')?.get(i) ?? ''),
@@ -774,12 +788,7 @@ export class LadybugGraphStore implements GraphStore {
 
       // Read Parquet → Arrow → row objects
       const wasmTable = readParquet(relData);
-      let arrowTable;
-      try {
-        arrowTable = tableFromIPC(wasmTable.intoIPCStream());
-      } finally {
-        wasmTable.free();
-      }
+      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
       const allRows: Record<string, string>[] = Array.from(
         { length: arrowTable.numRows },
         (_, i) => ({
