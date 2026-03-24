@@ -27,15 +27,7 @@ import { Parser, Language, type Node as SyntaxNode } from 'web-tree-sitter';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PUBLIC_DIR = join(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  'public',
-  'wasm',
-);
+const PUBLIC_DIR = join(__dirname, '..', '..', '..', '..', 'public', 'wasm');
 
 let initialized = false;
 
