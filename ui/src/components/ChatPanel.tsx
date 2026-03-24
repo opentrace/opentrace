@@ -723,7 +723,7 @@ export default function ChatPanel({
           )}
           <div className="settings-actions">
             <button
-              className="api-search-btn"
+              className="settings-save-btn"
               style={{ flex: 1, padding: '8px' }}
               onClick={handleSaveKey}
             >
