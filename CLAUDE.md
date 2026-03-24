@@ -5,8 +5,7 @@ Monorepo for the OpenTrace platform — a knowledge graph that maps system archi
 ## Repository Structure
 
 ```
-ui/          — React/TypeScript frontend
-components/  — @opentrace/components (graph visualization library)
+ui/          — React/TypeScript frontend (includes graph visualization components)
 agent/       — Python agent (loads data into the graph)
 proto/       — Protobuf definitions
 ```
