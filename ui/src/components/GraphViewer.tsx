@@ -46,7 +46,6 @@ import {
   type FilterItem,
   type FilterPanelProps,
   DEFAULT_LAYOUT_CONFIG,
-  type OptimizeStatus,
 } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useStore } from '../store';
@@ -334,10 +333,6 @@ const GraphViewer = memo(
       // Community-focus highlight override state
       const [focusedCommunityNodes, setFocusedCommunityNodes] =
         useState<Set<string>>(EMPTY_SET);
-
-      // Optimize status (from GraphCanvas callback)
-      const [optimizeStatus, setOptimizeStatus] =
-        useState<OptimizeStatus | null>(null);
 
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
@@ -1491,7 +1486,6 @@ const GraphViewer = memo(
             onNodeClick={onNodeClick}
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
-            onOptimizeStatus={setOptimizeStatus}
             layoutMode={layoutMode}
             mode3d={mode3d}
             on3DAutoRotateChange={setRendererAutoRotate}
