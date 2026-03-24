@@ -53,6 +53,15 @@ interface PhysicsPanelProps {
   onZoomSizeExponentChange?: (value: number) => void;
   onReheat?: () => void;
   onFitToScreen?: () => void;
+  // 3D mode
+  mode3d?: boolean;
+  onMode3dChange?: (enabled: boolean) => void;
+  mode3dAutoRotate?: boolean;
+  onMode3dAutoRotateChange?: (enabled: boolean) => void;
+  mode3dSpeed?: number;
+  onMode3dSpeedChange?: (speed: number) => void;
+  mode3dTilt?: number;
+  onMode3dTiltChange?: (tilt: number) => void;
 }
 
 export default function PhysicsPanel({
@@ -86,6 +95,14 @@ export default function PhysicsPanel({
   onZoomSizeExponentChange,
   onReheat,
   onFitToScreen,
+  mode3d = false,
+  onMode3dChange,
+  mode3dAutoRotate = true,
+  onMode3dAutoRotateChange,
+  mode3dSpeed = 30,
+  onMode3dSpeedChange,
+  mode3dTilt = 35,
+  onMode3dTiltChange,
 }: PhysicsPanelProps) {
   // Debounce repulsion slider changes (200ms)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,6 +178,63 @@ export default function PhysicsPanel({
             <div className="physics-toggle-thumb" />
           </div>
         </div>
+      )}
+
+      {/* Pixi: 3D rotation toggle + controls */}
+      {pixiMode && onMode3dChange && (
+        <>
+          <div
+            className="physics-toggle-row"
+            onClick={() => onMode3dChange(!mode3d)}
+          >
+            <span className="physics-toggle-label">3D rotation</span>
+            <div className={`physics-toggle-track${mode3d ? ' on' : ''}`}>
+              <div className="physics-toggle-thumb" />
+            </div>
+          </div>
+          {mode3d && onMode3dAutoRotateChange && (
+            <div
+              className="physics-toggle-row"
+              onClick={() => onMode3dAutoRotateChange(!mode3dAutoRotate)}
+              style={{ paddingLeft: 8 }}
+            >
+              <span className="physics-toggle-label">Auto-rotate</span>
+              <div className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}>
+                <div className="physics-toggle-thumb" />
+              </div>
+            </div>
+          )}
+          {mode3d && onMode3dSpeedChange && (
+            <div className="physics-slider-row">
+              <div className="physics-slider-label">
+                <span>Rotation speed</span>
+                <span className="physics-slider-value">{mode3dSpeed}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={mode3dSpeed}
+                onInput={(e) => onMode3dSpeedChange(Number(e.currentTarget.value))}
+              />
+            </div>
+          )}
+          {mode3d && onMode3dTiltChange && (
+            <div className="physics-slider-row">
+              <div className="physics-slider-label">
+                <span>Camera tilt</span>
+                <span className="physics-slider-value">{mode3dTilt}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={mode3dTilt}
+                onInput={(e) => onMode3dTiltChange(Number(e.currentTarget.value))}
+              />
+            </div>
+          )}
+        </>
       )}
 
       <div className="physics-divider" />

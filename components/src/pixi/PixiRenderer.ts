@@ -94,6 +94,7 @@ interface InteractionCallbacks {
   onNodeDragStart?: (nodeId: string) => void;
   onNodeDragMove?: (nodeId: string, x: number, y: number) => void;
   onNodeDragEnd?: (nodeId: string) => void;
+  on3DAutoRotateChange?: (autoRotate: boolean) => void;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────
@@ -168,6 +169,19 @@ export class PixiRenderer {
   // 0 = nodes scale fully with zoom (world-space), 1 = fixed screen size.
   // Default 0.5 matches ZOOM_SIZE_EXPONENT=0.7 feel.
   private zoomSizeExponent = 0.8;
+
+  // ── 3D Rotation Mode ────────────────────────────────────────────────
+  // Pseudo-3D: nodes get Z from community, camera rotates around Y axis
+  // with perspective projection. Physics stays 2D.
+  private mode3d = false;
+  private mode3dAngle = 0; // Y-axis rotation (radians)
+  private mode3dTilt = 0.35; // X-axis tilt (radians)
+  private mode3dSpeed = 0.003; // auto-rotation speed (radians/frame)
+  private mode3dAutoRotate = true;
+  private mode3dDepthScale = 800;
+  private mode3dPerspectiveD = 2000; // perspective distance
+  private nodeDepthT: Map<string, number> = new Map(); // per-node depth [-1, 1]
+  private mode3dRadius = 0; // computed from node positions at enable time
 
   // Animation cancel
   private cancelAnimation: (() => void) | null = null;
@@ -247,11 +261,17 @@ export class PixiRenderer {
     this.vp = { x: width / 2, y: height / 2, scale: 1 };
     this.lastAppliedInvScale = 1;
 
-    // Render loop — apply viewport transform + counter-scale sprites
+    // Render loop — apply viewport transform + counter-scale sprites + 3D
     app.ticker.add(() => {
       if (!this.world) return;
       this.world.position.set(this.vp.x, this.vp.y);
       this.world.scale.set(this.vp.scale);
+
+      // 3D mode: project all nodes every frame (overrides normal position updates)
+      if (this.mode3d) {
+        this.update3D();
+        return; // skip counter-scale — 3D handles its own scaling
+      }
 
       // Counter-scale sprites when zoom OR exponent changes
       const currentInv = this.zoomInvScale();
@@ -451,18 +471,19 @@ export class PixiRenderer {
   // ─── Position Updates (called from simulation tick) ───────────────
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    // Cache invScale once for this tick (avoid repeated Math.pow)
     const invScale = this.zoomInvScale();
     for (const [id, pos] of positions) {
       const node = this.nodes.get(id);
       if (!node || !node.visible) continue;
       node.x = pos.x;
       node.y = pos.y;
-      node.sprite.position.set(pos.x, pos.y);
-      // Update label position if visible (right of node)
-      if (node.label?.visible) {
-        const gap = (node.size + 4) * invScale;
-        node.label.position.set(pos.x + gap, pos.y);
+      // In 3D mode the ticker handles sprite positioning via projection each frame.
+      if (!this.mode3d) {
+        node.sprite.position.set(pos.x, pos.y);
+        if (node.label?.visible) {
+          const gap = (node.size + 4) * invScale;
+          node.label.position.set(pos.x + gap, pos.y);
+        }
       }
     }
 
@@ -475,20 +496,26 @@ export class PixiRenderer {
    */
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const arr = this.nodeArray;
-    const invScale = this.zoomInvScale();
     const len = Math.min(arr.length, buffer.length / 2);
 
+    // Always update stored (x, y) — these are the 2D physics positions
     for (let i = 0; i < len; i++) {
-      const node = arr[i];
-      if (!node.visible) continue;
-      const x = buffer[i * 2];
-      const y = buffer[i * 2 + 1];
-      node.x = x;
-      node.y = y;
-      node.sprite.position.set(x, y);
-      if (node.label?.visible) {
-        const gap = (node.size + 4) * invScale;
-        node.label.position.set(x + gap, y);
+      arr[i].x = buffer[i * 2];
+      arr[i].y = buffer[i * 2 + 1];
+    }
+
+    // In 3D mode, the ticker handles sprite positioning via projection.
+    // Just store the 2D positions and let postPositionUpdate run.
+    if (!this.mode3d) {
+      const invScale = this.zoomInvScale();
+      for (let i = 0; i < len; i++) {
+        const node = arr[i];
+        if (!node.visible) continue;
+        node.sprite.position.set(node.x, node.y);
+        if (node.label?.visible) {
+          const gap = (node.size + 4) * invScale;
+          node.label.position.set(node.x + gap, node.y);
+        }
       }
     }
 
@@ -813,8 +840,11 @@ export class PixiRenderer {
     this.interactionResumeTimer = null;
     if (this.edgeBgGfx) this.edgeBgGfx.visible = true;
     if (this.edgeFgGfx) this.edgeFgGfx.visible = true;
-    this.redrawAllEdges();
-    this.applyCounterScale();
+    // In 3D mode the ticker's update3D() will redraw on the next frame; skip here
+    if (!this.mode3d) {
+      this.redrawAllEdges();
+      this.applyCounterScale();
+    }
   }
 
   /** Notify renderer that the layout simulation has settled (skip edge redraws). */
@@ -919,9 +949,10 @@ export class PixiRenderer {
     for (const node of this.nodes.values()) {
       if (node.visible) visibleNodes.push(node);
     }
+    // In 3D mode, use the sprite's projected position for hit detection
     this._quadtree = quadtree<PixiNode>()
-      .x((d) => d.x)
-      .y((d) => d.y)
+      .x((d) => this.mode3d ? d.sprite.position.x : d.x)
+      .y((d) => this.mode3d ? d.sprite.position.y : d.y)
       .addAll(visibleNodes);
     this.lastQuadtreeRebuild = performance.now();
   }
@@ -929,7 +960,10 @@ export class PixiRenderer {
   /** Find the nearest node to (worldX, worldY) within maxDistance. */
   findNodeAt(worldX: number, worldY: number, maxDistance = 20): PixiNode | null {
     if (!this._quadtree) return null;
-    // d3-quadtree.find() is a native optimized nearest-neighbor search
+    // In 3D mode, rebuild quadtree every hit test since projected positions
+    // change every frame from rotation. This is O(n log n) but only runs
+    // on click/hover (~20fps), not every render frame.
+    if (this.mode3d) this.rebuildQuadtree();
     return this._quadtree.find(worldX, worldY, maxDistance) ?? null;
   }
 
@@ -947,7 +981,10 @@ export class PixiRenderer {
     if (this.nodes.size === 0) return;
     const positions = Array.from(this.nodes.values())
       .filter((n) => n.visible)
-      .map((n) => ({ x: n.x, y: n.y }));
+      .map((n) => this.mode3d
+        ? { x: n.sprite.position.x, y: n.sprite.position.y }
+        : { x: n.x, y: n.y },
+      );
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
     const target = fitBounds(bounds, this.width, this.height);
@@ -976,7 +1013,13 @@ export class PixiRenderer {
     const positions: { x: number; y: number }[] = [];
     for (const id of nodeIds) {
       const node = this.nodes.get(id);
-      if (node?.visible) positions.push({ x: node.x, y: node.y });
+      if (!node?.visible) continue;
+      // In 3D, use projected positions (rotation paused on click so they're stable)
+      if (this.mode3d) {
+        positions.push({ x: node.sprite.position.x, y: node.sprite.position.y });
+      } else {
+        positions.push({ x: node.x, y: node.y });
+      }
     }
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
@@ -1130,6 +1173,19 @@ export class PixiRenderer {
           }
           this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
           this.redrawDragEdges(this.dragNode);
+        } else if (this.mode3d) {
+          // 3D mode: drag rotates the camera instead of panning
+          const rotateDx = e.clientX - lastPointerX;
+          const rotateDy = e.clientY - lastPointerY;
+          // Horizontal drag → Y-axis rotation
+          this.mode3dAngle += rotateDx * 0.005;
+          // Vertical drag → X-axis tilt (clamped to avoid flipping)
+          this.mode3dTilt = Math.max(-1.2, Math.min(1.2, this.mode3dTilt + rotateDy * 0.005));
+          // Pause auto-rotation during manual drag
+          if (this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = false;
+            this.callbacks.on3DAutoRotateChange?.(false);
+          }
         } else {
           // Pan — compute delta from last pointer position (not movementX/Y)
           // to avoid a jump on the first move after crossing the drag threshold.
@@ -1164,8 +1220,18 @@ export class PixiRenderer {
         const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
 
         if (hitNode) {
+          // Pause 3D rotation on click so edges stay attached to highlighted node
+          if (this.mode3d && this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = false;
+            this.callbacks.on3DAutoRotateChange?.(false);
+          }
           this.callbacks.onNodeClick?.(hitNode.graphNode);
         } else {
+          // Resume 3D rotation on stage click (deselect)
+          if (this.mode3d && !this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = true;
+            this.callbacks.on3DAutoRotateChange?.(true);
+          }
           this.callbacks.onStageClick?.();
         }
       }
@@ -1204,5 +1270,221 @@ export class PixiRenderer {
   /** Override the default breakpoint tiers. Takes effect on next setData(). */
   setBreakpoints(breakpoints: PixiScaleBreakpoint[]): void {
     this.breakpoints = breakpoints;
+  }
+
+  // ─── 3D Rotation Mode ─────────────────────────────────────────────
+
+  /**
+   * Enable/disable pseudo-3D rotation mode.
+   * Assigns Z coordinates based on community membership (golden angle distribution)
+   * and applies perspective projection + auto-rotation on the Pixi ticker.
+   */
+  set3DMode(enabled: boolean, communityAssignments?: Record<string, number>): void {
+    this.mode3d = enabled;
+    if (!enabled) {
+      // Restore 2D positions from stored (x, y)
+      for (const node of this.nodeArray) {
+        if (!node.visible) continue;
+        node.sprite.position.set(node.x, node.y);
+        node.sprite.alpha = 0.9;
+      }
+      this.applyCounterScale();
+      this.redrawAllEdges();
+      // Rebuild quadtree with 2D positions so hit detection works correctly
+      this.rebuildQuadtree();
+      return;
+    }
+
+    // Compute bounding radius from current positions
+    let maxDist = 0;
+    for (const node of this.nodeArray) {
+      const d = Math.sqrt(node.x * node.x + node.y * node.y);
+      if (d > maxDist) maxDist = d;
+    }
+    this.mode3dRadius = maxDist * 1.1 || 500;
+
+    // Assign Z depth per node: community-based + jitter
+    this.nodeDepthT.clear();
+    if (communityAssignments) {
+      const uniqueComms = [...new Set(Object.values(communityAssignments))].sort((a, b) => a - b);
+      const commDepth = new Map<number, number>();
+      const GOLDEN_ANGLE = 0.618033988749;
+      for (let i = 0; i < uniqueComms.length; i++) {
+        const t = (i * GOLDEN_ANGLE) % 1;
+        commDepth.set(uniqueComms[i], (t - 0.5) * 2);
+      }
+      for (let i = 0; i < this.nodeArray.length; i++) {
+        const node = this.nodeArray[i];
+        const cid = communityAssignments[node.id];
+        const base = cid !== undefined ? (commDepth.get(cid) ?? 0) : 0;
+        // Deterministic jitter from node index
+        const hash = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+        const jitter = ((hash - Math.floor(hash)) - 0.5) * 0.8;
+        this.nodeDepthT.set(node.id, Math.max(-1, Math.min(1, base + jitter)));
+      }
+    }
+
+    // Scale perspective distance to graph size so the 3D effect is proportional.
+    // PerspectiveD should be ~3-4x the radius for a natural look.
+    this.mode3dPerspectiveD = this.mode3dRadius * 3;
+    // Depth scale relative to radius — controls how "thick" the sphere is
+    this.mode3dDepthScale = this.mode3dRadius * 0.6;
+
+    this.mode3dAngle = 0;
+    this.mode3dAutoRotate = true;
+  }
+
+  /** Get Z coordinate for a node (filled sphere distribution). */
+  private getNodeZ(node: PixiNode): number {
+    const R = this.mode3dRadius;
+    const R2 = R * R;
+    const d2 = node.x * node.x + node.y * node.y;
+    if (d2 >= R2) return 0;
+    const zMax = Math.sqrt(R2 - d2);
+    const t = this.nodeDepthT.get(node.id) ?? 0;
+    return t * zMax * (this.mode3dDepthScale / R);
+  }
+
+  /** Project a 3D point to 2D screen coordinates with perspective. */
+  private project3d(x: number, y: number, z: number): { px: number; py: number; scale: number; rz: number } {
+    // X-axis tilt
+    const cosT = Math.cos(this.mode3dTilt);
+    const sinT = Math.sin(this.mode3dTilt);
+    const ty = y * cosT - z * sinT;
+    const tz = y * sinT + z * cosT;
+    // Y-axis rotation
+    const cosA = Math.cos(this.mode3dAngle);
+    const sinA = Math.sin(this.mode3dAngle);
+    const rx = x * cosA - tz * sinA;
+    const rz = x * sinA + tz * cosA;
+    // Perspective
+    const scale = this.mode3dPerspectiveD / (this.mode3dPerspectiveD + rz);
+    return { px: rx * scale, py: ty * scale, scale, rz };
+  }
+
+  /**
+   * Called from the Pixi ticker every frame when 3D mode is active.
+   * Projects all nodes and redraws edges.
+   */
+  private update3D(): void {
+    if (this.mode3dAutoRotate) {
+      this.mode3dAngle += this.mode3dSpeed;
+    }
+
+    const invScale = this.zoomInvScale();
+    for (const node of this.nodeArray) {
+      if (!node.visible) continue;
+      // Skip the dragged node — its sprite position is controlled by pointermove
+      if (this.dragNode === node) continue;
+      const z = this.getNodeZ(node);
+      const p = this.project3d(node.x, node.y, z);
+      node.sprite.position.set(p.px, p.py);
+      const depthScale = Math.max(p.scale, 0.3);
+      const depthAlpha = 0.3 + 0.6 * Math.max(Math.min(p.scale, 1), 0);
+
+      // Apply highlight dimming in 3D (same as 2D applyVisuals)
+      if (this.hasHighlight) {
+        const isHighlighted = this.highlightNodes.has(node.id);
+        const s = isHighlighted ? node.size : node.size * NODE_SIZE_DIMMED_SCALE;
+        node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale * depthScale);
+        node.sprite.alpha = isHighlighted ? depthAlpha : depthAlpha * NODE_OPACITY_DIMMED;
+      } else {
+        node.sprite.scale.set((node.size / CIRCLE_RADIUS) * invScale * depthScale);
+        node.sprite.alpha = depthAlpha;
+      }
+
+      if (node.label?.visible) {
+        const gap = (node.size + 4) * invScale * depthScale;
+        node.label.position.set(p.px + gap, p.py);
+        node.label.scale.set(invScale * depthScale);
+      }
+    }
+
+    // Redraw edges every frame in 3D (projection changes each frame)
+    if (!this.edgesHiddenForInteraction) {
+      this.redrawAllEdges3D();
+    }
+  }
+
+  /**
+   * Edge redraw for 3D mode — uses projected positions instead of stored (x, y).
+   */
+  private redrawAllEdges3D(): void {
+    if (!this.edgeBgGfx || !this.edgeFgGfx) return;
+    this.edgeBgGfx.clear();
+    this.edgeFgGfx.clear();
+    if (!this.edgesEnabled) return;
+
+    const bgAlpha = this.hasHighlight ? EDGE_OPACITY_DIMMED : EDGE_OPACITY_DEFAULT;
+    const edgeWidth = 0.5 * this.zoomInvScale();
+
+    for (const [color, indices] of this.edgeColorGroups) {
+      let drawn = false;
+      for (const i of indices) {
+        const e = this.edges[i];
+        if (this.hiddenLinkTypes.has(e.label)) continue;
+        const s = this.nodes.get(e.sourceId);
+        const t = this.nodes.get(e.targetId);
+        if (!s?.visible || !t?.visible) continue;
+        // Use projected positions (already set on sprites)
+        const sx = s.sprite.position.x;
+        const sy = s.sprite.position.y;
+        const tx = t.sprite.position.x;
+        const ty = t.sprite.position.y;
+        this.drawEdge(this.edgeBgGfx, sx, sy, tx, ty);
+        drawn = true;
+      }
+      if (drawn) {
+        this.edgeBgGfx.stroke({ width: edgeWidth, color: hexToNum(color), alpha: bgAlpha });
+      }
+    }
+
+    // Foreground highlight edges (same logic as 2D redrawAllEdges)
+    if (this.hasHighlight) {
+      const hlColorGroups = new Map<string, { sx: number; sy: number; tx: number; ty: number }[]>();
+      for (let i = 0; i < this.edges.length; i++) {
+        const e = this.edges[i];
+        if (this.hiddenLinkTypes.has(e.label)) continue;
+        const linkKey = `${e.sourceId}-${e.targetId}`;
+        if (!this.highlightLinks.has(linkKey)) continue;
+        const s = this.nodes.get(e.sourceId);
+        const t = this.nodes.get(e.targetId);
+        if (!s?.visible || !t?.visible) continue;
+        let group = hlColorGroups.get(e.color);
+        if (!group) { group = []; hlColorGroups.set(e.color, group); }
+        group.push({
+          sx: s.sprite.position.x, sy: s.sprite.position.y,
+          tx: t.sprite.position.x, ty: t.sprite.position.y,
+        });
+      }
+      for (const [color, lines] of hlColorGroups) {
+        for (const l of lines) {
+          this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
+        }
+        this.edgeFgGfx.stroke({ width: 1.5 * this.zoomInvScale(), color: hexToNum(color), alpha: EDGE_OPACITY_HIGHLIGHTED });
+      }
+    }
+
+    this.lastEdgeRedraw = performance.now();
+  }
+
+  is3DMode(): boolean {
+    return this.mode3d;
+  }
+
+  set3DAutoRotate(enabled: boolean): void {
+    this.mode3dAutoRotate = enabled;
+  }
+
+  set3DSpeed(speed: number): void {
+    this.mode3dSpeed = speed;
+  }
+
+  set3DTilt(tilt: number): void {
+    this.mode3dTilt = tilt;
+  }
+
+  set3DAngle(angle: number): void {
+    this.mode3dAngle = angle;
   }
 }

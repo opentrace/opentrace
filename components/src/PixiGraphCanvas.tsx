@@ -78,6 +78,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onStageClick,
       onOptimizeStatus,
       layoutMode: layoutModeProp = 'spread',
+      mode3d: mode3dProp = false,
+      on3DAutoRotateChange,
       className,
       style,
     } = props;
@@ -237,6 +239,17 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
 
+    // ── Apply 3D mode when data is ready or prop changes ──────────────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      // Always re-initialize when mode3d is active so new data gets fresh nodeDepthT
+      if (mode3dProp) {
+        rendererRef.current.set3DMode(true, communityData.assignments);
+      } else if (rendererRef.current.is3DMode()) {
+        rendererRef.current.set3DMode(false);
+      }
+    }, [dataVersion, mode3dProp, communityData.assignments]);
+
     // ── Apply highlights ────────────────────────────────────────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
@@ -295,8 +308,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           // Keep pinned (like reference implementation)
           resetTheta(); // restore accuracy
         },
+        on3DAutoRotateChange,
       });
-    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta]);
+    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta, on3DAutoRotateChange]);
 
     // ── Imperative handle (same as GraphCanvas) ─────────────────────────
     useImperativeHandle(
@@ -356,8 +370,20 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         },
         setLayoutMode,
         updateCompactConfig,
+        set3DMode: (enabled: boolean) => {
+          rendererRef.current?.set3DMode(enabled, communityData.assignments);
+        },
+        set3DSpeed: (speed: number) => {
+          rendererRef.current?.set3DSpeed(speed);
+        },
+        set3DTilt: (tilt: number) => {
+          rendererRef.current?.set3DTilt(tilt);
+        },
+        set3DAutoRotate: (enabled: boolean) => {
+          rendererRef.current?.set3DAutoRotate(enabled);
+        },
       }),
-      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig],
+      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig, communityData.assignments],
     );
 
     return (

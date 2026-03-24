@@ -384,6 +384,15 @@ const GraphViewer = memo(
       const [compactRadius, setCompactRadius] = useState(() =>
         ps('compactRadius', 32),
       );
+      // 3D mode state
+      const [mode3d, setMode3d] = useState(() => ps('mode3d', true));
+      const [mode3dSpeed, setMode3dSpeed] = useState(() =>
+        ps('mode3dSpeed', 30),
+      );
+      const [mode3dTilt, setMode3dTilt] = useState(() => ps('mode3dTilt', 35));
+      const [rendererAutoRotate, setRendererAutoRotate] = useState<
+        boolean | null
+      >(null);
 
       // Persist settings to localStorage when they change
       useEffect(() => {
@@ -399,6 +408,9 @@ const GraphViewer = memo(
           compactCommunity,
           compactCentering,
           compactRadius,
+          mode3d,
+          mode3dSpeed,
+          mode3dTilt,
         };
         localStorage.setItem('graph-settings', JSON.stringify(settings));
       }, [
@@ -413,6 +425,9 @@ const GraphViewer = memo(
         compactCommunity,
         compactCentering,
         compactRadius,
+        mode3d,
+        mode3dSpeed,
+        mode3dTilt,
       ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
@@ -581,21 +596,16 @@ const GraphViewer = memo(
         [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities],
       );
 
-      const onNodeClick = useCallback(
-        (node: GraphNode) => {
-          setSelectedNode(node);
-          setSelectedLink(null);
-          // Clear edge-click and community-focus highlights (use stable empty sets)
-          setEdgeHighlightNodes(EMPTY_SET);
-          setEdgeHighlightLinks(EMPTY_SET);
-          setEdgeLabelNodes(EMPTY_SET);
-          setFocusedCommunityNodes(EMPTY_SET);
-          if (zoomOnSelect) {
-            canvasRef.current?.zoomToNodes([node.id], 600);
-          }
-        },
-        [zoomOnSelect],
-      );
+      const onNodeClick = useCallback((node: GraphNode) => {
+        setSelectedNode(node);
+        setSelectedLink(null);
+        // Clear edge-click and community-focus highlights (use stable empty sets)
+        setEdgeHighlightNodes(EMPTY_SET);
+        setEdgeHighlightLinks(EMPTY_SET);
+        setEdgeLabelNodes(EMPTY_SET);
+        setFocusedCommunityNodes(EMPTY_SET);
+        // Zoom is handled by the effect below after highlights are computed
+      }, []);
 
       const onCommunityFocus = useCallback(
         (key: string) => {
@@ -709,6 +719,17 @@ const GraphViewer = memo(
         hops,
         filterState,
       );
+
+      // Zoom to highlighted neighborhood when a node is selected.
+      // Only trigger on selectedNode identity change, not on highlight recalculation
+      // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
+      useEffect(() => {
+        if (!zoomOnSelect || !selectedNode) return;
+        if (highlights.highlightNodes.size > 0) {
+          canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [zoomOnSelect, selectedNode?.id]);
 
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
@@ -1469,6 +1490,8 @@ const GraphViewer = memo(
             onStageClick={handleStageClick}
             onOptimizeStatus={setOptimizeStatus}
             layoutMode={layoutMode}
+            mode3d={mode3d}
+            on3DAutoRotateChange={setRendererAutoRotate}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
@@ -1546,6 +1569,26 @@ const GraphViewer = memo(
               }}
               onReheat={() => canvasRef.current?.reheat?.()}
               onFitToScreen={() => canvasRef.current?.fitToScreen?.()}
+              mode3d={mode3d}
+              onMode3dChange={(v) => {
+                setMode3d(v);
+                canvasRef.current?.set3DMode?.(v);
+              }}
+              mode3dAutoRotate={mode3d ? (rendererAutoRotate ?? true) : true}
+              onMode3dAutoRotateChange={(v) => {
+                canvasRef.current?.set3DAutoRotate?.(v);
+                setRendererAutoRotate(v);
+              }}
+              mode3dSpeed={mode3dSpeed}
+              onMode3dSpeedChange={(v) => {
+                setMode3dSpeed(v);
+                canvasRef.current?.set3DSpeed?.(v / 10000);
+              }}
+              mode3dTilt={mode3dTilt}
+              onMode3dTiltChange={(v) => {
+                setMode3dTilt(v);
+                canvasRef.current?.set3DTilt?.(v / 100);
+              }}
             />
           )}
 
