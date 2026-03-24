@@ -449,7 +449,9 @@ export class LadybugGraphStore implements GraphStore {
     const t0 = performance.now();
     let data: GraphData;
 
-    if (query) {
+    if (query && query.startsWith('type:')) {
+      data = await this.searchByType(query.slice(5), hops ?? 2);
+    } else if (query) {
       let queryEmbedding: number[] | undefined;
       if (this.embedder) {
         try {
@@ -646,6 +648,77 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     // Fetch edges between visited nodes
+    const relRows = await this.query(
+      `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${nodeList}] AND b.id IN [${nodeList}] ` +
+        `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,
+    );
+    const links: GraphLink[] = (relRows as Record<string, string>[]).map(
+      (r) => ({
+        source: r.source,
+        target: r.target,
+        label: r.type,
+        properties: parseProps(r.properties),
+      }),
+    );
+
+    return { nodes, links };
+  }
+
+  /** Search by node type — return all nodes of a given type plus hop neighbours. */
+  private async searchByType(
+    typeName: string,
+    hops: number,
+  ): Promise<GraphData> {
+    // Find the matching KuzuDB table type (case-insensitive)
+    const matchedType = NODE_TYPES.find(
+      (t) => t.toLowerCase() === typeName.toLowerCase(),
+    );
+    if (!matchedType) return { nodes: [], links: [] };
+
+    // Seed: all nodes of this type (capped)
+    const seedRows = await this.query(
+      `MATCH (n:${matchedType}) RETURN n.id AS id LIMIT ${this.maxVisNodes}`,
+    );
+    const seedIds = new Set(
+      (seedRows as Record<string, string>[]).map((r) => r.id),
+    );
+    if (seedIds.size === 0) return { nodes: [], links: [] };
+
+    // BFS hop expansion (same as searchGraph)
+    const visitedNodes = new Set(seedIds);
+    let frontier = new Set(seedIds);
+    for (let d = 0; d < hops && frontier.size > 0; d++) {
+      const nextFrontier = new Set<string>();
+      for (const nodeId of frontier) {
+        if (visitedNodes.size >= this.maxVisNodes) break;
+        const nodeType = this.nodeTypeMap.get(nodeId);
+        if (!nodeType) continue;
+        const neighbors = await this.query(
+          `MATCH (a:${nodeType} {id: '${esc(nodeId)}'})-[r:RELATES]-(b) RETURN b.id AS id`,
+        );
+        for (const row of neighbors as Record<string, string>[]) {
+          if (!visitedNodes.has(row.id)) {
+            visitedNodes.add(row.id);
+            nextFrontier.add(row.id);
+            if (visitedNodes.size >= this.maxVisNodes) break;
+          }
+        }
+      }
+      frontier = nextFrontier;
+      if (visitedNodes.size >= this.maxVisNodes) break;
+    }
+
+    const nodeList = [...visitedNodes].map((id) => `'${esc(id)}'`).join(', ');
+    const nodeRows = await this.query(unionAllNodes(`n.id IN [${nodeList}]`));
+    const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
+      (r) => ({
+        id: r.id,
+        type: r.type,
+        name: r.name,
+        properties: parseProps(r.properties),
+      }),
+    );
+
     const relRows = await this.query(
       `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${nodeList}] AND b.id IN [${nodeList}] ` +
         `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,

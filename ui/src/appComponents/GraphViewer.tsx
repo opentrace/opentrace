@@ -45,6 +45,7 @@ import {
   type GraphCanvasHandle,
   type FilterItem,
   type FilterPanelProps,
+  type SearchSuggestion,
   DEFAULT_LAYOUT_CONFIG,
 } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
@@ -790,6 +791,80 @@ const GraphViewer = memo(
       const legendItems =
         colorMode === 'community' ? legendCommunityItems : legendNodeItems;
 
+      // Build autocomplete suggestions for the toolbar search
+      const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
+        // Deduplicate names; pick first node's type/community for each name
+        const nameMap = new Map<
+          string,
+          { type: string; communityId?: number }
+        >();
+        for (const n of graphData.nodes) {
+          if (!nameMap.has(n.name)) {
+            const cid = communityData.assignments[n.id];
+            nameMap.set(n.name, { type: n.type, communityId: cid });
+          }
+        }
+        const suggestions: SearchSuggestion[] = [];
+        for (const [name, info] of nameMap) {
+          const cLabel =
+            info.communityId !== undefined
+              ? communityData.names.get(info.communityId)
+              : undefined;
+          const cColor =
+            info.communityId !== undefined
+              ? communityData.colorMap.get(info.communityId)
+              : undefined;
+          suggestions.push({
+            label: name,
+            category: 'name',
+            color: getNodeColor(info.type),
+            communityLabel: cLabel,
+            communityColor: cColor,
+          });
+        }
+        for (const [cid, name] of communityData.names) {
+          suggestions.push({
+            label: name,
+            category: 'community',
+            color: communityData.colorMap.get(cid),
+          });
+        }
+        return suggestions;
+      }, [graphData.nodes, communityData]);
+
+      const handleSuggestionSelect = useCallback(
+        (suggestion: SearchSuggestion) => {
+          switch (suggestion.category) {
+            case 'community': {
+              // Find community ID by name, then focus it
+              let cid: number | undefined;
+              for (const [id, name] of communityData.names) {
+                if (name === suggestion.label) {
+                  cid = id;
+                  break;
+                }
+              }
+              if (cid !== undefined) {
+                const nodeIds = Object.entries(communityData.assignments)
+                  .filter(([, id]) => id === cid)
+                  .map(([nodeId]) => nodeId);
+                if (nodeIds.length > 0) {
+                  setFocusedCommunityNodes(new Set(nodeIds));
+                  setSelectedNode(null);
+                  setSelectedLink(null);
+                }
+              }
+              break;
+            }
+            default:
+              // name — normal search
+              loadGraph(suggestion.label, hops);
+              break;
+          }
+        },
+        [communityData, hops, loadGraph],
+      );
+
       const legendLinkItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.links.forEach((l) => {
@@ -1193,6 +1268,8 @@ const GraphViewer = memo(
               !searchQuery.trim() || searchQuery === lastSearchQuery
             }
             showResetButton={!!lastSearchQuery}
+            searchSuggestions={searchSuggestions}
+            onSuggestionSelect={handleSuggestionSelect}
             hops={hops}
             onHopsChange={setHops}
             nodeCount={filteredGraphData.nodes.length}
