@@ -1168,6 +1168,16 @@ export class PixiRenderer {
           }
           this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
           this.redrawDragEdges(this.dragNode);
+        } else if (this.mode3d) {
+          // 3D mode: drag rotates the camera instead of panning
+          const rotateDx = e.clientX - lastPointerX;
+          const rotateDy = e.clientY - lastPointerY;
+          // Horizontal drag → Y-axis rotation
+          this.mode3dAngle += rotateDx * 0.005;
+          // Vertical drag → X-axis tilt (clamped to avoid flipping)
+          this.mode3dTilt = Math.max(-1.2, Math.min(1.2, this.mode3dTilt + rotateDy * 0.005));
+          // Pause auto-rotation during manual drag
+          this.mode3dAutoRotate = false;
         } else {
           // Pan — compute delta from last pointer position (not movementX/Y)
           // to avoid a jump on the first move after crossing the drag threshold.
