@@ -385,7 +385,7 @@ const GraphViewer = memo(
         ps('compactRadius', 32),
       );
       // 3D mode state
-      const [mode3d, setMode3d] = useState(() => ps('mode3d', false));
+      const [mode3d, setMode3d] = useState(() => ps('mode3d', true));
       const [mode3dSpeed, setMode3dSpeed] = useState(() =>
         ps('mode3dSpeed', 30),
       );
