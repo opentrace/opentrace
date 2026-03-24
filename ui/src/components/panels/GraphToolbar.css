@@ -221,7 +221,7 @@
 
 /* ── Search autocomplete ───────────────────── */
 
-.ot-toolbar .ot-search-autocomplete {
+.ot-search-container .ot-search-autocomplete {
   position: absolute;
   top: 100%;
   left: 0;
@@ -239,7 +239,7 @@
   padding: 4px 0;
 }
 
-.ot-toolbar .ot-ac-header {
+.ot-search-autocomplete .ot-ac-header {
   padding: 5px 12px 2px;
   font-size: 0.62rem;
   font-weight: 600;
@@ -248,7 +248,7 @@
   letter-spacing: 0.05em;
 }
 
-.ot-toolbar .ot-ac-item {
+.ot-search-autocomplete .ot-ac-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -263,19 +263,19 @@
   transition: background 0.1s;
 }
 
-.ot-toolbar .ot-ac-item:hover,
-.ot-toolbar .ot-ac-item--active {
+.ot-search-autocomplete .ot-ac-item:hover,
+.ot-search-autocomplete .ot-ac-item--active {
   background: color-mix(in oklch, var(--accent) 60%, transparent);
 }
 
-.ot-toolbar .ot-ac-dot {
+.ot-search-autocomplete .ot-ac-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.ot-toolbar .ot-ac-label {
+.ot-search-autocomplete .ot-ac-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -283,14 +283,14 @@
   white-space: nowrap;
 }
 
-.ot-toolbar .ot-ac-category {
+.ot-search-autocomplete .ot-ac-category {
   font-size: 0.6rem;
   color: var(--muted-foreground);
   flex-shrink: 0;
   opacity: 0.5;
 }
 
-.ot-toolbar .ot-ac-community {
+.ot-search-autocomplete .ot-ac-community {
   font-size: 0.62rem;
   font-weight: 500;
   flex-shrink: 0;
