@@ -56,6 +56,7 @@ export default function FilterPanel({
           className="filter-section-collapse-btn"
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? 'Expand section' : 'Collapse section'}
+          aria-expanded={!collapsed}
         >
           <svg
             width="10"
