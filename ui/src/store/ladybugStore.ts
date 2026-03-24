@@ -30,7 +30,13 @@ import {
   tableToIPC,
   tableFromIPC,
   vectorFromArray,
-  makeTable,
+  makeData,
+  RecordBatch,
+  Table as ArrowTable,
+  Schema,
+  Field,
+  Utf8,
+  Struct,
 } from 'apache-arrow';
 import {
   writeParquet,
@@ -218,11 +224,23 @@ function rowsToParquet(
   rows: Record<string, unknown>[],
   columns: string[],
 ): Uint8Array {
-  const cols: Record<string, ReturnType<typeof vectorFromArray>> = {};
-  for (const col of columns) {
-    cols[col] = vectorFromArray(rows.map((r) => String(r[col] ?? '')));
-  }
-  const arrowTable = makeTable(cols);
+  const fields = columns.map((c) => new Field(c, new Utf8()));
+  const schema = new Schema(fields);
+  const children = columns.map(
+    (col) =>
+      vectorFromArray(
+        rows.map((r) => String(r[col] ?? '')),
+        new Utf8(),
+      ).data[0],
+  );
+  const structType = new Struct(fields);
+  const batchData = makeData({
+    type: structType,
+    length: rows.length,
+    children,
+  });
+  const batch = new RecordBatch(schema, batchData);
+  const arrowTable = new ArrowTable(batch);
   const ipc = tableToIPC(arrowTable, 'stream');
   const wasmTable = ParquetTable.fromIPCStream(ipc);
   return writeParquet(wasmTable);
