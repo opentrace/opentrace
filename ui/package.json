@@ -1,5 +1,5 @@
 {
-  "name": "@opentrace/components",
+  "name": "@opentrace/opentrace",
   "version": "0.1.1",
   "type": "module",
   "description": "React components for graph visualization — powered by Pixi.js and Graphology",
