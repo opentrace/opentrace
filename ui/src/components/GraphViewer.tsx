@@ -785,18 +785,18 @@ const GraphViewer = memo(
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.links]);
 
+      const isEmpty = graphData.nodes.length === 0;
+      const isSearchEmpty = isEmpty && !!lastSearchQuery;
+
       // Determine whether to show the full indexing progress modal
       const showFullModal =
         jobState.status === 'running' ||
         jobState.status === 'persisted' ||
         jobState.status === 'error' ||
         ((jobState.status === 'enriching' || jobState.status === 'done') &&
-          jobExpanded);
+          (jobExpanded || (loading && isEmpty)));
 
       const graphWidth = showChat ? width - chatWidth : width;
-
-      const isEmpty = graphData.nodes.length === 0;
-      const isSearchEmpty = isEmpty && !!lastSearchQuery;
 
       // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
       // to the "Computing layout" overlay without flashing "no data").
@@ -840,7 +840,7 @@ const GraphViewer = memo(
 
       // --- Early returns for loading/error/empty states ---
 
-      if (loading && !showAddRepo && !showFullModal) {
+      if (loading && isEmpty && !showAddRepo && !showFullModal) {
         return (
           <div className="graph-viewport">
             <div className="loading">
