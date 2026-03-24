@@ -16,6 +16,7 @@
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import wasm from 'vite-plugin-wasm';
 import {
   existsSync,
   readFileSync,
@@ -187,7 +188,7 @@ export default defineConfig(({ mode }) => {
       },
       dedupe: ['react', 'react-dom'],
     },
-    plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
+    plugins: [react(), wasm(), crossOriginIsolation(), copyComponentsWasm()],
     build: {
       sourcemap: true,
     },
@@ -199,7 +200,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core'],
+      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core', 'parquet-wasm'],
     },
     worker: {
       format: 'es',

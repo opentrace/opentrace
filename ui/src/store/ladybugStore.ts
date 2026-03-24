@@ -26,6 +26,23 @@
  */
 
 import { deflateSync, inflateSync, zipSync, unzipSync } from 'fflate';
+import {
+  tableToIPC,
+  tableFromIPC,
+  vectorFromArray,
+  makeData,
+  RecordBatch,
+  Table as ArrowTable,
+  Schema,
+  Field,
+  Utf8,
+  Struct,
+} from 'apache-arrow';
+import {
+  writeParquet,
+  readParquet,
+  Table as ParquetTable,
+} from 'parquet-wasm/bundler';
 
 import lbug from '@ladybugdb/wasm-core';
 
@@ -202,14 +219,44 @@ function unionAllTextSearch(escapedLower: string): string {
 
 // ---- Parquet export helpers ----
 
-/** Parquet file names inside the export zip archive. */
-const PARQUET_DIR = '/parquet';
-
-function nodeParquetPath(type: string): string {
-  return `${PARQUET_DIR}/nodes_${type}.parquet`;
+/** Safely parse a JSON string, returning fallback on error. */
+function safeJsonParse(
+  s: string,
+  fallback: Record<string, unknown> = {},
+): Record<string, unknown> {
+  try {
+    return JSON.parse(s) as Record<string, unknown>;
+  } catch {
+    return fallback;
+  }
 }
 
-const REL_PARQUET_PATH = `${PARQUET_DIR}/relationships.parquet`;
+/** Convert an array of row objects to Parquet bytes via Arrow IPC → parquet-wasm. */
+function rowsToParquet(
+  rows: Record<string, unknown>[],
+  columns: string[],
+): Uint8Array {
+  const fields = columns.map((c) => new Field(c, new Utf8()));
+  const schema = new Schema(fields);
+  const children = columns.map(
+    (col) =>
+      vectorFromArray(
+        rows.map((r) => String(r[col] ?? '')),
+        new Utf8(),
+      ).data[0],
+  );
+  const structType = new Struct(fields);
+  const batchData = makeData({
+    type: structType,
+    length: rows.length,
+    children,
+  });
+  const batch = new RecordBatch(schema, batchData);
+  const arrowTable = new ArrowTable(batch);
+  const ipc = tableToIPC(arrowTable, 'stream');
+  const wasmTable = ParquetTable.fromIPCStream(ipc);
+  return writeParquet(wasmTable);
+}
 
 // ---- Store implementation ----
 
@@ -275,7 +322,7 @@ export class LadybugGraphStore implements GraphStore {
     this.conn = new lbug.Connection(this.db);
     await this.conn.init();
     await this.initSchema();
-    await this.ensureParquetDir();
+
     console.log(
       `[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`,
     );
@@ -295,15 +342,6 @@ export class LadybugGraphStore implements GraphStore {
     for (const stmt of SCHEMA_STATEMENTS) {
       const result = await this.conn.query(stmt);
       await result.close();
-    }
-  }
-
-  /** Ensure the /parquet directory exists on the WASM virtual filesystem. */
-  private async ensureParquetDir(): Promise<void> {
-    try {
-      await lbug.FS.mkdir(PARQUET_DIR);
-    } catch {
-      // Already exists — ignore
     }
   }
 
@@ -698,24 +736,35 @@ export class LadybugGraphStore implements GraphStore {
     // Clear current data and reset caches
     await this.clearGraph();
 
-    this.ensureParquetDir();
-
     let totalNodes = 0;
     let totalRels = 0;
 
-    // Import node tables from Parquet files
+    // Import node tables from Parquet files → CSV → COPY FROM
     for (const type of NODE_TYPES) {
       const fileName = `nodes_${type}.parquet`;
       const fileData = entries[fileName];
       if (!fileData) continue;
 
       onProgress?.(`Importing ${type} nodes`);
-      const path = nodeParquetPath(type);
-      await lbug.FS.writeFile(path, fileData);
+      // Read Parquet → Arrow IPC → JS Arrow table → CSV for COPY FROM
+      const wasmTable = readParquet(fileData);
+      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      const csv = generateTypedNodeCSV(
+        Array.from({ length: arrowTable.numRows }, (_, i) => ({
+          id: String(arrowTable.getChild('id')?.get(i) ?? ''),
+          type,
+          name: String(arrowTable.getChild('name')?.get(i) ?? ''),
+          properties: safeJsonParse(
+            String(arrowTable.getChild('properties')?.get(i) ?? '{}'),
+          ),
+        })),
+      );
+      const csvPath = `/import_nodes_${type}.csv`;
+      await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
       try {
-        await this.exec(`COPY ${type} FROM '${path}'`);
+        await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
       } finally {
-        await lbug.FS.unlink(path);
+        await lbug.FS.unlink(csvPath);
       }
 
       // Rebuild nodeTypeMap and BM25 index for this type
@@ -736,18 +785,26 @@ export class LadybugGraphStore implements GraphStore {
     const relData = entries['relationships.parquet'];
     if (relData) {
       onProgress?.('Importing relationships');
-      await lbug.FS.writeFile(REL_PARQUET_PATH, relData);
+
+      // Read Parquet → Arrow → row objects
+      const wasmTable = readParquet(relData);
+      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      const allRows: Record<string, string>[] = Array.from(
+        { length: arrowTable.numRows },
+        (_, i) => ({
+          from: String(arrowTable.getChild('from')?.get(i) ?? ''),
+          to: String(arrowTable.getChild('to')?.get(i) ?? ''),
+          id: String(arrowTable.getChild('id')?.get(i) ?? ''),
+          type: String(arrowTable.getChild('type')?.get(i) ?? ''),
+          properties: String(arrowTable.getChild('properties')?.get(i) ?? '{}'),
+        }),
+      );
+
+      console.log(
+        `[LadybugStore] relationship parquet has ${allRows.length} rows`,
+      );
 
       try {
-        // Scan the Parquet file and bucket rows by (srcType, tgtType)
-        const allRows = await this.query(
-          `LOAD FROM '${REL_PARQUET_PATH}' RETURN *`,
-        );
-
-        console.log(
-          `[LadybugStore] relationship parquet has ${allRows.length} rows`,
-        );
-
         const buckets = new Map<string, ImportBatchRequest['relationships']>();
 
         for (const row of allRows as Record<string, string>[]) {
@@ -799,8 +856,6 @@ export class LadybugGraphStore implements GraphStore {
       } catch (err) {
         console.error('[LadybugStore] relationship import failed:', err);
       }
-
-      await lbug.FS.unlink(REL_PARQUET_PATH);
     }
 
     console.log(
@@ -817,43 +872,42 @@ export class LadybugGraphStore implements GraphStore {
     await this.ensureReady();
     await this.flush();
 
-    this.ensureParquetDir();
-
     const files: Record<string, Uint8Array> = {};
 
-    // Export each typed node table as a Parquet file
+    // Export each typed node table as a Parquet file via JS Arrow → parquet-wasm
     for (const type of NODE_TYPES) {
-      const countRows = await this.query(
-        `MATCH (n:${type}) RETURN count(n) AS cnt`,
+      const rows = await this.query(
+        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
       );
-      const count = Number(
-        (countRows as Record<string, number>[])[0]?.cnt ?? 0,
-      );
-      if (count === 0) continue;
+      if (rows.length === 0) continue;
 
-      const path = nodeParquetPath(type);
-      await this.exec(
-        `COPY (MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties) TO '${path}'`,
+      const data = rowsToParquet(rows as Record<string, string>[], [
+        'id',
+        'name',
+        'properties',
+      ]);
+      files[`nodes_${type}.parquet`] = data;
+      console.log(
+        `[LadybugStore] exported ${type}: ${rows.length} nodes, ${data.byteLength} bytes`,
       );
-      files[`nodes_${type}.parquet`] = await lbug.FS.readFile(path);
-      await lbug.FS.unlink(path);
-      console.log(`[LadybugStore] exported ${type}: ${count} nodes`);
     }
 
     // Export all relationships as a single Parquet file
-    const relCountRows = await this.query(
-      `MATCH ()-[r:RELATES]->() RETURN count(r) AS cnt`,
+    const relRows = await this.query(
+      'MATCH (a)-[r:RELATES]->(b) RETURN a.id AS `from`, b.id AS `to`, r.id AS id, r.type AS type, r.properties AS properties',
     );
-    const relCount = Number(
-      (relCountRows as Record<string, number>[])[0]?.cnt ?? 0,
-    );
-    if (relCount > 0) {
-      await this.exec(
-        `COPY (MATCH (a)-[r:RELATES]->(b) RETURN a.id AS \`from\`, b.id AS \`to\`, r.id AS id, r.type AS type, r.properties AS properties) TO '${REL_PARQUET_PATH}'`,
+    if (relRows.length > 0) {
+      const data = rowsToParquet(relRows as Record<string, string>[], [
+        'from',
+        'to',
+        'id',
+        'type',
+        'properties',
+      ]);
+      files['relationships.parquet'] = data;
+      console.log(
+        `[LadybugStore] exported ${relRows.length} rels, ${data.byteLength} bytes`,
       );
-      files['relationships.parquet'] = await lbug.FS.readFile(REL_PARQUET_PATH);
-      await lbug.FS.unlink(REL_PARQUET_PATH);
-      console.log(`[LadybugStore] exported ${relCount} relationships`);
     }
 
     console.log(
