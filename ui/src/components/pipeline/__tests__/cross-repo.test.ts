@@ -34,6 +34,7 @@ const repoRoot = join(
   '..',
   '..',
   '..',
+  '..',
 );
 const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'python', 'project');
 

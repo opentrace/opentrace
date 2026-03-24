@@ -34,6 +34,7 @@ const repoRoot = join(
   '..',
   '..',
   '..',
+  '..',
 );
 
 async function readAllFiles(

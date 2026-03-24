@@ -33,8 +33,6 @@ const PUBLIC_DIR = join(
   '..',
   '..',
   '..',
-  '..',
-  'components',
   'public',
   'wasm',
 );
