@@ -1741,6 +1741,34 @@ const GraphViewer = memo(
               </svg>
             </button>
             <button
+              className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
+              onClick={() => {
+                const next = !mode3d;
+                setMode3d(next);
+                canvasRef.current?.set3DMode?.(next);
+              }}
+              title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                {mode3d ? (
+                  /* 2D grid icon */
+                  <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
+                ) : (
+                  /* 3D cube icon */
+                  <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
+                )}
+              </svg>
+            </button>
+            <button
               className={`graph-control-btn${optimizeStatus?.phase === 'fa2' ? ' graph-control-btn--active' : ''}`}
               onClick={() => canvasRef.current?.optimize()}
               title={
