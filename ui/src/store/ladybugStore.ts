@@ -219,6 +219,18 @@ function unionAllTextSearch(escapedLower: string): string {
 
 // ---- Parquet export helpers ----
 
+/** Safely parse a JSON string, returning fallback on error. */
+function safeJsonParse(
+  s: string,
+  fallback: Record<string, unknown> = {},
+): Record<string, unknown> {
+  try {
+    return JSON.parse(s) as Record<string, unknown>;
+  } catch {
+    return fallback;
+  }
+}
+
 /** Convert an array of row objects to Parquet bytes via Arrow IPC → parquet-wasm. */
 function rowsToParquet(
   rows: Record<string, unknown>[],
@@ -243,7 +255,11 @@ function rowsToParquet(
   const arrowTable = new ArrowTable(batch);
   const ipc = tableToIPC(arrowTable, 'stream');
   const wasmTable = ParquetTable.fromIPCStream(ipc);
-  return writeParquet(wasmTable);
+  try {
+    return writeParquet(wasmTable);
+  } finally {
+    wasmTable.free();
+  }
 }
 
 // ---- Store implementation ----
@@ -736,13 +752,18 @@ export class LadybugGraphStore implements GraphStore {
       onProgress?.(`Importing ${type} nodes`);
       // Read Parquet → Arrow IPC → JS Arrow table → CSV for COPY FROM
       const wasmTable = readParquet(fileData);
-      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      let arrowTable;
+      try {
+        arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      } finally {
+        wasmTable.free();
+      }
       const csv = generateTypedNodeCSV(
         Array.from({ length: arrowTable.numRows }, (_, i) => ({
           id: String(arrowTable.getChild('id')?.get(i) ?? ''),
           type,
           name: String(arrowTable.getChild('name')?.get(i) ?? ''),
-          properties: JSON.parse(
+          properties: safeJsonParse(
             String(arrowTable.getChild('properties')?.get(i) ?? '{}'),
           ),
         })),
@@ -776,7 +797,12 @@ export class LadybugGraphStore implements GraphStore {
 
       // Read Parquet → Arrow → row objects
       const wasmTable = readParquet(relData);
-      const arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      let arrowTable;
+      try {
+        arrowTable = tableFromIPC(wasmTable.intoIPCStream());
+      } finally {
+        wasmTable.free();
+      }
       const allRows: Record<string, string>[] = Array.from(
         { length: arrowTable.numRows },
         (_, i) => ({
