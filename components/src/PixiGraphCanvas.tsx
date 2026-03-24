@@ -79,6 +79,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onOptimizeStatus,
       layoutMode: layoutModeProp = 'spread',
       mode3d: mode3dProp = false,
+      on3DAutoRotateChange,
       className,
       style,
     } = props;
@@ -241,10 +242,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // ── Apply 3D mode when data is ready or prop changes ──────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
-      const is3d = rendererRef.current.is3DMode();
-      if (mode3dProp && !is3d) {
+      // Always re-initialize when mode3d is active so new data gets fresh nodeDepthT
+      if (mode3dProp) {
         rendererRef.current.set3DMode(true, communityData.assignments);
-      } else if (!mode3dProp && is3d) {
+      } else if (rendererRef.current.is3DMode()) {
         rendererRef.current.set3DMode(false);
       }
     }, [dataVersion, mode3dProp, communityData.assignments]);
@@ -307,8 +308,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           // Keep pinned (like reference implementation)
           resetTheta(); // restore accuracy
         },
+        on3DAutoRotateChange,
       });
-    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta]);
+    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta, on3DAutoRotateChange]);
 
     // ── Imperative handle (same as GraphCanvas) ─────────────────────────
     useImperativeHandle(

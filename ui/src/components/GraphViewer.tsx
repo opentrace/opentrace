@@ -720,13 +720,16 @@ const GraphViewer = memo(
         filterState,
       );
 
-      // Zoom to highlighted neighborhood when a node is selected
+      // Zoom to highlighted neighborhood when a node is selected.
+      // Only trigger on selectedNode identity change, not on highlight recalculation
+      // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
       useEffect(() => {
         if (!zoomOnSelect || !selectedNode) return;
         if (highlights.highlightNodes.size > 0) {
           canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
         }
-      }, [zoomOnSelect, selectedNode, highlights.highlightNodes]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [zoomOnSelect, selectedNode?.id]);
 
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
@@ -1488,6 +1491,7 @@ const GraphViewer = memo(
             onOptimizeStatus={setOptimizeStatus}
             layoutMode={layoutMode}
             mode3d={mode3d}
+            on3DAutoRotateChange={setRendererAutoRotate}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />

@@ -94,6 +94,7 @@ interface InteractionCallbacks {
   onNodeDragStart?: (nodeId: string) => void;
   onNodeDragMove?: (nodeId: string, x: number, y: number) => void;
   onNodeDragEnd?: (nodeId: string) => void;
+  on3DAutoRotateChange?: (autoRotate: boolean) => void;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────
@@ -470,18 +471,19 @@ export class PixiRenderer {
   // ─── Position Updates (called from simulation tick) ───────────────
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    // Cache invScale once for this tick (avoid repeated Math.pow)
     const invScale = this.zoomInvScale();
     for (const [id, pos] of positions) {
       const node = this.nodes.get(id);
       if (!node || !node.visible) continue;
       node.x = pos.x;
       node.y = pos.y;
-      node.sprite.position.set(pos.x, pos.y);
-      // Update label position if visible (right of node)
-      if (node.label?.visible) {
-        const gap = (node.size + 4) * invScale;
-        node.label.position.set(pos.x + gap, pos.y);
+      // In 3D mode the ticker handles sprite positioning via projection each frame.
+      if (!this.mode3d) {
+        node.sprite.position.set(pos.x, pos.y);
+        if (node.label?.visible) {
+          const gap = (node.size + 4) * invScale;
+          node.label.position.set(pos.x + gap, pos.y);
+        }
       }
     }
 
@@ -838,8 +840,11 @@ export class PixiRenderer {
     this.interactionResumeTimer = null;
     if (this.edgeBgGfx) this.edgeBgGfx.visible = true;
     if (this.edgeFgGfx) this.edgeFgGfx.visible = true;
-    this.redrawAllEdges();
-    this.applyCounterScale();
+    // In 3D mode the ticker's update3D() will redraw on the next frame; skip here
+    if (!this.mode3d) {
+      this.redrawAllEdges();
+      this.applyCounterScale();
+    }
   }
 
   /** Notify renderer that the layout simulation has settled (skip edge redraws). */
@@ -1177,7 +1182,10 @@ export class PixiRenderer {
           // Vertical drag → X-axis tilt (clamped to avoid flipping)
           this.mode3dTilt = Math.max(-1.2, Math.min(1.2, this.mode3dTilt + rotateDy * 0.005));
           // Pause auto-rotation during manual drag
-          this.mode3dAutoRotate = false;
+          if (this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = false;
+            this.callbacks.on3DAutoRotateChange?.(false);
+          }
         } else {
           // Pan — compute delta from last pointer position (not movementX/Y)
           // to avoid a jump on the first move after crossing the drag threshold.
@@ -1213,11 +1221,17 @@ export class PixiRenderer {
 
         if (hitNode) {
           // Pause 3D rotation on click so edges stay attached to highlighted node
-          if (this.mode3d) this.mode3dAutoRotate = false;
+          if (this.mode3d && this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = false;
+            this.callbacks.on3DAutoRotateChange?.(false);
+          }
           this.callbacks.onNodeClick?.(hitNode.graphNode);
         } else {
           // Resume 3D rotation on stage click (deselect)
-          if (this.mode3d) this.mode3dAutoRotate = true;
+          if (this.mode3d && !this.mode3dAutoRotate) {
+            this.mode3dAutoRotate = true;
+            this.callbacks.on3DAutoRotateChange?.(true);
+          }
           this.callbacks.onStageClick?.();
         }
       }
@@ -1360,6 +1374,8 @@ export class PixiRenderer {
     const invScale = this.zoomInvScale();
     for (const node of this.nodeArray) {
       if (!node.visible) continue;
+      // Skip the dragged node — its sprite position is controlled by pointermove
+      if (this.dragNode === node) continue;
       const z = this.getNodeZ(node);
       const p = this.project3d(node.x, node.y, z);
       node.sprite.position.set(p.px, p.py);

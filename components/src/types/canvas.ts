@@ -83,6 +83,8 @@ export interface GraphCanvasProps {
   layoutMode?: 'spread' | 'compact';
   /** Enable pseudo-3D rotation mode. */
   mode3d?: boolean;
+  /** Called when auto-rotation state changes (e.g. paused on node click). */
+  on3DAutoRotateChange?: (autoRotate: boolean) => void;
   /** CSS class name for the container div. */
   className?: string;
   /** Inline styles for the container div. */
