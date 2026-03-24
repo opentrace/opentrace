@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: all install build test clean agent ui components ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
+.PHONY: all install build test clean agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
 
 all: build
 
@@ -23,13 +23,11 @@ proto:
 
 ## Install dependencies for all components
 install:
-	$(MAKE) -C components install
 	$(MAKE) -C agent install
 	$(MAKE) -C ui install
 
 ## Build all components
 build:
-	$(MAKE) -C components build
 	$(MAKE) -C ui build
 
 ## Run all tests
@@ -38,7 +36,6 @@ test:
 
 ## Clean all build artifacts
 clean:
-	$(MAKE) -C components clean
 	$(MAKE) -C agent clean
 	$(MAKE) -C ui clean
 
@@ -51,10 +48,6 @@ fmt:
 lint:
 	$(MAKE) -C agent lint
 	$(MAKE) -C ui lint
-
-## Component shortcuts
-components:
-	$(MAKE) -C components build
 
 agent:
 	$(MAKE) -C agent run

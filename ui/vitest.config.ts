@@ -20,9 +20,10 @@ import { resolve } from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      // Dedupe React so @opentrace/components uses the same instance as ui/
-      react: resolve(__dirname, 'node_modules/react'),
-      'react-dom': resolve(__dirname, 'node_modules/react-dom'),
+      '@opentrace/components/chat': resolve(__dirname, 'src/components/chat/index.ts'),
+      '@opentrace/components/pipeline': resolve(__dirname, 'src/components/pipeline/index.ts'),
+      '@opentrace/components/utils': resolve(__dirname, 'src/components/utils.ts'),
+      '@opentrace/components': resolve(__dirname, 'src/components/index.ts'),
     },
   },
   test: {
