@@ -301,6 +301,7 @@ const GraphViewer = memo(
         null,
       );
       const [hops, setHops] = useState(2);
+      const [exporting, setExporting] = useState(false);
       const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
@@ -1326,38 +1327,59 @@ const GraphViewer = memo(
                   <button
                     className="export-db-btn"
                     title="Export database"
+                    disabled={exporting}
                     onClick={async () => {
-                      if (!store.exportDatabase) return;
-                      const data = await store.exportDatabase();
-                      // Copy to a standard ArrayBuffer — the WASM FS may
-                      // return a Uint8Array backed by SharedArrayBuffer.
-                      const buf = new Uint8Array(data).buffer as ArrayBuffer;
-                      const blob = new Blob([buf], {
-                        type: 'application/octet-stream',
-                      });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = 'opentrace.parquet.zip';
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      if (!store.exportDatabase || exporting) return;
+                      setExporting(true);
+                      try {
+                        const data = await store.exportDatabase();
+                        const buf = new Uint8Array(data).buffer as ArrayBuffer;
+                        const blob = new Blob([buf], {
+                          type: 'application/octet-stream',
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'opentrace.parquet.zip';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      } finally {
+                        setExporting(false);
+                      }
                     }}
                   >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    <span className="ot-menu-label">Export</span>
+                    {exporting ? (
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        style={{ animation: 'spin 0.8s linear infinite' }}
+                      >
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                    ) : (
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    )}
+                    <span className="ot-menu-label">
+                      {exporting ? 'Exporting…' : 'Export'}
+                    </span>
                   </button>
                 )}
                 <ThemeSelector />
