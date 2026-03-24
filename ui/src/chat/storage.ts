@@ -18,6 +18,7 @@ const KEY_PREFIX = 'ot_chat_apikey_';
 const PROVIDER_KEY = 'ot_chat_provider';
 const MODEL_PREFIX = 'ot_chat_model_';
 const LOCAL_URL_KEY = 'ot_chat_local_url';
+const HISTORY_ENABLED_KEY = 'ot_chat_history_enabled';
 
 export function loadApiKey(provider: string): string {
   return localStorage.getItem(KEY_PREFIX + provider) ?? '';
@@ -60,4 +61,12 @@ export function saveLocalUrl(url: string): void {
   } else {
     localStorage.removeItem(LOCAL_URL_KEY);
   }
+}
+
+export function loadChatHistoryEnabled(): boolean {
+  return localStorage.getItem(HISTORY_ENABLED_KEY) === 'true';
+}
+
+export function saveChatHistoryEnabled(enabled: boolean): void {
+  localStorage.setItem(HISTORY_ENABLED_KEY, String(enabled));
 }

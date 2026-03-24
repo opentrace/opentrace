@@ -286,6 +286,22 @@
   color: var(--destructive, #ef4444);
 }
 
+/* Chat history toggle */
+.chat-history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.chat-history-toggle input[type='checkbox'] {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 /* Streaming cursor blink */
 .streaming-cursor {
   display: inline-block;

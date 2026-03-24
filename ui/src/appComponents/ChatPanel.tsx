@@ -33,6 +33,8 @@ import {
   saveModelChoice,
   loadLocalUrl,
   saveLocalUrl,
+  loadChatHistoryEnabled,
+  saveChatHistoryEnabled,
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
@@ -89,6 +91,7 @@ export default function ChatPanel({
   const [localUrl, setLocalUrl] = useState(loadLocalUrl);
   const [localModels, setLocalModels] = useState<string[] | null>(null);
   const [localModelsFetching, setLocalModelsFetching] = useState(false);
+  const [historyEnabled, setHistoryEnabled] = useState(loadChatHistoryEnabled);
   const {
     conversationId,
     conversations,
@@ -99,7 +102,7 @@ export default function ChatPanel({
     deleteConversation,
     persistMessages,
     loadingConversation,
-  } = useConversation(repoUrl);
+  } = useConversation(repoUrl, historyEnabled);
 
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
@@ -840,6 +843,17 @@ export default function ChatPanel({
             )}
           </div>
           <p className="hint">Your key is stored locally in your browser.</p>
+          <label className="chat-history-toggle">
+            <input
+              type="checkbox"
+              checked={historyEnabled}
+              onChange={(e) => {
+                setHistoryEnabled(e.target.checked);
+                saveChatHistoryEnabled(e.target.checked);
+              }}
+            />
+            <span>Save chat history</span>
+          </label>
         </div>
       ) : activeTab === 'prs' && prClient ? (
         <PRListPanel

@@ -44,7 +44,10 @@ export interface UseConversationReturn {
   loadingConversation: boolean;
 }
 
-export function useConversation(projectKey?: string): UseConversationReturn {
+export function useConversation(
+  projectKey?: string,
+  enabled = true,
+): UseConversationReturn {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -55,7 +58,7 @@ export function useConversation(projectKey?: string): UseConversationReturn {
   // Cancel token for switchConversation to prevent race conditions
   const switchTokenRef = useRef(0);
 
-  // When project changes, reset chat and reload the conversation list.
+  // When project changes or history is toggled, reset chat and reload the list.
   useEffect(() => {
     let cancelled = false;
 
@@ -63,22 +66,27 @@ export function useConversation(projectKey?: string): UseConversationReturn {
     conversationIdRef.current = null;
     setMessages([]);
 
-    (async () => {
-      const list = await listConversations(projectKey);
-      if (!cancelled) {
-        setConversations(list);
-      }
-    })();
+    if (enabled) {
+      (async () => {
+        const list = await listConversations(projectKey);
+        if (!cancelled) {
+          setConversations(list);
+        }
+      })();
+    } else {
+      setConversations([]);
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [projectKey]);
+  }, [projectKey, enabled]);
 
   const refreshList = useCallback(async () => {
+    if (!enabled) return;
     const list = await listConversations(projectKey);
     setConversations(list);
-  }, [projectKey]);
+  }, [projectKey, enabled]);
 
   const startNewConversation = useCallback(() => {
     setConversationId(null);
@@ -120,7 +128,7 @@ export function useConversation(projectKey?: string): UseConversationReturn {
 
   const persistMessages = useCallback(
     async (msgs: ChatMessage[], provider: string, model: string) => {
-      if (msgs.length === 0) return;
+      if (!enabled || msgs.length === 0) return;
 
       // Use the ref to get the live ID, not the stale closure value
       let id = conversationIdRef.current;
@@ -152,7 +160,7 @@ export function useConversation(projectKey?: string): UseConversationReturn {
       await saveConversation(conv);
       await refreshList();
     },
-    [projectKey, refreshList],
+    [enabled, projectKey, refreshList],
   );
 
   return {
