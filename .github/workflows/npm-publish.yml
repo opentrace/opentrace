@@ -56,6 +56,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@opentrace/opentrace
     steps:
       - uses: actions/checkout@v6
 
