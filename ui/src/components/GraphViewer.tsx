@@ -390,6 +390,7 @@ const GraphViewer = memo(
         ps('mode3dSpeed', 30),
       );
       const [mode3dTilt, setMode3dTilt] = useState(() => ps('mode3dTilt', 35));
+      const [labelScale, setLabelScale] = useState(() => ps('labelScale', 100));
       const [rendererAutoRotate, setRendererAutoRotate] = useState<
         boolean | null
       >(null);
@@ -411,6 +412,7 @@ const GraphViewer = memo(
           mode3d,
           mode3dSpeed,
           mode3dTilt,
+          labelScale,
         };
         localStorage.setItem('graph-settings', JSON.stringify(settings));
       }, [
@@ -428,6 +430,7 @@ const GraphViewer = memo(
         mode3d,
         mode3dSpeed,
         mode3dTilt,
+        labelScale,
       ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
@@ -1589,6 +1592,11 @@ const GraphViewer = memo(
                 setMode3dTilt(v);
                 canvasRef.current?.set3DTilt?.(v / 100);
               }}
+              labelScale={labelScale}
+              onLabelScaleChange={(v) => {
+                setLabelScale(v);
+                canvasRef.current?.setLabelScale?.(v / 100);
+              }}
             />
           )}
 
@@ -1768,50 +1776,7 @@ const GraphViewer = memo(
                 )}
               </svg>
             </button>
-            <button
-              className={`graph-control-btn${optimizeStatus?.phase === 'fa2' ? ' graph-control-btn--active' : ''}`}
-              onClick={() => canvasRef.current?.optimize()}
-              title={
-                optimizeStatus?.phase === 'fa2'
-                  ? 'Running physics...'
-                  : 'Optimize layout'
-              }
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M12 2l0 4M12 18l0 4M2 12l4 0M18 12l4 0" />
-                <path d="M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-              </svg>
-            </button>
           </div>
-          {optimizeStatus && optimizeStatus.phase !== 'done' && (
-            <div
-              className="optimize-status"
-              style={{
-                position: 'absolute',
-                left: '50%',
-                bottom: 60,
-                transform: 'translateX(-50%)',
-                background: 'rgba(0,0,0,0.75)',
-                color: '#e2e8f0',
-                padding: '6px 16px',
-                borderRadius: 8,
-                fontSize: 13,
-                pointerEvents: 'none',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {optimizeStatus.phase === 'fa2' && 'Running physics...'}
-            </div>
-          )}
         </div>
       );
     },

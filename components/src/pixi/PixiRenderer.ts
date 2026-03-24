@@ -165,6 +165,9 @@ export class PixiRenderer {
   // Show-all-labels mode (toggled from control panel)
   private showAllLabels = false;
 
+  // Label scale multiplier — independent of node size (default 1.0)
+  private labelScaleMultiplier = 1.0;
+
   // Zoom-size exponent: controls how nodes/edges scale with zoom.
   // 0 = nodes scale fully with zoom (world-space), 1 = fixed screen size.
   // Default 0.5 matches ZOOM_SIZE_EXPONENT=0.7 feel.
@@ -656,7 +659,7 @@ export class PixiRenderer {
           node.label = this.createLabel(node);
         }
         node.label.visible = true;
-        node.label.scale.set(invScale);
+        node.label.scale.set(invScale * this.labelScaleMultiplier);
         node.label.position.set(node.x + gap, node.y);
         boxes.push({ x: sx, y: sy, w: sw, h: sh });
       }
@@ -871,6 +874,15 @@ export class PixiRenderer {
     this.applyCounterScale();
   }
 
+  setLabelScale(scale: number): void {
+    this.labelScaleMultiplier = Math.max(0.1, Math.min(3, scale));
+    this.applyCounterScale();
+  }
+
+  getLabelScale(): number {
+    return this.labelScaleMultiplier;
+  }
+
   getZoomSizeExponent(): number {
     return this.zoomSizeExponent;
   }
@@ -913,7 +925,7 @@ export class PixiRenderer {
     });
     // Anchor left-center, positioned to the right of the node
     label.anchor.set(0, 0.5);
-    label.scale.set(invScale);
+    label.scale.set(invScale * this.labelScaleMultiplier);
     const gap = (node.size + 4) * this.zoomInvScale();
     label.position.set(node.x + gap, node.y);
     this.labelContainer!.addChild(label);
@@ -933,7 +945,7 @@ export class PixiRenderer {
           node.label = this.createLabel(node);
         }
         node.label.visible = true;
-        node.label.scale.set(invScale);
+        node.label.scale.set(invScale * this.labelScaleMultiplier);
       } else {
         if (node.label) {
           node.label.visible = this.labelNodes.has(id);
@@ -1396,7 +1408,7 @@ export class PixiRenderer {
       if (node.label?.visible) {
         const gap = (node.size + 4) * invScale * depthScale;
         node.label.position.set(p.px + gap, p.py);
-        node.label.scale.set(invScale * depthScale);
+        node.label.scale.set(invScale * depthScale * this.labelScaleMultiplier);
       }
     }
 

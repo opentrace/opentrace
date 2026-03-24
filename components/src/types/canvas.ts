@@ -133,4 +133,6 @@ export interface GraphCanvasHandle {
   set3DTilt?: (tilt: number) => void;
   /** Enable/disable 3D auto-rotation. */
   set3DAutoRotate?: (enabled: boolean) => void;
+  /** Set label scale multiplier (independent of node size, default 1.0). */
+  setLabelScale?: (scale: number) => void;
 }
