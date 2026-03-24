@@ -45,7 +45,8 @@ export function useCommunities(
   allLinks: GraphLink[],
   layoutConfig: LayoutConfig,
 ): CommunityData {
-  const [communityData, setCommunityData] = useState<CommunityData>(EMPTY_COMMUNITY);
+  const [communityData, setCommunityData] =
+    useState<CommunityData>(EMPTY_COMMUNITY);
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
   const unmountedRef = useRef(false);
@@ -61,6 +62,7 @@ export function useCommunities(
 
   useEffect(() => {
     if (allNodes.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when graph clears
       setCommunityData(EMPTY_COMMUNITY);
       return;
     }
@@ -106,8 +108,14 @@ export function useCommunities(
     // Prepare serializable data for the worker
     const nodes = allNodes.map((n) => ({ id: n.id, type: n.type }));
     const links = allLinks.map((link) => ({
-      source: typeof link.source === 'string' ? link.source : (link.source as GraphNode).id,
-      target: typeof link.target === 'string' ? link.target : (link.target as GraphNode).id,
+      source:
+        typeof link.source === 'string'
+          ? link.source
+          : (link.source as GraphNode).id,
+      target:
+        typeof link.target === 'string'
+          ? link.target
+          : (link.target as GraphNode).id,
       label: link.label,
     }));
 

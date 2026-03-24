@@ -41,9 +41,7 @@ function collect(
 }
 
 function stageEvents(events: ConcurrentPipelineEvent[]): StageEvent[] {
-  return events.filter(
-    (e): e is StageEvent => 'action' in e,
-  );
+  return events.filter((e): e is StageEvent => 'action' in e);
 }
 
 function ctx(cancelled = false): PipelineContext {
@@ -57,15 +55,22 @@ class PassthroughStage implements INodeStage {
   _name: string;
   produceChildren: (n: GraphNode) => GraphNode[];
 
-  constructor(name: string, produceChildren: (n: GraphNode) => GraphNode[] = () => []) {
+  constructor(
+    name: string,
+    produceChildren: (n: GraphNode) => GraphNode[] = () => [],
+  ) {
     this._name = name;
     this.produceChildren = produceChildren;
   }
-  name() { return this._name; }
+  name() {
+    return this._name;
+  }
   process(n: GraphNode): StageMutation {
     return { nodes: this.produceChildren(n), relationships: [] };
   }
-  flush(): StageMutation { return { nodes: [], relationships: [] }; }
+  flush(): StageMutation {
+    return { nodes: [], relationships: [] };
+  }
 }
 
 /** Only processes nodes of a given type; skips others by passing them through unchanged. */
@@ -74,12 +79,18 @@ class FilteredStage implements INodeStage {
   acceptType: string;
   produceChildren: (n: GraphNode) => GraphNode[];
 
-  constructor(name: string, acceptType: string, produceChildren: (n: GraphNode) => GraphNode[] = () => []) {
+  constructor(
+    name: string,
+    acceptType: string,
+    produceChildren: (n: GraphNode) => GraphNode[] = () => [],
+  ) {
     this._name = name;
     this.acceptType = acceptType;
     this.produceChildren = produceChildren;
   }
-  name() { return this._name; }
+  name() {
+    return this._name;
+  }
   process(n: GraphNode): StageMutation {
     if (n.type !== this.acceptType) {
       // Pass the node through without producing children
@@ -87,7 +98,9 @@ class FilteredStage implements INodeStage {
     }
     return { nodes: this.produceChildren(n), relationships: [] };
   }
-  flush(): StageMutation { return { nodes: [], relationships: [] }; }
+  flush(): StageMutation {
+    return { nodes: [], relationships: [] };
+  }
 }
 
 /** Accumulates nodes during process(), emits a batch on flush(). */
@@ -98,7 +111,9 @@ class AccumulatingStage implements INodeStage {
   constructor(name: string) {
     this._name = name;
   }
-  name() { return this._name; }
+  name() {
+    return this._name;
+  }
   process(n: GraphNode): StageMutation {
     this.accumulated.push(n);
     return { nodes: [], relationships: [] };
@@ -129,14 +144,18 @@ class ErrorStage implements INodeStage {
     this._name = name;
     this.errorOnId = errorOnId;
   }
-  name() { return this._name; }
+  name() {
+    return this._name;
+  }
   process(n: GraphNode): StageMutation {
     if (n.id === this.errorOnId) {
       throw new Error(`explode on ${n.id}`);
     }
     return { nodes: [n], relationships: [] };
   }
-  flush(): StageMutation { return { nodes: [], relationships: [] }; }
+  flush(): StageMutation {
+    return { nodes: [], relationships: [] };
+  }
 }
 
 // --- Tests ---
@@ -160,17 +179,33 @@ describe('concurrent pipeline', () => {
       const se = stageEvents(events);
 
       // StageA processes seed1, produces seed1-child
-      expect(se[0]).toMatchObject({ stage: 'A', node: 'seed1', action: 'start' });
+      expect(se[0]).toMatchObject({
+        stage: 'A',
+        node: 'seed1',
+        action: 'start',
+      });
       expect(se[1]).toMatchObject({ stage: 'A', node: 'seed1', action: 'end' });
       expect(se[1].mutation?.nodes).toEqual([node('seed1-child', 'Class')]);
 
       // StageB processes seed1-child, produces seed1-child-grandchild
-      expect(se[2]).toMatchObject({ stage: 'B', node: 'seed1-child', action: 'start' });
-      expect(se[3]).toMatchObject({ stage: 'B', node: 'seed1-child', action: 'end' });
-      expect(se[3].mutation?.nodes).toEqual([node('seed1-child-grandchild', 'Function')]);
+      expect(se[2]).toMatchObject({
+        stage: 'B',
+        node: 'seed1-child',
+        action: 'start',
+      });
+      expect(se[3]).toMatchObject({
+        stage: 'B',
+        node: 'seed1-child',
+        action: 'end',
+      });
+      expect(se[3].mutation?.nodes).toEqual([
+        node('seed1-child-grandchild', 'Function'),
+      ]);
 
       // pipeline_done reports total counts
-      const done = events.find((e) => 'kind' in e && e.kind === 'pipeline_done');
+      const done = events.find(
+        (e) => 'kind' in e && e.kind === 'pipeline_done',
+      );
       expect(done).toBeDefined();
       if (done && 'kind' in done && done.kind === 'pipeline_done') {
         // seed1 + seed1-child + seed1-child-grandchild = 3
@@ -190,7 +225,9 @@ describe('concurrent pipeline', () => {
       const se = stageEvents(events);
 
       for (const id of ['a', 'b', 'c']) {
-        const startIdx = se.findIndex((e) => e.node === id && e.action === 'start');
+        const startIdx = se.findIndex(
+          (e) => e.node === id && e.action === 'start',
+        );
         const endIdx = se.findIndex((e) => e.node === id && e.action === 'end');
         expect(startIdx).toBeGreaterThanOrEqual(0);
         expect(endIdx).toBeGreaterThan(startIdx);
@@ -397,9 +434,7 @@ describe('concurrent pipeline', () => {
       }
 
       // Nodes a and c should still flow to downstream
-      const downEvents = stageEvents(events).filter(
-        (e) => e.stage === 'Down',
-      );
+      const downEvents = stageEvents(events).filter((e) => e.stage === 'Down');
       const downNodes = downEvents
         .filter((e) => e.action === 'start')
         .map((e) => e.node);
@@ -575,7 +610,11 @@ describe('concurrent pipeline', () => {
         action: 'end',
         mutation: { nodes: [node('cls1', 'Class')], relationships: [] },
       });
-      log.logEvent({ kind: 'pipeline_done', totalNodes: 0, totalRelationships: 0 });
+      log.logEvent({
+        kind: 'pipeline_done',
+        totalNodes: 0,
+        totalRelationships: 0,
+      });
 
       const entries = log.getEntries();
       // start + 3 events

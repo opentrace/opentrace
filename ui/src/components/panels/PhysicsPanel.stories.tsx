@@ -32,7 +32,14 @@ const meta: Meta<typeof PhysicsPanel> = {
   },
   decorators: [
     (Story) => (
-      <div style={{ width: 260, background: '#161b22', padding: 12, borderRadius: 8 }}>
+      <div
+        style={{
+          width: 260,
+          background: '#161b22',
+          padding: 12,
+          borderRadius: 8,
+        }}
+      >
         <Story />
       </div>
     ),

@@ -142,7 +142,10 @@ export {
   SummarizeStage,
   StoreStage,
 } from './concurrent/stages';
-export type { FileCacheStageConfig, ExtractStageConfig } from './concurrent/stages';
+export type {
+  FileCacheStageConfig,
+  ExtractStageConfig,
+} from './concurrent/stages';
 export { PipelineDebugLog } from './concurrent/debug';
 export type { DebugEntry } from './concurrent/debug';
 

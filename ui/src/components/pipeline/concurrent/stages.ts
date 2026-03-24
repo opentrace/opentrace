@@ -127,7 +127,12 @@ export class FileCacheStage implements INodeStage {
   }
 
   /** Number of files cached vs skipped. */
-  stats(): { cached: number; skipped: number; bytesUsed: number; byteLimit: number } {
+  stats(): {
+    cached: number;
+    skipped: number;
+    bytesUsed: number;
+    byteLimit: number;
+  } {
     return {
       cached: this.cachedCount,
       skipped: this.skippedCount,
@@ -274,9 +279,7 @@ export class ExtractStage implements INodeStage {
         this.registries.importRegistry.set(fileId, fileImports);
 
         // External imports → IMPORTS rels + new Package nodes
-        for (const [pkgName, pkgId] of Object.entries(
-          importResult.external,
-        )) {
+        for (const [pkgName, pkgId] of Object.entries(importResult.external)) {
           if (!this.packageNodes.has(pkgId)) {
             const pkgNode: GraphNode = {
               id: pkgId,

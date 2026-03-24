@@ -87,140 +87,142 @@ export default function FilterPanel({
           </button>
         )}
       </div>
-      {!collapsed && <div className="filter-list">
-        {items.map((item) => {
-          const hasChildren = item.children && item.children.length > 0;
-          const isExpanded = expandedKeys.has(item.key);
+      {!collapsed && (
+        <div className="filter-list">
+          {items.map((item) => {
+            const hasChildren = item.children && item.children.length > 0;
+            const isExpanded = expandedKeys.has(item.key);
 
-          // Derive indeterminate state from children
-          let hidden = item.hidden;
-          let indeterminate = false;
-          if (hasChildren) {
-            const hiddenCount = item.children!.filter((c) => c.hidden).length;
-            if (hiddenCount === item.children!.length) hidden = true;
-            else if (hiddenCount > 0) indeterminate = true;
-            else hidden = false;
-          }
+            // Derive indeterminate state from children
+            let hidden = item.hidden;
+            let indeterminate = false;
+            if (hasChildren) {
+              const hiddenCount = item.children!.filter((c) => c.hidden).length;
+              if (hiddenCount === item.children!.length) hidden = true;
+              else if (hiddenCount > 0) indeterminate = true;
+              else hidden = false;
+            }
 
-          return (
-            <div key={item.key} className="filter-type-group">
-              <label
-                className={`filter-item ${hidden ? 'hidden' : ''} ${indeterminate ? 'partial' : ''}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={!hidden && !indeterminate}
-                  ref={(el) => {
-                    if (el) el.indeterminate = indeterminate;
-                  }}
-                  onChange={() => onToggle(item.key)}
-                />
-                {hasChildren ? (
-                  <button
-                    className="filter-expand-btn"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      toggleExpanded(item.key);
+            return (
+              <div key={item.key} className="filter-type-group">
+                <label
+                  className={`filter-item ${hidden ? 'hidden' : ''} ${indeterminate ? 'partial' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hidden && !indeterminate}
+                    ref={(el) => {
+                      if (el) el.indeterminate = indeterminate;
                     }}
-                    title={isExpanded ? 'Collapse' : 'Expand sub-types'}
-                  >
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
+                    onChange={() => onToggle(item.key)}
+                  />
+                  {hasChildren ? (
+                    <button
+                      className="filter-expand-btn"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleExpanded(item.key);
+                      }}
+                      title={isExpanded ? 'Collapse' : 'Expand sub-types'}
                     >
-                      <path
-                        d="M3 2 L7 5 L3 8"
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 10 10"
+                        className={`filter-expand-icon ${isExpanded ? 'filter-expand-icon--open' : ''}`}
+                      >
+                        <path
+                          d="M3 2 L7 5 L3 8"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                        />
+                      </svg>
+                    </button>
+                  ) : (
+                    <span className="filter-expand-spacer" />
+                  )}
+                  {indicator === 'line' ? (
+                    <span
+                      className="filter-line"
+                      style={{
+                        backgroundColor: hidden ? 'var(--muted)' : item.color,
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="filter-dot"
+                      style={{
+                        backgroundColor: hidden ? 'var(--muted)' : item.color,
+                      }}
+                    />
+                  )}
+                  <span className="filter-type-name">{item.label}</span>
+                  <span className="filter-count">{item.count}</span>
+                  {onFocus && (
+                    <button
+                      className="filter-focus-btn"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onFocus(item.key);
+                      }}
+                      title={`Focus on ${item.label}`}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 16 16"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="1.5"
-                      />
-                    </svg>
-                  </button>
-                ) : (
-                  <span className="filter-expand-spacer" />
+                      >
+                        <circle cx="8" cy="8" r="5.5" />
+                        <circle cx="8" cy="8" r="2" />
+                        <line x1="8" y1="0" x2="8" y2="3" />
+                        <line x1="8" y1="13" x2="8" y2="16" />
+                        <line x1="0" y1="8" x2="3" y2="8" />
+                        <line x1="13" y1="8" x2="16" y2="8" />
+                      </svg>
+                    </button>
+                  )}
+                </label>
+                {hasChildren && isExpanded && (
+                  <div className="filter-subtypes">
+                    {item.children!.map((child) => (
+                      <label
+                        key={child.key}
+                        className={`filter-item filter-subitem ${child.hidden ? 'hidden' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!child.hidden}
+                          onChange={() => onToggle(child.key)}
+                        />
+                        <span
+                          className="filter-dot filter-dot--small"
+                          style={{
+                            backgroundColor: child.hidden
+                              ? 'var(--muted)'
+                              : child.color,
+                            opacity: child.hidden ? 1 : 0.7,
+                          }}
+                        />
+                        <span className="filter-type-name">{child.label}</span>
+                        <span className="filter-count">{child.count}</span>
+                      </label>
+                    ))}
+                  </div>
                 )}
-                {indicator === 'line' ? (
-                  <span
-                    className="filter-line"
-                    style={{
-                      backgroundColor: hidden ? 'var(--muted)' : item.color,
-                    }}
-                  />
-                ) : (
-                  <span
-                    className="filter-dot"
-                    style={{
-                      backgroundColor: hidden ? 'var(--muted)' : item.color,
-                    }}
-                  />
-                )}
-                <span className="filter-type-name">{item.label}</span>
-                <span className="filter-count">{item.count}</span>
-                {onFocus && (
-                  <button
-                    className="filter-focus-btn"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onFocus(item.key);
-                    }}
-                    title={`Focus on ${item.label}`}
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    >
-                      <circle cx="8" cy="8" r="5.5" />
-                      <circle cx="8" cy="8" r="2" />
-                      <line x1="8" y1="0" x2="8" y2="3" />
-                      <line x1="8" y1="13" x2="8" y2="16" />
-                      <line x1="0" y1="8" x2="3" y2="8" />
-                      <line x1="13" y1="8" x2="16" y2="8" />
-                    </svg>
-                  </button>
-                )}
-              </label>
-              {hasChildren && isExpanded && (
-                <div className="filter-subtypes">
-                  {item.children!.map((child) => (
-                    <label
-                      key={child.key}
-                      className={`filter-item filter-subitem ${child.hidden ? 'hidden' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!child.hidden}
-                        onChange={() => onToggle(child.key)}
-                      />
-                      <span
-                        className="filter-dot filter-dot--small"
-                        style={{
-                          backgroundColor: child.hidden
-                            ? 'var(--muted)'
-                            : child.color,
-                          opacity: child.hidden ? 1 : 0.7,
-                        }}
-                      />
-                      <span className="filter-type-name">{child.label}</span>
-                      <span className="filter-count">{child.count}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {items.length === 0 && emptyMessage && (
-          <span className="filter-empty">{emptyMessage}</span>
-        )}
-      </div>}
+              </div>
+            );
+          })}
+          {items.length === 0 && emptyMessage && (
+            <span className="filter-empty">{emptyMessage}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

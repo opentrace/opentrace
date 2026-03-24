@@ -38,7 +38,14 @@ const meta: Meta<typeof PixiControlPanel> = {
   },
   decorators: [
     (Story) => (
-      <div style={{ position: 'relative', width: 400, height: 600, background: '#0d1117' }}>
+      <div
+        style={{
+          position: 'relative',
+          width: 400,
+          height: 600,
+          background: '#0d1117',
+        }}
+      >
         <Story />
       </div>
     ),

@@ -55,3 +55,15 @@ export function normalizeRepoUrl(raw: string): string {
 function stripDotGit(s: string): string {
   return s.endsWith('.git') ? s.slice(0, -4) : s;
 }
+
+export function detectProvider(
+  url: string,
+): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
+  const lower = url.toLowerCase();
+  if (lower.includes('github')) return 'github';
+  if (lower.includes('gitlab')) return 'gitlab';
+  if (lower.includes('bitbucket')) return 'bitbucket';
+  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
+    return 'azuredevops';
+  return null;
+}

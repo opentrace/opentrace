@@ -90,7 +90,10 @@
   border-radius: var(--radius);
   color: var(--muted-foreground);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .discover-tree-control-btn:hover {

@@ -81,8 +81,12 @@ export default function GraphPlayground({
   const [zoomSizeExponent, setZoomSizeExponent] = useState(0.8);
 
   // ── Filters ────────────────────────────────────────────────────────
-  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(new Set());
-  const [hiddenLinkTypes, setHiddenLinkTypes] = useState<Set<string>>(new Set());
+  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(
+    new Set(),
+  );
+  const [hiddenLinkTypes, setHiddenLinkTypes] = useState<Set<string>>(
+    new Set(),
+  );
 
   // ── Side panel ─────────────────────────────────────────────────────
   const [showFilters, setShowFilters] = useState(true);
@@ -222,13 +226,10 @@ export default function GraphPlayground({
     setIsPhysicsRunning(true);
   }, []);
 
-  const handleRepulsionChange = useCallback(
-    (value: number) => {
-      setRepulsion(value);
-      graphRef.current?.setChargeStrength?.(-value);
-    },
-    [],
-  );
+  const handleRepulsionChange = useCallback((value: number) => {
+    setRepulsion(value);
+    graphRef.current?.setChargeStrength?.(-value);
+  }, []);
 
   // ── Visible counts (after filtering) ───────────────────────────────
   const visibleNodeCount = useMemo(
@@ -242,7 +243,6 @@ export default function GraphPlayground({
   );
 
   // ── Render ─────────────────────────────────────────────────────────
-
 
   return (
     <div
@@ -460,15 +460,17 @@ export default function GraphPlayground({
                 />
                 {selectedNode.type}
               </div>
-              {selectedNode.properties && Object.keys(selectedNode.properties).length > 0 && (
-                <div style={{ fontSize: 11, color: '#8b949e' }}>
-                  {Object.entries(selectedNode.properties).map(([k, v]) => (
-                    <div key={k}>
-                      <span style={{ color: '#58a6ff' }}>{k}</span>: {String(v)}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {selectedNode.properties &&
+                Object.keys(selectedNode.properties).length > 0 && (
+                  <div style={{ fontSize: 11, color: '#8b949e' }}>
+                    {Object.entries(selectedNode.properties).map(([k, v]) => (
+                      <div key={k}>
+                        <span style={{ color: '#58a6ff' }}>{k}</span>:{' '}
+                        {String(v)}
+                      </div>
+                    ))}
+                  </div>
+                )}
               <button
                 onClick={handleStageClick}
                 style={{
@@ -533,14 +535,23 @@ export default function GraphPlayground({
             outline: 'none',
           }}
         />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: 12,
+          }}
+        >
           Hops:
           <input
             type="number"
             min={0}
             max={5}
             value={hops}
-            onChange={(e) => setHops(Math.max(0, Math.min(5, parseInt(e.target.value) || 0)))}
+            onChange={(e) =>
+              setHops(Math.max(0, Math.min(5, parseInt(e.target.value) || 0)))
+            }
             style={{
               width: 40,
               background: '#21262d',

@@ -30,7 +30,8 @@ export const Short: Story = {
   args: {
     part: {
       type: 'thought',
-      content: 'Let me analyze the service dependencies to find potential bottlenecks.',
+      content:
+        'Let me analyze the service dependencies to find potential bottlenecks.',
     },
   },
 };

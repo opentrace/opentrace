@@ -36,7 +36,8 @@ class MockWorker {
     Promise.resolve().then(async () => {
       try {
         const { UndirectedGraph } = await import('graphology');
-        const { default: louvain } = await import('graphology-communities-louvain');
+        const { default: louvain } =
+          await import('graphology-communities-louvain');
 
         const { nodes, links, resolution } = data as {
           nodes: { id: string; type: string }[];
@@ -54,10 +55,21 @@ class MockWorker {
         }
         for (const link of links) {
           if (link.source === link.target) continue;
-          if (!nodeIdSet.has(link.source) || !nodeIdSet.has(link.target)) continue;
+          if (!nodeIdSet.has(link.source) || !nodeIdSet.has(link.target))
+            continue;
           if (tempGraph.hasEdge(link.source, link.target)) {
-            const w = (tempGraph.getEdgeAttribute(link.source, link.target, 'weight') as number) ?? 1;
-            tempGraph.setEdgeAttribute(link.source, link.target, 'weight', w + 1);
+            const w =
+              (tempGraph.getEdgeAttribute(
+                link.source,
+                link.target,
+                'weight',
+              ) as number) ?? 1;
+            tempGraph.setEdgeAttribute(
+              link.source,
+              link.target,
+              'weight',
+              w + 1,
+            );
           } else {
             tempGraph.addEdge(link.source, link.target, { weight: 1 });
           }

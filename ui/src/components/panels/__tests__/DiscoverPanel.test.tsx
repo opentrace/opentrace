@@ -330,9 +330,7 @@ describe('DiscoverPanel', () => {
           }),
         ),
       );
-      const controls = container.querySelectorAll(
-        '.discover-tree-control-btn',
-      );
+      const controls = container.querySelectorAll('.discover-tree-control-btn');
       expect(controls.length).toBe(2);
     });
 

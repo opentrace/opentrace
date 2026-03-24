@@ -27,7 +27,12 @@ import {
   EDGE_SIZE_DEFAULT,
   EDGE_SIZE_DEFAULT_LINE,
 } from '../config/graphLayout';
-import { nodeSize, endpointId, applySpacing, applyNoverlap } from './layoutHelpers';
+import {
+  nodeSize,
+  endpointId,
+  applySpacing,
+  applyNoverlap,
+} from './layoutHelpers';
 
 // ─── Hook ───────────────────────────────────────────────────────────────
 
@@ -67,7 +72,8 @@ export function useGraphInstance({
   // Derived from config
   const flatMode = layoutConfig.flatMode ?? false;
   const structuralTypes = useMemo(
-    () => (flatMode ? new Set<string>() : new Set(layoutConfig.structuralTypes)),
+    () =>
+      flatMode ? new Set<string>() : new Set(layoutConfig.structuralTypes),
     [layoutConfig.structuralTypes, flatMode],
   );
 
@@ -179,7 +185,8 @@ export function useGraphInstance({
           const count = Math.min(baseTies, members.length - 1);
           for (let c = 0; c < count; c++) {
             // Pick a random neighbor (simple deterministic shuffle via index)
-            const targetIdx = (members.indexOf(nodeId) + c + 1) % members.length;
+            const targetIdx =
+              (members.indexOf(nodeId) + c + 1) % members.length;
             const targetId = members[targetIdx];
             if (targetId === nodeId) continue;
             const vcKey = `_vc_${vcIdx++}`;
@@ -273,7 +280,13 @@ export function useGraphInstance({
         for (const sn of serializedNodes) {
           sizeMap.set(sn.key, sn.attributes.size);
         }
-        applyNoverlap(pos, sizeMap, assignments, layoutConfig.noverlapMargin, layoutConfig.noverlapCommunityIterations ?? 20);
+        applyNoverlap(
+          pos,
+          sizeMap,
+          assignments,
+          layoutConfig.noverlapMargin,
+          layoutConfig.noverlapCommunityIterations ?? 20,
+        );
       }
 
       // Seed positions into graph — batched, single event

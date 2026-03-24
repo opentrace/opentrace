@@ -24,9 +24,18 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GraphNode, GraphLink, CommunityData, LayoutConfig } from '../graph/types';
+import type {
+  GraphNode,
+  GraphLink,
+  CommunityData,
+  LayoutConfig,
+} from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
-import type { WorkerInMessage, WorkerOutMessage, LayoutMode } from '../workers/pixiLayoutWorker';
+import type {
+  WorkerInMessage,
+  WorkerOutMessage,
+  LayoutMode,
+} from '../workers/pixiLayoutWorker';
 import { type PixiScaleBreakpoint, selectBreakpoint } from './scaleBreakpoints';
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -69,7 +78,12 @@ export interface UsePixiLayoutResult {
   /** Switch layout mode ('spread' = standard force-directed, 'compact' = radial/circular). */
   setLayoutMode: (mode: LayoutMode) => void;
   /** Update compact-mode-specific config (radial strength, community pull, centering). */
-  updateCompactConfig: (config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => void;
+  updateCompactConfig: (config: {
+    radialStrength?: number;
+    communityPull?: number;
+    centeringStrength?: number;
+    radiusScale?: number;
+  }) => void;
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────
@@ -79,7 +93,10 @@ export function usePixiLayout(
   allLinks: GraphLink[],
   communityData: CommunityData,
   layoutConfig: LayoutConfig,
-  onTick: (positions: Map<string, { x: number; y: number }>, buffer?: Float64Array) => void,
+  onTick: (
+    positions: Map<string, { x: number; y: number }>,
+    buffer?: Float64Array,
+  ) => void,
   initialLayoutMode: LayoutMode = 'spread',
 ): UsePixiLayoutResult {
   const [layoutReady, setLayoutReady] = useState(false);
@@ -121,7 +138,10 @@ export function usePixiLayout(
     }
     const sizes = new Map<string, number>();
     for (const node of allNodes) {
-      sizes.set(node.id, nodeSize(degreeMap.get(node.id) ?? 0, node.type, structuralTypes));
+      sizes.set(
+        node.id,
+        nodeSize(degreeMap.get(node.id) ?? 0, node.type, structuralTypes),
+      );
     }
     nodeSizesRef.current = sizes;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,41 +308,59 @@ export function usePixiLayout(
     setSimRunning(true);
   }, [postToWorker]);
 
-  const fixNode = useCallback((nodeId: string, x: number, y: number) => {
-    postToWorker({ type: 'fix-node', nodeId, x, y });
-    if (!simRunningRef.current) {
+  const fixNode = useCallback(
+    (nodeId: string, x: number, y: number) => {
+      postToWorker({ type: 'fix-node', nodeId, x, y });
+      if (!simRunningRef.current) {
+        simRunningRef.current = true;
+        setSimRunning(true);
+      }
+    },
+    [postToWorker],
+  );
+
+  const unfixNode = useCallback(
+    (nodeId: string) => {
+      postToWorker({ type: 'unfix-node', nodeId });
+    },
+    [postToWorker],
+  );
+
+  const setChargeStrength = useCallback(
+    (strength: number) => {
+      postToWorker({ type: 'update-config', chargeStrength: strength });
       simRunningRef.current = true;
       setSimRunning(true);
-    }
-  }, [postToWorker]);
+    },
+    [postToWorker],
+  );
 
-  const unfixNode = useCallback((nodeId: string) => {
-    postToWorker({ type: 'unfix-node', nodeId });
-  }, [postToWorker]);
+  const setLinkDistance = useCallback(
+    (distance: number) => {
+      postToWorker({ type: 'update-config', linkDistance: distance });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
-  const setChargeStrength = useCallback((strength: number) => {
-    postToWorker({ type: 'update-config', chargeStrength: strength });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
+  const setCenterStrength = useCallback(
+    (strength: number) => {
+      postToWorker({ type: 'update-config', centerStrength: strength });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
-  const setLinkDistance = useCallback((distance: number) => {
-    postToWorker({ type: 'update-config', linkDistance: distance });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
-
-  const setCenterStrength = useCallback((strength: number) => {
-    postToWorker({ type: 'update-config', centerStrength: strength });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
-
-  const setCommunityGravity = useCallback((enabled: boolean, strength = 0.1) => {
-    postToWorker({ type: 'set-community-gravity', enabled, strength });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
+  const setCommunityGravity = useCallback(
+    (enabled: boolean, strength = 0.1) => {
+      postToWorker({ type: 'set-community-gravity', enabled, strength });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
   const boostTheta = useCallback(() => {
     postToWorker({ type: 'boost-theta' });
@@ -332,17 +370,28 @@ export function usePixiLayout(
     postToWorker({ type: 'reset-theta' });
   }, [postToWorker]);
 
-  const setLayoutMode = useCallback((mode: LayoutMode) => {
-    postToWorker({ type: 'set-layout-mode', mode });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
+  const setLayoutMode = useCallback(
+    (mode: LayoutMode) => {
+      postToWorker({ type: 'set-layout-mode', mode });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
-  const updateCompactConfig = useCallback((config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => {
-    postToWorker({ type: 'update-compact-config', ...config });
-    simRunningRef.current = true;
-    setSimRunning(true);
-  }, [postToWorker]);
+  const updateCompactConfig = useCallback(
+    (config: {
+      radialStrength?: number;
+      communityPull?: number;
+      centeringStrength?: number;
+      radiusScale?: number;
+    }) => {
+      postToWorker({ type: 'update-compact-config', ...config });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
   return {
     layoutReady,

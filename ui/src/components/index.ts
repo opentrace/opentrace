@@ -26,8 +26,16 @@
 export { default as Graph } from './PixiGraphCanvas';
 export { default as GraphCanvas } from './PixiGraphCanvas';
 export { default as PixiGraphCanvas } from './PixiGraphCanvas';
-export type { GraphCanvasProps, GraphCanvasHandle, AnimationSettings } from './types/canvas';
-export { type PixiScaleBreakpoint, DEFAULT_BREAKPOINTS, selectBreakpoint } from './pixi/scaleBreakpoints';
+export type {
+  GraphCanvasProps,
+  GraphCanvasHandle,
+  AnimationSettings,
+} from './types/canvas';
+export {
+  type PixiScaleBreakpoint,
+  DEFAULT_BREAKPOINTS,
+  selectBreakpoint,
+} from './pixi/scaleBreakpoints';
 export type { LayoutMode } from './workers/pixiLayoutWorker';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
@@ -43,7 +51,10 @@ export { useCommunities } from './graph/useCommunities';
 export { useHighlights } from './graph/useHighlights';
 
 // ─── Layout types ────────────────────────────────────────────────────────
-export type { OptimizeStatus, LayoutControl } from './graph/LayoutPipelineTypes';
+export type {
+  OptimizeStatus,
+  LayoutControl,
+} from './graph/LayoutPipelineTypes';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 export type {
@@ -101,7 +112,12 @@ export {
 } from './colors/communityColors';
 
 // ─── Indexing components ─────────────────────────────────────────────────
-export { AddRepoModal, IndexingProgress, normalizeRepoUrl, detectProvider } from './indexing';
+export {
+  AddRepoModal,
+  IndexingProgress,
+  normalizeRepoUrl,
+  detectProvider,
+} from './indexing';
 export type {
   IndexingState,
   StageState as IndexStageState,

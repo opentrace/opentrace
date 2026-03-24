@@ -31,10 +31,30 @@ const webAppNodes: GraphNode[] = [
   // Repo
   { id: 'repo', name: 'acme/web-app', type: 'Repo' },
   // Packages
-  { id: 'pkg-react', name: 'react', type: 'Package', properties: { version: '19.2.0' } },
-  { id: 'pkg-express', name: 'express', type: 'Package', properties: { version: '5.1.0' } },
-  { id: 'pkg-prisma', name: '@prisma/client', type: 'Package', properties: { version: '6.9.0' } },
-  { id: 'pkg-zod', name: 'zod', type: 'Package', properties: { version: '3.25.0' } },
+  {
+    id: 'pkg-react',
+    name: 'react',
+    type: 'Package',
+    properties: { version: '19.2.0' },
+  },
+  {
+    id: 'pkg-express',
+    name: 'express',
+    type: 'Package',
+    properties: { version: '5.1.0' },
+  },
+  {
+    id: 'pkg-prisma',
+    name: '@prisma/client',
+    type: 'Package',
+    properties: { version: '6.9.0' },
+  },
+  {
+    id: 'pkg-zod',
+    name: 'zod',
+    type: 'Package',
+    properties: { version: '3.25.0' },
+  },
   // Directories
   { id: 'dir-src', name: 'src', type: 'Directory' },
   { id: 'dir-server', name: 'src/server', type: 'Directory' },
@@ -44,29 +64,129 @@ const webAppNodes: GraphNode[] = [
   { id: 'dir-components', name: 'src/client/components', type: 'Directory' },
   { id: 'dir-hooks', name: 'src/client/hooks', type: 'Directory' },
   // Server files
-  { id: 'file-app', name: 'app.ts', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-user-model', name: 'user.model.ts', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-order-model', name: 'order.model.ts', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-user-routes', name: 'user.routes.ts', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-order-routes', name: 'order.routes.ts', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-auth-middleware', name: 'auth.middleware.ts', type: 'File', properties: { language: 'TypeScript' } },
+  {
+    id: 'file-app',
+    name: 'app.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-user-model',
+    name: 'user.model.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-order-model',
+    name: 'order.model.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-user-routes',
+    name: 'user.routes.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-order-routes',
+    name: 'order.routes.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-auth-middleware',
+    name: 'auth.middleware.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
   // Client files
-  { id: 'file-app-tsx', name: 'App.tsx', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-user-list', name: 'UserList.tsx', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-order-table', name: 'OrderTable.tsx', type: 'File', properties: { language: 'TypeScript' } },
-  { id: 'file-use-fetch', name: 'useFetch.ts', type: 'File', properties: { language: 'TypeScript' } },
+  {
+    id: 'file-app-tsx',
+    name: 'App.tsx',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-user-list',
+    name: 'UserList.tsx',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-order-table',
+    name: 'OrderTable.tsx',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'file-use-fetch',
+    name: 'useFetch.ts',
+    type: 'File',
+    properties: { language: 'TypeScript' },
+  },
   // Classes
-  { id: 'class-user', name: 'User', type: 'Class', properties: { language: 'TypeScript' } },
-  { id: 'class-order', name: 'Order', type: 'Class', properties: { language: 'TypeScript' } },
-  { id: 'class-auth', name: 'AuthMiddleware', type: 'Class', properties: { language: 'TypeScript' } },
+  {
+    id: 'class-user',
+    name: 'User',
+    type: 'Class',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'class-order',
+    name: 'Order',
+    type: 'Class',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'class-auth',
+    name: 'AuthMiddleware',
+    type: 'Class',
+    properties: { language: 'TypeScript' },
+  },
   // Functions
-  { id: 'fn-get-users', name: 'getUsers', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-create-order', name: 'createOrder', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-validate-token', name: 'validateToken', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-hash-password', name: 'hashPassword', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-use-fetch', name: 'useFetch', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-render-users', name: 'UserList', type: 'Function', properties: { language: 'TypeScript' } },
-  { id: 'fn-render-orders', name: 'OrderTable', type: 'Function', properties: { language: 'TypeScript' } },
+  {
+    id: 'fn-get-users',
+    name: 'getUsers',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-create-order',
+    name: 'createOrder',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-validate-token',
+    name: 'validateToken',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-hash-password',
+    name: 'hashPassword',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-use-fetch',
+    name: 'useFetch',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-render-users',
+    name: 'UserList',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
+  {
+    id: 'fn-render-orders',
+    name: 'OrderTable',
+    type: 'Function',
+    properties: { language: 'TypeScript' },
+  },
 ];
 
 const webAppLinks: GraphLink[] = [
@@ -94,12 +214,28 @@ const webAppLinks: GraphLink[] = [
   { source: 'class-order', target: 'file-order-model', label: 'DEFINED_IN' },
   { source: 'class-auth', target: 'file-auth-middleware', label: 'DEFINED_IN' },
   { source: 'fn-get-users', target: 'file-user-routes', label: 'DEFINED_IN' },
-  { source: 'fn-create-order', target: 'file-order-routes', label: 'DEFINED_IN' },
-  { source: 'fn-validate-token', target: 'file-auth-middleware', label: 'DEFINED_IN' },
-  { source: 'fn-hash-password', target: 'file-user-model', label: 'DEFINED_IN' },
+  {
+    source: 'fn-create-order',
+    target: 'file-order-routes',
+    label: 'DEFINED_IN',
+  },
+  {
+    source: 'fn-validate-token',
+    target: 'file-auth-middleware',
+    label: 'DEFINED_IN',
+  },
+  {
+    source: 'fn-hash-password',
+    target: 'file-user-model',
+    label: 'DEFINED_IN',
+  },
   { source: 'fn-use-fetch', target: 'file-use-fetch', label: 'DEFINED_IN' },
   { source: 'fn-render-users', target: 'file-user-list', label: 'DEFINED_IN' },
-  { source: 'fn-render-orders', target: 'file-order-table', label: 'DEFINED_IN' },
+  {
+    source: 'fn-render-orders',
+    target: 'file-order-table',
+    label: 'DEFINED_IN',
+  },
   // CALLS
   { source: 'fn-get-users', target: 'class-user', label: 'CALLS' },
   { source: 'fn-create-order', target: 'class-order', label: 'CALLS' },
@@ -112,8 +248,16 @@ const webAppLinks: GraphLink[] = [
   // IMPORTS
   { source: 'file-user-routes', target: 'file-user-model', label: 'IMPORTS' },
   { source: 'file-order-routes', target: 'file-order-model', label: 'IMPORTS' },
-  { source: 'file-order-routes', target: 'file-auth-middleware', label: 'IMPORTS' },
-  { source: 'file-user-routes', target: 'file-auth-middleware', label: 'IMPORTS' },
+  {
+    source: 'file-order-routes',
+    target: 'file-auth-middleware',
+    label: 'IMPORTS',
+  },
+  {
+    source: 'file-user-routes',
+    target: 'file-auth-middleware',
+    label: 'IMPORTS',
+  },
   { source: 'file-app', target: 'file-user-routes', label: 'IMPORTS' },
   { source: 'file-app', target: 'file-order-routes', label: 'IMPORTS' },
   { source: 'file-app-tsx', target: 'file-user-list', label: 'IMPORTS' },
@@ -151,33 +295,158 @@ const goMonorepoNodes: GraphNode[] = [
   { id: 'dir-logger', name: 'pkg/logger', type: 'Directory' },
   { id: 'dir-config', name: 'pkg/config', type: 'Directory' },
   // Files
-  { id: 'file-main-api', name: 'main.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-main-worker', name: 'main.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-user-handler', name: 'handler.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-user-repo', name: 'repository.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-user-service', name: 'service.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-order-handler', name: 'handler.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-order-service', name: 'service.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-auth-middleware', name: 'middleware.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-auth-jwt', name: 'jwt.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-logger', name: 'logger.go', type: 'File', properties: { language: 'Go' } },
-  { id: 'file-config', name: 'config.go', type: 'File', properties: { language: 'Go' } },
+  {
+    id: 'file-main-api',
+    name: 'main.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-main-worker',
+    name: 'main.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-user-handler',
+    name: 'handler.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-user-repo',
+    name: 'repository.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-user-service',
+    name: 'service.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-order-handler',
+    name: 'handler.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-order-service',
+    name: 'service.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-auth-middleware',
+    name: 'middleware.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-auth-jwt',
+    name: 'jwt.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-logger',
+    name: 'logger.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'file-config',
+    name: 'config.go',
+    type: 'File',
+    properties: { language: 'Go' },
+  },
   // Classes (structs)
-  { id: 'class-user-handler', name: 'UserHandler', type: 'Class', properties: { language: 'Go' } },
-  { id: 'class-user-repo', name: 'UserRepository', type: 'Class', properties: { language: 'Go' } },
-  { id: 'class-user-service', name: 'UserService', type: 'Class', properties: { language: 'Go' } },
-  { id: 'class-order-handler', name: 'OrderHandler', type: 'Class', properties: { language: 'Go' } },
-  { id: 'class-order-service', name: 'OrderService', type: 'Class', properties: { language: 'Go' } },
-  { id: 'class-auth-mw', name: 'AuthMiddleware', type: 'Class', properties: { language: 'Go' } },
+  {
+    id: 'class-user-handler',
+    name: 'UserHandler',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'class-user-repo',
+    name: 'UserRepository',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'class-user-service',
+    name: 'UserService',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'class-order-handler',
+    name: 'OrderHandler',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'class-order-service',
+    name: 'OrderService',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'class-auth-mw',
+    name: 'AuthMiddleware',
+    type: 'Class',
+    properties: { language: 'Go' },
+  },
   // Functions
-  { id: 'fn-main-api', name: 'main', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-main-worker', name: 'main', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-list-users', name: 'ListUsers', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-get-user', name: 'GetUser', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-create-order', name: 'CreateOrder', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-verify-token', name: 'VerifyToken', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-new-logger', name: 'New', type: 'Function', properties: { language: 'Go' } },
-  { id: 'fn-load-config', name: 'Load', type: 'Function', properties: { language: 'Go' } },
+  {
+    id: 'fn-main-api',
+    name: 'main',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-main-worker',
+    name: 'main',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-list-users',
+    name: 'ListUsers',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-get-user',
+    name: 'GetUser',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-create-order',
+    name: 'CreateOrder',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-verify-token',
+    name: 'VerifyToken',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-new-logger',
+    name: 'New',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
+  {
+    id: 'fn-load-config',
+    name: 'Load',
+    type: 'Function',
+    properties: { language: 'Go' },
+  },
 ];
 
 const goMonorepoLinks: GraphLink[] = [
@@ -205,17 +474,41 @@ const goMonorepoLinks: GraphLink[] = [
   { source: 'file-logger', target: 'dir-logger', label: 'DEFINED_IN' },
   { source: 'file-config', target: 'dir-config', label: 'DEFINED_IN' },
   // Classes/functions in files
-  { source: 'class-user-handler', target: 'file-user-handler', label: 'DEFINED_IN' },
+  {
+    source: 'class-user-handler',
+    target: 'file-user-handler',
+    label: 'DEFINED_IN',
+  },
   { source: 'class-user-repo', target: 'file-user-repo', label: 'DEFINED_IN' },
-  { source: 'class-user-service', target: 'file-user-service', label: 'DEFINED_IN' },
-  { source: 'class-order-handler', target: 'file-order-handler', label: 'DEFINED_IN' },
-  { source: 'class-order-service', target: 'file-order-service', label: 'DEFINED_IN' },
-  { source: 'class-auth-mw', target: 'file-auth-middleware', label: 'DEFINED_IN' },
+  {
+    source: 'class-user-service',
+    target: 'file-user-service',
+    label: 'DEFINED_IN',
+  },
+  {
+    source: 'class-order-handler',
+    target: 'file-order-handler',
+    label: 'DEFINED_IN',
+  },
+  {
+    source: 'class-order-service',
+    target: 'file-order-service',
+    label: 'DEFINED_IN',
+  },
+  {
+    source: 'class-auth-mw',
+    target: 'file-auth-middleware',
+    label: 'DEFINED_IN',
+  },
   { source: 'fn-main-api', target: 'file-main-api', label: 'DEFINED_IN' },
   { source: 'fn-main-worker', target: 'file-main-worker', label: 'DEFINED_IN' },
   { source: 'fn-list-users', target: 'file-user-handler', label: 'DEFINED_IN' },
   { source: 'fn-get-user', target: 'file-user-handler', label: 'DEFINED_IN' },
-  { source: 'fn-create-order', target: 'file-order-handler', label: 'DEFINED_IN' },
+  {
+    source: 'fn-create-order',
+    target: 'file-order-handler',
+    label: 'DEFINED_IN',
+  },
   { source: 'fn-verify-token', target: 'file-auth-jwt', label: 'DEFINED_IN' },
   { source: 'fn-new-logger', target: 'file-logger', label: 'DEFINED_IN' },
   { source: 'fn-load-config', target: 'file-config', label: 'DEFINED_IN' },
@@ -226,7 +519,11 @@ const goMonorepoLinks: GraphLink[] = [
   { source: 'fn-get-user', target: 'class-user-service', label: 'CALLS' },
   { source: 'class-user-service', target: 'class-user-repo', label: 'CALLS' },
   { source: 'fn-create-order', target: 'class-order-service', label: 'CALLS' },
-  { source: 'class-order-service', target: 'class-user-service', label: 'CALLS' },
+  {
+    source: 'class-order-service',
+    target: 'class-user-service',
+    label: 'CALLS',
+  },
   { source: 'class-auth-mw', target: 'fn-verify-token', label: 'CALLS' },
   // IMPORTS
   { source: 'file-main-api', target: 'file-user-handler', label: 'IMPORTS' },
@@ -234,10 +531,22 @@ const goMonorepoLinks: GraphLink[] = [
   { source: 'file-main-api', target: 'file-auth-middleware', label: 'IMPORTS' },
   { source: 'file-main-api', target: 'file-logger', label: 'IMPORTS' },
   { source: 'file-main-api', target: 'file-config', label: 'IMPORTS' },
-  { source: 'file-user-handler', target: 'file-user-service', label: 'IMPORTS' },
+  {
+    source: 'file-user-handler',
+    target: 'file-user-service',
+    label: 'IMPORTS',
+  },
   { source: 'file-user-service', target: 'file-user-repo', label: 'IMPORTS' },
-  { source: 'file-order-handler', target: 'file-order-service', label: 'IMPORTS' },
-  { source: 'file-order-service', target: 'file-user-service', label: 'IMPORTS' },
+  {
+    source: 'file-order-handler',
+    target: 'file-order-service',
+    label: 'IMPORTS',
+  },
+  {
+    source: 'file-order-service',
+    target: 'file-user-service',
+    label: 'IMPORTS',
+  },
   { source: 'file-auth-middleware', target: 'file-auth-jwt', label: 'IMPORTS' },
   // DEPENDS_ON
   { source: 'repo', target: 'pkg-gin', label: 'DEPENDS_ON' },
@@ -280,14 +589,14 @@ function generateLargeDataset(
   const typeWeights = [
     { type: 'Repo', weight: 0.02 },
     { type: 'Directory', weight: 0.08 },
-    { type: 'File', weight: 0.30 },
-    { type: 'Class', weight: 0.20 },
+    { type: 'File', weight: 0.3 },
+    { type: 'Class', weight: 0.2 },
     { type: 'Function', weight: 0.35 },
     { type: 'Package', weight: 0.05 },
   ];
 
   // Assign types based on weights
-  function pickType(_i: number): string {
+  function pickType(): string {
     const r = rand();
     let cumulative = 0;
     for (const { type, weight } of typeWeights) {
@@ -299,17 +608,28 @@ function generateLargeDataset(
 
   // Phase 1: Create nodes
   const byType: Record<string, number[]> = {
-    Repo: [], Directory: [], File: [], Class: [], Function: [], Package: [],
+    Repo: [],
+    Directory: [],
+    File: [],
+    Class: [],
+    Function: [],
+    Package: [],
   };
 
   for (let i = 0; i < nodeCount; i++) {
-    const type = pickType(i);
-    const name = type === 'Repo' ? `repo_${i}`
-      : type === 'Directory' ? `dir_${i}`
-      : type === 'File' ? `file_${i}.ts`
-      : type === 'Class' ? `Class${i}`
-      : type === 'Function' ? `func${i}`
-      : `pkg_${i}`;
+    const type = pickType();
+    const name =
+      type === 'Repo'
+        ? `repo_${i}`
+        : type === 'Directory'
+          ? `dir_${i}`
+          : type === 'File'
+            ? `file_${i}.ts`
+            : type === 'Class'
+              ? `Class${i}`
+              : type === 'Function'
+                ? `func${i}`
+                : `pkg_${i}`;
     nodes.push({ id: `n-${i}`, name, type });
     byType[type].push(i);
   }
@@ -339,24 +659,41 @@ function generateLargeDataset(
 
   for (const d of dirs) {
     const parent = repos[Math.floor(rand() * repos.length)];
-    links.push({ source: `n-${d}`, target: `n-${parent}`, label: 'DEFINED_IN' });
+    links.push({
+      source: `n-${d}`,
+      target: `n-${parent}`,
+      label: 'DEFINED_IN',
+    });
   }
   for (const f of files) {
-    const parent = dirs.length > 0
-      ? dirs[Math.floor(rand() * dirs.length)]
-      : repos[Math.floor(rand() * repos.length)];
-    links.push({ source: `n-${f}`, target: `n-${parent}`, label: 'DEFINED_IN' });
+    const parent =
+      dirs.length > 0
+        ? dirs[Math.floor(rand() * dirs.length)]
+        : repos[Math.floor(rand() * repos.length)];
+    links.push({
+      source: `n-${f}`,
+      target: `n-${parent}`,
+      label: 'DEFINED_IN',
+    });
   }
   for (const c of classes) {
     if (files.length > 0) {
       const parent = files[Math.floor(rand() * files.length)];
-      links.push({ source: `n-${c}`, target: `n-${parent}`, label: 'DEFINED_IN' });
+      links.push({
+        source: `n-${c}`,
+        target: `n-${parent}`,
+        label: 'DEFINED_IN',
+      });
     }
   }
   for (const fn of functions) {
     if (files.length > 0) {
       const parent = files[Math.floor(rand() * files.length)];
-      links.push({ source: `n-${fn}`, target: `n-${parent}`, label: 'DEFINED_IN' });
+      links.push({
+        source: `n-${fn}`,
+        target: `n-${parent}`,
+        label: 'DEFINED_IN',
+      });
     }
   }
 
@@ -412,8 +749,12 @@ function lazyDataset(
   return {
     name,
     description,
-    get nodes() { return getData().nodes; },
-    get links() { return getData().links; },
+    get nodes() {
+      return getData().nodes;
+    },
+    get links() {
+      return getData().links;
+    },
   };
 }
 

@@ -181,10 +181,7 @@ export default defineConfig(({ mode }) => {
           __dirname,
           'src/components/utils.ts',
         ),
-        '@opentrace/components': resolve(
-          __dirname,
-          'src/components/index.ts',
-        ),
+        '@opentrace/components': resolve(__dirname, 'src/components/index.ts'),
       },
       dedupe: ['react', 'react-dom'],
     },

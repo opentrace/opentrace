@@ -26,19 +26,9 @@ import type { AddRepoModalProps } from './types';
 import './indexing-base.css';
 import './AddRepoModal.css';
 
-type SourceMode = 'url' | 'directory' | 'import';
+import { detectProvider } from './urlNormalize';
 
-export function detectProvider(
-  url: string,
-): 'github' | 'gitlab' | 'bitbucket' | 'azuredevops' | null {
-  const lower = url.toLowerCase();
-  if (lower.includes('github')) return 'github';
-  if (lower.includes('gitlab')) return 'gitlab';
-  if (lower.includes('bitbucket')) return 'bitbucket';
-  if (lower.includes('dev.azure.com') || lower.includes('visualstudio.com'))
-    return 'azuredevops';
-  return null;
-}
+type SourceMode = 'url' | 'directory' | 'import';
 
 const HISTORY_KEY = 'ot_repo_history';
 const MAX_HISTORY = 5;

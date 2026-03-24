@@ -203,7 +203,9 @@ export default function PhysicsPanel({
               style={{ paddingLeft: 8 }}
             >
               <span className="physics-toggle-label">Auto-rotate</span>
-              <div className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}>
+              <div
+                className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}
+              >
                 <div className="physics-toggle-thumb" />
               </div>
             </div>
@@ -219,7 +221,9 @@ export default function PhysicsPanel({
                 min={0}
                 max={100}
                 value={mode3dSpeed}
-                onInput={(e) => onMode3dSpeedChange(Number(e.currentTarget.value))}
+                onInput={(e) =>
+                  onMode3dSpeedChange(Number(e.currentTarget.value))
+                }
               />
             </div>
           )}
@@ -234,7 +238,9 @@ export default function PhysicsPanel({
                 min={0}
                 max={100}
                 value={mode3dTilt}
-                onInput={(e) => onMode3dTiltChange(Number(e.currentTarget.value))}
+                onInput={(e) =>
+                  onMode3dTiltChange(Number(e.currentTarget.value))
+                }
               />
             </div>
           )}
@@ -310,7 +316,9 @@ export default function PhysicsPanel({
             min={0}
             max={50}
             value={radialStrength}
-            onInput={(e) => onRadialStrengthChange(Number(e.currentTarget.value))}
+            onInput={(e) =>
+              onRadialStrengthChange(Number(e.currentTarget.value))
+            }
           />
         </div>
       )}
@@ -327,7 +335,9 @@ export default function PhysicsPanel({
             min={0}
             max={50}
             value={communityPull}
-            onInput={(e) => onCommunityPullChange(Number(e.currentTarget.value))}
+            onInput={(e) =>
+              onCommunityPullChange(Number(e.currentTarget.value))
+            }
           />
         </div>
       )}
@@ -361,7 +371,9 @@ export default function PhysicsPanel({
             min={0}
             max={30}
             value={centeringStrength}
-            onInput={(e) => onCenteringStrengthChange(Number(e.currentTarget.value))}
+            onInput={(e) =>
+              onCenteringStrengthChange(Number(e.currentTarget.value))
+            }
           />
         </div>
       )}

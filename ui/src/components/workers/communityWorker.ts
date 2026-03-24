@@ -56,7 +56,12 @@ self.onmessage = (e: MessageEvent<CommunityRequest>) => {
     if (!nodeIdSet.has(link.source) || !nodeIdSet.has(link.target)) continue;
 
     if (tempGraph.hasEdge(link.source, link.target)) {
-      const w = (tempGraph.getEdgeAttribute(link.source, link.target, 'weight') as number) ?? 1;
+      const w =
+        (tempGraph.getEdgeAttribute(
+          link.source,
+          link.target,
+          'weight',
+        ) as number) ?? 1;
       tempGraph.setEdgeAttribute(link.source, link.target, 'weight', w + 1);
     } else {
       tempGraph.addEdge(link.source, link.target, { weight: 1 });
@@ -68,5 +73,7 @@ self.onmessage = (e: MessageEvent<CommunityRequest>) => {
     getEdgeWeight: 'weight',
   });
 
-  (self as unknown as Worker).postMessage({ assignments } satisfies CommunityResponse);
+  (self as unknown as Worker).postMessage({
+    assignments,
+  } satisfies CommunityResponse);
 };

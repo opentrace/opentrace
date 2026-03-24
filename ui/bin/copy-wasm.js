@@ -116,7 +116,9 @@ async function main() {
     copied++;
   }
 
-  console.log(`Copied ${copied} WASM file${copied !== 1 ? 's' : ''} to ${dest}`);
+  console.log(
+    `Copied ${copied} WASM file${copied !== 1 ? 's' : ''} to ${dest}`,
+  );
 }
 
 main().catch((err) => {

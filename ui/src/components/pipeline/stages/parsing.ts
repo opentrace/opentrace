@@ -28,11 +28,7 @@ import { extractPython } from '../parser/extractors/python';
 import { extractTypeScript } from '../parser/extractors/typescript';
 import { extractGo } from '../parser/extractors/go';
 import { extractGeneric } from '../parser/extractors/generic';
-import type {
-  Registries,
-  CallInfo,
-  SymbolNode,
-} from '../parser/callResolver';
+import type { Registries, CallInfo, SymbolNode } from '../parser/callResolver';
 
 // --- Parser registry (module-level) ---
 

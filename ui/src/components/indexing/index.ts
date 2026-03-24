@@ -17,7 +17,7 @@
 export { default as AddRepoModal } from './AddRepoModal';
 export { default as IndexingProgress } from './IndexingProgress';
 export { normalizeRepoUrl } from './urlNormalize';
-export { detectProvider } from './AddRepoModal';
+export { detectProvider } from './urlNormalize';
 export type {
   IndexingState,
   StageState,

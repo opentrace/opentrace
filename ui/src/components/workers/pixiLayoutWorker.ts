@@ -75,8 +75,19 @@ export type WorkerInMessage =
         layoutMode?: LayoutMode;
       };
     }
-  | { type: 'update-config'; chargeStrength?: number; linkDistance?: number; centerStrength?: number }
-  | { type: 'update-compact-config'; radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }
+  | {
+      type: 'update-config';
+      chargeStrength?: number;
+      linkDistance?: number;
+      centerStrength?: number;
+    }
+  | {
+      type: 'update-compact-config';
+      radialStrength?: number;
+      communityPull?: number;
+      centeringStrength?: number;
+      radiusScale?: number;
+    }
   | { type: 'set-layout-mode'; mode: LayoutMode }
   | { type: 'fix-node'; nodeId: string; x: number; y: number }
   | { type: 'unfix-node'; nodeId: string }
@@ -104,9 +115,18 @@ let dragTheta = 1.5;
 let settled = false;
 // Cached init config for re-building simulation on layout mode switch
 let cachedLinks: SimLink[] = [];
-let cachedConfig: { chargeStrength: number; linkDistance: number; centerStrength?: number } | null = null;
+let cachedConfig: {
+  chargeStrength: number;
+  linkDistance: number;
+  centerStrength?: number;
+} | null = null;
 // Compact mode tuning (updated at runtime via update-compact-config)
-let compactConfig = { radialStrength: 0.08, communityPull: 0.1, centeringStrength: 0.05, radiusScale: 32 };
+const compactConfig = {
+  radialStrength: 0.08,
+  communityPull: 0.1,
+  centeringStrength: 0.05,
+  radiusScale: 32,
+};
 let streaming = false;
 let streamInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -143,7 +163,9 @@ function startStreaming(): void {
       postPositions();
       stopStreaming();
       settled = true;
-      (self as unknown as Worker).postMessage({ type: 'settled' } satisfies WorkerOutMessage);
+      (self as unknown as Worker).postMessage({
+        type: 'settled',
+      } satisfies WorkerOutMessage);
       return;
     }
     postPositions();
@@ -170,7 +192,11 @@ function stopStreaming(): void {
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
-  config: { chargeStrength: number; linkDistance: number; centerStrength?: number },
+  config: {
+    chargeStrength: number;
+    linkDistance: number;
+    centerStrength?: number;
+  },
   mode: LayoutMode,
 ): Simulation<SimNode, SimLink> {
   const s = forceSimulation<SimNode, SimLink>(nodes);
@@ -185,11 +211,17 @@ function buildSimulation(
   if (mode === 'compact') {
     const compactRadius = Math.sqrt(nodes.length) * compactConfig.radiusScale;
 
-    s.force('charge', forceManyBody().strength(config.chargeStrength).theta(defaultTheta))
+    s.force(
+      'charge',
+      forceManyBody().strength(config.chargeStrength).theta(defaultTheta),
+    )
       .force('center', forceCenter(0, 0).strength(0.3))
       .force('x', forceX<SimNode>(0).strength(compactConfig.centeringStrength))
       .force('y', forceY<SimNode>(0).strength(compactConfig.centeringStrength))
-      .force('radial', forceRadial(0, 0, 0).strength(compactConfig.radialStrength))
+      .force(
+        'radial',
+        forceRadial(0, 0, 0).strength(compactConfig.radialStrength),
+      )
       .alphaDecay(0.008)
       .velocityDecay(0.4);
 
@@ -205,8 +237,13 @@ function buildSimulation(
       }
     };
     // d3-force accepts any function with .initialize as a force
-    (containForce as unknown as { initialize: (n: SimNode[]) => void }).initialize = () => {};
-    s.force('contain', containForce as unknown as Parameters<typeof s.force>[1]);
+    (
+      containForce as unknown as { initialize: (n: SimNode[]) => void }
+    ).initialize = () => {};
+    s.force(
+      'contain',
+      containForce as unknown as Parameters<typeof s.force>[1],
+    );
 
     // Community gravity — pulls nodes toward their community centroid each tick
     if (communities && Object.keys(communities).length > 0) {
@@ -230,17 +267,28 @@ function buildSimulation(
           if (n < 2) continue;
           const targetX = cx.get(c)! / n;
           const targetY = cy.get(c)! / n;
-          node.vx = (node.vx ?? 0) + (targetX - (node.x ?? 0)) * compactConfig.communityPull * alpha;
-          node.vy = (node.vy ?? 0) + (targetY - (node.y ?? 0)) * compactConfig.communityPull * alpha;
+          node.vx =
+            (node.vx ?? 0) +
+            (targetX - (node.x ?? 0)) * compactConfig.communityPull * alpha;
+          node.vy =
+            (node.vy ?? 0) +
+            (targetY - (node.y ?? 0)) * compactConfig.communityPull * alpha;
         }
       };
-      (communityForce as unknown as { initialize: (n: SimNode[]) => void }).initialize = () => {};
-      s.force('communityGravity', communityForce as unknown as Parameters<typeof s.force>[1]);
+      (
+        communityForce as unknown as { initialize: (n: SimNode[]) => void }
+      ).initialize = () => {};
+      s.force(
+        'communityGravity',
+        communityForce as unknown as Parameters<typeof s.force>[1],
+      );
     }
   } else {
     // Spread mode — standard force-directed
-    s.force('charge', forceManyBody().strength(config.chargeStrength).theta(defaultTheta))
-      .force('center', forceCenter(0, 0).strength(config.centerStrength ?? 1));
+    s.force(
+      'charge',
+      forceManyBody().strength(config.chargeStrength).theta(defaultTheta),
+    ).force('center', forceCenter(0, 0).strength(config.centerStrength ?? 1));
   }
 
   return s;
@@ -307,21 +355,31 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
 
     case 'update-config': {
       if (!sim || !cachedConfig) break;
-      if (msg.chargeStrength !== undefined) cachedConfig.chargeStrength = msg.chargeStrength;
-      if (msg.linkDistance !== undefined) cachedConfig.linkDistance = msg.linkDistance;
-      if (msg.centerStrength !== undefined) cachedConfig.centerStrength = msg.centerStrength;
+      if (msg.chargeStrength !== undefined)
+        cachedConfig.chargeStrength = msg.chargeStrength;
+      if (msg.linkDistance !== undefined)
+        cachedConfig.linkDistance = msg.linkDistance;
+      if (msg.centerStrength !== undefined)
+        cachedConfig.centerStrength = msg.centerStrength;
 
       // Charge and link distance apply in both modes
       if (msg.chargeStrength !== undefined) {
-        sim.force('charge', forceManyBody().strength(msg.chargeStrength).theta(defaultTheta));
+        sim.force(
+          'charge',
+          forceManyBody().strength(msg.chargeStrength).theta(defaultTheta),
+        );
       }
       if (msg.linkDistance !== undefined) {
-        const link = sim.force('link') as ReturnType<typeof forceLink<SimNode, SimLink>> | undefined;
+        const link = sim.force('link') as
+          | ReturnType<typeof forceLink<SimNode, SimLink>>
+          | undefined;
         if (link) link.distance(msg.linkDistance);
       }
       // Center strength only applies in spread mode
       if (currentMode === 'spread' && msg.centerStrength !== undefined) {
-        const center = sim.force('center') as ReturnType<typeof forceCenter> | undefined;
+        const center = sim.force('center') as
+          | ReturnType<typeof forceCenter>
+          | undefined;
         if (center) center.strength(msg.centerStrength);
       }
       sim.alpha(0.3).restart();
@@ -335,7 +393,9 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       let needsRebuild = false;
       if (msg.radialStrength !== undefined) {
         compactConfig.radialStrength = msg.radialStrength;
-        const radial = sim.force('radial') as ReturnType<typeof forceRadial> | undefined;
+        const radial = sim.force('radial') as
+          | ReturnType<typeof forceRadial>
+          | undefined;
         if (radial) radial.strength(msg.radialStrength);
       }
       if (msg.communityPull !== undefined) {
@@ -431,14 +491,18 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       // Less accurate but ~2x faster at 20k nodes — acceptable since only
       // local nodes matter during drag.
       if (!sim) break;
-      const charge = sim.force('charge') as ReturnType<typeof forceManyBody> | undefined;
+      const charge = sim.force('charge') as
+        | ReturnType<typeof forceManyBody>
+        | undefined;
       if (charge) charge.theta(dragTheta);
       break;
     }
 
     case 'reset-theta': {
       if (!sim) break;
-      const charge = sim.force('charge') as ReturnType<typeof forceManyBody> | undefined;
+      const charge = sim.force('charge') as
+        | ReturnType<typeof forceManyBody>
+        | undefined;
       if (charge) charge.theta(defaultTheta);
       break;
     }
@@ -457,7 +521,10 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
 
       // Compute centroids from current positions
       const strength = msg.strength ?? 0.1;
-      const centroidSums = new Map<number, { x: number; y: number; count: number }>();
+      const centroidSums = new Map<
+        number,
+        { x: number; y: number; count: number }
+      >();
 
       if (!communities) break;
 
@@ -483,8 +550,18 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       }
 
       sim
-        .force('clusterX', forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(strength))
-        .force('clusterY', forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(strength))
+        .force(
+          'clusterX',
+          forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(
+            strength,
+          ),
+        )
+        .force(
+          'clusterY',
+          forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(
+            strength,
+          ),
+        )
         .alpha(0.5)
         .restart();
       settled = false;
@@ -493,4 +570,3 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     }
   }
 };
-

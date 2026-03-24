@@ -86,12 +86,30 @@ export const WithActions: Story = {
     nodeCount: 42,
     edgeCount: 87,
     actions: (
-      <button style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #30363d', background: '#21262d', color: '#e6edf3', cursor: 'pointer' }}>
+      <button
+        style={{
+          padding: '4px 8px',
+          borderRadius: 4,
+          border: '1px solid #30363d',
+          background: '#21262d',
+          color: '#e6edf3',
+          cursor: 'pointer',
+        }}
+      >
         Settings
       </button>
     ),
     persistentActions: (
-      <button style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #30363d', background: '#21262d', color: '#e6edf3', cursor: 'pointer' }}>
+      <button
+        style={{
+          padding: '4px 8px',
+          borderRadius: 4,
+          border: '1px solid #30363d',
+          background: '#21262d',
+          color: '#e6edf3',
+          cursor: 'pointer',
+        }}
+      >
         + Add
       </button>
     ),

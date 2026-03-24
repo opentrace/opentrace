@@ -76,9 +76,15 @@
     "web-tree-sitter": ">=0.24.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true },
-    "web-tree-sitter": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "web-tree-sitter": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",

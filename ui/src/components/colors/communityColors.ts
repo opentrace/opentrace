@@ -199,9 +199,11 @@ function findHubNode(members: NameableNode[]): string | null {
 
   if (scores.length === 0) {
     // All names are very short — pick the shortest
-    return members.reduce((a, b) =>
-      (a.name ?? '').length <= (b.name ?? '').length ? a : b,
-    ).name ?? members[0].id;
+    return (
+      members.reduce((a, b) =>
+        (a.name ?? '').length <= (b.name ?? '').length ? a : b,
+      ).name ?? members[0].id
+    );
   }
 
   // Sort by: highest score, then shortest name

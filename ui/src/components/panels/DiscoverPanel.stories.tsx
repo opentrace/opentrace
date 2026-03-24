@@ -29,7 +29,15 @@ const meta: Meta<typeof DiscoverPanel> = {
   },
   decorators: [
     (Story) => (
-      <div style={{ width: 300, height: 500, background: '#161b22', borderRadius: 8, overflow: 'hidden' }}>
+      <div
+        style={{
+          width: 300,
+          height: 500,
+          background: '#161b22',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}
+      >
         <Story />
       </div>
     ),

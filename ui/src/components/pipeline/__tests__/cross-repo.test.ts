@@ -28,7 +28,13 @@ beforeAll(async () => {
   initParsers(new Map([['python', pyParser]]));
 });
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+const repoRoot = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  '..',
+);
 const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'python', 'project');
 
 async function readAllFiles(

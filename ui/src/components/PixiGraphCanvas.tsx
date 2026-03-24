@@ -88,7 +88,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const rendererRef = useRef<PixiRenderer | null>(null);
     // Incremented when setData completes so dependent effects re-run
     const [dataVersion, setDataVersion] = useState(0);
-    const dummyGraph = useMemo(() => new Graph({ multi: true, type: 'directed' }), []);
+    const dummyGraph = useMemo(
+      () => new Graph({ multi: true, type: 'directed' }),
+      [],
+    );
 
     // ── Community detection (reuse existing hook or accept from props) ──
     const internalCommunityData = useCommunities(nodes, links, layoutConfig);
@@ -155,7 +158,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     // ── Layout (d3-force simulation) ────────────────────────────────────
     const onLayoutTick = useCallback(
-      (positions: Map<string, { x: number; y: number }>, buffer?: Float64Array) => {
+      (
+        positions: Map<string, { x: number; y: number }>,
+        buffer?: Float64Array,
+      ) => {
         const renderer = rendererRef.current;
         if (!renderer) return;
         // Fast path: use indexed Float64Array (avoids 20k Map lookups per tick)
@@ -169,15 +175,33 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     );
 
     const {
-      layoutReady, positions, nodeSizes,
-      simRunning, reheat, restart, toggleSim,
-      stopSim, startSim,
-      fixNode, unfixNode,
-      boostTheta, resetTheta,
-      setChargeStrength, setLinkDistance, setCenterStrength,
+      layoutReady,
+      positions,
+      nodeSizes,
+      simRunning,
+      reheat,
+      restart,
+      toggleSim,
+      stopSim,
+      startSim,
+      fixNode,
+      unfixNode,
+      boostTheta,
+      resetTheta,
+      setChargeStrength,
+      setLinkDistance,
+      setCenterStrength,
       setCommunityGravity,
-      setLayoutMode, updateCompactConfig,
-    } = usePixiLayout(nodes, links, communityData, layoutConfig, onLayoutTick, layoutModeProp);
+      setLayoutMode,
+      updateCompactConfig,
+    } = usePixiLayout(
+      nodes,
+      links,
+      communityData,
+      layoutConfig,
+      onLayoutTick,
+      layoutModeProp,
+    );
 
     // ── Sync layout settled state to renderer for edge redraw gating ────
     useEffect(() => {
@@ -203,7 +227,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         rendererRef.current = null;
         renderer.destroy();
         // Ensure canvas is removed from DOM (Pixi v8 destroy may not do this)
-        while (container.firstChild) container.removeChild(container.firstChild);
+        while (container.firstChild)
+          container.removeChild(container.firstChild);
       };
       // Only init once — resize handled separately
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,16 +247,26 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       if (!layoutReady || !rendererRef.current) return;
       const posSnapshot = new Map(positions);
       let cancelled = false;
-      rendererRef.current.setData(
-        nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors,
-      ).then(() => {
-        if (!cancelled) setDataVersion((v) => v + 1);
-      });
-      return () => { cancelled = true; };
+      rendererRef.current
+        .setData(nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors)
+        .then(() => {
+          if (!cancelled) setDataVersion((v) => v + 1);
+        });
+      return () => {
+        cancelled = true;
+      };
       // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
       // It never changes identity — the effect re-runs via `layoutReady` or when
       // nodes/links/colors change.
-    }, [layoutReady, nodes, links, positions, nodeColors, nodeSizes, linkColors]);
+    }, [
+      layoutReady,
+      nodes,
+      links,
+      positions,
+      nodeColors,
+      nodeSizes,
+      linkColors,
+    ]);
 
     // ── Update node colors when colorMode changes ───────────────────────
     useEffect(() => {
@@ -258,7 +293,12 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         activeHighlightLinks,
         activeLabelNodes,
       );
-    }, [dataVersion, activeHighlightNodes, activeHighlightLinks, activeLabelNodes]);
+    }, [
+      dataVersion,
+      activeHighlightNodes,
+      activeHighlightLinks,
+      activeLabelNodes,
+    ]);
 
     // ── Apply link type filtering ──────────────────────────────────────
     useEffect(() => {
@@ -304,19 +344,28 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         onNodeDragMove: (nodeId, x, y) => {
           fixNode(nodeId, x, y);
         },
-        onNodeDragEnd: (_nodeId) => {
+        onNodeDragEnd: () => {
           // Keep pinned (like reference implementation)
           resetTheta(); // restore accuracy
         },
         on3DAutoRotateChange,
       });
-    }, [onNodeClick, onEdgeClick, onStageClick, fixNode, unfixNode, boostTheta, resetTheta, on3DAutoRotateChange]);
+    }, [
+      onNodeClick,
+      onEdgeClick,
+      onStageClick,
+      fixNode,
+      unfixNode,
+      boostTheta,
+      resetTheta,
+      on3DAutoRotateChange,
+    ]);
 
     // ── Imperative handle (same as GraphCanvas) ─────────────────────────
     useImperativeHandle(
       ref,
       () => ({
-        selectNode: (nodeId: string, _hops?: number) => {
+        selectNode: (nodeId: string) => {
           const renderer = rendererRef.current;
           if (!renderer) return;
           const node = renderer.getNode(nodeId);
@@ -386,7 +435,22 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           rendererRef.current?.setLabelScale(scale);
         },
       }),
-      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig, communityData.assignments],
+      [
+        onNodeClick,
+        restart,
+        stopSim,
+        startSim,
+        toggleSim,
+        simRunning,
+        reheat,
+        setChargeStrength,
+        setLinkDistance,
+        setCenterStrength,
+        setCommunityGravity,
+        setLayoutMode,
+        updateCompactConfig,
+        communityData.assignments,
+      ],
     );
 
     return (

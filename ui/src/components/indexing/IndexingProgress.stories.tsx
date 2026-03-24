@@ -45,9 +45,25 @@ const runningState: IndexingState = {
   relationshipsCreated: 567,
   error: null,
   stages: {
-    fetch: { status: 'completed', current: 4200000, total: 4200000, message: '4.0 MB downloaded', format: 'bytes' },
-    extract: { status: 'completed', current: 312, total: 312, message: '312 files' },
-    parse: { status: 'active', current: 180, total: 312, message: 'src/utils/helpers.ts' },
+    fetch: {
+      status: 'completed',
+      current: 4200000,
+      total: 4200000,
+      message: '4.0 MB downloaded',
+      format: 'bytes',
+    },
+    extract: {
+      status: 'completed',
+      current: 312,
+      total: 312,
+      message: '312 files',
+    },
+    parse: {
+      status: 'active',
+      current: 180,
+      total: 312,
+      message: 'src/utils/helpers.ts',
+    },
   },
 };
 
@@ -67,7 +83,13 @@ export const FetchingWithBytes: Story = {
       relationshipsCreated: 0,
       error: null,
       stages: {
-        fetch: { status: 'active', current: 1500000, total: 4200000, message: 'Downloading...', format: 'bytes' },
+        fetch: {
+          status: 'active',
+          current: 1500000,
+          total: 4200000,
+          message: 'Downloading...',
+          format: 'bytes',
+        },
       },
     },
     stages: stageConfig,
@@ -82,11 +104,37 @@ export const Completed: Story = {
       relationshipsCreated: 3456,
       error: null,
       stages: {
-        fetch: { status: 'completed', current: 4200000, total: 4200000, message: '4.0 MB', format: 'bytes' },
-        extract: { status: 'completed', current: 312, total: 312, message: '312 files' },
-        parse: { status: 'completed', current: 312, total: 312, message: 'Done' },
-        resolve: { status: 'completed', current: 890, total: 890, message: '890 calls resolved' },
-        upload: { status: 'completed', current: 1234, total: 1234, message: 'Complete' },
+        fetch: {
+          status: 'completed',
+          current: 4200000,
+          total: 4200000,
+          message: '4.0 MB',
+          format: 'bytes',
+        },
+        extract: {
+          status: 'completed',
+          current: 312,
+          total: 312,
+          message: '312 files',
+        },
+        parse: {
+          status: 'completed',
+          current: 312,
+          total: 312,
+          message: 'Done',
+        },
+        resolve: {
+          status: 'completed',
+          current: 890,
+          total: 890,
+          message: '890 calls resolved',
+        },
+        upload: {
+          status: 'completed',
+          current: 1234,
+          total: 1234,
+          message: 'Complete',
+        },
       },
     },
     stages: stageConfig,
@@ -101,7 +149,8 @@ export const Error: Story = {
       status: 'error',
       nodesCreated: 150,
       relationshipsCreated: 300,
-      error: 'Failed to fetch archive: 403 Forbidden. The repository may be private — try adding an access token.',
+      error:
+        'Failed to fetch archive: 403 Forbidden. The repository may be private — try adding an access token.',
       stages: {
         fetch: { status: 'active', current: 0, total: 0, message: '' },
       },
@@ -110,4 +159,3 @@ export const Error: Story = {
     title: 'Indexing Failed',
   },
 };
-

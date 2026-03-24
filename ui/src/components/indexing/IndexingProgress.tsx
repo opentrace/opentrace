@@ -21,11 +21,7 @@
  * relying on proto-generated JobPhase enum.
  */
 
-import type {
-  IndexingProgressProps,
-  StageConfig,
-  StageState,
-} from './types';
+import type { IndexingProgressProps, StageConfig, StageState } from './types';
 import './indexing-base.css';
 import './IndexingProgress.css';
 
@@ -299,10 +295,7 @@ export default function IndexingProgress({
           <h2>{title ?? 'Indexing Repository'}</h2>
         </div>
         <div className="indexing-progress">
-          <MultiStageProgress
-            stages={state.stages}
-            stageConfig={stageConfig}
-          />
+          <MultiStageProgress stages={state.stages} stageConfig={stageConfig} />
           <StatsGrid
             nodes={state.nodesCreated}
             relationships={state.relationshipsCreated}

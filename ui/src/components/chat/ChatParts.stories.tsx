@@ -34,7 +34,8 @@ type Story = StoryObj<typeof ChatParts>;
 const mixedParts: MessagePart[] = [
   {
     type: 'thought',
-    content: 'Let me search for services in the graph to understand the architecture.',
+    content:
+      'Let me search for services in the graph to understand the architecture.',
   },
   {
     type: 'tool_call',

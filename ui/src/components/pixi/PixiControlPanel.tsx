@@ -212,7 +212,16 @@ function PixiControlPanel(props: PixiControlPanelProps) {
         onClick={() => setOpen((o) => !o)}
         title="Graph settings"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
@@ -220,132 +229,132 @@ function PixiControlPanel(props: PixiControlPanelProps) {
 
       {/* Panel — only visible when open */}
       {open && (
-      <div style={panelStyle}>
-        {/* Stats */}
-        <div style={{ fontSize: 12, marginBottom: 6, lineHeight: 1.6 }}>
-          <span style={valStyle}>{nodeCount.toLocaleString()}</span> nodes{' '}
-          <span style={valStyle}>{edgeCount.toLocaleString()}</span> edges
-        </div>
+        <div style={panelStyle}>
+          {/* Stats */}
+          <div style={{ fontSize: 12, marginBottom: 6, lineHeight: 1.6 }}>
+            <span style={valStyle}>{nodeCount.toLocaleString()}</span> nodes{' '}
+            <span style={valStyle}>{edgeCount.toLocaleString()}</span> edges
+          </div>
 
-      {/* Force sliders */}
-      <label style={labelStyle}>
-        Repel:{' '}
-        <input
-          type="range"
-          min={-500}
-          max={-5}
-          value={chargeValue}
-          onChange={handleCharge}
-          style={rangeStyle}
-        />
-      </label>
-      <label style={labelStyle}>
-        Link dist:{' '}
-        <input
-          type="range"
-          min={5}
-          max={500}
-          value={linkDistValue}
-          onChange={handleLinkDist}
-          style={rangeStyle}
-        />
-      </label>
-      <label style={labelStyle}>
-        Center:{' '}
-        <input
-          type="range"
-          min={1}
-          max={100}
-          value={centerValue}
-          onChange={handleCenter}
-          style={rangeStyle}
-        />
-      </label>
-
-      {/* Buttons */}
-      <div style={{ marginTop: 6 }}>
-        <button style={buttonStyle} onClick={onReheat}>
-          Reheat
-        </button>
-        <button style={buttonStyle} onClick={onToggleSim}>
-          {simRunning ? 'Stop' : 'Resume'}
-        </button>
-        <button style={buttonStyle} onClick={onFitToScreen}>
-          Fit to screen
-        </button>
-      </div>
-
-      {/* Edge / Bloom */}
-      <div style={sectionStyle}>
-        <label style={{ ...labelStyle, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={edgesEnabled}
-            onChange={(e) => onEdgesEnabledChange(e.target.checked)}
-          />{' '}
-          Show edges
-        </label>
-        <label style={{ ...labelStyle, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={bloomEnabled}
-            onChange={(e) => onBloomEnabledChange(e.target.checked)}
-          />{' '}
-          Bloom glow
-        </label>
-        {bloomEnabled && (
+          {/* Force sliders */}
           <label style={labelStyle}>
-            Bloom:{' '}
+            Repel:{' '}
             <input
               type="range"
-              min={0}
+              min={-500}
+              max={-5}
+              value={chargeValue}
+              onChange={handleCharge}
+              style={rangeStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            Link dist:{' '}
+            <input
+              type="range"
+              min={5}
+              max={500}
+              value={linkDistValue}
+              onChange={handleLinkDist}
+              style={rangeStyle}
+            />
+          </label>
+          <label style={labelStyle}>
+            Center:{' '}
+            <input
+              type="range"
+              min={1}
               max={100}
-              value={Math.round(bloomStrength * 100)}
-              onChange={(e) => onBloomStrengthChange(+e.target.value / 100)}
-              style={{ ...rangeStyle, width: 100 }}
+              value={centerValue}
+              onChange={handleCenter}
+              style={rangeStyle}
             />
           </label>
-        )}
-      </div>
 
-      {/* Community clusters */}
-      <div style={sectionStyle}>
-        <label style={{ ...labelStyle, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={communityGravityEnabled}
-            onChange={(e) => onCommunityGravityEnabledChange(e.target.checked)}
-          />{' '}
-          Community clusters
-        </label>
-        {communityGravityEnabled && (
-          <label style={labelStyle}>
-            Gravity:{' '}
-            <input
-              type="range"
-              min={0}
-              max={50}
-              value={Math.round(communityGravityStrength * 100)}
-              onChange={(e) =>
-                onCommunityGravityStrengthChange(+e.target.value / 100)
-              }
-              style={{ ...rangeStyle, width: 100 }}
-            />
-          </label>
-        )}
-        <label style={{ ...labelStyle, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={showLabels}
-            onChange={(e) => onShowLabelsChange(e.target.checked)}
-          />{' '}
-          Show labels
-        </label>
-        <div style={statusStyle}>
-          {communityCount} communities detected
+          {/* Buttons */}
+          <div style={{ marginTop: 6 }}>
+            <button style={buttonStyle} onClick={onReheat}>
+              Reheat
+            </button>
+            <button style={buttonStyle} onClick={onToggleSim}>
+              {simRunning ? 'Stop' : 'Resume'}
+            </button>
+            <button style={buttonStyle} onClick={onFitToScreen}>
+              Fit to screen
+            </button>
+          </div>
+
+          {/* Edge / Bloom */}
+          <div style={sectionStyle}>
+            <label style={{ ...labelStyle, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={edgesEnabled}
+                onChange={(e) => onEdgesEnabledChange(e.target.checked)}
+              />{' '}
+              Show edges
+            </label>
+            <label style={{ ...labelStyle, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={bloomEnabled}
+                onChange={(e) => onBloomEnabledChange(e.target.checked)}
+              />{' '}
+              Bloom glow
+            </label>
+            {bloomEnabled && (
+              <label style={labelStyle}>
+                Bloom:{' '}
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(bloomStrength * 100)}
+                  onChange={(e) => onBloomStrengthChange(+e.target.value / 100)}
+                  style={{ ...rangeStyle, width: 100 }}
+                />
+              </label>
+            )}
+          </div>
+
+          {/* Community clusters */}
+          <div style={sectionStyle}>
+            <label style={{ ...labelStyle, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={communityGravityEnabled}
+                onChange={(e) =>
+                  onCommunityGravityEnabledChange(e.target.checked)
+                }
+              />{' '}
+              Community clusters
+            </label>
+            {communityGravityEnabled && (
+              <label style={labelStyle}>
+                Gravity:{' '}
+                <input
+                  type="range"
+                  min={0}
+                  max={50}
+                  value={Math.round(communityGravityStrength * 100)}
+                  onChange={(e) =>
+                    onCommunityGravityStrengthChange(+e.target.value / 100)
+                  }
+                  style={{ ...rangeStyle, width: 100 }}
+                />
+              </label>
+            )}
+            <label style={{ ...labelStyle, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={showLabels}
+                onChange={(e) => onShowLabelsChange(e.target.checked)}
+              />{' '}
+              Show labels
+            </label>
+            <div style={statusStyle}>{communityCount} communities detected</div>
+          </div>
         </div>
-      </div>
-    </div>
       )}
     </>
   );

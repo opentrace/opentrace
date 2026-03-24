@@ -136,9 +136,10 @@ export function* runNodePipeline(
     yield {
       kind: 'flush_end',
       stage: stage.name(),
-      mutation: mutation.nodes.length > 0 || mutation.relationships.length > 0
-        ? mutation
-        : undefined,
+      mutation:
+        mutation.nodes.length > 0 || mutation.relationships.length > 0
+          ? mutation
+          : undefined,
     };
   }
 

@@ -28,7 +28,9 @@
       "@opentrace/components/utils": ["./src/components/utils.ts"],
       "@opentrace/components/chat": ["./src/components/chat/index.ts"],
       "@opentrace/components/pipeline": ["./src/components/pipeline/index.ts"],
-      "@opentrace/components/pipeline/wasm": ["./src/components/pipeline/wasm.ts"],
+      "@opentrace/components/pipeline/wasm": [
+        "./src/components/pipeline/wasm.ts"
+      ],
       "@opentrace/components/indexing": ["./src/components/indexing/index.ts"]
     }
   },

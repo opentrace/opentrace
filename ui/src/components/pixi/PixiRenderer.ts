@@ -40,7 +40,11 @@ import { quadtree, type Quadtree } from 'd3-quadtree';
 import type { Texture } from 'pixi.js';
 import type { GraphNode, GraphLink } from '../graph/types';
 import type { SelectedEdge } from '../types/graph';
-import { getCircleTexture, clearTextureCache, CIRCLE_RADIUS } from './spriteTextures';
+import {
+  getCircleTexture,
+  clearTextureCache,
+  CIRCLE_RADIUS,
+} from './spriteTextures';
 import {
   type Viewport,
   computeBounds,
@@ -203,11 +207,7 @@ export class PixiRenderer {
 
   // ─── Lifecycle ──────────────────────────────────────────────────────
 
-  init(
-    container: HTMLElement,
-    width: number,
-    height: number,
-  ): Promise<void> {
+  init(container: HTMLElement, width: number, height: number): Promise<void> {
     this.initPromise = this._init(container, width, height);
     return this.initPromise;
   }
@@ -312,10 +312,17 @@ export class PixiRenderer {
     this.edgeColorGroups.clear();
     if (this.app) {
       try {
-        this.app.destroy({ removeView: true }, { children: true, texture: true });
+        this.app.destroy(
+          { removeView: true },
+          { children: true, texture: true },
+        );
       } catch {
         // Fallback for different Pixi versions
-        try { this.app.destroy(true, { children: true }); } catch { /* ignore */ }
+        try {
+          this.app.destroy(true, { children: true });
+        } catch {
+          /* ignore */
+        }
       }
     }
     this.app = null;
@@ -334,7 +341,13 @@ export class PixiRenderer {
   ): Promise<void> {
     // Wait for init to complete before touching the scene graph
     if (this.initPromise) await this.initPromise;
-    if (this.destroyed || !this.app || !this.nodeContainer || !this.labelContainer) return;
+    if (
+      this.destroyed ||
+      !this.app ||
+      !this.nodeContainer ||
+      !this.labelContainer
+    )
+      return;
 
     // Clear previous
     this.nodeContainer.removeChildren();
@@ -377,8 +390,10 @@ export class PixiRenderer {
     // Build edges and edge index
     const seenEdges = new Set<string>();
     for (const gl of graphLinks) {
-      const sourceId = typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
-      const targetId = typeof gl.target === 'string' ? gl.target : (gl.target as GraphNode).id;
+      const sourceId =
+        typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
+      const targetId =
+        typeof gl.target === 'string' ? gl.target : (gl.target as GraphNode).id;
       if (!this.nodes.has(sourceId) || !this.nodes.has(targetId)) continue;
       const key = `${sourceId}-${gl.label}-${targetId}`;
       if (seenEdges.has(key)) continue;
@@ -395,10 +410,16 @@ export class PixiRenderer {
 
       // Index: source → edge indices
       let sIdx = this.edgeIndex.get(sourceId);
-      if (!sIdx) { sIdx = []; this.edgeIndex.set(sourceId, sIdx); }
+      if (!sIdx) {
+        sIdx = [];
+        this.edgeIndex.set(sourceId, sIdx);
+      }
       sIdx.push(idx);
       let tIdx = this.edgeIndex.get(targetId);
-      if (!tIdx) { tIdx = []; this.edgeIndex.set(targetId, tIdx); }
+      if (!tIdx) {
+        tIdx = [];
+        this.edgeIndex.set(targetId, tIdx);
+      }
       tIdx.push(idx);
     }
 
@@ -407,7 +428,10 @@ export class PixiRenderer {
     for (let i = 0; i < this.edges.length; i++) {
       const color = this.edges[i].color;
       let group = this.edgeColorGroups.get(color);
-      if (!group) { group = []; this.edgeColorGroups.set(color, group); }
+      if (!group) {
+        group = [];
+        this.edgeColorGroups.set(color, group);
+      }
       group.push(i);
     }
 
@@ -446,12 +470,14 @@ export class PixiRenderer {
 
     for (const node of this.nodes.values()) {
       if (!node.visible) continue;
-      const s = (this.hasHighlight && !this.highlightNodes.has(node.id))
-        ? node.size * NODE_SIZE_DIMMED_SCALE
-        : node.size;
+      const s =
+        this.hasHighlight && !this.highlightNodes.has(node.id)
+          ? node.size * NODE_SIZE_DIMMED_SCALE
+          : node.size;
       node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
 
-      const autoLabel = !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
+      const autoLabel =
+        !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
       if (this.showAllLabels || this.labelNodes.has(node.id) || autoLabel) {
         wantLabel.push(node);
       } else if (node.label) {
@@ -532,7 +558,10 @@ export class PixiRenderer {
     // Throttled edge redraw — skip entirely when settled (if alpha-gated)
     const now = performance.now();
     const skipForSettle = this.bp.edgeAlphaGate && this.layoutSettled;
-    if (!skipForSettle && now - this.lastEdgeRedraw >= this.bp.edgeRedrawInterval) {
+    if (
+      !skipForSettle &&
+      now - this.lastEdgeRedraw >= this.bp.edgeRedrawInterval
+    ) {
       if (this.dragNode) {
         this.redrawDragEdges(this.dragNode);
       } else {
@@ -541,7 +570,10 @@ export class PixiRenderer {
     }
 
     // Throttled quadtree rebuild — skip if positions haven't changed
-    if (this.quadtreeDirty && now - this.lastQuadtreeRebuild > QUADTREE_REBUILD_INTERVAL) {
+    if (
+      this.quadtreeDirty &&
+      now - this.lastQuadtreeRebuild > QUADTREE_REBUILD_INTERVAL
+    ) {
       this.rebuildQuadtree();
       this.quadtreeDirty = false;
     }
@@ -577,7 +609,11 @@ export class PixiRenderer {
       const node = this.nodes.get(id);
       if (!node) continue;
       node.color = color;
-      node.sprite.texture = getCircleTexture(this.app, color, this.textureCache);
+      node.sprite.texture = getCircleTexture(
+        this.app,
+        color,
+        this.textureCache,
+      );
     }
   }
 
@@ -593,14 +629,17 @@ export class PixiRenderer {
       if (this.hasHighlight) {
         const isHighlighted = this.highlightNodes.has(id);
         node.sprite.alpha = isHighlighted ? 1.0 : NODE_OPACITY_DIMMED;
-        const s = isHighlighted ? node.size : node.size * NODE_SIZE_DIMMED_SCALE;
+        const s = isHighlighted
+          ? node.size
+          : node.size * NODE_SIZE_DIMMED_SCALE;
         node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
       } else {
         node.sprite.alpha = 0.9;
         node.sprite.scale.set((node.size / CIRCLE_RADIUS) * invScale);
       }
 
-      const autoLabel = !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
+      const autoLabel =
+        !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
       if (this.showAllLabels || this.labelNodes.has(id) || autoLabel) {
         wantLabel.push(node);
       } else if (node.label) {
@@ -674,8 +713,10 @@ export class PixiRenderer {
   /** Draw an edge between two points, using the current breakpoint's edge style. */
   private drawEdge(
     gfx: Graphics,
-    sx: number, sy: number,
-    tx: number, ty: number,
+    sx: number,
+    sy: number,
+    tx: number,
+    ty: number,
   ): void {
     if (this.bp.edgeStyle === 'curve') {
       const mx = (sx + tx) / 2;
@@ -701,7 +742,9 @@ export class PixiRenderer {
     const sy = wy * this.vp.scale + this.vp.y;
     const mx = this.width * VIEWPORT_CULL_MARGIN;
     const my = this.height * VIEWPORT_CULL_MARGIN;
-    return sx >= -mx && sx <= this.width + mx && sy >= -my && sy <= this.height + my;
+    return (
+      sx >= -mx && sx <= this.width + mx && sy >= -my && sy <= this.height + my
+    );
   }
 
   private redrawAllEdges(): void {
@@ -712,7 +755,9 @@ export class PixiRenderer {
 
     if (!this.edgesEnabled) return;
 
-    const bgAlpha = this.hasHighlight ? EDGE_OPACITY_DIMMED : EDGE_OPACITY_DEFAULT;
+    const bgAlpha = this.hasHighlight
+      ? EDGE_OPACITY_DIMMED
+      : EDGE_OPACITY_DEFAULT;
     const edgeWidth = 0.5 * this.zoomInvScale();
     const doCull = this.bp.edgeViewportCulling;
 
@@ -729,18 +774,30 @@ export class PixiRenderer {
         // Note: this can miss edges that cross the viewport diagonally (both endpoints
         // outside but the line segment passes through). A full segment-rect intersection
         // test is more expensive; this heuristic is sufficient for layout animation.
-        if (doCull && !this.isInViewport(s.x, s.y) && !this.isInViewport(t.x, t.y)) continue;
+        if (
+          doCull &&
+          !this.isInViewport(s.x, s.y) &&
+          !this.isInViewport(t.x, t.y)
+        )
+          continue;
         this.drawEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
         drawn = true;
       }
       if (drawn) {
-        this.edgeBgGfx.stroke({ width: edgeWidth, color: hexToNum(color), alpha: bgAlpha });
+        this.edgeBgGfx.stroke({
+          width: edgeWidth,
+          color: hexToNum(color),
+          alpha: bgAlpha,
+        });
       }
     }
 
     // Foreground highlight edges
     if (this.hasHighlight) {
-      const hlColorGroups = new Map<string, { sx: number; sy: number; tx: number; ty: number }[]>();
+      const hlColorGroups = new Map<
+        string,
+        { sx: number; sy: number; tx: number; ty: number }[]
+      >();
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
         if (this.hiddenLinkTypes.has(e.label)) continue;
@@ -750,14 +807,21 @@ export class PixiRenderer {
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
         let group = hlColorGroups.get(e.color);
-        if (!group) { group = []; hlColorGroups.set(e.color, group); }
+        if (!group) {
+          group = [];
+          hlColorGroups.set(e.color, group);
+        }
         group.push({ sx: s.x, sy: s.y, tx: t.x, ty: t.y });
       }
       for (const [color, lines] of hlColorGroups) {
         for (const l of lines) {
           this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
         }
-        this.edgeFgGfx.stroke({ width: 1.5 * this.zoomInvScale(), color: hexToNum(color), alpha: EDGE_OPACITY_HIGHLIGHTED });
+        this.edgeFgGfx.stroke({
+          width: 1.5 * this.zoomInvScale(),
+          color: hexToNum(color),
+          alpha: EDGE_OPACITY_HIGHLIGHTED,
+        });
       }
     }
 
@@ -774,7 +838,10 @@ export class PixiRenderer {
     const neighborIds = new Set<string>();
 
     // Group drag edges by color
-    const dragGroups = new Map<string, { sx: number; sy: number; tx: number; ty: number }[]>();
+    const dragGroups = new Map<
+      string,
+      { sx: number; sy: number; tx: number; ty: number }[]
+    >();
     for (const idx of myEdges) {
       const e = this.edges[idx];
       if (this.hiddenLinkTypes.has(e.label)) continue;
@@ -782,7 +849,10 @@ export class PixiRenderer {
       const t = this.nodes.get(e.targetId);
       if (!s || !t) continue;
       let group = dragGroups.get(e.color);
-      if (!group) { group = []; dragGroups.set(e.color, group); }
+      if (!group) {
+        group = [];
+        dragGroups.set(e.color, group);
+      }
       group.push({ sx: s.x, sy: s.y, tx: t.x, ty: t.y });
       const neighborId = e.sourceId === node.id ? e.targetId : e.sourceId;
       neighborIds.add(neighborId);
@@ -791,7 +861,11 @@ export class PixiRenderer {
       for (const l of lines) {
         this.drawEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
       }
-      this.edgeBgGfx.stroke({ width: 1 * this.zoomInvScale(), color: hexToNum(color), alpha: 0.6 });
+      this.edgeBgGfx.stroke({
+        width: 1 * this.zoomInvScale(),
+        color: hexToNum(color),
+        alpha: 0.6,
+      });
     }
 
     // Neighbor-to-neighbor edges for context
@@ -808,7 +882,11 @@ export class PixiRenderer {
         }
       }
     }
-    this.edgeBgGfx.stroke({ width: 0.4 * this.zoomInvScale(), color: EDGE_FALLBACK_COLOR, alpha: 0.2 });
+    this.edgeBgGfx.stroke({
+      width: 0.4 * this.zoomInvScale(),
+      color: EDGE_FALLBACK_COLOR,
+      alpha: 0.2,
+    });
 
     this.lastEdgeRedraw = performance.now();
   }
@@ -894,11 +972,13 @@ export class PixiRenderer {
 
   // ─── Bloom ─────────────────────────────────────────────────────────
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomEnabled(_enabled: boolean): void {
     // Placeholder — full bloom requires pixi-filters v6 package.
     // When available, creates AdvancedBloomFilter on app.stage.
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomStrength(_strength: number): void {
     // Placeholder for bloom strength control — requires pixi-filters.
   }
@@ -963,14 +1043,18 @@ export class PixiRenderer {
     }
     // In 3D mode, use the sprite's projected position for hit detection
     this._quadtree = quadtree<PixiNode>()
-      .x((d) => this.mode3d ? d.sprite.position.x : d.x)
-      .y((d) => this.mode3d ? d.sprite.position.y : d.y)
+      .x((d) => (this.mode3d ? d.sprite.position.x : d.x))
+      .y((d) => (this.mode3d ? d.sprite.position.y : d.y))
       .addAll(visibleNodes);
     this.lastQuadtreeRebuild = performance.now();
   }
 
   /** Find the nearest node to (worldX, worldY) within maxDistance. */
-  findNodeAt(worldX: number, worldY: number, maxDistance = 20): PixiNode | null {
+  findNodeAt(
+    worldX: number,
+    worldY: number,
+    maxDistance = 20,
+  ): PixiNode | null {
     if (!this._quadtree) return null;
     // In 3D mode, rebuild quadtree every hit test since projected positions
     // change every frame from rotation. This is O(n log n) but only runs
@@ -993,14 +1077,14 @@ export class PixiRenderer {
     if (this.nodes.size === 0) return;
     const positions = Array.from(this.nodes.values())
       .filter((n) => n.visible)
-      .map((n) => this.mode3d
-        ? { x: n.sprite.position.x, y: n.sprite.position.y }
-        : { x: n.x, y: n.y },
+      .map((n) =>
+        this.mode3d
+          ? { x: n.sprite.position.x, y: n.sprite.position.y }
+          : { x: n.x, y: n.y },
       );
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
     const target = fitBounds(bounds, this.width, this.height);
-
 
     if (duration <= 0) {
       this.vp = target;
@@ -1013,7 +1097,9 @@ export class PixiRenderer {
       this.vp,
       target,
       duration,
-      (vp) => { this.vp = vp; },
+      (vp) => {
+        this.vp = vp;
+      },
       () => {
         this.redrawAllEdges();
         this.cancelAnimation = null;
@@ -1028,7 +1114,10 @@ export class PixiRenderer {
       if (!node?.visible) continue;
       // In 3D, use projected positions (rotation paused on click so they're stable)
       if (this.mode3d) {
-        positions.push({ x: node.sprite.position.x, y: node.sprite.position.y });
+        positions.push({
+          x: node.sprite.position.x,
+          y: node.sprite.position.y,
+        });
       } else {
         positions.push({ x: node.x, y: node.y });
       }
@@ -1042,7 +1131,9 @@ export class PixiRenderer {
       this.vp,
       target,
       duration,
-      (vp) => { this.vp = vp; },
+      (vp) => {
+        this.vp = vp;
+      },
       () => {
         this.redrawAllEdges();
         this.cancelAnimation = null;
@@ -1057,9 +1148,17 @@ export class PixiRenderer {
       scale: this.vp.scale * 1.5,
     };
     this.cancelAnimation?.();
-    this.cancelAnimation = animateViewport(this.vp, target, duration,
-      (vp) => { this.vp = vp; },
-      () => { this.redrawAllEdges(); this.cancelAnimation = null; },
+    this.cancelAnimation = animateViewport(
+      this.vp,
+      target,
+      duration,
+      (vp) => {
+        this.vp = vp;
+      },
+      () => {
+        this.redrawAllEdges();
+        this.cancelAnimation = null;
+      },
     );
   }
 
@@ -1070,9 +1169,17 @@ export class PixiRenderer {
       scale: this.vp.scale / 1.5,
     };
     this.cancelAnimation?.();
-    this.cancelAnimation = animateViewport(this.vp, target, duration,
-      (vp) => { this.vp = vp; },
-      () => { this.redrawAllEdges(); this.cancelAnimation = null; },
+    this.cancelAnimation = animateViewport(
+      this.vp,
+      target,
+      duration,
+      (vp) => {
+        this.vp = vp;
+      },
+      () => {
+        this.redrawAllEdges();
+        this.cancelAnimation = null;
+      },
     );
   }
 
@@ -1086,28 +1193,35 @@ export class PixiRenderer {
     this.callbacks = callbacks;
   }
 
-  private setupInteraction(canvas: HTMLCanvasElement, signal: AbortSignal): void {
+  private setupInteraction(
+    canvas: HTMLCanvasElement,
+    signal: AbortSignal,
+  ): void {
     // Wheel zoom — deltaY-proportional for smooth, magnitude-aware zooming
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+    canvas.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
 
-      // Smooth zoom: larger deltaY → bigger zoom step
-      const zoomFactor = Math.pow(0.999, e.deltaY);
-      const newScale = this.vp.scale * zoomFactor;
-      // Adjust position so world point under cursor stays fixed
-      this.vp.x = mouseX - (mouseX - this.vp.x) * (newScale / this.vp.scale);
-      this.vp.y = mouseY - (mouseY - this.vp.y) * (newScale / this.vp.scale);
-      this.vp.scale = newScale;
+        // Smooth zoom: larger deltaY → bigger zoom step
+        const zoomFactor = Math.pow(0.999, e.deltaY);
+        const newScale = this.vp.scale * zoomFactor;
+        // Adjust position so world point under cursor stays fixed
+        this.vp.x = mouseX - (mouseX - this.vp.x) * (newScale / this.vp.scale);
+        this.vp.y = mouseY - (mouseY - this.vp.y) * (newScale / this.vp.scale);
+        this.vp.scale = newScale;
 
-      // Hide edges during zoom for instant response (Grafana pattern).
-      // Sprite transforms are instant; edges redraw after 1300ms settle.
-      if (!this.dragNode) {
-        this.hideEdgesForInteraction();
-      }
-    }, { passive: false, signal });
+        // Hide edges during zoom for instant response (Grafana pattern).
+        // Sprite transforms are instant; edges redraw after 1300ms settle.
+        if (!this.dragNode) {
+          this.hideEdgesForInteraction();
+        }
+      },
+      { passive: false, signal },
+    );
 
     // Pointer events for pan / drag / click
     let pointerDown = false;
@@ -1118,101 +1232,112 @@ export class PixiRenderer {
     let lastPointerX = 0;
     let lastPointerY = 0;
 
-    canvas.addEventListener('pointerdown', (e) => {
-      pointerDown = true;
-      movedDistance = 0;
-      lastPointerX = e.clientX;
-      lastPointerY = e.clientY;
-      this.pointerDownPos = { x: e.clientX, y: e.clientY };
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        pointerDown = true;
+        movedDistance = 0;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
-      // Hit test
-      const rect = canvas.getBoundingClientRect();
-      const screenX = e.clientX - rect.left;
-      const screenY = e.clientY - rect.top;
-      const world = screenToWorld(screenX, screenY, this.vp);
-      const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
+        // Hit test
+        const rect = canvas.getBoundingClientRect();
+        const screenX = e.clientX - rect.left;
+        const screenY = e.clientY - rect.top;
+        const world = screenToWorld(screenX, screenY, this.vp);
+        const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
 
-      if (hitNode) {
-        this.pendingDragNode = hitNode;
-      } else {
-        this.pendingDragNode = null;
-      }
-    }, { signal });
+        if (hitNode) {
+          this.pendingDragNode = hitNode;
+        } else {
+          this.pendingDragNode = null;
+        }
+      },
+      { signal },
+    );
 
     let lastHoverCheck = 0;
-    canvas.addEventListener('pointermove', (e) => {
-      // Hover cursor — throttled to avoid quadtree traversal on every mousemove
-      if (!pointerDown) {
-        const now = performance.now();
-        if (now - lastHoverCheck < 50) return; // 20fps hover check
-        lastHoverCheck = now;
-        const rect = canvas.getBoundingClientRect();
-        const sx = e.clientX - rect.left;
-        const sy = e.clientY - rect.top;
-        const w = screenToWorld(sx, sy, this.vp);
-        const hit = this.findNodeAt(w.x, w.y, 15 / this.vp.scale);
-        canvas.style.cursor = hit ? 'pointer' : 'default';
-        return;
-      }
-
-      if (!this.pointerDownPos) return;
-
-      const dx = e.clientX - this.pointerDownPos.x;
-      const dy = e.clientY - this.pointerDownPos.y;
-      movedDistance = Math.sqrt(dx * dx + dy * dy);
-
-      if (movedDistance > CLICK_THRESHOLD) {
-        if (this.pendingDragNode && !this.dragNode) {
-          // Start node drag
-          this.dragNode = this.pendingDragNode;
-          this.pendingDragNode = null;
-          canvas.style.cursor = 'grabbing';
-          this.callbacks.onNodeDragStart?.(this.dragNode.id);
-        }
-
-        if (this.dragNode) {
-          // Move dragged node
+    canvas.addEventListener(
+      'pointermove',
+      (e) => {
+        // Hover cursor — throttled to avoid quadtree traversal on every mousemove
+        if (!pointerDown) {
+          const now = performance.now();
+          if (now - lastHoverCheck < 50) return; // 20fps hover check
+          lastHoverCheck = now;
           const rect = canvas.getBoundingClientRect();
-          const screenX = e.clientX - rect.left;
-          const screenY = e.clientY - rect.top;
-          const world = screenToWorld(screenX, screenY, this.vp);
-          this.dragNode.x = world.x;
-          this.dragNode.y = world.y;
-          this.dragNode.sprite.position.set(world.x, world.y);
-          if (this.dragNode.label?.visible) {
-            const gap = (this.dragNode.size + 4) * this.zoomInvScale();
-            this.dragNode.label.position.set(world.x + gap, world.y);
-          }
-          this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
-          this.redrawDragEdges(this.dragNode);
-        } else if (this.mode3d) {
-          // 3D mode: drag rotates the camera instead of panning
-          const rotateDx = e.clientX - lastPointerX;
-          const rotateDy = e.clientY - lastPointerY;
-          // Horizontal drag → Y-axis rotation
-          this.mode3dAngle += rotateDx * 0.005;
-          // Vertical drag → X-axis tilt (clamped to avoid flipping)
-          this.mode3dTilt = Math.max(-1.2, Math.min(1.2, this.mode3dTilt + rotateDy * 0.005));
-          // Pause auto-rotation during manual drag
-          if (this.mode3dAutoRotate) {
-            this.mode3dAutoRotate = false;
-            this.callbacks.on3DAutoRotateChange?.(false);
-          }
-        } else {
-          // Pan — compute delta from last pointer position (not movementX/Y)
-          // to avoid a jump on the first move after crossing the drag threshold.
-          const panDx = e.clientX - lastPointerX;
-          const panDy = e.clientY - lastPointerY;
-          this.vp.x += panDx;
-          this.vp.y += panDy;
-          // Hide edges during pan for instant response
-          this.hideEdgesForInteraction();
+          const sx = e.clientX - rect.left;
+          const sy = e.clientY - rect.top;
+          const w = screenToWorld(sx, sy, this.vp);
+          const hit = this.findNodeAt(w.x, w.y, 15 / this.vp.scale);
+          canvas.style.cursor = hit ? 'pointer' : 'default';
+          return;
         }
-      }
 
-      lastPointerX = e.clientX;
-      lastPointerY = e.clientY;
-    }, { signal });
+        if (!this.pointerDownPos) return;
+
+        const dx = e.clientX - this.pointerDownPos.x;
+        const dy = e.clientY - this.pointerDownPos.y;
+        movedDistance = Math.sqrt(dx * dx + dy * dy);
+
+        if (movedDistance > CLICK_THRESHOLD) {
+          if (this.pendingDragNode && !this.dragNode) {
+            // Start node drag
+            this.dragNode = this.pendingDragNode;
+            this.pendingDragNode = null;
+            canvas.style.cursor = 'grabbing';
+            this.callbacks.onNodeDragStart?.(this.dragNode.id);
+          }
+
+          if (this.dragNode) {
+            // Move dragged node
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+            const world = screenToWorld(screenX, screenY, this.vp);
+            this.dragNode.x = world.x;
+            this.dragNode.y = world.y;
+            this.dragNode.sprite.position.set(world.x, world.y);
+            if (this.dragNode.label?.visible) {
+              const gap = (this.dragNode.size + 4) * this.zoomInvScale();
+              this.dragNode.label.position.set(world.x + gap, world.y);
+            }
+            this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
+            this.redrawDragEdges(this.dragNode);
+          } else if (this.mode3d) {
+            // 3D mode: drag rotates the camera instead of panning
+            const rotateDx = e.clientX - lastPointerX;
+            const rotateDy = e.clientY - lastPointerY;
+            // Horizontal drag → Y-axis rotation
+            this.mode3dAngle += rotateDx * 0.005;
+            // Vertical drag → X-axis tilt (clamped to avoid flipping)
+            this.mode3dTilt = Math.max(
+              -1.2,
+              Math.min(1.2, this.mode3dTilt + rotateDy * 0.005),
+            );
+            // Pause auto-rotation during manual drag
+            if (this.mode3dAutoRotate) {
+              this.mode3dAutoRotate = false;
+              this.callbacks.on3DAutoRotateChange?.(false);
+            }
+          } else {
+            // Pan — compute delta from last pointer position (not movementX/Y)
+            // to avoid a jump on the first move after crossing the drag threshold.
+            const panDx = e.clientX - lastPointerX;
+            const panDy = e.clientY - lastPointerY;
+            this.vp.x += panDx;
+            this.vp.y += panDy;
+            // Hide edges during pan for instant response
+            this.hideEdgesForInteraction();
+          }
+        }
+
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+      },
+      { signal },
+    );
 
     const pointerUp = (e: PointerEvent) => {
       if (!pointerDown) return;
@@ -1291,7 +1416,10 @@ export class PixiRenderer {
    * Assigns Z coordinates based on community membership (golden angle distribution)
    * and applies perspective projection + auto-rotation on the Pixi ticker.
    */
-  set3DMode(enabled: boolean, communityAssignments?: Record<string, number>): void {
+  set3DMode(
+    enabled: boolean,
+    communityAssignments?: Record<string, number>,
+  ): void {
     this.mode3d = enabled;
     if (!enabled) {
       // Restore 2D positions from stored (x, y)
@@ -1318,7 +1446,9 @@ export class PixiRenderer {
     // Assign Z depth per node: community-based + jitter
     this.nodeDepthT.clear();
     if (communityAssignments) {
-      const uniqueComms = [...new Set(Object.values(communityAssignments))].sort((a, b) => a - b);
+      const uniqueComms = [
+        ...new Set(Object.values(communityAssignments)),
+      ].sort((a, b) => a - b);
       const commDepth = new Map<number, number>();
       const GOLDEN_ANGLE = 0.618033988749;
       for (let i = 0; i < uniqueComms.length; i++) {
@@ -1331,7 +1461,7 @@ export class PixiRenderer {
         const base = cid !== undefined ? (commDepth.get(cid) ?? 0) : 0;
         // Deterministic jitter from node index
         const hash = Math.sin(i * 127.1 + 311.7) * 43758.5453;
-        const jitter = ((hash - Math.floor(hash)) - 0.5) * 0.8;
+        const jitter = (hash - Math.floor(hash) - 0.5) * 0.8;
         this.nodeDepthT.set(node.id, Math.max(-1, Math.min(1, base + jitter)));
       }
     }
@@ -1358,7 +1488,11 @@ export class PixiRenderer {
   }
 
   /** Project a 3D point to 2D screen coordinates with perspective. */
-  private project3d(x: number, y: number, z: number): { px: number; py: number; scale: number; rz: number } {
+  private project3d(
+    x: number,
+    y: number,
+    z: number,
+  ): { px: number; py: number; scale: number; rz: number } {
     // X-axis tilt
     const cosT = Math.cos(this.mode3dTilt);
     const sinT = Math.sin(this.mode3dTilt);
@@ -1397,11 +1531,17 @@ export class PixiRenderer {
       // Apply highlight dimming in 3D (same as 2D applyVisuals)
       if (this.hasHighlight) {
         const isHighlighted = this.highlightNodes.has(node.id);
-        const s = isHighlighted ? node.size : node.size * NODE_SIZE_DIMMED_SCALE;
+        const s = isHighlighted
+          ? node.size
+          : node.size * NODE_SIZE_DIMMED_SCALE;
         node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale * depthScale);
-        node.sprite.alpha = isHighlighted ? depthAlpha : depthAlpha * NODE_OPACITY_DIMMED;
+        node.sprite.alpha = isHighlighted
+          ? depthAlpha
+          : depthAlpha * NODE_OPACITY_DIMMED;
       } else {
-        node.sprite.scale.set((node.size / CIRCLE_RADIUS) * invScale * depthScale);
+        node.sprite.scale.set(
+          (node.size / CIRCLE_RADIUS) * invScale * depthScale,
+        );
         node.sprite.alpha = depthAlpha;
       }
 
@@ -1427,7 +1567,9 @@ export class PixiRenderer {
     this.edgeFgGfx.clear();
     if (!this.edgesEnabled) return;
 
-    const bgAlpha = this.hasHighlight ? EDGE_OPACITY_DIMMED : EDGE_OPACITY_DEFAULT;
+    const bgAlpha = this.hasHighlight
+      ? EDGE_OPACITY_DIMMED
+      : EDGE_OPACITY_DEFAULT;
     const edgeWidth = 0.5 * this.zoomInvScale();
 
     for (const [color, indices] of this.edgeColorGroups) {
@@ -1447,13 +1589,20 @@ export class PixiRenderer {
         drawn = true;
       }
       if (drawn) {
-        this.edgeBgGfx.stroke({ width: edgeWidth, color: hexToNum(color), alpha: bgAlpha });
+        this.edgeBgGfx.stroke({
+          width: edgeWidth,
+          color: hexToNum(color),
+          alpha: bgAlpha,
+        });
       }
     }
 
     // Foreground highlight edges (same logic as 2D redrawAllEdges)
     if (this.hasHighlight) {
-      const hlColorGroups = new Map<string, { sx: number; sy: number; tx: number; ty: number }[]>();
+      const hlColorGroups = new Map<
+        string,
+        { sx: number; sy: number; tx: number; ty: number }[]
+      >();
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
         if (this.hiddenLinkTypes.has(e.label)) continue;
@@ -1463,17 +1612,26 @@ export class PixiRenderer {
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
         let group = hlColorGroups.get(e.color);
-        if (!group) { group = []; hlColorGroups.set(e.color, group); }
+        if (!group) {
+          group = [];
+          hlColorGroups.set(e.color, group);
+        }
         group.push({
-          sx: s.sprite.position.x, sy: s.sprite.position.y,
-          tx: t.sprite.position.x, ty: t.sprite.position.y,
+          sx: s.sprite.position.x,
+          sy: s.sprite.position.y,
+          tx: t.sprite.position.x,
+          ty: t.sprite.position.y,
         });
       }
       for (const [color, lines] of hlColorGroups) {
         for (const l of lines) {
           this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
         }
-        this.edgeFgGfx.stroke({ width: 1.5 * this.zoomInvScale(), color: hexToNum(color), alpha: EDGE_OPACITY_HIGHLIGHTED });
+        this.edgeFgGfx.stroke({
+          width: 1.5 * this.zoomInvScale(),
+          color: hexToNum(color),
+          alpha: EDGE_OPACITY_HIGHLIGHTED,
+        });
       }
     }
 

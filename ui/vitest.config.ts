@@ -20,9 +20,18 @@ import { resolve } from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      '@opentrace/components/chat': resolve(__dirname, 'src/components/chat/index.ts'),
-      '@opentrace/components/pipeline': resolve(__dirname, 'src/components/pipeline/index.ts'),
-      '@opentrace/components/utils': resolve(__dirname, 'src/components/utils.ts'),
+      '@opentrace/components/chat': resolve(
+        __dirname,
+        'src/components/chat/index.ts',
+      ),
+      '@opentrace/components/pipeline': resolve(
+        __dirname,
+        'src/components/pipeline/index.ts',
+      ),
+      '@opentrace/components/utils': resolve(
+        __dirname,
+        'src/components/utils.ts',
+      ),
       '@opentrace/components': resolve(__dirname, 'src/components/index.ts'),
     },
   },

@@ -15,11 +15,7 @@
  */
 
 import type { GraphNode, GraphLink, SelectedEdge } from './graph';
-import type {
-  LayoutConfig,
-  CommunityData,
-  GetSubTypeFn,
-} from '../graph/types';
+import type { LayoutConfig, CommunityData, GetSubTypeFn } from '../graph/types';
 import type { OptimizeStatus } from '../graph/LayoutPipelineTypes';
 
 export interface AnimationSettings {
@@ -124,7 +120,12 @@ export interface GraphCanvasHandle {
   /** Switch layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
   setLayoutMode?: (mode: 'spread' | 'compact') => void;
   /** Update compact-mode-specific parameters. */
-  updateCompactConfig?: (config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => void;
+  updateCompactConfig?: (config: {
+    radialStrength?: number;
+    communityPull?: number;
+    centeringStrength?: number;
+    radiusScale?: number;
+  }) => void;
   /** Enable/disable pseudo-3D rotation mode. */
   set3DMode?: (enabled: boolean) => void;
   /** Set 3D auto-rotation speed (radians/frame, default 0.003). */

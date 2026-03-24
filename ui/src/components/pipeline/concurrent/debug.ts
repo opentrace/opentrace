@@ -139,7 +139,10 @@ export class PipelineDebugLog {
 
     const result: Record<string, { count: number; totalMs: number }> = {};
     for (const [k, v] of Object.entries(stages)) {
-      result[k] = { count: v.count, totalMs: Math.round(v.totalMs * 100) / 100 };
+      result[k] = {
+        count: v.count,
+        totalMs: Math.round(v.totalMs * 100) / 100,
+      };
     }
     return result;
   }
