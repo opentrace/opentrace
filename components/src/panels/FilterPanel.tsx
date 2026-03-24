@@ -28,6 +28,7 @@ export default function FilterPanel({
   emptyMessage,
   onFocus,
 }: FilterPanelProps) {
+  const [collapsed, setCollapsed] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   const toggleExpanded = (key: string) => {
@@ -51,15 +52,41 @@ export default function FilterPanel({
   return (
     <div className="filter-section">
       <div className="filter-section-header">
-        <span className="filter-section-title">{title}</span>
         <button
-          className="filter-toggle-all"
-          onClick={allHidden ? onShowAll : onHideAll}
+          className="filter-section-collapse-btn"
+          onClick={() => setCollapsed((c) => !c)}
+          title={collapsed ? 'Expand section' : 'Collapse section'}
         >
-          {allHidden ? 'Show all' : 'Hide all'}
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            className={`filter-expand-icon ${collapsed ? '' : 'filter-expand-icon--open'}`}
+          >
+            <path
+              d="M3 2 L7 5 L3 8"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          </svg>
         </button>
+        <span
+          className="filter-section-title"
+          onClick={() => setCollapsed((c) => !c)}
+        >
+          {title}
+        </span>
+        {!collapsed && (
+          <button
+            className="filter-toggle-all"
+            onClick={allHidden ? onShowAll : onHideAll}
+          >
+            {allHidden ? 'Show all' : 'Hide all'}
+          </button>
+        )}
       </div>
-      <div className="filter-list">
+      {!collapsed && <div className="filter-list">
         {items.map((item) => {
           const hasChildren = item.children && item.children.length > 0;
           const isExpanded = expandedKeys.has(item.key);
@@ -192,7 +219,7 @@ export default function FilterPanel({
         {items.length === 0 && emptyMessage && (
           <span className="filter-empty">{emptyMessage}</span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
