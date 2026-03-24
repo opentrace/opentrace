@@ -62,7 +62,6 @@ import {
   LABEL_SIZE,
   LABEL_FONT,
   LABEL_COLOR,
-  LABEL_RENDERED_SIZE_THRESHOLD,
 } from '../config/graphLayout';
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -159,14 +158,19 @@ export class PixiRenderer {
   // Highlight state
   private highlightNodes: Set<string> = new Set();
   private highlightLinks: Set<string> = new Set();
-  private labelNodes: Set<string> = new Set();
   private hasHighlight = false;
 
   // Show-all-labels mode (toggled from control panel)
-  private showAllLabels = false;
+  private showAllLabels = true;
 
   // Label scale multiplier — independent of node size (default 1.0)
   private labelScaleMultiplier = 1.0;
+
+  // Debounced label re-culling
+  private lastLabelCull = 0;
+  private readonly LABEL_CULL_INTERVAL = 500; // ms (throttle for non-debounced calls)
+  private labelCullDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly LABEL_CULL_DEBOUNCE = 300; // ms — wait for zoom/interaction to stop
 
   // Zoom-size exponent: controls how nodes/edges scale with zoom.
   // 0 = nodes scale fully with zoom (world-space), 1 = fixed screen size.
@@ -253,10 +257,12 @@ export class PixiRenderer {
     this.edgeFgGfx = edgeFgGfx;
 
     const nodeContainer = new Container();
+    nodeContainer.sortableChildren = true;
     world.addChild(nodeContainer);
     this.nodeContainer = nodeContainer;
 
     const labelContainer = new Container();
+    labelContainer.sortableChildren = true;
     world.addChild(labelContainer);
     this.labelContainer = labelContainer;
 
@@ -273,6 +279,15 @@ export class PixiRenderer {
       // 3D mode: project all nodes every frame (overrides normal position updates)
       if (this.mode3d) {
         this.update3D();
+        // Debounce label cull when viewport is actively changing (zoom/pan/rotate).
+        // Only schedule the debounce when something actually changed — not every frame.
+        if (this.vp.scale !== this._lastEdgeScale) {
+          this._lastEdgeScale = this.vp.scale;
+          this.debouncedLabelCull();
+        } else if (!this.mode3dAutoRotate && this.labelCullDebounceTimer === null) {
+          // Rotation paused and no pending debounce — cull once for the static view
+          this.debouncedLabelCull();
+        }
         return; // skip counter-scale — 3D handles its own scaling
       }
 
@@ -300,6 +315,10 @@ export class PixiRenderer {
     if (this.interactionResumeTimer !== null) {
       clearTimeout(this.interactionResumeTimer);
       this.interactionResumeTimer = null;
+    }
+    if (this.labelCullDebounceTimer !== null) {
+      clearTimeout(this.labelCullDebounceTimer);
+      this.labelCullDebounceTimer = null;
     }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
@@ -446,20 +465,41 @@ export class PixiRenderer {
 
     for (const node of this.nodes.values()) {
       if (!node.visible) continue;
-      const s = (this.hasHighlight && !this.highlightNodes.has(node.id))
-        ? node.size * NODE_SIZE_DIMMED_SCALE
-        : node.size;
-      node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
+      // In 3D mode, skip sprite scale — the ticker's update3D() handles it.
+      if (!this.mode3d) {
+        const s = (this.hasHighlight && !this.highlightNodes.has(node.id))
+          ? node.size * NODE_SIZE_DIMMED_SCALE
+          : node.size;
+        node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
+      }
 
-      const autoLabel = !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
-      if (this.showAllLabels || this.labelNodes.has(node.id) || autoLabel) {
+      if (!this.showAllLabels) {
+        if (node.label) node.label.visible = false;
+      } else if (this.hasHighlight) {
+        // Only highlighted nodes get labels when a selection is active
+        if (this.highlightNodes.has(node.id)) {
+          wantLabel.push(node);
+        } else if (node.label) {
+          node.label.visible = false;
+        }
+      } else {
         wantLabel.push(node);
-      } else if (node.label) {
-        node.label.visible = false;
       }
     }
 
     this.applyLabelCulling(wantLabel, invScale);
+
+    // Update scale + position for visible labels (skip in 3D — ticker handles it)
+    if (!this.mode3d) {
+      const lm = this.labelScaleMultiplier;
+      for (const node of wantLabel) {
+        if (!node.label?.visible) continue;
+        node.label.scale.set(invScale * lm);
+        const gap = (node.size + 4) * invScale * lm;
+        node.label.position.set(node.sprite.position.x + gap, node.sprite.position.y);
+      }
+    }
+
     // Only redraw edges if scale actually changed (edge widths depend on zoom).
     // Skip if this is just an exponent change at the same zoom level —
     // edge geometry hasn't changed, only sprite sizes.
@@ -552,11 +592,10 @@ export class PixiRenderer {
   setHighlight(
     highlightNodes: Set<string>,
     highlightLinks: Set<string>,
-    labelNodes: Set<string>,
+    _labelNodes: Set<string>,
   ): void {
     this.highlightNodes = highlightNodes;
     this.highlightLinks = highlightLinks;
-    this.labelNodes = labelNodes;
     this.hasHighlight = highlightNodes.size > 0;
     this.applyVisuals();
   }
@@ -566,9 +605,21 @@ export class PixiRenderer {
       const vis = visibleIds.has(id);
       node.visible = vis;
       node.sprite.visible = vis;
-      if (node.label) node.label.visible = vis && this.labelNodes.has(id);
+      // Hide labels for hidden nodes; visible nodes get re-culled below
+      if (!vis && node.label) node.label.visible = false;
     }
-    this.redrawAllEdges();
+    // Re-cull labels for the new visible set
+    if (this.showAllLabels) {
+      const invScale = this.zoomInvScale();
+      const wantLabel: PixiNode[] = [];
+      for (const node of this.nodes.values()) {
+        if (node.visible) wantLabel.push(node);
+      }
+      this.applyLabelCulling(wantLabel, invScale);
+    }
+    if (!this.mode3d) {
+      this.redrawAllEdges();
+    }
   }
 
   updateNodeColors(nodeColors: Map<string, string>): void {
@@ -586,58 +637,74 @@ export class PixiRenderer {
     const invScale = this.zoomInvScale();
 
     // Pass 1: update sprites + determine which labels want to show
+    // In 3D mode, skip sprite scale/alpha — the ticker's update3D() handles those.
     const wantLabel: PixiNode[] = [];
     for (const [id, node] of this.nodes) {
       if (!node.visible) continue;
 
-      if (this.hasHighlight) {
-        const isHighlighted = this.highlightNodes.has(id);
-        node.sprite.alpha = isHighlighted ? 1.0 : NODE_OPACITY_DIMMED;
-        const s = isHighlighted ? node.size : node.size * NODE_SIZE_DIMMED_SCALE;
-        node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
-      } else {
-        node.sprite.alpha = 0.9;
-        node.sprite.scale.set((node.size / CIRCLE_RADIUS) * invScale);
+      if (!this.mode3d) {
+        if (this.hasHighlight) {
+          const isHighlighted = this.highlightNodes.has(id);
+          node.sprite.alpha = isHighlighted ? 1.0 : NODE_OPACITY_DIMMED;
+          const s = isHighlighted ? node.size : node.size * NODE_SIZE_DIMMED_SCALE;
+          node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
+        } else {
+          node.sprite.alpha = 0.9;
+          node.sprite.scale.set((node.size / CIRCLE_RADIUS) * invScale);
+        }
       }
 
-      const autoLabel = !this.hasHighlight && node.size >= LABEL_RENDERED_SIZE_THRESHOLD;
-      if (this.showAllLabels || this.labelNodes.has(id) || autoLabel) {
+      if (!this.showAllLabels) {
+        if (node.label) node.label.visible = false;
+      } else if (this.hasHighlight) {
+        if (this.highlightNodes.has(id)) {
+          wantLabel.push(node);
+        } else if (node.label) {
+          node.label.visible = false;
+        }
+      } else {
         wantLabel.push(node);
-      } else if (node.label) {
-        node.label.visible = false;
       }
     }
 
     // Pass 2: cull overlapping labels (largest nodes first)
     this.applyLabelCulling(wantLabel, invScale);
 
-    this.redrawAllEdges();
+    // In 3D mode, the ticker redraws edges; skip here to avoid 2D position flash
+    if (!this.mode3d) {
+      this.redrawAllEdges();
+    }
   }
 
   /**
    * Show labels for the given nodes, culling any that overlap a previously
    * placed label. Nodes are processed largest-first so important nodes win.
-   * Labels are only created (expensive Text objects) for nodes that pass culling.
+   *
+   * This method ONLY controls visibility. Scale and position are handled by
+   * the update paths (update3D, updatePositionsFromBuffer, applyCounterScale)
+   * to avoid jitter from competing writes.
    */
   private applyLabelCulling(candidates: PixiNode[], invScale: number): void {
     // Sort by size descending — largest (highest degree) nodes get labels first
     candidates.sort((a, b) => b.size - a.size);
 
-    // Occupied regions in screen coordinates
     const boxes: { x: number; y: number; w: number; h: number }[] = [];
-    const labelH = LABEL_SIZE + 4;
+    const lm = this.labelScaleMultiplier;
+    const screenLabelScale = invScale * lm * this.vp.scale;
+    const labelH = (LABEL_SIZE + 4) * screenLabelScale;
 
     for (const node of candidates) {
-      const gap = (node.size + 4) * invScale;
+      const gap = (node.size + 4) * invScale * lm;
+      // Use sprite position (correct in both 2D and 3D modes)
+      const nx = node.sprite.position.x;
+      const ny = node.sprite.position.y;
 
-      // Compute screen-space bounding box for overlap test BEFORE creating the label
-      const sx = (node.x + gap) * this.vp.scale + this.vp.x;
-      const sy = node.y * this.vp.scale + this.vp.y - labelH / 2;
+      const sx = (nx + gap) * this.vp.scale + this.vp.x;
+      const sy = ny * this.vp.scale + this.vp.y - labelH / 2;
       const textLen = (node.graphNode.name || node.id).length;
-      const sw = textLen * LABEL_SIZE * 0.6;
+      const sw = textLen * LABEL_SIZE * 0.6 * screenLabelScale;
       const sh = labelH;
 
-      // Check overlap
       let overlapping = false;
       for (const box of boxes) {
         if (
@@ -654,13 +721,10 @@ export class PixiRenderer {
       if (overlapping) {
         if (node.label) node.label.visible = false;
       } else {
-        // Only create the label Text if it passes culling
         if (!node.label) {
           node.label = this.createLabel(node);
         }
         node.label.visible = true;
-        node.label.scale.set(invScale * this.labelScaleMultiplier);
-        node.label.position.set(node.x + gap, node.y);
         boxes.push({ x: sx, y: sy, w: sw, h: sh });
       }
     }
@@ -843,8 +907,11 @@ export class PixiRenderer {
     this.interactionResumeTimer = null;
     if (this.edgeBgGfx) this.edgeBgGfx.visible = true;
     if (this.edgeFgGfx) this.edgeFgGfx.visible = true;
-    // In 3D mode the ticker's update3D() will redraw on the next frame; skip here
-    if (!this.mode3d) {
+    if (this.mode3d) {
+      // In 3D mode the ticker redraws edges; just re-cull labels for new view angle
+      this.lastLabelCull = 0;
+      this.throttledLabelCull();
+    } else {
       this.redrawAllEdges();
       this.applyCounterScale();
     }
@@ -925,33 +992,60 @@ export class PixiRenderer {
     });
     // Anchor left-center, positioned to the right of the node
     label.anchor.set(0, 0.5);
-    label.scale.set(invScale * this.labelScaleMultiplier);
-    const gap = (node.size + 4) * this.zoomInvScale();
-    label.position.set(node.x + gap, node.y);
+    const lm = this.labelScaleMultiplier;
+    label.scale.set(invScale * lm);
+    const gap = (node.size + 4) * invScale * lm;
+    label.position.set(node.sprite.position.x + gap, node.sprite.position.y);
     this.labelContainer!.addChild(label);
     return label;
+  }
+
+  /** Re-cull labels if enough time has passed. For immediate needs (e.g. toggle). */
+  private throttledLabelCull(): void {
+    const now = performance.now();
+    if (now - this.lastLabelCull < this.LABEL_CULL_INTERVAL) return;
+    this.runLabelCull();
+  }
+
+  /** Debounced label cull — waits for interaction to stop before re-culling. */
+  private debouncedLabelCull(): void {
+    if (this.labelCullDebounceTimer !== null) {
+      clearTimeout(this.labelCullDebounceTimer);
+    }
+    this.labelCullDebounceTimer = setTimeout(() => {
+      this.labelCullDebounceTimer = null;
+      this.runLabelCull();
+    }, this.LABEL_CULL_DEBOUNCE);
+  }
+
+  /** Actually run the label cull. */
+  private runLabelCull(): void {
+    this.lastLabelCull = performance.now();
+    if (!this.showAllLabels) return;
+    const invScale = this.zoomInvScale();
+    const wantLabel: PixiNode[] = [];
+    for (const node of this.nodes.values()) {
+      if (!node.visible) continue;
+      if (this.hasHighlight) {
+        if (this.highlightNodes.has(node.id)) {
+          wantLabel.push(node);
+        } else if (node.label) {
+          node.label.visible = false;
+        }
+      } else {
+        wantLabel.push(node);
+      }
+    }
+    this.applyLabelCulling(wantLabel, invScale);
   }
 
   setShowAllLabels(show: boolean): void {
     this.showAllLabels = show;
     if (!this.app || !this.labelContainer) return;
-
-    const invScale = this.zoomInvScale();
-    for (const [id, node] of this.nodes) {
-      if (!node.visible) continue;
-
-      if (show) {
-        if (!node.label) {
-          node.label = this.createLabel(node);
-        }
-        node.label.visible = true;
-        node.label.scale.set(invScale * this.labelScaleMultiplier);
-      } else {
-        if (node.label) {
-          node.label.visible = this.labelNodes.has(id);
-        }
-      }
-    }
+    // Re-run the full counter-scale pass which includes label culling.
+    // When showAllLabels=true, all visible nodes become candidates but still
+    // go through overlap culling so labels don't pile up.
+    this.applyCounterScale();
   }
 
   // ─── Quadtree ─────────────────────────────────────────────────────
@@ -1107,6 +1201,8 @@ export class PixiRenderer {
       if (!this.dragNode) {
         this.hideEdgesForInteraction();
       }
+      // Re-cull labels after zoom settles
+      this.debouncedLabelCull();
     }, { passive: false, signal });
 
     // Pointer events for pan / drag / click
@@ -1198,6 +1294,7 @@ export class PixiRenderer {
             this.mode3dAutoRotate = false;
             this.callbacks.on3DAutoRotateChange?.(false);
           }
+          this.debouncedLabelCull();
         } else {
           // Pan — compute delta from last pointer position (not movementX/Y)
           // to avoid a jump on the first move after crossing the drag threshold.
@@ -1207,6 +1304,7 @@ export class PixiRenderer {
           this.vp.y += panDy;
           // Hide edges during pan for instant response
           this.hideEdgesForInteraction();
+          this.debouncedLabelCull();
         }
       }
 
@@ -1344,6 +1442,11 @@ export class PixiRenderer {
 
     this.mode3dAngle = 0;
     this.mode3dAutoRotate = true;
+
+    // Run one update3D pass to set projected positions, then cull labels
+    this.update3D();
+    this.lastLabelCull = 0;
+    this.throttledLabelCull();
   }
 
   /** Get Z coordinate for a node (filled sphere distribution). */
@@ -1394,6 +1497,11 @@ export class PixiRenderer {
       const depthScale = Math.max(p.scale, 0.3);
       const depthAlpha = 0.3 + 0.6 * Math.max(Math.min(p.scale, 1), 0);
 
+      // Depth sorting: closer nodes (lower rz) render on top (higher zIndex)
+      // Negate rz so that closer = higher zIndex. Multiply by 1000 for integer precision.
+      const depthZ = Math.round(-p.rz * 1000);
+      node.sprite.zIndex = depthZ;
+
       // Apply highlight dimming in 3D (same as 2D applyVisuals)
       if (this.hasHighlight) {
         const isHighlighted = this.highlightNodes.has(node.id);
@@ -1409,6 +1517,7 @@ export class PixiRenderer {
         const gap = (node.size + 4) * invScale * depthScale;
         node.label.position.set(p.px + gap, p.py);
         node.label.scale.set(invScale * depthScale * this.labelScaleMultiplier);
+        node.label.zIndex = depthZ;
       }
     }
 
@@ -1486,6 +1595,11 @@ export class PixiRenderer {
 
   set3DAutoRotate(enabled: boolean): void {
     this.mode3dAutoRotate = enabled;
+    // Force immediate label re-cull when rotation stops
+    if (!enabled) {
+      this.lastLabelCull = 0;
+      this.throttledLabelCull();
+    }
   }
 
   set3DSpeed(speed: number): void {

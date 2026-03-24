@@ -77,6 +77,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onEdgeClick,
       onStageClick,
       onOptimizeStatus,
+      labelsVisible: labelsVisibleProp = true,
       layoutMode: layoutModeProp = 'spread',
       mode3d: mode3dProp = false,
       on3DAutoRotateChange,
@@ -238,6 +239,12 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
+
+    // ── Apply labels visibility when data is ready or prop changes ─────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setShowAllLabels(labelsVisibleProp);
+    }, [dataVersion, labelsVisibleProp]);
 
     // ── Apply 3D mode when data is ready or prop changes ──────────────
     useEffect(() => {
