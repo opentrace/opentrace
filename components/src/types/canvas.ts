@@ -81,6 +81,8 @@ export interface GraphCanvasProps {
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
   /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
   layoutMode?: 'spread' | 'compact';
+  /** Enable pseudo-3D rotation mode. */
+  mode3d?: boolean;
   /** CSS class name for the container div. */
   className?: string;
   /** Inline styles for the container div. */
@@ -121,4 +123,12 @@ export interface GraphCanvasHandle {
   setLayoutMode?: (mode: 'spread' | 'compact') => void;
   /** Update compact-mode-specific parameters. */
   updateCompactConfig?: (config: { radialStrength?: number; communityPull?: number; centeringStrength?: number; radiusScale?: number }) => void;
+  /** Enable/disable pseudo-3D rotation mode. */
+  set3DMode?: (enabled: boolean) => void;
+  /** Set 3D auto-rotation speed (radians/frame, default 0.003). */
+  set3DSpeed?: (speed: number) => void;
+  /** Set 3D camera tilt (radians, default 0.35). */
+  set3DTilt?: (tilt: number) => void;
+  /** Enable/disable 3D auto-rotation. */
+  set3DAutoRotate?: (enabled: boolean) => void;
 }

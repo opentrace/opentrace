@@ -78,6 +78,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onStageClick,
       onOptimizeStatus,
       layoutMode: layoutModeProp = 'spread',
+      mode3d: mode3dProp = false,
       className,
       style,
     } = props;
@@ -237,6 +238,17 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
 
+    // ── Apply 3D mode when data is ready or prop changes ──────────────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      const is3d = rendererRef.current.is3DMode();
+      if (mode3dProp && !is3d) {
+        rendererRef.current.set3DMode(true, communityData.assignments);
+      } else if (!mode3dProp && is3d) {
+        rendererRef.current.set3DMode(false);
+      }
+    }, [dataVersion, mode3dProp, communityData.assignments]);
+
     // ── Apply highlights ────────────────────────────────────────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
@@ -356,8 +368,20 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         },
         setLayoutMode,
         updateCompactConfig,
+        set3DMode: (enabled: boolean) => {
+          rendererRef.current?.set3DMode(enabled, communityData.assignments);
+        },
+        set3DSpeed: (speed: number) => {
+          rendererRef.current?.set3DSpeed(speed);
+        },
+        set3DTilt: (tilt: number) => {
+          rendererRef.current?.set3DTilt(tilt);
+        },
+        set3DAutoRotate: (enabled: boolean) => {
+          rendererRef.current?.set3DAutoRotate(enabled);
+        },
       }),
-      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig],
+      [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig, communityData.assignments],
     );
 
     return (
