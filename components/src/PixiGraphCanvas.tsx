@@ -382,6 +382,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         set3DAutoRotate: (enabled: boolean) => {
           rendererRef.current?.set3DAutoRotate(enabled);
         },
+        setLabelScale: (scale: number) => {
+          rendererRef.current?.setLabelScale(scale);
+        },
       }),
       [onNodeClick, restart, stopSim, startSim, toggleSim, simRunning, reheat, setChargeStrength, setLinkDistance, setCenterStrength, setCommunityGravity, setLayoutMode, updateCompactConfig, communityData.assignments],
     );

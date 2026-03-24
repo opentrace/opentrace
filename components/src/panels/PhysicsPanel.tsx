@@ -51,6 +51,8 @@ interface PhysicsPanelProps {
   onCircleRadiusChange?: (value: number) => void;
   zoomSizeExponent?: number;
   onZoomSizeExponentChange?: (value: number) => void;
+  labelScale?: number;
+  onLabelScaleChange?: (value: number) => void;
   onReheat?: () => void;
   onFitToScreen?: () => void;
   // 3D mode
@@ -93,6 +95,8 @@ export default function PhysicsPanel({
   onCircleRadiusChange,
   zoomSizeExponent = 0.8,
   onZoomSizeExponentChange,
+  labelScale = 100,
+  onLabelScaleChange,
   onReheat,
   onFitToScreen,
   mode3d = false,
@@ -379,6 +383,23 @@ export default function PhysicsPanel({
             onInput={(e) =>
               onZoomSizeExponentChange(Number(e.currentTarget.value) / 100)
             }
+          />
+        </div>
+      )}
+
+      {/* Label scale — independent of node size */}
+      {pixiMode && onLabelScaleChange && (
+        <div className="physics-slider-row">
+          <div className="physics-slider-label">
+            <span>Label size</span>
+            <span className="physics-slider-value">{labelScale}%</span>
+          </div>
+          <input
+            type="range"
+            min={10}
+            max={300}
+            value={labelScale}
+            onInput={(e) => onLabelScaleChange(Number(e.currentTarget.value))}
           />
         </div>
       )}

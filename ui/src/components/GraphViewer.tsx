@@ -46,7 +46,6 @@ import {
   type FilterItem,
   type FilterPanelProps,
   DEFAULT_LAYOUT_CONFIG,
-  type OptimizeStatus,
 } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useStore } from '../store';
@@ -335,10 +334,6 @@ const GraphViewer = memo(
       const [focusedCommunityNodes, setFocusedCommunityNodes] =
         useState<Set<string>>(EMPTY_SET);
 
-      // Optimize status (from GraphCanvas callback)
-      const [optimizeStatus, setOptimizeStatus] =
-        useState<OptimizeStatus | null>(null);
-
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
       // Persisted graph settings — restored from localStorage on mount
@@ -390,6 +385,7 @@ const GraphViewer = memo(
         ps('mode3dSpeed', 30),
       );
       const [mode3dTilt, setMode3dTilt] = useState(() => ps('mode3dTilt', 35));
+      const [labelScale, setLabelScale] = useState(() => ps('labelScale', 100));
       const [rendererAutoRotate, setRendererAutoRotate] = useState<
         boolean | null
       >(null);
@@ -411,6 +407,7 @@ const GraphViewer = memo(
           mode3d,
           mode3dSpeed,
           mode3dTilt,
+          labelScale,
         };
         localStorage.setItem('graph-settings', JSON.stringify(settings));
       }, [
@@ -428,6 +425,7 @@ const GraphViewer = memo(
         mode3d,
         mode3dSpeed,
         mode3dTilt,
+        labelScale,
       ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
@@ -1488,7 +1486,6 @@ const GraphViewer = memo(
             onNodeClick={onNodeClick}
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
-            onOptimizeStatus={setOptimizeStatus}
             layoutMode={layoutMode}
             mode3d={mode3d}
             on3DAutoRotateChange={setRendererAutoRotate}
@@ -1588,6 +1585,11 @@ const GraphViewer = memo(
               onMode3dTiltChange={(v) => {
                 setMode3dTilt(v);
                 canvasRef.current?.set3DTilt?.(v / 100);
+              }}
+              labelScale={labelScale}
+              onLabelScaleChange={(v) => {
+                setLabelScale(v);
+                canvasRef.current?.setLabelScale?.(v / 100);
               }}
             />
           )}
@@ -1741,13 +1743,13 @@ const GraphViewer = memo(
               </svg>
             </button>
             <button
-              className={`graph-control-btn${optimizeStatus?.phase === 'fa2' ? ' graph-control-btn--active' : ''}`}
-              onClick={() => canvasRef.current?.optimize()}
-              title={
-                optimizeStatus?.phase === 'fa2'
-                  ? 'Running physics...'
-                  : 'Optimize layout'
-              }
+              className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
+              onClick={() => {
+                const next = !mode3d;
+                setMode3d(next);
+                canvasRef.current?.set3DMode?.(next);
+              }}
+              title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
             >
               <svg
                 width="16"
@@ -1759,31 +1761,16 @@ const GraphViewer = memo(
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <path d="M12 2l0 4M12 18l0 4M2 12l4 0M18 12l4 0" />
-                <path d="M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                {mode3d ? (
+                  /* 2D grid icon */
+                  <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
+                ) : (
+                  /* 3D cube icon */
+                  <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
+                )}
               </svg>
             </button>
           </div>
-          {optimizeStatus && optimizeStatus.phase !== 'done' && (
-            <div
-              className="optimize-status"
-              style={{
-                position: 'absolute',
-                left: '50%',
-                bottom: 60,
-                transform: 'translateX(-50%)',
-                background: 'rgba(0,0,0,0.75)',
-                color: '#e2e8f0',
-                padding: '6px 16px',
-                borderRadius: 8,
-                fontSize: 13,
-                pointerEvents: 'none',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {optimizeStatus.phase === 'fa2' && 'Running physics...'}
-            </div>
-          )}
         </div>
       );
     },
