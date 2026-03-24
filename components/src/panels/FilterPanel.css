@@ -37,8 +37,28 @@
 .filter-section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   margin-bottom: 8px;
+}
+
+.filter-section-collapse-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  transition: color 0.15s;
+}
+
+.filter-section-collapse-btn:hover {
+  color: var(--foreground);
 }
 
 .filter-section-title {
@@ -47,6 +67,9 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted-foreground);
+  cursor: pointer;
+  user-select: none;
+  flex: 1;
 }
 
 .filter-toggle-all {
