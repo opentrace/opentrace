@@ -76,6 +76,12 @@ export type WorkerInMessage =
       };
     }
   | {
+      type: 'add-nodes';
+      nodeIds: string[];
+      links: { source: string; target: string }[];
+      communities?: Record<string, number>;
+    }
+  | {
       type: 'update-config';
       chargeStrength?: number;
       linkDistance?: number;
@@ -350,6 +356,68 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       sim.restart();
       settled = false;
       startStreaming();
+      break;
+    }
+
+    case 'add-nodes': {
+      if (!sim || !cachedConfig) break;
+
+      if (msg.communities) {
+        communities = { ...communities, ...msg.communities };
+      }
+
+      // Compute centroid of existing nodes
+      const existingIds = new Set(simNodes.map((n) => n.id));
+      let cx = 0,
+        cy = 0;
+      for (const n of simNodes) {
+        cx += n.x ?? 0;
+        cy += n.y ?? 0;
+      }
+      if (simNodes.length > 0) {
+        cx /= simNodes.length;
+        cy /= simNodes.length;
+      }
+      const spread = Math.sqrt(simNodes.length) * 10;
+
+      // Add new nodes scattered near centroid
+      let added = 0;
+      for (const id of msg.nodeIds) {
+        if (existingIds.has(id)) continue;
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * spread;
+        const node: SimNode = {
+          id,
+          x: cx + Math.cos(angle) * r,
+          y: cy + Math.sin(angle) * r,
+        };
+        simNodes.push(node);
+        nodeIdToIndex.set(id, simNodes.length - 1);
+        added++;
+      }
+
+      if (added === 0) break;
+
+      // Add new links
+      const updatedIds = new Set(simNodes.map((n) => n.id));
+      for (const link of msg.links) {
+        if (updatedIds.has(link.source) && updatedIds.has(link.target)) {
+          cachedLinks.push({ source: link.source, target: link.target });
+        }
+      }
+
+      // Rebuild simulation preserving existing positions
+      sim.stop();
+      stopStreaming();
+      sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+
+      // Gentle reheat — existing nodes barely shift, new ones settle in
+      sim.alpha(0.3).restart();
+      settled = false;
+      startStreaming();
+
+      // Send immediate position update for the expanded node set
+      postPositions();
       break;
     }
 

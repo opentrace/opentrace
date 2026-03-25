@@ -147,11 +147,13 @@ export function usePixiLayout(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks]);
 
-  // Apply Float64Array positions to the position map (in-place update, no allocation)
+  // Apply Float64Array positions to the position map (in-place update, no allocation).
+  // Guards against buffer/nodeOrder length mismatches during incremental updates.
   const applyPositionBuffer = useCallback((buffer: Float64Array) => {
     const nodeOrder = nodeOrderRef.current;
     const pos = positionsRef.current;
-    for (let i = 0; i < nodeOrder.length; i++) {
+    const count = Math.min(nodeOrder.length, buffer.length / 2);
+    for (let i = 0; i < count; i++) {
       const id = nodeOrder[i];
       const existing = pos.get(id);
       if (existing) {
@@ -163,41 +165,122 @@ export function usePixiLayout(
     }
   }, []);
 
-  // Main effect: spawn worker and init simulation
+  // Track previous node IDs to detect incremental additions
+  const prevNodeIdsRef = useRef<Set<string>>(new Set());
+
+  // Build layout-only links helper
+  const buildLayoutLinks = useCallback(
+    (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
+      const out: { source: string; target: string }[] = [];
+      for (const link of linkArray) {
+        if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
+        const source = endpointId(link.source);
+        const target = endpointId(link.target);
+        if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
+          out.push({ source, target });
+        }
+      }
+      return out;
+    },
+    [flatMode, layoutConfig.layoutEdgeType],
+  );
+
+  // Single effect: handles full init, incremental add-nodes, and same-nodes skip.
+  // Worker lifecycle is managed explicitly (terminate at start of full-init),
+  // NOT via effect cleanup — this avoids React's cleanup-runs-before-next-effect
+  // timing issue that would kill the worker before add-nodes can reuse it.
+  // The unmount effect above (line ~104) handles final cleanup.
   useEffect(() => {
-    // Terminate previous worker
+    const nodeIds = allNodes.map((n) => n.id);
+    const nodeIdSet = new Set(nodeIds);
+    const prevIds = prevNodeIdsRef.current;
+
+    const allPrevPresent =
+      prevIds.size > 0 && [...prevIds].every((id) => nodeIdSet.has(id));
+    const isIncremental =
+      allPrevPresent &&
+      nodeIdSet.size > prevIds.size &&
+      workerRef.current !== null;
+    const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
+
+    // ── Same nodes (metadata change like communityData) — skip ──
+    if (isSameNodes) return;
+
+    // ── Incremental: send add-nodes to existing worker ──
+    if (isIncremental) {
+      const newNodeIds = nodeIds.filter((id) => !prevIds.has(id));
+      const links = buildLayoutLinks(nodeIdSet, allLinks);
+      const newLinks = links.filter(
+        (l) => !prevIds.has(l.source) || !prevIds.has(l.target),
+      );
+
+      // Update node order: existing + new appended (matches worker's internal order)
+      nodeOrderRef.current = [...nodeOrderRef.current, ...newNodeIds];
+
+      // Seed position map for new nodes near centroid of existing
+      const pos = positionsRef.current;
+      let cx = 0,
+        cy = 0,
+        count = 0;
+      for (const id of prevIds) {
+        const p = pos.get(id);
+        if (p) {
+          cx += p.x;
+          cy += p.y;
+          count++;
+        }
+      }
+      if (count > 0) {
+        cx /= count;
+        cy /= count;
+      }
+      const spread = Math.sqrt(prevIds.size) * 10;
+      for (const id of newNodeIds) {
+        if (!pos.has(id)) {
+          const angle = Math.random() * Math.PI * 2;
+          const r = Math.random() * spread;
+          pos.set(id, {
+            x: cx + Math.cos(angle) * r,
+            y: cy + Math.sin(angle) * r,
+          });
+        }
+      }
+
+      prevNodeIdsRef.current = nodeIdSet;
+
+      workerRef.current!.postMessage({
+        type: 'add-nodes',
+        nodeIds: newNodeIds,
+        links: newLinks,
+        communities: communityData.assignments,
+      } satisfies WorkerInMessage);
+
+      simRunningRef.current = true;
+      setSimRunning(true);
+      return;
+    }
+
+    // ── Full init: terminate old worker, create new one ──
     workerRef.current?.terminate();
     workerRef.current = null;
     setLayoutReady(false);
 
-    if (allNodes.length === 0) return;
+    if (allNodes.length === 0) {
+      prevNodeIdsRef.current = new Set();
+      return;
+    }
 
     const reqId = ++requestIdRef.current;
-
-    // Build node order
-    const nodeIds = allNodes.map((n) => n.id);
     nodeOrderRef.current = nodeIds;
 
-    // Seed position map entries
     const pos = positionsRef.current;
     pos.clear();
     for (const id of nodeIds) {
       pos.set(id, { x: 0, y: 0 });
     }
 
-    // Build layout-only links
-    const nodeIdSet = new Set(nodeIds);
-    const links: { source: string; target: string }[] = [];
-    for (const link of allLinks) {
-      if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
-      const source = endpointId(link.source);
-      const target = endpointId(link.target);
-      if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
-        links.push({ source, target });
-      }
-    }
+    const links = buildLayoutLinks(nodeIdSet, allLinks);
 
-    // Create worker
     const worker = new Worker(
       new URL('../workers/pixiLayoutWorker.ts', import.meta.url),
       { type: 'module' },
@@ -219,13 +302,11 @@ export function usePixiLayout(
 
       switch (e.data.type) {
         case 'ready':
-          // Initial positions from sync ticks
           applyPositionBuffer(e.data.buffer);
           setLayoutReady(true);
           break;
 
         case 'positions':
-          // Streaming position update — in-place map update + pass raw buffer
           applyPositionBuffer(e.data.buffer);
           onTickRef.current(positionsRef.current, e.data.buffer);
           break;
@@ -237,11 +318,9 @@ export function usePixiLayout(
       }
     };
 
-    // Select breakpoint for theta config
     const bp = selectBreakpoint(allNodes.length);
     breakpointRef.current = bp;
 
-    // Send init message
     worker.postMessage({
       type: 'init',
       nodeIds,
@@ -256,15 +335,20 @@ export function usePixiLayout(
       },
     } satisfies WorkerInMessage);
 
+    prevNodeIdsRef.current = nodeIdSet;
     simRunningRef.current = true;
     setSimRunning(true);
-
-    return () => {
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-    };
+    // No cleanup — worker is terminated at the START of the next full-init,
+    // and on unmount via the separate cleanup effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNodes, allLinks, communityData, layoutConfig, applyPositionBuffer]);
+  }, [
+    allNodes,
+    allLinks,
+    communityData,
+    layoutConfig,
+    applyPositionBuffer,
+    buildLayoutLinks,
+  ]);
 
   // ── Control callbacks (all just postMessage to worker) ────────────────
 
