@@ -923,10 +923,9 @@ const GraphViewer = memo(
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
-        // Clear edge-click and community-focus highlights
+        // Clear edge-click highlights but preserve search-driven community focus
         setEdgeHighlightNodes(EMPTY_SET);
         setEdgeHighlightLinks(EMPTY_SET);
-        setFocusedCommunityNodes(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
       }, []);
 
