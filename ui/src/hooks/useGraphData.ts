@@ -40,7 +40,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     nodes: GraphNode[];
     links: GraphLink[];
   }>({ nodes: [], links: [] });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => store.hasData());
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [lastSearchQuery, setLastApiQuery] = useState('');

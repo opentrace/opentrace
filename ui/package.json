@@ -1,16 +1,90 @@
 {
-  "name": "ui",
-  "private": true,
-  "version": "0.1.0",
+  "name": "@opentrace/opentrace",
+  "version": "0.1.1",
   "type": "module",
+  "description": "React components for graph visualization — powered by Pixi.js and Graphology",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opentrace/opentrace",
+    "directory": "ui"
+  },
+  "main": "./dist/lib/opentrace-components.cjs",
+  "module": "./dist/lib/opentrace-components.js",
+  "types": "./dist/lib/src/components/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/lib/src/components/index.d.ts",
+      "import": "./dist/lib/opentrace-components.js",
+      "require": "./dist/lib/opentrace-components.cjs"
+    },
+    "./utils": {
+      "types": "./dist/lib/src/components/utils.d.ts",
+      "import": "./dist/lib/utils.js",
+      "require": "./dist/lib/utils.cjs"
+    },
+    "./indexing": {
+      "types": "./dist/lib/src/components/indexing/index.d.ts",
+      "import": "./dist/lib/indexing.js",
+      "require": "./dist/lib/indexing.cjs"
+    },
+    "./pipeline": {
+      "types": "./dist/lib/src/components/pipeline/index.d.ts",
+      "import": "./dist/lib/pipeline.js",
+      "require": "./dist/lib/pipeline.cjs"
+    },
+    "./pipeline/wasm": {
+      "types": "./dist/lib/src/components/pipeline/wasm.d.ts",
+      "import": "./dist/lib/pipeline-wasm.js",
+      "require": "./dist/lib/pipeline-wasm.cjs"
+    },
+    "./chat": {
+      "types": "./dist/lib/src/components/chat/index.d.ts",
+      "import": "./dist/lib/chat.js",
+      "require": "./dist/lib/chat.cjs"
+    },
+    "./style.css": "./dist/lib/components.css"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "bin": {
+    "opentrace-copy-wasm": "./bin/copy-wasm.js"
+  },
+  "files": [
+    "dist/lib",
+    "public/wasm",
+    "bin"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:lib": "vite build -c vite.config.lib.ts && tsc -p tsconfig.lib.json",
     "build:wasm": "bash scripts/build-wasm.sh",
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "preview": "vite preview",
     "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "web-tree-sitter": ">=0.24.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "web-tree-sitter": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
@@ -20,7 +94,10 @@
     "@langchain/google-genai": "^2.1.26",
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.3.0",
-    "@opentrace/components": "file:../components",
+    "d3-force": "^3.0.0",
+    "d3-quadtree": "^3.0.1",
+    "pixi.js": "^8.17.1",
+    "apache-arrow": "^21.1.0",
     "fflate": "^0.8.2",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
@@ -28,6 +105,7 @@
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
     "mermaid": "^11.6.0",
+    "parquet-wasm": "^0.7.1",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -41,6 +119,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/d3-force": "^3.0.10",
+    "@types/d3-quadtree": "^3.0.6",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.5.0",

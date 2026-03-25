@@ -11,7 +11,6 @@ jobs:
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
       ui: ${{ steps.filter.outputs.ui }}
-      components: ${{ steps.filter.outputs.components }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -23,8 +22,6 @@ jobs:
               - 'agent/**'
             ui:
               - 'ui/**'
-            components:
-              - 'components/**'
 
   agent:
     name: Agent (Python)
@@ -59,7 +56,7 @@ jobs:
   ui:
     name: UI (TypeScript)
     needs: changes
-    if: needs.changes.outputs.ui == 'true' || needs.changes.outputs.components == 'true'
+    if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -69,10 +66,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: ui/package-lock.json
-
-      - name: Build components
-        working-directory: components
-        run: npm ci && npm run build
 
       - name: Install dependencies
         working-directory: ui
@@ -92,27 +85,4 @@ jobs:
 
       - name: Build
         working-directory: ui
-        run: npm run build
-
-  components:
-    name: Components (TypeScript)
-    needs: changes
-    if: needs.changes.outputs.components == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: components
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: components/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
         run: npm run build

@@ -66,6 +66,8 @@ declare module '@ladybugdb/wasm-core' {
     static mkdir(path: string): Promise<void>;
     static unlink(path: string): Promise<void>;
     static rename(oldPath: string, newPath: string): Promise<void>;
+    static rmdir(path: string): Promise<void>;
+    static readDir(path: string): Promise<string[]>;
   }
 
   const _default: {

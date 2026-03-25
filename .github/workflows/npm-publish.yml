@@ -4,11 +4,13 @@ on:
   pull_request:
     types: [labeled, synchronize]
     paths:
-      - "components/**"
+      - "ui/**"
   push:
     branches: [main]
     paths:
-      - "components/**"
+      - "ui/**"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -34,11 +36,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - id: version
-        working-directory: components
+        working-directory: ui
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "push" ]; then
             BASE_VERSION=$(node -p "require('./package.json').version")
             echo "version=${BASE_VERSION}-rc.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -56,6 +61,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@opentrace/opentrace
     steps:
       - uses: actions/checkout@v6
 
@@ -65,21 +73,21 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Set version
-        working-directory: components
+        working-directory: ui
         run: |
           npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
-          echo "Publishing @opentrace/components@${{ needs.version.outputs.version }} with tag ${{ needs.version.outputs.tag }}"
+          echo "Publishing @opentrace/opentrace@${{ needs.version.outputs.version }} with tag ${{ needs.version.outputs.tag }}"
 
       - name: Install dependencies
-        working-directory: components
+        working-directory: ui
         run: npm ci
 
-      - name: Build
-        working-directory: components
-        run: npm run build
+      - name: Build library
+        working-directory: ui
+        run: npm run build:lib
 
       - name: Publish to npm
-        working-directory: components
+        working-directory: ui
         run: NODE_AUTH_TOKEN="" npm publish --tag "${{ needs.version.outputs.tag }}"
 
   comment:
@@ -95,13 +103,13 @@ jobs:
           PREVIEW_VERSION: ${{ needs.version.outputs.version }}
         with:
           script: |
-            const marker = '<!-- opentrace-components-preview -->';
+            const marker = '<!-- opentrace-npm-preview -->';
             const body = [
               marker,
-              `📦 Preview published: \`@opentrace/components@${process.env.PREVIEW_VERSION}\``,
+              `📦 Preview published: \`@opentrace/opentrace@${process.env.PREVIEW_VERSION}\``,
               '',
               '```bash',
-              `npm install @opentrace/components@${process.env.PREVIEW_VERSION}`,
+              `npm install @opentrace/opentrace@${process.env.PREVIEW_VERSION}`,
               '```',
               '',
             ].join('\n');

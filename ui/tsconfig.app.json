@@ -22,8 +22,18 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "paths": {
+      "@opentrace/components": ["./src/components/index.ts"],
+      "@opentrace/components/utils": ["./src/components/utils.ts"],
+      "@opentrace/components/chat": ["./src/components/chat/index.ts"],
+      "@opentrace/components/pipeline": ["./src/components/pipeline/index.ts"],
+      "@opentrace/components/pipeline/wasm": [
+        "./src/components/pipeline/wasm.ts"
+      ],
+      "@opentrace/components/indexing": ["./src/components/indexing/index.ts"]
+    }
   },
   "include": ["src"],
-  "exclude": ["src/gen", "src/**/__tests__"]
+  "exclude": ["src/gen", "src/**/__tests__", "src/**/*.stories.*"]
 }

@@ -16,6 +16,7 @@
 
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import wasm from 'vite-plugin-wasm';
 import {
   existsSync,
   readFileSync,
@@ -79,7 +80,7 @@ function resolveEnvDir(): string {
  */
 function crossOriginIsolation(): Plugin {
   const publicDir = resolve(__dirname, 'public');
-  const componentsWasmDir = resolve(__dirname, '../components/public/wasm');
+  const componentsWasmDir = resolve(__dirname, 'public/wasm');
 
   function wasmMiddleware(
     req: import('http').IncomingMessage,
@@ -129,7 +130,7 @@ function crossOriginIsolation(): Plugin {
  * them directly; this plugin handles production builds.
  */
 function copyComponentsWasm(): Plugin {
-  const wasmDir = resolve(__dirname, '../components/public/wasm');
+  const wasmDir = resolve(__dirname, 'public/wasm');
   return {
     name: 'copy-components-wasm',
     writeBundle(options) {
@@ -170,24 +171,21 @@ export default defineConfig(({ mode }) => {
         // which has baked-in worker URLs that Rollup can't resolve.
         '@opentrace/components/chat': resolve(
           __dirname,
-          '../components/src/chat/index.ts',
+          'src/components/chat/index.ts',
         ),
         '@opentrace/components/pipeline': resolve(
           __dirname,
-          '../components/src/pipeline/index.ts',
+          'src/components/pipeline/index.ts',
         ),
         '@opentrace/components/utils': resolve(
           __dirname,
-          '../components/src/utils.ts',
+          'src/components/utils.ts',
         ),
-        '@opentrace/components': resolve(
-          __dirname,
-          '../components/src/index.ts',
-        ),
+        '@opentrace/components': resolve(__dirname, 'src/components/index.ts'),
       },
       dedupe: ['react', 'react-dom'],
     },
-    plugins: [react(), crossOriginIsolation(), copyComponentsWasm()],
+    plugins: [react(), wasm(), crossOriginIsolation(), copyComponentsWasm()],
     build: {
       sourcemap: true,
     },
@@ -195,11 +193,11 @@ export default defineConfig(({ mode }) => {
       port,
       strictPort: true,
       fs: {
-        allow: [resolve(__dirname), resolve(__dirname, '../components')],
+        allow: [resolve(__dirname)],
       },
     },
     optimizeDeps: {
-      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core'],
+      exclude: ['web-tree-sitter', '@ladybugdb/wasm-core', 'parquet-wasm'],
     },
     worker: {
       format: 'es',
