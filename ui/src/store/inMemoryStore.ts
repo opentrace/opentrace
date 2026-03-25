@@ -150,13 +150,21 @@ export class InMemoryGraphStore implements GraphStore {
   }
 
   async fetchGraph(query?: string): Promise<GraphData> {
-    const matchingNodes = query
-      ? [...this.nodes.values()].filter(
-          (n) =>
-            n.name.toLowerCase().includes(query.toLowerCase()) ||
-            n.id.toLowerCase().includes(query.toLowerCase()),
-        )
-      : [...this.nodes.values()];
+    let matchingNodes;
+    if (!query) {
+      matchingNodes = [...this.nodes.values()];
+    } else if (query.startsWith('type:')) {
+      const typeName = query.slice(5);
+      matchingNodes = [...this.nodes.values()].filter(
+        (n) => n.type.toLowerCase() === typeName.toLowerCase(),
+      );
+    } else {
+      matchingNodes = [...this.nodes.values()].filter(
+        (n) =>
+          n.name.toLowerCase().includes(query.toLowerCase()) ||
+          n.id.toLowerCase().includes(query.toLowerCase()),
+      );
+    }
 
     const nodeIds = new Set(matchingNodes.map((n) => n.id));
     const links = [...this.rels.values()]

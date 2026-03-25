@@ -219,6 +219,87 @@
   cursor: not-allowed;
 }
 
+/* ── Search autocomplete ───────────────────── */
+
+.ot-search-container .ot-search-autocomplete {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  margin-top: 4px;
+  background: var(--popover, var(--card));
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.15),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.ot-search-autocomplete .ot-ac-header {
+  padding: 5px 12px 2px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ot-search-autocomplete .ot-ac-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.ot-search-autocomplete .ot-ac-item:hover,
+.ot-search-autocomplete .ot-ac-item--active {
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+}
+
+.ot-search-autocomplete .ot-ac-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ot-search-autocomplete .ot-ac-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ot-search-autocomplete .ot-ac-category {
+  font-size: 0.6rem;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.ot-search-autocomplete .ot-ac-community {
+  font-size: 0.62rem;
+  font-weight: 500;
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Reset / Show All button ────────────────── */
 
 .ot-toolbar .ot-reset-btn {
