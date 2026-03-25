@@ -286,20 +286,66 @@
   color: var(--destructive, #ef4444);
 }
 
-/* Chat history toggle */
-.chat-history-toggle {
+/* Chat save card */
+.chat-save-card {
+  width: 100%;
+  max-width: 460px;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  padding: 14px 16px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
+  gap: 12px;
+  margin-bottom: 12px;
   cursor: pointer;
+  user-select: none;
 }
 
-.chat-history-toggle input[type='checkbox'] {
-  accent-color: var(--primary);
-  cursor: pointer;
+.chat-save-card-info {
+  flex: 1;
+}
+
+.chat-save-card-info strong {
+  font-size: 0.8rem;
+  color: var(--foreground);
+}
+
+.chat-save-card-info p {
+  margin: 2px 0 0 0;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+/* Sliding toggle — matches PhysicsPanel toggle */
+.chat-save-card .chat-toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+  border-radius: 9px;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.chat-save-card .chat-toggle-track.on {
+  background: var(--primary);
+}
+
+.chat-save-card .chat-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.15);
+}
+
+.chat-save-card .chat-toggle-track.on .chat-toggle-thumb {
+  transform: translateX(14px);
 }
 
 /* Streaming cursor blink */

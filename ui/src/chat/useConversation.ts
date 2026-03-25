@@ -58,7 +58,8 @@ export function useConversation(
   // Cancel token for switchConversation to prevent race conditions
   const switchTokenRef = useRef(0);
 
-  // When project changes or history is toggled, reset chat and reload the list.
+  // When project changes, reset chat and reload the conversation list.
+  // The list always loads regardless of `enabled` so users can browse history.
   useEffect(() => {
     let cancelled = false;
 
@@ -66,27 +67,22 @@ export function useConversation(
     conversationIdRef.current = null;
     setMessages([]);
 
-    if (enabled) {
-      (async () => {
-        const list = await listConversations(projectKey);
-        if (!cancelled) {
-          setConversations(list);
-        }
-      })();
-    } else {
-      setConversations([]);
-    }
+    (async () => {
+      const list = await listConversations(projectKey);
+      if (!cancelled) {
+        setConversations(list);
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [projectKey, enabled]);
+  }, [projectKey]);
 
   const refreshList = useCallback(async () => {
-    if (!enabled) return;
     const list = await listConversations(projectKey);
     setConversations(list);
-  }, [projectKey, enabled]);
+  }, [projectKey]);
 
   const startNewConversation = useCallback(() => {
     setConversationId(null);

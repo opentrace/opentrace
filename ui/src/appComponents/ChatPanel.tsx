@@ -843,17 +843,6 @@ export default function ChatPanel({
             )}
           </div>
           <p className="hint">Your key is stored locally in your browser.</p>
-          <label className="chat-history-toggle">
-            <input
-              type="checkbox"
-              checked={historyEnabled}
-              onChange={(e) => {
-                setHistoryEnabled(e.target.checked);
-                saveChatHistoryEnabled(e.target.checked);
-              }}
-            />
-            <span>Save chat history</span>
-          </label>
         </div>
       ) : activeTab === 'prs' && prClient ? (
         <PRListPanel
@@ -874,6 +863,27 @@ export default function ChatPanel({
             {!loadingConversation && messages.length === 0 && (
               <div className="empty-chat">
                 <p>Ask me anything about your graph!</p>
+                <div
+                  className="chat-save-card"
+                  onClick={() => {
+                    const next = !historyEnabled;
+                    setHistoryEnabled(next);
+                    saveChatHistoryEnabled(next);
+                  }}
+                >
+                  <div className="chat-save-card-info">
+                    <strong>Save this conversation</strong>
+                    <p>
+                      Store this chat locally in your browser so you can resume
+                      it later.
+                    </p>
+                  </div>
+                  <div
+                    className={`chat-toggle-track${historyEnabled ? ' on' : ''}`}
+                  >
+                    <div className="chat-toggle-thumb" />
+                  </div>
+                </div>
                 <ChatTemplates onSelect={handleTemplate} />
               </div>
             )}
