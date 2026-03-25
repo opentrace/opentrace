@@ -243,15 +243,60 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // setData is async — it awaits the Pixi init promise internally.
     // Snapshot positions because the worker may update entries in-place
     // during the async gap.
+    //
+    // For incremental updates (nodes only added), use addData to append
+    // new sprites without destroying existing ones.
+    const prevNodeIdsRef = useRef<Set<string>>(new Set());
     useEffect(() => {
       if (!layoutReady || !rendererRef.current) return;
+
+      const currentIds = new Set(nodes.map((n) => n.id));
+      const prevIds = prevNodeIdsRef.current;
+      const allPrevPresent =
+        prevIds.size > 0 && [...prevIds].every((id) => currentIds.has(id));
+      const isIncremental = allPrevPresent && currentIds.size > prevIds.size;
+      const isSameNodes = allPrevPresent && currentIds.size === prevIds.size;
+
+      prevNodeIdsRef.current = currentIds;
+
+      // Same nodes, only metadata changed — other effects handle colors etc.
+      if (isSameNodes) return;
+
       const posSnapshot = new Map(positions);
       let cancelled = false;
-      rendererRef.current
-        .setData(nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors)
-        .then(() => {
-          if (!cancelled) setDataVersion((v) => v + 1);
+
+      if (isIncremental) {
+        const newNodes = nodes.filter((n) => !prevIds.has(n.id));
+        const newLinks = links.filter((l) => {
+          const s =
+            typeof l.source === 'string'
+              ? l.source
+              : (l.source as { id: string }).id;
+          const t =
+            typeof l.target === 'string'
+              ? l.target
+              : (l.target as { id: string }).id;
+          return !prevIds.has(s) || !prevIds.has(t);
         });
+        rendererRef.current
+          .addData(
+            newNodes,
+            newLinks,
+            posSnapshot,
+            nodeColors,
+            nodeSizes,
+            linkColors,
+          )
+          .then(() => {
+            if (!cancelled) setDataVersion((v) => v + 1);
+          });
+      } else {
+        rendererRef.current
+          .setData(nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors)
+          .then(() => {
+            if (!cancelled) setDataVersion((v) => v + 1);
+          });
+      }
       return () => {
         cancelled = true;
       };
