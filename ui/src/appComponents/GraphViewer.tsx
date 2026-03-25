@@ -336,6 +336,12 @@ const GraphViewer = memo(
       const [focusedCommunityNodes, setFocusedCommunityNodes] =
         useState<Set<string>>(EMPTY_SET);
 
+      // Active search filter — stored as data so we can re-apply it
+      const [activeFilter, setActiveFilter] = useState<{
+        type: 'community';
+        communityId: number;
+      } | null>(null);
+
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
       // Persisted graph settings — restored from localStorage on mount
@@ -461,6 +467,7 @@ const GraphViewer = memo(
         setHops(2);
         setSelectedNode(null);
         setSelectedLink(null);
+        setActiveFilter(null);
         setFocusedCommunityNodes(EMPTY_SET);
         setHiddenNodeTypes(new Set());
         setHiddenCommunities(new Set());
@@ -830,42 +837,54 @@ const GraphViewer = memo(
             label: name,
             category: 'community',
             color: communityData.colorMap.get(cid),
+            communityId: cid,
           });
         }
         return suggestions;
       }, [graphData.nodes, communityData]);
 
+      // Apply the active filter — computes focused nodes from the stored filter
+      const applyFilter = useCallback(
+        (filter: typeof activeFilter) => {
+          if (!filter) {
+            setFocusedCommunityNodes(EMPTY_SET);
+            return;
+          }
+          if (filter.type === 'community') {
+            const nodeIds = Object.entries(communityData.assignments)
+              .filter(([, id]) => id === filter.communityId)
+              .map(([nodeId]) => nodeId);
+            if (nodeIds.length > 0) {
+              const nodeSet = new Set(nodeIds);
+              setFocusedCommunityNodes(nodeSet);
+              canvasRef.current?.zoomToNodes(nodeSet, 600);
+            }
+          }
+        },
+        [communityData.assignments],
+      );
+
       const handleSuggestionSelect = useCallback(
         (suggestion: SearchSuggestion) => {
           switch (suggestion.category) {
             case 'community': {
-              // Find community ID by name, then focus it
-              let cid: number | undefined;
-              for (const [id, name] of communityData.names) {
-                if (name === suggestion.label) {
-                  cid = id;
-                  break;
-                }
-              }
+              const cid = suggestion.communityId;
               if (cid !== undefined) {
-                const nodeIds = Object.entries(communityData.assignments)
-                  .filter(([, id]) => id === cid)
-                  .map(([nodeId]) => nodeId);
-                if (nodeIds.length > 0) {
-                  setFocusedCommunityNodes(new Set(nodeIds));
-                  setSelectedNode(null);
-                  setSelectedLink(null);
-                }
+                setActiveFilter({ type: 'community', communityId: cid });
+                applyFilter({ type: 'community', communityId: cid });
+                setSelectedNode(null);
+                setSelectedLink(null);
               }
               break;
             }
             default:
               // name — normal search
+              setActiveFilter(null);
               loadGraph(suggestion.label, hops);
               break;
           }
         },
-        [communityData, hops, loadGraph],
+        [applyFilter, hops, loadGraph],
       );
 
       const legendLinkItems = useMemo(() => {
@@ -926,15 +945,18 @@ const GraphViewer = memo(
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
 
+      const activeFilterRef = useRef(activeFilter);
+      activeFilterRef.current = activeFilter;
+
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
-        // Clear edge-click and community-focus highlights
         setEdgeHighlightNodes(EMPTY_SET);
         setEdgeHighlightLinks(EMPTY_SET);
-        setFocusedCommunityNodes(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
-      }, []);
+        // Re-apply the active search filter (e.g. community focus)
+        applyFilter(activeFilterRef.current);
+      }, [applyFilter]);
 
       // --- Early returns for loading/error/empty states ---
 
