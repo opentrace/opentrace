@@ -76,6 +76,7 @@ The built-in chat agent has access to these tools:
 
 ```
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
+agent/                — Python agent (loads data into the graph)
 proto/                — Protobuf definitions (shared API contracts)
 claude-code-plugin/   — Claude Code plugin (MCP server config)
 ```
@@ -91,6 +92,7 @@ claude-code-plugin/   — Claude Code plugin (MCP server config)
 
 ```bash
 make install          # Install dependencies
+make agent            # Run Python agent
 make ui               # Start dev server (localhost:5173)
 make build            # Production build
 make test             # Run tests
@@ -100,6 +102,14 @@ make proto            # Generate protobuf types
 make ui-build-static  # Static build (no API server dependency)
 ```
 
+### Agent
+
+```bash
+cd agent
+uv sync          # Install dependencies
+uv run pytest    # Run tests
+```
+
 ### Running Tests
 
 ```bash
@@ -107,6 +117,24 @@ cd ui
 npm test              # Run all tests
 npm run lint          # ESLint + Prettier check
 ```
+
+## Agents
+
+| Agent                  | Description                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `@code-explorer`       | Explore indexed code structure — find classes, functions, services and their relationships |
+| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                                     |
+
+## Commands
+
+| Command           | Description                                                     |
+| ----------------- | --------------------------------------------------------------- |
+| `/graph-status`   | Show overview of indexed nodes by type, list repos and services |
+| `/explore <name>` | Quick exploration of a named component in the graph             |
+
+## Graph Node Types
+
+Service, Repo, Repository, Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable
 
 ## Claude Code Plugin
 
