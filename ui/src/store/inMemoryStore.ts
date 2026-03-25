@@ -32,6 +32,30 @@ import type {
   TraverseResult,
 } from './types';
 
+// ---- Debug performance logging ----
+
+const DEBUG_KEY = 'ot:debug';
+function isDebug(): boolean {
+  try {
+    return localStorage.getItem(DEBUG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function logPerf(
+  method: string,
+  params: Record<string, unknown>,
+  count: number,
+  ms: number,
+): void {
+  if (!isDebug()) return;
+  console.debug(
+    `[InMemoryStore] ${method}(${JSON.stringify(params)}) => ${count} results in ${ms.toFixed(1)}ms`,
+  );
+}
+
+// ---- Types ----
+
 interface StoredNode {
   id: string;
   type: string;
@@ -50,6 +74,10 @@ interface StoredRel {
 export class InMemoryGraphStore implements GraphStore {
   private nodes = new Map<string, StoredNode>();
   private rels = new Map<string, StoredRel>();
+  /** Adjacency index: nodeId → set of outgoing relationship IDs. */
+  private outgoing = new Map<string, Set<string>>();
+  /** Adjacency index: nodeId → set of incoming relationship IDs. */
+  private incoming = new Map<string, Set<string>>();
   private sourceCache = new Map<
     string,
     { content: string; path: string; binary?: boolean }
@@ -60,6 +88,7 @@ export class InMemoryGraphStore implements GraphStore {
   }
 
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
+    const t0 = performance.now();
     let nodesCreated = 0;
     let relsCreated = 0;
 
@@ -91,9 +120,34 @@ export class InMemoryGraphStore implements GraphStore {
         target_id: r.target_id,
         properties: r.properties ?? {},
       });
+
+      // Maintain adjacency indexes
+      let outSet = this.outgoing.get(r.source_id);
+      if (!outSet) {
+        outSet = new Set();
+        this.outgoing.set(r.source_id, outSet);
+      }
+      outSet.add(r.id);
+
+      let inSet = this.incoming.get(r.target_id);
+      if (!inSet) {
+        inSet = new Set();
+        this.incoming.set(r.target_id, inSet);
+      }
+      inSet.add(r.id);
     }
 
-    return { nodes_created: nodesCreated, relationships_created: relsCreated };
+    const result = {
+      nodes_created: nodesCreated,
+      relationships_created: relsCreated,
+    };
+    logPerf(
+      'importBatch',
+      { nodes: batch.nodes.length, rels: batch.relationships.length },
+      nodesCreated + relsCreated,
+      performance.now() - t0,
+    );
+    return result;
   }
 
   async flush(): Promise<void> {
@@ -150,6 +204,7 @@ export class InMemoryGraphStore implements GraphStore {
   }
 
   async fetchGraph(query?: string): Promise<GraphData> {
+    const t0 = performance.now();
     let matchingNodes;
     if (!query) {
       matchingNodes = [...this.nodes.values()];
@@ -166,17 +221,24 @@ export class InMemoryGraphStore implements GraphStore {
       );
     }
 
+    // Use adjacency index to find links between matched nodes
     const nodeIds = new Set(matchingNodes.map((n) => n.id));
-    const links = [...this.rels.values()]
-      .filter((r) => nodeIds.has(r.source_id) && nodeIds.has(r.target_id))
-      .map((r) => ({
-        source: r.source_id,
-        target: r.target_id,
-        label: r.type,
-        properties: r.properties,
-      }));
+    const links = [];
+    for (const nid of nodeIds) {
+      for (const rid of this.outgoing.get(nid) ?? []) {
+        const rel = this.rels.get(rid)!;
+        if (nodeIds.has(rel.target_id)) {
+          links.push({
+            source: rel.source_id,
+            target: rel.target_id,
+            label: rel.type,
+            properties: rel.properties,
+          });
+        }
+      }
+    }
 
-    return {
+    const data = {
       nodes: matchingNodes.map((n) => ({
         id: n.id,
         name: n.name,
@@ -185,23 +247,30 @@ export class InMemoryGraphStore implements GraphStore {
       })),
       links,
     };
+    logPerf('fetchGraph', { query }, data.nodes.length, performance.now() - t0);
+    return data;
   }
 
   async fetchStats(): Promise<GraphStats> {
+    const t0 = performance.now();
     const byType: Record<string, number> = {};
     for (const n of this.nodes.values()) {
       byType[n.type] = (byType[n.type] ?? 0) + 1;
     }
-    return {
+    const result = {
       total_nodes: this.nodes.size,
       total_edges: this.rels.size,
       nodes_by_type: byType,
     };
+    logPerf('fetchStats', {}, this.nodes.size, performance.now() - t0);
+    return result;
   }
 
   async clearGraph(): Promise<void> {
     this.nodes.clear();
     this.rels.clear();
+    this.outgoing.clear();
+    this.incoming.clear();
     this.sourceCache.clear();
   }
 
@@ -210,6 +279,7 @@ export class InMemoryGraphStore implements GraphStore {
     limit = 50,
     nodeTypes?: string[],
   ): Promise<NodeResult[]> {
+    const t0 = performance.now();
     const q = query.toLowerCase();
     const results: NodeResult[] = [];
 
@@ -226,6 +296,12 @@ export class InMemoryGraphStore implements GraphStore {
       }
     }
 
+    logPerf(
+      'searchNodes',
+      { query, limit, nodeTypes },
+      results.length,
+      performance.now() - t0,
+    );
     return results;
   }
 
@@ -234,6 +310,7 @@ export class InMemoryGraphStore implements GraphStore {
     limit = 100,
     filters?: Record<string, string>,
   ): Promise<NodeResult[]> {
+    const t0 = performance.now();
     const results: NodeResult[] = [];
 
     for (const n of this.nodes.values()) {
@@ -257,12 +334,23 @@ export class InMemoryGraphStore implements GraphStore {
       if (results.length >= limit) break;
     }
 
+    logPerf(
+      'listNodes',
+      { type, limit, filters },
+      results.length,
+      performance.now() - t0,
+    );
     return results;
   }
 
   async getNode(nodeId: string): Promise<NodeResult | null> {
+    const t0 = performance.now();
     const n = this.nodes.get(nodeId);
-    if (!n) return null;
+    if (!n) {
+      logPerf('getNode', { nodeId }, 0, performance.now() - t0);
+      return null;
+    }
+    logPerf('getNode', { nodeId }, 1, performance.now() - t0);
     return { id: n.id, type: n.type, name: n.name, properties: n.properties };
   }
 
@@ -272,6 +360,7 @@ export class InMemoryGraphStore implements GraphStore {
     maxDepth = 1,
     relType?: string,
   ): Promise<TraverseResult[]> {
+    const t0 = performance.now();
     const results: TraverseResult[] = [];
     const visited = new Set<string>();
     const queue: Array<{ id: string; depth: number }> = [
@@ -284,23 +373,21 @@ export class InMemoryGraphStore implements GraphStore {
       if (visited.has(id)) continue;
       visited.add(id);
 
-      for (const rel of this.rels.values()) {
+      // Collect relevant relationship IDs from adjacency indexes
+      const relIds: string[] = [];
+      if (direction === 'outgoing' || direction === 'both') {
+        for (const rid of this.outgoing.get(id) ?? []) relIds.push(rid);
+      }
+      if (direction === 'incoming' || direction === 'both') {
+        for (const rid of this.incoming.get(id) ?? []) relIds.push(rid);
+      }
+
+      for (const rid of relIds) {
+        const rel = this.rels.get(rid)!;
         if (relType && rel.type !== relType) continue;
 
-        let neighborId: string | null = null;
-        if (
-          (direction === 'outgoing' || direction === 'both') &&
-          rel.source_id === id
-        ) {
-          neighborId = rel.target_id;
-        }
-        if (
-          (direction === 'incoming' || direction === 'both') &&
-          rel.target_id === id
-        ) {
-          neighborId = rel.source_id;
-        }
-        if (!neighborId || visited.has(neighborId)) continue;
+        const neighborId = rel.source_id === id ? rel.target_id : rel.source_id;
+        if (visited.has(neighborId)) continue;
 
         const neighbor = this.nodes.get(neighborId);
         if (!neighbor) continue;
@@ -326,6 +413,12 @@ export class InMemoryGraphStore implements GraphStore {
       }
     }
 
+    logPerf(
+      'traverse',
+      { nodeId, direction, maxDepth, relType },
+      results.length,
+      performance.now() - t0,
+    );
     return results;
   }
 }
