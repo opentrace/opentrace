@@ -336,6 +336,12 @@ const GraphViewer = memo(
       const [focusedCommunityNodes, setFocusedCommunityNodes] =
         useState<Set<string>>(EMPTY_SET);
 
+      // Active search filter — stored as data so we can re-apply it
+      const [activeFilter, setActiveFilter] = useState<{
+        type: 'community';
+        communityId: number;
+      } | null>(null);
+
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
       // Persisted graph settings — restored from localStorage on mount
@@ -461,6 +467,7 @@ const GraphViewer = memo(
         setHops(2);
         setSelectedNode(null);
         setSelectedLink(null);
+        setActiveFilter(null);
         setFocusedCommunityNodes(EMPTY_SET);
         setHiddenNodeTypes(new Set());
         setHiddenCommunities(new Set());
@@ -836,30 +843,48 @@ const GraphViewer = memo(
         return suggestions;
       }, [graphData.nodes, communityData]);
 
+      // Apply the active filter — computes focused nodes from the stored filter
+      const applyFilter = useCallback(
+        (filter: typeof activeFilter) => {
+          if (!filter) {
+            setFocusedCommunityNodes(EMPTY_SET);
+            return;
+          }
+          if (filter.type === 'community') {
+            const nodeIds = Object.entries(communityData.assignments)
+              .filter(([, id]) => id === filter.communityId)
+              .map(([nodeId]) => nodeId);
+            if (nodeIds.length > 0) {
+              const nodeSet = new Set(nodeIds);
+              setFocusedCommunityNodes(nodeSet);
+              canvasRef.current?.zoomToNodes(nodeSet, 600);
+            }
+          }
+        },
+        [communityData.assignments],
+      );
+
       const handleSuggestionSelect = useCallback(
         (suggestion: SearchSuggestion) => {
           switch (suggestion.category) {
             case 'community': {
               const cid = suggestion.communityId;
               if (cid !== undefined) {
-                const nodeIds = Object.entries(communityData.assignments)
-                  .filter(([, id]) => id === cid)
-                  .map(([nodeId]) => nodeId);
-                if (nodeIds.length > 0) {
-                  setFocusedCommunityNodes(new Set(nodeIds));
-                  setSelectedNode(null);
-                  setSelectedLink(null);
-                }
+                setActiveFilter({ type: 'community', communityId: cid });
+                applyFilter({ type: 'community', communityId: cid });
+                setSelectedNode(null);
+                setSelectedLink(null);
               }
               break;
             }
             default:
               // name — normal search
+              setActiveFilter(null);
               loadGraph(suggestion.label, hops);
               break;
           }
         },
-        [communityData, hops, loadGraph],
+        [applyFilter, hops, loadGraph],
       );
 
       const legendLinkItems = useMemo(() => {
@@ -920,22 +945,18 @@ const GraphViewer = memo(
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
 
-      const focusedCommunityNodesRef = useRef(focusedCommunityNodes);
-      focusedCommunityNodesRef.current = focusedCommunityNodes;
+      const activeFilterRef = useRef(activeFilter);
+      activeFilterRef.current = activeFilter;
 
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
-        // Clear edge-click highlights but preserve search-driven community focus
         setEdgeHighlightNodes(EMPTY_SET);
         setEdgeHighlightLinks(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
-        // Re-zoom to community focus if one is active
-        const focused = focusedCommunityNodesRef.current;
-        if (focused.size > 0) {
-          canvasRef.current?.zoomToNodes(focused, 600);
-        }
-      }, []);
+        // Re-apply the active search filter (e.g. community focus)
+        applyFilter(activeFilterRef.current);
+      }, [applyFilter]);
 
       // --- Early returns for loading/error/empty states ---
 
@@ -1565,29 +1586,23 @@ const GraphViewer = memo(
             highlightNodes={
               selectedLink
                 ? edgeHighlightNodes
-                : selectedNode
-                  ? undefined
-                  : focusedCommunityNodes.size > 0
-                    ? focusedCommunityNodes
-                    : highlights.highlightNodes
+                : focusedCommunityNodes.size > 0
+                  ? focusedCommunityNodes
+                  : highlights.highlightNodes
             }
             highlightLinks={
               selectedLink
                 ? edgeHighlightLinks
-                : selectedNode
-                  ? undefined
-                  : focusedCommunityNodes.size > 0
-                    ? EMPTY_SET
-                    : highlights.highlightLinks
+                : focusedCommunityNodes.size > 0
+                  ? EMPTY_SET
+                  : highlights.highlightLinks
             }
             labelNodes={
               selectedLink
                 ? edgeLabelNodes
-                : selectedNode
-                  ? undefined
-                  : focusedCommunityNodes.size > 0
-                    ? focusedCommunityNodes
-                    : highlights.labelNodes
+                : focusedCommunityNodes.size > 0
+                  ? focusedCommunityNodes
+                  : highlights.labelNodes
             }
             availableSubTypes={availableSubTypes}
             zIndex
