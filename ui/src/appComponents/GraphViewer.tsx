@@ -1508,6 +1508,7 @@ const GraphViewer = memo(
             onNodeClick={onNodeClick}
             onEdgeClick={onLinkClick}
             onStageClick={handleStageClick}
+            labelsVisible={labelsVisible}
             layoutMode={layoutMode}
             mode3d={mode3d}
             on3DAutoRotateChange={setRendererAutoRotate}
