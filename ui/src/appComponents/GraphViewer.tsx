@@ -927,7 +927,11 @@ const GraphViewer = memo(
         setEdgeHighlightNodes(EMPTY_SET);
         setEdgeHighlightLinks(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
-      }, []);
+        // Re-zoom to community focus if one is active
+        if (focusedCommunityNodes.size > 0) {
+          canvasRef.current?.zoomToNodes(focusedCommunityNodes, 600);
+        }
+      }, [focusedCommunityNodes]);
 
       // --- Early returns for loading/error/empty states ---
 
