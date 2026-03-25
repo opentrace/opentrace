@@ -461,6 +461,9 @@ const GraphViewer = memo(
         setHops(2);
         setSelectedNode(null);
         setSelectedLink(null);
+        setFocusedCommunityNodes(EMPTY_SET);
+        setHiddenNodeTypes(new Set());
+        setHiddenCommunities(new Set());
         if (lastSearchQuery) {
           loadGraph();
         }
