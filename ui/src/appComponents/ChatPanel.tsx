@@ -38,7 +38,11 @@ import {
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
-import { ChatTemplates, ChatParts, extractNodeIds } from '@opentrace/components/chat';
+import {
+  ChatTemplates,
+  ChatParts,
+  extractNodeIds,
+} from '@opentrace/components/chat';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
@@ -314,7 +318,10 @@ export default function ChatPanel({
     setStreaming(true);
 
     // Track in-flight tool calls by ID to match results later
-    const pendingTools = new Map<string, { idx: number; name: string; args: string }>(); // tool_call_id → {parts index, tool name, accumulated args}
+    const pendingTools = new Map<
+      string,
+      { idx: number; name: string; args: string }
+    >(); // tool_call_id → {parts index, tool name, accumulated args}
     let lastToolId = ''; // tracks the most recently started tool call for arg accumulation
     const { agent, progress } = getAgentHandle();
 
@@ -375,7 +382,11 @@ export default function ChatPanel({
               : JSON.stringify(chunk.content);
 
           if (toolCallId && pendingTools.has(toolCallId)) {
-            const { idx: partIdx, name: toolName, args: toolArgs } = pendingTools.get(toolCallId)!;
+            const {
+              idx: partIdx,
+              name: toolName,
+              args: toolArgs,
+            } = pendingTools.get(toolCallId)!;
             const isError =
               resultContent.startsWith('API error') ||
               resultContent.startsWith('Fetch failed');
@@ -394,12 +405,19 @@ export default function ChatPanel({
             // Highlight found nodes in the graph
             if (!isError) {
               const ids = extractNodeIds(toolName, resultContent, toolArgs);
-              console.log('[ChatPanel] extractNodeIds', { toolName, idCount: ids.length, ids: ids.slice(0, 5), toolArgs: toolArgs.slice(0, 200) });
+              console.log('[ChatPanel] extractNodeIds', {
+                toolName,
+                idCount: ids.length,
+                ids: ids.slice(0, 5),
+                toolArgs: toolArgs.slice(0, 200),
+              });
               if (ids.length > 0) {
                 for (const id of ids) chatFoundNodesRef.current.add(id);
                 setHasFoundNodes(true);
                 onChatHighlight?.(
-                  highlightEnabled ? new Set(chatFoundNodesRef.current) : new Set(),
+                  highlightEnabled
+                    ? new Set(chatFoundNodesRef.current)
+                    : new Set(),
                   highlightEnabled ? ids : [],
                 );
               }
@@ -447,7 +465,11 @@ export default function ChatPanel({
               updateLastParts((parts) => {
                 const idx = parts.length;
                 lastToolId = toolId;
-                pendingTools.set(toolId, { idx, name: tc.name!, args: tc.args || '' });
+                pendingTools.set(toolId, {
+                  idx,
+                  name: tc.name!,
+                  args: tc.args || '',
+                });
                 parts.push({
                   type: 'tool_call',
                   id: toolId,
@@ -607,7 +629,11 @@ export default function ChatPanel({
             <button
               className={`clear-chat-btn${highlightEnabled ? ' active' : ''}`}
               onClick={() => setHighlightEnabled((v) => !v)}
-              title={highlightEnabled ? 'Hide graph highlights' : 'Show graph highlights'}
+              title={
+                highlightEnabled
+                  ? 'Hide graph highlights'
+                  : 'Show graph highlights'
+              }
               style={{ opacity: highlightEnabled ? 1 : 0.5 }}
             >
               <svg

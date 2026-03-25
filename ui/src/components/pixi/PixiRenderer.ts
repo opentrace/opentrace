@@ -167,7 +167,8 @@ export class PixiRenderer {
   private hasHighlight = false;
 
   // Ping animation state — maps node ID → animation state
-  private pingNodes: Map<string, { startTime: number; glow: Sprite }> = new Map();
+  private pingNodes: Map<string, { startTime: number; glow: Sprite }> =
+    new Map();
   private static readonly PING_DURATION = 900; // ms
   private static readonly PING_SCALE = 1.6; // peak node scale multiplier
   private static readonly GLOW_SIZE = 3; // glow sprite scale relative to node
@@ -699,16 +700,18 @@ export class PixiRenderer {
       // ── Scale pulse: sharp pop then smooth settle ──
       const pulse = Math.sin(Math.PI * t) * (1 - t);
       const pingScale = 1 + (PixiRenderer.PING_SCALE - 1) * pulse;
-      const baseSize = (this.hasHighlight && !this.highlightNodes.has(id))
-        ? node.size * NODE_SIZE_DIMMED_SCALE
-        : node.size;
+      const baseSize =
+        this.hasHighlight && !this.highlightNodes.has(id)
+          ? node.size * NODE_SIZE_DIMMED_SCALE
+          : node.size;
       node.sprite.scale.set((baseSize / CIRCLE_RADIUS) * invScale * pingScale);
 
       // ── Glow: follow the sprite's actual position (handles 3D projection) ──
       const glow = ping.glow;
       glow.position.copyFrom(node.sprite.position);
       // Scale the glow relative to node size
-      const glowScale = (baseSize / CIRCLE_RADIUS) * invScale * PixiRenderer.GLOW_SIZE;
+      const glowScale =
+        (baseSize / CIRCLE_RADIUS) * invScale * PixiRenderer.GLOW_SIZE;
       glow.scale.set(glowScale * (1 + 0.3 * pulse)); // breathe slightly
       // Alpha envelope: quick ramp up (0→0.15), hold, then fade out
       const alphaIn = Math.min(1, t * 5); // 0→1 over first 20% of duration
@@ -830,7 +833,10 @@ export class PixiRenderer {
         this.pingNodes.delete(id);
       }
       const node = this.nodes.get(id);
-      if (!node) { missed.push(id); continue; }
+      if (!node) {
+        missed.push(id);
+        continue;
+      }
       triggered.push(id);
       const tex = getGlowTexture(this.app, node.color, this.textureCache);
       const glow = new Sprite(tex);
@@ -840,7 +846,11 @@ export class PixiRenderer {
       this.rippleContainer?.addChild(glow);
       this.pingNodes.set(id, { startTime: now, glow });
     }
-    console.log('[PixiRenderer] triggerPing', { triggered: triggered.length, missed: missed.length, missedIds: missed.slice(0, 3) });
+    console.log('[PixiRenderer] triggerPing', {
+      triggered: triggered.length,
+      missed: missed.length,
+      missedIds: missed.slice(0, 3),
+    });
   }
 
   setNodeVisibility(visibleIds: Set<string>): void {

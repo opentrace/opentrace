@@ -97,7 +97,11 @@ export function parseTraverseResult(raw: string): TraverseEntry[] | null {
  * Extract node IDs from a tool result (or args) based on the tool name.
  * Returns an array of node IDs found, or empty array on failure.
  */
-export function extractNodeIds(toolName: string, result: string, args?: string): string[] {
+export function extractNodeIds(
+  toolName: string,
+  result: string,
+  args?: string,
+): string[] {
   switch (toolName) {
     case 'search_graph': {
       const nodes = parseSearchResult(result);

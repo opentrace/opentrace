@@ -295,11 +295,18 @@ const GraphViewer = memo(
 
       // Compute edges between chat-highlighted nodes
       const chatHighlightLinks = useMemo(() => {
-        if (!chatHighlightNodes || chatHighlightNodes.size < 2) return EMPTY_SET;
+        if (!chatHighlightNodes || chatHighlightNodes.size < 2)
+          return EMPTY_SET;
         const links = new Set<string>();
         for (const link of graphData.links) {
-          const src = typeof link.source === 'object' ? link.source.id : String(link.source);
-          const tgt = typeof link.target === 'object' ? link.target.id : String(link.target);
+          const src =
+            typeof link.source === 'object'
+              ? link.source.id
+              : String(link.source);
+          const tgt =
+            typeof link.target === 'object'
+              ? link.target.id
+              : String(link.target);
           if (chatHighlightNodes.has(src) && chatHighlightNodes.has(tgt)) {
             links.add(`${src}-${tgt}`);
           }
@@ -1595,7 +1602,10 @@ const GraphViewer = memo(
                 selectedLink: !!selectedLink,
                 focusedCommunity: focusedCommunityNodes.size,
                 bfsHighlights: highlights.highlightNodes.size,
-                willApply: !selectedLink && focusedCommunityNodes.size === 0 && highlights.highlightNodes.size === 0,
+                willApply:
+                  !selectedLink &&
+                  focusedCommunityNodes.size === 0 &&
+                  highlights.highlightNodes.size === 0,
               });
             }
             return null;
