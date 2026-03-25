@@ -187,6 +187,167 @@
   border-bottom-color: var(--primary);
 }
 
+/* ── Chat history dropdown ── */
+.chat-history-wrapper {
+  position: relative;
+}
+
+.chat-history-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  width: 280px;
+  max-height: 360px;
+  background: var(--card);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-history-header {
+  padding: 10px 14px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.chat-history-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.chat-history-item {
+  position: relative;
+  padding: 10px 32px 10px 14px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+}
+
+.chat-history-item:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.chat-history-item.active {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  border-left: 2px solid var(--primary);
+}
+
+.chat-history-item-title {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+
+.chat-history-item-meta {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+
+.chat-history-item-delete {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.1s;
+}
+
+.chat-history-item:hover .chat-history-item-delete {
+  opacity: 1;
+}
+
+.chat-history-item-delete:hover {
+  background: color-mix(in oklch, var(--destructive, #ef4444) 15%, transparent);
+  color: var(--destructive, #ef4444);
+}
+
+/* Chat save card */
+.chat-save-card {
+  width: 100%;
+  max-width: 460px;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-save-card-info {
+  flex: 1;
+}
+
+.chat-save-card-info strong {
+  font-size: 0.8rem;
+  color: var(--foreground);
+}
+
+.chat-save-card-info p {
+  margin: 2px 0 0 0;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+/* Sliding toggle — matches PhysicsPanel toggle */
+.chat-save-card .chat-toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
+  border-radius: 9px;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.chat-save-card .chat-toggle-track.on {
+  background: var(--primary);
+}
+
+.chat-save-card .chat-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.15);
+}
+
+.chat-save-card .chat-toggle-track.on .chat-toggle-thumb {
+  transform: translateX(14px);
+}
+
 /* Streaming cursor blink */
 .streaming-cursor {
   display: inline-block;

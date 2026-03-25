@@ -33,6 +33,8 @@ import {
   saveModelChoice,
   loadLocalUrl,
   saveLocalUrl,
+  loadChatHistoryEnabled,
+  saveChatHistoryEnabled,
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
@@ -42,6 +44,7 @@ import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
 import { PRClient, parseRepoUrl } from '../pr/client';
 import { useResizablePanel } from '../hooks/useResizablePanel';
+import { useConversation } from '../chat/useConversation';
 import PRListPanel from './PRListPanel';
 import './ChatPanel.css';
 
@@ -88,12 +91,27 @@ export default function ChatPanel({
   const [localUrl, setLocalUrl] = useState(loadLocalUrl);
   const [localModels, setLocalModels] = useState<string[] | null>(null);
   const [localModelsFetching, setLocalModelsFetching] = useState(false);
+  const [historyEnabled, setHistoryEnabled] = useState(loadChatHistoryEnabled);
+  const {
+    conversationId,
+    conversations,
+    messages,
+    setMessages,
+    startNewConversation,
+    switchConversation,
+    deleteConversation,
+    persistMessages,
+    loadingConversation,
+  } = useConversation(repoUrl, historyEnabled);
+
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('chat');
+  const [showHistory, setShowHistory] = useState(false);
+  const historyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatMessage[]>(messages);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +135,11 @@ export default function ChatPanel({
   const agentKeyRef = useRef('');
   type AgentHandle = ReturnType<typeof createChatAgent>;
 
+  // Keep messagesRef in sync with state
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   // Auto-scroll only when the user is near the bottom
   const isNearBottomRef = useRef(true);
 
@@ -138,6 +161,21 @@ export default function ChatPanel({
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
+
+  // Close history dropdown on outside click
+  useEffect(() => {
+    if (!showHistory) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        historyRef.current &&
+        !historyRef.current.contains(e.target as Node)
+      ) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHistory]);
 
   const switchProvider = (id: string) => {
     setProviderId(id);
@@ -448,6 +486,10 @@ export default function ChatPanel({
     } finally {
       progress.setListener(null);
       setStreaming(false);
+      // Persist conversation after each completed turn (skip if user aborted)
+      if (!controller.signal.aborted) {
+        persistMessages(messagesRef.current, providerId, modelId);
+      }
     }
   };
 
@@ -455,7 +497,7 @@ export default function ChatPanel({
   const handleTemplate = (prompt: string) => sendMessage(prompt);
   const handleClearChat = () => {
     abortRef.current?.abort();
-    setMessages([]);
+    startNewConversation();
     setStreaming(false);
   };
 
@@ -521,28 +563,89 @@ export default function ChatPanel({
           )}
         </div>
         <div className="panel-header-actions">
-          {messages.length > 0 && (
-            <button
-              className="clear-chat-btn"
-              onClick={handleClearChat}
-              title="New chat"
-              data-testid="new-chat-btn"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+          {conversations.length > 0 && (
+            <div className="chat-history-wrapper" ref={historyRef}>
+              <button
+                className="clear-chat-btn"
+                onClick={() => setShowHistory((v) => !v)}
+                title="Chat history"
+                data-testid="chat-history-btn"
               >
-                <path d="M12 20h9" />
-                <path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z" />
-              </svg>
-            </button>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+              </button>
+              {showHistory && (
+                <div className="chat-history-dropdown">
+                  <div className="chat-history-header">
+                    <span>Recent conversations</span>
+                  </div>
+                  <div className="chat-history-list">
+                    {conversations.map((c) => (
+                      <div
+                        key={c.id}
+                        className={`chat-history-item ${c.id === conversationId ? 'active' : ''}`}
+                        onClick={() => {
+                          switchConversation(c.id);
+                          setShowHistory(false);
+                        }}
+                      >
+                        <div className="chat-history-item-title">{c.title}</div>
+                        <div className="chat-history-item-meta">
+                          {new Date(c.updatedAt).toLocaleDateString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                          {' \u00B7 '}
+                          {c.model}
+                        </div>
+                        <button
+                          className="chat-history-item-delete"
+                          title="Delete conversation"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteConversation(c.id);
+                          }}
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
+          <button
+            className="clear-chat-btn"
+            onClick={handleClearChat}
+            title="New chat"
+            data-testid="new-chat-btn"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 20h9" />
+              <path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.855z" />
+            </svg>
+          </button>
           <button className="close-btn" onClick={onClose}>
             &times;
           </button>
@@ -754,9 +857,35 @@ export default function ChatPanel({
       ) : (
         <>
           <div className="messages" ref={scrollRef} onScroll={handleScroll}>
-            {messages.length === 0 && (
+            {loadingConversation && (
+              <div className="empty-chat">
+                <p>Loading conversation...</p>
+              </div>
+            )}
+            {!loadingConversation && messages.length === 0 && (
               <div className="empty-chat">
                 <p>Ask me anything about your graph!</p>
+                <div
+                  className="chat-save-card"
+                  onClick={() => {
+                    const next = !historyEnabled;
+                    setHistoryEnabled(next);
+                    saveChatHistoryEnabled(next);
+                  }}
+                >
+                  <div className="chat-save-card-info">
+                    <strong>Save this conversation</strong>
+                    <p>
+                      Store this chat locally in your browser so you can resume
+                      it later.
+                    </p>
+                  </div>
+                  <div
+                    className={`chat-toggle-track${historyEnabled ? ' on' : ''}`}
+                  >
+                    <div className="chat-toggle-thumb" />
+                  </div>
+                </div>
                 <ChatTemplates onSelect={handleTemplate} />
               </div>
             )}
