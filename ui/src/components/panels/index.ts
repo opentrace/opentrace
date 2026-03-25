@@ -29,6 +29,7 @@ export type {
   GraphLegendProps,
   MobilePanelTab,
   GraphToolbarProps,
+  SearchSuggestion,
   TreeNodeData,
   DiscoverPanelProps,
 } from './types';

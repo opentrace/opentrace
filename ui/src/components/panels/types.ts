@@ -88,6 +88,18 @@ export interface MobilePanelTab {
   visible?: boolean;
 }
 
+/** A single autocomplete suggestion for the toolbar search. */
+export interface SearchSuggestion {
+  label: string;
+  category: 'name' | 'community';
+  /** Color for the leading dot indicator. */
+  color?: string;
+  /** Community label shown on the right side. */
+  communityLabel?: string;
+  /** Color for the community label. */
+  communityColor?: string;
+}
+
 export interface GraphToolbarProps {
   /** Logo element rendered at the leading edge of the header. */
   logo: React.ReactNode;
@@ -101,6 +113,10 @@ export interface GraphToolbarProps {
   searchDisabled?: boolean;
   /** Show a "Show All" reset button (e.g. when a search is active). */
   showResetButton?: boolean;
+  /** Autocomplete suggestions shown while typing in the search box. */
+  searchSuggestions?: SearchSuggestion[];
+  /** Called when a suggestion is selected (clicked or Enter). */
+  onSuggestionSelect?: (suggestion: SearchSuggestion) => void;
 
   // ─── Hops ──────────────────────────────────────────────────
   hops: number;

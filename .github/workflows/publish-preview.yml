@@ -9,7 +9,7 @@ on:
 jobs:
   publish-preview:
     name: Publish preview to PyPI
-    if: contains(github.event.pull_request.labels.*.name, 'publish-preview')
+    if: contains(github.event.pull_request.labels.*.name, 'preview-publish')
     runs-on: ubuntu-latest
     permissions:
       id-token: write

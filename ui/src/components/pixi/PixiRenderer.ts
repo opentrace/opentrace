@@ -474,6 +474,109 @@ export class PixiRenderer {
   }
 
   /**
+   * Incrementally add new nodes and edges without touching existing sprites.
+   */
+  async addData(
+    newNodes: GraphNode[],
+    newLinks: GraphLink[],
+    positions: Map<string, { x: number; y: number }>,
+    nodeColors: Map<string, string>,
+    nodeSizes: Map<string, number>,
+    linkColors: Map<string, string>,
+  ): Promise<void> {
+    if (this.initPromise) await this.initPromise;
+    if (
+      this.destroyed ||
+      !this.app ||
+      !this.nodeContainer ||
+      !this.labelContainer
+    )
+      return;
+
+    // Add only nodes not already present
+    for (const gn of newNodes) {
+      if (this.nodes.has(gn.id)) continue;
+
+      const pos = positions.get(gn.id) ?? { x: 0, y: 0 };
+      const color = nodeColors.get(gn.id) ?? '#888888';
+      const size = nodeSizes.get(gn.id) ?? 4;
+      const tex = getCircleTexture(this.app, color, this.textureCache);
+
+      const sprite = new Sprite(tex);
+      sprite.anchor.set(0.5);
+      sprite.scale.set(size / CIRCLE_RADIUS);
+      sprite.alpha = 0.9;
+      sprite.position.set(pos.x, pos.y);
+      this.nodeContainer.addChild(sprite);
+
+      const node: PixiNode = {
+        id: gn.id,
+        graphNode: gn,
+        x: pos.x,
+        y: pos.y,
+        size,
+        color,
+        sprite,
+        visible: true,
+      };
+      this.nodeIdToIndex.set(gn.id, this.nodeArray.length);
+      this.nodeArray.push(node);
+      this.nodes.set(gn.id, node);
+    }
+
+    // Add only edges not already present
+    const existingEdgeKeys = new Set(
+      this.edges.map((e) => `${e.sourceId}-${e.label}-${e.targetId}`),
+    );
+    for (const gl of newLinks) {
+      const sourceId =
+        typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
+      const targetId =
+        typeof gl.target === 'string' ? gl.target : (gl.target as GraphNode).id;
+      if (!this.nodes.has(sourceId) || !this.nodes.has(targetId)) continue;
+      const key = `${sourceId}-${gl.label}-${targetId}`;
+      if (existingEdgeKeys.has(key)) continue;
+      existingEdgeKeys.add(key);
+
+      const idx = this.edges.length;
+      this.edges.push({
+        sourceId,
+        targetId,
+        label: gl.label,
+        graphLink: gl,
+        color: linkColors.get(gl.label) ?? '#3b4048',
+      });
+
+      let sIdx = this.edgeIndex.get(sourceId);
+      if (!sIdx) {
+        sIdx = [];
+        this.edgeIndex.set(sourceId, sIdx);
+      }
+      sIdx.push(idx);
+      let tIdx = this.edgeIndex.get(targetId);
+      if (!tIdx) {
+        tIdx = [];
+        this.edgeIndex.set(targetId, tIdx);
+      }
+      tIdx.push(idx);
+
+      const color = linkColors.get(gl.label) ?? '#3b4048';
+      let group = this.edgeColorGroups.get(color);
+      if (!group) {
+        group = [];
+        this.edgeColorGroups.set(color, group);
+      }
+      group.push(idx);
+    }
+
+    this.bp = selectBreakpoint(this.nodeArray.length, this.breakpoints);
+    this.layoutSettled = false;
+    this.redrawAllEdges();
+    this.rebuildQuadtree();
+    this.applyCounterScale();
+  }
+
+  /**
    * Compute the inverse-scale factor for sprites/labels, adjusted by zoom exponent.
    * At exponent 1: fully cancels world zoom (fixed screen size).
    * At exponent 0: no cancellation (world-space scaling).

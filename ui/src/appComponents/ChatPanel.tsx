@@ -112,6 +112,7 @@ export default function ChatPanel({
   const historyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>(messages);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const keyInputRef = useRef<HTMLInputElement>(null);
   const localUrlInputRef = useRef<HTMLInputElement>(null);
@@ -292,6 +293,7 @@ export default function ChatPanel({
     const newMessages: ChatMessage[] = [...messages, userMsg];
     setMessages([...newMessages, assistantMsg]);
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setStreaming(true);
 
     // Track in-flight tool calls by ID to match results later
@@ -913,12 +915,23 @@ export default function ChatPanel({
             ))}
           </div>
           <div className="chat-input-area">
-            <input
-              type="text"
+            <textarea
+              ref={textareaRef}
+              rows={1}
               placeholder="Ask a question..."
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Auto-resize: reset then grow to content
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
             />
             <button
               onClick={handleSubmit}

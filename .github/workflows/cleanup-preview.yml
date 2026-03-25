@@ -9,8 +9,8 @@ jobs:
     name: Cleanup Preview
     runs-on: ubuntu-latest
     if: |
-      (github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'deploy-preview')) ||
-      (github.event.action == 'unlabeled' && github.event.label.name == 'deploy-preview')
+      (github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'preview-deploy')) ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'preview-deploy')
     steps:
       - name: Trigger preview cleanup
         run: |
