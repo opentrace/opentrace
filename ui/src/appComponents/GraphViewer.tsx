@@ -920,6 +920,9 @@ const GraphViewer = memo(
         }
       }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
 
+      const focusedCommunityNodesRef = useRef(focusedCommunityNodes);
+      focusedCommunityNodesRef.current = focusedCommunityNodes;
+
       const handleStageClick = useCallback(() => {
         setSelectedNode(null);
         setSelectedLink(null);
@@ -928,10 +931,11 @@ const GraphViewer = memo(
         setEdgeHighlightLinks(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
         // Re-zoom to community focus if one is active
-        if (focusedCommunityNodes.size > 0) {
-          canvasRef.current?.zoomToNodes(focusedCommunityNodes, 600);
+        const focused = focusedCommunityNodesRef.current;
+        if (focused.size > 0) {
+          canvasRef.current?.zoomToNodes(focused, 600);
         }
-      }, [focusedCommunityNodes]);
+      }, []);
 
       // --- Early returns for loading/error/empty states ---
 
