@@ -64,6 +64,7 @@ export {
   parseListNodesResult,
   parseGetNodeResult,
   parseTraverseResult,
+  extractNodeIds,
   type NodeResult,
   type TraverseRelationship,
   type TraverseEntry,

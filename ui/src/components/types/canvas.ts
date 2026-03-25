@@ -136,4 +136,6 @@ export interface GraphCanvasHandle {
   set3DAutoRotate?: (enabled: boolean) => void;
   /** Set label scale multiplier (independent of node size, default 1.0). */
   setLabelScale?: (scale: number) => void;
+  /** Trigger a ping/glow animation on the given node IDs. */
+  triggerPing?: (nodeIds: Iterable<string>) => void;
 }

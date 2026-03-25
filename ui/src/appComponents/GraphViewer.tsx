@@ -158,6 +158,7 @@ export interface GraphViewerHandle {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   selectNode: (nodeId: string, hops?: number) => void;
   reload: (query?: string, hops?: number) => Promise<void>;
+  triggerPing: (nodeIds: Iterable<string>) => void;
 }
 
 export interface GraphViewerProps {
@@ -187,6 +188,8 @@ export interface GraphViewerProps {
     nodes: GraphNode[];
     links: GraphLink[];
   }) => void;
+  /** Node IDs found by chat tool results — highlighted when no other selection is active */
+  chatHighlightNodes?: Set<string>;
   /** Animation settings from SettingsDrawer */
   animationSettings?: import('@opentrace/components').AnimationSettings;
 }
@@ -214,6 +217,7 @@ const GraphViewer = memo(
         showSettings,
         onToggleSettings,
         onGraphDataChange,
+        chatHighlightNodes,
         animationSettings,
       } = props;
 
@@ -288,6 +292,20 @@ const GraphViewer = memo(
       useEffect(() => {
         onGraphDataChange?.(graphData);
       }, [graphData, onGraphDataChange]);
+
+      // Compute edges between chat-highlighted nodes
+      const chatHighlightLinks = useMemo(() => {
+        if (!chatHighlightNodes || chatHighlightNodes.size < 2) return EMPTY_SET;
+        const links = new Set<string>();
+        for (const link of graphData.links) {
+          const src = typeof link.source === 'object' ? link.source.id : String(link.source);
+          const tgt = typeof link.target === 'object' ? link.target.id : String(link.target);
+          if (chatHighlightNodes.has(src) && chatHighlightNodes.has(tgt)) {
+            links.add(`${src}-${tgt}`);
+          }
+        }
+        return links;
+      }, [graphData.links, chatHighlightNodes]);
 
       const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(
         null,
@@ -652,6 +670,9 @@ const GraphViewer = memo(
             if (node) onNodeClick(node);
           },
           reload: (query?: string, hops?: number) => loadGraph(query, hops),
+          triggerPing: (nodeIds: Iterable<string>) => {
+            canvasRef.current?.triggerPing?.(nodeIds);
+          },
         }),
         [graphData, loadGraph, onNodeClick],
       );
@@ -1567,6 +1588,18 @@ const GraphViewer = memo(
 
           <GraphLegend items={legendItems} linkItems={legendLinkItems} />
 
+          {(() => {
+            if (chatHighlightNodes && chatHighlightNodes.size > 0) {
+              console.log('[GraphViewer] chatHighlightNodes', {
+                size: chatHighlightNodes.size,
+                selectedLink: !!selectedLink,
+                focusedCommunity: focusedCommunityNodes.size,
+                bfsHighlights: highlights.highlightNodes.size,
+                willApply: !selectedLink && focusedCommunityNodes.size === 0 && highlights.highlightNodes.size === 0,
+              });
+            }
+            return null;
+          })()}
           <PixiGraphCanvas
             ref={canvasRef}
             nodes={graphData.nodes}
@@ -1588,21 +1621,33 @@ const GraphViewer = memo(
                 ? edgeHighlightNodes
                 : focusedCommunityNodes.size > 0
                   ? focusedCommunityNodes
-                  : highlights.highlightNodes
+                  : highlights.highlightNodes.size > 0
+                    ? highlights.highlightNodes
+                    : chatHighlightNodes && chatHighlightNodes.size > 0
+                      ? chatHighlightNodes
+                      : highlights.highlightNodes
             }
             highlightLinks={
               selectedLink
                 ? edgeHighlightLinks
                 : focusedCommunityNodes.size > 0
                   ? EMPTY_SET
-                  : highlights.highlightLinks
+                  : highlights.highlightLinks.size > 0
+                    ? highlights.highlightLinks
+                    : chatHighlightLinks.size > 0
+                      ? chatHighlightLinks
+                      : highlights.highlightLinks
             }
             labelNodes={
               selectedLink
                 ? edgeLabelNodes
                 : focusedCommunityNodes.size > 0
                   ? focusedCommunityNodes
-                  : highlights.labelNodes
+                  : highlights.labelNodes.size > 0
+                    ? highlights.labelNodes
+                    : chatHighlightNodes && chatHighlightNodes.size > 0
+                      ? chatHighlightNodes
+                      : highlights.labelNodes
             }
             availableSubTypes={availableSubTypes}
             zIndex

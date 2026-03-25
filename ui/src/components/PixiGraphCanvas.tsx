@@ -485,6 +485,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         setLabelScale: (scale: number) => {
           rendererRef.current?.setLabelScale(scale);
         },
+        triggerPing: (nodeIds: Iterable<string>) => {
+          rendererRef.current?.triggerPing(nodeIds);
+        },
       }),
       [
         onNodeClick,

@@ -93,6 +93,43 @@ export function parseTraverseResult(raw: string): TraverseEntry[] | null {
   }
 }
 
+/**
+ * Extract node IDs from a tool result (or args) based on the tool name.
+ * Returns an array of node IDs found, or empty array on failure.
+ */
+export function extractNodeIds(toolName: string, result: string, args?: string): string[] {
+  switch (toolName) {
+    case 'search_graph': {
+      const nodes = parseSearchResult(result);
+      return nodes ? nodes.map((n) => n.id) : [];
+    }
+    case 'list_nodes': {
+      const nodes = parseListNodesResult(result);
+      return nodes ? nodes.map((n) => n.id) : [];
+    }
+    case 'get_node': {
+      const node = parseGetNodeResult(result);
+      return node ? [node.id] : [];
+    }
+    case 'traverse_graph': {
+      const entries = parseTraverseResult(result);
+      return entries ? entries.map((e) => e.node.id) : [];
+    }
+    case 'load_source': {
+      // Node ID is in the tool arguments, not the result
+      if (!args) return [];
+      try {
+        const parsed = JSON.parse(args);
+        return typeof parsed.nodeId === 'string' ? [parsed.nodeId] : [];
+      } catch {
+        return [];
+      }
+    }
+    default:
+      return [];
+  }
+}
+
 function isNode(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false;
   const o = v as Record<string, unknown>;

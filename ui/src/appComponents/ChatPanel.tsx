@@ -38,7 +38,7 @@ import {
 } from '../chat/storage';
 import { buildGraphContext } from '../chat/graphContext';
 import { createChatAgent, createLLM } from '../chat/agent';
-import { ChatTemplates, ChatParts } from '@opentrace/components/chat';
+import { ChatTemplates, ChatParts, extractNodeIds } from '@opentrace/components/chat';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
@@ -55,6 +55,8 @@ interface Props {
   onClose: () => void;
   onNodeSelect?: (nodeId: string) => void;
   onGraphChange?: (focusNodeId?: string) => Promise<void>;
+  /** Called with accumulated highlight set and the new IDs to ping */
+  onChatHighlight?: (allNodeIds: Set<string>, newNodeIds: string[]) => void;
   repoUrl?: string;
   onWidthChange?: (width: number) => void;
 }
@@ -64,6 +66,7 @@ export default function ChatPanel({
   onClose,
   onNodeSelect,
   onGraphChange,
+  onChatHighlight,
   repoUrl,
   onWidthChange,
 }: Props) {
@@ -107,6 +110,8 @@ export default function ChatPanel({
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [highlightEnabled, setHighlightEnabled] = useState(true);
+  const [hasFoundNodes, setHasFoundNodes] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const [showHistory, setShowHistory] = useState(false);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -114,6 +119,8 @@ export default function ChatPanel({
   const messagesRef = useRef<ChatMessage[]>(messages);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** Accumulated node IDs found by chat tool results */
+  const chatFoundNodesRef = useRef<Set<string>>(new Set());
   const keyInputRef = useRef<HTMLInputElement>(null);
   const localUrlInputRef = useRef<HTMLInputElement>(null);
   const localModelInputRef = useRef<HTMLInputElement>(null);
@@ -156,6 +163,16 @@ export default function ChatPanel({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Sync highlight state when toggle changes
+  useEffect(() => {
+    if (highlightEnabled && chatFoundNodesRef.current.size > 0) {
+      onChatHighlight?.(new Set(chatFoundNodesRef.current), []);
+    } else if (!highlightEnabled) {
+      onChatHighlight?.(new Set(), []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only fire on toggle change
+  }, [highlightEnabled]);
 
   // Cancel in-flight request on unmount
   useEffect(() => {
@@ -297,7 +314,8 @@ export default function ChatPanel({
     setStreaming(true);
 
     // Track in-flight tool calls by ID to match results later
-    const pendingTools = new Map<string, number>(); // tool_call_id → parts index
+    const pendingTools = new Map<string, { idx: number; name: string; args: string }>(); // tool_call_id → {parts index, tool name, accumulated args}
+    let lastToolId = ''; // tracks the most recently started tool call for arg accumulation
     const { agent, progress } = getAgentHandle();
 
     // Subscribe to sub-agent progress — pushes steps into active agent ToolCallParts
@@ -357,7 +375,7 @@ export default function ChatPanel({
               : JSON.stringify(chunk.content);
 
           if (toolCallId && pendingTools.has(toolCallId)) {
-            const partIdx = pendingTools.get(toolCallId)!;
+            const { idx: partIdx, name: toolName, args: toolArgs } = pendingTools.get(toolCallId)!;
             const isError =
               resultContent.startsWith('API error') ||
               resultContent.startsWith('Fetch failed');
@@ -373,6 +391,19 @@ export default function ChatPanel({
               }
               return parts;
             });
+            // Highlight found nodes in the graph
+            if (!isError) {
+              const ids = extractNodeIds(toolName, resultContent, toolArgs);
+              console.log('[ChatPanel] extractNodeIds', { toolName, idCount: ids.length, ids: ids.slice(0, 5), toolArgs: toolArgs.slice(0, 200) });
+              if (ids.length > 0) {
+                for (const id of ids) chatFoundNodesRef.current.add(id);
+                setHasFoundNodes(true);
+                onChatHighlight?.(
+                  highlightEnabled ? new Set(chatFoundNodesRef.current) : new Set(),
+                  highlightEnabled ? ids : [],
+                );
+              }
+            }
           }
           continue;
         }
@@ -415,7 +446,8 @@ export default function ChatPanel({
               const toolId = tc.id || `tc_${Date.now()}_${tc.name}`;
               updateLastParts((parts) => {
                 const idx = parts.length;
-                pendingTools.set(toolId, idx);
+                lastToolId = toolId;
+                pendingTools.set(toolId, { idx, name: tc.name!, args: tc.args || '' });
                 parts.push({
                   type: 'tool_call',
                   id: toolId,
@@ -428,6 +460,10 @@ export default function ChatPanel({
               });
             } else if (tc.args) {
               // Streaming args for existing tool call
+              // Also accumulate in pendingTools so args are available at result time
+              if (lastToolId && pendingTools.has(lastToolId)) {
+                pendingTools.get(lastToolId)!.args += tc.args;
+              }
               updateLastParts((parts) => {
                 // Find the last active tool_call part and append args
                 for (let i = parts.length - 1; i >= 0; i--) {
@@ -499,6 +535,10 @@ export default function ChatPanel({
     abortRef.current?.abort();
     startNewConversation();
     setStreaming(false);
+    chatFoundNodesRef.current.clear();
+    setHasFoundNodes(false);
+    setHighlightEnabled(true);
+    onChatHighlight?.(new Set(), []);
   };
 
   /** Switch to chat tab and send a pre-seeded prompt (used by PR panel) */
@@ -563,6 +603,35 @@ export default function ChatPanel({
           )}
         </div>
         <div className="panel-header-actions">
+          {hasFoundNodes && (
+            <button
+              className={`clear-chat-btn${highlightEnabled ? ' active' : ''}`}
+              onClick={() => setHighlightEnabled((v) => !v)}
+              title={highlightEnabled ? 'Hide graph highlights' : 'Show graph highlights'}
+              style={{ opacity: highlightEnabled ? 1 : 0.5 }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill={highlightEnabled ? 'currentColor' : 'none'}
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2" />
+                <path d="M12 20v2" />
+                <path d="M4.93 4.93l1.41 1.41" />
+                <path d="M17.66 17.66l1.41 1.41" />
+                <path d="M2 12h2" />
+                <path d="M20 12h2" />
+                <path d="M6.34 17.66l-1.41 1.41" />
+                <path d="M19.07 4.93l-1.41 1.41" />
+              </svg>
+            </button>
+          )}
           {conversations.length > 0 && (
             <div className="chat-history-wrapper" ref={historyRef}>
               <button
