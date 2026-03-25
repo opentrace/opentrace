@@ -98,6 +98,8 @@ export interface SearchSuggestion {
   communityLabel?: string;
   /** Color for the community label. */
   communityColor?: string;
+  /** Community ID — used for direct lookup when selecting a community suggestion. */
+  communityId?: number;
 }
 
 export interface GraphToolbarProps {

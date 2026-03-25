@@ -830,6 +830,7 @@ const GraphViewer = memo(
             label: name,
             category: 'community',
             color: communityData.colorMap.get(cid),
+            communityId: cid,
           });
         }
         return suggestions;
@@ -839,14 +840,7 @@ const GraphViewer = memo(
         (suggestion: SearchSuggestion) => {
           switch (suggestion.category) {
             case 'community': {
-              // Find community ID by name, then focus it
-              let cid: number | undefined;
-              for (const [id, name] of communityData.names) {
-                if (name === suggestion.label) {
-                  cid = id;
-                  break;
-                }
-              }
+              const cid = suggestion.communityId;
               if (cid !== undefined) {
                 const nodeIds = Object.entries(communityData.assignments)
                   .filter(([, id]) => id === cid)

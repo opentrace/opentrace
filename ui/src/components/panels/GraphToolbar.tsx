@@ -103,7 +103,6 @@ export default function GraphToolbar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const autocompleteRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
   const burgerRef = useRef<HTMLButtonElement>(null);
 
@@ -115,15 +114,9 @@ export default function GraphToolbar({
   // Close autocomplete on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (
-        autocompleteRef.current &&
-        !autocompleteRef.current.contains(e.target as Node)
-      ) {
-        // Check if click is inside any search input
-        const target = e.target as HTMLElement;
-        if (!target.closest('.ot-search-input')) {
-          setShowAutocomplete(false);
-        }
+      const target = e.target as HTMLElement;
+      if (!target.closest('.ot-search-container')) {
+        setShowAutocomplete(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -208,134 +201,137 @@ export default function GraphToolbar({
     [showAutocomplete, suggestions, activeIndex, selectSuggestion, onSearch],
   );
 
-  const autocompleteDropdown =
-    showAutocomplete && suggestions.length > 0 ? (
-      <div
-        ref={autocompleteRef}
-        className="ot-search-autocomplete"
-        role="listbox"
-      >
-        {suggestions.map((suggestion, idx) => {
-          const prevCategory = idx > 0 ? suggestions[idx - 1].category : null;
-          const showHeader = suggestion.category !== prevCategory;
-          return (
-            <div key={`${suggestion.category}-${suggestion.label}`}>
-              {showHeader && (
-                <div className="ot-ac-header">
-                  {CATEGORY_LABELS[suggestion.category]}
-                </div>
-              )}
-              <button
-                className={`ot-ac-item${idx === activeIndex ? ' ot-ac-item--active' : ''}`}
-                role="option"
-                aria-selected={idx === activeIndex}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  selectSuggestion(suggestion);
-                }}
-                onMouseEnter={() => setActiveIndex(idx)}
-              >
-                {suggestion.color && (
-                  <span
-                    className="ot-ac-dot"
-                    style={{ backgroundColor: suggestion.color }}
-                  />
-                )}
-                <span className="ot-ac-label">{suggestion.label}</span>
-                {suggestion.communityLabel ? (
-                  <span
-                    className="ot-ac-community"
-                    style={{ color: suggestion.communityColor }}
-                  >
-                    {suggestion.communityLabel}
-                  </span>
-                ) : (
-                  <span className="ot-ac-category">{suggestion.category}</span>
-                )}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    ) : null;
-
-  const searchMarkup = (id: string) => (
-    <div className="ot-search-container">
-      <input
-        type="text"
-        placeholder="Search nodes..."
-        value={searchQuery}
-        onChange={(e) => {
-          onSearchQueryChange(e.target.value);
-          setShowAutocomplete(true);
-          setActiveIndex(-1);
-        }}
-        onFocus={() => setShowAutocomplete(true)}
-        onKeyDown={handleSearchKeyDown}
-        className="ot-search-input"
-        role="combobox"
-        aria-expanded={showAutocomplete && suggestions.length > 0}
-        aria-autocomplete="list"
-        aria-controls={`ot-search-autocomplete-${id}`}
-        autoComplete="off"
-      />
-      <div className="ot-search-params">
-        <label htmlFor={`ot-hops-input-${id}`}>Hops:</label>
+  const searchMarkup = (id: string) => {
+    const dropdownId = `ot-search-autocomplete-${id}`;
+    return (
+      <div className="ot-search-container">
         <input
-          id={`ot-hops-input-${id}`}
-          type="number"
-          min="0"
-          max={maxHops}
-          value={hops}
-          onChange={(e) =>
-            onHopsChange(
-              Math.min(maxHops, Math.max(0, parseInt(e.target.value) || 0)),
-            )
-          }
-          className="ot-hops-input"
-          title={`Number of connection hops to include (max ${maxHops})`}
+          type="text"
+          placeholder="Search nodes..."
+          value={searchQuery}
+          onChange={(e) => {
+            onSearchQueryChange(e.target.value);
+            setShowAutocomplete(true);
+            setActiveIndex(-1);
+          }}
+          onFocus={() => setShowAutocomplete(true)}
+          onKeyDown={handleSearchKeyDown}
+          className="ot-search-input"
+          role="combobox"
+          aria-expanded={showAutocomplete && suggestions.length > 0}
+          aria-autocomplete="list"
+          aria-controls={dropdownId}
+          autoComplete="off"
         />
-      </div>
-      <div className="ot-search-actions">
-        {searchQuery && (
+        <div className="ot-search-params">
+          <label htmlFor={`ot-hops-input-${id}`}>Hops:</label>
+          <input
+            id={`ot-hops-input-${id}`}
+            type="number"
+            min="0"
+            max={maxHops}
+            value={hops}
+            onChange={(e) =>
+              onHopsChange(
+                Math.min(maxHops, Math.max(0, parseInt(e.target.value) || 0)),
+              )
+            }
+            className="ot-hops-input"
+            title={`Number of connection hops to include (max ${maxHops})`}
+          />
+        </div>
+        <div className="ot-search-actions">
+          {searchQuery && (
+            <button
+              className="ot-clear-search"
+              onClick={() => {
+                onReset();
+                setShowAutocomplete(false);
+              }}
+              title="Clear search"
+            >
+              &times;
+            </button>
+          )}
           <button
-            className="ot-clear-search"
+            className="ot-search-btn"
             onClick={() => {
-              onReset();
+              onSearch();
               setShowAutocomplete(false);
             }}
-            title="Clear search"
+            title="Query API and rerender"
+            disabled={searchDisabled}
           >
-            &times;
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
           </button>
-        )}
-        <button
-          className="ot-search-btn"
-          onClick={() => {
-            onSearch();
-            setShowAutocomplete(false);
-          }}
-          title="Query API and rerender"
-          disabled={searchDisabled}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        </div>
+        {showAutocomplete && suggestions.length > 0 && (
+          <div
+            id={dropdownId}
+            className="ot-search-autocomplete"
+            role="listbox"
           >
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        </button>
+            {suggestions.map((suggestion, idx) => {
+              const prevCategory =
+                idx > 0 ? suggestions[idx - 1].category : null;
+              const showHeader = suggestion.category !== prevCategory;
+              return (
+                <div key={`${suggestion.category}-${suggestion.label}`}>
+                  {showHeader && (
+                    <div className="ot-ac-header">
+                      {CATEGORY_LABELS[suggestion.category]}
+                    </div>
+                  )}
+                  <button
+                    className={`ot-ac-item${idx === activeIndex ? ' ot-ac-item--active' : ''}`}
+                    role="option"
+                    aria-selected={idx === activeIndex}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectSuggestion(suggestion);
+                    }}
+                    onMouseEnter={() => setActiveIndex(idx)}
+                  >
+                    {suggestion.color && (
+                      <span
+                        className="ot-ac-dot"
+                        style={{ backgroundColor: suggestion.color }}
+                      />
+                    )}
+                    <span className="ot-ac-label">{suggestion.label}</span>
+                    {suggestion.communityLabel ? (
+                      <span
+                        className="ot-ac-community"
+                        style={{ color: suggestion.communityColor }}
+                      >
+                        {suggestion.communityLabel}
+                      </span>
+                    ) : (
+                      <span className="ot-ac-category">
+                        {suggestion.category}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
-      {autocompleteDropdown}
-    </div>
-  );
+    );
+  };
 
   return (
     <header className={`ot-toolbar${className ? ` ${className}` : ''}`}>
