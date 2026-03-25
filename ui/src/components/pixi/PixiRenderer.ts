@@ -588,6 +588,15 @@ export class PixiRenderer {
     return Math.pow(1 / this.vp.scale, this.zoomSizeExponent);
   }
 
+  /**
+   * Inverse-scale for labels only — always fully cancels viewport zoom
+   * (equivalent to exponent=1) so labels stay at constant screen-pixel size.
+   * The separate labelScaleMultiplier controls user-adjustable sizing.
+   */
+  private labelInvScale(): number {
+    return 1 / this.vp.scale;
+  }
+
   /** Counter-scale all sprites, labels, and edges for current viewport scale. */
   private applyCounterScale(): void {
     const invScale = this.zoomInvScale();
@@ -617,15 +626,16 @@ export class PixiRenderer {
       }
     }
 
-    this.applyLabelCulling(wantLabel, invScale);
+    const lblInv = this.labelInvScale();
+    this.applyLabelCulling(wantLabel, lblInv);
 
     // Update scale + position for visible labels (skip in 3D — ticker handles it)
     if (!this.mode3d) {
       const lm = this.labelScaleMultiplier;
       for (const node of wantLabel) {
         if (!node.label?.visible) continue;
-        node.label.scale.set(invScale * lm);
-        const gap = (node.size + 4) * invScale * lm;
+        node.label.scale.set(lblInv * lm);
+        const gap = (node.size + 4) * lblInv * lm;
         node.label.position.set(
           node.sprite.position.x + gap,
           node.sprite.position.y,
@@ -745,12 +755,12 @@ export class PixiRenderer {
     }
     // Re-cull labels for the new visible set
     if (this.showAllLabels) {
-      const invScale = this.zoomInvScale();
+      const lblInv = this.labelInvScale();
       const wantLabel: PixiNode[] = [];
       for (const node of this.nodes.values()) {
         if (node.visible) wantLabel.push(node);
       }
-      this.applyLabelCulling(wantLabel, invScale);
+      this.applyLabelCulling(wantLabel, lblInv);
     }
     if (!this.mode3d) {
       this.redrawAllEdges();
@@ -809,7 +819,7 @@ export class PixiRenderer {
     }
 
     // Pass 2: cull overlapping labels (largest nodes first)
-    this.applyLabelCulling(wantLabel, invScale);
+    this.applyLabelCulling(wantLabel, this.labelInvScale());
 
     // In 3D mode, the ticker redraws edges; skip here to avoid 2D position flash
     if (!this.mode3d) {
@@ -1156,7 +1166,7 @@ export class PixiRenderer {
 
   /** Create a label Text for a node. Positioned to the right of the node. */
   private createLabel(node: PixiNode): Text {
-    const invScale = this.zoomInvScale();
+    const lblInv = this.labelInvScale();
     const label = new Text({
       text: node.graphNode.name || node.id,
       style: new TextStyle({
@@ -1175,8 +1185,8 @@ export class PixiRenderer {
     // Anchor left-center, positioned to the right of the node
     label.anchor.set(0, 0.5);
     const lm = this.labelScaleMultiplier;
-    label.scale.set(invScale * lm);
-    const gap = (node.size + 4) * invScale * lm;
+    label.scale.set(lblInv * lm);
+    const gap = (node.size + 4) * lblInv * lm;
     label.position.set(node.sprite.position.x + gap, node.sprite.position.y);
     this.labelContainer!.addChild(label);
     return label;
@@ -1204,7 +1214,7 @@ export class PixiRenderer {
   private runLabelCull(): void {
     this.lastLabelCull = performance.now();
     if (!this.showAllLabels) return;
-    const invScale = this.zoomInvScale();
+    const invScale = this.labelInvScale();
     const wantLabel: PixiNode[] = [];
     for (const node of this.nodes.values()) {
       if (!node.visible) continue;
@@ -1723,6 +1733,7 @@ export class PixiRenderer {
     }
 
     const invScale = this.zoomInvScale();
+    const lblInv = this.labelInvScale();
     for (const node of this.nodeArray) {
       if (!node.visible) continue;
       // Skip the dragged node — its sprite position is controlled by pointermove
@@ -1756,9 +1767,9 @@ export class PixiRenderer {
       }
 
       if (node.label?.visible) {
-        const gap = (node.size + 4) * invScale * depthScale;
+        const gap = (node.size + 4) * lblInv * depthScale;
         node.label.position.set(p.px + gap, p.py);
-        node.label.scale.set(invScale * depthScale * this.labelScaleMultiplier);
+        node.label.scale.set(lblInv * depthScale * this.labelScaleMultiplier);
         node.label.zIndex = depthZ;
       }
     }
