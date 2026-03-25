@@ -537,6 +537,7 @@
   border-radius: var(--radius);
   color: var(--primary-foreground);
   padding: 8px 12px;
+  min-height: 36px;
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
