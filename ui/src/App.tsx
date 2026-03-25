@@ -46,6 +46,9 @@ function App() {
 
   const graphViewerRef = useRef<GraphViewerHandle>(null);
   const [chatGraphData, setChatGraphData] = useState(EMPTY_GRAPH);
+  const [chatHighlightNodes, setChatHighlightNodes] = useState<Set<string>>(
+    () => new Set(),
+  );
   const hasRepoParam = useRef(
     new URLSearchParams(window.location.search).has('repo'),
   );
@@ -201,6 +204,7 @@ function App() {
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
           onGraphDataChange={setChatGraphData}
+          chatHighlightNodes={chatHighlightNodes}
           animationSettings={animationSettings}
         />
 
@@ -210,6 +214,12 @@ function App() {
             onClose={() => setShowChat(false)}
             onNodeSelect={(nodeId) => {
               graphViewerRef.current?.selectNode(nodeId);
+            }}
+            onChatHighlight={(allIds, newIds) => {
+              setChatHighlightNodes(allIds);
+              if (newIds.length > 0) {
+                graphViewerRef.current?.triggerPing(newIds);
+              }
             }}
             onGraphChange={async (focusNodeId) => {
               // Reload scoped to the PR node — 2 hops shows PR → Files → their neighbors

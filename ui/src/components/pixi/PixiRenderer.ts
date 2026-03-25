@@ -42,6 +42,7 @@ import type { GraphNode, GraphLink } from '../graph/types';
 import type { SelectedEdge } from '../types/graph';
 import {
   getCircleTexture,
+  getGlowTexture,
   clearTextureCache,
   CIRCLE_RADIUS,
 } from './spriteTextures';
@@ -121,6 +122,7 @@ export class PixiRenderer {
   private edgeBgGfx: Graphics | null = null;
   private edgeFgGfx: Graphics | null = null;
   private nodeContainer: Container | null = null;
+  private rippleContainer: Container | null = null;
   private labelContainer: Container | null = null;
 
   // Data
@@ -163,6 +165,13 @@ export class PixiRenderer {
   private highlightNodes: Set<string> = new Set();
   private highlightLinks: Set<string> = new Set();
   private hasHighlight = false;
+
+  // Ping animation state — maps node ID → animation state
+  private pingNodes: Map<string, { startTime: number; glow: Sprite }> =
+    new Map();
+  private static readonly PING_DURATION = 900; // ms
+  private static readonly PING_SCALE = 1.6; // peak node scale multiplier
+  private static readonly GLOW_SIZE = 3; // glow sprite scale relative to node
 
   // Show-all-labels mode (toggled from control panel)
   private showAllLabels = true;
@@ -261,6 +270,10 @@ export class PixiRenderer {
     world.addChild(nodeContainer);
     this.nodeContainer = nodeContainer;
 
+    const rippleContainer = new Container();
+    world.addChild(rippleContainer);
+    this.rippleContainer = rippleContainer;
+
     const labelContainer = new Container();
     labelContainer.sortableChildren = true;
     world.addChild(labelContainer);
@@ -291,6 +304,7 @@ export class PixiRenderer {
           // Rotation paused and no pending debounce — cull once for the static view
           this.debouncedLabelCull();
         }
+        this.applyPingAnimations();
         return; // skip counter-scale — 3D handles its own scaling
       }
 
@@ -299,6 +313,8 @@ export class PixiRenderer {
       if (currentInv !== this.lastAppliedInvScale) {
         this.applyCounterScale();
       }
+
+      this.applyPingAnimations();
     });
 
     // Pointer events on the canvas — cleaned up via AbortController in destroy()
@@ -326,6 +342,8 @@ export class PixiRenderer {
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     clearTextureCache(this.textureCache);
+    for (const ping of this.pingNodes.values()) ping.glow.destroy();
+    this.pingNodes.clear();
     this.nodes.clear();
     this.nodeArray = [];
     this.nodeIdToIndex.clear();
@@ -654,6 +672,62 @@ export class PixiRenderer {
     }
   }
 
+  /**
+   * Apply ping (pulse + glow) animations to newly highlighted nodes.
+   * Node scale pops then settles; glow sprite fades in then out.
+   */
+  private applyPingAnimations(): void {
+    if (this.pingNodes.size === 0) return;
+    const now = performance.now();
+    const invScale = this.zoomInvScale();
+    const expired: string[] = [];
+
+    for (const [id, ping] of this.pingNodes) {
+      const elapsed = now - ping.startTime;
+      if (elapsed >= PixiRenderer.PING_DURATION) {
+        expired.push(id);
+        continue;
+      }
+      const node = this.nodes.get(id);
+      if (!node?.visible) {
+        expired.push(id);
+        continue;
+      }
+
+      // t goes 0→1 over the duration
+      const t = elapsed / PixiRenderer.PING_DURATION;
+
+      // ── Scale pulse: sharp pop then smooth settle ──
+      const pulse = Math.sin(Math.PI * t) * (1 - t);
+      const pingScale = 1 + (PixiRenderer.PING_SCALE - 1) * pulse;
+      const baseSize =
+        this.hasHighlight && !this.highlightNodes.has(id)
+          ? node.size * NODE_SIZE_DIMMED_SCALE
+          : node.size;
+      node.sprite.scale.set((baseSize / CIRCLE_RADIUS) * invScale * pingScale);
+
+      // ── Glow: follow the sprite's actual position (handles 3D projection) ──
+      const glow = ping.glow;
+      glow.position.copyFrom(node.sprite.position);
+      // Scale the glow relative to node size
+      const glowScale =
+        (baseSize / CIRCLE_RADIUS) * invScale * PixiRenderer.GLOW_SIZE;
+      glow.scale.set(glowScale * (1 + 0.3 * pulse)); // breathe slightly
+      // Alpha envelope: quick ramp up (0→0.15), hold, then fade out
+      const alphaIn = Math.min(1, t * 5); // 0→1 over first 20% of duration
+      const alphaOut = Math.max(0, 1 - (t - 0.5) * 2); // 1→0 over last 50%
+      glow.alpha = 0.45 * Math.min(alphaIn, alphaOut);
+    }
+
+    for (const id of expired) {
+      const ping = this.pingNodes.get(id);
+      if (ping) {
+        ping.glow.destroy();
+        this.pingNodes.delete(id);
+      }
+    }
+  }
+
   // ─── Position Updates (called from simulation tick) ───────────────
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
@@ -743,6 +817,40 @@ export class PixiRenderer {
     this.highlightLinks = highlightLinks;
     this.hasHighlight = highlightNodes.size > 0;
     this.applyVisuals();
+  }
+
+  /** Trigger a ping/glow animation on the given node IDs (replays even if already highlighted). */
+  triggerPing(nodeIds: Iterable<string>): void {
+    if (!this.app) return;
+    const now = performance.now();
+    const triggered: string[] = [];
+    const missed: string[] = [];
+    for (const id of nodeIds) {
+      // Remove existing ping so it replays
+      const existing = this.pingNodes.get(id);
+      if (existing) {
+        existing.glow.destroy();
+        this.pingNodes.delete(id);
+      }
+      const node = this.nodes.get(id);
+      if (!node) {
+        missed.push(id);
+        continue;
+      }
+      triggered.push(id);
+      const tex = getGlowTexture(this.app, node.color, this.textureCache);
+      const glow = new Sprite(tex);
+      glow.anchor.set(0.5);
+      glow.position.copyFrom(node.sprite.position);
+      glow.alpha = 0;
+      this.rippleContainer?.addChild(glow);
+      this.pingNodes.set(id, { startTime: now, glow });
+    }
+    console.log('[PixiRenderer] triggerPing', {
+      triggered: triggered.length,
+      missed: missed.length,
+      missedIds: missed.slice(0, 3),
+    });
   }
 
   setNodeVisibility(visibleIds: Set<string>): void {

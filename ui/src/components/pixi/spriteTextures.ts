@@ -50,6 +50,37 @@ export function getCircleTexture(
   return tex;
 }
 
+const GLOW_RADIUS = 48; // outer radius of the glow texture
+const GLOW_RINGS = 8; // number of concentric rings to simulate gradient
+
+/**
+ * Get (or create) a soft glow texture for the given hex color.
+ * Draws concentric filled circles with decreasing alpha to simulate a radial gradient.
+ */
+export function getGlowTexture(
+  app: Application,
+  color: string,
+  cache: Map<string, Texture>,
+): Texture {
+  const key = `glow:${color}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const g = new Graphics();
+  // Draw rings from outer (faint) to inner (bright) so inner overwrites outer
+  for (let i = GLOW_RINGS; i >= 0; i--) {
+    const t = i / GLOW_RINGS; // 1 = outermost, 0 = center
+    const r = GLOW_RADIUS * (0.3 + 0.7 * t); // rings from 30% to 100% of radius
+    const alpha = 0.5 * (1 - t); // 0 at edge, 0.5 at center
+    g.circle(GLOW_RADIUS, GLOW_RADIUS, r);
+    g.fill({ color, alpha });
+  }
+  const tex = app.renderer.generateTexture(g);
+  g.destroy();
+  cache.set(key, tex);
+  return tex;
+}
+
 /** Clear and destroy all textures in the given cache. */
 export function clearTextureCache(cache: Map<string, Texture>): void {
   for (const tex of cache.values()) {
