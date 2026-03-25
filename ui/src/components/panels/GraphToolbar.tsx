@@ -112,11 +112,6 @@ export default function GraphToolbar({
     [searchSuggestions, searchQuery],
   );
 
-  // Reset active index when suggestions change
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [suggestions]);
-
   // Close autocomplete on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -221,8 +216,7 @@ export default function GraphToolbar({
         role="listbox"
       >
         {suggestions.map((suggestion, idx) => {
-          const prevCategory =
-            idx > 0 ? suggestions[idx - 1].category : null;
+          const prevCategory = idx > 0 ? suggestions[idx - 1].category : null;
           const showHeader = suggestion.category !== prevCategory;
           return (
             <div key={`${suggestion.category}-${suggestion.label}`}>
@@ -256,9 +250,7 @@ export default function GraphToolbar({
                     {suggestion.communityLabel}
                   </span>
                 ) : (
-                  <span className="ot-ac-category">
-                    {suggestion.category}
-                  </span>
+                  <span className="ot-ac-category">{suggestion.category}</span>
                 )}
               </button>
             </div>
@@ -276,6 +268,7 @@ export default function GraphToolbar({
         onChange={(e) => {
           onSearchQueryChange(e.target.value);
           setShowAutocomplete(true);
+          setActiveIndex(-1);
         }}
         onFocus={() => setShowAutocomplete(true)}
         onKeyDown={handleSearchKeyDown}
