@@ -1565,23 +1565,29 @@ const GraphViewer = memo(
             highlightNodes={
               selectedLink
                 ? edgeHighlightNodes
-                : focusedCommunityNodes.size > 0
-                  ? focusedCommunityNodes
-                  : highlights.highlightNodes
+                : selectedNode
+                  ? undefined
+                  : focusedCommunityNodes.size > 0
+                    ? focusedCommunityNodes
+                    : highlights.highlightNodes
             }
             highlightLinks={
               selectedLink
                 ? edgeHighlightLinks
-                : focusedCommunityNodes.size > 0
-                  ? EMPTY_SET
-                  : highlights.highlightLinks
+                : selectedNode
+                  ? undefined
+                  : focusedCommunityNodes.size > 0
+                    ? EMPTY_SET
+                    : highlights.highlightLinks
             }
             labelNodes={
               selectedLink
                 ? edgeLabelNodes
-                : focusedCommunityNodes.size > 0
-                  ? focusedCommunityNodes
-                  : highlights.labelNodes
+                : selectedNode
+                  ? undefined
+                  : focusedCommunityNodes.size > 0
+                    ? focusedCommunityNodes
+                    : highlights.labelNodes
             }
             availableSubTypes={availableSubTypes}
             zIndex
