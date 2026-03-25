@@ -299,16 +299,11 @@ const GraphViewer = memo(
           return EMPTY_SET;
         const links = new Set<string>();
         for (const link of graphData.links) {
-          const src =
-            typeof link.source === 'object'
-              ? link.source.id
-              : String(link.source);
-          const tgt =
-            typeof link.target === 'object'
-              ? link.target.id
-              : String(link.target);
-          if (chatHighlightNodes.has(src) && chatHighlightNodes.has(tgt)) {
-            links.add(`${src}-${tgt}`);
+          if (
+            chatHighlightNodes.has(link.source) &&
+            chatHighlightNodes.has(link.target)
+          ) {
+            links.add(`${link.source}-${link.target}`);
           }
         }
         return links;
