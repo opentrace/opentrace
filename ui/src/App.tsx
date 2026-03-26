@@ -26,7 +26,7 @@ import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
 import { useStore } from './store';
-import { loadTheme, loadMode } from './config/theme';
+import './App.css';
 
 const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
   nodes: [],
@@ -197,13 +197,7 @@ function App({ version, buildTime, initialRepoUrl }: AppProps = {}) {
   );
 
   return (
-    <div
-      className="app"
-      data-ot-root=""
-      data-theme={loadTheme()}
-      data-mode={loadMode()}
-      ref={containerRef}
-    >
+    <div className="app" ref={containerRef}>
       <div className="app-body">
         <GraphViewer
           ref={graphViewerRef}

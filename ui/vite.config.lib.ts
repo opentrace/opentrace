@@ -62,7 +62,7 @@ export default defineConfig({
         store: resolve(__dirname, 'src/store/index.ts'),
         job: resolve(__dirname, 'src/job/index.ts'),
         'app-components': resolve(__dirname, 'src/appComponents/index.ts'),
-        app: resolve(__dirname, 'src/lib-app-entry.ts'),
+        app: resolve(__dirname, 'src/OpenTraceApp.tsx'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],

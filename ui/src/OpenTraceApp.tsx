@@ -17,6 +17,8 @@
 import { StoreProvider } from './store';
 import { JobServiceProvider } from './job';
 import App from './App';
+import './styles/index.css';
+import './App.css';
 
 export interface OpenTraceAppProps {
   /** Shown in the version footer (bottom-right). Omit to hide the footer. */
