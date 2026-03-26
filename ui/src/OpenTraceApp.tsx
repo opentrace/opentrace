@@ -25,6 +25,8 @@ export interface OpenTraceAppProps {
   version?: string;
   /** Build timestamp shown in the version footer. Omit to hide. */
   buildTime?: string;
+  /** Initial repository URL to index or open. */
+  repoUrl?: string;
 }
 
 /**
@@ -42,11 +44,15 @@ export interface OpenTraceAppProps {
  * Note: requires Cross-Origin Isolation headers (COOP/COEP) for the
  * in-browser WASM graph store.
  */
-export function OpenTraceApp({ version, buildTime }: OpenTraceAppProps = {}) {
+export function OpenTraceApp({
+  version,
+  buildTime,
+  repoUrl,
+}: OpenTraceAppProps = {}) {
   return (
     <StoreProvider>
       <JobServiceProvider>
-        <App version={version} buildTime={buildTime} />
+        <App version={version} buildTime={buildTime} initialRepoUrl={repoUrl} />
       </JobServiceProvider>
     </StoreProvider>
   );
