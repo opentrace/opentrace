@@ -26,7 +26,6 @@ import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
 import { useStore } from './store';
-import './App.css';
 
 const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
   nodes: [],
