@@ -723,7 +723,7 @@ export class LadybugGraphStore implements GraphStore {
    */
   private async batchedNeighborsFull(
     frontier: Set<string>,
-    visited: Set<string>,
+    _visited: Set<string>,
     direction: 'outgoing' | 'incoming' | 'both',
     relType?: string,
   ): Promise<
