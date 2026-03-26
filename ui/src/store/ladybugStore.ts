@@ -157,6 +157,40 @@ const FLUSH_CHUNK_SIZE = 500;
  *  with certain characters — explicit UTF-8 encoding avoids this. */
 const CSV_ENCODER = new TextEncoder();
 
+// ---- Debug performance logging ----
+
+/**
+ * Debug performance logging, controlled via localStorage:
+ *   ot:debug = '1'  → method-level summaries (searchNodes, traverse, etc.)
+ *   ot:debug = '2'  → method summaries + every individual Cypher query
+ */
+const DEBUG_KEY = 'ot:debug';
+function debugLevel(): number {
+  try {
+    return Number(localStorage.getItem(DEBUG_KEY) || '0');
+  } catch {
+    return 0;
+  }
+}
+function logPerf(
+  method: string,
+  params: Record<string, unknown>,
+  count: number,
+  ms: number,
+): void {
+  if (debugLevel() < 1) return;
+  console.debug(
+    `[LadybugStore] ${method}(${JSON.stringify(params)}) => ${count} results in ${ms.toFixed(1)}ms`,
+  );
+}
+function logQuery(cypher: string, rowCount: number, ms: number): void {
+  if (debugLevel() < 2) return;
+  const short = cypher.length > 120 ? cypher.slice(0, 117) + '...' : cypher;
+  console.debug(
+    `[LadybugStore] query: ${short} => ${rowCount} rows in ${ms.toFixed(1)}ms`,
+  );
+}
+
 // ---- Cypher helpers ----
 
 /** Escape a string for use inside a Cypher single-quoted literal. */
@@ -215,11 +249,19 @@ function unionAllNodes(where?: string, suffix?: string): string {
   );
 }
 
-/** Build a UNION ALL text search across all typed node tables. */
+/** Build a UNION ALL text search across all typed node tables (IDs only). */
 function unionAllTextSearch(escapedLower: string): string {
   return NODE_TYPES.map(
     (t) =>
       `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id`,
+  ).join(' UNION ALL ');
+}
+
+/** Build a UNION ALL text search returning full node data (saves a round-trip). */
+function unionAllTextSearchFull(escapedLower: string): string {
+  return NODE_TYPES.map(
+    (t) =>
+      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id, '${t}' AS type, n.name AS name, n.properties AS properties`,
   ).join(' UNION ALL ');
 }
 
@@ -299,6 +341,15 @@ export class LadybugGraphStore implements GraphStore {
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
 
+  /** LRU node cache: id → {type, name, properties}. Serves getNode and
+   *  fetchNodesByIds from JS memory without WASM round-trips. Capped at
+   *  NODE_CACHE_MAX entries — Map insertion order acts as the eviction queue. */
+  private nodeCache = new Map<
+    string,
+    { type: string; name: string; properties: string }
+  >();
+  private static readonly NODE_CACHE_MAX = 10_000;
+
   /** Package node IDs already written to LadybugDB. Packages are shared across
    *  repos so the same ID can arrive from multiple pipeline runs — skip
    *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
@@ -371,9 +422,11 @@ export class LadybugGraphStore implements GraphStore {
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
+          const qt0 = performance.now();
           const result = await this.conn.query(cypher);
           try {
             const rows = await result.getAllObjects();
+            logQuery(cypher, rows.length, performance.now() - qt0);
             resolve(rows);
           } finally {
             await result.close();
@@ -401,6 +454,30 @@ export class LadybugGraphStore implements GraphStore {
           reject(err);
         });
     });
+  }
+
+  /** Set a node in the LRU cache, evicting oldest entries if over capacity. */
+  private cacheNode(
+    id: string,
+    entry: { type: string; name: string; properties: string },
+  ): void {
+    // Delete first so re-insert moves to end (most recent)
+    this.nodeCache.delete(id);
+    this.nodeCache.set(id, entry);
+    // Evict oldest entries if over capacity
+    if (this.nodeCache.size > LadybugGraphStore.NODE_CACHE_MAX) {
+      const it = this.nodeCache.keys();
+      // Delete oldest 10% in one pass to avoid per-insert eviction churn
+      const evictCount = Math.max(
+        1,
+        this.nodeCache.size - LadybugGraphStore.NODE_CACHE_MAX,
+      );
+      for (let i = 0; i < evictCount; i++) {
+        const oldest = it.next();
+        if (oldest.done) break;
+        this.nodeCache.delete(oldest.value);
+      }
+    }
   }
 
   /** Close the database connection and release WASM resources. */
@@ -468,18 +545,23 @@ export class LadybugGraphStore implements GraphStore {
       data = await this.getAllGraph();
     }
 
+    const elapsed = performance.now() - t0;
     console.log(
-      `[LadybugStore] fetchGraph: ${data.nodes.length} nodes, ${data.links.length} edges in ${(performance.now() - t0).toFixed(0)}ms`,
+      `[LadybugStore] fetchGraph: ${data.nodes.length} nodes, ${data.links.length} edges in ${elapsed.toFixed(0)}ms`,
     );
+    logPerf('fetchGraph', { query, hops }, data.nodes.length, elapsed);
     return data;
   }
 
   private async getAllGraph(): Promise<GraphData> {
-    // Count nodes across all typed tables
+    // Count nodes + edges in 2 queries (not 8)
+    const countQuery = NODE_TYPES.map(
+      (t) => `MATCH (n:${t}) RETURN '${t}' AS type, count(n) AS cnt`,
+    ).join(' UNION ALL ');
+    const countRows = await this.query(countQuery);
     let totalNodes = 0;
-    for (const type of NODE_TYPES) {
-      const rows = await this.query(`MATCH (n:${type}) RETURN count(n) AS cnt`);
-      totalNodes += Number((rows as Record<string, number>[])[0]?.cnt ?? 0);
+    for (const row of countRows as Record<string, unknown>[]) {
+      totalNodes += Number(row.cnt ?? 0);
     }
 
     const edgeCountRows = await this.query(
@@ -522,13 +604,9 @@ export class LadybugGraphStore implements GraphStore {
         connectedIds.add(link.target as string);
       }
 
-      // Fetch connected nodes via UNION ALL across typed tables
-      const nodeList = [...connectedIds]
-        .slice(0, this.maxVisNodes)
-        .map((id) => `'${esc(id)}'`)
-        .join(', ');
-
-      const nodeRows = await this.query(unionAllNodes(`n.id IN [${nodeList}]`));
+      // Fetch connected nodes — routed by type instead of 7-way UNION ALL
+      const cappedIds = [...connectedIds].slice(0, this.maxVisNodes);
+      const nodeRows = await this.fetchNodesByIds(cappedIds);
       const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
         (r) => ({
           id: r.id,
@@ -574,6 +652,227 @@ export class LadybugGraphStore implements GraphStore {
     return { nodes, links };
   }
 
+  /**
+   * Batched BFS neighbor expansion: groups frontier IDs by type from
+   * nodeTypeMap and issues ONE query per type instead of per-node.
+   *
+   * Returns the set of newly-discovered neighbor IDs (not yet in visited).
+   */
+  private async batchedNeighborIds(
+    frontier: Set<string>,
+    visited: Set<string>,
+    direction: 'outgoing' | 'incoming' | 'both',
+    maxNodes: number,
+  ): Promise<Set<string>> {
+    // Group frontier by typed table
+    const byType = new Map<string, string[]>();
+    for (const id of frontier) {
+      const t = this.nodeTypeMap.get(id);
+      if (!t) continue;
+      let arr = byType.get(t);
+      if (!arr) {
+        arr = [];
+        byType.set(t, arr);
+      }
+      arr.push(id);
+    }
+
+    const nextFrontier = new Set<string>();
+
+    for (const [type, ids] of byType) {
+      if (visited.size >= maxNodes) break;
+
+      // Chunk large ID lists to avoid oversized Cypher strings
+      for (let off = 0; off < ids.length; off += 500) {
+        if (visited.size >= maxNodes) break;
+        const chunk = ids.slice(off, off + 500);
+        const idList = chunk.map((i) => `'${esc(i)}'`).join(', ');
+
+        let pattern: string;
+        switch (direction) {
+          case 'outgoing':
+            pattern = `MATCH (a:${type})-[r:RELATES]->(b)`;
+            break;
+          case 'incoming':
+            pattern = `MATCH (a:${type})<-[r:RELATES]-(b)`;
+            break;
+          default:
+            pattern = `MATCH (a:${type})-[r:RELATES]-(b)`;
+            break;
+        }
+
+        const rows = await this.query(
+          `${pattern} WHERE a.id IN [${idList}] RETURN b.id AS id`,
+        );
+        for (const row of rows as Record<string, string>[]) {
+          if (visited.size >= maxNodes) break;
+          if (!visited.has(row.id)) {
+            visited.add(row.id);
+            nextFrontier.add(row.id);
+          }
+        }
+      }
+    }
+
+    return nextFrontier;
+  }
+
+  /**
+   * Batched BFS neighbor expansion with full relationship details.
+   * Used by traverse() which needs node + relationship data, not just IDs.
+   */
+  private async batchedNeighborsFull(
+    frontier: Set<string>,
+    _visited: Set<string>,
+    direction: 'outgoing' | 'incoming' | 'both',
+    relType?: string,
+  ): Promise<
+    Array<{
+      fromId: string;
+      neighborId: string;
+      neighborName: string;
+      neighborProps: string;
+      relId: string;
+      relType: string;
+      relProps: string;
+      sourceId: string;
+    }>
+  > {
+    const byType = new Map<string, string[]>();
+    for (const id of frontier) {
+      const t = this.nodeTypeMap.get(id);
+      if (!t) continue;
+      let arr = byType.get(t);
+      if (!arr) {
+        arr = [];
+        byType.set(t, arr);
+      }
+      arr.push(id);
+    }
+
+    const results: Array<{
+      fromId: string;
+      neighborId: string;
+      neighborName: string;
+      neighborProps: string;
+      relId: string;
+      relType: string;
+      relProps: string;
+      sourceId: string;
+    }> = [];
+
+    for (const [type, ids] of byType) {
+      for (let off = 0; off < ids.length; off += 500) {
+        const chunk = ids.slice(off, off + 500);
+        const idList = chunk.map((i) => `'${esc(i)}'`).join(', ');
+
+        let pattern: string;
+        switch (direction) {
+          case 'outgoing':
+            pattern = `MATCH (a:${type})-[r:RELATES]->(b)`;
+            break;
+          case 'incoming':
+            pattern = `MATCH (a:${type})<-[r:RELATES]-(b)`;
+            break;
+          default:
+            pattern = `MATCH (a:${type})-[r:RELATES]-(b)`;
+            break;
+        }
+
+        const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
+        const rows = await this.query(
+          `${pattern} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, b.properties AS properties, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
+        );
+
+        for (const row of rows as Record<string, string>[]) {
+          results.push({
+            fromId: row.fromId,
+            neighborId: row.id,
+            neighborName: row.name,
+            neighborProps: row.properties,
+            relId: row.rel_id,
+            relType: row.rel_type,
+            relProps: row.rel_properties,
+            sourceId: row.fromId,
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Fetch node details by IDs, routing each ID to its typed table via
+   * nodeTypeMap. Combines all types into a single UNION ALL query to
+   * avoid multiple round-trips through the serialized WASM queue.
+   */
+  private async fetchNodesByIds(
+    ids: Iterable<string>,
+  ): Promise<Record<string, string>[]> {
+    // Serve from JS-side node cache where possible
+    const allRows: Record<string, string>[] = [];
+    const missIds: string[] = [];
+
+    for (const id of ids) {
+      const cached = this.nodeCache.get(id);
+      if (cached) {
+        allRows.push({
+          id,
+          type: cached.type,
+          name: cached.name,
+          properties: cached.properties,
+        });
+      } else {
+        missIds.push(id);
+      }
+    }
+
+    // All hits — no DB round-trip needed
+    if (missIds.length === 0) return allRows;
+
+    // Fetch misses from DB
+    const byType = new Map<string, string[]>();
+    const unknownIds: string[] = [];
+
+    for (const id of missIds) {
+      const t = this.nodeTypeMap.get(id);
+      if (t) {
+        let arr = byType.get(t);
+        if (!arr) {
+          arr = [];
+          byType.set(t, arr);
+        }
+        arr.push(id);
+      } else {
+        unknownIds.push(id);
+      }
+    }
+
+    // Build a single UNION ALL across only the types that have misses
+    const parts: string[] = [];
+
+    for (const [type, typeIds] of byType) {
+      const idList = typeIds.map((i) => `'${esc(i)}'`).join(', ');
+      parts.push(
+        `MATCH (n:${type}) WHERE n.id IN [${idList}] RETURN n.id AS id, '${type}' AS type, n.name AS name, n.properties AS properties`,
+      );
+    }
+
+    // Fallback for IDs with unknown type — scan all tables
+    if (unknownIds.length > 0) {
+      const idList = unknownIds.map((i) => `'${esc(i)}'`).join(', ');
+      parts.push(unionAllNodes(`n.id IN [${idList}]`));
+    }
+
+    if (parts.length > 0) {
+      const rows = await this.query(parts.join(' UNION ALL '));
+      allRows.push(...(rows as Record<string, string>[]));
+    }
+
+    return allRows;
+  }
+
   private async searchGraph(
     search: string,
     hops: number,
@@ -608,36 +907,22 @@ export class LadybugGraphStore implements GraphStore {
 
     if (seedIds.size === 0) return { nodes: [], links: [] };
 
-    // BFS hop expansion using typed start nodes
+    // BFS hop expansion — batched by type instead of per-node
     const visitedNodes = new Set(seedIds);
     let frontier = new Set(seedIds);
 
     for (let d = 0; d < hops && frontier.size > 0; d++) {
-      const nextFrontier = new Set<string>();
-
-      for (const nodeId of frontier) {
-        if (visitedNodes.size >= this.maxVisNodes) break;
-        const nodeType = this.nodeTypeMap.get(nodeId);
-        if (!nodeType) continue; // unknown type — skip
-        const neighbors = await this.query(
-          `MATCH (a:${nodeType} {id: '${esc(nodeId)}'})-[r:RELATES]-(b) RETURN b.id AS id`,
-        );
-        for (const row of neighbors as Record<string, string>[]) {
-          if (!visitedNodes.has(row.id)) {
-            visitedNodes.add(row.id);
-            nextFrontier.add(row.id);
-            if (visitedNodes.size >= this.maxVisNodes) break;
-          }
-        }
-      }
-
-      frontier = nextFrontier;
+      frontier = await this.batchedNeighborIds(
+        frontier,
+        visitedNodes,
+        'both',
+        this.maxVisNodes,
+      );
       if (visitedNodes.size >= this.maxVisNodes) break;
     }
 
-    // Fetch full node details via UNION ALL
-    const nodeList = [...visitedNodes].map((id) => `'${esc(id)}'`).join(', ');
-    const nodeRows = await this.query(unionAllNodes(`n.id IN [${nodeList}]`));
+    // Fetch full node details — routed by type instead of 7-way UNION ALL
+    const nodeRows = await this.fetchNodesByIds(visitedNodes);
     const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
       (r) => ({
         id: r.id,
@@ -648,8 +933,9 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     // Fetch edges between visited nodes
+    const idList = [...visitedNodes].map((id) => `'${esc(id)}'`).join(', ');
     const relRows = await this.query(
-      `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${nodeList}] AND b.id IN [${nodeList}] ` +
+      `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${idList}] AND b.id IN [${idList}] ` +
         `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,
     );
     const links: GraphLink[] = (relRows as Record<string, string>[]).map(
@@ -684,32 +970,21 @@ export class LadybugGraphStore implements GraphStore {
     );
     if (seedIds.size === 0) return { nodes: [], links: [] };
 
-    // BFS hop expansion (same as searchGraph)
+    // BFS hop expansion — batched by type instead of per-node
     const visitedNodes = new Set(seedIds);
     let frontier = new Set(seedIds);
     for (let d = 0; d < hops && frontier.size > 0; d++) {
-      const nextFrontier = new Set<string>();
-      for (const nodeId of frontier) {
-        if (visitedNodes.size >= this.maxVisNodes) break;
-        const nodeType = this.nodeTypeMap.get(nodeId);
-        if (!nodeType) continue;
-        const neighbors = await this.query(
-          `MATCH (a:${nodeType} {id: '${esc(nodeId)}'})-[r:RELATES]-(b) RETURN b.id AS id`,
-        );
-        for (const row of neighbors as Record<string, string>[]) {
-          if (!visitedNodes.has(row.id)) {
-            visitedNodes.add(row.id);
-            nextFrontier.add(row.id);
-            if (visitedNodes.size >= this.maxVisNodes) break;
-          }
-        }
-      }
-      frontier = nextFrontier;
+      frontier = await this.batchedNeighborIds(
+        frontier,
+        visitedNodes,
+        'both',
+        this.maxVisNodes,
+      );
       if (visitedNodes.size >= this.maxVisNodes) break;
     }
 
-    const nodeList = [...visitedNodes].map((id) => `'${esc(id)}'`).join(', ');
-    const nodeRows = await this.query(unionAllNodes(`n.id IN [${nodeList}]`));
+    // Fetch full node details — routed by type instead of 7-way UNION ALL
+    const nodeRows = await this.fetchNodesByIds(visitedNodes);
     const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
       (r) => ({
         id: r.id,
@@ -719,8 +994,9 @@ export class LadybugGraphStore implements GraphStore {
       }),
     );
 
+    const idList = [...visitedNodes].map((id) => `'${esc(id)}'`).join(', ');
     const relRows = await this.query(
-      `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${nodeList}] AND b.id IN [${nodeList}] ` +
+      `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${idList}] AND b.id IN [${idList}] ` +
         `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,
     );
     const links: GraphLink[] = (relRows as Record<string, string>[]).map(
@@ -736,14 +1012,19 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   async fetchStats(): Promise<GraphStats> {
-    // One count per typed table
+    const t0 = performance.now();
+    // Single UNION ALL for all type counts (2 queries instead of 8)
+    const countQuery = NODE_TYPES.map(
+      (t) => `MATCH (n:${t}) RETURN '${t}' AS type, count(n) AS cnt`,
+    ).join(' UNION ALL ');
+    const countRows = await this.query(countQuery);
+
     const nodes_by_type: Record<string, number> = {};
     let total_nodes = 0;
-    for (const type of NODE_TYPES) {
-      const rows = await this.query(`MATCH (n:${type}) RETURN count(n) AS cnt`);
-      const count = Number((rows as Record<string, number>[])[0]?.cnt ?? 0);
+    for (const row of countRows as Record<string, unknown>[]) {
+      const count = Number(row.cnt ?? 0);
       if (count > 0) {
-        nodes_by_type[type] = count;
+        nodes_by_type[row.type as string] = count;
         total_nodes += count;
       }
     }
@@ -755,6 +1036,7 @@ export class LadybugGraphStore implements GraphStore {
       (edgeRows as Record<string, number>[])[0]?.cnt ?? 0,
     );
 
+    logPerf('fetchStats', {}, total_nodes, performance.now() - t0);
     return { total_nodes, total_edges, nodes_by_type };
   }
 
@@ -783,6 +1065,7 @@ export class LadybugGraphStore implements GraphStore {
     this.vectorIndex = null;
     this.bm25Index = new BM25Index();
     this.nodeTypeMap.clear();
+    this.nodeCache.clear();
     this.flushedPackageIds.clear();
     this.sourceCache.clear();
   }
@@ -855,13 +1138,21 @@ export class LadybugGraphStore implements GraphStore {
         await lbug.FS.unlink(csvPath);
       }
 
-      // Rebuild nodeTypeMap and BM25 index for this type
+      // Rebuild nodeTypeMap, BM25 index, and node cache for this type
       const rows = await this.query(
-        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name`,
+        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
       );
       for (const r of rows as Record<string, string>[]) {
         this.nodeTypeMap.set(r.id, type);
         this.bm25Index.addDocument(r.id, `${r.name ?? ''} ${type}`);
+        this.cacheNode(r.id, {
+          type,
+          name: r.name ?? '',
+          properties:
+            typeof r.properties === 'string'
+              ? r.properties
+              : JSON.stringify(r.properties ?? {}),
+        });
         totalNodes++;
       }
       console.log(
@@ -1077,6 +1368,13 @@ export class LadybugGraphStore implements GraphStore {
       const props = node.properties ?? {};
       this.nodeTypeMap.set(node.id, node.type);
 
+      // Node cache — serves getNode/fetchNodesByIds from JS memory
+      this.cacheNode(node.id, {
+        type: node.type,
+        name: node.name,
+        properties: JSON.stringify(props),
+      });
+
       // BM25 index
       const searchParts = [node.name, node.type];
       if (typeof props.summary === 'string') searchParts.push(props.summary);
@@ -1186,6 +1484,12 @@ export class LadybugGraphStore implements GraphStore {
     console.log(
       `[LadybugStore] flush: ${nodeCount} nodes, ${relCount} rels in ${elapsed.toFixed(0)}ms`,
     );
+    logPerf(
+      'flush',
+      { nodes: nodeCount, rels: relCount },
+      nodeCount + relCount,
+      elapsed,
+    );
   }
 
   storeSource(files: SourceFile[]): void {
@@ -1250,6 +1554,9 @@ export class LadybugGraphStore implements GraphStore {
     limit?: number,
     nodeTypes?: string[],
   ): Promise<NodeResult[]> {
+    const t0 = performance.now();
+
+    // Phase 1: Embedding
     let queryEmbedding: number[] | undefined;
     if (this.embedder) {
       try {
@@ -1261,7 +1568,9 @@ export class LadybugGraphStore implements GraphStore {
         // Embedding failure is non-fatal
       }
     }
+    const tEmbed = performance.now();
 
+    // Phase 2: BM25 + vector ranking
     const effectiveLimit = limit ?? 50;
     const rankedLists: { id: string; score: number }[][] = [];
 
@@ -1275,23 +1584,52 @@ export class LadybugGraphStore implements GraphStore {
       );
       if (vecResults.length > 0) rankedLists.push(vecResults);
     }
+    const tRank = performance.now();
 
+    // Phase 3: Fusion / fallback text search
     let seedIds: string[];
+    let searchPath: string;
+    // If the fallback returns full node data, we can skip the fetch phase
+    let prefetchedRows: Record<string, string>[] | null = null;
 
     if (rankedLists.length > 0) {
       const fused = rrfFuse(rankedLists, effectiveLimit * 2);
       seedIds = fused.map((r) => r.id);
+      searchPath = `rrf(bm25=${bm25Results.length},vec=${queryEmbedding ? (rankedLists.length > 1 ? (rankedLists[1]?.length ?? 0) : 0) : 'off'})`;
     } else {
+      // Cypher CONTAINS fallback — return full node data in one round-trip
       const q = esc(queryStr.toLowerCase());
-      const rows = await this.query(unionAllTextSearch(q));
-      seedIds = (rows as Record<string, string>[]).map((r) => r.id);
+      const rows = await this.query(unionAllTextSearchFull(q));
+      prefetchedRows = rows as Record<string, string>[];
+      seedIds = prefetchedRows.map((r) => r.id);
+      searchPath = 'cypher-contains';
+    }
+    const tFuse = performance.now();
+
+    if (seedIds.length === 0) {
+      logPerf(
+        'searchNodes',
+        {
+          queryStr,
+          limit,
+          nodeTypes,
+          results: 0,
+          seedIds: 0,
+          searchPath,
+          embed_ms: +(tEmbed - t0).toFixed(1),
+          rank_ms: +(tRank - tEmbed).toFixed(1),
+          fuse_ms: +(tFuse - tRank).toFixed(1),
+          fetch_ms: 0,
+        },
+        0,
+        performance.now() - t0,
+      );
+      return [];
     }
 
-    if (seedIds.length === 0) return [];
-
-    // Fetch full node details via UNION ALL
-    const idList = seedIds.map((i) => `'${esc(i)}'`).join(', ');
-    const nodeRows = await this.query(unionAllNodes(`n.id IN [${idList}]`));
+    // Phase 4: Fetch full node details (skip if already fetched in phase 3)
+    const nodeRows = prefetchedRows ?? (await this.fetchNodesByIds(seedIds));
+    const tFetch = performance.now();
 
     let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
       (r) => {
@@ -1317,7 +1655,25 @@ export class LadybugGraphStore implements GraphStore {
         (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
     );
 
-    return results.slice(0, effectiveLimit);
+    const final = results.slice(0, effectiveLimit);
+    logPerf(
+      'searchNodes',
+      {
+        queryStr,
+        limit,
+        nodeTypes,
+        searchPath,
+        seedIds: seedIds.length,
+        results: final.length,
+        embed_ms: +(tEmbed - t0).toFixed(1),
+        rank_ms: +(tRank - tEmbed).toFixed(1),
+        fuse_ms: +(tFuse - tRank).toFixed(1),
+        fetch_ms: +(tFetch - tFuse).toFixed(1),
+      },
+      final.length,
+      performance.now() - t0,
+    );
+    return final;
   }
 
   async listNodes(
@@ -1325,6 +1681,7 @@ export class LadybugGraphStore implements GraphStore {
     limit?: number,
     filters?: Record<string, string>,
   ): Promise<NodeResult[]> {
+    const t0 = performance.now();
     const effectiveLimit = limit ?? 50;
 
     // Validate type to prevent Cypher injection and route to typed table
@@ -1355,10 +1712,34 @@ export class LadybugGraphStore implements GraphStore {
       });
     }
 
+    logPerf(
+      'listNodes',
+      { type, limit, filters },
+      results.length,
+      performance.now() - t0,
+    );
     return results;
   }
 
   async getNode(nodeId: string): Promise<NodeResult | null> {
+    const t0 = performance.now();
+
+    // Cache path: serve from JS memory (0ms, no WASM round-trip)
+    const cached = this.nodeCache.get(nodeId);
+    if (cached) {
+      // Promote to most-recent (LRU)
+      this.nodeCache.delete(nodeId);
+      this.nodeCache.set(nodeId, cached);
+      const props = parseProps(cached.properties);
+      logPerf('getNode', { nodeId, path: 'cache' }, 1, performance.now() - t0);
+      return {
+        id: nodeId,
+        type: cached.type,
+        name: cached.name,
+        ...(props && { properties: props }),
+      };
+    }
+
     const nodeType = this.nodeTypeMap.get(nodeId);
 
     if (nodeType) {
@@ -1366,9 +1747,18 @@ export class LadybugGraphStore implements GraphStore {
       const rows = await this.query(
         `MATCH (n:${nodeType} {id: '${esc(nodeId)}'}) RETURN n.id AS id, '${nodeType}' AS type, n.name AS name, n.properties AS properties`,
       );
-      if (rows.length === 0) return null;
+      if (rows.length === 0) {
+        logPerf(
+          'getNode',
+          { nodeId, path: 'typed' },
+          0,
+          performance.now() - t0,
+        );
+        return null;
+      }
       const r = rows[0] as Record<string, string>;
       const props = parseProps(r.properties);
+      logPerf('getNode', { nodeId, path: 'typed' }, 1, performance.now() - t0);
       return {
         id: r.id,
         type: r.type,
@@ -1385,6 +1775,7 @@ export class LadybugGraphStore implements GraphStore {
     const props = parseProps(r.properties);
     // Cache the discovered type for future lookups
     this.nodeTypeMap.set(r.id, r.type);
+    logPerf('getNode', { nodeId, path: 'union' }, 1, performance.now() - t0);
     return {
       id: r.id,
       type: r.type,
@@ -1399,71 +1790,73 @@ export class LadybugGraphStore implements GraphStore {
     maxDepth?: number,
     relType?: string,
   ): Promise<TraverseResult[]> {
+    const t0 = performance.now();
     const dir = direction ?? 'outgoing';
     const depth = maxDepth ?? 3;
     const results: TraverseResult[] = [];
     const visited = new Set<string>([nodeId]);
     let frontier = new Set<string>([nodeId]);
+    const depthTimings: string[] = [];
 
     for (let d = 1; d <= depth && frontier.size > 0; d++) {
+      const td0 = performance.now();
+      const neighbors = await this.batchedNeighborsFull(
+        frontier,
+        visited,
+        dir,
+        relType,
+      );
+
       const nextFrontier = new Set<string>();
 
-      for (const currentId of frontier) {
-        const aType = this.nodeTypeMap.get(currentId);
-        if (!aType) continue; // unknown type — skip
+      for (const nb of neighbors) {
+        if (visited.has(nb.neighborId)) continue;
+        visited.add(nb.neighborId);
+        nextFrontier.add(nb.neighborId);
 
-        let pattern: string;
-        switch (dir) {
-          case 'outgoing':
-            pattern = `MATCH (a:${aType} {id: '${esc(currentId)}'})-[r:RELATES]->(b)`;
-            break;
-          case 'incoming':
-            pattern = `MATCH (a:${aType} {id: '${esc(currentId)}'})<-[r:RELATES]-(b)`;
-            break;
-          default:
-            pattern = `MATCH (a:${aType} {id: '${esc(currentId)}'})-[r:RELATES]-(b)`;
-            break;
-        }
+        const bType = this.nodeTypeMap.get(nb.neighborId) ?? 'Unknown';
+        const props = parseProps(nb.neighborProps);
+        const node: NodeResult = {
+          id: nb.neighborId,
+          type: bType,
+          name: nb.neighborName,
+          ...(props && { properties: props }),
+        };
 
-        const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
-        const rows = await this.query(
-          `${pattern} WHERE true${relFilter} RETURN b.id AS id, b.name AS name, b.properties AS properties, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties, a.id AS source_id`,
-        );
+        const isOutgoing =
+          dir === 'outgoing' || (dir === 'both' && nb.sourceId === nb.fromId);
+        const relProps = parseProps(nb.relProps);
+        const relationship = {
+          id: nb.relId || `${nb.fromId}->${nb.neighborId}`,
+          type: nb.relType,
+          source_id: isOutgoing ? nb.fromId : nb.neighborId,
+          target_id: isOutgoing ? nb.neighborId : nb.fromId,
+          ...(relProps && { properties: relProps }),
+        };
 
-        for (const row of rows as Record<string, string>[]) {
-          if (visited.has(row.id)) continue;
-          visited.add(row.id);
-          nextFrontier.add(row.id);
-
-          // Resolve neighbor type from nodeTypeMap
-          const bType = this.nodeTypeMap.get(row.id) ?? 'Unknown';
-          const props = parseProps(row.properties);
-          const node: NodeResult = {
-            id: row.id,
-            type: bType,
-            name: row.name,
-            ...(props && { properties: props }),
-          };
-
-          const isOutgoing =
-            dir === 'outgoing' ||
-            (dir === 'both' && row.source_id === currentId);
-          const relProps = parseProps(row.rel_properties);
-          const relationship = {
-            id: row.rel_id || `${currentId}->${row.id}`,
-            type: row.rel_type,
-            source_id: isOutgoing ? currentId : row.id,
-            target_id: isOutgoing ? row.id : currentId,
-            ...(relProps && { properties: relProps }),
-          };
-
-          results.push({ node, relationship, depth: d });
-        }
+        results.push({ node, relationship, depth: d });
       }
 
+      depthTimings.push(
+        `d${d}:${frontier.size}→${nextFrontier.size} in ${(performance.now() - td0).toFixed(0)}ms`,
+      );
       frontier = nextFrontier;
     }
 
+    logPerf(
+      'traverse',
+      {
+        nodeId,
+        direction: dir,
+        maxDepth: depth,
+        relType,
+        results: results.length,
+        visited: visited.size,
+        depths: depthTimings.join(', '),
+      },
+      results.length,
+      performance.now() - t0,
+    );
     return results;
   }
 }
