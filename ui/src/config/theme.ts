@@ -37,11 +37,18 @@ export function loadMode(): 'light' | 'dark' {
 
 export function applyTheme(theme: string) {
   document.documentElement.dataset.theme = theme;
+  // Also scope to the app container so themes work when embedded in a host app
+  document
+    .querySelectorAll<HTMLElement>('[data-ot-root]')
+    .forEach((el) => (el.dataset.theme = theme));
   localStorage.setItem(THEME_KEY, theme);
 }
 
 export function applyMode(mode: 'light' | 'dark') {
   document.documentElement.dataset.mode = mode;
+  document
+    .querySelectorAll<HTMLElement>('[data-ot-root]')
+    .forEach((el) => (el.dataset.mode = mode));
   localStorage.setItem(MODE_KEY, mode);
 }
 
