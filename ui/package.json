@@ -43,7 +43,7 @@
       "import": "./dist/lib/chat.js",
       "require": "./dist/lib/chat.cjs"
     },
-    "./style.css": "./dist/lib/components.css"
+    "./style.css": "./dist/lib/opentrace.css"
   },
   "publishConfig": {
     "access": "public",
