@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import {
   PROVIDERS,
@@ -24,6 +24,13 @@ import {
   type AssistantMessage,
   type MessagePart,
 } from '../chat/providers';
+import type { ImageAttachment } from '../components/chat/types';
+import {
+  processImageFiles,
+  clipboardToImageFiles,
+  dropToImageFiles,
+  MAX_IMAGES_PER_MESSAGE,
+} from '../chat/imageUtils';
 import {
   loadApiKey,
   saveApiKey,
@@ -127,6 +134,12 @@ export default function ChatPanel({
   const chatFoundNodesRef = useRef<Set<string>>(new Set());
   const keyInputRef = useRef<HTMLInputElement>(null);
   const localUrlInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<ImageAttachment | null>(
+    null,
+  );
   const localModelInputRef = useRef<HTMLInputElement>(null);
 
   // Build PRClient from repoUrl
@@ -296,16 +309,26 @@ export default function ChatPanel({
     });
   };
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = async (text: string, images?: ImageAttachment[]) => {
     const trimmed = text.trim();
-    if (!trimmed || (providerId !== 'local' && !apiKey) || streaming) return;
+    const hasImages = images && images.length > 0;
+    if (
+      (!trimmed && !hasImages) ||
+      (providerId !== 'local' && !apiKey) ||
+      streaming
+    )
+      return;
 
     // Abort any previous request
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const userMsg: ChatMessage = { role: 'user', content: trimmed };
+    const userMsg: ChatMessage = {
+      role: 'user',
+      content: trimmed,
+      ...(hasImages ? { images } : {}),
+    };
     const assistantMsg: AssistantMessage = {
       role: 'assistant',
       content: '',
@@ -348,11 +371,26 @@ export default function ChatPanel({
 
     try {
       // Convert to LangChain message format (text-only for history)
-      const lcMessages = newMessages.map((m) =>
-        m.role === 'user'
-          ? new HumanMessage(m.content)
-          : new AIMessage(m.content),
-      );
+      const lcMessages = newMessages.map((m) => {
+        if (m.role === 'user') {
+          const imgs = m.images;
+          if (imgs && imgs.length > 0) {
+            return new HumanMessage({
+              content: [
+                ...(m.content
+                  ? [{ type: 'text' as const, text: m.content }]
+                  : []),
+                ...imgs.map((img) => ({
+                  type: 'image_url' as const,
+                  image_url: { url: img.dataUrl },
+                })),
+              ],
+            });
+          }
+          return new HumanMessage(m.content);
+        }
+        return new AIMessage(m.content);
+      });
 
       const stream = await agent.stream(
         { messages: lcMessages },
@@ -551,8 +589,60 @@ export default function ChatPanel({
     }
   };
 
-  const handleSubmit = () => sendMessage(input);
+  const handleSubmit = () => {
+    sendMessage(input, pendingImages.length > 0 ? pendingImages : undefined);
+    setPendingImages([]);
+  };
   const handleTemplate = (prompt: string) => sendMessage(prompt);
+
+  const addImages = useCallback(
+    async (files: File[]) => {
+      const remaining = MAX_IMAGES_PER_MESSAGE - pendingImages.length;
+      if (remaining <= 0) return;
+      const { images, errors } = await processImageFiles(
+        files.slice(0, remaining),
+      );
+      if (errors.length) console.warn('Image processing errors:', errors);
+      if (images.length) setPendingImages((prev) => [...prev, ...images]);
+    },
+    [pendingImages.length],
+  );
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const files = clipboardToImageFiles(e.nativeEvent as ClipboardEvent);
+      if (files.length > 0) {
+        e.preventDefault();
+        addImages(files);
+      }
+    },
+    [addImages],
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const files = dropToImageFiles(e.nativeEvent as DragEvent);
+      if (files.length > 0) addImages(files);
+    },
+    [addImages],
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear when leaving the panel itself, not when entering a child
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragOver(false);
+  }, []);
+
+  const removeImage = useCallback((id: string) => {
+    setPendingImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
   const handleClearChat = () => {
     abortRef.current?.abort();
     startNewConversation();
@@ -591,8 +681,22 @@ export default function ChatPanel({
   const hasPRTab = !!prClient;
 
   return (
-    <div className="chat-panel" style={{ width: panelWidth }}>
+    <div
+      className="chat-panel"
+      style={{ width: panelWidth }}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="chat-panel-drag-handle" onMouseDown={handleMouseDown} />
+      {dragOver && (
+        <div className="image-drop-overlay">
+          <div className="image-drop-overlay-content">
+            <span className="image-drop-icon">&#128247;</span>
+            <span>Drop images here</span>
+          </div>
+        </div>
+      )}
       <div className="panel-header">
         <div className="panel-header-title">
           <svg
@@ -1003,47 +1107,118 @@ export default function ChatPanel({
                       onPostComment={prClient ? handlePostComment : undefined}
                     />
                   ) : (
-                    m.content
+                    <>
+                      {m.content}
+                      {m.images && m.images.length > 0 && (
+                        <div className="user-message-images">
+                          {m.images.map((img) => (
+                            <img
+                              key={img.id}
+                              src={img.dataUrl}
+                              alt={img.name || 'Attached image'}
+                              className="user-message-image"
+                              onClick={() => setLightboxImage(img)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             ))}
           </div>
           <div className="chat-input-area">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              placeholder="Ask a question..."
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                // Auto-resize: reset then grow to content
-                e.target.style.height = 'auto';
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit();
+            {pendingImages.length > 0 && (
+              <div className="image-preview-strip">
+                {pendingImages.map((img) => (
+                  <div key={img.id} className="image-preview-thumb">
+                    <img src={img.dataUrl} alt={img.name || 'Attachment'} />
+                    <button
+                      className="image-remove-btn"
+                      onClick={() => removeImage(img.id)}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="chat-input-row">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                placeholder="Ask a question..."
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
+                onPaste={handlePaste}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files) addImages(Array.from(e.target.files));
+                  e.target.value = '';
+                }}
+              />
+              <button
+                className="image-upload-btn"
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach image"
+              >
+                &#128206;
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={
+                  streaming || (!input.trim() && pendingImages.length === 0)
                 }
-              }}
-            />
-            <button
-              onClick={handleSubmit}
-              disabled={streaming || !input.trim()}
-              data-testid="chat-send-btn"
-            >
-              Send
-            </button>
-            <button
-              className="settings-btn"
-              onClick={() => setShowSettings(true)}
-              title="Provider Settings"
-            >
-              &#9881;
-            </button>
+                data-testid="chat-send-btn"
+              >
+                Send
+              </button>
+              <button
+                className="settings-btn"
+                onClick={() => setShowSettings(true)}
+                title="Provider Settings"
+              >
+                &#9881;
+              </button>
+            </div>
           </div>
         </>
+      )}
+      {lightboxImage && (
+        <div
+          className="image-lightbox-overlay"
+          onClick={() => setLightboxImage(null)}
+        >
+          <button
+            className="image-lightbox-close"
+            onClick={() => setLightboxImage(null)}
+          >
+            &times;
+          </button>
+          <img
+            src={lightboxImage.dataUrl}
+            alt={lightboxImage.name || 'Full size image'}
+            className="image-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

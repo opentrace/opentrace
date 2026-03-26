@@ -41,9 +41,17 @@ export interface ToolCallPart {
 
 export type MessagePart = TextPart | ThoughtPart | ToolCallPart;
 
+export interface ImageAttachment {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
+  name?: string;
+}
+
 export interface UserMessage {
   role: 'user';
   content: string;
+  images?: ImageAttachment[];
 }
 
 export interface AssistantMessage {
