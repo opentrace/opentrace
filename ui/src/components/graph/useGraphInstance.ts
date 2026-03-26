@@ -26,6 +26,7 @@ import type { LayoutRequest, LayoutResponse } from '../workers/d3LayoutWorker';
 import {
   EDGE_SIZE_DEFAULT,
   EDGE_SIZE_DEFAULT_LINE,
+  LABEL_MAX_LENGTH,
 } from '../config/graphLayout';
 import {
   nodeSize,
@@ -33,6 +34,13 @@ import {
   applySpacing,
   applyNoverlap,
 } from './layoutHelpers';
+
+function cleanLabel(raw: string): string {
+  const stripped = raw.replace(/[\n\r\t]+/g, ' ').trim();
+  return stripped.length > LABEL_MAX_LENGTH
+    ? stripped.slice(0, LABEL_MAX_LENGTH) + '…'
+    : stripped;
+}
 
 // ─── Hook ───────────────────────────────────────────────────────────────
 
@@ -109,8 +117,8 @@ export function useGraphInstance({
       return {
         key: node.id,
         attributes: {
-          label: node.name || node.id,
-          _originalLabel: node.name || node.id,
+          label: cleanLabel(node.name || node.id),
+          _originalLabel: cleanLabel(node.name || node.id),
           x: 0,
           y: 0,
           size,
