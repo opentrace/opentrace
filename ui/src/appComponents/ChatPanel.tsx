@@ -118,7 +118,6 @@ export default function ChatPanel({
   const [hasFoundNodes, setHasFoundNodes] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const [showHistory, setShowHistory] = useState(false);
-  const historyRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>(messages);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -182,21 +181,6 @@ export default function ChatPanel({
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
-
-  // Close history dropdown on outside click
-  useEffect(() => {
-    if (!showHistory) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        historyRef.current &&
-        !historyRef.current.contains(e.target as Node)
-      ) {
-        setShowHistory(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showHistory]);
 
   const switchProvider = (id: string) => {
     setProviderId(id);
@@ -560,6 +544,7 @@ export default function ChatPanel({
     chatFoundNodesRef.current.clear();
     setHasFoundNodes(false);
     setHighlightEnabled(true);
+    setShowHistory(false);
     onChatHighlight?.(new Set(), []);
   };
 
@@ -659,67 +644,26 @@ export default function ChatPanel({
             </button>
           )}
           {conversations.length > 0 && (
-            <div className="chat-history-wrapper" ref={historyRef}>
-              <button
-                className="clear-chat-btn"
-                onClick={() => setShowHistory((v) => !v)}
-                title="Chat history"
-                data-testid="chat-history-btn"
+            <button
+              className={`clear-chat-btn${showHistory ? ' active' : ''}`}
+              onClick={() => setShowHistory((v) => !v)}
+              title="Chat history"
+              data-testid="chat-history-btn"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-              </button>
-              {showHistory && (
-                <div className="chat-history-dropdown">
-                  <div className="chat-history-header">
-                    <span>Recent conversations</span>
-                  </div>
-                  <div className="chat-history-list">
-                    {conversations.map((c) => (
-                      <div
-                        key={c.id}
-                        className={`chat-history-item ${c.id === conversationId ? 'active' : ''}`}
-                        onClick={() => {
-                          switchConversation(c.id);
-                          setShowHistory(false);
-                        }}
-                      >
-                        <div className="chat-history-item-title">{c.title}</div>
-                        <div className="chat-history-item-meta">
-                          {new Date(c.updatedAt).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                          })}
-                          {' \u00B7 '}
-                          {c.model}
-                        </div>
-                        <button
-                          className="chat-history-item-delete"
-                          title="Delete conversation"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteConversation(c.id);
-                          }}
-                        >
-                          &times;
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </button>
           )}
           <button
             className="clear-chat-btn"
@@ -764,7 +708,45 @@ export default function ChatPanel({
         </div>
       )}
 
-      {showSettingsView ? (
+      {showHistory ? (
+        <div className="chat-history-panel">
+          <div className="chat-history-header">
+            <span>Conversations</span>
+          </div>
+          <div className="chat-history-list">
+            {conversations.map((c) => (
+              <div
+                key={c.id}
+                className={`chat-history-item ${c.id === conversationId ? 'active' : ''}`}
+                onClick={() => {
+                  switchConversation(c.id);
+                  setShowHistory(false);
+                }}
+              >
+                <div className="chat-history-item-title">{c.title}</div>
+                <div className="chat-history-item-meta">
+                  {new Date(c.updatedAt).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                  {' \u00B7 '}
+                  {c.model}
+                </div>
+                <button
+                  className="chat-history-item-delete"
+                  title="Delete conversation"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteConversation(c.id);
+                  }}
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : showSettingsView ? (
         <div className="api-key-config">
           <div className="provider-selector">
             {PROVIDER_IDS.map((id) => (

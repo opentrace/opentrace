@@ -187,36 +187,23 @@
   border-bottom-color: var(--primary);
 }
 
-/* ── Chat history dropdown ── */
-.chat-history-wrapper {
-  position: relative;
-}
-
-.chat-history-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
-  width: 280px;
-  max-height: 360px;
-  background: var(--card);
-  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  z-index: 100;
+/* ── Chat history panel ── */
+.chat-history-panel {
+  flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .chat-history-header {
-  padding: 10px 14px;
-  font-size: 0.7rem;
+  padding: 12px 16px;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  flex-shrink: 0;
 }
 
 .chat-history-list {
@@ -226,7 +213,7 @@
 
 .chat-history-item {
   position: relative;
-  padding: 10px 32px 10px 14px;
+  padding: 12px 36px 12px 16px;
   cursor: pointer;
   transition: background 0.1s;
   border-bottom: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
