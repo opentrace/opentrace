@@ -43,6 +43,21 @@
       "import": "./dist/lib/chat.js",
       "require": "./dist/lib/chat.cjs"
     },
+    "./store": {
+      "types": "./dist/lib/src/store/index.d.ts",
+      "import": "./dist/lib/store.js",
+      "require": "./dist/lib/store.cjs"
+    },
+    "./job": {
+      "types": "./dist/lib/src/job/index.d.ts",
+      "import": "./dist/lib/job.js",
+      "require": "./dist/lib/job.cjs"
+    },
+    "./app-components": {
+      "types": "./dist/lib/src/appComponents/index.d.ts",
+      "import": "./dist/lib/app-components.js",
+      "require": "./dist/lib/app-components.cjs"
+    },
     "./app": {
       "types": "./dist/lib/src/lib-app-entry.d.ts",
       "import": "./dist/lib/app.js",

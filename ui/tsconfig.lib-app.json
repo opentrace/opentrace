@@ -37,6 +37,7 @@
     "src/job",
     "src/config",
     "src/appComponents",
+    "src/hooks",
     "src/chat",
     "src/components"
   ],
