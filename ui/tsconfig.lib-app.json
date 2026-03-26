@@ -27,10 +27,17 @@
       "@opentrace/components/indexing": ["./src/components/indexing/index.ts"]
     }
   },
-  "include": ["src/components"],
-  "exclude": [
-    "src/components/**/__tests__",
-    "src/components/**/*.test.*",
-    "src/components/**/*.stories.*"
-  ]
+  "include": [
+    "src/env.d.ts",
+    "src/lbug-wasm.d.ts",
+    "src/OpenTraceApp.tsx",
+    "src/App.tsx",
+    "src/store",
+    "src/job",
+    "src/config",
+    "src/appComponents",
+    "src/chat",
+    "src/components"
+  ],
+  "exclude": ["src/**/__tests__", "src/**/*.test.*", "src/**/*.stories.*"]
 }

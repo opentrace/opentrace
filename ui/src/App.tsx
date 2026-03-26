@@ -33,7 +33,13 @@ const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
   links: [],
 };
 
-function App() {
+interface AppProps {
+  version?: string;
+  buildTime?: string;
+  initialRepoUrl?: string;
+}
+
+function App({ version, buildTime, initialRepoUrl }: AppProps = {}) {
   const { store } = useStore();
   const jobService = useJobService();
   const {
@@ -62,16 +68,21 @@ function App() {
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   const [jobExpanded, setJobExpanded] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight,
   });
 
   useEffect(() => {
-    const onResize = () =>
-      setDimensions({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setDimensions({ width, height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const handleJobSubmit = useCallback(
@@ -122,17 +133,22 @@ function App() {
     [store, handleJobSubmit],
   );
 
-  // Handle ?repo= query parameter on initial load
+  // Handle initial repository on load (from prop or ?repo= param)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const repoParam = params.get('repo');
+    const repoParam = initialRepoUrl || params.get('repo');
     if (!repoParam) {
       hasRepoParam.current = false;
       return;
     }
 
-    // Clean URL so the param doesn't persist on refresh
-    window.history.replaceState({}, '', window.location.pathname);
+    // Clean URL only if repo came from params, and only remove the repo param
+    if (!initialRepoUrl && params.has('repo')) {
+      params.delete('repo');
+      const search = params.toString();
+      const url = window.location.pathname + (search ? `?${search}` : '');
+      window.history.replaceState({}, '', url);
+    }
 
     handleRepoDeepLink(repoParam).then(() => {
       hasRepoParam.current = false;
@@ -181,7 +197,7 @@ function App() {
   );
 
   return (
-    <div className="app">
+    <div className="app" ref={containerRef}>
       <div className="app-body">
         <GraphViewer
           ref={graphViewerRef}
@@ -249,9 +265,20 @@ function App() {
         />
       )}
 
-      <footer className="version-footer">
-        v{__APP_VERSION__} &middot; {new Date(__BUILD_TIME__).toLocaleString()}
-      </footer>
+      {(version || typeof __APP_VERSION__ !== 'undefined') && (
+        <footer className="version-footer">
+          v{version ?? __APP_VERSION__}
+          {(buildTime ??
+            (typeof __BUILD_TIME__ !== 'undefined'
+              ? __BUILD_TIME__
+              : undefined)) && (
+            <>
+              {' '}
+              &middot; {new Date(buildTime ?? __BUILD_TIME__).toLocaleString()}
+            </>
+          )}
+        </footer>
+      )}
     </div>
   );
 }

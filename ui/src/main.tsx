@@ -25,7 +25,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <StoreProvider>
       <JobServiceProvider>
-        <App />
+        <App version={__APP_VERSION__} buildTime={__BUILD_TIME__} />
       </JobServiceProvider>
     </StoreProvider>
   </StrictMode>,
