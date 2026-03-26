@@ -64,10 +64,19 @@ import {
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_HIGHLIGHTED,
   EDGE_OPACITY_DIMMED,
+  LABEL_MAX_LENGTH,
   LABEL_SIZE,
   LABEL_FONT,
   LABEL_COLOR,
 } from '../config/graphLayout';
+
+/** Strip control characters and truncate to MAX_LABEL_LENGTH. */
+function cleanLabel(raw: string): string {
+  const stripped = raw.replace(/[\n\r\t]+/g, ' ').trim();
+  return stripped.length > LABEL_MAX_LENGTH
+    ? stripped.slice(0, LABEL_MAX_LENGTH) + '…'
+    : stripped;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -960,7 +969,7 @@ export class PixiRenderer {
 
       const sx = (nx + gap) * this.vp.scale + this.vp.x;
       const sy = ny * this.vp.scale + this.vp.y - labelH / 2;
-      const textLen = (node.graphNode.name || node.id).length;
+      const textLen = cleanLabel(node.graphNode.name || node.id).length;
       const sw = textLen * LABEL_SIZE * 0.6 * screenLabelScale;
       const sh = labelH;
 
@@ -1276,7 +1285,7 @@ export class PixiRenderer {
   private createLabel(node: PixiNode): Text {
     const lblInv = this.labelInvScale();
     const label = new Text({
-      text: node.graphNode.name || node.id,
+      text: cleanLabel(node.graphNode.name || node.id),
       style: new TextStyle({
         fontSize: LABEL_SIZE,
         fontFamily: LABEL_FONT,

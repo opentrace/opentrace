@@ -104,6 +104,7 @@ export const NOVERLAP_COMMUNITY_ITERATIONS = 20; // per-community push-apart pas
 export const EDGE_PROGRAM_THRESHOLD = 50000;
 
 export const LABEL_RENDERED_SIZE_THRESHOLD = 8;
+export const LABEL_MAX_LENGTH = 64;
 export const LABEL_SIZE = 12;
 export const LABEL_FONT = 'Inter, system-ui, sans-serif';
 export const LABEL_COLOR = '#e2e8f0';
