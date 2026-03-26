@@ -1,0 +1,233 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
+ * OpenTrace logo animation cycle — 6s total, ease-in-out, infinite
+ *
+ * ─── Phase 1: Entry / Drawing (0% → 28% = 0s → 1.68s) ───────────────────────
+ *   0%   Orange stroke begins drawing (dashoffset 600 → 0)
+ *   3%   Node strokes become visible
+ *   6%   Node strokes start drawing
+ *  18%   All strokes fully drawn; fills begin fading in
+ *  22%   Orange stroke fully drawn
+ *  28%   Fills reach full opacity; strokes cross-fade out    → fully colored
+ *
+ * ─── Phase 2: Static / Fully colored (28% → 55% = 1.68s → 3.30s = 1.62s) ───
+ *  28%–55%  All fills solid, all strokes invisible.
+ *           Only the ambient glow breathes (ot-breathe, separate 6s cycle).
+ *
+ * ─── Phase 3: Exit / Fading (55% → 100% = 3.30s → 6.00s = 2.70s) ──────────
+ *  55%  Fills begin fading out
+ *  60%  Node fills at 70% opacity
+ *  62%  Node strokes reappear (draw-retract begins)
+ *  65%  Orange stroke reappears; node fills at 40%
+ *  70%  All fills gone
+ *  75%  Node strokes fully retracted (dashoffset back to initial)
+ *  80%  Node strokes at 50% opacity
+ *  85%  Node strokes gone
+ * 100%  Orange stroke fully retracted → loop
+ */
+
+@keyframes ot-draw-stroke {
+  /* Entry: draw in */
+  0% {
+    stroke-dashoffset: 600;
+    opacity: 1;
+  }
+  22% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  30% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  /* Static: invisible */
+  60% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  /* Exit: reappear and retract */
+  65% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 600;
+    opacity: 1;
+  }
+}
+@keyframes ot-fill-in {
+  /* Entry: fade in */
+  0%,
+  18% {
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  /* Static: hold */
+  55% {
+    opacity: 1;
+  }
+  /* Exit: fade out */
+  70%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ot-nd-draw {
+  /* Entry: draw in */
+  0%,
+  3% {
+    stroke-dashoffset: inherit;
+    opacity: 0;
+  }
+  6% {
+    stroke-dashoffset: inherit;
+    opacity: 1;
+  }
+  22% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  28% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  /* Static: invisible */
+  58% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  /* Exit: reappear and retract */
+  62% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  75% {
+    stroke-dashoffset: inherit;
+    opacity: 1;
+  }
+  80% {
+    stroke-dashoffset: inherit;
+    opacity: 0.5;
+  }
+  85%,
+  100% {
+    stroke-dashoffset: inherit;
+    opacity: 0;
+  }
+}
+@keyframes ot-nd-solid {
+  /* Entry: fade in */
+  0%,
+  18% {
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  /* Static: hold */
+  55% {
+    opacity: 1;
+  }
+  /* Exit: stepped fade out */
+  60% {
+    opacity: 0.7;
+  }
+  65% {
+    opacity: 0.4;
+  }
+  70%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ot-breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  35%,
+  70% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.ot-sz-xl .ot-nd-stroke {
+  stroke-dasharray: 123;
+  stroke-dashoffset: 123;
+}
+.ot-sz-xl2 .ot-nd-stroke {
+  stroke-dasharray: 115;
+  stroke-dashoffset: 115;
+}
+.ot-sz-lg .ot-nd-stroke {
+  stroke-dasharray: 82;
+  stroke-dashoffset: 82;
+}
+.ot-sz-md .ot-nd-stroke {
+  stroke-dasharray: 65;
+  stroke-dashoffset: 65;
+}
+.ot-sz-smd .ot-nd-stroke {
+  stroke-dasharray: 57;
+  stroke-dashoffset: 57;
+}
+.ot-sz-sm .ot-nd-stroke {
+  stroke-dasharray: 31;
+  stroke-dashoffset: 31;
+}
+.ot-sz-blob .ot-nd-stroke {
+  stroke-dasharray: 300;
+  stroke-dashoffset: 300;
+}
+
+.ot-d0 .ot-nd-stroke,
+.ot-d0 .ot-nd-fill {
+  animation-delay: 0s;
+}
+.ot-d1 .ot-nd-stroke,
+.ot-d1 .ot-nd-fill {
+  animation-delay: 0.1s;
+}
+.ot-d2 .ot-nd-stroke,
+.ot-d2 .ot-nd-fill {
+  animation-delay: 0.2s;
+}
+.ot-d3 .ot-nd-stroke,
+.ot-d3 .ot-nd-fill {
+  animation-delay: 0.3s;
+}
+.ot-d4 .ot-nd-stroke,
+.ot-d4 .ot-nd-fill {
+  animation-delay: 0.4s;
+}
+.ot-d5 .ot-nd-stroke,
+.ot-d5 .ot-nd-fill {
+  animation-delay: 0.5s;
+}
+.ot-d6 .ot-nd-stroke,
+.ot-d6 .ot-nd-fill {
+  animation-delay: 0.6s;
+}
+.ot-d7 .ot-nd-stroke,
+.ot-d7 .ot-nd-fill {
+  animation-delay: 0.7s;
+}
