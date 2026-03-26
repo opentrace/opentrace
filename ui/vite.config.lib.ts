@@ -26,11 +26,29 @@
  */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import wasm from 'vite-plugin-wasm';
 import { resolve } from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), wasm()],
   publicDir: false,
+  resolve: {
+    alias: {
+      '@opentrace/components/chat': resolve(
+        __dirname,
+        'src/components/chat/index.ts',
+      ),
+      '@opentrace/components/pipeline': resolve(
+        __dirname,
+        'src/components/pipeline/index.ts',
+      ),
+      '@opentrace/components/utils': resolve(
+        __dirname,
+        'src/components/utils.ts',
+      ),
+      '@opentrace/components': resolve(__dirname, 'src/components/index.ts'),
+    },
+  },
   build: {
     outDir: 'dist/lib',
     lib: {
@@ -41,6 +59,7 @@ export default defineConfig({
         pipeline: resolve(__dirname, 'src/components/pipeline/index.ts'),
         'pipeline-wasm': resolve(__dirname, 'src/components/pipeline/wasm.ts'),
         chat: resolve(__dirname, 'src/components/chat/index.ts'),
+        app: resolve(__dirname, 'src/OpenTraceApp.tsx'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],
@@ -56,6 +75,10 @@ export default defineConfig({
         'node:fs',
         'node:path',
         'node:url',
+        // WASM packages use top-level await, incompatible with CJS output.
+        // Consumers' bundlers resolve these from node_modules at build time.
+        'parquet-wasm/bundler',
+        '@ladybugdb/wasm-core',
       ],
       output: {
         globals: {

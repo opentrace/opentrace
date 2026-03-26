@@ -58,6 +58,9 @@ export function createLLM(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ChatAgent = { agent: any; progress: SubAgentProgressHandle };
+
 export function createChatAgent(
   providerId: string,
   modelId: string,
@@ -66,7 +69,7 @@ export function createChatAgent(
   store: GraphStore,
   prClient?: PRClient | null,
   baseUrl?: string,
-) {
+): ChatAgent {
   const llm = createLLM(providerId, modelId, apiKey, baseUrl);
   const graphTools = makeGraphTools(store);
   const prTools = makePRTools(store, prClient);

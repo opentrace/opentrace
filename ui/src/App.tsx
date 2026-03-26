@@ -33,7 +33,12 @@ const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
   links: [],
 };
 
-function App() {
+interface AppProps {
+  version?: string;
+  buildTime?: string;
+}
+
+function App({ version, buildTime }: AppProps = {}) {
   const { store } = useStore();
   const jobService = useJobService();
   const {
@@ -249,9 +254,20 @@ function App() {
         />
       )}
 
-      <footer className="version-footer">
-        v{__APP_VERSION__} &middot; {new Date(__BUILD_TIME__).toLocaleString()}
-      </footer>
+      {(version || typeof __APP_VERSION__ !== 'undefined') && (
+        <footer className="version-footer">
+          v{version ?? __APP_VERSION__}
+          {(buildTime ??
+            (typeof __BUILD_TIME__ !== 'undefined'
+              ? __BUILD_TIME__
+              : undefined)) && (
+            <>
+              {' '}
+              &middot; {new Date(buildTime ?? __BUILD_TIME__).toLocaleString()}
+            </>
+          )}
+        </footer>
+      )}
     </div>
   );
 }

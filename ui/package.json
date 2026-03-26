@@ -43,6 +43,11 @@
       "import": "./dist/lib/chat.js",
       "require": "./dist/lib/chat.cjs"
     },
+    "./app": {
+      "types": "./dist/lib/src/OpenTraceApp.d.ts",
+      "import": "./dist/lib/app.js",
+      "require": "./dist/lib/app.cjs"
+    },
     "./style.css": "./dist/lib/opentrace.css"
   },
   "publishConfig": {
@@ -63,7 +68,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "vite build -c vite.config.lib.ts && tsc -p tsconfig.lib.json",
+    "build:lib": "vite build -c vite.config.lib.ts && tsc -p tsconfig.lib.json && tsc -p tsconfig.lib-app.json",
     "build:wasm": "bash scripts/build-wasm.sh",
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check .",
