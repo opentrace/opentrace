@@ -59,7 +59,7 @@ export default defineConfig({
         pipeline: resolve(__dirname, 'src/components/pipeline/index.ts'),
         'pipeline-wasm': resolve(__dirname, 'src/components/pipeline/wasm.ts'),
         chat: resolve(__dirname, 'src/components/chat/index.ts'),
-        app: resolve(__dirname, 'src/OpenTraceApp.tsx'),
+        app: resolve(__dirname, 'src/lib-app-entry.ts'),
       },
       name: 'OpenTraceComponents',
       formats: ['es', 'cjs'],

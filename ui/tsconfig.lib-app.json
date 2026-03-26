@@ -30,6 +30,7 @@
   "include": [
     "src/env.d.ts",
     "src/lbug-wasm.d.ts",
+    "src/lib-app-entry.ts",
     "src/OpenTraceApp.tsx",
     "src/App.tsx",
     "src/store",

@@ -44,7 +44,7 @@
       "require": "./dist/lib/chat.cjs"
     },
     "./app": {
-      "types": "./dist/lib/src/OpenTraceApp.d.ts",
+      "types": "./dist/lib/src/lib-app-entry.d.ts",
       "import": "./dist/lib/app.js",
       "require": "./dist/lib/app.cjs"
     },
