@@ -1420,6 +1420,7 @@ const GraphViewer = memo(
             }
             actions={
               <>
+                {toolbarActions}
                 {(jobState.status === 'enriching' ||
                   jobState.status === 'done') &&
                 !jobExpanded ? (
@@ -1554,7 +1555,6 @@ const GraphViewer = memo(
                   </svg>
                   <span className="ot-menu-label">Settings</span>
                 </button>
-                {toolbarActions}
               </>
             }
           />
