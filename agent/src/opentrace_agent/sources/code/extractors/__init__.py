@@ -20,6 +20,7 @@ from opentrace_agent.sources.code.extractors.base import (
     ExtractionResult,
     SymbolExtractor,
 )
+from opentrace_agent.sources.code.extractors.generic_extractor import GenericExtractor
 from opentrace_agent.sources.code.extractors.go_extractor import GoExtractor
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 from opentrace_agent.sources.code.extractors.typescript_extractor import (
@@ -30,6 +31,7 @@ __all__ = [
     "CallRef",
     "CodeSymbol",
     "ExtractionResult",
+    "GenericExtractor",
     "GoExtractor",
     "PythonExtractor",
     "SymbolExtractor",

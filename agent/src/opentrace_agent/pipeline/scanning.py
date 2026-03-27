@@ -41,6 +41,7 @@ from opentrace_agent.sources.code.directory_walker import (
     DirectoryWalker,
 )
 from opentrace_agent.sources.code.extractors import (
+    GenericExtractor,
     GoExtractor,
     PythonExtractor,
     SymbolExtractor,
@@ -64,6 +65,7 @@ _DEFAULT_EXTRACTORS: list[SymbolExtractor] = [
     PythonExtractor(),
     TypeScriptExtractor(),
     GoExtractor(),
+    GenericExtractor(),
 ]
 
 for _ext in _DEFAULT_EXTRACTORS:

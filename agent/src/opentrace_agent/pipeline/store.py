@@ -36,7 +36,17 @@ class MemoryStore:
         self.relationships: dict[str, GraphRelationship] = {}
 
     def save_node(self, node: GraphNode) -> None:
-        self.nodes[node.id] = node
+        existing = self.nodes.get(node.id)
+        if existing is not None:
+            merged_props = {**(existing.properties or {}), **(node.properties or {})}
+            self.nodes[node.id] = GraphNode(
+                id=existing.id,
+                type=existing.type,
+                name=existing.name,
+                properties=merged_props,
+            )
+        else:
+            self.nodes[node.id] = node
 
     def save_relationship(self, rel: GraphRelationship) -> None:
         self.relationships[rel.id] = rel

@@ -27,6 +27,7 @@ class Phase(str, Enum):
     SCANNING = "scanning"
     PROCESSING = "processing"
     RESOLVING = "resolving"
+    SUMMARIZING = "summarizing"
     SUBMITTING = "submitting"
 
 

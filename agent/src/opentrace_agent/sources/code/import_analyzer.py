@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 
 import tree_sitter
 
+from opentrace_agent.sources.code.manifest_parser import normalize_py_name
+
 
 @dataclass
 class ImportResult:
@@ -52,27 +54,17 @@ def package_source_url(registry: str, name: str) -> str | None:
     return urls.get(registry)
 
 
+# ---------------------------------------------------------------------------
+# Python imports
+# ---------------------------------------------------------------------------
+
+
 def analyze_python_imports(
     root_node: tree_sitter.Node,
     file_path: str,
     known_files: set[str],
 ) -> ImportResult:
-    """Extract Python imports and map local module names to repo file IDs.
-
-    Handles:
-      - ``import utils`` → alias "utils"
-      - ``import utils as u`` → alias "u"
-      - ``from . import helper`` → relative import
-      - ``from mypackage import foo`` → absolute local import
-
-    Args:
-        root_node: Tree-sitter root node of the parsed Python file.
-        file_path: The repo-relative path of this file (e.g. "src/app/main.py").
-        known_files: Set of all repo file IDs (paths) for local-import detection.
-
-    Returns:
-        ImportResult with internal (alias → file_id) and external (name → pkg ID).
-    """
+    """Extract Python imports and map local module names to repo file IDs."""
     internal: dict[str, str] = {}
     external: dict[str, str] = {}
     file_dir = _parent_dir(file_path)
@@ -96,7 +88,6 @@ def _parse_python_import(
     for child in node.children:
         if child.type == "dotted_name":
             module_name = child.text.decode()
-            # Try to resolve module.submodule → module/submodule.py or module/submodule/__init__.py
             candidates = _module_to_paths(module_name)
             resolved = False
             for candidate in candidates:
@@ -106,7 +97,8 @@ def _parse_python_import(
                     break
             if not resolved:
                 top_level = module_name.split(".")[0]
-                external[top_level] = package_id("pypi", top_level)
+                name = normalize_py_name(top_level)
+                external[name] = package_id("pypi", name)
         elif child.type == "aliased_import":
             name_node = child.child_by_field_name("name")
             alias_node = child.child_by_field_name("alias")
@@ -122,7 +114,8 @@ def _parse_python_import(
                         break
                 if not resolved:
                     top_level = module_name.split(".")[0]
-                    external[top_level] = package_id("pypi", top_level)
+                    name = normalize_py_name(top_level)
+                    external[name] = package_id("pypi", name)
 
 
 def _parse_python_from_import(
@@ -144,13 +137,11 @@ def _parse_python_from_import(
     for child in node.children:
         if child.type == "relative_import":
             is_relative = True
-            # Extract the actual module path from the relative import
             for sub in child.children:
                 if sub.type == "dotted_name":
                     module_text = sub.text.decode()
                 elif sub.type == "import_prefix":
                     dots = sub.text.decode()
-                    # Each dot goes up one level
                     base_dir = file_dir
                     for _ in range(len(dots) - 1):
                         base_dir = _parent_dir(base_dir)
@@ -159,7 +150,6 @@ def _parse_python_from_import(
             break
 
     if is_relative:
-        # For relative imports, resolve relative to file's directory
         if module_text:
             base_path = f"{file_dir}/{module_text.replace('.', '/')}" if file_dir else module_text.replace(".", "/")
         else:
@@ -168,25 +158,20 @@ def _parse_python_from_import(
     else:
         candidates = _module_to_paths(module_text)
 
-    # Map the imported module alias
     resolved_path: str | None = None
     for candidate in candidates:
         if candidate in known_files:
-            # The alias is the last part of the module name or the explicit alias
             alias = module_text.split(".")[-1] if module_text else ""
             if alias:
                 result[alias] = candidate
             resolved_path = candidate
             break
 
-    # Store individual imported symbol names from `from X import Y, Z`
     if resolved_path is not None:
         for child in node.children:
             if child.type == "dotted_name" and child != node.child_by_field_name("module_name"):
-                # Bare imported name: `from X import Y`
                 result[child.text.decode()] = resolved_path
             elif child.type == "aliased_import":
-                # `from X import Y as Z` — store the alias
                 name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
                 if alias_node:
@@ -194,9 +179,65 @@ def _parse_python_from_import(
                 elif name_node:
                     result[name_node.text.decode()] = resolved_path
     elif not is_relative:
-        # External import: not resolved to any local file
         top_level = module_text.split(".")[0]
-        external[top_level] = package_id("pypi", top_level)
+        name = normalize_py_name(top_level)
+        external[name] = package_id("pypi", name)
+
+
+# ---------------------------------------------------------------------------
+# Go imports (with cached directory index)
+# ---------------------------------------------------------------------------
+
+_cached_dir_index: dict[str, str] | None = None
+_cached_dir_index_source: frozenset[str] | None = None
+
+
+def reset_dir_index_cache() -> None:
+    """Reset the directory index cache (for test isolation)."""
+    global _cached_dir_index, _cached_dir_index_source  # noqa: PLW0603
+    _cached_dir_index = None
+    _cached_dir_index_source = None
+
+
+def _build_dir_index(known_files: set[str]) -> dict[str, str]:
+    """Build an O(1) directory index from known file paths.
+
+    Maps full directory paths and unambiguous basenames to a representative
+    Go file for fast import resolution.
+    """
+    dir_to_file: dict[str, str] = {}
+    basename_counts: dict[str, int] = {}
+    basename_to_dir: dict[str, str] = {}
+
+    for path in known_files:
+        if not path.endswith(".go"):
+            continue
+        d = _parent_dir(path)
+        if d and d not in dir_to_file:
+            dir_to_file[d] = path
+            base = d.rsplit("/", 1)[-1]
+            basename_counts[base] = basename_counts.get(base, 0) + 1
+            basename_to_dir[base] = d
+
+    # Add shortcut for unambiguous basenames
+    for base, count in basename_counts.items():
+        if count == 1:
+            full_dir = basename_to_dir[base]
+            if base not in dir_to_file:
+                dir_to_file[base] = dir_to_file[full_dir]
+
+    return dir_to_file
+
+
+def _get_dir_index(known_files: set[str]) -> dict[str, str]:
+    """Get or build the directory index, caching across calls."""
+    global _cached_dir_index, _cached_dir_index_source  # noqa: PLW0603
+    frozen = frozenset(known_files)
+    if _cached_dir_index is not None and _cached_dir_index_source == frozen:
+        return _cached_dir_index
+    _cached_dir_index = _build_dir_index(known_files)
+    _cached_dir_index_source = frozen
+    return _cached_dir_index
 
 
 def analyze_go_imports(
@@ -204,15 +245,7 @@ def analyze_go_imports(
     known_files: set[str],
     go_module_path: str | None = None,
 ) -> ImportResult:
-    """Extract Go imports and map package aliases to repo file IDs.
-
-    Handles:
-      - ``import "myproject/internal/store"`` → alias "store"
-      - ``import s "myproject/internal/store"`` → alias "s"
-
-    Returns:
-        ImportResult with internal (alias → file_id) and external (name → pkg ID).
-    """
+    """Extract Go imports and map package aliases to repo file IDs."""
     internal: dict[str, str] = {}
     external: dict[str, str] = {}
 
@@ -240,18 +273,27 @@ def _parse_go_import_decl(
                     _parse_go_import_spec(spec, known_files, result, external, go_module_path)
 
 
+_GO_MODULE_HOSTS = frozenset({
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "golang.org",
+    "google.golang.org",
+    "gopkg.in",
+})
+
+
 def _go_module_root(import_path: str) -> str:
     """Extract the module root from a Go import path.
 
-    For known hosting platforms (github.com, gitlab.com, bitbucket.org),
-    the module root is the first 3 segments. Otherwise, use the full path.
+    For known hosting platforms, the module root is the first 3 segments.
+    For unknown hosts, also use up to 3 segments as a reasonable default.
     """
     parts = import_path.split("/")
-    if len(parts) >= 3 and parts[0] in (
-        "github.com",
-        "gitlab.com",
-        "bitbucket.org",
-    ):
+    if len(parts) >= 3 and parts[0] in _GO_MODULE_HOSTS:
+        return "/".join(parts[:3])
+    # Fallback: up to 3 segments for unknown hosts
+    if len(parts) >= 3:
         return "/".join(parts[:3])
     return import_path
 
@@ -263,7 +305,7 @@ def _parse_go_import_spec(
     external: dict[str, str],
     go_module_path: str | None,
 ) -> None:
-    """Parse a single Go import spec."""
+    """Parse a single Go import spec using the directory index for O(1) lookup."""
     path_node = node.child_by_field_name("path")
     name_node = node.child_by_field_name("name")
 
@@ -282,29 +324,30 @@ def _parse_go_import_spec(
         if alias == "_" or alias == ".":
             return
     else:
-        # Default alias is the last path segment
         alias = import_path.rsplit("/", 1)[-1]
 
-    # Try to find matching files — match directory-based Go packages.
-    # The import path may have a module prefix (e.g. "myproject/internal/store")
-    # but the known files use repo-relative paths (e.g. "internal/store/store.go").
-    # We check if the last package segment of the import path matches the
-    # last directory segment of the known file.
+    # Use directory index for fast lookup
+    dir_index = _get_dir_index(known_files)
     pkg_name = import_path.rsplit("/", 1)[-1]
+
     resolved = False
-    for known in known_files:
-        known_dir = _parent_dir(known)
-        # Check: exact match, suffix match, or last segment match
-        if (
-            known_dir == import_path
-            or known_dir.endswith("/" + import_path)
-            or known_dir.endswith(import_path)
-            or known_dir == pkg_name
-            or known_dir.endswith("/" + pkg_name)
-        ):
-            result[alias] = known
+
+    # Tier 1: full import path match
+    if import_path in dir_index:
+        result[alias] = dir_index[import_path]
+        resolved = True
+    else:
+        # Tier 2: module-path-stripped repo-relative match
+        if go_module_path and import_path.startswith(go_module_path + "/"):
+            repo_relative = import_path[len(go_module_path) + 1 :]
+            if repo_relative in dir_index:
+                result[alias] = dir_index[repo_relative]
+                resolved = True
+
+        # Tier 3: bare package name (basename shortcut)
+        if not resolved and pkg_name in dir_index:
+            result[alias] = dir_index[pkg_name]
             resolved = True
-            break
 
     if not resolved:
         # External dependency — skip if it's the project's own module path
@@ -314,21 +357,17 @@ def _parse_go_import_spec(
         external[module_root] = package_id("go", module_root)
 
 
+# ---------------------------------------------------------------------------
+# TypeScript/JavaScript imports
+# ---------------------------------------------------------------------------
+
+
 def analyze_typescript_imports(
     root_node: tree_sitter.Node,
     file_path: str,
     known_files: set[str],
 ) -> ImportResult:
-    """Extract TypeScript/TSX imports and map aliases to repo file IDs.
-
-    Handles:
-      - ``import { foo } from './utils'`` → alias "utils"
-      - ``import utils from '../lib/utils'`` → alias "utils"
-      - Bare specifier imports produce external Package references
-
-    Returns:
-        ImportResult with internal (alias → file_id) and external (name → pkg ID).
-    """
+    """Extract TypeScript/TSX imports and map aliases to repo file IDs."""
     internal: dict[str, str] = {}
     external: dict[str, str] = {}
     file_dir = _parent_dir(file_path)
@@ -346,7 +385,6 @@ def _npm_package_name(specifier: str) -> str:
     """Extract the npm package name from a bare specifier.
 
     Handles scoped packages: ``@scope/pkg/sub`` → ``@scope/pkg``.
-    Plain packages: ``lodash/fp`` → ``lodash``.
     """
     if specifier.startswith("@"):
         parts = specifier.split("/")
@@ -370,16 +408,13 @@ def _parse_ts_import(
 
     source_text = source_node.text.decode().strip("'\"")
 
-    # Non-relative imports → external packages
     if not source_text.startswith("."):
         pkg_name = _npm_package_name(source_text)
         external[pkg_name] = package_id("npm", pkg_name)
         return
 
-    # Resolve relative path
     resolved = _resolve_relative_path(file_dir, source_text)
 
-    # Try common extensions
     extensions = [
         "",
         ".ts",
@@ -393,7 +428,6 @@ def _parse_ts_import(
     for ext in extensions:
         candidate = resolved + ext
         if candidate in known_files:
-            # Alias is the last path segment
             alias = source_text.rsplit("/", 1)[-1]
             result[alias] = candidate
             break
@@ -408,12 +442,10 @@ def _parse_ts_reexport(
     """Parse ``export { Config } from './config'`` as an import alias."""
     source_node = node.child_by_field_name("source")
     if source_node is None:
-        # Bare export (e.g. `export class Foo {}`), not a re-export
         return
 
     source_text = source_node.text.decode().strip("'\"")
 
-    # Only resolve relative re-exports
     if not source_text.startswith("."):
         return
 
@@ -437,7 +469,180 @@ def _parse_ts_reexport(
             break
 
 
-# --- path utilities ---
+# ---------------------------------------------------------------------------
+# Rust imports
+# ---------------------------------------------------------------------------
+
+_RUST_BUILTINS = frozenset({"std", "core", "alloc", "self", "super", "crate"})
+
+
+def analyze_rust_imports(
+    root_node: tree_sitter.Node,
+    file_path: str,
+    known_files: set[str],
+) -> ImportResult:
+    """Extract Rust imports (mod declarations and use statements)."""
+    internal: dict[str, str] = {}
+    external: dict[str, str] = {}
+    file_dir = _parent_dir(file_path)
+
+    for child in root_node.children:
+        if child.type == "mod_item":
+            name_node = child.child_by_field_name("name")
+            if not name_node:
+                continue
+            # Only external mod declarations (with `;`), not inline `mod foo { ... }`
+            has_body = any(c.type == "declaration_list" for c in child.children)
+            if has_body:
+                continue
+
+            mod_name = name_node.text.decode()
+            candidates = [
+                f"{file_dir}/{mod_name}.rs" if file_dir else f"{mod_name}.rs",
+                f"{file_dir}/{mod_name}/mod.rs" if file_dir else f"{mod_name}/mod.rs",
+            ]
+            found = False
+            for candidate in candidates:
+                if candidate in known_files:
+                    internal[mod_name] = candidate
+                    found = True
+                    break
+            if not found:
+                external[mod_name] = package_id("crates", mod_name)
+
+        elif child.type == "use_declaration":
+            _parse_rust_use_decl(child, file_dir, known_files, internal, external)
+
+    return ImportResult(internal=internal, external=external)
+
+
+def _parse_rust_use_decl(
+    node: tree_sitter.Node,
+    file_dir: str,
+    known_files: set[str],
+    internal: dict[str, str],
+    external: dict[str, str],
+) -> None:
+    """Parse a Rust use declaration and resolve the root crate/module."""
+    for child in node.children:
+        if child.type == "scoped_identifier":
+            parts = child.text.decode().split("::")
+            root = parts[0]
+            _resolve_rust_root(root, file_dir, known_files, internal, external)
+        elif child.type == "scoped_use_list":
+            for sub in child.children:
+                if sub.type in ("identifier", "scoped_identifier"):
+                    root = sub.text.decode().split("::")[0]
+                    _resolve_rust_root(root, file_dir, known_files, internal, external)
+                    break
+        elif child.type == "identifier":
+            _resolve_rust_root(child.text.decode(), file_dir, known_files, internal, external)
+
+
+def _resolve_rust_root(
+    root: str,
+    file_dir: str,
+    known_files: set[str],
+    internal: dict[str, str],
+    external: dict[str, str],
+) -> None:
+    """Resolve a Rust crate root to a local file or external package."""
+    if root in _RUST_BUILTINS:
+        return
+
+    if root not in internal:
+        candidates = [
+            f"{file_dir}/{root}.rs" if file_dir else f"{root}.rs",
+            f"{file_dir}/{root}/mod.rs" if file_dir else f"{root}/mod.rs",
+            f"src/{root}.rs",
+            f"src/{root}/mod.rs",
+        ]
+        for candidate in candidates:
+            if candidate in known_files:
+                internal[root] = candidate
+                return
+        external[root] = package_id("crates", root)
+
+
+# ---------------------------------------------------------------------------
+# Ruby imports
+# ---------------------------------------------------------------------------
+
+
+def analyze_ruby_imports(
+    root_node: tree_sitter.Node,
+    file_path: str,
+    known_files: set[str],
+) -> ImportResult:
+    """Extract Ruby imports (require and require_relative statements)."""
+    internal: dict[str, str] = {}
+    external: dict[str, str] = {}
+    file_dir = _parent_dir(file_path)
+
+    for child in root_node.children:
+        if child.type == "call":
+            func_node = child.children[0] if child.children else None
+            if not func_node or func_node.type != "identifier":
+                continue
+            func_name = func_node.text.decode()
+
+            if func_name == "require_relative":
+                require_path = _extract_ruby_string_arg(child)
+                if not require_path:
+                    continue
+                resolved = _resolve_relative_path(file_dir, require_path)
+                candidates = [f"{resolved}.rb", resolved, f"{resolved}/index.rb"]
+                for candidate in candidates:
+                    if candidate in known_files:
+                        alias = require_path.rsplit("/", 1)[-1]
+                        internal[alias] = candidate
+                        break
+
+            elif func_name == "require":
+                gem_name = _extract_ruby_string_arg(child)
+                if not gem_name:
+                    continue
+                candidates = [
+                    f"{gem_name}.rb",
+                    f"lib/{gem_name}.rb",
+                    f"{gem_name}/init.rb",
+                ]
+                found = False
+                for candidate in candidates:
+                    if candidate in known_files:
+                        internal[gem_name] = candidate
+                        found = True
+                        break
+                if not found:
+                    name = gem_name.split("/")[0]
+                    external[name] = package_id("rubygems", name)
+
+    return ImportResult(internal=internal, external=external)
+
+
+def _extract_ruby_string_arg(call_node: tree_sitter.Node) -> str | None:
+    """Extract the string argument from a Ruby require/require_relative call."""
+    arg_node = call_node.child_by_field_name("arguments")
+    if arg_node is None:
+        # Try finding argument_list child
+        for c in call_node.children:
+            if c.type == "argument_list":
+                arg_node = c
+                break
+    if arg_node is None:
+        return None
+
+    for c in arg_node.children:
+        if c.type == "string":
+            for sc in c.children:
+                if sc.type == "string_content":
+                    return sc.text.decode()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Path utilities
+# ---------------------------------------------------------------------------
 
 
 def _parent_dir(path: str) -> str:

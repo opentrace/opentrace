@@ -36,6 +36,7 @@ from opentrace_agent.pipeline.types import (
     SymbolInfo,
 )
 from opentrace_agent.sources.code.extractors import (
+    GenericExtractor,
     GoExtractor,
     PythonExtractor,
     SymbolExtractor,
@@ -49,6 +50,8 @@ from opentrace_agent.sources.code.import_analyzer import (
     ImportResult,
     analyze_go_imports,
     analyze_python_imports,
+    analyze_ruby_imports,
+    analyze_rust_imports,
     analyze_typescript_imports,
     package_source_url,
 )
@@ -59,6 +62,7 @@ _DEFAULT_EXTRACTORS: list[SymbolExtractor] = [
     PythonExtractor(),
     TypeScriptExtractor(),
     GoExtractor(),
+    GenericExtractor(),
 ]
 
 
@@ -123,6 +127,8 @@ def processing(
 
         # Extract symbols
         if isinstance(extractor, TSExtractor):
+            result = extractor.extract_for_extension(source_bytes, fe.extension)
+        elif isinstance(extractor, GenericExtractor):
             result = extractor.extract_for_extension(source_bytes, fe.extension)
         else:
             result = extractor.extract(source_bytes)
@@ -268,6 +274,10 @@ def _analyze_imports_from_node(
         return analyze_go_imports(root_node, known_paths, go_module_path)  # type: ignore[arg-type]
     elif language in ("typescript", "javascript"):
         return analyze_typescript_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
+    elif language == "rust":
+        return analyze_rust_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
+    elif language == "ruby":
+        return analyze_ruby_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     return ImportResult()
 
 

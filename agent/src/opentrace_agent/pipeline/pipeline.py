@@ -23,6 +23,7 @@ from opentrace_agent.pipeline.resolving import resolving
 from opentrace_agent.pipeline.saving import saving
 from opentrace_agent.pipeline.scanning import scanning
 from opentrace_agent.pipeline.store import Store
+from opentrace_agent.pipeline.summarizing import summarizing
 from opentrace_agent.pipeline.types import (
     EventKind,
     GraphNode,
@@ -71,7 +72,7 @@ def run_pipeline(
 ) -> Generator[PipelineEvent, None, None]:
     """Public entry point — run the full pipeline, optionally persisting via store."""
     ctx = ctx or PipelineContext()
-    inner = core_pipeline(inp, ctx)
+    inner = summarizing(core_pipeline(inp, ctx))
     if store is not None:
         yield from saving(inner, store)
     else:
