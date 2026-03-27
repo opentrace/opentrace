@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generator, Generic, Protocol, TypeVar
 
 T = TypeVar("T")
 
@@ -185,3 +185,69 @@ class ProcessingOutput:
     classes_extracted: int = 0
     functions_extracted: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Stage protocols — allow external projects to supply custom implementations
+# ---------------------------------------------------------------------------
+
+EventGen = Generator[PipelineEvent, None, None]
+
+
+class ScanningStage(Protocol):
+    """Callable that walks input and produces structural nodes."""
+
+    def __call__(
+        self,
+        inp: PipelineInput,
+        ctx: PipelineContext,
+        out: StageResult[ScanResult],
+    ) -> EventGen: ...
+
+
+class ProcessingStage(Protocol):
+    """Callable that extracts symbols from scanned files."""
+
+    def __call__(
+        self,
+        scan: ScanResult,
+        ctx: PipelineContext,
+        out: StageResult[ProcessingOutput],
+    ) -> EventGen: ...
+
+
+class ResolvingStage(Protocol):
+    """Callable that resolves call references into CALLS relationships."""
+
+    def __call__(
+        self,
+        proc: ProcessingOutput,
+        ctx: PipelineContext,
+        out: StageResult[PipelineResult],
+    ) -> EventGen: ...
+
+
+class SummarizingStage(Protocol):
+    """Callable wrapper that adds summaries to nodes flowing through."""
+
+    def __call__(self, inner: EventGen) -> EventGen: ...
+
+
+@dataclass
+class PipelineStages:
+    """Bundle of stage implementations injected into the pipeline.
+
+    Every field defaults to ``None``, meaning "use the built-in stage".
+    External projects can override any subset of stages::
+
+        from opentrace_agent.pipeline import PipelineStages, run_pipeline
+
+        stages = PipelineStages(scanning=my_custom_scanner)
+        for event in run_pipeline(inp, stages=stages):
+            ...
+    """
+
+    scanning: ScanningStage | None = None
+    processing: ProcessingStage | None = None
+    resolving: ResolvingStage | None = None
+    summarizing: SummarizingStage | None = None
