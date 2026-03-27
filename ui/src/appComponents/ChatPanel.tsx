@@ -63,6 +63,8 @@ interface Props {
   onChatHighlight?: (allNodeIds: Set<string>, newNodeIds: string[]) => void;
   repoUrl?: string;
   onWidthChange?: (width: number) => void;
+  /** Optional content rendered at the bottom of the settings view (e.g. managed provider UI). */
+  settingsFooter?: React.ReactNode;
 }
 
 export default function ChatPanel({
@@ -73,6 +75,7 @@ export default function ChatPanel({
   onChatHighlight,
   repoUrl,
   onWidthChange,
+  settingsFooter,
 }: Props) {
   const { store } = useStore();
 
@@ -940,6 +943,7 @@ export default function ChatPanel({
             )}
           </div>
           <p className="hint">Your key is stored locally in your browser.</p>
+          {settingsFooter}
         </div>
       ) : activeTab === 'prs' && prClient ? (
         <PRListPanel

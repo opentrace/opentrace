@@ -20,34 +20,40 @@ interface Props {
 
 const TEMPLATES = [
   {
-    label: 'Overview',
-    description: 'Architecture overview with node types and connections',
+    label: 'Explore architecture',
+    description: 'Deep dive into how the system is structured',
     prompt:
-      "Give me an overview of this system's architecture. What node types exist and how are they connected?",
+      'Explore the overall architecture of this system. What are the main components, how are they structured, and how do they connect to each other?',
   },
   {
-    label: 'List services',
-    description: 'Enumerate services and describe their roles',
+    label: 'Find usages',
+    description: 'Discover what calls or depends on a key component',
     prompt:
-      'Search the code for services in this system. Look for classes, modules, or files that act as services and briefly describe what each one does based on its connections and source code.',
+      'What are the most connected components in this system? Pick the one with the most consumers and show me everything that uses it.',
   },
   {
-    label: 'Find dependencies',
-    description: 'Identify critical nodes with the most connections',
+    label: 'Map dependencies',
+    description: 'Trace what a component depends on',
     prompt:
-      'What are the most critical dependencies in this system? Which nodes have the most incoming connections?',
+      'Pick a central service or class in this system and map out all of its dependencies. What does it call, import, or rely on?',
   },
   {
-    label: 'Database usage',
-    description: 'Which databases exist and what connects to them',
+    label: 'Blast radius',
+    description: 'Assess the impact of changing a critical component',
     prompt:
-      'Search the code for database usage in this system. Look for database connections, ORMs, query builders, or migration files and describe which components interact with databases.',
+      'What would be the blast radius of changing the most-connected component in this system? Show me both what depends on it and what it depends on.',
   },
   {
     label: 'Code review',
     description: 'Review recent PR changes for bugs and quality issues',
     prompt:
       'Review the most recent pull request for bugs, security issues, and code quality. Focus on substantive issues.',
+  },
+  {
+    label: 'Database usage',
+    description: 'Which databases exist and what connects to them',
+    prompt:
+      'Search the code for database usage in this system. Look for database connections, ORMs, query builders, or migration files and describe which components interact with databases.',
   },
   {
     label: 'Documentation gaps',
