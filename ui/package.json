@@ -43,6 +43,21 @@
       "import": "./dist/lib/chat.js",
       "require": "./dist/lib/chat.cjs"
     },
+    "./store": {
+      "types": "./dist/lib/src/store/index.d.ts",
+      "import": "./dist/lib/store.js",
+      "require": "./dist/lib/store.cjs"
+    },
+    "./job": {
+      "types": "./dist/lib/src/job/index.d.ts",
+      "import": "./dist/lib/job.js",
+      "require": "./dist/lib/job.cjs"
+    },
+    "./app-components": {
+      "types": "./dist/lib/src/appComponents/index.d.ts",
+      "import": "./dist/lib/app-components.js",
+      "require": "./dist/lib/app-components.cjs"
+    },
     "./app": {
       "types": "./dist/lib/src/OpenTraceApp.d.ts",
       "import": "./dist/lib/app.js",
@@ -99,10 +114,9 @@
     "@langchain/google-genai": "^2.1.26",
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.3.0",
+    "apache-arrow": "^21.1.0",
     "d3-force": "^3.0.0",
     "d3-quadtree": "^3.0.1",
-    "pixi.js": "^8.17.1",
-    "apache-arrow": "^21.1.0",
     "fflate": "^0.8.2",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
@@ -112,23 +126,24 @@
     "idb": "^8.0.3",
     "mermaid": "^11.6.0",
     "parquet-wasm": "^0.7.1",
+    "pixi.js": "^8.17.1",
     "prism-react-renderer": "^2.4.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
     "react-markdown": "^10.1.0",
     "react-window": "^2.2.7",
     "remark-gfm": "^4.0.1",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",
-    "web-tree-sitter": "^0.26.6",
+    "web-tree-sitter": ">=0.24.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "@types/d3-force": "^3.0.10",
-    "@types/d3-quadtree": "^3.0.6",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/d3-force": "^3.0.10",
+    "@types/d3-quadtree": "^3.0.6",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
