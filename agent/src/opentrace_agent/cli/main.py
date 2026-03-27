@@ -821,12 +821,17 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
         line_ranges = []
         for part in line_spec.split(","):
             part = part.strip()
-            if "-" in part:
-                lo, hi = part.split("-", 1)
-                line_ranges.append((int(lo), int(hi)))
-            else:
-                n = int(part)
-                line_ranges.append((n, n))
+            if not part:
+                continue
+            try:
+                if "-" in part:
+                    lo, hi = part.split("-", 1)
+                    line_ranges.append((int(lo), int(hi)))
+                else:
+                    n = int(part)
+                    line_ranges.append((n, n))
+            except ValueError:
+                continue
 
     run_impact(file_path, resolved, line_ranges)
 

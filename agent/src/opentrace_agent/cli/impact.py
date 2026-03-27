@@ -21,6 +21,7 @@ relationships (CALLS, IMPORTS, DEPENDS_ON) to surface the blast radius.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # Relationship types that indicate something *depends on* the changed symbol.
@@ -37,8 +38,11 @@ def _symbol_label(node: dict[str, Any]) -> str:
     props = node.get("properties") or {}
     start = props.get("start_line")
     end = props.get("end_line")
-    loc = f" L{start}-{end}" if start else ""
-    return f"{node['type']}: {node['name']}{loc}"
+    if not start:
+        return f"{node['type']}: {node['name']}"
+    if end and end != start:
+        return f"{node['type']}: {node['name']} L{start}-{end}"
+    return f"{node['type']}: {node['name']} L{start}"
 
 
 def _caller_label(node: dict[str, Any], rel: dict[str, Any], depth: int) -> str:
@@ -117,11 +121,9 @@ def _run(
     file_nodes = store.search_nodes(file_path, node_types=["File"], limit=5)
     if not file_nodes:
         # Fallback: try just the basename
-        import os
-
-        basename = os.path.basename(file_path)
-        if basename:
-            file_nodes = store.search_nodes(basename, node_types=["File"], limit=5)
+        bn = os.path.basename(file_path)
+        if bn:
+            file_nodes = store.search_nodes(bn, node_types=["File"], limit=5)
     if not file_nodes:
         return
 

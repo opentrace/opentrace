@@ -155,6 +155,10 @@ def handle_post_tool_use(payload: dict) -> None:
         _debug("no file_path in tool_input")
         return
 
+    # Ensure path is absolute if relative
+    if not os.path.isabs(file_path) and cwd:
+        file_path = os.path.join(cwd, file_path)
+
     if not _is_code_file(file_path):
         _debug(f"skipping non-code file: {file_path}")
         return
