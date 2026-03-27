@@ -192,6 +192,9 @@ export interface GraphViewerProps {
   chatHighlightNodes?: Set<string>;
   /** Animation settings from SettingsDrawer */
   animationSettings?: import('@opentrace/components').AnimationSettings;
+  /** Additional React elements rendered in the toolbar's actions area (right side).
+   *  Appended after the built-in buttons (chat toggle, settings, theme). */
+  toolbarActions?: React.ReactNode;
 }
 
 const GraphViewer = memo(
@@ -219,6 +222,7 @@ const GraphViewer = memo(
         onGraphDataChange,
         chatHighlightNodes,
         animationSettings,
+        toolbarActions,
       } = props;
 
       const { store } = useStore();
@@ -1416,6 +1420,7 @@ const GraphViewer = memo(
             }
             actions={
               <>
+                {toolbarActions}
                 {(jobState.status === 'enriching' ||
                   jobState.status === 'done') &&
                 !jobExpanded ? (
