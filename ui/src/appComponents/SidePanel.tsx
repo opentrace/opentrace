@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
 import { FilterPanel, type FilterPanelProps } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
+import { useStore } from '../store/context';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
+import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import './SidePanel.css';
@@ -78,6 +80,12 @@ export default function SidePanel({
   onMobileTabChange,
   onMobileClose,
 }: SidePanelProps) {
+  const { store } = useStore();
+  const discoverDataProvider = useMemo(
+    () => createStoreDataProvider(store),
+    [store],
+  );
+
   const [activeTab, setActiveTab] = useState<
     'filters' | 'discover' | 'details'
   >('filters');
@@ -187,6 +195,7 @@ export default function SidePanel({
       >
         <DiscoverPanelContainer
           onSelectNode={onSelectNode ?? (() => {})}
+          dataProvider={discoverDataProvider}
           graphVersion={graphVersion}
           selectedNodeId={selectedNode?.id as string | undefined}
           graphNodeIds={graphNodeIds}
