@@ -20,6 +20,7 @@ export { default as GraphLegend } from './GraphLegend';
 export { default as GraphToolbar } from './GraphToolbar';
 export { default as DiscoverPanel } from './DiscoverPanel';
 export { default as PhysicsPanel } from './PhysicsPanel';
+export { useDiscoverTree } from './useDiscoverTree';
 
 export type {
   FilterItem,
@@ -32,4 +33,7 @@ export type {
   SearchSuggestion,
   TreeNodeData,
   DiscoverPanelProps,
+  DiscoverDataProvider,
+  UseDiscoverTreeOptions,
+  UseDiscoverTreeResult,
 } from './types';

@@ -164,6 +164,51 @@ export interface TreeNodeData {
   properties?: Record<string, unknown>;
 }
 
+/**
+ * Abstraction for loading tree data into the DiscoverPanel.
+ *
+ * Implement this interface to provide a custom data source
+ * (e.g. REST API, static data, in-memory graph) to the
+ * DiscoverPanel tree.
+ */
+export interface DiscoverDataProvider {
+  /** Fetch the top-level root nodes for the tree. */
+  fetchRoots(): Promise<TreeNodeData[]>;
+
+  /** Fetch the children of a given node. */
+  fetchChildren(nodeId: string, nodeType: string): Promise<TreeNodeData[]>;
+
+  /**
+   * Fetch the ancestor path from a node up to a root.
+   * Returns ancestor IDs in root-first order (root → ... → parent).
+   * Used to auto-expand the tree path when a node is selected externally.
+   */
+  fetchAncestorPath(nodeId: string): Promise<string[]>;
+}
+
+export interface UseDiscoverTreeOptions {
+  /** Data provider for loading roots and children. */
+  dataProvider: DiscoverDataProvider;
+  /** Bumping this value triggers a full re-fetch of roots. */
+  refreshKey?: number;
+  /** Predicate controlling which nodes can be expanded. */
+  isExpandable?: (node: TreeNodeData) => boolean;
+  /** Number of levels to auto-expand on initial load. Defaults to 3. */
+  autoExpandDepth?: number;
+}
+
+export interface UseDiscoverTreeResult {
+  roots: TreeNodeData[];
+  childrenMap: Map<string, TreeNodeData[]>;
+  expanded: Set<string>;
+  loading: boolean;
+  toggleExpand: (nodeId: string) => void;
+  collapseAll: () => void;
+  expandAll: () => void;
+  /** Expand the ancestor path to make a node visible. */
+  expandToNode: (nodeId: string) => void;
+}
+
 export interface DiscoverPanelProps {
   /** Root nodes of the tree */
   roots: TreeNodeData[];

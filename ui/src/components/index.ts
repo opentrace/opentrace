@@ -139,6 +139,7 @@ export {
   GraphToolbar,
   DiscoverPanel,
   PhysicsPanel,
+  useDiscoverTree,
 } from './panels';
 export type {
   FilterItem,
@@ -151,4 +152,7 @@ export type {
   SearchSuggestion,
   TreeNodeData,
   DiscoverPanelProps,
+  DiscoverDataProvider,
+  UseDiscoverTreeOptions,
+  UseDiscoverTreeResult,
 } from './panels';
