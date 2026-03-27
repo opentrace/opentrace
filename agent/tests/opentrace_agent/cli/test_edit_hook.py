@@ -188,12 +188,14 @@ def test_handle_post_tool_use_skips_relative_cwd(capsys):
 
 def test_main_dispatches_post_tool_use(capsys, monkeypatch, tmp_path):
     """Should dispatch PostToolUse events to handle_post_tool_use."""
-    payload = json.dumps({
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Edit",
-        "tool_input": {"file_path": str(tmp_path / "src" / "api.py")},
-        "cwd": str(tmp_path),
-    })
+    payload = json.dumps(
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(tmp_path / "src" / "api.py")},
+            "cwd": str(tmp_path),
+        }
+    )
     monkeypatch.setattr("sys.stdin", StringIO(payload))
 
     with patch.object(_hook, "run_opentraceai", return_value="impact context"):

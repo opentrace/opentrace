@@ -128,9 +128,7 @@ def test_run_impact_with_symbols_and_callers(tmp_path, capsys):
     # _get_neighbors returns Function defined in file
     mock_store._get_neighbors.return_value = [(func_node, defined_in_rel)]
     # traverse returns callers
-    mock_store.traverse.return_value = [
-        {"node": caller_node, "relationship": calls_rel, "depth": 1}
-    ]
+    mock_store.traverse.return_value = [{"node": caller_node, "relationship": calls_rel, "depth": 1}]
 
     with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
         run_impact("src/api.py", str(tmp_path / "fake.db"))

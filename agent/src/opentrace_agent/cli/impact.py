@@ -118,6 +118,7 @@ def _run(
     if not file_nodes:
         # Fallback: try just the basename
         import os
+
         basename = os.path.basename(file_path)
         if basename:
             file_nodes = store.search_nodes(basename, node_types=["File"], limit=5)
@@ -176,10 +177,7 @@ def _run(
             dependents = []
 
         # Filter to impact-relevant relationships
-        relevant = [
-            d for d in dependents
-            if d["relationship"]["type"] in _IMPACT_RELS
-        ]
+        relevant = [d for d in dependents if d["relationship"]["type"] in _IMPACT_RELS]
 
         if not relevant:
             lines.append("    (no known callers/dependents)")
@@ -197,9 +195,7 @@ def _run(
         lines.append("")
 
     if total_callers > 0:
-        lines.append(
-            f"  ⚠ {total_callers} dependent(s) may be affected by changes to this file."
-        )
+        lines.append(f"  ⚠ {total_callers} dependent(s) may be affected by changes to this file.")
         lines.append("  Consider reviewing these callers for compatibility.")
     else:
         lines.append("  No known dependents found in the graph.")
