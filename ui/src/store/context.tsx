@@ -15,7 +15,6 @@
  */
 
 import { createContext, use, type ReactNode } from 'react';
-import { LadybugGraphStore } from './ladybugStore';
 import type { GraphStore } from './types';
 
 interface StoreContextValue {
@@ -24,26 +23,12 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
-// Module-level singleton — survives React StrictMode double-invocation.
-// Without this, StrictMode creates two LadybugGraphStore instances (two workers,
-// two independent in-memory databases), so imports go to one and reads to the other.
-let singletonStore: LadybugGraphStore | null = null;
-function getStore(): LadybugGraphStore {
-  if (!singletonStore) {
-    if (!crossOriginIsolated) {
-      throw new Error(
-        'Cross-Origin Isolation (COOP/COEP headers) is required ' +
-          'for in-browser LadybugDB. Serve with appropriate headers.',
-      );
-    }
-    singletonStore = new LadybugGraphStore();
-  }
-  return singletonStore;
+interface StoreProviderProps {
+  store: GraphStore;
+  children: ReactNode;
 }
 
-export function StoreProvider({ children }: { children: ReactNode }) {
-  const store = getStore();
-
+export function StoreProvider({ store, children }: StoreProviderProps) {
   return <StoreContext value={{ store }}>{children}</StoreContext>;
 }
 
@@ -54,12 +39,4 @@ export function useStore(): StoreContextValue {
     throw new Error('useStore() must be used within <StoreProvider>');
   }
   return ctx;
-}
-
-// Clean up WASM resources on Vite HMR to prevent memory leaks.
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    singletonStore?.dispose();
-    singletonStore = null;
-  });
 }

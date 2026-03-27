@@ -15,13 +15,15 @@
  */
 
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import React from 'react';
+import { StoreProvider, useStore } from '../context';
+import type { GraphStore } from '../types';
 
-// Mock LadybugGraphStore and crossOriginIsolated
-vi.mock('../ladybugStore', () => ({
-  LadybugGraphStore: vi.fn().mockImplementation(() => ({
+function createMockStore(): GraphStore {
+  return {
+    hasData: () => false,
     fetchGraph: vi.fn().mockResolvedValue({ nodes: [], links: [] }),
     fetchStats: vi.fn().mockResolvedValue({
       total_nodes: 0,
@@ -33,38 +35,29 @@ vi.mock('../ladybugStore', () => ({
       nodes_created: 0,
       relationships_created: 0,
     }),
+    flush: vi.fn().mockResolvedValue(undefined),
     storeSource: vi.fn(),
     fetchSource: vi.fn().mockResolvedValue(null),
     searchNodes: vi.fn().mockResolvedValue([]),
     listNodes: vi.fn().mockResolvedValue([]),
     getNode: vi.fn().mockResolvedValue(null),
     traverse: vi.fn().mockResolvedValue([]),
-  })),
-}));
-
-// Must mock crossOriginIsolated before importing context
-vi.stubGlobal('crossOriginIsolated', true);
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+  };
+}
 
 describe('StoreContext', () => {
-  it('useStore outside provider throws', async () => {
-    // Dynamic import after mocks are set up
-    const { useStore } = await import('../context');
+  it('useStore outside provider throws', () => {
     expect(() => {
       renderHook(() => useStore());
     }).toThrow('useStore() must be used within <StoreProvider>');
   });
 
-  it('useStore inside provider returns store', async () => {
-    const { useStore, StoreProvider } = await import('../context');
+  it('useStore inside provider returns the provided store', () => {
+    const mockStore = createMockStore();
     const wrapper = ({ children }: { children: React.ReactNode }) =>
-      React.createElement(StoreProvider, null, children);
+      React.createElement(StoreProvider, { store: mockStore }, children);
 
     const { result } = renderHook(() => useStore(), { wrapper });
-    expect(result.current.store).toBeDefined();
-    expect(typeof result.current.store.fetchGraph).toBe('function');
+    expect(result.current.store).toBe(mockStore);
   });
 });
