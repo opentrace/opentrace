@@ -18,12 +18,14 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/index.css';
 import App from './App.tsx';
-import { StoreProvider } from './store';
+import { StoreProvider, createLadybugStore } from './store';
 import { JobServiceProvider } from './job';
+
+const store = createLadybugStore();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <StoreProvider>
+    <StoreProvider store={store}>
       <JobServiceProvider>
         <App version={__APP_VERSION__} buildTime={__BUILD_TIME__} />
       </JobServiceProvider>
