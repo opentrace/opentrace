@@ -14,16 +14,14 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import {
   DiscoverPanel,
   useDiscoverTree,
   type DiscoverDataProvider,
   type TreeNodeData,
 } from '@opentrace/components';
-import { useStore } from '../store/context';
 import { PARSEABLE_EXTENSIONS } from '../runner/browser/loader/constants';
-import { createStoreDataProvider } from './storeDataProvider';
 
 const EXPANDABLE_TYPES = new Set([
   'Repository',
@@ -47,31 +45,23 @@ function isExpandable(node: TreeNodeData): boolean {
 
 interface DiscoverPanelContainerProps {
   onSelectNode: (nodeId: string) => void;
+  dataProvider: DiscoverDataProvider;
   graphVersion?: number;
   selectedNodeId?: string;
   graphNodeIds?: string[];
   hopMap?: Map<string, number>;
   isActive?: boolean;
-  /** Custom data provider. Defaults to store-based provider. */
-  dataProvider?: DiscoverDataProvider;
 }
 
 export default function DiscoverPanelContainer({
   onSelectNode,
+  dataProvider,
   graphVersion,
   selectedNodeId,
   graphNodeIds,
   hopMap,
   isActive,
-  dataProvider: externalProvider,
 }: DiscoverPanelContainerProps) {
-  const { store } = useStore();
-
-  const dataProvider = useMemo(
-    () => externalProvider ?? createStoreDataProvider(store),
-    [externalProvider, store],
-  );
-
   const {
     roots,
     childrenMap,
