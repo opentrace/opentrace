@@ -205,8 +205,8 @@ export interface UseDiscoverTreeResult {
   toggleExpand: (nodeId: string) => void;
   collapseAll: () => void;
   expandAll: () => void;
-  /** Expand the ancestor path to make a node visible. */
-  expandToNode: (nodeId: string) => void;
+  /** Expand the ancestor path to make a node visible. Returns a cleanup function. */
+  expandToNode: (nodeId: string) => () => void;
 }
 
 export interface DiscoverPanelProps {

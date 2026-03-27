@@ -80,7 +80,7 @@ export default function DiscoverPanelContainer({
   // Auto-expand tree path to the selected node
   useEffect(() => {
     if (selectedNodeId) {
-      expandToNode(selectedNodeId);
+      return expandToNode(selectedNodeId);
     }
   }, [selectedNodeId, expandToNode]);
 

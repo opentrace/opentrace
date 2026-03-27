@@ -60,6 +60,19 @@ export function useDiscoverTree({
   rootsRef.current = roots;
   const childrenMapRef = useRef(childrenMap);
   childrenMapRef.current = childrenMap;
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+
+  // O(1) node-type lookup map, rebuilt when roots/childrenMap change
+  const nodeTypeMapRef = useRef(new Map<string, string>());
+  nodeTypeMapRef.current = (() => {
+    const m = new Map<string, string>();
+    for (const r of roots) m.set(r.id, r.type);
+    for (const children of childrenMap.values()) {
+      for (const c of children) m.set(c.id, c.type);
+    }
+    return m;
+  })();
 
   /** Fetch children and write them into state. */
   const loadChildren = useCallback(
@@ -133,22 +146,6 @@ export function useDiscoverTree({
     };
   }, [dataProvider, refreshKey, isExpandable, autoExpandDepth]);
 
-  /** Find a node's type from roots or childrenMap. */
-  const findNodeType = useCallback(
-    (nodeId: string): string => {
-      for (const r of roots) {
-        if (r.id === nodeId) return r.type;
-      }
-      for (const children of childrenMap.values()) {
-        for (const c of children) {
-          if (c.id === nodeId) return c.type;
-        }
-      }
-      return '';
-    },
-    [roots, childrenMap],
-  );
-
   const toggleExpand = useCallback(
     async (nodeId: string) => {
       setExpanded((prev) => {
@@ -166,7 +163,7 @@ export function useDiscoverTree({
 
       setLoadingSet((prev) => new Set(prev).add(nodeId));
       try {
-        await loadChildren(nodeId, findNodeType(nodeId));
+        await loadChildren(nodeId, nodeTypeMapRef.current.get(nodeId) ?? '');
       } finally {
         setLoadingSet((prev) => {
           const next = new Set(prev);
@@ -175,25 +172,31 @@ export function useDiscoverTree({
         });
       }
     },
-    [loadChildren, childrenMap, findNodeType, loadingSet],
+    [loadChildren, childrenMap, loadingSet],
   );
 
   const expandToNode = useCallback(
-    (nodeId: string) => {
+    (nodeId: string): (() => void) => {
       // Check if the node is already visible in the tree
       const isVisible = (id: string): boolean => {
         for (const r of rootsRef.current) {
           if (r.id === id) return true;
         }
+        const currentExpanded = expandedRef.current;
         for (const [parentId, children] of childrenMapRef.current.entries()) {
-          if (children.some((c) => c.id === id) && expanded.has(parentId)) {
+          if (
+            children.some((c) => c.id === id) &&
+            currentExpanded.has(parentId)
+          ) {
             return true;
           }
         }
         return false;
       };
 
-      if (isVisible(nodeId)) return;
+      if (isVisible(nodeId)) {
+        return () => {};
+      }
 
       let cancelled = false;
       (async () => {
@@ -206,7 +209,7 @@ export function useDiscoverTree({
           if (!childrenMapRef.current.has(ancestorId)) {
             await loadChildren(
               ancestorId,
-              findNodeType(ancestorId) || 'Directory',
+              nodeTypeMapRef.current.get(ancestorId) || 'Directory',
             );
           }
         }
@@ -223,7 +226,7 @@ export function useDiscoverTree({
         cancelled = true;
       };
     },
-    [dataProvider, loadChildren, findNodeType, expanded],
+    [dataProvider, loadChildren],
   );
 
   const collapseAll = useCallback(() => {
