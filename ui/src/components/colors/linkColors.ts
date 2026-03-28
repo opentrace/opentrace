@@ -40,20 +40,17 @@ const FALLBACK_PALETTE = [
 ];
 
 /** Well-known relationship types → CSS variable name suffix and fallback color.
- *  Keys are UPPER_CASE (canonical), var names use kebab-case. */
+ *  Keys are SCREAMING_SNAKE_CASE (matching generated REL_TYPES). */
 const FALLBACK_KNOWN: Record<string, { varSuffix: string; color: string }> = {
-  CALLS: { varSuffix: 'calls', color: '#93c5fd' },
-  READS: { varSuffix: 'reads', color: '#fde68a' },
-  WRITES: { varSuffix: 'writes', color: '#fdba74' },
-  DEFINED_IN: { varSuffix: 'defined-in', color: '#6ee7b7' },
-  PART_OF: { varSuffix: 'part-of', color: '#5eead4' },
-  DEPENDS_ON: { varSuffix: 'depends-on', color: '#f9a8d4' },
-  EXTENDS: { varSuffix: 'extends', color: '#c4b5fd' },
-  HANDLES: { varSuffix: 'handles', color: '#7dd3fc' },
+  DEFINES: { varSuffix: 'defines', color: '#6ee7b7' },
   IMPORTS: { varSuffix: 'imports', color: '#d8b4fe' },
-  AUTHORED: { varSuffix: 'authored', color: '#fca5a5' },
-  ASSIGNED: { varSuffix: 'assigned', color: '#67e8f9' },
-  PARTICIPATED: { varSuffix: 'participated', color: '#bef264' },
+  CALLS: { varSuffix: 'calls', color: '#93c5fd' },
+  IMPLEMENTS: { varSuffix: 'implements', color: '#fde68a' },
+  EXTENDS: { varSuffix: 'extends', color: '#c4b5fd' },
+  OVERRIDES: { varSuffix: 'overrides', color: '#fdba74' },
+  DEPENDS: { varSuffix: 'depends-on', color: '#f9a8d4' },
+  CHANGES: { varSuffix: 'changes', color: '#fca5a5' },
+  REFERENCES: { varSuffix: 'references', color: '#5eead4' },
 };
 
 function djb2(str: string): number {
@@ -109,7 +106,6 @@ function resolveColors(): ColorCache {
 }
 
 export function getLinkColor(type: string): string {
-  const upper = type.toUpperCase();
   const { known, palette } = resolveColors();
-  return known.get(upper) ?? palette[djb2(upper) % palette.length];
+  return known.get(type) ?? palette[djb2(type) % palette.length];
 }

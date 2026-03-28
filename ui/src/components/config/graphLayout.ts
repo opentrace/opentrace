@@ -65,7 +65,7 @@ export const NODE_SIZE_DIMMED_SCALE = 0.35; // shrink non-highlighted nodes so e
 export const ZOOM_SIZE_EXPONENT = 0.7;
 
 // ─── d3-Force Layout ────────────────────────────────────────────────────
-// Layout uses only DEFINED_IN edges. These control the force simulation.
+// Layout uses only DEFINES edges. These control the force simulation.
 
 export const FORCE_LINK_DISTANCE = 200; // target distance between linked nodes
 export const FORCE_CHARGE_STRENGTH = -200; // repulsion between all nodes (negative = repel)
@@ -153,8 +153,8 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
-  layoutEdgeType: 'DEFINED_IN',
-  structuralTypes: ['Repository', 'Directory', 'Package'],
+  layoutEdgeType: 'DEFINES',
+  structuralTypes: ['Repository', 'Directory', 'Dependency'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,

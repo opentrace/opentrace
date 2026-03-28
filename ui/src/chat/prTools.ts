@@ -59,7 +59,7 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
         if (!node)
           return JSON.stringify({ error: 'PR not found in graph', id: prId });
 
-        // Traverse 2 hops: PR --CHANGES--> File --*--> neighbors
+        // Traverse 2 hops: PR --Changes--> File --*--> neighbors
         const modifies = await store.traverse(prId, 'outgoing', 2, 'CHANGES');
         return truncate(
           JSON.stringify({
@@ -74,7 +74,7 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
         name: 'get_pull_request',
         description:
           'Get details of a specific PullRequest node from the graph, ' +
-          'including all files it modifies via CHANGES relationships (with diff status and line counts). ' +
+          'including all files it modifies via Changes relationships (with diff status and line counts). ' +
           'Use get_pr_file_change to inspect the actual diff or file contents for individual files.',
         schema: z.object({
           prId: z
@@ -85,7 +85,7 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
     ),
     tool(
       async ({ prId }) => {
-        // Traverse: PR --CHANGES--> File --incoming(CALLS, IMPORTS, etc.)--> callers
+        // Traverse: PR --Changes--> File --incoming(Calls, Imports, etc.)--> callers
         const modifies = await store.traverse(prId, 'outgoing', 1, 'CHANGES');
         const blastRadius: Record<string, unknown[]> = {};
         for (const rel of modifies) {
@@ -105,7 +105,7 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
       {
         name: 'summarize_pr_changes',
         description:
-          'Analyze the blast radius of a pull request by traversing CHANGES relationships ' +
+          'Analyze the blast radius of a pull request by traversing Changes relationships ' +
           'to find modified files, then checking what depends on those files. ' +
           'Helps understand the impact of PR changes on the broader codebase.',
         schema: z.object({

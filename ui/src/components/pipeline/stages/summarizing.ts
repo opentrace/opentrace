@@ -49,8 +49,8 @@ function summarizeNode(node: GraphNode): string {
     signature: props.signature as string | undefined,
     language: props.language as string | undefined,
     lineCount:
-      typeof props.start_line === 'number' && typeof props.end_line === 'number'
-        ? props.end_line - props.start_line + 1
+      typeof props.startLine === 'number' && typeof props.endLine === 'number'
+        ? props.endLine - props.startLine + 1
         : undefined,
     receiverType: props.receiver_type as string | undefined,
     fileName:

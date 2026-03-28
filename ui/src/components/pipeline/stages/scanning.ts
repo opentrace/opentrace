@@ -70,7 +70,7 @@ export function* execute(
   };
 
   const repoProps: Record<string, unknown> = { ref: repo.ref };
-  if (repo.url) repoProps.source_uri = repo.url;
+  if (repo.url) repoProps.sourceUri = repo.url;
   if (repo.provider) repoProps.provider = repo.provider;
 
   const repoNode: GraphNode = {
@@ -112,7 +112,7 @@ export function* execute(
     };
     if (language) fileProps.language = language;
     if (repo.url) {
-      fileProps.source_uri = `${repo.url}/blob/${repo.ref}/${file.path}`;
+      fileProps.sourceUri = `${repo.url}/blob/${repo.ref}/${file.path}`;
     }
 
     fileNodes.push({
@@ -127,10 +127,10 @@ export function* execute(
 
     const parentId = dir ? `${repoId}/${dir}` : repoId;
     structureRels.push({
-      id: `${fileId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: fileId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${fileId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: fileId,
     });
 
     if (language && PARSEABLE_LANGUAGES.has(language)) {
@@ -141,7 +141,7 @@ export function* execute(
     knownPaths.add(file.path);
     pathToFileId.set(file.path, fileId);
 
-    // Manifest parsing: extract Package nodes + DEPENDS_ON rels
+    // Manifest parsing: extract Dependency nodes + DependsOn rels
     if (isManifestFile(file.path)) {
       const manifestResult = parseManifest(file.path, file.content);
 
@@ -158,24 +158,24 @@ export function* execute(
             version: dep.version,
           };
           const sourceUrl = packageSourceUrl(dep.registry, dep.name);
-          if (sourceUrl) props.source_uri = sourceUrl;
+          if (sourceUrl) props.sourceUri = sourceUrl;
 
           packageNodes.set(pkgId, {
             id: pkgId,
-            type: 'Package',
+            type: 'Dependency',
             name: dep.name,
             properties: props,
           });
         }
 
         dependencyRels.push({
-          id: `${repoId}->DEPENDS_ON->${pkgId}`,
-          type: 'DEPENDS_ON',
+          id: `${repoId}->DEPENDS->${pkgId}`,
+          type: 'DEPENDS',
           source_id: repoId,
           target_id: pkgId,
           properties: {
             version: dep.version,
-            dependency_type: dep.dependencyType,
+            kind: dep.dependencyType,
             source: dep.source,
           },
         });

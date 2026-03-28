@@ -67,7 +67,7 @@ const traverseGraphSchema = z.object({
   relationship: z
     .string()
     .optional()
-    .describe("Filter by relationship type, e.g. 'CALLS', 'READS', 'DEFINES'"),
+    .describe("Filter by relationship type, e.g. 'CALLS', 'DEFINES', 'IMPORTS'"),
 });
 
 const loadSourceSchema = z.object({
@@ -95,7 +95,7 @@ const SEARCH_DESC =
 
 const LIST_DESC =
   'List nodes of a specific type. Valid types include: Repository, ' +
-  'Class, Function, File, Directory, Package, PullRequest.';
+  'Class, Function, File, Directory, Dependency, PullRequest.';
 
 const GET_DESC =
   'Get full details of a single node by its ID, including all properties.';
@@ -187,8 +187,8 @@ export function makeGraphTools(store: GraphStore) {
           JSON.stringify({
             path: result.path,
             line_count: result.line_count,
-            start_line: result.start_line,
-            end_line: result.end_line,
+            startLine: result.startLine,
+            endLine: result.endLine,
             content: result.content,
           }),
           MAX_SOURCE_CHARS,

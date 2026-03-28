@@ -29,7 +29,7 @@ function makeLink(src: string, tgt: string, label?: string): GraphLink {
 describe('buildGraphContext', () => {
   it('returns string with correct node and link counts', () => {
     const nodes = makeNodes(['Repository', 'Class']);
-    const links = [makeLink('n0', 'n1', 'READS')];
+    const links = [makeLink('n0', 'n1', 'CALLS')];
     const ctx = buildGraphContext(nodes, links);
     expect(ctx).toContain('2 nodes');
     expect(ctx).toContain('1 relationships');
@@ -89,10 +89,10 @@ describe('buildGraphContext', () => {
         type: 'Repository',
       } as unknown as string,
       target: { id: 'n1', name: 'DB', type: 'Class' } as unknown as string,
-      label: 'READS',
+      label: 'CALLS',
     };
     const ctx = buildGraphContext(nodes, [link]);
-    expect(ctx).toContain('Auth -[READS]-> DB');
+    expect(ctx).toContain('Auth -[CALLS]-> DB');
   });
 
   it('handles empty arrays gracefully', () => {

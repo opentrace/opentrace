@@ -66,8 +66,8 @@ export interface NodeSourceResponse {
   content: string;
   path: string;
   language?: string;
-  start_line?: number;
-  end_line?: number;
+  startLine?: number;
+  endLine?: number;
   line_count: number;
   binary?: boolean;
 }

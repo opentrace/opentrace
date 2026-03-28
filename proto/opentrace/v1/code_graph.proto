@@ -32,21 +32,24 @@ import "ladybug/options.proto";
 
 // ---- Node types ----------------------------------------------------------
 
-// RepoNode represents a source code repository.
-message RepoNode {
+// RepositoryNode represents a source code repository.
+message RepositoryNode {
   string id             = 1;
   string name           = 2;
   string ref            = 3;
   string source_uri     = 4 [(ladybug.column) = "sourceUri"];
   string provider       = 5;
   string default_branch = 6 [(ladybug.column) = "defaultBranch"];
+  string owner          = 7;
+  string summary        = 8;
 }
 
-// DirNode represents a directory in a repository.
-message DirNode {
-  string id   = 1;
-  string name = 2;
-  string path = 3;
+// DirectoryNode represents a directory in a repository.
+message DirectoryNode {
+  string id      = 1;
+  string name    = 2;
+  string path    = 3;
+  string summary = 4;
 }
 
 // ModuleNode represents a language-level module or package.
@@ -72,6 +75,7 @@ message FileNode {
   string language   = 5;
   string source_uri = 6 [(ladybug.column) = "sourceUri"];
   int32  lines      = 7;   // total line count
+  string summary    = 8;
 }
 
 // ClassNode represents a class, struct, record, type alias, or similar type definition.
@@ -92,6 +96,7 @@ message ClassNode {
   repeated string interfaces      = 12;
   repeated string type_parameters = 13 [(ladybug.column) = "typeParameters"];  // generics: ["T", "U extends Foo"]
   repeated string decorators      = 14;  // @dataclass, @Entity, @Component, #[derive(...)], etc.
+  string summary  = 15;  // AI-generated summary
 }
 
 // EnumNode represents an enum type definition.
@@ -109,6 +114,7 @@ message EnumNode {
   repeated string modifiers       = 9;
   repeated string type_parameters = 10 [(ladybug.column) = "typeParameters"];  // Rust: enum Option<T>
   repeated string decorators      = 11;
+  string summary  = 12;
 }
 
 // InterfaceNode represents an interface, trait, or protocol definition.
@@ -125,6 +131,7 @@ message InterfaceNode {
   repeated string modifiers       = 10;  // "public", "sealed", "partial", etc.
   repeated string type_parameters = 11 [(ladybug.column) = "typeParameters"];
   repeated string decorators      = 12;
+  string summary  = 13;
 }
 
 // MethodNode represents a method defined on a class or interface.
@@ -143,6 +150,7 @@ message MethodNode {
   repeated string decorators      = 12;  // @override, @staticmethod, @property, etc.
   repeated string parameters      = 13;  // parameter names: ["ctx", "name", "options"]
   repeated string throws          = 14;  // declared exceptions: Java throws, Kotlin @Throws, Swift throws
+  string summary  = 15;
 }
 
 // FunctionNode represents a standalone function (not bound to a class).
@@ -161,17 +169,19 @@ message FunctionNode {
   repeated string decorators      = 12;  // @app.route(), @click.command(), #[test], etc.
   repeated string parameters      = 13;  // parameter names: ["req", "res"]
   repeated string throws          = 14;  // declared exceptions
+  string summary  = 15;
 }
 
 // DependencyNode represents an external package dependency declared in a manifest
 // (package.json, pyproject.toml, go.mod, pom.xml, Cargo.toml, Gemfile, etc.).
 // Linked from Module/Repo via DependsOn edges.
 message DependencyNode {
-  string id       = 1;
-  string name     = 2;
-  string version  = 3;   // version constraint: "^4.17", ">=2.28", "v1.2.3"
-  string registry = 4;   // "npm", "pypi", "go", "maven", "crates.io", "rubygems"
-  string kind     = 5;   // "runtime", "dev", "peer", "optional", "build"
+  string id         = 1;
+  string name       = 2;
+  string version    = 3;   // version constraint: "^4.17", ">=2.28", "v1.2.3"
+  string registry   = 4;   // "npm", "pypi", "go", "maven", "crates.io", "rubygems"
+  string kind       = 5;   // "runtime", "dev", "peer", "optional", "build"
+  string source_uri = 6 [(ladybug.column) = "sourceUri"];  // URL to package registry page
 }
 
 // VariableNode represents a module-level variable, constant, field, or export.
@@ -187,6 +197,23 @@ message VariableNode {
   string docs            = 9;
   repeated string modifiers  = 10;  // "public", "private", "static", "readonly", "volatile", "final", "lazy", etc.
   repeated string decorators = 11;  // @property, @Value, #[serde(...)], etc.
+}
+
+// PullRequestNode represents a pull request / merge request.
+message PullRequestNode {
+  string id          = 1;
+  string name        = 2;
+  int32  number      = 3;
+  string title       = 4;
+  string state       = 5;   // "open", "closed", "merged"
+  string author      = 6;
+  string url         = 7;
+  string created_at  = 8 [(ladybug.column) = "createdAt"];
+  string base_branch = 9 [(ladybug.column) = "baseBranch"];
+  string head_branch = 10 [(ladybug.column) = "headBranch"];
+  int32  additions   = 11;
+  int32  deletions   = 12;
+  int32  files_changed = 13 [(ladybug.column) = "filesChanged"];
 }
 
 // ---- Relationship types --------------------------------------------------
@@ -243,12 +270,23 @@ message OverridesRel {
   string target_id = 3;
 }
 
-// DependsOnRel represents a build-level package dependency.
-// Module/Repo --DependsOn--> Dependency
-message DependsOnRel {
+// DependsRel represents a build-level package dependency.
+// Module/Repo --DEPENDS--> Dependency
+message DependsRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
+}
+
+// ChangesRel represents a pull request modifying a file.
+// PullRequest --Changes--> File
+message ChangesRel {
+  string id          = 1;
+  string source_id   = 2;
+  string target_id   = 3;
+  int32  additions   = 4;
+  int32  deletions   = 5;
+  string status      = 6;  // "added", "modified", "removed", "renamed"
 }
 
 // ReferencesRel represents a read/use of a variable, constant, or type

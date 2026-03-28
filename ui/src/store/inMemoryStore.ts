@@ -190,8 +190,8 @@ export class InMemoryGraphStore implements GraphStore {
       return {
         content: sliced.join('\n'),
         path: entry.path,
-        start_line: startLine,
-        end_line: endLine,
+        startLine: startLine,
+        endLine: endLine,
         line_count: allLines.length,
       };
     }

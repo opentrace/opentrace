@@ -20,26 +20,20 @@ import { getLinkColor } from '@opentrace/components/utils';
 describe('getLinkColor', () => {
   it('returns fixed color for known relationship types', () => {
     expect(getLinkColor('CALLS')).toBe('#93c5fd');
-    expect(getLinkColor('READS')).toBe('#fde68a');
-    expect(getLinkColor('WRITES')).toBe('#fdba74');
-    expect(getLinkColor('DEFINED_IN')).toBe('#6ee7b7');
-    expect(getLinkColor('DEPENDS_ON')).toBe('#f9a8d4');
-  });
-
-  it('uppercases input before lookup', () => {
-    expect(getLinkColor('calls')).toBe('#93c5fd');
-    expect(getLinkColor('Reads')).toBe('#fde68a');
-    expect(getLinkColor('defined_in')).toBe('#6ee7b7');
+    expect(getLinkColor('DEFINES')).toBe('#6ee7b7');
+    expect(getLinkColor('DEPENDS')).toBe('#f9a8d4');
+    expect(getLinkColor('IMPORTS')).toBe('#d8b4fe');
+    expect(getLinkColor('CHANGES')).toBe('#fca5a5');
   });
 
   it('returns deterministic color for unknown types', () => {
-    const color1 = getLinkColor('SOME_UNKNOWN_REL');
-    const color2 = getLinkColor('SOME_UNKNOWN_REL');
+    const color1 = getLinkColor('SomeUnknownRel');
+    const color2 = getLinkColor('SomeUnknownRel');
     expect(color1).toBe(color2);
     expect(color1).toMatch(/^#[0-9a-f]{6}$/);
   });
 
-  it('unknown type case-insensitive', () => {
-    expect(getLinkColor('custom_rel')).toBe(getLinkColor('CUSTOM_REL'));
+  it('different casing of unknown types gives different colors', () => {
+    expect(getLinkColor('CustomRel')).not.toBe(getLinkColor('CUSTOM_REL'));
   });
 });

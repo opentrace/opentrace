@@ -66,7 +66,7 @@ export function buildCommunityColorMap(
 }
 
 // Node types that represent structural containers (ordered by priority — most specific first)
-const CONTAINER_TYPES = ['Package', 'Directory', 'Repository'];
+const CONTAINER_TYPES = ['Dependency', 'Directory', 'Repository'];
 
 interface NameableNode {
   id: string;

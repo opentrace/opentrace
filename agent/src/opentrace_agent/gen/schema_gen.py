@@ -3,21 +3,22 @@
 from typing import Final
 
 NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
-    "CREATE NODE TABLE IF NOT EXISTS Repo(id STRING PRIMARY KEY, name STRING, ref STRING, sourceUri STRING, provider STRING, defaultBranch STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS Dir(id STRING PRIMARY KEY, name STRING, path STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Repository(id STRING PRIMARY KEY, name STRING, ref STRING, sourceUri STRING, provider STRING, defaultBranch STRING, owner STRING, summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Directory(id STRING PRIMARY KEY, name STRING, path STRING, summary STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Module(id STRING PRIMARY KEY, name STRING, language STRING, path STRING, kind STRING, version STRING, docs STRING, exported BOOL)",
-    "CREATE NODE TABLE IF NOT EXISTS File(id STRING PRIMARY KEY, name STRING, path STRING, extension STRING, language STRING, sourceUri STRING, lines INT32)",
-    "CREATE NODE TABLE IF NOT EXISTS Class(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, kind STRING, modifiers STRING[], superclasses STRING[], interfaces STRING[], typeParameters STRING[], decorators STRING[])",
-    "CREATE NODE TABLE IF NOT EXISTS Enum(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, docs STRING, exported BOOL, kind STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[])",
-    "CREATE NODE TABLE IF NOT EXISTS Interface(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, kind STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[])",
-    "CREATE NODE TABLE IF NOT EXISTS Method(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, returnType STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], parameters STRING[], throws STRING[])",
-    "CREATE NODE TABLE IF NOT EXISTS Function(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, returnType STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], parameters STRING[], throws STRING[])",
-    "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING, kind STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS File(id STRING PRIMARY KEY, name STRING, path STRING, extension STRING, language STRING, sourceUri STRING, lines INT32, summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Class(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, kind STRING, modifiers STRING[], superclasses STRING[], interfaces STRING[], typeParameters STRING[], decorators STRING[], summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Enum(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, docs STRING, exported BOOL, kind STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Interface(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, kind STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Method(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, returnType STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], parameters STRING[], throws STRING[], summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Function(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, exported BOOL, returnType STRING, modifiers STRING[], typeParameters STRING[], decorators STRING[], parameters STRING[], throws STRING[], summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING, kind STRING, sourceUri STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING, modifiers STRING[], decorators STRING[])",
+    "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
 ]
 
-NODE_TYPE_REPO: Final[str] = "Repo"
-NODE_TYPE_DIR: Final[str] = "Dir"
+NODE_TYPE_REPOSITORY: Final[str] = "Repository"
+NODE_TYPE_DIRECTORY: Final[str] = "Directory"
 NODE_TYPE_MODULE: Final[str] = "Module"
 NODE_TYPE_FILE: Final[str] = "File"
 NODE_TYPE_CLASS: Final[str] = "Class"
@@ -27,10 +28,11 @@ NODE_TYPE_METHOD: Final[str] = "Method"
 NODE_TYPE_FUNCTION: Final[str] = "Function"
 NODE_TYPE_DEPENDENCY: Final[str] = "Dependency"
 NODE_TYPE_VARIABLE: Final[str] = "Variable"
+NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
 
 NODE_TYPES: Final[list[str]] = [
-    NODE_TYPE_REPO,
-    NODE_TYPE_DIR,
+    NODE_TYPE_REPOSITORY,
+    NODE_TYPE_DIRECTORY,
     NODE_TYPE_MODULE,
     NODE_TYPE_FILE,
     NODE_TYPE_CLASS,
@@ -40,57 +42,64 @@ NODE_TYPES: Final[list[str]] = [
     NODE_TYPE_FUNCTION,
     NODE_TYPE_DEPENDENCY,
     NODE_TYPE_VARIABLE,
+    NODE_TYPE_PULL_REQUEST,
 ]
 
 
 def rel_schema_defines(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Defines relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Defines(FROM {from_node} TO {to_node}, id STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS DEFINES(FROM {from_node} TO {to_node}, id STRING)"
 
 
 def rel_schema_imports(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Imports relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Imports(FROM {from_node} TO {to_node}, id STRING, alias STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS IMPORTS(FROM {from_node} TO {to_node}, id STRING, alias STRING)"
 
 
 def rel_schema_calls(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Calls relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Calls(FROM {from_node} TO {to_node}, id STRING, confidence FLOAT)"
+    return f"CREATE REL TABLE IF NOT EXISTS CALLS(FROM {from_node} TO {to_node}, id STRING, confidence FLOAT)"
 
 
 def rel_schema_implements(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Implements relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Implements(FROM {from_node} TO {to_node}, id STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS IMPLEMENTS(FROM {from_node} TO {to_node}, id STRING)"
 
 
 def rel_schema_extends(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Extends relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Extends(FROM {from_node} TO {to_node}, id STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS EXTENDS(FROM {from_node} TO {to_node}, id STRING)"
 
 
 def rel_schema_overrides(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Overrides relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS Overrides(FROM {from_node} TO {to_node}, id STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS OVERRIDES(FROM {from_node} TO {to_node}, id STRING)"
 
 
-def rel_schema_depends_on(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for DependsOn relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS DependsOn(FROM {from_node} TO {to_node}, id STRING)"
+def rel_schema_depends(from_node: str, to_node: str) -> str:
+    """Return the CREATE REL TABLE DDL for Depends relationships."""
+    return f"CREATE REL TABLE IF NOT EXISTS DEPENDS(FROM {from_node} TO {to_node}, id STRING)"
+
+
+def rel_schema_changes(from_node: str, to_node: str) -> str:
+    """Return the CREATE REL TABLE DDL for Changes relationships."""
+    return f"CREATE REL TABLE IF NOT EXISTS CHANGES(FROM {from_node} TO {to_node}, id STRING, additions INT32, deletions INT32, status STRING)"
 
 
 def rel_schema_references(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for References relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS References(FROM {from_node} TO {to_node}, id STRING)"
+    return f"CREATE REL TABLE IF NOT EXISTS REFERENCES(FROM {from_node} TO {to_node}, id STRING)"
 
 
-REL_TYPE_DEFINES: Final[str] = "Defines"
-REL_TYPE_IMPORTS: Final[str] = "Imports"
-REL_TYPE_CALLS: Final[str] = "Calls"
-REL_TYPE_IMPLEMENTS: Final[str] = "Implements"
-REL_TYPE_EXTENDS: Final[str] = "Extends"
-REL_TYPE_OVERRIDES: Final[str] = "Overrides"
-REL_TYPE_DEPENDS_ON: Final[str] = "DependsOn"
-REL_TYPE_REFERENCES: Final[str] = "References"
+REL_TYPE_DEFINES: Final[str] = "DEFINES"
+REL_TYPE_IMPORTS: Final[str] = "IMPORTS"
+REL_TYPE_CALLS: Final[str] = "CALLS"
+REL_TYPE_IMPLEMENTS: Final[str] = "IMPLEMENTS"
+REL_TYPE_EXTENDS: Final[str] = "EXTENDS"
+REL_TYPE_OVERRIDES: Final[str] = "OVERRIDES"
+REL_TYPE_DEPENDS: Final[str] = "DEPENDS"
+REL_TYPE_CHANGES: Final[str] = "CHANGES"
+REL_TYPE_REFERENCES: Final[str] = "REFERENCES"
 
 REL_TYPES: Final[list[str]] = [
     REL_TYPE_DEFINES,
@@ -99,6 +108,7 @@ REL_TYPES: Final[list[str]] = [
     REL_TYPE_IMPLEMENTS,
     REL_TYPE_EXTENDS,
     REL_TYPE_OVERRIDES,
-    REL_TYPE_DEPENDS_ON,
+    REL_TYPE_DEPENDS,
+    REL_TYPE_CHANGES,
     REL_TYPE_REFERENCES,
 ]

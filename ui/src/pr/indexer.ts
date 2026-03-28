@@ -17,9 +17,9 @@
 /**
  * Indexes PR data into the OpenTrace knowledge graph.
  *
- * Creates a PullRequest node, a TARGETS_REPO edge to the Repo node,
- * and a CHANGES edge to each File node touched by the PR.
- * The CHANGES edge carries the full change details: status, line counts,
+ * Creates a PullRequest node, a TargetsRepo edge to the Repo node,
+ * and a Changes edge to each File node touched by the PR.
+ * The Changes edge carries the full change details: status, line counts,
  * unified diff patch, and previous path (for renames).
  */
 
@@ -91,9 +91,10 @@ export async function indexPRIntoGraph(
     relationships: [
       {
         id: `${prId}->repo:${repoId}`,
-        type: 'TARGETS_REPO',
+        type: 'REFERENCES',
         source_id: prId,
         target_id: repoId,
+        // PullRequest references its target repo
       },
     ],
   };
@@ -138,7 +139,7 @@ export async function indexPRIntoGraph(
       });
     }
 
-    // Ensure the full directory chain exists so defined_in edges connect.
+    // Ensure the full directory chain exists so Defines edges connect.
     const parts = file.path.split('/');
     for (let i = parts.length - 1; i >= 1; i--) {
       const dirPath = parts.slice(0, i).join('/');
@@ -156,33 +157,33 @@ export async function indexPRIntoGraph(
         });
       }
 
-      // Only add defined_in edge if the directory node is new
+      // Only add Defines edge if the directory node is new
       if (!existingIds.has(dirId)) {
         const parentDirPath = parts.slice(0, i - 1).join('/');
         const parentId = parentDirPath ? `${repoId}/${parentDirPath}` : repoId;
         batch.relationships.push({
-          id: `${dirId}->defined_in->${parentId}`,
-          type: 'defined_in',
+          id: `${dirId}->DEFINES->${parentId}`,
+          type: 'DEFINES',
           source_id: dirId,
           target_id: parentId,
         });
       }
     }
 
-    // Only add file→directory edge if the file node is new
+    // Only add file→directory Defines edge if the file node is new
     if (!existingIds.has(fileId)) {
       const lastSlash = file.path.lastIndexOf('/');
       const parentId =
         lastSlash > 0 ? `${repoId}/${file.path.slice(0, lastSlash)}` : repoId;
       batch.relationships.push({
-        id: `${fileId}->defined_in->${parentId}`,
-        type: 'defined_in',
+        id: `${fileId}->DEFINES->${parentId}`,
+        type: 'DEFINES',
         source_id: fileId,
         target_id: parentId,
       });
     }
 
-    // Always add the CHANGES edge — this is the PR-specific data
+    // Always add the Changes edge — this is the PR-specific data
     batch.relationships.push({
       id: `${prId}->changes:${fileId}`,
       type: 'CHANGES',

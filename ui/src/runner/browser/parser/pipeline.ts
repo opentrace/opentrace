@@ -140,9 +140,9 @@ export async function runPipeline(
     endLine?: number,
   ): Record<string, unknown> {
     const props: Record<string, unknown> = { branch };
-    if (provider) props.source_name = provider;
+    if (provider) props.provider = provider;
     const uri = buildSourceUri(filePath, startLine, endLine);
-    if (uri) props.source_uri = uri;
+    if (uri) props.sourceUri = uri;
     return props;
   }
 
@@ -152,7 +152,7 @@ export async function runPipeline(
     type: 'Repository',
     name: repo.repo,
     properties: {
-      url: repo.url ?? `https://github.com/${repoId}`,
+      sourceUri: repo.url ?? `https://github.com/${repoId}`,
       ref: repo.ref,
       owner: repo.owner,
       summary: `Source code repository for ${repo.repo}, maintained by ${repo.owner}`,
@@ -193,13 +193,13 @@ export async function runPipeline(
       sourceProps(dp),
     );
 
-    // Link file to parent dir (or repo): File DEFINED_IN Directory
+    // Parent dir (or repo) DEFINES file
     const parentId = dirPath ? `${repoId}/${dirPath}` : repoId;
     structureRels.push({
-      id: `${fileId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: fileId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${fileId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: fileId,
     });
 
     if (language && PARSEABLE_LANGUAGES.has(language)) {
@@ -216,7 +216,7 @@ export async function runPipeline(
   totalNodes += structureBatch.nodes.length;
   totalRels += structureBatch.relationships.length;
 
-  // --- Manifest parsing: create Package nodes + depends_on relationships ---
+  // --- Manifest parsing: create Dependency nodes + DependsOn relationships ---
   const packageNodes = new Map<string, GraphNode>();
   const emittedPackageIds = new Set<string>();
   const dependencyRels: GraphRelationship[] = [];
@@ -241,27 +241,27 @@ export async function runPipeline(
         const pkgUrl = packageSourceUrl(dep.registry, dep.name);
         packageNodes.set(pkgId, {
           id: pkgId,
-          type: 'Package',
+          type: 'Dependency',
           name: dep.name,
           properties: {
             version: dep.version,
             registry: dep.registry,
             source: dep.source,
-            dependency_type: dep.dependencyType,
+            kind: dep.dependencyType,
             ...(pkgUrl
-              ? { source_uri: pkgUrl, source_name: dep.registry }
+              ? { sourceUri: pkgUrl, provider: dep.registry }
               : {}),
           },
         });
       }
       dependencyRels.push({
-        id: `${repoId}/${dep.source}->DEPENDS_ON->${pkgId}`,
-        type: 'DEPENDS_ON',
+        id: `${repoId}/${dep.source}->DEPENDS->${pkgId}`,
+        type: 'DEPENDS',
         source_id: repoId,
         target_id: pkgId,
         properties: {
           source: dep.source,
-          dependency_type: dep.dependencyType,
+          kind: dep.dependencyType,
           version: dep.version,
         },
       });
@@ -330,7 +330,7 @@ export async function runPipeline(
       const ext = getExtension(file.path);
       const language = EXTENSION_LANGUAGE_MAP[ext];
 
-      // Per-file batch: symbol nodes + DEFINED_IN rels + summary update nodes
+      // Per-file batch: symbol nodes + Defines rels + summary update nodes
       const fileBatch: GraphBatch = { nodes: [], relationships: [] };
 
       // Local array replaces the old symbolLineInfo map
@@ -362,18 +362,18 @@ export async function runPipeline(
           }
         }
 
-        // External imports — collect File→Package relationships
+        // External imports — collect File→Dependency relationships
         for (const [pkgName, pkgId] of Object.entries(importResult.external)) {
           if (!packageNodes.has(pkgId)) {
             const reg = pkgId.split(':')[1];
             const pkgUrl = packageSourceUrl(reg, pkgName);
             packageNodes.set(pkgId, {
               id: pkgId,
-              type: 'Package',
+              type: 'Dependency',
               name: pkgName,
               properties: {
                 registry: reg,
-                ...(pkgUrl ? { source_uri: pkgUrl, source_name: reg } : {}),
+                ...(pkgUrl ? { sourceUri: pkgUrl, provider: reg } : {}),
               },
             });
           }
@@ -544,7 +544,7 @@ export async function runPipeline(
 
   // --- Post-loop: external imports, call resolution, directory summaries ---
 
-  // Emit external import Package nodes + File→Package relationships
+  // Emit external import Dependency nodes + File→Dependency relationships
   const newPackageNodes = Array.from(packageNodes.values()).filter(
     (n) => !emittedPackageIds.has(n.id),
   );
@@ -742,22 +742,22 @@ function processSymbol(
       name: symbol.name,
       properties: {
         language,
-        start_line: symbol.startLine,
-        end_line: symbol.endLine,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
         signature: symbol.signature ?? undefined,
         superclasses: symbol.superclasses ?? undefined,
         interfaces: symbol.interfaces ?? undefined,
-        subtype: symbol.subtype ?? undefined,
+        kind: symbol.subtype ?? undefined,
         docs: symbol.docs ?? undefined,
         ...extraProps?.(symbol.startLine, symbol.endLine),
       },
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: nodeId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${nodeId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     // Collect symbol info for inline summarization
@@ -810,8 +810,8 @@ function processSymbol(
       name: symbol.name,
       properties: {
         language,
-        start_line: symbol.startLine,
-        end_line: symbol.endLine,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
         signature: symbol.signature ?? undefined,
         docs: symbol.docs ?? undefined,
         ...extraProps?.(symbol.startLine, symbol.endLine),
@@ -819,10 +819,10 @@ function processSymbol(
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: nodeId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${nodeId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     // Collect symbol info for inline summarization
@@ -901,17 +901,17 @@ function ensureDirectoryChain(
     ensureDirectoryChain(repoId, parentPath, dirNodes, rels, extraProps);
     const parentDirId = `${repoId}/${parentPath}`;
     rels.push({
-      id: `${dirId}->DEFINED_IN->${parentDirId}`,
-      type: 'DEFINED_IN',
-      source_id: dirId,
-      target_id: parentDirId,
+      id: `${parentDirId}->DEFINES->${dirId}`,
+      type: 'DEFINES',
+      source_id: parentDirId,
+      target_id: dirId,
     });
   } else {
     rels.push({
-      id: `${dirId}->DEFINED_IN->${repoId}`,
-      type: 'DEFINED_IN',
-      source_id: dirId,
-      target_id: repoId,
+      id: `${repoId}->DEFINES->${dirId}`,
+      type: 'DEFINES',
+      source_id: repoId,
+      target_id: dirId,
     });
   }
 }

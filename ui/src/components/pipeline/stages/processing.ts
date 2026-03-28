@@ -19,9 +19,9 @@
  *
  * For each parseable file:
  * 1. Parse with tree-sitter
- * 2. Extract symbols → Class/Function nodes + DEFINED_IN rels
+ * 2. Extract symbols → Class/Function nodes + Defines rels
  * 3. Populate registries + allCallInfo
- * 4. Analyze imports → IMPORTS rels + Package nodes
+ * 4. Analyze imports → Imports rels + Dependency nodes
  * 5. Yield per-file nodes/rels as stage_progress
  *
  * rootNode is used immediately and discarded (no Map accumulation).
@@ -155,7 +155,7 @@ export function* execute(
             goModulePath,
           );
 
-          // Internal imports → populate importRegistry + IMPORTS edges
+          // Internal imports → populate importRegistry + Imports edges
           const fileImports: Record<string, string> = {};
           const seenTargetFiles = new Set<string>();
           for (const [alias, targetPath] of Object.entries(
@@ -177,14 +177,14 @@ export function* execute(
           }
           registries.importRegistry.set(fileId, fileImports);
 
-          // External imports → IMPORTS rels + new Package nodes
+          // External imports → Imports rels + new Dependency nodes
           for (const [pkgName, pkgId] of Object.entries(
             importResult.external,
           )) {
             if (!packageNodes.has(pkgId)) {
               const pkgNode: GraphNode = {
                 id: pkgId,
-                type: 'Package',
+                type: 'Dependency',
                 name: pkgName,
                 properties: { registry: pkgId.split(':')[1] },
               };

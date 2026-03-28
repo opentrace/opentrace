@@ -76,7 +76,7 @@ describe('indexPRIntoGraph', () => {
     expect(prNode.name).toBe('#42: Test PR');
   });
 
-  it('creates TARGETS_REPO edge to Repo node', async () => {
+  it('creates TargetsRepo edge to Repo node', async () => {
     const store = createMockStore({
       importBatch: vi.fn().mockResolvedValue({
         nodes_created: 0,
@@ -88,7 +88,7 @@ describe('indexPRIntoGraph', () => {
     const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     const repoEdge = batch.relationships.find(
-      (r: { type: string }) => r.type === 'TARGETS_REPO',
+      (r: { type: string }) => r.type === 'REFERENCES',
     );
     expect(repoEdge.target_id).toBe('owner/repo');
   });
@@ -111,7 +111,7 @@ describe('indexPRIntoGraph', () => {
     expect(fileNodes[0].name).toBe('main.ts');
   });
 
-  it('creates CHANGES edges with correct properties', async () => {
+  it('creates Changes edges with correct properties', async () => {
     const store = createMockStore({
       importBatch: vi.fn().mockResolvedValue({
         nodes_created: 0,
@@ -268,16 +268,16 @@ describe('indexPRIntoGraph', () => {
     expect(fileNodes).toHaveLength(0);
     expect(dirNodes).toHaveLength(0);
 
-    // Should still include the CHANGES edge
+    // Should still include the Changes edge
     const changesEdges = batch.relationships.filter(
       (r: { type: string }) => r.type === 'CHANGES',
     );
     expect(changesEdges).toHaveLength(1);
     expect(changesEdges[0].target_id).toBe('owner/repo/src/main.ts');
 
-    // Should NOT include defined_in edges for existing nodes
+    // Should NOT include Defines edges for existing nodes
     const definedInEdges = batch.relationships.filter(
-      (r: { type: string }) => r.type === 'defined_in',
+      (r: { type: string }) => r.type === 'DEFINES',
     );
     expect(definedInEdges).toHaveLength(0);
   });

@@ -110,7 +110,7 @@ function CratesIcon() {
   );
 }
 
-/** Map source_name to an icon component. */
+/** Map provider to an icon component. */
 const PROVIDER_ICONS: Record<string, () => ReactNode> = {
   github: () => <GitHubIcon size={16} />,
   gitlab: () => <GitLabIcon size={16} />,
@@ -182,9 +182,9 @@ export default function NodeDetailsPanel({
   const hasEnrichment = !!(
     node.properties?.summary || node.properties?.has_embedding
   );
-  const sourceUri = node.properties?.source_uri as string | undefined;
+  const sourceUri = node.properties?.sourceUri as string | undefined;
   const sourceName = (
-    node.properties?.source_name as string | undefined
+    node.properties?.provider as string | undefined
   )?.toLowerCase();
   const ProviderIcon = sourceName ? PROVIDER_ICONS[sourceName] : undefined;
 
@@ -267,8 +267,8 @@ export default function NodeDetailsPanel({
             .filter(
               ([k]) =>
                 k !== 'has_embedding' &&
-                k !== 'source_uri' &&
-                k !== 'source_name',
+                k !== 'sourceUri' &&
+                k !== 'provider',
             )
             .map(([k, v]) => (
               <div key={k} className="detail-row">
@@ -474,9 +474,9 @@ export default function NodeDetailsPanel({
 
               return (
                 <div className="source-viewer">
-                  {nodeSource.start_line && nodeSource.end_line ? (
+                  {nodeSource.startLine && nodeSource.endLine ? (
                     <div className="source-line-info">
-                      Lines {nodeSource.start_line}&ndash;{nodeSource.end_line}{' '}
+                      Lines {nodeSource.startLine}&ndash;{nodeSource.endLine}{' '}
                       of {nodeSource.line_count}
                     </div>
                   ) : null}
@@ -489,7 +489,7 @@ export default function NodeDetailsPanel({
                       <pre className="source-code" style={style}>
                         <code>
                           {tokens.map((line, i) => {
-                            const lineNum = (nodeSource.start_line || 1) + i;
+                            const lineNum = (nodeSource.startLine || 1) + i;
                             const lineProps = getLineProps({ line });
                             return (
                               <div

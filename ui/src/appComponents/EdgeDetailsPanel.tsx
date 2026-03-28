@@ -141,8 +141,8 @@ export default function EdgeDetailsPanel({
               .filter(
                 ([k]) =>
                   k !== 'has_embedding' &&
-                  k !== 'source_uri' &&
-                  k !== 'source_name',
+                  k !== 'sourceUri' &&
+                  k !== 'provider',
               )
               .slice(0, 5)
               .map(([k, v]) => (
@@ -166,8 +166,8 @@ export default function EdgeDetailsPanel({
               .filter(
                 ([k]) =>
                   k !== 'has_embedding' &&
-                  k !== 'source_uri' &&
-                  k !== 'source_name',
+                  k !== 'sourceUri' &&
+                  k !== 'provider',
               )
               .slice(0, 5)
               .map(([k, v]) => (

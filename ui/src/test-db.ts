@@ -67,7 +67,7 @@ function generateDataset(nodeCount: number): {
     { type: 'File', weight: 0.3 },
     { type: 'Class', weight: 0.2 },
     { type: 'Function', weight: 0.35 },
-    { type: 'Package', weight: 0.05 },
+    { type: 'Dependency', weight: 0.05 },
   ];
 
   function pickType(): string {
@@ -86,7 +86,7 @@ function generateDataset(nodeCount: number): {
     File: [],
     Class: [],
     Function: [],
-    Package: [],
+    Dependency: [],
   };
 
   for (let i = 0; i < nodeCount; i++) {
@@ -114,7 +114,7 @@ function generateDataset(nodeCount: number): {
       id: `r-di-${d}`,
       source_id: `n-${d}`,
       target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      type: 'DEFINES',
     });
   }
   for (const f of files) {
@@ -123,7 +123,7 @@ function generateDataset(nodeCount: number): {
       id: `r-di-${f}`,
       source_id: `n-${f}`,
       target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      type: 'DEFINES',
     });
   }
   for (const c of classes) {
@@ -133,7 +133,7 @@ function generateDataset(nodeCount: number): {
       id: `r-di-${c}`,
       source_id: `n-${c}`,
       target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      type: 'DEFINES',
     });
   }
   for (const fn of functions) {
@@ -143,7 +143,7 @@ function generateDataset(nodeCount: number): {
       id: `r-di-${fn}`,
       source_id: `n-${fn}`,
       target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      type: 'DEFINES',
     });
   }
   for (let i = 0; i < functions.length * 0.3; i++) {
@@ -194,11 +194,11 @@ const REL_PAIRS = [
   'Class_Class',
   'File_Directory',
   'File_File',
-  'File_Package',
+  'File_Dependency',
   'File_Repository',
   'Directory_Directory',
   'Directory_Repository',
-  'Repository_Package',
+  'Repository_Dependency',
 ];
 const REL_PAIR_SET = new Set(REL_PAIRS);
 
@@ -233,10 +233,15 @@ const CHUNK = 500;
 const NODE_TYPES = [
   'Repository',
   'Directory',
+  'Module',
   'File',
-  'Package',
   'Class',
+  'Enum',
+  'Interface',
+  'Method',
   'Function',
+  'Dependency',
+  'Variable',
 ];
 
 async function runTest(nodeCount: number) {
@@ -287,11 +292,11 @@ async function runTest(nodeCount: number) {
     'FROM Class TO Class',
     'FROM File TO Directory',
     'FROM File TO File',
-    'FROM File TO Package',
+    'FROM File TO Dependency',
     'FROM File TO Repository',
     'FROM Directory TO Directory',
     'FROM Directory TO Repository',
-    'FROM Repository TO Package',
+    'FROM Repository TO Dependency',
   ].join(', ');
   const relResult = await conn.query(
     `CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`,

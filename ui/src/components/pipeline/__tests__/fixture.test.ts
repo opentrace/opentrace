@@ -110,9 +110,9 @@ describe('fixture: Go project', () => {
       events.some((e) => e.kind === 'stage_stop' && e.phase === 'submitting'),
     ).toBe(true);
 
-    // Store has structural + package nodes
+    // Store has structural + dependency nodes
     const packageNodes = [...store.nodes.values()].filter(
-      (n) => n.type === 'Package',
+      (n) => n.type === 'Dependency',
     );
     expect(store.nodes.size).toBeGreaterThanOrEqual(
       files.length + 1 + countDirs(files),
@@ -195,28 +195,28 @@ describe('fixture: Python project', () => {
     );
     expect(createUser).toBeDefined();
 
-    // Class methods are DEFINED_IN the class, not the file
+    // Class defines its methods (parent→child direction)
     const initRel = [...store.relationships.values()].find(
-      (r) => r.source_id === 'fixture/py-project/db.py::Database::__init__',
+      (r) => r.target_id === 'fixture/py-project/db.py::Database::__init__',
     );
-    expect(initRel?.target_id).toBe('fixture/py-project/db.py::Database');
+    expect(initRel?.source_id).toBe('fixture/py-project/db.py::Database');
 
-    // Class is DEFINED_IN the file
+    // File defines the class (parent→child direction)
     const classRel = [...store.relationships.values()].find(
-      (r) => r.source_id === 'fixture/py-project/db.py::Database',
+      (r) => r.target_id === 'fixture/py-project/db.py::Database',
     );
-    expect(classRel?.target_id).toBe('fixture/py-project/db.py');
+    expect(classRel?.source_id).toBe('fixture/py-project/db.py');
 
-    // All DEFINED_IN relationships point to valid nodes
+    // All Defines relationships point to valid nodes
     const definedInRels = [...store.relationships.values()].filter(
-      (r) => r.type === 'DEFINED_IN',
+      (r) => r.type === 'DEFINES',
     );
     for (const rel of definedInRels) {
       expect(store.nodes.has(rel.source_id)).toBe(true);
       expect(store.nodes.has(rel.target_id)).toBe(true);
     }
 
-    // CALLS and IMPORTS relationships should also have valid endpoints
+    // Calls and Imports relationships should also have valid endpoints
     const callRels = [...store.relationships.values()].filter(
       (r) => r.type === 'CALLS',
     );

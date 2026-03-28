@@ -46,6 +46,12 @@ const FALLBACK_KNOWN: Record<string, string> = {
   Function: '#a855f7',
   File: '#84cc16',
   Directory: '#06b6d4',
+  Module: '#8b5cf6',
+  Enum: '#f59e0b',
+  Interface: '#06b6d4',
+  Method: '#ec4899',
+  Variable: '#64748b',
+  Dependency: '#f97316',
 };
 
 function djb2(str: string): number {

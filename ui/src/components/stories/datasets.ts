@@ -34,25 +34,25 @@ const webAppNodes: GraphNode[] = [
   {
     id: 'pkg-react',
     name: 'react',
-    type: 'Package',
+    type: 'Dependency',
     properties: { version: '19.2.0' },
   },
   {
     id: 'pkg-express',
     name: 'express',
-    type: 'Package',
+    type: 'Dependency',
     properties: { version: '5.1.0' },
   },
   {
     id: 'pkg-prisma',
     name: '@prisma/client',
-    type: 'Package',
+    type: 'Dependency',
     properties: { version: '6.9.0' },
   },
   {
     id: 'pkg-zod',
     name: 'zod',
-    type: 'Package',
+    type: 'Dependency',
     properties: { version: '3.25.0' },
   },
   // Directories
@@ -190,51 +190,51 @@ const webAppNodes: GraphNode[] = [
 ];
 
 const webAppLinks: GraphLink[] = [
-  // Directory structure (DEFINED_IN)
-  { source: 'dir-src', target: 'repo', label: 'DEFINED_IN' },
-  { source: 'dir-server', target: 'dir-src', label: 'DEFINED_IN' },
-  { source: 'dir-client', target: 'dir-src', label: 'DEFINED_IN' },
-  { source: 'dir-models', target: 'dir-server', label: 'DEFINED_IN' },
-  { source: 'dir-routes', target: 'dir-server', label: 'DEFINED_IN' },
-  { source: 'dir-components', target: 'dir-client', label: 'DEFINED_IN' },
-  { source: 'dir-hooks', target: 'dir-client', label: 'DEFINED_IN' },
+  // Directory structure (DEFINES)
+  { source: 'dir-src', target: 'repo', label: 'DEFINES' },
+  { source: 'dir-server', target: 'dir-src', label: 'DEFINES' },
+  { source: 'dir-client', target: 'dir-src', label: 'DEFINES' },
+  { source: 'dir-models', target: 'dir-server', label: 'DEFINES' },
+  { source: 'dir-routes', target: 'dir-server', label: 'DEFINES' },
+  { source: 'dir-components', target: 'dir-client', label: 'DEFINES' },
+  { source: 'dir-hooks', target: 'dir-client', label: 'DEFINES' },
   // Files in directories
-  { source: 'file-app', target: 'dir-server', label: 'DEFINED_IN' },
-  { source: 'file-user-model', target: 'dir-models', label: 'DEFINED_IN' },
-  { source: 'file-order-model', target: 'dir-models', label: 'DEFINED_IN' },
-  { source: 'file-user-routes', target: 'dir-routes', label: 'DEFINED_IN' },
-  { source: 'file-order-routes', target: 'dir-routes', label: 'DEFINED_IN' },
-  { source: 'file-auth-middleware', target: 'dir-server', label: 'DEFINED_IN' },
-  { source: 'file-app-tsx', target: 'dir-client', label: 'DEFINED_IN' },
-  { source: 'file-user-list', target: 'dir-components', label: 'DEFINED_IN' },
-  { source: 'file-order-table', target: 'dir-components', label: 'DEFINED_IN' },
-  { source: 'file-use-fetch', target: 'dir-hooks', label: 'DEFINED_IN' },
+  { source: 'file-app', target: 'dir-server', label: 'DEFINES' },
+  { source: 'file-user-model', target: 'dir-models', label: 'DEFINES' },
+  { source: 'file-order-model', target: 'dir-models', label: 'DEFINES' },
+  { source: 'file-user-routes', target: 'dir-routes', label: 'DEFINES' },
+  { source: 'file-order-routes', target: 'dir-routes', label: 'DEFINES' },
+  { source: 'file-auth-middleware', target: 'dir-server', label: 'DEFINES' },
+  { source: 'file-app-tsx', target: 'dir-client', label: 'DEFINES' },
+  { source: 'file-user-list', target: 'dir-components', label: 'DEFINES' },
+  { source: 'file-order-table', target: 'dir-components', label: 'DEFINES' },
+  { source: 'file-use-fetch', target: 'dir-hooks', label: 'DEFINES' },
   // Classes & functions in files
-  { source: 'class-user', target: 'file-user-model', label: 'DEFINED_IN' },
-  { source: 'class-order', target: 'file-order-model', label: 'DEFINED_IN' },
-  { source: 'class-auth', target: 'file-auth-middleware', label: 'DEFINED_IN' },
-  { source: 'fn-get-users', target: 'file-user-routes', label: 'DEFINED_IN' },
+  { source: 'class-user', target: 'file-user-model', label: 'DEFINES' },
+  { source: 'class-order', target: 'file-order-model', label: 'DEFINES' },
+  { source: 'class-auth', target: 'file-auth-middleware', label: 'DEFINES' },
+  { source: 'fn-get-users', target: 'file-user-routes', label: 'DEFINES' },
   {
     source: 'fn-create-order',
     target: 'file-order-routes',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   {
     source: 'fn-validate-token',
     target: 'file-auth-middleware',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   {
     source: 'fn-hash-password',
     target: 'file-user-model',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
-  { source: 'fn-use-fetch', target: 'file-use-fetch', label: 'DEFINED_IN' },
-  { source: 'fn-render-users', target: 'file-user-list', label: 'DEFINED_IN' },
+  { source: 'fn-use-fetch', target: 'file-use-fetch', label: 'DEFINES' },
+  { source: 'fn-render-users', target: 'file-user-list', label: 'DEFINES' },
   {
     source: 'fn-render-orders',
     target: 'file-order-table',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   // CALLS
   { source: 'fn-get-users', target: 'class-user', label: 'CALLS' },
@@ -264,11 +264,11 @@ const webAppLinks: GraphLink[] = [
   { source: 'file-app-tsx', target: 'file-order-table', label: 'IMPORTS' },
   { source: 'file-user-list', target: 'file-use-fetch', label: 'IMPORTS' },
   { source: 'file-order-table', target: 'file-use-fetch', label: 'IMPORTS' },
-  // DEPENDS_ON (packages)
-  { source: 'repo', target: 'pkg-react', label: 'DEPENDS_ON' },
-  { source: 'repo', target: 'pkg-express', label: 'DEPENDS_ON' },
-  { source: 'repo', target: 'pkg-prisma', label: 'DEPENDS_ON' },
-  { source: 'repo', target: 'pkg-zod', label: 'DEPENDS_ON' },
+  // DEPENDS (packages)
+  { source: 'repo', target: 'pkg-react', label: 'DEPENDS' },
+  { source: 'repo', target: 'pkg-express', label: 'DEPENDS' },
+  { source: 'repo', target: 'pkg-prisma', label: 'DEPENDS' },
+  { source: 'repo', target: 'pkg-zod', label: 'DEPENDS' },
   { source: 'file-user-model', target: 'pkg-prisma', label: 'IMPORTS' },
   { source: 'file-order-model', target: 'pkg-prisma', label: 'IMPORTS' },
   { source: 'file-app', target: 'pkg-express', label: 'IMPORTS' },
@@ -280,9 +280,9 @@ const webAppLinks: GraphLink[] = [
 const goMonorepoNodes: GraphNode[] = [
   { id: 'repo', name: 'acme/platform', type: 'Repo' },
   // Packages (external)
-  { id: 'pkg-gin', name: 'github.com/gin-gonic/gin', type: 'Package' },
-  { id: 'pkg-gorm', name: 'gorm.io/gorm', type: 'Package' },
-  { id: 'pkg-grpc', name: 'google.golang.org/grpc', type: 'Package' },
+  { id: 'pkg-gin', name: 'github.com/gin-gonic/gin', type: 'Dependency' },
+  { id: 'pkg-gorm', name: 'gorm.io/gorm', type: 'Dependency' },
+  { id: 'pkg-grpc', name: 'google.golang.org/grpc', type: 'Dependency' },
   // Directories
   { id: 'dir-cmd', name: 'cmd', type: 'Directory' },
   { id: 'dir-internal', name: 'internal', type: 'Directory' },
@@ -451,67 +451,67 @@ const goMonorepoNodes: GraphNode[] = [
 
 const goMonorepoLinks: GraphLink[] = [
   // Directory tree
-  { source: 'dir-cmd', target: 'repo', label: 'DEFINED_IN' },
-  { source: 'dir-internal', target: 'repo', label: 'DEFINED_IN' },
-  { source: 'dir-pkg', target: 'repo', label: 'DEFINED_IN' },
-  { source: 'dir-cmd-api', target: 'dir-cmd', label: 'DEFINED_IN' },
-  { source: 'dir-cmd-worker', target: 'dir-cmd', label: 'DEFINED_IN' },
-  { source: 'dir-user', target: 'dir-internal', label: 'DEFINED_IN' },
-  { source: 'dir-order', target: 'dir-internal', label: 'DEFINED_IN' },
-  { source: 'dir-auth', target: 'dir-internal', label: 'DEFINED_IN' },
-  { source: 'dir-logger', target: 'dir-pkg', label: 'DEFINED_IN' },
-  { source: 'dir-config', target: 'dir-pkg', label: 'DEFINED_IN' },
+  { source: 'dir-cmd', target: 'repo', label: 'DEFINES' },
+  { source: 'dir-internal', target: 'repo', label: 'DEFINES' },
+  { source: 'dir-pkg', target: 'repo', label: 'DEFINES' },
+  { source: 'dir-cmd-api', target: 'dir-cmd', label: 'DEFINES' },
+  { source: 'dir-cmd-worker', target: 'dir-cmd', label: 'DEFINES' },
+  { source: 'dir-user', target: 'dir-internal', label: 'DEFINES' },
+  { source: 'dir-order', target: 'dir-internal', label: 'DEFINES' },
+  { source: 'dir-auth', target: 'dir-internal', label: 'DEFINES' },
+  { source: 'dir-logger', target: 'dir-pkg', label: 'DEFINES' },
+  { source: 'dir-config', target: 'dir-pkg', label: 'DEFINES' },
   // Files in dirs
-  { source: 'file-main-api', target: 'dir-cmd-api', label: 'DEFINED_IN' },
-  { source: 'file-main-worker', target: 'dir-cmd-worker', label: 'DEFINED_IN' },
-  { source: 'file-user-handler', target: 'dir-user', label: 'DEFINED_IN' },
-  { source: 'file-user-repo', target: 'dir-user', label: 'DEFINED_IN' },
-  { source: 'file-user-service', target: 'dir-user', label: 'DEFINED_IN' },
-  { source: 'file-order-handler', target: 'dir-order', label: 'DEFINED_IN' },
-  { source: 'file-order-service', target: 'dir-order', label: 'DEFINED_IN' },
-  { source: 'file-auth-middleware', target: 'dir-auth', label: 'DEFINED_IN' },
-  { source: 'file-auth-jwt', target: 'dir-auth', label: 'DEFINED_IN' },
-  { source: 'file-logger', target: 'dir-logger', label: 'DEFINED_IN' },
-  { source: 'file-config', target: 'dir-config', label: 'DEFINED_IN' },
+  { source: 'file-main-api', target: 'dir-cmd-api', label: 'DEFINES' },
+  { source: 'file-main-worker', target: 'dir-cmd-worker', label: 'DEFINES' },
+  { source: 'file-user-handler', target: 'dir-user', label: 'DEFINES' },
+  { source: 'file-user-repo', target: 'dir-user', label: 'DEFINES' },
+  { source: 'file-user-service', target: 'dir-user', label: 'DEFINES' },
+  { source: 'file-order-handler', target: 'dir-order', label: 'DEFINES' },
+  { source: 'file-order-service', target: 'dir-order', label: 'DEFINES' },
+  { source: 'file-auth-middleware', target: 'dir-auth', label: 'DEFINES' },
+  { source: 'file-auth-jwt', target: 'dir-auth', label: 'DEFINES' },
+  { source: 'file-logger', target: 'dir-logger', label: 'DEFINES' },
+  { source: 'file-config', target: 'dir-config', label: 'DEFINES' },
   // Classes/functions in files
   {
     source: 'class-user-handler',
     target: 'file-user-handler',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
-  { source: 'class-user-repo', target: 'file-user-repo', label: 'DEFINED_IN' },
+  { source: 'class-user-repo', target: 'file-user-repo', label: 'DEFINES' },
   {
     source: 'class-user-service',
     target: 'file-user-service',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   {
     source: 'class-order-handler',
     target: 'file-order-handler',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   {
     source: 'class-order-service',
     target: 'file-order-service',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
   {
     source: 'class-auth-mw',
     target: 'file-auth-middleware',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
-  { source: 'fn-main-api', target: 'file-main-api', label: 'DEFINED_IN' },
-  { source: 'fn-main-worker', target: 'file-main-worker', label: 'DEFINED_IN' },
-  { source: 'fn-list-users', target: 'file-user-handler', label: 'DEFINED_IN' },
-  { source: 'fn-get-user', target: 'file-user-handler', label: 'DEFINED_IN' },
+  { source: 'fn-main-api', target: 'file-main-api', label: 'DEFINES' },
+  { source: 'fn-main-worker', target: 'file-main-worker', label: 'DEFINES' },
+  { source: 'fn-list-users', target: 'file-user-handler', label: 'DEFINES' },
+  { source: 'fn-get-user', target: 'file-user-handler', label: 'DEFINES' },
   {
     source: 'fn-create-order',
     target: 'file-order-handler',
-    label: 'DEFINED_IN',
+    label: 'DEFINES',
   },
-  { source: 'fn-verify-token', target: 'file-auth-jwt', label: 'DEFINED_IN' },
-  { source: 'fn-new-logger', target: 'file-logger', label: 'DEFINED_IN' },
-  { source: 'fn-load-config', target: 'file-config', label: 'DEFINED_IN' },
+  { source: 'fn-verify-token', target: 'file-auth-jwt', label: 'DEFINES' },
+  { source: 'fn-new-logger', target: 'file-logger', label: 'DEFINES' },
+  { source: 'fn-load-config', target: 'file-config', label: 'DEFINES' },
   // CALLS
   { source: 'fn-main-api', target: 'fn-load-config', label: 'CALLS' },
   { source: 'fn-main-api', target: 'fn-new-logger', label: 'CALLS' },
@@ -548,10 +548,10 @@ const goMonorepoLinks: GraphLink[] = [
     label: 'IMPORTS',
   },
   { source: 'file-auth-middleware', target: 'file-auth-jwt', label: 'IMPORTS' },
-  // DEPENDS_ON
-  { source: 'repo', target: 'pkg-gin', label: 'DEPENDS_ON' },
-  { source: 'repo', target: 'pkg-gorm', label: 'DEPENDS_ON' },
-  { source: 'repo', target: 'pkg-grpc', label: 'DEPENDS_ON' },
+  // DEPENDS
+  { source: 'repo', target: 'pkg-gin', label: 'DEPENDS' },
+  { source: 'repo', target: 'pkg-gorm', label: 'DEPENDS' },
+  { source: 'repo', target: 'pkg-grpc', label: 'DEPENDS' },
   { source: 'file-main-api', target: 'pkg-gin', label: 'IMPORTS' },
   { source: 'file-user-repo', target: 'pkg-gorm', label: 'IMPORTS' },
 ];
@@ -571,11 +571,11 @@ function mulberry32(seed: number) {
 
 /**
  * Generates a realistic code-graph dataset using only the standard
- * node types (Repo, Directory, File, Class, Function, Package) and
- * edge labels (DEFINED_IN, CALLS, IMPORTS, DEPENDS_ON).
+ * node types (Repo, Directory, File, Class, Function, Dependency) and
+ * edge labels (DEFINES, CALLS, IMPORTS, DEPENDS).
  *
  * Structure: 1 Repo → directories → files → classes/functions,
- * plus packages with DEPENDS_ON and cross-file IMPORTS/CALLS.
+ * plus packages with DEPENDS and cross-file IMPORTS/CALLS.
  */
 function generateLargeDataset(
   nodeCount: number,
@@ -585,14 +585,14 @@ function generateLargeDataset(
   const nodes: GraphNode[] = [];
   const links: GraphLink[] = [];
 
-  // Distribution: ~2% Repo, ~8% Directory, ~30% File, ~20% Class, ~35% Function, ~5% Package
+  // Distribution: ~2% Repo, ~8% Directory, ~30% File, ~20% Class, ~35% Function, ~5% Dependency
   const typeWeights = [
     { type: 'Repo', weight: 0.02 },
     { type: 'Directory', weight: 0.08 },
     { type: 'File', weight: 0.3 },
     { type: 'Class', weight: 0.2 },
     { type: 'Function', weight: 0.35 },
-    { type: 'Package', weight: 0.05 },
+    { type: 'Dependency', weight: 0.05 },
   ];
 
   // Assign types based on weights
@@ -613,7 +613,7 @@ function generateLargeDataset(
     File: [],
     Class: [],
     Function: [],
-    Package: [],
+    Dependency: [],
   };
 
   for (let i = 0; i < nodeCount; i++) {
@@ -648,21 +648,21 @@ function generateLargeDataset(
     }
   }
 
-  // Phase 2: DEFINED_IN edges (structural tree)
+  // Phase 2: DEFINES edges (structural tree)
   // Directories → Repo, Files → Directory, Classes/Functions → File
   const repos = byType.Repo;
   const dirs = byType.Directory;
   const files = byType.File;
   const classes = byType.Class;
   const functions = byType.Function;
-  const packages = byType.Package;
+  const packages = byType.Dependency;
 
   for (const d of dirs) {
     const parent = repos[Math.floor(rand() * repos.length)];
     links.push({
       source: `n-${d}`,
       target: `n-${parent}`,
-      label: 'DEFINED_IN',
+      label: 'DEFINES',
     });
   }
   for (const f of files) {
@@ -673,7 +673,7 @@ function generateLargeDataset(
     links.push({
       source: `n-${f}`,
       target: `n-${parent}`,
-      label: 'DEFINED_IN',
+      label: 'DEFINES',
     });
   }
   for (const c of classes) {
@@ -682,7 +682,7 @@ function generateLargeDataset(
       links.push({
         source: `n-${c}`,
         target: `n-${parent}`,
-        label: 'DEFINED_IN',
+        label: 'DEFINES',
       });
     }
   }
@@ -692,15 +692,15 @@ function generateLargeDataset(
       links.push({
         source: `n-${fn}`,
         target: `n-${parent}`,
-        label: 'DEFINED_IN',
+        label: 'DEFINES',
       });
     }
   }
 
-  // Phase 3: DEPENDS_ON (repos → packages)
+  // Phase 3: DEPENDS (repos → packages)
   for (const p of packages) {
     const repo = repos[Math.floor(rand() * repos.length)];
-    links.push({ source: `n-${repo}`, target: `n-${p}`, label: 'DEPENDS_ON' });
+    links.push({ source: `n-${repo}`, target: `n-${p}`, label: 'DEPENDS' });
   }
 
   // Phase 4: IMPORTS (file → file, file → package)
@@ -767,8 +767,8 @@ const minimalNodes: GraphNode[] = [
 ];
 
 const minimalLinks: GraphLink[] = [
-  { source: 'file', target: 'repo', label: 'DEFINED_IN' },
-  { source: 'fn', target: 'file', label: 'DEFINED_IN' },
+  { source: 'file', target: 'repo', label: 'DEFINES' },
+  { source: 'fn', target: 'file', label: 'DEFINES' },
 ];
 
 // ─── Export ──────────────────────────────────────────────────────────────
