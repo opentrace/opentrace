@@ -127,6 +127,12 @@ export interface GraphStore {
   /** Search stored source files for exact text patterns (regex). */
   grepSource?(
     pattern: string,
-    options?: { caseSensitive?: boolean; maxResults?: number; fileFilter?: string },
-  ): Promise<{ nodeId: string; filePath: string; line: number; text: string }[]>;
+    options?: {
+      caseSensitive?: boolean;
+      maxResults?: number;
+      fileFilter?: string;
+    },
+  ): Promise<
+    { nodeId: string; filePath: string; line: number; text: string }[]
+  >;
 }

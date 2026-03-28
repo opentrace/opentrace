@@ -130,7 +130,10 @@ function csvEscape(value: string): string {
 function generateTypedNodeCSV(
   nodes: ImportBatchRequest['nodes'],
   sourceSnippets?: Map<string, string>,
-  sourceCache?: Map<string, { compressed: Uint8Array; path: string; binary?: boolean }>,
+  sourceCache?: Map<
+    string,
+    { compressed: Uint8Array; path: string; binary?: boolean }
+  >,
 ): string {
   const lines = ['id,name,properties,source_text'];
   for (const node of nodes) {
@@ -151,7 +154,10 @@ const MAX_SYMBOL_SOURCE_CHARS = 5_000;
 function resolveSourceText(
   node: ImportBatchRequest['nodes'][0],
   sourceSnippets?: Map<string, string>,
-  sourceCache?: Map<string, { compressed: Uint8Array; path: string; binary?: boolean }>,
+  sourceCache?: Map<
+    string,
+    { compressed: Uint8Array; path: string; binary?: boolean }
+  >,
 ): string {
   if (node.type === 'File' && sourceSnippets) {
     return (sourceSnippets.get(node.id) ?? '').slice(0, MAX_FILE_SOURCE_CHARS);
@@ -169,11 +175,16 @@ function resolveSourceText(
       const entry = fileId ? sourceCache.get(fileId) : undefined;
       if (entry && !entry.binary) {
         try {
-          const content = new TextDecoder().decode(inflateSync(entry.compressed));
+          const content = new TextDecoder().decode(
+            inflateSync(entry.compressed),
+          );
           const lines = content.split('\n');
           const from = Math.max(0, startLine - 3);
           const to = Math.min(lines.length, endLine + 2);
-          return lines.slice(from, to).join('\n').slice(0, MAX_SYMBOL_SOURCE_CHARS);
+          return lines
+            .slice(from, to)
+            .join('\n')
+            .slice(0, MAX_SYMBOL_SOURCE_CHARS);
         } catch {
           // Decompression failure — skip
         }
@@ -603,8 +614,14 @@ export class LadybugGraphStore implements GraphStore {
   /** Search stored source files for exact text patterns (regex). */
   async grepSource(
     pattern: string,
-    options?: { caseSensitive?: boolean; maxResults?: number; fileFilter?: string },
-  ): Promise<{ nodeId: string; filePath: string; line: number; text: string }[]> {
+    options?: {
+      caseSensitive?: boolean;
+      maxResults?: number;
+      fileFilter?: string;
+    },
+  ): Promise<
+    { nodeId: string; filePath: string; line: number; text: string }[]
+  > {
     const maxResults = options?.maxResults ?? 100;
     const caseSensitive = options?.caseSensitive ?? false;
     const fileFilter = options?.fileFilter;
@@ -616,7 +633,12 @@ export class LadybugGraphStore implements GraphStore {
       return []; // Invalid regex — return empty
     }
 
-    const results: { nodeId: string; filePath: string; line: number; text: string }[] = [];
+    const results: {
+      nodeId: string;
+      filePath: string;
+      line: number;
+      text: string;
+    }[] = [];
 
     for (const [id, entry] of this.sourceCache) {
       if (entry.binary) continue;
@@ -1599,7 +1621,11 @@ export class LadybugGraphStore implements GraphStore {
     for (const [type, bucket] of buckets) {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const csv = generateTypedNodeCSV(chunk, this.sourceSnippets, this.sourceCache);
+        const csv = generateTypedNodeCSV(
+          chunk,
+          this.sourceSnippets,
+          this.sourceCache,
+        );
         const path = `/nodes_${type}.csv`;
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
@@ -1617,9 +1643,7 @@ export class LadybugGraphStore implements GraphStore {
         const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const lines = ['id,vec'];
         for (const { id, vec } of chunk) {
-          lines.push(
-            `${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`,
-          );
+          lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
         }
         const csv = lines.join('\n');
         const path = '/vectors.csv';
@@ -1712,7 +1736,10 @@ export class LadybugGraphStore implements GraphStore {
       });
       // Store truncated source for FTS indexing (populated into source_text column during flush)
       if (!f.binary && f.content) {
-        this.sourceSnippets.set(f.id, f.content.slice(0, MAX_FILE_SOURCE_CHARS));
+        this.sourceSnippets.set(
+          f.id,
+          f.content.slice(0, MAX_FILE_SOURCE_CHARS),
+        );
       }
     }
   }
@@ -1826,163 +1853,164 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     try {
-
-    // Phase 1: Embedding
-    let queryEmbedding: number[] | undefined;
-    if (this.embedder) {
-      try {
-        const embeddings = await this.embedder.embed([queryStr]);
-        if (embeddings.length > 0 && embeddings[0].length > 0) {
-          queryEmbedding = embeddings[0];
+      // Phase 1: Embedding
+      let queryEmbedding: number[] | undefined;
+      if (this.embedder) {
+        try {
+          const embeddings = await this.embedder.embed([queryStr]);
+          if (embeddings.length > 0 && embeddings[0].length > 0) {
+            queryEmbedding = embeddings[0];
+          }
+        } catch {
+          // Embedding failure is non-fatal
         }
-      } catch {
-        // Embedding failure is non-fatal
       }
-    }
-    const tEmbed = performance.now();
+      const tEmbed = performance.now();
 
-    // Phase 2: BM25 (in-memory) + LadybugDB FTS (content) + vector ranking
-    const effectiveLimit = limit ?? 50;
-    const rankedLists: { id: string; score: number }[][] = [];
+      // Phase 2: BM25 (in-memory) + LadybugDB FTS (content) + vector ranking
+      const effectiveLimit = limit ?? 50;
+      const rankedLists: { id: string; score: number }[][] = [];
 
-    // 2a: In-memory BM25 — fast metadata search (name + type + summary + path)
-    const bm25Results = this.bm25Index.search(queryStr, effectiveLimit * 2);
-    if (bm25Results.length > 0) rankedLists.push(bm25Results);
+      // 2a: In-memory BM25 — fast metadata search (name + type + summary + path)
+      const bm25Results = this.bm25Index.search(queryStr, effectiveLimit * 2);
+      if (bm25Results.length > 0) rankedLists.push(bm25Results);
 
-    // 2b: LadybugDB native FTS — content search across per-type indexes
-    const ftsResults = await this.queryFTSIndexes(queryStr, effectiveLimit * 2);
-    if (ftsResults.length > 0) rankedLists.push(ftsResults);
-
-    // 2c: Vector search — LadybugDB native vector index
-    if (queryEmbedding && this.hasVectorIndex) {
-      try {
-        const dims = queryEmbedding.length;
-        const vecLiteral = `[${queryEmbedding.join(',')}]`;
-        const vecRows = await this.query(
-          `CALL QUERY_VECTOR_INDEX('NodeVector', 'nodevec_idx', ` +
-            `CAST(${vecLiteral} AS FLOAT[${dims}]), ${effectiveLimit * 2}) ` +
-            `YIELD node AS v, distance AS dist ` +
-            `WITH v, dist WHERE dist < 0.65 ` +
-            `RETURN v.id AS id, dist ` +
-            `ORDER BY dist`,
-        );
-        const vecResults = (vecRows as { id: string; dist: number }[]).map(
-          (r) => ({ id: r.id, score: Math.exp(-2 * r.dist) }),
-        );
-        if (vecResults.length > 0) rankedLists.push(vecResults);
-      } catch {
-        // Vector index may not exist yet — safe to skip
-      }
-    }
-    const tRank = performance.now();
-
-    // Phase 3: Fusion / fallback text search
-    let seedIds: string[];
-    let searchPath: string;
-    // If the fallback returns full node data, we can skip the fetch phase
-    let prefetchedRows: Record<string, string>[] | null = null;
-
-    if (rankedLists.length > 0) {
-      const fused = rrfFuse(rankedLists, effectiveLimit * 2);
-      seedIds = fused.map((r) => r.id);
-      searchPath = `rrf(bm25=${bm25Results.length},fts=${ftsResults.length},vec=${queryEmbedding ? 'on' : 'off'})`;
-    } else {
-      console.warn(
-        `[searchNodes] No ranked results for "${queryStr}" — bm25.size=${this.bm25Index.size}, bm25hits=${bm25Results.length}, ftsHits=${ftsResults.length}`,
+      // 2b: LadybugDB native FTS — content search across per-type indexes
+      const ftsResults = await this.queryFTSIndexes(
+        queryStr,
+        effectiveLimit * 2,
       );
-      // Cypher CONTAINS fallback — return full node data in one round-trip
-      const q = esc(queryStr.toLowerCase());
-      const rows = await this.query(unionAllTextSearchFull(q));
-      prefetchedRows = rows as Record<string, string>[];
-      seedIds = prefetchedRows.map((r) => r.id);
-      searchPath = 'cypher-contains';
-    }
-    const tFuse = performance.now();
+      if (ftsResults.length > 0) rankedLists.push(ftsResults);
 
-    if (seedIds.length === 0) {
+      // 2c: Vector search — LadybugDB native vector index
+      if (queryEmbedding && this.hasVectorIndex) {
+        try {
+          const dims = queryEmbedding.length;
+          const vecLiteral = `[${queryEmbedding.join(',')}]`;
+          const vecRows = await this.query(
+            `CALL QUERY_VECTOR_INDEX('NodeVector', 'nodevec_idx', ` +
+              `CAST(${vecLiteral} AS FLOAT[${dims}]), ${effectiveLimit * 2}) ` +
+              `YIELD node AS v, distance AS dist ` +
+              `WITH v, dist WHERE dist < 0.65 ` +
+              `RETURN v.id AS id, dist ` +
+              `ORDER BY dist`,
+          );
+          const vecResults = (vecRows as { id: string; dist: number }[]).map(
+            (r) => ({ id: r.id, score: Math.exp(-2 * r.dist) }),
+          );
+          if (vecResults.length > 0) rankedLists.push(vecResults);
+        } catch {
+          // Vector index may not exist yet — safe to skip
+        }
+      }
+      const tRank = performance.now();
+
+      // Phase 3: Fusion / fallback text search
+      let seedIds: string[];
+      let searchPath: string;
+      // If the fallback returns full node data, we can skip the fetch phase
+      let prefetchedRows: Record<string, string>[] | null = null;
+
+      if (rankedLists.length > 0) {
+        const fused = rrfFuse(rankedLists, effectiveLimit * 2);
+        seedIds = fused.map((r) => r.id);
+        searchPath = `rrf(bm25=${bm25Results.length},fts=${ftsResults.length},vec=${queryEmbedding ? 'on' : 'off'})`;
+      } else {
+        console.warn(
+          `[searchNodes] No ranked results for "${queryStr}" — bm25.size=${this.bm25Index.size}, bm25hits=${bm25Results.length}, ftsHits=${ftsResults.length}`,
+        );
+        // Cypher CONTAINS fallback — return full node data in one round-trip
+        const q = esc(queryStr.toLowerCase());
+        const rows = await this.query(unionAllTextSearchFull(q));
+        prefetchedRows = rows as Record<string, string>[];
+        seedIds = prefetchedRows.map((r) => r.id);
+        searchPath = 'cypher-contains';
+      }
+      const tFuse = performance.now();
+
+      if (seedIds.length === 0) {
+        logPerf(
+          'searchNodes',
+          {
+            queryStr,
+            limit,
+            nodeTypes,
+            results: 0,
+            seedIds: 0,
+            searchPath,
+            embed_ms: +(tEmbed - t0).toFixed(1),
+            rank_ms: +(tRank - tEmbed).toFixed(1),
+            fuse_ms: +(tFuse - tRank).toFixed(1),
+            fetch_ms: 0,
+          },
+          0,
+          performance.now() - t0,
+        );
+        return [];
+      }
+
+      // Phase 4: Fetch full node details (skip if already fetched in phase 3)
+      console.debug(
+        `[searchNodes] Phase 4: seedIds=${seedIds.length}, path=${searchPath}, top3=${seedIds.slice(0, 3).join(', ')}`,
+      );
+      const nodeRows = prefetchedRows ?? (await this.fetchNodesByIds(seedIds));
+      const tFetch = performance.now();
+
+      if (nodeRows.length < seedIds.length) {
+        console.warn(
+          `[searchNodes] fetchNodesByIds returned ${nodeRows.length} rows for ${seedIds.length} seeds — ${seedIds.length - nodeRows.length} nodes not found in DB`,
+        );
+      }
+
+      let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
+        (r) => {
+          const props = parseProps(r.properties);
+          return {
+            id: r.id,
+            type: r.type,
+            name: r.name,
+            ...(props && { properties: props }),
+          };
+        },
+      );
+
+      if (nodeTypes && nodeTypes.length > 0) {
+        const typeSet = new Set(nodeTypes.map((t) => t.trim()));
+        const beforeFilter = results.length;
+        results = results.filter((n) => typeSet.has(n.type));
+        if (results.length < beforeFilter) {
+          console.debug(
+            `[searchNodes] nodeType filter: ${beforeFilter} → ${results.length} (types=${nodeTypes.join(',')})`,
+          );
+        }
+      }
+
+      // Preserve ranked order
+      const orderMap = new Map(seedIds.map((id, idx) => [id, idx]));
+      results.sort(
+        (a, b) =>
+          (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
+      );
+
+      const final = results.slice(0, effectiveLimit);
       logPerf(
         'searchNodes',
         {
           queryStr,
           limit,
           nodeTypes,
-          results: 0,
-          seedIds: 0,
           searchPath,
+          seedIds: seedIds.length,
+          results: final.length,
           embed_ms: +(tEmbed - t0).toFixed(1),
           rank_ms: +(tRank - tEmbed).toFixed(1),
           fuse_ms: +(tFuse - tRank).toFixed(1),
-          fetch_ms: 0,
+          fetch_ms: +(tFetch - tFuse).toFixed(1),
         },
-        0,
+        final.length,
         performance.now() - t0,
       );
-      return [];
-    }
-
-    // Phase 4: Fetch full node details (skip if already fetched in phase 3)
-    console.debug(
-      `[searchNodes] Phase 4: seedIds=${seedIds.length}, path=${searchPath}, top3=${seedIds.slice(0, 3).join(', ')}`,
-    );
-    const nodeRows = prefetchedRows ?? (await this.fetchNodesByIds(seedIds));
-    const tFetch = performance.now();
-
-    if (nodeRows.length < seedIds.length) {
-      console.warn(
-        `[searchNodes] fetchNodesByIds returned ${nodeRows.length} rows for ${seedIds.length} seeds — ${seedIds.length - nodeRows.length} nodes not found in DB`,
-      );
-    }
-
-    let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
-      (r) => {
-        const props = parseProps(r.properties);
-        return {
-          id: r.id,
-          type: r.type,
-          name: r.name,
-          ...(props && { properties: props }),
-        };
-      },
-    );
-
-    if (nodeTypes && nodeTypes.length > 0) {
-      const typeSet = new Set(nodeTypes.map((t) => t.trim()));
-      const beforeFilter = results.length;
-      results = results.filter((n) => typeSet.has(n.type));
-      if (results.length < beforeFilter) {
-        console.debug(
-          `[searchNodes] nodeType filter: ${beforeFilter} → ${results.length} (types=${nodeTypes.join(',')})`,
-        );
-      }
-    }
-
-    // Preserve ranked order
-    const orderMap = new Map(seedIds.map((id, idx) => [id, idx]));
-    results.sort(
-      (a, b) =>
-        (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
-    );
-
-    const final = results.slice(0, effectiveLimit);
-    logPerf(
-      'searchNodes',
-      {
-        queryStr,
-        limit,
-        nodeTypes,
-        searchPath,
-        seedIds: seedIds.length,
-        results: final.length,
-        embed_ms: +(tEmbed - t0).toFixed(1),
-        rank_ms: +(tRank - tEmbed).toFixed(1),
-        fuse_ms: +(tFuse - tRank).toFixed(1),
-        fetch_ms: +(tFetch - tFuse).toFixed(1),
-      },
-      final.length,
-      performance.now() - t0,
-    );
-    return final;
-
+      return final;
     } catch (err) {
       console.error('[searchNodes] EXCEPTION during search:', err);
       return [];

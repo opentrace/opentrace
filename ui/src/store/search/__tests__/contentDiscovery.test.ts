@@ -333,9 +333,7 @@ describe('content discovery: hyphenated service name in file body', () => {
       // matched "license" in its name) should NOT outrank the routing file —
       // unless they ALSO have content matches. The routing file has the
       // strongest content match (3 references to the full service name).
-      const infoRank = fused.findIndex(
-        (r) => r.id === 'repo/license.info.cfm',
-      );
+      const infoRank = fused.findIndex((r) => r.id === 'repo/license.info.cfm');
       if (infoRank >= 0) {
         // license.info.cfm has "license" in its name (metadata match) AND
         // "LicenseKey" in its source. The routing file has the full compound
@@ -420,9 +418,7 @@ describe('content discovery: callers of a service', () => {
     // 1. The file that defines the endpoint (apiRouter.cfm)
     // 2. The files that call through it (license.modifyExpiry, order.detailed, etc.)
     const metadataResults = buildMetadataIndex().search('license service');
-    const contentResults = simulateFTSContentSearch(
-      'billing-license-service',
-    );
+    const contentResults = simulateFTSContentSearch('billing-license-service');
     const callerResults = simulateFTSContentSearch('portal-updateLicense');
 
     const rankedLists: { id: string; score: number }[][] = [];

@@ -192,7 +192,12 @@ export class BM25Index {
   /** Maximum edit distance for fuzzy matching. 0 = disabled. */
   private fuzzyMaxDist: number;
 
-  constructor(k1 = 1.5, b = 0.75, fieldWeights?: FieldWeights, fuzzyMaxDist = 1) {
+  constructor(
+    k1 = 1.5,
+    b = 0.75,
+    fieldWeights?: FieldWeights,
+    fuzzyMaxDist = 1,
+  ) {
     this.k1 = k1;
     this.b = b;
     this.fieldWeights = fieldWeights ?? {};
@@ -312,7 +317,8 @@ export class BM25Index {
 
           scores.set(
             docId,
-            (scores.get(docId) ?? 0) + idf * tfScore * matchPenalty * fieldBoost,
+            (scores.get(docId) ?? 0) +
+              idf * tfScore * matchPenalty * fieldBoost,
           );
         }
       }

@@ -838,7 +838,11 @@ const GraphViewer = memo(
         for (const n of graphData.nodes) {
           if (!nameMap.has(n.name)) {
             const cid = communityData.assignments[n.id];
-            nameMap.set(n.name, { type: n.type, communityId: cid, nodeId: n.id });
+            nameMap.set(n.name, {
+              type: n.type,
+              communityId: cid,
+              nodeId: n.id,
+            });
           }
         }
         const suggestions: SearchSuggestion[] = [];

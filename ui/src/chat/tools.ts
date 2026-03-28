@@ -290,11 +290,7 @@ export function makeGraphTools(store: GraphStore) {
 
         // 2. Get relationships (capped depth)
         const traverseDepth = Math.min(depth, 3);
-        const rels = await store.traverse(
-          nodeId,
-          'both',
-          traverseDepth,
-        );
+        const rels = await store.traverse(nodeId, 'both', traverseDepth);
 
         const connections = rels.map((r) => ({
           type: r.relationship.type,
@@ -307,7 +303,11 @@ export function makeGraphTools(store: GraphStore) {
         }));
 
         // 3. Optionally include source code
-        let source: { path: string; content: string; line_count: number } | null = null;
+        let source: {
+          path: string;
+          content: string;
+          line_count: number;
+        } | null = null;
         if (includeSource) {
           const result = await store.fetchSource(nodeId);
           if (result) {
