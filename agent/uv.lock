@@ -970,10 +970,12 @@ dependencies = [
     { name = "gitpython" },
     { name = "mcp" },
     { name = "real-ladybug" },
+    { name = "starlette" },
     { name = "tree-sitter" },
     { name = "tree-sitter-go" },
     { name = "tree-sitter-python" },
     { name = "tree-sitter-typescript" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -1000,11 +1002,13 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0" },
     { name = "optimum", extras = ["onnxruntime"], marker = "extra == 'summarization'", specifier = ">=1.17" },
     { name = "real-ladybug", specifier = ">=0.13" },
+    { name = "starlette", specifier = ">=0.27" },
     { name = "transformers", marker = "extra == 'summarization'", specifier = ">=4.38" },
     { name = "tree-sitter", specifier = ">=0.24" },
     { name = "tree-sitter-go" },
     { name = "tree-sitter-python" },
     { name = "tree-sitter-typescript" },
+    { name = "uvicorn", specifier = ">=0.24" },
 ]
 provides-extras = ["summarization", "swe-bench"]
 

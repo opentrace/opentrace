@@ -26,6 +26,8 @@ dependencies = [
     "click>=8.0",
     "mcp>=1.0",
     "real-ladybug>=0.13",
+    "starlette>=0.27",
+    "uvicorn>=0.24",
 ]
 
 [project.optional-dependencies]

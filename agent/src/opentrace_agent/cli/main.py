@@ -321,6 +321,61 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
 
 
 @app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind address.")
+@click.option("--port", default=8787, show_default=True, help="Bind port.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
+    """Start an HTTP server exposing the graph database.
+
+    Provides a REST API that replaces the in-browser WASM LadybugDB engine,
+    allowing the UI to query a server-backed graph store instead.
+    """
+    import uvicorn
+
+    _configure_logging(verbose)
+    log = logging.getLogger("opentrace_agent.serve")
+
+    from opentrace_agent.cli.serve import create_app
+    from opentrace_agent.store import GraphStore
+
+    try:
+        resolved_db = _resolve_db(db_path, must_exist=True)
+    except click.UsageError as e:
+        raise SystemExit(str(e))
+
+    log.debug("Opening database: %s", resolved_db)
+    store = GraphStore(resolved_db)
+
+    stats = store.get_stats()
+    click.echo(f"Database: {resolved_db}")
+    click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
+    click.echo(f"Listening on http://{host}:{port}")
+
+    app = create_app(store)
+
+    def _shutdown(signum: int, _frame: object) -> None:
+        log.debug("Received signal %d, shutting down", signum)
+        store.close()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="debug" if verbose else "info")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        store.close()
+
+
+@app.command()
 @click.argument("pattern")
 @click.option(
     "--db",
