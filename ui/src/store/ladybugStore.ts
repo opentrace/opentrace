@@ -495,10 +495,8 @@ export class LadybugGraphStore implements GraphStore {
   >();
   private static readonly NODE_CACHE_MAX = 10_000;
 
-  /** Package node IDs already written to LadybugDB. Packages are shared across
-   *  repos so the same ID can arrive from multiple pipeline runs — skip
-   *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
-  private flushedDependencyIds = new Set<string>();
+  /** Node IDs already written to LadybugDB. Used to detect duplicates. */
+  private flushedNodeIds = new Set<string>();
 
   // --- Visualization limits ---
   private maxVisNodes = 20000;
@@ -1199,7 +1197,7 @@ export class LadybugGraphStore implements GraphStore {
     this.bm25Index = new BM25Index();
     this.nodeTypeMap.clear();
     this.nodeCache.clear();
-    this.flushedDependencyIds.clear();
+    this.flushedNodeIds.clear();
     this.sourceCache.clear();
   }
 
@@ -1513,18 +1511,12 @@ export class LadybugGraphStore implements GraphStore {
         this.vectorIndex.addVector(node.id, node.embedding);
       }
 
-      // Bucket by type, skipping unknown types and duplicate dependencies
+      // Bucket by type, skipping unknown types
       if (!NODE_TYPE_SET.has(node.type)) {
         console.warn(
           `[LadybugStore] Unknown node type '${node.type}' for node ${node.id}, skipping`,
         );
         continue;
-      }
-      if (node.type === 'Dependency' && this.flushedDependencyIds.has(node.id)) {
-        continue;
-      }
-      if (node.type === 'Dependency') {
-        this.flushedDependencyIds.add(node.id);
       }
 
       let bucket = buckets.get(node.type);
@@ -1536,15 +1528,52 @@ export class LadybugGraphStore implements GraphStore {
       nodeCount++;
     }
 
-    // --- Flush nodes: chunked COPY FROM per type ---
+    // --- Flush nodes: chunked COPY FROM per type, SET on PK conflict ---
     for (const [type, bucket] of buckets) {
-      for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
-        const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
+      // Split into new nodes (for COPY) and existing nodes (for SET update)
+      const newNodes: typeof bucket = [];
+      const existingNodes: typeof bucket = [];
+      for (const node of bucket) {
+        if (this.flushedNodeIds.has(node.id)) {
+          existingNodes.push(node);
+        } else {
+          newNodes.push(node);
+          this.flushedNodeIds.add(node.id);
+        }
+      }
+
+      // COPY new nodes in chunks
+      for (let offset = 0; offset < newNodes.length; offset += FLUSH_CHUNK_SIZE) {
+        const chunk = newNodes.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(type, chunk);
         const csvPath = `/nodes_${type}.csv`;
         await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
         await lbug.FS.unlink(csvPath);
+      }
+
+      // SET update existing nodes (e.g. summary added after initial creation)
+      const cols = NODE_COLUMNS.get(type);
+      for (const node of existingNodes) {
+        const props = node.properties ?? {};
+        const setClauses: string[] = [];
+        if (cols) {
+          for (const col of cols) {
+            if (col === 'id') continue;
+            const val = col === 'name' ? node.name : getPropValue(props, col);
+            if (val == null || val === '') continue;
+            if (typeof val === 'number' || typeof val === 'boolean') {
+              setClauses.push(`n.${col} = ${val}`);
+            } else {
+              setClauses.push(`n.${col} = '${esc(String(val))}'`);
+            }
+          }
+        }
+        if (setClauses.length > 0) {
+          await this.exec(
+            `MATCH (n:${type} {id: '${esc(node.id)}'}) SET ${setClauses.join(', ')}`,
+          );
+        }
       }
     }
 
