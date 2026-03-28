@@ -58,7 +58,10 @@ def create_app(store: GraphStore) -> Starlette:
     async def fetch_graph(request: Request) -> JSONResponse:
         """GET /api/graph?query=&hops="""
         query = request.query_params.get("query", "")
-        hops = int(request.query_params.get("hops", "2"))
+        try:
+            hops = int(request.query_params.get("hops", "2"))
+        except ValueError:
+            return _error(400, "Invalid parameter: hops must be an integer")
         if not query:
             return JSONResponse({"nodes": [], "links": []})
         nodes, relationships = store.search_graph(query, hops=hops)
@@ -79,7 +82,10 @@ def create_app(store: GraphStore) -> Starlette:
         query = request.query_params.get("query", "")
         if not query:
             return JSONResponse([])
-        limit = int(request.query_params.get("limit", "50"))
+        try:
+            limit = int(request.query_params.get("limit", "50"))
+        except ValueError:
+            return _error(400, "Invalid parameter: limit must be an integer")
         node_types_param = request.query_params.get("nodeTypes", "")
         node_types = [t.strip() for t in node_types_param.split(",") if t.strip()] or None
         results = store.search_nodes(query, node_types=node_types, limit=limit)
@@ -90,9 +96,12 @@ def create_app(store: GraphStore) -> Starlette:
         node_type = request.query_params.get("type", "")
         if not node_type:
             return _error(400, "Missing required parameter: type")
-        limit = int(request.query_params.get("limit", "50"))
-        filters_param = request.query_params.get("filters", "")
-        filters = json.loads(filters_param) if filters_param else None
+        try:
+            limit = int(request.query_params.get("limit", "50"))
+            filters_param = request.query_params.get("filters", "")
+            filters = json.loads(filters_param) if filters_param else None
+        except (ValueError, json.JSONDecodeError) as e:
+            return _error(400, f"Invalid parameter: {e}")
         results = store.list_nodes(node_type=node_type, filters=filters, limit=limit)
         return JSONResponse(results)
 
@@ -111,7 +120,10 @@ def create_app(store: GraphStore) -> Starlette:
             return _error(400, "Missing required field: nodeId")
         node_id = body["nodeId"]
         direction = body.get("direction", "outgoing")
-        max_depth = int(body.get("maxDepth", 3))
+        try:
+            max_depth = int(body.get("maxDepth", 3))
+        except (ValueError, TypeError):
+            return _error(400, "Invalid field: maxDepth must be an integer")
         rel_type = body.get("relType") or None
         if direction not in ("outgoing", "incoming", "both"):
             return _error(400, f"Invalid direction: {direction}")

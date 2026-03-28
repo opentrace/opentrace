@@ -360,13 +360,6 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
 
     app = create_app(store)
 
-    def _shutdown(signum: int, _frame: object) -> None:
-        log.debug("Received signal %d, shutting down", signum)
-        store.close()
-        raise SystemExit(0)
-
-    signal.signal(signal.SIGTERM, _shutdown)
-
     try:
         uvicorn.run(app, host=host, port=port, log_level="debug" if verbose else "info")
     except KeyboardInterrupt:
