@@ -15,6 +15,10 @@
 PROTO_DIR   := opentrace/v1
 PROTO_FILES := $(PROTO_DIR)/job_config.proto $(PROTO_DIR)/agent_service.proto
 
+# Code graph schema (protoc-gen-ladybug)
+GRAPH_PROTO := $(PROTO_DIR)/code_graph.proto
+GRAPH_OUT   := ../ui/src/gen
+
 # TS and Python: protoc mirrors the proto package path (opentrace/v1/) under
 # the output directory, so we point to the gen root.
 TS_OUT     := ../ui/src/gen
@@ -26,9 +30,9 @@ TS_PROTO_PLUGIN := ../ui/node_modules/.bin/protoc-gen-ts_proto
 GO_OUT     := ../api
 GO_MODULE  := github.com/opentrace/opentrace/api
 
-.PHONY: all ts py go clean
+.PHONY: all ts py go graph clean
 
-all: ts py go
+all: ts py go graph
 
 ts:
 	@mkdir -p $(TS_OUT)
@@ -44,7 +48,7 @@ ts:
 
 py:
 	@mkdir -p $(PY_OUT)
-	python -m grpc_tools.protoc \
+	uv run --project ../agent python -m grpc_tools.protoc \
 		--proto_path=. \
 		--python_out=$(PY_OUT) \
 		--pyi_out=$(PY_OUT) \
@@ -68,6 +72,20 @@ go:
 		--go-grpc_out=$(GO_OUT) \
 		--go-grpc_opt=module=$(GO_MODULE) \
 		$(PROTO_FILES)
+
+graph:
+	@mkdir -p $(GRAPH_OUT)
+	protoc \
+		--proto_path=. \
+		--ladybug_out=$(GRAPH_OUT) \
+		--ladybug_opt=lang=ts \
+		$(GRAPH_PROTO)
+	@mkdir -p $(PY_OUT)
+	protoc \
+		--proto_path=. \
+		--ladybug_out=$(PY_OUT) \
+		--ladybug_opt=lang=py \
+		$(GRAPH_PROTO)
 
 clean:
 	rm -rf $(TS_OUT) $(PY_OUT)

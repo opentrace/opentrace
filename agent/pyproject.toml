@@ -48,7 +48,7 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-anyio", "ruff"]
+dev = ["pytest", "pytest-anyio", "ruff", "grpcio-tools"]
 
 [build-system]
 requires = ["hatchling"]
