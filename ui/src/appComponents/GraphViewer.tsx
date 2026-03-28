@@ -630,7 +630,10 @@ const GraphViewer = memo(
       );
 
       const onNodeClick = useCallback((node: GraphNode) => {
-        setSelectedNode(node);
+        // Refresh from store cache to pick up properties added after graph load (e.g. summaries)
+        store.getNode(node.id).then((fresh) => {
+          setSelectedNode(fresh ? { ...node, properties: fresh.properties } : node);
+        }).catch(() => setSelectedNode(node));
         setSelectedLink(null);
         // Clear edge-click and community-focus highlights (use stable empty sets)
         setEdgeHighlightNodes(EMPTY_SET);
@@ -638,7 +641,7 @@ const GraphViewer = memo(
         setEdgeLabelNodes(EMPTY_SET);
         setFocusedCommunityNodes(EMPTY_SET);
         // Zoom is handled by the effect below after highlights are computed
-      }, []);
+      }, [store]);
 
       const onCommunityFocus = useCallback(
         (key: string) => {
