@@ -18,11 +18,11 @@ import type { GraphData, GraphStats } from '@opentrace/components/utils';
 
 // ---- Shared result types ----
 
-export interface NodeResult {
+export interface NodeResult<T = Record<string, unknown>> {
   id: string;
   type: string;
   name: string;
-  properties?: Record<string, unknown>;
+  properties?: T;
 }
 
 export interface TraverseRelationship {
@@ -116,7 +116,7 @@ export interface GraphStore {
     limit?: number,
     filters?: Record<string, string>,
   ): Promise<NodeResult[]>;
-  getNode(nodeId: string): Promise<NodeResult | null>;
+  getNode<T = Record<string, unknown>>(nodeId: string): Promise<NodeResult<T> | null>;
   traverse(
     nodeId: string,
     direction?: 'outgoing' | 'incoming' | 'both',

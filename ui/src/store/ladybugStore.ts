@@ -1491,11 +1491,16 @@ export class LadybugGraphStore implements GraphStore {
       const props = node.properties ?? {};
       this.nodeTypeMap.set(node.id, node.type);
 
-      // Node cache — serves getNode/fetchNodesByIds from JS memory
+      // Node cache — merge with existing so partial updates (e.g. summary)
+      // don't overwrite previously cached properties.
+      const prev = this.nodeCache.get(node.id);
+      const merged = prev
+        ? { ...JSON.parse(prev.properties), ...props }
+        : props;
       this.cacheNode(node.id, {
         type: node.type,
         name: node.name,
-        properties: JSON.stringify(props),
+        properties: JSON.stringify(merged),
       });
 
       // BM25 index
@@ -1889,7 +1894,7 @@ export class LadybugGraphStore implements GraphStore {
     return results;
   }
 
-  async getNode(nodeId: string): Promise<NodeResult | null> {
+  async getNode<T = Record<string, unknown>>(nodeId: string): Promise<NodeResult<T> | null> {
     const t0 = performance.now();
 
     // Cache path: serve from JS memory (0ms, no WASM round-trip)

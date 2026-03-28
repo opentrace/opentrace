@@ -44,7 +44,7 @@ ts:
 		--ts_proto_opt=enumsAsLiterals=true \
 		--ts_proto_opt=outputServices=false \
 		--ts_proto_opt=esModuleInterop=true \
-		$(PROTO_FILES)
+		$(PROTO_FILES) $(GRAPH_PROTO)
 
 py:
 	@mkdir -p $(PY_OUT)

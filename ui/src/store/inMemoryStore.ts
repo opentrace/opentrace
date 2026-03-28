@@ -343,7 +343,7 @@ export class InMemoryGraphStore implements GraphStore {
     return results;
   }
 
-  async getNode(nodeId: string): Promise<NodeResult | null> {
+  async getNode<T = Record<string, unknown>>(nodeId: string): Promise<NodeResult<T> | null> {
     const t0 = performance.now();
     const n = this.nodes.get(nodeId);
     if (!n) {
