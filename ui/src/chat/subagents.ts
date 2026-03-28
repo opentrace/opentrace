@@ -415,9 +415,7 @@ export function makeSubAgentTools(
       schema: z.object({
         query: z
           .string()
-          .describe(
-            'The component to find dependencies of (name or ID)',
-          ),
+          .describe('The component to find dependencies of (name or ID)'),
       }),
     },
   );
@@ -444,9 +442,7 @@ export function makeSubAgentTools(
         'Returns structured JSON with the full picture. ' +
         "Use for questions like 'explain X', 'how does X work?', 'walk me through X'.",
       schema: z.object({
-        query: z
-          .string()
-          .describe('The exploration question to investigate'),
+        query: z.string().describe('The exploration question to investigate'),
       }),
     },
   );
@@ -475,9 +471,7 @@ export function makeSubAgentTools(
       schema: z.object({
         query: z
           .string()
-          .describe(
-            'The component to analyze impact for (name or ID)',
-          ),
+          .describe('The component to analyze impact for (name or ID)'),
       }),
     },
   );
