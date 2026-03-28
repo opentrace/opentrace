@@ -325,7 +325,7 @@ const GraphViewer = memo(
       );
       const [hops, setHops] = useState(2);
       const [exporting, setExporting] = useState(false);
-      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
+      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>(['Dependency']));
       const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
       const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
       const [hiddenCommunities, setHiddenCommunities] = useState(
