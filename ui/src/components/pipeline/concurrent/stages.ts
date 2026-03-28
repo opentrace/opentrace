@@ -396,7 +396,7 @@ export class SummarizeStage implements INodeStage {
         typeof props.endLine === 'number'
           ? props.endLine - props.startLine + 1
           : undefined,
-      receiverType: props.receiver_type as string | undefined,
+      receiverType: props.receiverType as string | undefined,
       fileName:
         kind === 'file' ? ((props.path as string) ?? node.name) : undefined,
       childNames: props.childNames as string[] | undefined,
