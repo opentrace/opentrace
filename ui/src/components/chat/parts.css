@@ -200,6 +200,12 @@
   overflow-y: auto;
 }
 
+.agent-result-summary {
+  padding: 4px 0 2px;
+  font-size: 0.85em;
+  color: var(--color-text-secondary, #888);
+}
+
 /* ── Agent progress steps ────────────────── */
 
 .agent-progress {

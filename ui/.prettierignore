@@ -17,3 +17,4 @@ src/gen/
 *.wasm
 CLAUDE.md
 **/CLAUDE.md
+README.md

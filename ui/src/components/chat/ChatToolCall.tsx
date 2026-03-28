@@ -52,8 +52,10 @@ const TOOL_NAMES: Record<string, string> = {
   get_node: 'Get Node',
   traverse_graph: 'Traverse Graph',
   load_source: 'Load Source',
-  code_explorer: 'Code Explorer',
-  dependency_analyzer: 'Dependency Analyzer',
+  find_usages: 'Find Usages',
+  find_dependencies: 'Find Dependencies',
+  explore_component: 'Explore Component',
+  analyze_blast_radius: 'Blast Radius',
   code_reviewer: 'Code Reviewer',
   suggest_comment: 'Suggest Comment',
   comment_on_pr: 'Comment on PR',
@@ -61,8 +63,10 @@ const TOOL_NAMES: Record<string, string> = {
 
 /** Tools that are actually sub-agents — rendered with distinct styling */
 const AGENT_TOOLS = new Set([
-  'code_explorer',
-  'dependency_analyzer',
+  'find_usages',
+  'find_dependencies',
+  'explore_component',
+  'analyze_blast_radius',
   'code_reviewer',
 ]);
 
@@ -114,6 +118,22 @@ function trimSteps(steps: string[], isActive: boolean): string[] {
   if (steps.length <= MAX_OLD + (isActive ? 1 : 0)) return steps;
   // Active step is always the last element
   return isActive ? steps.slice(-(MAX_OLD + 1)) : steps.slice(-MAX_OLD);
+}
+
+/** Extract the "summary" field from a JSON agent result (best-effort). */
+function extractSummary(result: string): string {
+  try {
+    // Result may be a raw JSON string or wrapped in a fenced code block
+    const jsonMatch = result.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonStr = jsonMatch ? jsonMatch[1] : result;
+    const parsed = JSON.parse(jsonStr);
+    if (typeof parsed.summary === 'string' && parsed.summary) {
+      return parsed.summary;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'Done.';
 }
 
 export default function ChatToolCall({
@@ -312,12 +332,12 @@ export default function ChatToolCall({
               </div>
             );
           })()}
-        {/* Agent: show result as rendered markdown when complete */}
+        {/* Agent: show result summary when complete */}
         {isAgent &&
           part.status !== 'active' &&
           part.result &&
           (() => {
-            // For code_reviewer: parse structured review and render with submit button
+            // Code reviewer returns prose + structured review — render fully
             if (part.name === 'code_reviewer') {
               const reviewData = parseReviewResult(part.result);
               const strippedText = reviewData
@@ -342,15 +362,17 @@ export default function ChatToolCall({
                 </>
               );
             }
+            // Other agents return raw JSON — show summary + collapsible raw data
             return (
-              <div className="agent-result markdown-body">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={markdownComponents}
-                >
-                  {part.result}
-                </ReactMarkdown>
-              </div>
+              <>
+                <div className="agent-result-summary">
+                  {extractSummary(part.result)}
+                </div>
+                <details className="tool-section">
+                  <summary className="tool-section-label">Raw data</summary>
+                  <RawResult result={part.result} />
+                </details>
+              </>
             );
           })()}
         {/* Non-agent tools: keep existing collapsible sections */}

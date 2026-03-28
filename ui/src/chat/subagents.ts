@@ -24,7 +24,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import { makeGraphTools } from './tools';
 import type { GraphStore } from '../store/types';
 
-const MAX_SUBAGENT_RESULT_CHARS = 8000;
+const MAX_SUBAGENT_RESULT_CHARS = 12000;
 
 /** Callback for reporting sub-agent progress to the UI */
 export type ProgressFn = (agentName: string, step: string) => void;
@@ -37,6 +37,11 @@ const STEP_LABELS: Record<string, string> = {
   get_node: 'Inspecting node',
   traverse_graph: 'Traversing connections',
   load_source: 'Loading source',
+  find_usages: 'Finding usages',
+  find_dependencies: 'Finding dependencies',
+  explore_component: 'Exploring component',
+  analyze_blast_radius: 'Analyzing blast radius',
+  code_reviewer: 'Reviewing code',
 };
 
 function stepLabel(toolName: string): string {
@@ -44,78 +49,132 @@ function stepLabel(toolName: string): string {
 }
 
 // ---- System prompts ----
+//
+// Sub-agents return raw structured JSON so the main (parent) agent can
+// synthesize a user-facing response.  Each prompt ends with an output-format
+// contract the sub-agent must follow.
 
-const CODE_EXPLORER_PROMPT = `You are a code exploration agent with access to the OpenTrace knowledge graph. Your job is to help developers understand their codebase by navigating the indexed graph of repositories, classes, functions, files, and their relationships.
-
-## Workflow
-
-1. **Find**: Use search_graph to locate nodes matching the query. Start broad.
-2. **Inspect**: Use get_node to get full details on specific nodes and their neighbors.
-3. **Trace**: Use traverse_graph to walk dependency trees:
-   - direction: outgoing — what does this component depend on?
-   - direction: incoming — what depends on this component?
-   - direction: both — full neighborhood
-4. **List**: Use list_nodes with a node type to enumerate all nodes of a given type.
-5. **Read source**: Use load_source with a File or symbol node ID to fetch actual source code.
-
-## Response Format
-
-Present findings as structured summaries:
-- Node type and name with ID for reference
-- Properties (language, team, etc.)
-- Relationships grouped by type (CALLS, READS, DEFINED_IN, etc.)
-
-When presenting graph traversals, show the path clearly:
-  ClassA --CALLS--> ClassB --DEFINED_IN--> FileC
-
-## Tips
-
-- Start broad with search_graph, then drill down with get_node
-- Use nodeTypes filter in search_graph to narrow results (e.g. "Repository,Class")
-- For "what calls this?" questions, traverse incoming edges
-- For "what does this depend on?" questions, traverse outgoing edges
-- When exploring unfamiliar code, start from Repository nodes and traverse outward
-- Use load_source to show actual code when the user asks about implementation details
-
-Produce a clear, synthesized answer. Do NOT return raw JSON — summarize your findings in prose with structured lists.`;
-
-const DEPENDENCY_ANALYZER_PROMPT = `You are a dependency analysis agent. Your job is to help developers understand the impact of changes by mapping dependencies through the OpenTrace knowledge graph.
+const FIND_USAGES_PROMPT = `You are a usage-finding agent with access to the OpenTrace knowledge graph.
+Given a target component (by name or ID), find everything that calls, imports, or depends on it.
 
 ## Workflow
+1. Use search_graph to locate the target node. If multiple matches, pick the best one.
+2. Use traverse_graph with direction: incoming, depth: 3 to find all consumers.
+3. Optionally use get_node on key consumers for extra detail.
 
-1. **Locate target**: Use search_graph to find the component the user is asking about.
-2. **Map consumers** (incoming): Use traverse_graph with direction: incoming to find everything that depends on this component.
-3. **Map dependencies** (outgoing): Use traverse_graph with direction: outgoing to find everything this component depends on.
-4. **Assess blast radius**: Combine incoming and outgoing traversals to build the full dependency picture.
+## CRITICAL: Output Format
+Return ONLY a fenced JSON code block — no prose, no markdown headings.
+The parent agent will synthesize a user-facing answer from your raw data.
 
-## Response Format
+\`\`\`json
+{
+  "summary": "Short one-sentence description of what was found",
+  "target": { "id": "...", "name": "...", "type": "..." },
+  "usages": [
+    { "id": "...", "name": "...", "type": "...", "relationship": "CALLS", "depth": 1 }
+  ],
+  "totalCount": 12
+}
+\`\`\`
 
-Present analysis in three sections:
+Include up to 50 usages. Set totalCount to the real total even if you truncate the list.
+The "summary" must be a single plain-text sentence (no markdown) describing what was found, e.g. "Found 12 callers of AuthService, mostly in the API layer."`;
 
-### Upstream (what depends on this)
-List all consumers with depth annotations:
-  [depth 1] FunctionA --CALLS--> TargetFunction
-  [depth 2] ClassX --CALLS--> FunctionA --CALLS--> TargetFunction
+const FIND_DEPENDENCIES_PROMPT = `You are a dependency-finding agent with access to the OpenTrace knowledge graph.
+Given a target component, find everything it depends on, calls, or imports.
 
-### Downstream (what this depends on)
-List all dependencies:
-  [depth 1] TargetFunction --DEFINED_IN--> FileA
-  [depth 1] TargetFunction --CALLS--> FunctionB
+## Workflow
+1. Use search_graph to locate the target node.
+2. Use traverse_graph with direction: outgoing, depth: 3 to map dependencies.
+3. Optionally use get_node on important dependencies for extra detail.
 
-### Blast Radius Summary
-- Direct consumers: Count and list of depth-1 incoming nodes
-- Transitive consumers: Count of depth 2+ incoming nodes
-- Direct dependencies: Count and list of depth-1 outgoing nodes
-- Risk assessment: High/Medium/Low based on consumer count and node types
+## CRITICAL: Output Format
+Return ONLY a fenced JSON code block — no prose, no markdown headings.
 
-## Guidelines
+\`\`\`json
+{
+  "summary": "Short one-sentence description of what was found",
+  "target": { "id": "...", "name": "...", "type": "..." },
+  "dependencies": [
+    { "id": "...", "name": "...", "type": "...", "relationship": "CALLS", "depth": 1 }
+  ],
+  "totalCount": 8
+}
+\`\`\`
 
-- Use depth 3 for initial analysis, increase if deeper exploration is needed
-- Filter by relationship type when asked about specific kinds of dependencies
-- Highlight widely-imported files and packages as high-impact
-- Flag classes/functions with many incoming connections as critical components
+Include up to 50 dependencies. Set totalCount to the real total even if you truncate the list.
+The "summary" must be a single plain-text sentence (no markdown), e.g. "UserService depends on 8 components including DatabaseClient and AuthProvider."`;
 
-Produce a clear, synthesized answer. Do NOT return raw JSON — summarize your findings in prose with structured lists.`;
+const EXPLORE_COMPONENT_PROMPT = `You are a component exploration agent with access to the OpenTrace knowledge graph.
+Given a query about a codebase component, perform a thorough multi-step exploration.
+
+## Workflow
+1. Use search_graph to find relevant nodes.
+2. Use get_node on the best match for full properties.
+3. Use traverse_graph with direction: both to map the neighborhood (incoming and outgoing).
+4. Use load_source if the query asks about implementation details.
+
+## CRITICAL: Output Format
+Return ONLY a fenced JSON code block — no prose, no markdown headings.
+
+\`\`\`json
+{
+  "summary": "Short one-sentence description of what was found",
+  "node": { "id": "...", "name": "...", "type": "...", "properties": {} },
+  "incoming": [
+    { "id": "...", "name": "...", "type": "...", "relationship": "..." }
+  ],
+  "outgoing": [
+    { "id": "...", "name": "...", "type": "...", "relationship": "..." }
+  ],
+  "source": [
+    { "path": "...", "startLine": 1, "endLine": 50, "snippet": "..." }
+  ],
+  "related": [
+    { "id": "...", "name": "...", "type": "..." }
+  ]
+}
+\`\`\`
+
+Include up to 30 neighbors per direction and up to 3 source snippets.
+Omit the "source" key if no source was loaded.
+The "summary" must be a single plain-text sentence (no markdown), e.g. "AuthService is a Class with 5 incoming callers and 3 outgoing dependencies."`;
+
+const BLAST_RADIUS_PROMPT = `You are a blast-radius analysis agent with access to the OpenTrace knowledge graph.
+Given a target component, map both what depends on it AND what it depends on to assess the impact of changes.
+
+## Workflow
+1. Use search_graph to locate the target node.
+2. Use traverse_graph with direction: incoming, depth: 3 for consumers.
+3. Use traverse_graph with direction: outgoing, depth: 3 for dependencies.
+4. Optionally use get_node on high-fanout nodes for detail.
+
+## CRITICAL: Output Format
+Return ONLY a fenced JSON code block — no prose, no markdown headings.
+
+\`\`\`json
+{
+  "summary": "Short one-sentence description of the impact",
+  "target": { "id": "...", "name": "...", "type": "..." },
+  "upstream": {
+    "direct": [{ "id": "...", "name": "...", "type": "...", "relationship": "..." }],
+    "transitive": [{ "id": "...", "name": "...", "type": "...", "depth": 2 }]
+  },
+  "downstream": {
+    "direct": [{ "id": "...", "name": "...", "type": "...", "relationship": "..." }],
+    "transitive": [{ "id": "...", "name": "...", "type": "...", "depth": 2 }]
+  },
+  "counts": {
+    "directConsumers": 5,
+    "transitiveConsumers": 12,
+    "directDependencies": 3,
+    "transitiveDependencies": 7
+  }
+}
+\`\`\`
+
+Include up to 30 nodes per section. Set counts to real totals.
+The "summary" must be a single plain-text sentence (no markdown), e.g. "Changing DatabaseClient would affect 17 consumers across 3 services."`;
 
 const CODE_REVIEWER_PROMPT = `You are a code review agent. Your job is to review code changes for quality issues, bugs, security vulnerabilities, and adherence to codebase conventions by combining source code inspection with architecture context from the OpenTrace knowledge graph.
 
@@ -271,16 +330,30 @@ export function makeSubAgentTools(
 ) {
   const graphTools = makeGraphTools(store);
 
-  const codeExplorerAgent = createReactAgent({
+  // ── Focused sub-agents ──────────────────────────────────────────────────
+
+  const findUsagesAgent = createReactAgent({
     llm,
     tools: graphTools,
-    stateModifier: CODE_EXPLORER_PROMPT,
+    stateModifier: FIND_USAGES_PROMPT,
   });
 
-  const dependencyAnalyzerAgent = createReactAgent({
+  const findDependenciesAgent = createReactAgent({
     llm,
     tools: graphTools,
-    stateModifier: DEPENDENCY_ANALYZER_PROMPT,
+    stateModifier: FIND_DEPENDENCIES_PROMPT,
+  });
+
+  const exploreComponentAgent = createReactAgent({
+    llm,
+    tools: graphTools,
+    stateModifier: EXPLORE_COMPONENT_PROMPT,
+  });
+
+  const blastRadiusAgent = createReactAgent({
+    llm,
+    tools: graphTools,
+    stateModifier: BLAST_RADIUS_PROMPT,
   });
 
   const codeReviewerAgent = createReactAgent({
@@ -289,58 +362,116 @@ export function makeSubAgentTools(
     stateModifier: CODE_REVIEWER_PROMPT,
   });
 
-  const codeExplorer = tool(
+  // ── Tool wrappers exposed to the main agent ─────────────────────────────
+
+  const findUsages = tool(
     async ({ query }) => {
       try {
         const response = await streamSubAgent(
-          codeExplorerAgent,
-          'code_explorer',
+          findUsagesAgent,
+          'find_usages',
           query,
           onProgress,
         );
         return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
       } catch (err) {
-        return `Code exploration failed: ${err instanceof Error ? err.message : String(err)}`;
+        return `Find usages failed: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
     {
-      name: 'code_explorer',
+      name: 'find_usages',
       description:
-        'Delegates a complex code exploration task to a specialized sub-agent. ' +
-        'The sub-agent autonomously searches the graph, inspects nodes, and traverses ' +
-        'relationships to produce a synthesized answer. Use this for questions that require ' +
-        "multiple lookups like 'explain the structure of RepositoryX' or 'how is authentication implemented?'.",
+        'Find all callers, consumers, and importers of a component. ' +
+        'Returns structured JSON listing every node that depends on the target. ' +
+        "Use for questions like 'what calls X?', 'what uses X?', 'who imports X?'.",
+      schema: z.object({
+        query: z
+          .string()
+          .describe('The component to find usages of (name or ID)'),
+      }),
+    },
+  );
+
+  const findDependencies = tool(
+    async ({ query }) => {
+      try {
+        const response = await streamSubAgent(
+          findDependenciesAgent,
+          'find_dependencies',
+          query,
+          onProgress,
+        );
+        return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
+      } catch (err) {
+        return `Find dependencies failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+    {
+      name: 'find_dependencies',
+      description:
+        'Find everything a component depends on, calls, or imports. ' +
+        'Returns structured JSON of outgoing dependencies. ' +
+        "Use for questions like 'what does X depend on?', 'what does X call?', 'what does X import?'.",
+      schema: z.object({
+        query: z
+          .string()
+          .describe('The component to find dependencies of (name or ID)'),
+      }),
+    },
+  );
+
+  const exploreComponent = tool(
+    async ({ query }) => {
+      try {
+        const response = await streamSubAgent(
+          exploreComponentAgent,
+          'explore_component',
+          query,
+          onProgress,
+        );
+        return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
+      } catch (err) {
+        return `Component exploration failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+    {
+      name: 'explore_component',
+      description:
+        'Deep multi-step exploration of a component: finds it, inspects properties, ' +
+        'maps neighbors in both directions, and optionally loads source code. ' +
+        'Returns structured JSON with the full picture. ' +
+        "Use for questions like 'explain X', 'how does X work?', 'walk me through X'.",
       schema: z.object({
         query: z.string().describe('The exploration question to investigate'),
       }),
     },
   );
 
-  const dependencyAnalyzer = tool(
+  const analyzeBlastRadius = tool(
     async ({ query }) => {
       try {
         const response = await streamSubAgent(
-          dependencyAnalyzerAgent,
-          'dependency_analyzer',
+          blastRadiusAgent,
+          'analyze_blast_radius',
           query,
           onProgress,
         );
         return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
       } catch (err) {
-        return `Dependency analysis failed: ${err instanceof Error ? err.message : String(err)}`;
+        return `Blast radius analysis failed: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
     {
-      name: 'dependency_analyzer',
+      name: 'analyze_blast_radius',
       description:
-        'Delegates a dependency or impact analysis task to a specialized sub-agent. ' +
-        'The sub-agent autonomously maps upstream consumers, downstream dependencies, and ' +
-        "blast radius. Use this for questions like 'what depends on ClassX?' or " +
-        "'what is the impact of changing FileY?'.",
+        'Analyze the full impact of changing a component by mapping both upstream ' +
+        'consumers and downstream dependencies. Returns structured JSON with counts ' +
+        'and node lists. ' +
+        "Use for questions like 'what is the blast radius of X?', 'what would break if I change X?'.",
       schema: z.object({
         query: z
           .string()
-          .describe('The dependency/impact analysis question to investigate'),
+          .describe('The component to analyze impact for (name or ID)'),
       }),
     },
   );
@@ -376,5 +507,11 @@ export function makeSubAgentTools(
     },
   );
 
-  return [codeExplorer, dependencyAnalyzer, codeReviewer];
+  return [
+    findUsages,
+    findDependencies,
+    exploreComponent,
+    analyzeBlastRadius,
+    codeReviewer,
+  ];
 }
