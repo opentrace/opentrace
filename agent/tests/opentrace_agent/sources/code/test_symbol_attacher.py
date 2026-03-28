@@ -79,6 +79,7 @@ class TestSymbolAttacher:
 
         assert counts["classes"] == 1
         assert counts["functions"] == 3  # greet, farewell, standalone
+        assert counts["variables"] == 1  # greet(name: str)
 
         # File should now have children
         file_children = file_node.children
@@ -93,8 +94,17 @@ class TestSymbolAttacher:
         assert cls.end_line == 8
 
         # Class should have 2 methods
-        method_names = {r.target.name for r in cls.children}
+        method_rels = [r for r in cls.children if isinstance(r.target, FunctionNode)]
+        method_names = {r.target.name for r in method_rels}
         assert method_names == {"greet", "farewell"}
+
+        # greet method should have a 'name' parameter variable
+        greet_rel = next(r for r in method_rels if r.target.name == "greet")
+        greet_vars = [r for r in greet_rel.target.children if isinstance(r.target, VariableNode)]
+        assert len(greet_vars) == 1
+        assert greet_vars[0].target.name == "name"
+        assert greet_vars[0].target.kind == "parameter"
+        assert greet_vars[0].target.type_annotation == "str"
 
         # Check standalone function
         func_rel = next(r for r in file_children if isinstance(r.target, FunctionNode))
@@ -483,12 +493,21 @@ def process():
         counts = attacher.attach(repo)
 
         assert counts["calls"] == 1
+        assert counts["variables"] == 1  # check(data) parameter
 
         process_rel = next(r for r in file_node.children if r.target.name == "process")
         call_rels = [r for r in process_rel.target.children if r.relationship == "CALLS"]
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "check"
         assert call_rels[0].confidence == 1.0  # same file
+
+        # check method should have a 'data' parameter variable
+        validator_rel = next(r for r in file_node.children if r.target.name == "Validator")
+        check_rel = next(r for r in validator_rel.target.children if r.target.name == "check")
+        check_vars = [r for r in check_rel.target.children if isinstance(r.target, VariableNode)]
+        assert len(check_vars) == 1
+        assert check_vars[0].target.name == "data"
+        assert check_vars[0].target.kind == "parameter"
 
     def test_constructor_call_resolves_to_class(self, tmp_path: Path):
         """Bare call matching a class name should resolve to the class (or __init__)."""
@@ -539,12 +558,21 @@ def build():
         counts = attacher.attach(repo)
 
         assert counts["calls"] == 1
+        assert counts["variables"] == 1  # Config.name field
 
         build_rel = next(r for r in file_node.children if r.target.name == "build")
         call_rels = [r for r in build_rel.target.children if r.relationship == "CALLS"]
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "Config"
         assert isinstance(call_rels[0].target, ClassNode)
+
+        # Config class should have a 'name' field variable
+        config_rel = next(r for r in file_node.children if r.target.name == "Config")
+        config_vars = [r for r in config_rel.target.children if isinstance(r.target, VariableNode)]
+        assert len(config_vars) == 1
+        assert config_vars[0].target.name == "name"
+        assert config_vars[0].target.kind == "field"
+        assert config_vars[0].target.type_annotation == "str"
 
     def test_go_struct_method_via_type_name(self, tmp_path: Path):
         """Go Server.Listen() should resolve via class_registry → receiver_type methods."""
@@ -736,12 +764,20 @@ def serve(channel: Channel):
         counts = attacher.attach(repo)
 
         assert counts["calls"] >= 1
+        assert counts["variables"] == 1  # serve(channel: Channel) parameter
 
         serve_rel = next(r for r in file_node.children if r.target.name == "serve")
         call_rels = [r for r in serve_rel.target.children if r.relationship == "CALLS"]
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "unary_stream"
         assert call_rels[0].confidence == 0.7
+
+        # serve should have a 'channel' parameter with type annotation
+        serve_vars = [r for r in serve_rel.target.children if isinstance(r.target, VariableNode)]
+        assert len(serve_vars) == 1
+        assert serve_vars[0].target.name == "channel"
+        assert serve_vars[0].target.kind == "parameter"
+        assert serve_vars[0].target.type_annotation == "Channel"
 
     def test_param_type_hint_dotted_resolves(self, tmp_path: Path):
         """grpc.Channel type hint should resolve via the leaf type name."""
