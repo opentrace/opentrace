@@ -50,6 +50,7 @@ RelationType = Literal[
     "ASSIGNED",
     "PARENT_OF",
     "PARTICIPATED",
+    "DERIVED_FROM",
 ]
 
 relationship_mapping: dict[str, str] = {
@@ -62,6 +63,7 @@ relationship_mapping: dict[str, str] = {
     "ASSIGNED": "save_assigned_relationship",
     "PARENT_OF": "save_part_of_relationship",
     "PARTICIPATED": "save_participated_relationship",
+    "DERIVED_FROM": "save_derived_from_relationship",
 }
 
 

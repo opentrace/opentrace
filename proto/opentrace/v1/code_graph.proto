@@ -174,14 +174,14 @@ message DependencyNode {
   string kind     = 5;   // "runtime", "dev", "peer", "optional", "build"
 }
 
-// VariableNode represents a module-level variable, constant, field, or export.
+// VariableNode represents a variable, constant, field, parameter, or export.
 message VariableNode {
   string id              = 1;
   string name            = 2;
   string language        = 3;
   int32  start_line      = 4 [(ladybug.column) = "startLine"];
   int32  end_line        = 5 [(ladybug.column) = "endLine"];
-  string kind            = 6;  // "const", "let", "var", "field", "property", "parameter"
+  string kind            = 6;  // "const", "let", "var", "field", "property", "parameter", "local"
   bool   exported        = 7;
   string type_annotation = 8 [(ladybug.column) = "typeAnnotation"];  // declared type if present
   string docs            = 9;
@@ -219,6 +219,7 @@ message CallsRel {
   string source_id  = 2;
   string target_id  = 3;
   float  confidence = 4;
+  repeated string args = 5;  // Variable node IDs passed as arguments
 }
 
 // ImplementsRel represents a class implementing an interface.
@@ -258,4 +259,16 @@ message ReferencesRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
+}
+
+// DerivedFromRel represents a data-flow relationship where one variable's
+// value originates from another variable or from the return value of a
+// function/method call.
+// Variable --DerivedFrom--> Variable   (value copied/transformed)
+// Variable --DerivedFrom--> Function   (value is function return)
+message DerivedFromRel {
+  string id         = 1;
+  string source_id  = 2;
+  string target_id  = 3;
+  string transform  = 4;  // "none", "mapped", "derived", "aggregated"
 }

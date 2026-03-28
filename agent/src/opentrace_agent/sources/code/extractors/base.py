@@ -22,6 +22,24 @@ from typing import Any, ClassVar, Literal
 
 
 @dataclass
+class DerivationRef:
+    """A reference to where a variable's value originates.
+
+    Points to either another variable (value copied/transformed) or a
+    function call (value is the return of a call).
+    """
+
+    kind: Literal["variable", "call"]
+    """Whether the source is a variable or a function call return."""
+
+    name: str
+    """Variable name or function/method name."""
+
+    receiver: str | None = None
+    """Object/module prefix for attribute access (e.g. "self", "repo")."""
+
+
+@dataclass
 class CallRef:
     """A reference to a function/method call found in source code.
 
@@ -38,6 +56,23 @@ class CallRef:
     kind: Literal["bare", "attribute"] = "bare"
     """Whether this is a bare call (foo()) or dotted call (obj.foo())."""
 
+    args: list[str] = field(default_factory=list)
+    """Variable names passed as arguments to this call."""
+
+
+@dataclass
+class VariableSymbol:
+    """A variable (parameter, field, local, constant) extracted from source code."""
+
+    name: str
+    kind: Literal["parameter", "field", "local", "const", "global"]
+    start_line: int
+    end_line: int
+    type_annotation: str | None = None
+    """Declared type if present (e.g. "int", "str", "UserDTO")."""
+    derived_from: list[DerivationRef] = field(default_factory=list)
+    """Where this variable's value originates — other variables or function returns."""
+
 
 @dataclass
 class CodeSymbol:
@@ -50,6 +85,8 @@ class CodeSymbol:
     signature: str | None = None
     children: list[CodeSymbol] = field(default_factory=list)
     calls: list[CallRef] = field(default_factory=list)
+    variables: list[VariableSymbol] = field(default_factory=list)
+    """Variables owned by this symbol (parameters, fields, locals)."""
     receiver_var: str | None = None
     """Go-specific: the receiver variable name (e.g. 's' from '(s *Server)')."""
     receiver_type: str | None = None

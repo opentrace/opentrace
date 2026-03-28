@@ -148,6 +148,37 @@ class FunctionNode(BaseTreeNode):
 
 
 @dataclass
+class VariableNode(BaseTreeNode):
+    """Represents a variable, parameter, field, or constant."""
+
+    graph_type: ClassVar[str] = "Variable"
+    save_function_name: ClassVar[str] = "save_variable_node"
+
+    language: Optional[str] = None
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    kind: Optional[str] = None
+    """Variable kind: "parameter", "field", "local", "const", "global"."""
+    type_annotation: Optional[str] = None
+    """Declared type annotation if present."""
+
+    @property
+    def graph_properties(self) -> dict[str, Any]:
+        props = super().graph_properties
+        if self.language:
+            props["language"] = self.language
+        if self.start_line is not None:
+            props["start_line"] = self.start_line
+        if self.end_line is not None:
+            props["end_line"] = self.end_line
+        if self.kind:
+            props["kind"] = self.kind
+        if self.type_annotation:
+            props["type_annotation"] = self.type_annotation
+        return props
+
+
+@dataclass
 class ProjectNode(BaseTreeNode):
     """Represents a project (e.g., Linear project, GitHub project)."""
 

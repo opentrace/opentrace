@@ -31,11 +31,14 @@ from opentrace_agent.models.nodes import (
     FileNode,
     FunctionNode,
     RepoNode,
+    VariableNode,
 )
 from opentrace_agent.sources.code.extractors.base import (
     CallRef,
     CodeSymbol,
+    DerivationRef,
     SymbolExtractor,
+    VariableSymbol,
 )
 from opentrace_agent.sources.code.import_analyzer import (
     analyze_go_imports,
@@ -73,6 +76,7 @@ class SymbolAttacher:
         """
         classes_count = 0
         functions_count = 0
+        variables_count = 0
 
         # Global registries populated during Phase 1
         name_registry: dict[str, list[BaseTreeNode]] = {}
@@ -80,6 +84,10 @@ class SymbolAttacher:
         class_registry: dict[str, list[ClassNode]] = {}
         import_registry: dict[str, dict[str, str]] = {}  # file_id → {alias → target_file_id}
         call_info: list[tuple[BaseTreeNode, list[CallRef], str]] = []  # (caller, refs, file_id)
+        # Variable registry: scope_id → {var_name → VariableNode}
+        variable_registry: dict[str, dict[str, VariableNode]] = {}
+        # Pending derivation refs to resolve after all variables are registered
+        derivation_info: list[tuple[VariableNode, list[DerivationRef], str]] = []  # (var, refs, scope_id)
 
         # Collect all file nodes first to build the known_file_ids set
         file_nodes: list[tuple[FileNode, SymbolExtractor]] = []
@@ -110,7 +118,7 @@ class SymbolAttacher:
 
         # Phase 1: Extract & Register (including imports)
         for file_node, extractor in file_nodes:
-            c, f = self._process_file(
+            c, f, v = self._process_file(
                 file_node,
                 extractor,
                 name_registry,
@@ -120,9 +128,12 @@ class SymbolAttacher:
                 import_registry,
                 path_to_file_id,
                 known_paths,
+                variable_registry,
+                derivation_info,
             )
             classes_count += c
             functions_count += f
+            variables_count += v
 
         # Phase 2: Resolve calls
         calls_count = _resolve_calls(
@@ -131,6 +142,14 @@ class SymbolAttacher:
             file_registry,
             class_registry,
             import_registry,
+        )
+
+        # Phase 2.5: Resolve variable derivations
+        derivations_count = _resolve_derivations(
+            derivation_info,
+            variable_registry,
+            name_registry,
+            file_registry,
         )
 
         # Phase 3: Summarize nodes (if summarizer configured)
@@ -158,16 +177,21 @@ class SymbolAttacher:
                 )
 
         logger.info(
-            "Attached %d classes, %d functions, %d call relationships, %d summaries",
+            "Attached %d classes, %d functions, %d variables, %d call relationships, "
+            "%d derivations, %d summaries",
             classes_count,
             functions_count,
+            variables_count,
             calls_count,
+            derivations_count,
             summaries_count,
         )
         return {
             "classes": classes_count,
             "functions": functions_count,
+            "variables": variables_count,
             "calls": calls_count,
+            "derivations": derivations_count,
             "summaries": summaries_count,
         }
 
@@ -188,13 +212,15 @@ class SymbolAttacher:
         import_registry: dict[str, dict[str, str]],
         path_to_file_id: dict[str, str],
         known_paths: set[str],
-    ) -> tuple[int, int]:
-        """Parse a single file and attach symbol nodes. Returns (classes, functions)."""
+        variable_registry: dict[str, dict[str, VariableNode]],
+        derivation_info: list[tuple[VariableNode, list[DerivationRef], str]],
+    ) -> tuple[int, int, int]:
+        """Parse a single file and attach symbol nodes. Returns (classes, functions, variables)."""
         try:
             source_bytes = Path(file_node.abs_path).read_bytes()  # type: ignore[arg-type]
         except (OSError, IOError) as exc:
             logger.warning("Could not read %s: %s", file_node.abs_path, exc)
-            return 0, 0
+            return 0, 0, 0
 
         # Use extension-aware extraction for TypeScript
         from opentrace_agent.sources.code.extractors.typescript_extractor import (
@@ -208,6 +234,7 @@ class SymbolAttacher:
 
         classes = 0
         functions = 0
+        variables = 0
         file_id = file_node.id
         file_path = file_node.path or ""
 
@@ -233,7 +260,7 @@ class SymbolAttacher:
                     import_registry[file_id] = id_imports
 
         for symbol in result.symbols:
-            child_node, c, f = _symbol_to_node(
+            child_node, c, f, v = _symbol_to_node(
                 symbol,
                 file_id,
                 result.language,
@@ -241,12 +268,15 @@ class SymbolAttacher:
                 file_registry,
                 class_registry,
                 call_info,
+                variable_registry,
+                derivation_info,
             )
             file_node.add_child(NodeRelationship(target=child_node, relationship="DEFINED_IN"))
             classes += c
             functions += f
+            variables += v
 
-        return classes, functions
+        return classes, functions, variables
 
     async def _summarize_nodes(
         self,
@@ -383,10 +413,13 @@ def _symbol_to_node(
     file_registry: dict[str, dict[str, BaseTreeNode]],
     class_registry: dict[str, list[ClassNode]],
     call_info: list[tuple[BaseTreeNode, list[CallRef], str]],
-) -> tuple[BaseTreeNode, int, int]:
-    """Convert a ``CodeSymbol`` to a tree node. Returns (node, classes, functions)."""
+    variable_registry: dict[str, dict[str, VariableNode]],
+    derivation_info: list[tuple[VariableNode, list[DerivationRef], str]],
+) -> tuple[BaseTreeNode, int, int, int]:
+    """Convert a ``CodeSymbol`` to a tree node. Returns (node, classes, functions, variables)."""
     classes = 0
     functions = 0
+    variables = 0
 
     # Derive file_id from parent_id (strip any ::suffix to get the file-level id)
     file_id = parent_id.split("::")[0]
@@ -405,7 +438,7 @@ def _symbol_to_node(
         class_registry.setdefault(symbol.name, []).append(node)
         # Attach child methods
         for child_sym in symbol.children:
-            child_node, c, f = _symbol_to_node(
+            child_node, c, f, v = _symbol_to_node(
                 child_sym,
                 node.id,
                 language,
@@ -413,10 +446,18 @@ def _symbol_to_node(
                 file_registry,
                 class_registry,
                 call_info,
+                variable_registry,
+                derivation_info,
             )
             node.add_child(NodeRelationship(target=child_node, relationship="DEFINED_IN"))
             classes += c
             functions += f
+            variables += v
+        # Attach class-level variables (fields)
+        variables += _attach_variables(
+            symbol.variables, node.id, language, node,
+            variable_registry, derivation_info,
+        )
     else:
         node = FunctionNode(
             id=f"{parent_id}::{symbol.name}",
@@ -439,8 +480,46 @@ def _symbol_to_node(
         file_registry.setdefault(file_id, {})[symbol.name] = node
         if symbol.calls:
             call_info.append((node, symbol.calls, file_id))
+        # Attach function variables (parameters + locals)
+        variables += _attach_variables(
+            symbol.variables, node.id, language, node,
+            variable_registry, derivation_info,
+        )
 
-    return node, classes, functions
+    return node, classes, functions, variables
+
+
+def _attach_variables(
+    var_symbols: list[VariableSymbol],
+    scope_id: str,
+    language: str,
+    parent_node: BaseTreeNode,
+    variable_registry: dict[str, dict[str, VariableNode]],
+    derivation_info: list[tuple[VariableNode, list[DerivationRef], str]],
+) -> int:
+    """Convert VariableSymbol list to VariableNodes and attach to parent.
+
+    Returns the number of variables created.
+    """
+    count = 0
+    for var_sym in var_symbols:
+        var_node = VariableNode(
+            id=f"{scope_id}::{var_sym.name}",
+            name=var_sym.name,
+            language=language,
+            start_line=var_sym.start_line,
+            end_line=var_sym.end_line,
+            kind=var_sym.kind,
+            type_annotation=var_sym.type_annotation,
+        )
+        parent_node.add_child(NodeRelationship(target=var_node, relationship="DEFINED_IN"))
+        # Register variable in scope
+        variable_registry.setdefault(scope_id, {})[var_sym.name] = var_node
+        # Queue derivation refs for resolution
+        if var_sym.derived_from:
+            derivation_info.append((var_node, var_sym.derived_from, scope_id))
+        count += 1
+    return count
 
 
 def _analyze_imports_from_node(
@@ -521,6 +600,80 @@ def _resolve_calls(
             )
             total += 1
     return total
+
+
+def _resolve_derivations(
+    derivation_info: list[tuple[VariableNode, list[DerivationRef], str]],
+    variable_registry: dict[str, dict[str, VariableNode]],
+    name_registry: dict[str, list[BaseTreeNode]],
+    file_registry: dict[str, dict[str, BaseTreeNode]],
+) -> int:
+    """Create DERIVED_FROM relationships from collected derivation data.
+
+    Resolution strategy:
+    1. For variable refs: look up in same scope, then parent scope, then file scope.
+    2. For call refs: look up in name_registry (reuse existing function resolution).
+
+    Returns count of relationships created.
+    """
+    total = 0
+    for var_node, refs, scope_id in derivation_info:
+        for ref in refs:
+            target: BaseTreeNode | None = None
+
+            if ref.kind == "variable":
+                if ref.receiver:
+                    # e.g. self.name → look for "name" in the class scope (parent of method scope)
+                    # Walk up scope: method → class → file
+                    parent_scope = "::".join(scope_id.split("::")[:-1])
+                    target = _find_variable_in_scopes(
+                        ref.name, [scope_id, parent_scope], variable_registry
+                    )
+                else:
+                    # Bare variable — look in current scope, then parent scope
+                    parent_scope = "::".join(scope_id.split("::")[:-1])
+                    file_scope = scope_id.split("::")[0]
+                    target = _find_variable_in_scopes(
+                        ref.name, [scope_id, parent_scope, file_scope], variable_registry
+                    )
+            elif ref.kind == "call":
+                # Look for the function/method in name_registry
+                fname = ref.name
+                candidates = name_registry.get(fname, [])
+                if len(candidates) == 1:
+                    target = candidates[0]
+                elif candidates:
+                    # Prefer same-file match
+                    file_scope = scope_id.split("::")[0]
+                    file_symbols = file_registry.get(file_scope, {})
+                    if fname in file_symbols:
+                        target = file_symbols[fname]
+                    else:
+                        target = candidates[0]
+
+            if target is not None:
+                cast(list, var_node.children).append(
+                    NodeRelationship(
+                        target=target,
+                        relationship="DERIVED_FROM",
+                        direction="outgoing",
+                    )
+                )
+                total += 1
+    return total
+
+
+def _find_variable_in_scopes(
+    name: str,
+    scope_ids: list[str],
+    variable_registry: dict[str, dict[str, VariableNode]],
+) -> VariableNode | None:
+    """Look up a variable by name across a list of scopes (most local first)."""
+    for scope_id in scope_ids:
+        scope_vars = variable_registry.get(scope_id, {})
+        if name in scope_vars:
+            return scope_vars[name]
+    return None
 
 
 def _resolve_single_call(

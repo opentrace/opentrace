@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from opentrace_agent.models.base import NodeRelationship
-from opentrace_agent.models.nodes import ClassNode, FileNode, FunctionNode, RepoNode
+from opentrace_agent.models.nodes import ClassNode, FileNode, FunctionNode, RepoNode, VariableNode
 from opentrace_agent.sources.code.extractors.go_extractor import GoExtractor
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 from opentrace_agent.sources.code.extractors.typescript_extractor import (
@@ -143,7 +143,7 @@ class TestSymbolAttacher:
         repo = RepoNode(id="test/repo", name="repo")
         attacher = SymbolAttacher([PythonExtractor()])
         counts = attacher.attach(repo)
-        assert counts == {"classes": 0, "functions": 0, "calls": 0, "summaries": 0}
+        assert counts == {"classes": 0, "functions": 0, "variables": 0, "calls": 0, "derivations": 0, "summaries": 0}
 
     def test_symbol_node_ids(self, tmp_path: Path):
         py_file = tmp_path / "mod.py"
@@ -790,3 +790,139 @@ def serve(channel: grpc.Channel):
         assert len(call_rels) == 1
         assert call_rels[0].target.name == "validate"
         assert call_rels[0].confidence == 0.9
+
+    # --- variable node creation tests ---
+
+    def test_function_parameters_become_variable_nodes(self, tmp_path: Path):
+        """Function parameters should create VariableNode children."""
+        source = b"""\
+def process(user_id: int, name: str):
+    pass
+"""
+        py_file = tmp_path / "params.py"
+        py_file.write_bytes(source)
+
+        repo = RepoNode(id="test/repo", name="repo")
+        file_node = _make_file_node(repo, "params.py", str(py_file), ".py")
+
+        attacher = SymbolAttacher([PythonExtractor()])
+        counts = attacher.attach(repo)
+
+        assert counts["variables"] >= 2
+
+        func_rel = next(r for r in file_node.children if r.target.name == "process")
+        var_rels = [r for r in func_rel.target.children if isinstance(r.target, VariableNode)]
+        var_names = {r.target.name for r in var_rels}
+        assert "user_id" in var_names
+        assert "name" in var_names
+
+        user_id_node = next(r.target for r in var_rels if r.target.name == "user_id")
+        assert user_id_node.kind == "parameter"
+        assert user_id_node.type_annotation == "int"
+
+    def test_class_fields_become_variable_nodes(self, tmp_path: Path):
+        """Class fields from __init__ should create VariableNode children on the class."""
+        source = b"""\
+class User:
+    def __init__(self, name, email):
+        self.name = name
+        self.email = email
+"""
+        py_file = tmp_path / "fields.py"
+        py_file.write_bytes(source)
+
+        repo = RepoNode(id="test/repo", name="repo")
+        file_node = _make_file_node(repo, "fields.py", str(py_file), ".py")
+
+        attacher = SymbolAttacher([PythonExtractor()])
+        counts = attacher.attach(repo)
+
+        assert counts["variables"] >= 2
+
+        cls_rel = next(r for r in file_node.children if r.target.name == "User")
+        var_rels = [r for r in cls_rel.target.children if isinstance(r.target, VariableNode)]
+        var_names = {r.target.name for r in var_rels}
+        assert "name" in var_names
+        assert "email" in var_names
+
+        name_node = next(r.target for r in var_rels if r.target.name == "name")
+        assert name_node.kind == "field"
+        assert name_node.id == "test/repo/fields.py::User::name"
+
+    def test_local_variables_become_variable_nodes(self, tmp_path: Path):
+        """Local variable assignments should create VariableNode children."""
+        source = b"""\
+def handler():
+    result = fetch()
+"""
+        py_file = tmp_path / "locals.py"
+        py_file.write_bytes(source)
+
+        repo = RepoNode(id="test/repo", name="repo")
+        file_node = _make_file_node(repo, "locals.py", str(py_file), ".py")
+
+        attacher = SymbolAttacher([PythonExtractor()])
+        counts = attacher.attach(repo)
+
+        assert counts["variables"] >= 1
+
+        func_rel = next(r for r in file_node.children if r.target.name == "handler")
+        var_rels = [r for r in func_rel.target.children if isinstance(r.target, VariableNode)]
+        assert any(r.target.name == "result" for r in var_rels)
+
+    # --- derivation resolution tests ---
+
+    def test_derived_from_variable_resolves(self, tmp_path: Path):
+        """Variable derived from another variable should get a DERIVED_FROM edge."""
+        source = b"""\
+def handler(data):
+    copy = data
+"""
+        py_file = tmp_path / "derive.py"
+        py_file.write_bytes(source)
+
+        repo = RepoNode(id="test/repo", name="repo")
+        file_node = _make_file_node(repo, "derive.py", str(py_file), ".py")
+
+        attacher = SymbolAttacher([PythonExtractor()])
+        counts = attacher.attach(repo)
+
+        assert counts["derivations"] >= 1
+
+        func_rel = next(r for r in file_node.children if r.target.name == "handler")
+        var_rels = [r for r in func_rel.target.children if isinstance(r.target, VariableNode)]
+        copy_node = next(r.target for r in var_rels if r.target.name == "copy")
+
+        derived_rels = [r for r in copy_node.children if r.relationship == "DERIVED_FROM"]
+        assert len(derived_rels) == 1
+        assert derived_rels[0].target.name == "data"
+        assert isinstance(derived_rels[0].target, VariableNode)
+
+    def test_derived_from_call_resolves(self, tmp_path: Path):
+        """Variable derived from a function call should get a DERIVED_FROM edge to the function."""
+        source = b"""\
+def fetch():
+    pass
+
+def handler():
+    result = fetch()
+"""
+        py_file = tmp_path / "derive_call.py"
+        py_file.write_bytes(source)
+
+        repo = RepoNode(id="test/repo", name="repo")
+        file_node = _make_file_node(repo, "derive_call.py", str(py_file), ".py")
+
+        attacher = SymbolAttacher([PythonExtractor()])
+        counts = attacher.attach(repo)
+
+        assert counts["derivations"] >= 1
+
+        func_rel = next(r for r in file_node.children if r.target.name == "handler")
+        var_rels = [r for r in func_rel.target.children if isinstance(r.target, VariableNode)]
+        result_node = next(r.target for r in var_rels if r.target.name == "result")
+
+        derived_rels = [r for r in result_node.children if r.relationship == "DERIVED_FROM"]
+        assert len(derived_rels) == 1
+        assert derived_rels[0].target.name == "fetch"
+        assert isinstance(derived_rels[0].target, FunctionNode)

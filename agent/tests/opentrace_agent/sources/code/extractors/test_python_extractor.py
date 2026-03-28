@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from opentrace_agent.sources.code.extractors.base import CallRef
+from opentrace_agent.sources.code.extractors.base import CallRef, DerivationRef, VariableSymbol
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 
 
@@ -193,3 +193,156 @@ class Service:
         handle = cls.children[0]
         assert CallRef("validate", receiver="self", kind="attribute") in handle.calls
         assert CallRef("save", receiver="self", kind="attribute") in handle.calls
+
+    # --- variable extraction tests ---
+
+    def test_extract_function_parameters(self):
+        source = b"""\
+def process(user_id: int, name: str):
+    pass
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        assert len(func.variables) == 2
+        assert func.variables[0].name == "user_id"
+        assert func.variables[0].kind == "parameter"
+        assert func.variables[0].type_annotation == "int"
+        assert func.variables[1].name == "name"
+        assert func.variables[1].type_annotation == "str"
+
+    def test_extract_parameters_skips_self_cls(self):
+        source = b"""\
+class Foo:
+    def method(self, x: int):
+        pass
+
+    @classmethod
+    def create(cls, y: str):
+        pass
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        method = cls.children[0]
+        assert len(method.variables) == 1
+        assert method.variables[0].name == "x"
+        create = cls.children[1]
+        assert len(create.variables) == 1
+        assert create.variables[0].name == "y"
+
+    def test_extract_local_variable_from_call(self):
+        source = b"""\
+def handler():
+    result = fetch_data()
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        locals_ = [v for v in func.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "result"
+        assert locals_[0].derived_from == [DerivationRef(kind="call", name="fetch_data")]
+
+    def test_extract_local_variable_from_variable(self):
+        source = b"""\
+def handler(data):
+    copy = data
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        locals_ = [v for v in func.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "copy"
+        assert locals_[0].derived_from == [DerivationRef(kind="variable", name="data")]
+
+    def test_extract_local_variable_from_method_call(self):
+        source = b"""\
+def handler(repo):
+    user = repo.find_by_id()
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        locals_ = [v for v in func.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "user"
+        assert locals_[0].derived_from == [
+            DerivationRef(kind="call", name="find_by_id", receiver="repo")
+        ]
+
+    def test_extract_local_variable_from_attribute(self):
+        source = b"""\
+def handler(self):
+    name = self.name
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        locals_ = [v for v in func.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "name"
+        assert locals_[0].derived_from == [
+            DerivationRef(kind="variable", name="name", receiver="self")
+        ]
+
+    def test_extract_class_fields_from_init(self):
+        source = b"""\
+class User:
+    def __init__(self, name, email):
+        self.name = name
+        self.email = email
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        assert len(cls.variables) == 2
+        assert cls.variables[0].name == "name"
+        assert cls.variables[0].kind == "field"
+        assert cls.variables[0].derived_from == [
+            DerivationRef(kind="variable", name="name")
+        ]
+        assert cls.variables[1].name == "email"
+        assert cls.variables[1].kind == "field"
+
+    def test_extract_dataclass_fields(self):
+        source = b"""\
+@dataclass
+class Config:
+    name: str
+    value: int
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        fields = [v for v in cls.variables if v.kind == "field"]
+        assert len(fields) == 2
+        assert fields[0].name == "name"
+        assert fields[1].name == "value"
+
+    def test_call_args_captured(self):
+        source = b"""\
+def handler(user_id, name):
+    result = process(user_id, name)
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        call = func.calls[0]
+        assert call.name == "process"
+        assert call.args == ["user_id", "name"]
+
+    def test_call_args_keyword(self):
+        source = b"""\
+def handler(data):
+    save(payload=data)
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        call = func.calls[0]
+        assert call.name == "save"
+        assert call.args == ["data"]
+
+    def test_annotated_local_variable(self):
+        source = b"""\
+def handler():
+    count: int = get_count()
+"""
+        result = self.extractor.extract(source)
+        func = result.symbols[0]
+        locals_ = [v for v in func.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "count"
+        assert locals_[0].derived_from == [DerivationRef(kind="call", name="get_count")]

@@ -38,4 +38,5 @@ VALID_NODE_TYPES = {
     "Endpoint",
     "Database",
     "DBTable",
+    "Variable",
 }
