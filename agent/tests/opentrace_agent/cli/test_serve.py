@@ -128,5 +128,3 @@ class TestTraverse:
     def test_missing_body(self, client):
         resp = client.post("/api/traverse")
         assert resp.status_code == 400
-
-

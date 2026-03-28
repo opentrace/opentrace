@@ -128,9 +128,7 @@ def create_app(store: GraphStore) -> Starlette:
         if direction not in ("outgoing", "incoming", "both"):
             return _error(400, f"Invalid direction: {direction}")
         try:
-            results = store.traverse(
-                node_id, direction=direction, max_depth=max_depth, relationship_type=rel_type
-            )
+            results = store.traverse(node_id, direction=direction, max_depth=max_depth, relationship_type=rel_type)
         except ValueError as e:
             return _error(404, str(e))
         return JSONResponse(results)
