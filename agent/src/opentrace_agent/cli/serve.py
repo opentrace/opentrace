@@ -123,23 +123,6 @@ def create_app(store: GraphStore) -> Starlette:
             return _error(404, str(e))
         return JSONResponse(results)
 
-    async def import_batch(request: Request) -> JSONResponse:
-        """POST /api/import"""
-        body = await _read_json(request)
-        if not body:
-            return _error(400, "Invalid JSON body")
-        nodes = body.get("nodes", [])
-        relationships = body.get("relationships", [])
-        result = store.import_batch(nodes, relationships)
-        return JSONResponse(result)
-
-    async def clear_graph(request: Request) -> JSONResponse:
-        """POST /api/clear"""
-        # Delete all relationships first, then all nodes
-        store._conn.execute("MATCH ()-[r:RELATES]->() DELETE r")
-        store._conn.execute("MATCH (n:Node) DELETE n")
-        return JSONResponse({"ok": True})
-
     async def health(request: Request) -> JSONResponse:
         """GET /api/health"""
         return JSONResponse({"status": "ok"})
@@ -152,8 +135,6 @@ def create_app(store: GraphStore) -> Starlette:
         Route("/api/nodes/list", list_nodes, methods=["GET"]),
         Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
         Route("/api/traverse", traverse, methods=["POST"]),
-        Route("/api/import", import_batch, methods=["POST"]),
-        Route("/api/clear", clear_graph, methods=["POST"]),
     ]
 
     middleware = [

@@ -130,24 +130,3 @@ class TestTraverse:
         assert resp.status_code == 400
 
 
-class TestImportBatch:
-    def test_import_nodes_and_rels(self, client):
-        batch = {
-            "nodes": [{"id": "node-4", "type": "File", "name": "main.py"}],
-            "relationships": [],
-        }
-        data = client.post("/api/import", json=batch).json()
-        assert data["nodes_created"] == 1
-
-        # Verify the node exists
-        node = client.get("/api/nodes/node-4").json()
-        assert node["name"] == "main.py"
-
-
-class TestClearGraph:
-    def test_clear_removes_all(self, client):
-        resp = client.post("/api/clear")
-        assert resp.status_code == 200
-        stats = client.get("/api/stats").json()
-        assert stats["total_nodes"] == 0
-        assert stats["total_edges"] == 0
