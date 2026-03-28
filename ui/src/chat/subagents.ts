@@ -80,7 +80,6 @@ The parent agent will synthesize a user-facing answer from your raw data.
 Include up to 50 usages. Set totalCount to the real total even if you truncate the list.
 The "summary" must be a single plain-text sentence (no markdown) describing what was found, e.g. "Found 12 callers of AuthService, mostly in the API layer."`;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for potential future use as standalone sub-agent
 const DEPENDENCY_ANALYZER_PROMPT = `You are a dependency analysis agent. Your job is to help developers understand the impact of changes by mapping dependencies through the OpenTrace knowledge graph.
 
 ## Workflow
@@ -341,7 +340,7 @@ export function makeSubAgentTools(
   const findDependenciesAgent = createReactAgent({
     llm,
     tools: graphTools,
-    stateModifier: FIND_DEPENDENCIES_PROMPT,
+    stateModifier: DEPENDENCY_ANALYZER_PROMPT,
   });
 
   const exploreComponentAgent = createReactAgent({
