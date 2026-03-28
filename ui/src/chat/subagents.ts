@@ -24,7 +24,7 @@ import type { StructuredToolInterface } from '@langchain/core/tools';
 import { makeGraphTools } from './tools';
 import type { GraphStore } from '../store/types';
 
-const MAX_SUBAGENT_RESULT_CHARS = 8000;
+const MAX_SUBAGENT_RESULT_CHARS = 12000;
 
 /** Callback for reporting sub-agent progress to the UI */
 export type ProgressFn = (agentName: string, step: string) => void;

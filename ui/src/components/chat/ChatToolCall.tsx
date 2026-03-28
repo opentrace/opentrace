@@ -362,11 +362,17 @@ export default function ChatToolCall({
                 </>
               );
             }
-            // Other agents return raw JSON — show the summary field
+            // Other agents return raw JSON — show summary + collapsible raw data
             return (
-              <div className="agent-result-summary">
-                {extractSummary(part.result)}
-              </div>
+              <>
+                <div className="agent-result-summary">
+                  {extractSummary(part.result)}
+                </div>
+                <details className="tool-section">
+                  <summary className="tool-section-label">Raw data</summary>
+                  <RawResult result={part.result} />
+                </details>
+              </>
             );
           })()}
         {/* Non-agent tools: keep existing collapsible sections */}
