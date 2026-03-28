@@ -100,6 +100,8 @@ export interface SearchSuggestion {
   communityColor?: string;
   /** Community ID — used for direct lookup when selecting a community suggestion. */
   communityId?: number;
+  /** Graph node ID — used to auto-select and zoom after search. */
+  nodeId?: string;
 }
 
 export interface GraphToolbarProps {

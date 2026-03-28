@@ -52,23 +52,17 @@ const TOOL_NAMES: Record<string, string> = {
   get_node: 'Get Node',
   traverse_graph: 'Traverse Graph',
   load_source: 'Load Source',
-  find_usages: 'Find Usages',
-  find_dependencies: 'Find Dependencies',
-  explore_component: 'Explore Component',
-  analyze_blast_radius: 'Blast Radius',
-  code_reviewer: 'Code Reviewer',
-  suggest_comment: 'Suggest Comment',
+  explore_node: 'Explore Node',
+  grep: 'Source Grep',
+  list_pull_requests: 'List Pull Requests',
+  get_pull_request: 'Get Pull Request',
+  summarize_pr_changes: 'Summarize PR Changes',
+  review_pull_request: 'Review Pull Request',
   comment_on_pr: 'Comment on PR',
 };
 
 /** Tools that are actually sub-agents — rendered with distinct styling */
-const AGENT_TOOLS = new Set([
-  'find_usages',
-  'find_dependencies',
-  'explore_component',
-  'analyze_blast_radius',
-  'code_reviewer',
-]);
+const AGENT_TOOLS = new Set<string>();
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;

@@ -129,6 +129,40 @@ export function extractNodeIds(
         return [];
       }
     }
+    case 'explore_node': {
+      // explore_node returns { node: { id, ... }, ... }
+      try {
+        const data = JSON.parse(result);
+        const ids: string[] = [];
+        if (data?.node?.id) ids.push(data.node.id);
+        // Also extract connected node IDs from relationships
+        for (const rel of data?.incoming ?? []) {
+          if (rel?.node?.id) ids.push(rel.node.id);
+        }
+        for (const rel of data?.outgoing ?? []) {
+          if (rel?.node?.id) ids.push(rel.node.id);
+        }
+        return ids;
+      } catch {
+        return [];
+      }
+    }
+    case 'grep': {
+      // grep returns { results: [{ nodeId, filePath, line, text }] }
+      try {
+        const data = JSON.parse(result);
+        const arr = data?.results;
+        if (!Array.isArray(arr)) return [];
+        // Deduplicate by nodeId (grep may have multiple hits per file)
+        const ids = new Set<string>();
+        for (const r of arr) {
+          if (typeof r?.nodeId === 'string') ids.add(r.nodeId);
+        }
+        return Array.from(ids);
+      } catch {
+        return [];
+      }
+    }
     default:
       return [];
   }

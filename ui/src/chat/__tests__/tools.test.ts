@@ -19,10 +19,10 @@ import { makeGraphTools } from '../tools';
 import { createMockStore } from '../../__tests__/mockStore';
 
 describe('makeGraphTools', () => {
-  it('returns 5 tools', () => {
+  it('returns 6 tools', () => {
     const store = createMockStore();
     const tools = makeGraphTools(store);
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
     const names = tools.map((t) => t.name);
     expect(names).toEqual([
       'search_graph',
@@ -30,6 +30,7 @@ describe('makeGraphTools', () => {
       'get_node',
       'traverse_graph',
       'load_source',
+      'explore_node',
     ]);
   });
 

@@ -20,6 +20,7 @@ import type { GraphStore } from '../store/types';
 
 const MAX_RESULT_CHARS = 4000;
 const MAX_SOURCE_CHARS = 8000;
+const MAX_EXPLORE_CHARS = 12000;
 
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
@@ -31,7 +32,10 @@ function truncate(text: string, limit: number): string {
 const searchGraphSchema = z.object({
   query: z
     .string()
-    .describe('Search text to match against node names and properties'),
+    .describe(
+      'Search text to match against node names, properties, and file content. ' +
+        'For compound identifiers (e.g. "my-service-name"), try both hyphenated and space-separated forms.',
+    ),
   limit: z.number().optional().describe('Max results (default 50, max 1000)'),
   nodeTypes: z
     .string()
@@ -87,11 +91,48 @@ const loadSourceSchema = z.object({
     .describe('End line (1-based) for a partial read'),
 });
 
+const exploreNodeSchema = z.object({
+  nodeId: z.string().describe('Node ID to explore in depth'),
+  includeSource: z
+    .boolean()
+    .optional()
+    .describe('Include source code snippet (default true)'),
+  depth: z
+    .number()
+    .optional()
+    .describe('Relationship traversal depth (default 1, max 3)'),
+});
+
+const grepSchema = z.object({
+  pattern: z
+    .string()
+    .describe(
+      'Regex pattern to search for across all indexed source files ' +
+        '(e.g. "coms-license-service", "TODO", "apiEndpoint")',
+    ),
+  fileFilter: z
+    .string()
+    .optional()
+    .describe(
+      'Only search files whose path contains this string (e.g. ".cfm", "src/api")',
+    ),
+  caseSensitive: z
+    .boolean()
+    .optional()
+    .describe('Case-sensitive search (default: false)'),
+  maxResults: z
+    .number()
+    .optional()
+    .describe('Max results to return (default: 100)'),
+});
+
 // ---- Tool descriptions ----
 
 const SEARCH_DESC =
-  'Full-text search across graph nodes by name or properties. ' +
-  'Returns matching nodes with their types and properties.';
+  'Full-text search across graph nodes by name, properties, and file content. ' +
+  'Search is case-insensitive — "contactbus" matches "contactBus". ' +
+  'Returns matching nodes with their types, properties, and 1-hop connections for top results. ' +
+  'This is the most efficient way to find nodes — prefer this over list_nodes + traverse_graph.';
 
 const LIST_DESC =
   'List nodes of a specific type. Valid types include: Repository, ' +
@@ -111,6 +152,17 @@ const LOAD_SOURCE_DESC =
   'symbol suffixes are stripped automatically to find the file. ' +
   'Use startLine/endLine for partial reads. Only works for files loaded during indexing.';
 
+const EXPLORE_DESC =
+  'Deep inspection of a single node — returns full properties, incoming and outgoing ' +
+  'relationships, and source code in one call. Use this instead of separate get_node + ' +
+  'traverse_graph + load_source calls when you want to understand a specific component.';
+
+const GREP_DESC =
+  'Search for exact text patterns across all indexed source files using regex. ' +
+  'Best for finding specific strings like service names, API endpoints, error messages, ' +
+  'or configuration values that may not appear in node names. ' +
+  'Returns file paths and line numbers where the pattern was found.';
+
 // ---- Factory: returns tools wired to a GraphStore ----
 
 export function makeGraphTools(store: GraphStore) {
@@ -121,8 +173,37 @@ export function makeGraphTools(store: GraphStore) {
           ? nodeTypes.split(',').map((t) => t.trim())
           : undefined;
         const results = await store.searchNodes(query, limit, types);
+
+        // Enrich top 5 results with 1-hop connections for context
+        const enrichedResults = [];
+        for (let i = 0; i < results.length; i++) {
+          const node = results[i];
+          if (i < 5) {
+            try {
+              const rels = await store.traverse(node.id, 'both', 1);
+              enrichedResults.push({
+                ...node,
+                connections: rels.slice(0, 10).map((r) => ({
+                  type: r.relationship.type,
+                  direction:
+                    r.relationship.source_id === node.id
+                      ? 'outgoing'
+                      : 'incoming',
+                  targetId: r.node.id,
+                  targetName: r.node.name,
+                  targetType: r.node.type,
+                })),
+              });
+            } catch {
+              enrichedResults.push(node);
+            }
+          } else {
+            enrichedResults.push(node);
+          }
+        }
+
         return truncate(
-          JSON.stringify({ results, count: results.length }),
+          JSON.stringify({ results: enrichedResults, count: results.length }),
           MAX_RESULT_CHARS,
         );
       },
@@ -200,5 +281,90 @@ export function makeGraphTools(store: GraphStore) {
         schema: loadSourceSchema,
       },
     ),
+    tool(
+      async ({ nodeId, includeSource = true, depth = 1 }) => {
+        // 1. Get node details
+        const node = await store.getNode(nodeId);
+        if (!node)
+          return JSON.stringify({ error: 'Node not found', id: nodeId });
+
+        // 2. Get relationships (capped depth)
+        const traverseDepth = Math.min(depth, 3);
+        const rels = await store.traverse(
+          nodeId,
+          'both',
+          traverseDepth,
+        );
+
+        const connections = rels.map((r) => ({
+          type: r.relationship.type,
+          direction:
+            r.relationship.source_id === nodeId ? 'outgoing' : 'incoming',
+          nodeId: r.node.id,
+          nodeName: r.node.name,
+          nodeType: r.node.type,
+          depth: r.depth,
+        }));
+
+        // 3. Optionally include source code
+        let source: { path: string; content: string; line_count: number } | null = null;
+        if (includeSource) {
+          const result = await store.fetchSource(nodeId);
+          if (result) {
+            source = {
+              path: result.path,
+              content: result.content,
+              line_count: result.line_count,
+            };
+          }
+        }
+
+        return truncate(
+          JSON.stringify({
+            node,
+            connections,
+            connectionCount: connections.length,
+            source,
+          }),
+          MAX_EXPLORE_CHARS,
+        );
+      },
+      {
+        name: 'explore_node',
+        description: EXPLORE_DESC,
+        schema: exploreNodeSchema,
+      },
+    ),
+    ...(store.grepSource
+      ? [
+          tool(
+            async ({ pattern, fileFilter, caseSensitive, maxResults }) => {
+              const results = await store.grepSource!(pattern, {
+                caseSensitive,
+                maxResults,
+                fileFilter,
+              });
+              if (results.length === 0) {
+                return JSON.stringify({
+                  results: [],
+                  message: `No matches found for pattern "${pattern}"`,
+                });
+              }
+              return truncate(
+                JSON.stringify({
+                  results,
+                  count: results.length,
+                }),
+                MAX_RESULT_CHARS,
+              );
+            },
+            {
+              name: 'grep',
+              description: GREP_DESC,
+              schema: grepSchema,
+            },
+          ),
+        ]
+      : []),
   ];
 }

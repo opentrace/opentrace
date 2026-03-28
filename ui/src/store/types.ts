@@ -123,4 +123,10 @@ export interface GraphStore {
     maxDepth?: number,
     relType?: string,
   ): Promise<TraverseResult[]>;
+
+  /** Search stored source files for exact text patterns (regex). */
+  grepSource?(
+    pattern: string,
+    options?: { caseSensitive?: boolean; maxResults?: number; fileFilter?: string },
+  ): Promise<{ nodeId: string; filePath: string; line: number; text: string }[]>;
 }

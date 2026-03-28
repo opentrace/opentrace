@@ -34,6 +34,24 @@ import type {
 let embedder: Embedder | undefined;
 let cancelled = false;
 
+/**
+ * Build the text that gets embedded for a given enrichment item.
+ * Includes metadata (name, type, path, summary) plus a capped
+ * source snippet for file/function/class nodes so that semantic
+ * search can match on actual code content.
+ */
+function composeSearchableText(item: EnrichItem, summary: string): string {
+  const parts = [item.nodeName, item.nodeType];
+  if (summary) parts.push(summary);
+  if (item.path) parts.push(item.path);
+  // Include source content (capped to stay within MiniLM 256-token context)
+  if (item.source && item.kind !== 'directory') {
+    const maxChars = item.kind === 'file' ? 300 : 500;
+    parts.push(item.source.slice(0, maxChars));
+  }
+  return parts.join(' ');
+}
+
 const BATCH_SIZE = 8;
 
 function post(msg: EnrichWorkerResponse) {
@@ -103,10 +121,7 @@ async function handleEnrich(items: EnrichItem[]) {
 
       // Embed non-directory nodes
       if (embedder && item.kind !== 'directory') {
-        const parts = [item.nodeName, item.nodeType];
-        if (summary) parts.push(summary);
-        if (item.path) parts.push(item.path);
-        const searchText = parts.join(' ');
+        const searchText = composeSearchableText(item, summary);
 
         try {
           const embeddings = await embedder.embed([searchText]);
