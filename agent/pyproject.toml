@@ -59,7 +59,7 @@ packages = ["src/opentrace_agent"]
 
 [tool.ruff]
 line-length = 120
-exclude = []
+exclude = ["src/opentrace_agent/gen"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
