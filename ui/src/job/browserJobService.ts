@@ -734,7 +734,10 @@ export class BrowserJobService implements JobService {
                 continue;
               }
 
-              if (phase) {
+              // Emit stage-complete for all stages except embed —
+              // embedding runs asynchronously after pipeline_done and
+              // manages its own STAGE_COMPLETE event.
+              if (phase && event.stage !== 'embed') {
                 channel.push({
                   ...emptyEvent(),
                   kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
