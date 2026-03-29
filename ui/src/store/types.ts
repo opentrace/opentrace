@@ -98,6 +98,8 @@ export interface GraphStore {
   ): Promise<ImportBatchResponse>;
   /** Export the database as a Parquet zip archive. */
   exportDatabase?(options?: { includeSource?: boolean }): Promise<Uint8Array>;
+  /** Set an embedder instance for query-time vector search. */
+  setEmbedder?(embedder: unknown): void;
   storeSource(files: SourceFile[]): void;
   fetchSource(
     nodeId: string,

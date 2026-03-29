@@ -497,3 +497,36 @@ export class StoreStage implements INodeStage {
     };
   }
 }
+
+// --- EmbedStage ---
+
+/**
+ * Collector stage for async embedding. Queues nodes as they flow through
+ * the pipeline — actual embedding happens asynchronously after the pipeline
+ * completes so it doesn't block graph readiness.
+ *
+ * Skips Directory nodes and nodes that already have embeddings.
+ */
+export class EmbedStage implements INodeStage {
+  private queue: GraphNode[] = [];
+
+  name(): string {
+    return 'embed';
+  }
+
+  process(node: GraphNode): StageMutation {
+    if (node.type !== 'Directory' && !node.properties?.has_embedding) {
+      this.queue.push(node);
+    }
+    return { nodes: [], relationships: [] };
+  }
+
+  flush(): StageMutation {
+    return { nodes: [], relationships: [] };
+  }
+
+  /** Return queued nodes for async embedding after pipeline completes. */
+  getQueue(): GraphNode[] {
+    return this.queue;
+  }
+}
