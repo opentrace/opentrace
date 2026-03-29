@@ -137,7 +137,8 @@ const CONCURRENT_PHASE_MAP: Record<string, JobPhase> = {
   resolve: JobPhase.JOB_PHASE_RESOLVING,
   summarize: JobPhase.JOB_PHASE_SUMMARIZING,
   store: JobPhase.JOB_PHASE_SUBMITTING,
-  embed: JobPhase.JOB_PHASE_EMBEDDING,
+  // embed is intentionally excluded — EmbedStage collects nodes silently
+  // during the pipeline; visible progress comes from runAsyncEmbedding.
 };
 
 /** Build a default empty JobEvent shell (proto fields are always present). */
@@ -734,10 +735,7 @@ export class BrowserJobService implements JobService {
                 continue;
               }
 
-              // Emit stage-complete for all stages except embed —
-              // embedding runs asynchronously after pipeline_done and
-              // manages its own STAGE_COMPLETE event.
-              if (phase && event.stage !== 'embed') {
+              if (phase) {
                 channel.push({
                   ...emptyEvent(),
                   kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
