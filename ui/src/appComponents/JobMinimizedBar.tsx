@@ -20,6 +20,7 @@ import './JobMinimizedBar.css';
 
 const PHASE_LABELS: Partial<Record<JobPhase, string>> = {
   [JobPhase.JOB_PHASE_ENRICHING]: 'Enriching',
+  [JobPhase.JOB_PHASE_EMBEDDING]: 'Generating embeddings',
   [JobPhase.JOB_PHASE_SUBMITTING]: 'Submitting',
 };
 
