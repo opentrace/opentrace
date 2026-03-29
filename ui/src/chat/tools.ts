@@ -22,9 +22,47 @@ const MAX_RESULT_CHARS = 4000;
 const MAX_SOURCE_CHARS = 8000;
 const MAX_EXPLORE_CHARS = 12000;
 
+/**
+ * Truncate a JSON-serializable value to fit within a character limit.
+ * Instead of slicing the JSON string (which produces invalid JSON),
+ * we progressively trim array entries or string fields until it fits.
+ */
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
-  return text.slice(0, limit) + `\n...[truncated, ${text.length} chars total]`;
+
+  // Try to parse and trim the data structurally to keep valid JSON
+  try {
+    const data = JSON.parse(text);
+    // If the root has a 'results' or 'nodes' array, trim entries from the end
+    const arrayKey =
+      'results' in data ? 'results' : 'nodes' in data ? 'nodes' : null;
+    if (arrayKey && Array.isArray(data[arrayKey])) {
+      while (data[arrayKey].length > 1) {
+        data[arrayKey].pop();
+        const attempt = JSON.stringify({ ...data, truncated: true });
+        if (attempt.length <= limit) return attempt;
+      }
+      return JSON.stringify({ ...data, truncated: true }).slice(0, limit);
+    }
+    // For non-array results (e.g. explore_node), truncate source content string
+    if (data.source?.content && typeof data.source.content === 'string') {
+      while (data.source.content.length > 100) {
+        data.source.content = data.source.content.slice(
+          0,
+          Math.floor(data.source.content.length / 2),
+        );
+        const attempt = JSON.stringify({ ...data, truncated: true });
+        if (attempt.length <= limit) return attempt;
+      }
+    }
+  } catch {
+    // Not valid JSON — fall through to raw slice
+  }
+  // Last resort: slice and wrap in a valid JSON envelope
+  return JSON.stringify({
+    partial: text.slice(0, limit - 50),
+    truncated: true,
+  });
 }
 
 // ---- Tool schemas ----
@@ -174,14 +212,13 @@ export function makeGraphTools(store: GraphStore) {
           : undefined;
         const results = await store.searchNodes(query, limit, types);
 
-        // Enrich top 5 results with 1-hop connections for context
-        const enrichedResults = [];
-        for (let i = 0; i < results.length; i++) {
-          const node = results[i];
-          if (i < 5) {
+        // Enrich top 5 results with 1-hop connections for context in parallel
+        const enrichedResults = await Promise.all(
+          results.map(async (node, i) => {
+            if (i >= 5) return node;
             try {
               const rels = await store.traverse(node.id, 'both', 1);
-              enrichedResults.push({
+              return {
                 ...node,
                 connections: rels.slice(0, 10).map((r) => ({
                   type: r.relationship.type,
@@ -193,14 +230,12 @@ export function makeGraphTools(store: GraphStore) {
                   targetName: r.node.name,
                   targetType: r.node.type,
                 })),
-              });
+              };
             } catch {
-              enrichedResults.push(node);
+              return node;
             }
-          } else {
-            enrichedResults.push(node);
-          }
-        }
+          }),
+        );
 
         return truncate(
           JSON.stringify({ results: enrichedResults, count: results.length }),

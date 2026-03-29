@@ -135,10 +135,17 @@ function generateTypedNodeCSV(
     { compressed: Uint8Array; path: string; binary?: boolean }
   >,
 ): string {
+  // Pre-inflate files that will be referenced by symbol nodes to avoid redundant decompression
+  const inflatedCache = new Map<string, string>();
   const lines = ['id,name,properties,source_text'];
   for (const node of nodes) {
     const props = JSON.stringify(node.properties ?? {});
-    const sourceText = resolveSourceText(node, sourceSnippets, sourceCache);
+    const sourceText = resolveSourceText(
+      node,
+      sourceSnippets,
+      sourceCache,
+      inflatedCache,
+    );
     lines.push(
       [node.id, node.name, props, sourceText].map(csvEscape).join(','),
     );
@@ -150,7 +157,9 @@ function generateTypedNodeCSV(
 const MAX_FILE_SOURCE_CHARS = 10_000;
 const MAX_SYMBOL_SOURCE_CHARS = 5_000;
 
-/** Extract source text for a node to store in the source_text column. */
+/** Extract source text for a node to store in the source_text column.
+ *  Uses an inflation cache to avoid redundant decompression when multiple
+ *  symbols reference the same file. */
 function resolveSourceText(
   node: ImportBatchRequest['nodes'][0],
   sourceSnippets?: Map<string, string>,
@@ -158,6 +167,7 @@ function resolveSourceText(
     string,
     { compressed: Uint8Array; path: string; binary?: boolean }
   >,
+  inflatedCache?: Map<string, string>,
 ): string {
   if (node.type === 'File' && sourceSnippets) {
     return (sourceSnippets.get(node.id) ?? '').slice(0, MAX_FILE_SOURCE_CHARS);
@@ -175,9 +185,12 @@ function resolveSourceText(
       const entry = fileId ? sourceCache.get(fileId) : undefined;
       if (entry && !entry.binary) {
         try {
-          const content = new TextDecoder().decode(
-            inflateSync(entry.compressed),
-          );
+          // Use inflation cache to avoid re-decompressing the same file
+          let content = inflatedCache?.get(fileId);
+          if (content == null) {
+            content = new TextDecoder().decode(inflateSync(entry.compressed));
+            inflatedCache?.set(fileId, content);
+          }
           const lines = content.split('\n');
           const from = Math.max(0, startLine - 3);
           const to = Math.min(lines.length, endLine + 2);
@@ -611,7 +624,8 @@ export class LadybugGraphStore implements GraphStore {
     }
   }
 
-  /** Search stored source files for exact text patterns (regex). */
+  /** Search stored source files for exact text patterns (regex).
+   *  Yields to the event loop every GREP_YIELD_INTERVAL files to avoid blocking the UI. */
   async grepSource(
     pattern: string,
     options?: {
@@ -640,6 +654,9 @@ export class LadybugGraphStore implements GraphStore {
       text: string;
     }[] = [];
 
+    const YIELD_INTERVAL = 50; // Yield to event loop every N files
+    let filesProcessed = 0;
+
     for (const [id, entry] of this.sourceCache) {
       if (entry.binary) continue;
       if (fileFilter && !entry.path.includes(fileFilter)) continue;
@@ -661,6 +678,11 @@ export class LadybugGraphStore implements GraphStore {
         }
       } catch {
         // Decompression failure — skip
+      }
+
+      // Yield to event loop periodically to keep UI responsive
+      if (++filesProcessed % YIELD_INTERVAL === 0) {
+        await new Promise<void>((r) => setTimeout(r, 0));
       }
     }
 

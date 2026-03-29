@@ -130,17 +130,14 @@ export function extractNodeIds(
       }
     }
     case 'explore_node': {
-      // explore_node returns { node: { id, ... }, ... }
+      // explore_node returns { node: { id, ... }, connections: [{ nodeId, ... }] }
       try {
         const data = JSON.parse(result);
         const ids: string[] = [];
         if (data?.node?.id) ids.push(data.node.id);
-        // Also extract connected node IDs from relationships
-        for (const rel of data?.incoming ?? []) {
-          if (rel?.node?.id) ids.push(rel.node.id);
-        }
-        for (const rel of data?.outgoing ?? []) {
-          if (rel?.node?.id) ids.push(rel.node.id);
+        // Extract connected node IDs from unified connections list
+        for (const conn of data?.connections ?? []) {
+          if (conn?.nodeId) ids.push(conn.nodeId);
         }
         return ids;
       } catch {
