@@ -40,6 +40,7 @@ const STEP_LABELS: Record<string, string> = {
   find_usages: 'Finding usages',
   find_dependencies: 'Finding dependencies',
   explore_component: 'Exploring component',
+  explore: 'Exploring graph',
   analyze_blast_radius: 'Analyzing blast radius',
   code_reviewer: 'Reviewing code',
 };
@@ -174,6 +175,50 @@ Return ONLY a fenced JSON code block — no prose, no markdown headings.
 
 Include up to 30 nodes per section. Set counts to real totals.
 The "summary" must be a single plain-text sentence (no markdown), e.g. "Changing DatabaseClient would affect 17 consumers across 3 services."`;
+
+const EXPLORE_GRAPH_PROMPT = `You are a graph exploration agent with access to the OpenTrace knowledge graph.
+Given an open-ended question about the codebase, autonomously explore the graph to find the answer.
+
+## Workflow
+1. Use search_graph to find nodes related to the question. Try multiple search terms if the first doesn't match.
+2. Use get_node on promising results to inspect their properties.
+3. Use traverse_graph (both directions) to discover how nodes are connected — follow interesting paths.
+4. Use load_source when the question involves implementation details, code patterns, or specific logic.
+5. Use explore_node for a single-call deep dive on a specific component.
+6. Iterate: if your first exploration doesn't fully answer the question, refine your search and explore further.
+
+## Guidelines
+- Be thorough — follow multiple paths through the graph if the question is broad.
+- Prioritize breadth first (search, list) then depth (traverse, load_source) on interesting results.
+- If you find something unexpected or relevant, investigate it even if it wasn't directly asked about.
+- Adapt your strategy based on what you find — the graph structure should guide your exploration.
+
+## CRITICAL: Output Format
+Return ONLY a fenced JSON code block — no prose, no markdown headings.
+The parent agent will synthesize a user-facing answer from your raw data.
+
+\`\`\`json
+{
+  "summary": "Short one-sentence answer to the question",
+  "findings": [
+    {
+      "label": "Brief heading for this finding",
+      "nodes": [{ "id": "...", "name": "...", "type": "..." }],
+      "detail": "Explanation of what was discovered"
+    }
+  ],
+  "connections": [
+    { "from": "...", "to": "...", "type": "CALLS", "detail": "..." }
+  ],
+  "source_snippets": [
+    { "path": "...", "startLine": 1, "endLine": 20, "snippet": "..." }
+  ]
+}
+\`\`\`
+
+Include up to 10 findings, 30 connections, and 5 source snippets.
+Omit "source_snippets" if none were loaded.
+The "summary" must be a single plain-text sentence (no markdown) directly answering the question.`;
 
 const CODE_REVIEWER_PROMPT = `You are a code review agent. Your job is to review code changes for quality issues, bugs, security vulnerabilities, and adherence to codebase conventions by combining source code inspection with architecture context from the OpenTrace knowledge graph.
 
@@ -361,6 +406,12 @@ export function makeSubAgentTools(
     stateModifier: CODE_REVIEWER_PROMPT,
   });
 
+  const exploreGraphAgent = createReactAgent({
+    llm,
+    tools: graphTools,
+    stateModifier: EXPLORE_GRAPH_PROMPT,
+  });
+
   // ── Tool wrappers exposed to the main agent ─────────────────────────────
 
   const findUsages = tool(
@@ -506,11 +557,41 @@ export function makeSubAgentTools(
     },
   );
 
+  const explore = tool(
+    async ({ query }) => {
+      try {
+        const response = await streamSubAgent(
+          exploreGraphAgent,
+          'explore',
+          query,
+          onProgress,
+        );
+        return truncate(response, MAX_SUBAGENT_RESULT_CHARS);
+      } catch (err) {
+        return `Graph exploration failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+    {
+      name: 'explore',
+      description:
+        'Autonomous graph exploration agent — delegates an open-ended question to a ' +
+        'sub-agent that searches, traverses, and inspects nodes to find the answer. ' +
+        'The sub-agent decides its own exploration strategy based on the question. ' +
+        'Returns structured JSON with findings, connections, and optional source snippets. ' +
+        "Use for broad questions like 'how is authentication implemented?', " +
+        "'what services talk to the database?', 'explain the data flow for X'.",
+      schema: z.object({
+        query: z.string().describe('The question to explore in the graph'),
+      }),
+    },
+  );
+
   return [
     findUsages,
     findDependencies,
     exploreComponent,
     analyzeBlastRadius,
     codeReviewer,
+    explore,
   ];
 }

@@ -326,7 +326,28 @@ export default function ChatPanel({
       { idx: number; name: string; args: string }
     >(); // tool_call_id → {parts index, tool name, accumulated args}
     let lastToolId = ''; // tracks the most recently started tool call for arg accumulation
-    const { agent } = getAgentHandle();
+    const { agent, progress } = getAgentHandle();
+
+    // Subscribe to sub-agent progress — pushes steps into active agent ToolCallParts
+    progress.setListener((agentName, step) => {
+      updateLastParts((parts) => {
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const p = parts[i];
+          if (
+            p.type === 'tool_call' &&
+            p.name === agentName &&
+            p.status === 'active'
+          ) {
+            parts[i] = {
+              ...p,
+              progressSteps: [...(p.progressSteps || []), step],
+            };
+            break;
+          }
+        }
+        return parts;
+      });
+    });
 
     try {
       // Convert to LangChain message format (text-only for history)
@@ -341,7 +362,7 @@ export default function ChatPanel({
         {
           streamMode: 'messages',
           signal: controller.signal,
-          recursionLimit: 30,
+          recursionLimit: 100,
         },
       );
 
@@ -525,6 +546,7 @@ export default function ChatPanel({
       });
     } finally {
       setStreaming(false);
+      progress.setListener(null);
       // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
         persistMessages(messagesRef.current, providerId, modelId);

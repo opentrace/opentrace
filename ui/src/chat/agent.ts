@@ -21,8 +21,14 @@ import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { makeGraphTools } from './tools';
 import { makePRTools } from './prTools';
+import { makeSubAgentTools, type ProgressFn } from './subagents';
 import type { GraphStore } from '../store/types';
 import type { PRClient } from '../pr/client';
+
+export interface SubAgentProgressHandle {
+  /** Set a listener to receive sub-agent progress steps. Pass null to unsubscribe. */
+  setListener(fn: ProgressFn | null): void;
+}
 
 export function createLLM(
   providerId: string,
@@ -53,7 +59,7 @@ export function createLLM(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ChatAgent = { agent: any };
+type ChatAgent = { agent: any; progress: SubAgentProgressHandle };
 
 export function createChatAgent(
   providerId: string,
@@ -68,11 +74,24 @@ export function createChatAgent(
   const graphTools = makeGraphTools(store);
   const prTools = makePRTools(store, prClient);
 
+  // Mutable listener — set by ChatPanel, called by sub-agent tools
+  let listener: ProgressFn | null = null;
+  const emitProgress: ProgressFn = (agentName, step) =>
+    listener?.(agentName, step);
+
+  const subAgentTools = makeSubAgentTools(llm, store, emitProgress, prTools);
+
   const agent = createReactAgent({
     llm,
-    tools: [...graphTools, ...prTools],
+    tools: [...graphTools, ...prTools, ...subAgentTools],
     stateModifier: systemPrompt,
   });
 
-  return { agent };
+  const progress: SubAgentProgressHandle = {
+    setListener(fn) {
+      listener = fn;
+    },
+  };
+
+  return { agent, progress };
 }
