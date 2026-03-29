@@ -97,7 +97,7 @@ export interface GraphStore {
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse>;
   /** Export the database as a Parquet zip archive. */
-  exportDatabase?(): Promise<Uint8Array>;
+  exportDatabase?(options?: { includeSource?: boolean }): Promise<Uint8Array>;
   storeSource(files: SourceFile[]): void;
   fetchSource(
     nodeId: string,

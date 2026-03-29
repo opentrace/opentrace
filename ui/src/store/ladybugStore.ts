@@ -127,84 +127,34 @@ function csvEscape(value: string): string {
 }
 
 /** Generate CSV for a typed node table (no type column — table name IS the type). */
-function generateTypedNodeCSV(
-  nodes: ImportBatchRequest['nodes'],
-  sourceSnippets?: Map<string, string>,
-  sourceCache?: Map<
-    string,
-    { compressed: Uint8Array; path: string; binary?: boolean }
-  >,
-): string {
-  // Pre-inflate files that will be referenced by symbol nodes to avoid redundant decompression
-  const inflatedCache = new Map<string, string>();
-  const lines = ['id,name,properties,source_text'];
+function generateTypedNodeCSV(nodes: ImportBatchRequest['nodes']): string {
+  const lines = ['id,name,properties'];
   for (const node of nodes) {
     const props = JSON.stringify(node.properties ?? {});
-    const sourceText = resolveSourceText(
-      node,
-      sourceSnippets,
-      sourceCache,
-      inflatedCache,
-    );
-    lines.push(
-      [node.id, node.name, props, sourceText].map(csvEscape).join(','),
-    );
+    lines.push([node.id, node.name, props].map(csvEscape).join(','));
   }
   return lines.join('\n');
 }
 
-/** Max content size per node type for the source_text column. */
-const MAX_FILE_SOURCE_CHARS = 10_000;
-const MAX_SYMBOL_SOURCE_CHARS = 5_000;
+/** Max file content stored in the SourceText table for FTS indexing. */
+const MAX_SOURCE_TEXT_CHARS = 10_000;
 
-/** Extract source text for a node to store in the source_text column.
- *  Uses an inflation cache to avoid redundant decompression when multiple
- *  symbols reference the same file. */
-function resolveSourceText(
-  node: ImportBatchRequest['nodes'][0],
-  sourceSnippets?: Map<string, string>,
-  sourceCache?: Map<
+/** Generate CSV for the SourceText table (file-level source for FTS). */
+function generateSourceTextCSV(
+  snippets: Map<string, string>,
+  sourceCache: Map<
     string,
     { compressed: Uint8Array; path: string; binary?: boolean }
   >,
-  inflatedCache?: Map<string, string>,
 ): string {
-  if (node.type === 'File' && sourceSnippets) {
-    return (sourceSnippets.get(node.id) ?? '').slice(0, MAX_FILE_SOURCE_CHARS);
+  const lines = ['id,name,source_text'];
+  for (const [id, text] of snippets) {
+    const name = sourceCache.get(id)?.path ?? id;
+    lines.push(
+      [id, name, text.slice(0, MAX_SOURCE_TEXT_CHARS)].map(csvEscape).join(','),
+    );
   }
-  if ((node.type === 'Function' || node.type === 'Class') && sourceCache) {
-    // Extract snippet from compressed source using start/end line
-    const nodeProps = node.properties ?? {};
-    const startLine = nodeProps.start_line as number | undefined;
-    const endLine = nodeProps.end_line as number | undefined;
-    if (startLine != null && endLine != null) {
-      // Derive file ID from node ID (format: "owner/repo/path::symbolName")
-      const fileId = node.id.includes('::')
-        ? node.id.slice(0, node.id.indexOf('::'))
-        : '';
-      const entry = fileId ? sourceCache.get(fileId) : undefined;
-      if (entry && !entry.binary) {
-        try {
-          // Use inflation cache to avoid re-decompressing the same file
-          let content = inflatedCache?.get(fileId);
-          if (content == null) {
-            content = new TextDecoder().decode(inflateSync(entry.compressed));
-            inflatedCache?.set(fileId, content);
-          }
-          const lines = content.split('\n');
-          const from = Math.max(0, startLine - 3);
-          const to = Math.min(lines.length, endLine + 2);
-          return lines
-            .slice(from, to)
-            .join('\n')
-            .slice(0, MAX_SYMBOL_SOURCE_CHARS);
-        } catch {
-          // Decompression failure — skip
-        }
-      }
-    }
-  }
-  return '';
+  return lines.join('\n');
 }
 
 function generateRelCSV(rels: ImportBatchRequest['relationships']): string {
@@ -294,12 +244,16 @@ function buildSchemaStatements(): string[] {
   const stmts: string[] = [];
   for (const type of NODE_TYPES) {
     stmts.push(
-      `CREATE NODE TABLE IF NOT EXISTS ${type}(id STRING PRIMARY KEY, name STRING, properties STRING, source_text STRING)`,
+      `CREATE NODE TABLE IF NOT EXISTS ${type}(id STRING PRIMARY KEY, name STRING, properties STRING)`,
     );
   }
   const pairs = REL_PAIRS.map(([f, t]) => `FROM ${f} TO ${t}`).join(', ');
   stmts.push(
     `CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`,
+  );
+  // Ephemeral source text table — used for FTS content search, never exported by default
+  stmts.push(
+    `CREATE NODE TABLE IF NOT EXISTS SourceText(id STRING PRIMARY KEY, name STRING, source_text STRING)`,
   );
   return stmts;
 }
@@ -324,7 +278,7 @@ function unionAllNodes(where?: string, suffix?: string): string {
 function unionAllTextSearch(escapedLower: string): string {
   return NODE_TYPES.map(
     (t) =>
-      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' OR lower(n.source_text) CONTAINS '${escapedLower}' RETURN n.id AS id`,
+      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id`,
   ).join(' UNION ALL ');
 }
 
@@ -332,7 +286,7 @@ function unionAllTextSearch(escapedLower: string): string {
 function unionAllTextSearchFull(escapedLower: string): string {
   return NODE_TYPES.map(
     (t) =>
-      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' OR lower(n.source_text) CONTAINS '${escapedLower}' RETURN n.id AS id, '${t}' AS type, n.name AS name, n.properties AS properties`,
+      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id, '${t}' AS type, n.name AS name, n.properties AS properties`,
   ).join(' UNION ALL ');
 }
 
@@ -429,6 +383,7 @@ export class LadybugGraphStore implements GraphStore {
    *  repos so the same ID can arrive from multiple pipeline runs — skip
    *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
   private flushedPackageIds = new Set<string>();
+  private flushedSourceIds = new Set<string>();
 
   // --- Visualization limits ---
   private maxVisNodes = 20000;
@@ -537,22 +492,35 @@ export class LadybugGraphStore implements GraphStore {
       // Already installed/loaded — safe to ignore
     }
 
-    const FTS_INDEXES = [
-      { type: 'File', name: 'search_idx_file' },
-      { type: 'Function', name: 'search_idx_func' },
-      { type: 'Class', name: 'search_idx_class' },
-      { type: 'Package', name: 'search_idx_pkg' },
-    ] as const;
+    // Create FTS index on the SourceText table (name + source content)
+    try {
+      const result = await this.conn.query(
+        `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
+      );
+      await result.close();
+    } catch {
+      // Index may already exist on re-init — safe to ignore
+    }
+  }
 
-    for (const { type, name } of FTS_INDEXES) {
-      try {
-        const result = await this.conn.query(
-          `CALL CREATE_FTS_INDEX('${type}', '${name}', ['name', 'source_text'], stemmer := 'porter')`,
-        );
-        await result.close();
-      } catch {
-        // Index may already exist on re-init — safe to ignore
-      }
+  /** Drop and recreate the SourceText FTS index after data mutations.
+   *  LadybugDB FTS indexes are static — new rows require a rebuild. */
+  private async rebuildSourceFTS(): Promise<void> {
+    try {
+      const r = await this.conn.query(
+        `CALL DROP_FTS_INDEX('SourceText', 'search_idx_source')`,
+      );
+      await r.close();
+    } catch {
+      // Index may not exist yet — safe to ignore
+    }
+    try {
+      const r = await this.conn.query(
+        `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
+      );
+      await r.close();
+    } catch {
+      // Empty table is fine — index will be rebuilt on next flush
     }
   }
 
@@ -1279,10 +1247,11 @@ export class LadybugGraphStore implements GraphStore {
         }
       }
     }
-    // Drop all typed node tables
+    // Drop all typed node tables and SourceText
     for (const type of NODE_TYPES) {
       await this.exec(`DROP TABLE IF EXISTS ${type}`);
     }
+    await this.exec(`DROP TABLE IF EXISTS SourceText`);
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
       await this.exec(stmt);
@@ -1292,6 +1261,7 @@ export class LadybugGraphStore implements GraphStore {
     this.nodeTypeMap.clear();
     this.nodeCache.clear();
     this.flushedPackageIds.clear();
+    this.flushedSourceIds.clear();
     this.sourceCache.clear();
     this.sourceSnippets.clear();
   }
@@ -1462,26 +1432,69 @@ export class LadybugGraphStore implements GraphStore {
       }
     }
 
+    // Import SourceText from Parquet (if present in archive)
+    const sourceData = entries['source_text.parquet'];
+    if (sourceData) {
+      onProgress?.('Importing source text for FTS');
+      const arrowTable = await parquetToArrow(sourceData);
+      const snippets = new Map<string, string>();
+      const fakeCache = new Map<
+        string,
+        { compressed: Uint8Array; path: string; binary?: boolean }
+      >();
+      for (let i = 0; i < arrowTable.numRows; i++) {
+        const id = String(arrowTable.getChild('id')?.get(i) ?? '');
+        const name = String(arrowTable.getChild('name')?.get(i) ?? '');
+        const text = String(arrowTable.getChild('source_text')?.get(i) ?? '');
+        if (id && text) {
+          snippets.set(id, text);
+          fakeCache.set(id, {
+            compressed: new Uint8Array(),
+            path: name,
+          });
+        }
+      }
+      if (snippets.size > 0) {
+        const csv = generateSourceTextCSV(snippets, fakeCache);
+        const csvPath = '/import_source_text.csv';
+        await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+        try {
+          await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
+        } finally {
+          await lbug.FS.unlink(csvPath);
+        }
+        console.log(
+          `[LadybugStore] imported SourceText: ${snippets.size} rows`,
+        );
+      }
+    }
+
+    // Rebuild FTS index on SourceText (whether from import or empty)
+    onProgress?.('Rebuilding search indexes');
+    await this.rebuildSourceFTS();
+
     console.log(
       `[LadybugStore] importDatabase complete: ${totalNodes} nodes, ${totalRels} rels`,
     );
-    onProgress?.('Rebuilding search indexes');
     return {
       nodes_created: totalNodes,
       relationships_created: totalRels,
     };
   }
 
-  async exportDatabase(): Promise<Uint8Array> {
+  async exportDatabase(options?: {
+    includeSource?: boolean;
+  }): Promise<Uint8Array> {
     await this.ensureReady();
     await this.flush();
 
+    const includeSource = options?.includeSource ?? false;
     const files: Record<string, Uint8Array> = {};
 
     // Export each typed node table as a Parquet file via JS Arrow → parquet-wasm
     for (const type of NODE_TYPES) {
       const rows = await this.query(
-        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties, n.source_text AS source_text`,
+        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
       );
       if (rows.length === 0) continue;
 
@@ -1489,12 +1502,28 @@ export class LadybugGraphStore implements GraphStore {
         'id',
         'name',
         'properties',
-        'source_text',
       ]);
       files[`nodes_${type}.parquet`] = data;
       console.log(
         `[LadybugStore] exported ${type}: ${rows.length} nodes, ${data.byteLength} bytes`,
       );
+    }
+
+    // Optionally export SourceText table (source code for FTS)
+    if (includeSource) {
+      const sourceRows = await this.query(
+        `MATCH (n:SourceText) RETURN n.id AS id, n.name AS name, n.source_text AS source_text`,
+      );
+      if (sourceRows.length > 0) {
+        const data = await rowsToParquet(
+          sourceRows as Record<string, string>[],
+          ['id', 'name', 'source_text'],
+        );
+        files['source_text.parquet'] = data;
+        console.log(
+          `[LadybugStore] exported SourceText: ${sourceRows.length} rows, ${data.byteLength} bytes`,
+        );
+      }
     }
 
     // Export all relationships as a single Parquet file
@@ -1516,7 +1545,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     console.log(
-      `[LadybugStore] exportDatabase: ${Object.keys(files).length} parquet files`,
+      `[LadybugStore] exportDatabase: ${Object.keys(files).length} parquet files (includeSource=${includeSource})`,
     );
 
     if (Object.keys(files).length === 0) {
@@ -1643,16 +1672,40 @@ export class LadybugGraphStore implements GraphStore {
     for (const [type, bucket] of buckets) {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const csv = generateTypedNodeCSV(
-          chunk,
-          this.sourceSnippets,
-          this.sourceCache,
-        );
+        const csv = generateTypedNodeCSV(chunk);
         const path = `/nodes_${type}.csv`;
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
         await lbug.FS.unlink(path);
       }
+    }
+
+    // --- Flush source text for FTS indexing (file-level only) ---
+    // Only flush snippets not yet in the SourceText table (avoid PK violations)
+    const newSnippets = new Map<string, string>();
+    for (const [id, text] of this.sourceSnippets) {
+      if (!this.flushedSourceIds.has(id)) {
+        newSnippets.set(id, text);
+      }
+    }
+    if (newSnippets.size > 0) {
+      const entries = Array.from(newSnippets.entries());
+      for (
+        let offset = 0;
+        offset < entries.length;
+        offset += FLUSH_CHUNK_SIZE
+      ) {
+        const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
+        const csv = generateSourceTextCSV(chunk, this.sourceCache);
+        const path = '/source_text.csv';
+        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
+        await lbug.FS.unlink(path);
+      }
+      for (const id of newSnippets.keys()) {
+        this.flushedSourceIds.add(id);
+      }
+      await this.rebuildSourceFTS();
     }
 
     // --- Flush embeddings to NodeVector table ---
@@ -1756,11 +1809,11 @@ export class LadybugGraphStore implements GraphStore {
         path: f.path,
         binary: f.binary,
       });
-      // Store truncated source for FTS indexing (populated into source_text column during flush)
+      // Store truncated source for FTS indexing (flushed to SourceText table)
       if (!f.binary && f.content) {
         this.sourceSnippets.set(
           f.id,
-          f.content.slice(0, MAX_FILE_SOURCE_CHARS),
+          f.content.slice(0, MAX_SOURCE_TEXT_CHARS),
         );
       }
     }
@@ -1812,54 +1865,27 @@ export class LadybugGraphStore implements GraphStore {
 
   // ---- FTS search helpers ----
 
-  /** FTS index configuration for code-bearing node types. */
-  private static readonly SEARCHABLE_TYPES = [
-    { type: 'File', index: 'search_idx_file' },
-    { type: 'Function', index: 'search_idx_func' },
-    { type: 'Class', index: 'search_idx_class' },
-    { type: 'Package', index: 'search_idx_pkg' },
-  ] as const;
-
   /**
-   * Query per-type FTS indexes and accumulate scores by file path.
-   * When a file AND a function inside it both match, their scores stack.
+   * Query the SourceText FTS index for file-level content matches.
+   * Returns file node IDs ranked by FTS relevance score.
    */
   private async queryFTSIndexes(
     queryStr: string,
     limit: number,
   ): Promise<{ id: string; score: number }[]> {
     const escaped = esc(queryStr);
-    const accumulated = new Map<string, { id: string; score: number }>();
-
-    for (const { type, index } of LadybugGraphStore.SEARCHABLE_TYPES) {
-      try {
-        const rows = await this.query(
-          `CALL QUERY_FTS_INDEX('${type}', '${index}', '${escaped}') ` +
-            `YIELD node, score ` +
-            `RETURN node.id AS id, score ` +
-            `ORDER BY score DESC LIMIT ${limit}`,
-        );
-        for (const row of rows as { id: string; score: number }[]) {
-          // For Function/Class nodes, derive file path to enable score accumulation
-          const fileId =
-            typeof row.id === 'string' && row.id.includes('::')
-              ? row.id.slice(0, row.id.indexOf('::'))
-              : row.id;
-          const existing = accumulated.get(fileId);
-          if (existing) {
-            existing.score += row.score;
-          } else {
-            accumulated.set(fileId, { id: row.id, score: row.score });
-          }
-        }
-      } catch {
-        // FTS index may not exist yet (before first flush) — safe to skip
-      }
+    try {
+      const rows = await this.query(
+        `CALL QUERY_FTS_INDEX('SourceText', 'search_idx_source', '${escaped}') ` +
+          `YIELD node, score ` +
+          `RETURN node.id AS id, score ` +
+          `ORDER BY score DESC LIMIT ${limit}`,
+      );
+      return rows as { id: string; score: number }[];
+    } catch {
+      // FTS index may not exist yet (before first flush) — safe to skip
+      return [];
     }
-
-    return Array.from(accumulated.values())
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
   }
 
   // ---- Chat tool methods ----
