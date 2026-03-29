@@ -104,7 +104,8 @@ describe('makeGraphTools', () => {
       const tools = makeGraphTools(store);
       const loadTool = tools.find((t) => t.name === 'load_source')!;
       const result = (await loadTool.invoke({ nodeId: 'big.ts' })) as string;
-      expect(result).toContain('[truncated');
+      const parsed = JSON.parse(result);
+      expect(parsed.truncated).toBe(true);
       expect(result.length).toBeLessThan(bigContent.length);
     });
   });
@@ -122,7 +123,9 @@ describe('makeGraphTools', () => {
       const tools = makeGraphTools(store);
       const searchTool = tools.find((t) => t.name === 'search_graph')!;
       const result = (await searchTool.invoke({ query: 'x' })) as string;
-      expect(result).toContain('[truncated');
+      const parsed = JSON.parse(result);
+      expect(parsed.truncated).toBe(true);
+      expect(parsed.results.length).toBeLessThan(200);
     });
   });
 });
