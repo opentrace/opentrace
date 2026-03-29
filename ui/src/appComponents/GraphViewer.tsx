@@ -1479,9 +1479,16 @@ const GraphViewer = memo(
                     disabled={exporting}
                     onClick={async () => {
                       if (!store.exportDatabase || exporting) return;
+                      const includeSource = window.confirm(
+                        'Include source text in the export?\n\n' +
+                          'This adds file content for full-text search but increases the archive size.\n\n' +
+                          'OK = Include source text\nCancel = Exclude (smaller file)',
+                      );
                       setExporting(true);
                       try {
-                        const data = await store.exportDatabase();
+                        const data = await store.exportDatabase({
+                          includeSource,
+                        });
                         const buf = new Uint8Array(data).buffer as ArrayBuffer;
                         const blob = new Blob([buf], {
                           type: 'application/octet-stream',
