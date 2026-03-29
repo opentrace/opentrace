@@ -344,6 +344,7 @@ export function makeGraphTools(store: GraphStore) {
           line_count: number;
         } | null = null;
         if (includeSource) {
+          // For symbol nodes (e.g. "repo/path::Class"), also try the file ID
           const result = await store.fetchSource(nodeId);
           if (result) {
             source = {
@@ -354,15 +355,15 @@ export function makeGraphTools(store: GraphStore) {
           }
         }
 
-        return truncate(
-          JSON.stringify({
-            node,
-            connections,
-            connectionCount: connections.length,
-            source,
-          }),
-          MAX_EXPLORE_CHARS,
-        );
+        const result: Record<string, unknown> = {
+          node,
+          connections,
+          connectionCount: connections.length,
+        };
+        if (includeSource) {
+          result.source = source;
+        }
+        return truncate(JSON.stringify(result), MAX_EXPLORE_CHARS);
       },
       {
         name: 'explore_node',
