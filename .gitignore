@@ -15,6 +15,7 @@ ui/node_modules/
 ui/dist/
 functions/node_modules/
 functions/lib/
+components/node_modules/
 
 # IDE
 .idea/
