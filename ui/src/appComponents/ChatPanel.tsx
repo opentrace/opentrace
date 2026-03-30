@@ -136,7 +136,10 @@ export default function ChatPanel({
   const localUrlInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<ImageAttachment | null>(
     null,
   );
@@ -163,6 +166,21 @@ export default function ChatPanel({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // Close attach menu on outside click
+  useEffect(() => {
+    if (!showAttachMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        attachMenuRef.current &&
+        !attachMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowAttachMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAttachMenu]);
 
   // Auto-scroll only when the user is near the bottom
   const isNearBottomRef = useRef(true);
@@ -590,19 +608,33 @@ export default function ChatPanel({
   };
 
   const handleSubmit = () => {
-    sendMessage(input, pendingImages.length > 0 ? pendingImages : undefined);
-    setPendingImages([]);
+    const images = pendingImages.length > 0 ? pendingImages : undefined;
+    const trimmed = input.trim();
+    const hasImages = images && images.length > 0;
+    // Only clear images if sendMessage will actually proceed
+    if (
+      (trimmed || hasImages) &&
+      (providerId === 'local' || apiKey) &&
+      !streaming
+    ) {
+      setPendingImages([]);
+    }
+    sendMessage(input, images);
   };
   const handleTemplate = (prompt: string) => sendMessage(prompt);
 
   const addImages = useCallback(
     async (files: File[]) => {
+      setImageError(null);
       const remaining = MAX_IMAGES_PER_MESSAGE - pendingImages.length;
-      if (remaining <= 0) return;
+      if (remaining <= 0) {
+        setImageError(`Maximum ${MAX_IMAGES_PER_MESSAGE} images per message.`);
+        return;
+      }
       const { images, errors } = await processImageFiles(
         files.slice(0, remaining),
       );
-      if (errors.length) console.warn('Image processing errors:', errors);
+      if (errors.length) setImageError(errors.join(' '));
       if (images.length) setPendingImages((prev) => [...prev, ...images]);
     },
     [pendingImages.length],
@@ -1129,6 +1161,12 @@ export default function ChatPanel({
             ))}
           </div>
           <div className="chat-input-area">
+            {imageError && (
+              <div className="image-error-banner">
+                {imageError}
+                <button onClick={() => setImageError(null)}>&times;</button>
+              </div>
+            )}
             {pendingImages.length > 0 && (
               <div className="image-preview-strip">
                 {pendingImages.map((img) => (
@@ -1145,6 +1183,40 @@ export default function ChatPanel({
               </div>
             )}
             <div className="chat-input-row">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files) addImages(Array.from(e.target.files));
+                  e.target.value = '';
+                }}
+              />
+              <div className="attach-menu-wrapper" ref={attachMenuRef}>
+                <button
+                  className="attach-btn"
+                  onClick={() => setShowAttachMenu((v) => !v)}
+                  title="Attach"
+                >
+                  +
+                </button>
+                {showAttachMenu && (
+                  <div className="attach-menu">
+                    <button
+                      className="attach-menu-item"
+                      onClick={() => {
+                        fileInputRef.current?.click();
+                        setShowAttachMenu(false);
+                      }}
+                    >
+                      <span className="attach-menu-icon">&#128247;</span>
+                      Image
+                    </button>
+                  </div>
+                )}
+              </div>
               <textarea
                 ref={textareaRef}
                 rows={1}
@@ -1163,24 +1235,6 @@ export default function ChatPanel({
                 }}
                 onPaste={handlePaste}
               />
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                multiple
-                style={{ display: 'none' }}
-                onChange={(e) => {
-                  if (e.target.files) addImages(Array.from(e.target.files));
-                  e.target.value = '';
-                }}
-              />
-              <button
-                className="image-upload-btn"
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach image"
-              >
-                &#128206;
-              </button>
               <button
                 onClick={handleSubmit}
                 disabled={

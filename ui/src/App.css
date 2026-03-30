@@ -589,10 +589,93 @@
   padding: 0 !important;
 }
 
-.image-upload-btn {
+.attach-menu-wrapper {
+  position: relative;
+}
+
+.attach-btn {
   background: none !important;
-  font-size: 1rem !important;
+  color: var(--muted-foreground) !important;
+  border: 1px solid var(--border) !important;
+  font-size: 1.25rem !important;
+  font-weight: 600;
   padding: 0 !important;
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.attach-btn:hover {
+  background: var(--secondary) !important;
+  color: var(--foreground) !important;
+}
+
+.attach-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 140px;
+  padding: 4px;
+  z-index: 100;
+}
+
+.attach-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none !important;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--foreground) !important;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.attach-menu-item:hover {
+  background: var(--secondary) !important;
+}
+
+.attach-menu-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.image-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  font-size: 0.8rem;
+  border-radius: var(--radius);
+}
+
+.image-error-banner button {
+  background: none !important;
+  border: none;
+  color: #f87171 !important;
+  font-size: 1rem;
+  padding: 0 !important;
+  cursor: pointer;
 }
 
 .image-preview-strip {

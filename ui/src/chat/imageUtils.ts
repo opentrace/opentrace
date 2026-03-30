@@ -26,6 +26,43 @@ const ALLOWED_MIME_TYPES = [
   'image/gif',
 ];
 
+/**
+ * Load a File into an Image using an object URL (avoids reading the entire
+ * file as a base64 data URL into memory before we know if resizing is needed).
+ */
+function loadImage(
+  file: File,
+): Promise<{ img: HTMLImageElement; url: string }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve({ img, url });
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load image'));
+    };
+    img.src = url;
+  });
+}
+
+function canvasToDataUrl(
+  img: HTMLImageElement,
+  width: number,
+  height: number,
+  mimeType: string,
+): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Failed to get canvas context');
+  ctx.drawImage(img, 0, 0, width, height);
+  // Preserve transparency for PNG/WebP/GIF; use JPEG only for JPEG inputs
+  const hasAlpha = mimeType !== 'image/jpeg';
+  const outputType = hasAlpha ? 'image/webp' : 'image/jpeg';
+  return canvas.toDataURL(outputType, 0.85);
+}
+
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -35,30 +72,28 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-function resizeImage(dataUrl: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const { width, height } = img;
-      if (width <= MAX_DIMENSION && height <= MAX_DIMENSION) {
-        resolve(dataUrl);
-        return;
-      }
-      const scale = MAX_DIMENSION / Math.max(width, height);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(width * scale);
-      canvas.height = Math.round(height * scale);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Failed to get canvas context'));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
-    };
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = dataUrl;
-  });
+/**
+ * Resize an image if it exceeds MAX_DIMENSION.
+ * Uses object URL to avoid loading a large base64 string for the initial decode.
+ */
+async function processImage(file: File): Promise<string> {
+  const { img, url } = await loadImage(file);
+  try {
+    const { width, height } = img;
+    if (width <= MAX_DIMENSION && height <= MAX_DIMENSION) {
+      // No resize needed — read the original file as data URL
+      return await fileToDataUrl(file);
+    }
+    const scale = MAX_DIMENSION / Math.max(width, height);
+    return canvasToDataUrl(
+      img,
+      Math.round(width * scale),
+      Math.round(height * scale),
+      file.type,
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export async function processImageFiles(
@@ -79,8 +114,7 @@ export async function processImageFiles(
       continue;
     }
     try {
-      const raw = await fileToDataUrl(file);
-      const dataUrl = await resizeImage(raw);
+      const dataUrl = await processImage(file);
       images.push({
         id: crypto.randomUUID(),
         dataUrl,

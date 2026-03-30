@@ -93,33 +93,10 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
               });
               blobStore.createIndex('conversationId', 'conversationId');
             }
-
-            // Migrate existing inline images to blob store
-            if (oldVersion >= 1) {
-              const convStore = transaction.objectStore(STORE_NAME);
-              convStore.getAll().then((convs: Conversation[]) => {
-                const blobSt = transaction.objectStore(BLOB_STORE);
-                for (const conv of convs) {
-                  let changed = false;
-                  for (const msg of conv.messages) {
-                    if (msg.role === 'user' && msg.images) {
-                      for (const img of msg.images) {
-                        if (img.dataUrl && img.dataUrl.length > 0) {
-                          blobSt.put({
-                            id: img.id,
-                            conversationId: conv.id,
-                            dataUrl: img.dataUrl,
-                          } satisfies StoredBlob);
-                          img.dataUrl = '';
-                          changed = true;
-                        }
-                      }
-                    }
-                  }
-                  if (changed) convStore.put(conv);
-                }
-              });
-            }
+            // Note: we intentionally skip migrating existing inline images here.
+            // Using async operations (.then/.getAll) inside the upgrade callback
+            // can cause TransactionInactiveError. Inline images from before v3
+            // will continue to work as-is; new images use the blob store.
           }
         },
       }).catch((err) => {
@@ -131,14 +108,12 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
   }
 
   /**
-   * Extract image dataUrls from messages, store them as blobs,
-   * and replace inline dataUrls with empty strings.
+   * Extract image blobs from messages and return stripped messages + blobs.
    */
-  private async saveBlobs(
-    db: IDBPDatabase,
+  private stripBlobs(
     convId: string,
     messages: ChatMessage[],
-  ): Promise<ChatMessage[]> {
+  ): { stripped: ChatMessage[]; blobs: StoredBlob[] } {
     const blobs: StoredBlob[] = [];
     const stripped = messages.map((m) => {
       if (m.role !== 'user' || !m.images?.length) return m;
@@ -156,43 +131,42 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
         }),
       };
     });
-
-    if (blobs.length > 0) {
-      const tx = db.transaction(BLOB_STORE, 'readwrite');
-      const store = tx.objectStore(BLOB_STORE);
-      await Promise.all([...blobs.map((b) => store.put(b)), tx.done]);
-    }
-
-    return stripped;
+    return { stripped, blobs };
   }
 
   /**
    * Re-hydrate image dataUrls from the blob store into messages.
+   * Uses getAllFromIndex to fetch all blobs for the conversation in one call.
    */
   private async hydrateBlobs(
     db: IDBPDatabase,
+    convId: string,
     messages: ChatMessage[],
   ): Promise<ChatMessage[]> {
-    // Collect all image IDs that need hydrating
-    const imageIds: string[] = [];
+    // Check if any images need hydrating
+    let needsHydration = false;
     for (const m of messages) {
       if (m.role === 'user' && m.images) {
         for (const img of m.images) {
-          if (!img.dataUrl) imageIds.push(img.id);
+          if (!img.dataUrl) {
+            needsHydration = true;
+            break;
+          }
         }
       }
+      if (needsHydration) break;
     }
-    if (imageIds.length === 0) return messages;
+    if (!needsHydration) return messages;
 
-    // Batch-read blobs
-    const tx = db.transaction(BLOB_STORE, 'readonly');
-    const store = tx.objectStore(BLOB_STORE);
-    const blobResults = await Promise.all(
-      imageIds.map((id) => store.get(id) as Promise<StoredBlob | undefined>),
+    // Fetch all blobs for this conversation in one call
+    const allBlobs: StoredBlob[] = await db.getAllFromIndex(
+      BLOB_STORE,
+      'conversationId',
+      convId,
     );
     const blobMap = new Map<string, string>();
-    for (const blob of blobResults) {
-      if (blob) blobMap.set(blob.id, blob.dataUrl);
+    for (const blob of allBlobs) {
+      blobMap.set(blob.id, blob.dataUrl);
     }
 
     return messages.map((m) => {
@@ -212,22 +186,26 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
 
   async save(conv: Conversation): Promise<void> {
     const db = await this.getDB();
-    const strippedMessages = await this.saveBlobs(db, conv.id, conv.messages);
-    await db.put(STORE_NAME, { ...conv, messages: strippedMessages });
+    const { stripped, blobs } = this.stripBlobs(conv.id, conv.messages);
+    const tx = db.transaction([BLOB_STORE, STORE_NAME], 'readwrite');
+    const blobStore = tx.objectStore(BLOB_STORE);
+    for (const b of blobs) blobStore.put(b);
+    tx.objectStore(STORE_NAME).put({ ...conv, messages: stripped });
+    await tx.done;
   }
 
   async get(id: string): Promise<Conversation | undefined> {
     const db = await this.getDB();
     const conv = await db.get(STORE_NAME, id);
     if (!conv) return undefined;
-    conv.messages = await this.hydrateBlobs(db, conv.messages);
+    conv.messages = await this.hydrateBlobs(db, id, conv.messages);
     return conv;
   }
 
   async delete(id: string): Promise<void> {
     const db = await this.getDB();
-    // Delete associated blobs first
-    const tx = db.transaction(BLOB_STORE, 'readwrite');
+    const tx = db.transaction([BLOB_STORE, STORE_NAME], 'readwrite');
+    // Delete associated blobs
     const blobStore = tx.objectStore(BLOB_STORE);
     const idx = blobStore.index('conversationId');
     let cursor = await idx.openCursor(id);
@@ -235,9 +213,9 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
       cursor.delete();
       cursor = await cursor.continue();
     }
+    // Delete the conversation
+    tx.objectStore(STORE_NAME).delete(id);
     await tx.done;
-    // Then delete the conversation itself
-    await db.delete(STORE_NAME, id);
   }
 
   async list(projectKey?: string): Promise<ConversationSummary[]> {
