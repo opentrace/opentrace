@@ -112,6 +112,7 @@ export default function ChatPanel({
     deleteConversation,
     persistMessages,
     loadingConversation,
+    foundNodeIds: restoredFoundNodeIds,
   } = useConversation(repoUrl, historyEnabled);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -170,6 +171,19 @@ export default function ChatPanel({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Restore chat graph highlights when switching conversations
+  useEffect(() => {
+    chatFoundNodesRef.current = new Set(restoredFoundNodeIds);
+    const hasNodes = restoredFoundNodeIds.length > 0;
+    setHasFoundNodes(hasNodes);
+    if (highlightEnabled && hasNodes) {
+      onChatHighlight?.(new Set(restoredFoundNodeIds), []);
+    } else {
+      onChatHighlight?.(new Set(), []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only fire when restored node IDs change
+  }, [restoredFoundNodeIds]);
 
   // Sync highlight state when toggle changes
   useEffect(() => {
@@ -549,7 +563,12 @@ export default function ChatPanel({
       setStreaming(false);
       // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
-        persistMessages(messagesRef.current, providerId, modelId);
+        persistMessages(
+          messagesRef.current,
+          providerId,
+          modelId,
+          Array.from(chatFoundNodesRef.current),
+        );
       }
     }
   };

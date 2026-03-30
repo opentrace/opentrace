@@ -26,6 +26,8 @@ export interface Conversation {
   /** Scopes the conversation to a project (typically the repo URL) */
   projectKey: string;
   messages: ChatMessage[];
+  /** Node IDs discovered by chat tool results (the "chat graph") */
+  foundNodeIds?: string[];
 }
 
 export type ConversationSummary = Omit<Conversation, 'messages'>;
