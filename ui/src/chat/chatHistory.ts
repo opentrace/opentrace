@@ -21,13 +21,32 @@ import type {
   ConversationSummary,
 } from './chatHistoryStore';
 import type { ChatMessage } from './providers';
+import type { ImageAttachment } from '../components/chat/types';
 
 // Re-export types so existing consumers don't need to change imports
 export type { Conversation, ConversationSummary, ChatHistoryStore };
 
 const DB_NAME = 'opentrace_chat';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_NAME = 'conversations';
+const BLOB_STORE = 'image_blobs';
+
+interface StoredBlob {
+  /** Same as ImageAttachment.id */
+  id: string;
+  conversationId: string;
+  dataUrl: string;
+}
+
+/** Placeholder used when the blob is missing (deleted externally, etc.) */
+const MISSING_IMAGE_PLACEHOLDER =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60">' +
+      '<rect width="60" height="60" fill="#333" rx="6"/>' +
+      '<text x="30" y="34" text-anchor="middle" fill="#888" font-size="11">?</text>' +
+      '</svg>',
+  );
 
 export function generateId(): string {
   return crypto.randomUUID();
@@ -66,6 +85,19 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
               store.createIndex('projectKey', 'projectKey');
             }
           }
+          // v3: separate blob store for image attachments
+          if (oldVersion < 3) {
+            if (!db.objectStoreNames.contains(BLOB_STORE)) {
+              const blobStore = db.createObjectStore(BLOB_STORE, {
+                keyPath: 'id',
+              });
+              blobStore.createIndex('conversationId', 'conversationId');
+            }
+            // Note: we intentionally skip migrating existing inline images here.
+            // Using async operations (.then/.getAll) inside the upgrade callback
+            // can cause TransactionInactiveError. Inline images from before v3
+            // will continue to work as-is; new images use the blob store.
+          }
         },
       }).catch((err) => {
         this.dbPromise = null;
@@ -75,19 +107,115 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
     return this.dbPromise;
   }
 
+  /**
+   * Extract image blobs from messages and return stripped messages + blobs.
+   */
+  private stripBlobs(
+    convId: string,
+    messages: ChatMessage[],
+  ): { stripped: ChatMessage[]; blobs: StoredBlob[] } {
+    const blobs: StoredBlob[] = [];
+    const stripped = messages.map((m) => {
+      if (m.role !== 'user' || !m.images?.length) return m;
+      return {
+        ...m,
+        images: m.images.map((img) => {
+          if (img.dataUrl) {
+            blobs.push({
+              id: img.id,
+              conversationId: convId,
+              dataUrl: img.dataUrl,
+            });
+          }
+          return { ...img, dataUrl: '' };
+        }),
+      };
+    });
+    return { stripped, blobs };
+  }
+
+  /**
+   * Re-hydrate image dataUrls from the blob store into messages.
+   * Uses getAllFromIndex to fetch all blobs for the conversation in one call.
+   */
+  private async hydrateBlobs(
+    db: IDBPDatabase,
+    convId: string,
+    messages: ChatMessage[],
+  ): Promise<ChatMessage[]> {
+    // Check if any images need hydrating
+    let needsHydration = false;
+    for (const m of messages) {
+      if (m.role === 'user' && m.images) {
+        for (const img of m.images) {
+          if (!img.dataUrl) {
+            needsHydration = true;
+            break;
+          }
+        }
+      }
+      if (needsHydration) break;
+    }
+    if (!needsHydration) return messages;
+
+    // Fetch all blobs for this conversation in one call
+    const allBlobs: StoredBlob[] = await db.getAllFromIndex(
+      BLOB_STORE,
+      'conversationId',
+      convId,
+    );
+    const blobMap = new Map<string, string>();
+    for (const blob of allBlobs) {
+      blobMap.set(blob.id, blob.dataUrl);
+    }
+
+    return messages.map((m) => {
+      if (m.role !== 'user' || !m.images?.length) return m;
+      return {
+        ...m,
+        images: m.images.map((img): ImageAttachment => {
+          if (img.dataUrl) return img;
+          return {
+            ...img,
+            dataUrl: blobMap.get(img.id) ?? MISSING_IMAGE_PLACEHOLDER,
+          };
+        }),
+      };
+    });
+  }
+
   async save(conv: Conversation): Promise<void> {
     const db = await this.getDB();
-    await db.put(STORE_NAME, conv);
+    const { stripped, blobs } = this.stripBlobs(conv.id, conv.messages);
+    const tx = db.transaction([BLOB_STORE, STORE_NAME], 'readwrite');
+    const blobStore = tx.objectStore(BLOB_STORE);
+    for (const b of blobs) blobStore.put(b);
+    tx.objectStore(STORE_NAME).put({ ...conv, messages: stripped });
+    await tx.done;
   }
 
   async get(id: string): Promise<Conversation | undefined> {
     const db = await this.getDB();
-    return db.get(STORE_NAME, id);
+    const conv = await db.get(STORE_NAME, id);
+    if (!conv) return undefined;
+    conv.messages = await this.hydrateBlobs(db, id, conv.messages);
+    return conv;
   }
 
   async delete(id: string): Promise<void> {
     const db = await this.getDB();
-    await db.delete(STORE_NAME, id);
+    const tx = db.transaction([BLOB_STORE, STORE_NAME], 'readwrite');
+    // Delete associated blobs
+    const blobStore = tx.objectStore(BLOB_STORE);
+    const idx = blobStore.index('conversationId');
+    let cursor = await idx.openCursor(id);
+    while (cursor) {
+      cursor.delete();
+      cursor = await cursor.continue();
+    }
+    // Delete the conversation
+    tx.objectStore(STORE_NAME).delete(id);
+    await tx.done;
   }
 
   async list(projectKey?: string): Promise<ConversationSummary[]> {
