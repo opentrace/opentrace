@@ -598,7 +598,7 @@ export default function ChatPanel({
             <path d="M5 18H3" />
           </svg>
           <h3>AI Assistant</h3>
-          {!showSettingsView && (apiKey || providerId === 'local') && (
+          {!showSettingsView && !showHistory && (apiKey || providerId === 'local') && (
             <span
               className="provider-tag"
               onClick={() => setShowSettings(true)}
@@ -643,7 +643,7 @@ export default function ChatPanel({
               </svg>
             </button>
           )}
-          {conversations.length > 0 && (
+          {(conversations.length > 0 || showHistory) && (
             <button
               className={`clear-chat-btn${showHistory ? ' active' : ''}`}
               onClick={() => setShowHistory((v) => !v)}
@@ -691,7 +691,7 @@ export default function ChatPanel({
         </div>
       </div>
 
-      {hasPRTab && !showSettingsView && (
+      {hasPRTab && !showSettingsView && !showHistory && (
         <div className="chat-tab-bar">
           <button
             className={`chat-tab ${activeTab === 'chat' ? 'active' : ''}`}
