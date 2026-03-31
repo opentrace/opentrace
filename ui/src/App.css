@@ -287,6 +287,10 @@
   background: color-mix(in oklch, var(--accent) 50%, transparent);
 }
 
+.clear-chat-btn.active {
+  color: var(--primary);
+}
+
 .close-btn {
   background: none;
   border: none;
