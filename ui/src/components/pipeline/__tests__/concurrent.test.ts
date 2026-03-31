@@ -503,15 +503,15 @@ describe('concurrent pipeline', () => {
   });
 
   describe('StoreStage', () => {
-    it('accumulates nodes and is terminal', () => {
+    it('accumulates nodes and forwards them downstream', () => {
       const store = new StoreStage();
 
       const result1 = store.process(node('a'));
       const result2 = store.process(node('b'));
 
-      // Terminal — no nodes forwarded
-      expect(result1.nodes).toEqual([]);
-      expect(result2.nodes).toEqual([]);
+      // Forwards nodes so downstream stages (e.g. EmbedStage) can see them
+      expect(result1.nodes).toEqual([node('a')]);
+      expect(result2.nodes).toEqual([node('b')]);
 
       expect(store.stats()).toEqual({ nodes: 2, relationships: 0 });
     });
@@ -543,7 +543,7 @@ describe('concurrent pipeline', () => {
       expect(mutation.nodes[1].id).toBe('b');
     });
 
-    it('works as terminal stage in pipeline', () => {
+    it('works in pipeline and forwards nodes downstream', () => {
       const passthrough = new PassthroughStage('P', (n) => [n]);
       const store = new StoreStage();
 
@@ -553,15 +553,12 @@ describe('concurrent pipeline', () => {
         seeds: [node('x'), node('y')],
       });
 
-      // Store is terminal — no nodes flow past it
-      // But flush returns them
-      const flushEnd = events.find(
-        (e) => 'kind' in e && e.kind === 'flush_end' && e.stage === 'store',
+      // Store processes nodes and forwards them
+      const storeEnds = stageEvents(events).filter(
+        (e) => e.stage === 'store' && e.action === 'end',
       );
-      expect(flushEnd).toBeDefined();
-      if (flushEnd && 'kind' in flushEnd && flushEnd.kind === 'flush_end') {
-        expect(flushEnd.mutation?.nodes).toHaveLength(2);
-      }
+      expect(storeEnds).toHaveLength(2);
+      expect(storeEnds[0].mutation?.nodes).toHaveLength(1);
     });
   });
 

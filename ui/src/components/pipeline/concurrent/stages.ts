@@ -440,8 +440,8 @@ export class StoreStage implements INodeStage {
   process(node: GraphNode): StageMutation {
     this.bufferedNodes.push(node);
     this.totalNodes++;
-    // Terminal — do not forward nodes
-    return { nodes: [], relationships: [] };
+    // Forward the node so downstream stages (e.g. EmbedStage) can see it
+    return { nodes: [node], relationships: [] };
   }
 
   /**
@@ -500,22 +500,63 @@ export class StoreStage implements INodeStage {
 
 // --- EmbedStage ---
 
+import type {
+  Embedder,
+  EmbedderConfig,
+} from '../../../runner/browser/enricher/embedder/types';
+import type { GraphStore } from '../../../store/types';
+
+export interface EmbedStageConfig {
+  config: EmbedderConfig;
+  store: GraphStore;
+}
+
 /**
- * Collector stage for async embedding. Queues nodes as they flow through
- * the pipeline — actual embedding happens asynchronously after the pipeline
- * completes so it doesn't block graph readiness.
+ * Embedding stage decoupled from the pipeline tick loop.
  *
- * Skips Directory nodes and nodes that already have embeddings.
+ * process() collects File nodes without blocking. The ONNX model
+ * starts loading in the constructor so it overlaps with the entire
+ * pipeline. settle() runs the actual inference sequentially (one
+ * batch at a time) after the pipeline is done.
  */
 export class EmbedStage implements INodeStage {
+  private initPromise: Promise<Embedder | null> | null = null;
+  private readonly embedderConfig: EmbedderConfig;
+  private readonly store: GraphStore;
   private queue: GraphNode[] = [];
+  private embedded = 0;
+
+  constructor({ config, store }: EmbedStageConfig) {
+    this.embedderConfig = config;
+    this.store = store;
+    // Start model loading immediately — overlaps with earlier stages
+    this.ensureModel();
+  }
 
   name(): string {
     return 'embed';
   }
 
+  private ensureModel(): Promise<Embedder | null> {
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          const { MiniLmEmbedder } =
+            await import('../../../runner/browser/enricher/embedder/miniLmEmbedder');
+          const embedder = new MiniLmEmbedder(this.embedderConfig);
+          await embedder.init();
+          this.store.setEmbedder?.(embedder);
+          return embedder;
+        } catch {
+          return null;
+        }
+      })();
+    }
+    return this.initPromise;
+  }
+
   process(node: GraphNode): StageMutation {
-    if (node.type !== 'Directory' && !node.properties?.has_embedding) {
+    if (node.type === 'File' && !node.properties?.has_embedding) {
       this.queue.push(node);
     }
     return { nodes: [], relationships: [] };
@@ -525,8 +566,53 @@ export class EmbedStage implements INodeStage {
     return { nodes: [], relationships: [] };
   }
 
-  /** Return queued nodes for async embedding after pipeline completes. */
-  getQueue(): GraphNode[] {
-    return this.queue;
+  /**
+   * Run embedding sequentially on all queued nodes. The model was
+   * pre-loaded in the constructor so init is already done by now.
+   */
+  async settle(
+    onProgress?: (embedded: number, total: number) => void,
+  ): Promise<void> {
+    const embedder = await this.ensureModel();
+    if (!embedder || this.queue.length === 0) return;
+
+    const BATCH = 8;
+    for (let off = 0; off < this.queue.length; off += BATCH) {
+      const batch = this.queue.slice(off, off + BATCH);
+      const texts = batch.map((n) => {
+        const parts = [n.name, n.type];
+        const props = n.properties ?? {};
+        if (typeof props.summary === 'string') parts.push(props.summary);
+        if (typeof props.path === 'string') parts.push(props.path);
+        return parts.join(' ');
+      });
+
+      try {
+        const vectors = await embedder.embed(texts);
+        const pending: { id: string; vec: number[] }[] = [];
+        for (let i = 0; i < batch.length; i++) {
+          if (vectors[i] && vectors[i].length > 0) {
+            pending.push({ id: batch[i].id, vec: vectors[i] });
+          }
+        }
+        if (pending.length > 0 && this.store.importVectors) {
+          await this.store.importVectors(pending);
+          this.embedded += pending.length;
+        }
+      } catch {
+        // Skip failed batch
+      }
+
+      onProgress?.(this.embedded, this.queue.length);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  }
+
+  get embeddedCount(): number {
+    return this.embedded;
+  }
+
+  get total(): number {
+    return this.queue.length;
   }
 }

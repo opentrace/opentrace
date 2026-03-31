@@ -51,7 +51,6 @@ import type {
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 import { loadEmbedderConfig } from '../config/embedding';
-import type { Embedder } from '../runner/browser/enricher/embedder/types';
 
 // --- Tree-sitter lazy initialization ---
 
@@ -131,14 +130,15 @@ function toProtoPhase(phase: PipelinePhase): JobPhase {
 }
 
 /** Map concurrent stage names → JobPhase for the UI.
- *  `cache` is omitted — it's an internal optimization, not user-visible. */
+ *  `cache` is omitted — it's an internal optimization, not user-visible.
+ *  `embed` maps to EMBEDDING but real progress comes from the
+ *  concurrent drain loop, not the sync pipeline events. */
 const CONCURRENT_PHASE_MAP: Record<string, JobPhase> = {
   extract: JobPhase.JOB_PHASE_PARSING,
   resolve: JobPhase.JOB_PHASE_RESOLVING,
   summarize: JobPhase.JOB_PHASE_SUMMARIZING,
   store: JobPhase.JOB_PHASE_SUBMITTING,
-  // embed is intentionally excluded — EmbedStage collects nodes silently
-  // during the pipeline; visible progress comes from runAsyncEmbedding.
+  embed: JobPhase.JOB_PHASE_EMBEDDING,
 };
 
 /** Build a default empty JobEvent shell (proto fields are always present). */
@@ -153,142 +153,6 @@ function emptyEvent(): JobEvent {
     nodes: [],
     relationships: [],
   };
-}
-
-// --- Async embedding after pipeline_done ---
-
-const EMBED_BATCH_SIZE = 8;
-
-/**
- * Run async embedding on queued nodes after the graph is persisted.
- * Initializes the MiniLM embedder, generates vectors, submits to store,
- * and sets the embedder for query-time search.
- */
-async function runAsyncEmbedding(
-  embedStage: EmbedStage,
-  config: { enabled: boolean; model: string },
-  store: GraphStore,
-  channel: EventChannel<JobEvent>,
-  debug: InstanceType<typeof PipelineDebugLog>,
-): Promise<void> {
-  const queue = embedStage.getQueue();
-  if (queue.length === 0) return;
-
-  debug.log('embedding', `starting async embedding of ${queue.length} nodes`);
-
-  channel.push({
-    ...emptyEvent(),
-    kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-    phase: JobPhase.JOB_PHASE_EMBEDDING,
-    message: 'Loading embedding model',
-    detail: {
-      current: 0,
-      total: queue.length,
-      fileName: '',
-      nodesCreated: 0,
-      relationshipsCreated: 0,
-    },
-  });
-
-  let embedder: Embedder;
-  try {
-    const { MiniLmEmbedder } =
-      await import('../runner/browser/enricher/embedder/miniLmEmbedder');
-    embedder = new MiniLmEmbedder(config);
-    await embedder.init();
-  } catch (err) {
-    debug.log(
-      'embedding',
-      `embedder init failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    channel.push({
-      ...emptyEvent(),
-      kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
-      phase: JobPhase.JOB_PHASE_EMBEDDING,
-      message: 'Embedding skipped (model failed to load)',
-    });
-    return;
-  }
-
-  // Set embedder on store for query-time vector search
-  store.setEmbedder?.(embedder);
-
-  let embedded = 0;
-  for (let offset = 0; offset < queue.length; offset += EMBED_BATCH_SIZE) {
-    const batch = queue.slice(offset, offset + EMBED_BATCH_SIZE);
-    const texts = batch.map((node) => {
-      const parts = [node.name, node.type];
-      const props = node.properties ?? {};
-      if (typeof props.summary === 'string') parts.push(props.summary);
-      if (typeof props.path === 'string') parts.push(props.path);
-      return parts.join(' ');
-    });
-
-    try {
-      const vectors = await embedder.embed(texts);
-      const updateNodes: {
-        id: string;
-        type: string;
-        name: string;
-        properties?: Record<string, unknown>;
-        embedding?: number[];
-      }[] = [];
-      for (let i = 0; i < batch.length; i++) {
-        if (vectors[i] && vectors[i].length > 0) {
-          updateNodes.push({
-            id: batch[i].id,
-            type: batch[i].type,
-            name: batch[i].name,
-            embedding: vectors[i],
-            properties: {
-              ...batch[i].properties,
-              has_embedding: true,
-            },
-          });
-        }
-      }
-      if (updateNodes.length > 0) {
-        await store.importBatch({
-          nodes: updateNodes,
-          relationships: [],
-        });
-      }
-    } catch (err) {
-      debug.log(
-        'embedding',
-        `batch error at offset ${offset}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    embedded += batch.length;
-    channel.push({
-      ...emptyEvent(),
-      kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-      phase: JobPhase.JOB_PHASE_EMBEDDING,
-      message: `Embedded ${embedded} of ${queue.length} nodes`,
-      detail: {
-        current: embedded,
-        total: queue.length,
-        fileName: '',
-        nodesCreated: 0,
-        relationshipsCreated: 0,
-      },
-    });
-
-    // Yield to event loop between batches
-    await new Promise<void>((r) => setTimeout(r, 0));
-  }
-
-  // Flush vectors to NodeVector table
-  await store.flush();
-
-  debug.log('embedding', `completed: ${embedded} nodes embedded`);
-  channel.push({
-    ...emptyEvent(),
-    kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
-    phase: JobPhase.JOB_PHASE_EMBEDDING,
-    message: `Embedded ${embedded} nodes`,
-  });
 }
 
 export class BrowserJobService implements JobService {
@@ -508,7 +372,9 @@ export class BrowserJobService implements JobService {
       const resolveStage = new ResolveStage(extractStage);
       const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
-      const embedStage = embedderConfig.enabled ? new EmbedStage() : null;
+      const embedStage = embedderConfig.enabled
+        ? new EmbedStage({ config: embedderConfig, store: this.store })
+        : null;
 
       // Pre-feed scanning rels into the store stage
       storeStage.addRelationships(scanningRels);
@@ -731,6 +597,19 @@ export class BrowserJobService implements JobService {
                   phase: JobPhase.JOB_PHASE_SUBMITTING,
                   message: `Persisted ${persistedNodes} nodes, ${persistedRels} relationships`,
                 });
+
+                // Graph is ready — UI can show it immediately while
+                // embedding continues as the next pipeline stage.
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+                  result: {
+                    nodesCreated: persistedNodes,
+                    relationshipsCreated: persistedRels,
+                    reposProcessed: 1,
+                  },
+                });
+
                 await new Promise((r) => setTimeout(r, 0));
                 continue;
               }
@@ -779,26 +658,37 @@ export class BrowserJobService implements JobService {
                 `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
               );
 
-              // Graph is ready — UI can show it immediately
-              channel.push({
-                ...emptyEvent(),
-                kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
-                result: {
-                  nodesCreated: persistedNodes,
-                  relationshipsCreated: persistedRels,
-                  reposProcessed: 1,
-                },
-              });
-
-              // Run async embedding if enabled, then emit DONE
-              if (embedStage && embedStage.getQueue().length > 0) {
-                await runAsyncEmbedding(
-                  embedStage,
-                  embedderConfig,
-                  this.store,
-                  channel,
-                  debug,
+              // Run embedding — model was pre-loaded during pipeline
+              if (embedStage && embedStage.total > 0) {
+                debug.log(
+                  'embedding',
+                  `starting ${embedStage.total} embeddings`,
                 );
+                await embedStage.settle((embedded, total) => {
+                  channel.push({
+                    ...emptyEvent(),
+                    kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                    phase: JobPhase.JOB_PHASE_EMBEDDING,
+                    message: `Embedded ${embedded} of ${total} nodes`,
+                    detail: {
+                      current: embedded,
+                      total,
+                      fileName: '',
+                      nodesCreated: 0,
+                      relationshipsCreated: 0,
+                    },
+                  });
+                });
+                debug.log(
+                  'embedding',
+                  `completed: ${embedStage.embeddedCount} nodes embedded`,
+                );
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase: JobPhase.JOB_PHASE_EMBEDDING,
+                  message: `Embedded ${embedStage.embeddedCount} nodes`,
+                });
               }
 
               channel.push({

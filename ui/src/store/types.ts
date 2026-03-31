@@ -91,6 +91,8 @@ export interface GraphStore {
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   /** Flush any buffered writes to the backing store. No-op if unbuffered. */
   flush(): Promise<void>;
+  /** Import embedding vectors without re-inserting the node into typed tables. */
+  importVectors?(vectors: { id: string; vec: number[] }[]): Promise<void>;
   /** Import a Parquet zip archive into the store. */
   importDatabase?(
     data: Uint8Array,

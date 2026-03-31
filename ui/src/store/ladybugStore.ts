@@ -1581,6 +1581,33 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   /**
+   * Import embedding vectors directly into the NodeVector table and the
+   * in-memory vector index, without touching the typed node tables.
+   */
+  async importVectors(vectors: { id: string; vec: number[] }[]): Promise<void> {
+    if (vectors.length === 0) return;
+    await this.ensureReady();
+
+    // Persist to LadybugDB NodeVector table in chunks
+    for (let offset = 0; offset < vectors.length; offset += FLUSH_CHUNK_SIZE) {
+      const chunk = vectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
+      const lines = ['id,vec'];
+      for (const { id, vec } of chunk) {
+        lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+      }
+      const csv = lines.join('\n');
+      const path = '/vectors_embed.csv';
+      await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+      await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
+      await lbug.FS.unlink(path);
+    }
+
+    if (!this.hasVectorIndex) {
+      await this.createVectorIndex();
+    }
+  }
+
+  /**
    * Flush all buffered writes to LadybugDB via CSV + COPY FROM.
    *
    * Nodes are deduplicated, bucketed by type, then written in chunks
