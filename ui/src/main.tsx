@@ -18,10 +18,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/index.css';
 import App from './App.tsx';
-import { StoreProvider, createLadybugStore } from './store';
+import { StoreProvider, createStore } from './store';
 import { JobServiceProvider } from './job';
 
-const store = createLadybugStore();
+const store = createStore();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { StoreProvider, createLadybugStore } from './store';
+import { StoreProvider, createStore } from './store';
 import { JobServiceProvider } from './job';
 import App from './App';
 import './styles/index.css';
@@ -29,7 +29,7 @@ export interface OpenTraceAppProps {
   repoUrl?: string;
 }
 
-const store = createLadybugStore();
+const store = createStore();
 
 /**
  * Drop-in full OpenTrace application component.

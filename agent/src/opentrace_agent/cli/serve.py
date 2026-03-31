@@ -56,14 +56,46 @@ def create_app(store: GraphStore) -> Starlette:
         return JSONResponse(data)
 
     async def fetch_graph(request: Request) -> JSONResponse:
-        """GET /api/graph?query=&hops="""
+        """GET /api/graph?query=&hops=
+
+        When *query* is empty, returns all nodes and relationships (capped by
+        *limit*, default 500) so the UI can render the full graph on initial load.
+        """
         query = request.query_params.get("query", "")
         try:
             hops = int(request.query_params.get("hops", "2"))
         except ValueError:
             return _error(400, "Invalid parameter: hops must be an integer")
+        try:
+            limit = int(request.query_params.get("limit", "10000"))
+        except ValueError:
+            return _error(400, "Invalid parameter: limit must be an integer")
+
         if not query:
-            return JSONResponse({"nodes": [], "links": []})
+            # Return all nodes (across all types) and their relationships
+            all_nodes: list[dict] = []
+            stats = store.get_stats()
+            for ntype in stats.get("nodes_by_type", {}):
+                all_nodes.extend(store.list_nodes(node_type=ntype, limit=limit))
+                if len(all_nodes) >= limit:
+                    break
+            all_nodes = all_nodes[:limit]
+
+            node_ids = {n["id"] for n in all_nodes}
+            all_rels = store._list_all_relationships(limit * 2)
+            links = [
+                {
+                    "source": r["source_id"],
+                    "target": r["target_id"],
+                    "type": r["type"],
+                    "id": r["id"],
+                    "properties": r.get("properties"),
+                }
+                for r in all_rels
+                if r["source_id"] in node_ids and r["target_id"] in node_ids
+            ]
+            return JSONResponse({"nodes": all_nodes, "links": links})
+
         nodes, relationships = store.search_graph(query, hops=hops)
         links = [
             {

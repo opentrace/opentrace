@@ -28,7 +28,7 @@ import './AddRepoModal.css';
 
 import { detectProvider } from './urlNormalize';
 
-type SourceMode = 'url' | 'directory' | 'import';
+type SourceMode = 'url' | 'directory' | 'import' | 'server';
 
 const HISTORY_KEY = 'ot_repo_history';
 const MAX_HISTORY = 5;
@@ -230,6 +230,26 @@ function ImportIcon() {
   );
 }
 
+function ServerIcon() {
+  return (
+    <svg
+      width="38"
+      height="38"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+      <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+      <line x1="6" y1="6" x2="6.01" y2="6" />
+      <line x1="6" y1="18" x2="6.01" y2="18" />
+    </svg>
+  );
+}
+
 const PROVIDER_DISPLAY_NAME: Record<string, string> = {
   github: 'GitHub',
   gitlab: 'GitLab',
@@ -304,6 +324,7 @@ export default function AddRepoModal({
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [serverUrl, setServerUrl] = useState('http://localhost:8787');
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -366,6 +387,17 @@ export default function AddRepoModal({
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+
+    if (source === 'server') {
+      if (!serverUrl.trim()) {
+        setError('Enter a server URL.');
+        return;
+      }
+      setError(null);
+      setLoading(true);
+      onSubmit({ type: 'connect-server', serverUrl: serverUrl.trim() });
+      return;
+    }
 
     if (source === 'import') {
       if (!importFile) {
@@ -430,7 +462,11 @@ export default function AddRepoModal({
   // --- Hero content based on source mode ---
 
   const heroIcon =
-    source === 'import' ? (
+    source === 'server' ? (
+      <div className="hero-icon hero-icon--provider">
+        <ServerIcon />
+      </div>
+    ) : source === 'import' ? (
       <div className="hero-icon hero-icon--provider">
         <ImportIcon />
       </div>
@@ -443,22 +479,26 @@ export default function AddRepoModal({
     );
 
   const title =
-    source === 'import'
-      ? 'Import Graph'
-      : source === 'directory'
-        ? 'Add Local Directory'
-        : provider
-          ? `Add from ${PROVIDER_DISPLAY_NAME[provider]}`
-          : 'Add Repository';
+    source === 'server'
+      ? 'Connect to Server'
+      : source === 'import'
+        ? 'Import Graph'
+        : source === 'directory'
+          ? 'Add Local Directory'
+          : provider
+            ? `Add from ${PROVIDER_DISPLAY_NAME[provider]}`
+            : 'Add Repository';
 
   const subtitle =
-    source === 'import'
-      ? 'Upload a LadybugDB file to load into the graph'
-      : source === 'directory'
-        ? 'Select a directory to index its structure into the graph'
-        : provider
-          ? `Enter a ${PROVIDER_DISPLAY_NAME[provider]} repository URL to index`
-          : 'Enter a repository URL to index its structure into the graph';
+    source === 'server'
+      ? 'Connect to an OpenTrace server to query its graph database'
+      : source === 'import'
+        ? 'Upload a LadybugDB file to load into the graph'
+        : source === 'directory'
+          ? 'Select a directory to index its structure into the graph'
+          : provider
+            ? `Enter a ${PROVIDER_DISPLAY_NAME[provider]} repository URL to index`
+            : 'Enter a repository URL to index its structure into the graph';
 
   return (
     <div className="modal-backdrop" onClick={dismissable ? onClose : undefined}>
@@ -487,6 +527,13 @@ export default function AddRepoModal({
             >
               Import
             </button>
+            <button
+              type="button"
+              className={`chip-toggle-btn${source === 'server' ? ' active' : ''}`}
+              onClick={() => setSource('server')}
+            >
+              Server
+            </button>
           </div>
         </div>
 
@@ -498,7 +545,42 @@ export default function AddRepoModal({
 
         <form onSubmit={handleSubmit}>
           <div className="form-fields">
-            {source === 'import' ? (
+            {source === 'server' ? (
+              <>
+                <div className="form-info">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  <span>
+                    Connect to a running{' '}
+                    <code className="form-info-code">opentrace serve</code>{' '}
+                    instance. The graph is queried directly from the server
+                    &mdash; nothing is stored in the browser.
+                  </span>
+                </div>
+                <input
+                  type="url"
+                  className="input-pill"
+                  placeholder="http://localhost:8787"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  autoFocus
+                  autoComplete="off"
+                  data-testid="server-url-input"
+                />
+              </>
+            ) : source === 'import' ? (
               <div className="import-picker">
                 <input
                   ref={importInputRef}
@@ -893,11 +975,19 @@ export default function AddRepoModal({
             {loading ? (
               <>
                 <span className="btn-spinner" />
-                {source === 'import' ? 'Importing...' : 'Indexing...'}
+                {source === 'server'
+                  ? 'Connecting...'
+                  : source === 'import'
+                    ? 'Importing...'
+                    : 'Indexing...'}
               </>
             ) : (
               <>
-                {source === 'import' ? 'Import' : 'Add & Index'}
+                {source === 'server'
+                  ? 'Connect'
+                  : source === 'import'
+                    ? 'Import'
+                    : 'Add & Index'}
                 <svg
                   width="16"
                   height="16"

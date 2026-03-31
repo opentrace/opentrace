@@ -87,6 +87,13 @@ function App({ version, buildTime, initialRepoUrl }: AppProps = {}) {
 
   const handleJobSubmit = useCallback(
     (message: JobMessage) => {
+      if (message.type === 'connect-server') {
+        // Navigate with ?server= param — createStore() picks it up on reload
+        const url = new URL(window.location.href);
+        url.searchParams.set('server', message.serverUrl);
+        window.location.href = url.toString();
+        return;
+      }
       if (message.type === 'index-repo') {
         setActiveRepoUrl(message.repoUrl);
       } else if (message.type === 'index-directory') {

@@ -40,7 +40,12 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     nodes: GraphNode[];
     links: GraphLink[];
   }>({ nodes: [], links: [] });
-  const [loading, setLoading] = useState(() => store.hasData());
+  // Start in loading state if the store either has data already (WASM with
+  // prior imports) OR needs an async probe to discover data (server mode).
+  // This prevents the empty-state UI from flashing before the server responds.
+  const [loading, setLoading] = useState(
+    () => store.hasData() || !!store.ensureReady,
+  );
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [lastSearchQuery, setLastApiQuery] = useState('');
@@ -84,6 +89,21 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     if (store.hasData()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
       loadGraph();
+    } else if (store.ensureReady) {
+      // Server-backed stores don't know if data exists until they've called
+      // the API. Probe the server, then load if it has data.
+      let cancelled = false;
+      store.ensureReady().then(() => {
+        if (cancelled) return;
+        if (store.hasData()) {
+          loadGraph();
+        } else {
+          setLoading(false);
+        }
+      }).catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+      return () => { cancelled = true; };
     } else {
       setLoading(false);
     }

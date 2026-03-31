@@ -28,6 +28,7 @@ export type {
   IndexRepoMessage,
   IndexDirectoryMessage,
   ImportFileMessage,
+  ConnectServerMessage,
   AddRepoModalProps,
   IndexingProgressProps,
 } from './types';
