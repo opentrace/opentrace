@@ -525,6 +525,7 @@ export class EmbedStage implements INodeStage {
   private readonly store: GraphStore;
   private queue: GraphNode[] = [];
   private embedded = 0;
+  private _total = 0;
 
   constructor({ config, store }: EmbedStageConfig) {
     this.embedderConfig = config;
@@ -558,6 +559,7 @@ export class EmbedStage implements INodeStage {
   process(node: GraphNode): StageMutation {
     if (node.type === 'File' && !node.properties?.has_embedding) {
       this.queue.push(node);
+      this._total++;
     }
     return { nodes: [], relationships: [] };
   }
@@ -606,6 +608,9 @@ export class EmbedStage implements INodeStage {
       onProgress?.(this.embedded, this.queue.length);
       await new Promise<void>((r) => setTimeout(r, 0));
     }
+
+    // Free node references — they're persisted in the DB now
+    this.queue = [];
   }
 
   get embeddedCount(): number {
@@ -613,6 +618,6 @@ export class EmbedStage implements INodeStage {
   }
 
   get total(): number {
-    return this.queue.length;
+    return this._total;
   }
 }
