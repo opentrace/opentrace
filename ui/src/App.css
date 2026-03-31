@@ -547,14 +547,9 @@
   font-size: 2rem;
 }
 
-.chat-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
 .chat-input-area textarea {
-  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
   background: color-mix(in oklch, var(--card) 50%, transparent);
   border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   border-radius: var(--radius);
@@ -567,6 +562,12 @@
   min-height: 36px;
   max-height: 200px;
   line-height: 1.4;
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .chat-input-area button {
@@ -587,10 +588,28 @@
   cursor: not-allowed;
 }
 
+.chat-action-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .settings-btn {
   background: none !important;
-  font-size: 1rem !important;
+  color: var(--muted-foreground) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius);
+  font-size: 1.1rem !important;
   padding: 0 !important;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .attach-menu-wrapper {
@@ -604,10 +623,10 @@
   font-size: 1.25rem !important;
   font-weight: 600;
   padding: 0 !important;
-  width: 28px;
-  height: 28px;
-  line-height: 28px;
-  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+  border-radius: var(--radius);
   display: flex;
   align-items: center;
   justify-content: center;
