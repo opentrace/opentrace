@@ -29,7 +29,12 @@ export {
   ResolveStage,
   SummarizeStage,
   StoreStage,
+  EmbedStage,
 } from './stages';
-export type { FileCacheStageConfig, ExtractStageConfig } from './stages';
+export type {
+  FileCacheStageConfig,
+  ExtractStageConfig,
+  EmbedStageConfig,
+} from './stages';
 export { PipelineDebugLog } from './debug';
 export type { DebugEntry } from './debug';

@@ -585,8 +585,8 @@ export default function ChatPanel({
         return parts;
       });
     } finally {
-      progress.setListener(null);
       setStreaming(false);
+      progress.setListener(null);
       // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
         persistMessages(messagesRef.current, providerId, modelId);

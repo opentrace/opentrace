@@ -68,6 +68,7 @@ import type { SidePanelTab } from './SidePanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
+import ExportModal from './ExportModal';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -321,6 +322,7 @@ const GraphViewer = memo(
       );
       const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
+      const [showExportModal, setShowExportModal] = useState(false);
       const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
         null,
       );
@@ -830,15 +832,19 @@ const GraphViewer = memo(
 
       // Build autocomplete suggestions for the toolbar search
       const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
-        // Deduplicate names; pick first node's type/community for each name
+        // Deduplicate names; pick first node's type/community/id for each name
         const nameMap = new Map<
           string,
-          { type: string; communityId?: number }
+          { type: string; communityId?: number; nodeId: string }
         >();
         for (const n of graphData.nodes) {
           if (!nameMap.has(n.name)) {
             const cid = communityData.assignments[n.id];
-            nameMap.set(n.name, { type: n.type, communityId: cid });
+            nameMap.set(n.name, {
+              type: n.type,
+              communityId: cid,
+              nodeId: n.id,
+            });
           }
         }
         const suggestions: SearchSuggestion[] = [];
@@ -857,6 +863,7 @@ const GraphViewer = memo(
             color: getNodeColor(info.type),
             communityLabel: cLabel,
             communityColor: cColor,
+            nodeId: info.nodeId,
           });
         }
         for (const [cid, name] of communityData.names) {
@@ -904,14 +911,30 @@ const GraphViewer = memo(
               }
               break;
             }
-            default:
-              // name — normal search
+            default: {
+              // name — load graph centered on the search, then auto-select the node
               setActiveFilter(null);
-              loadGraph(suggestion.label, hops);
+              const targetId = suggestion.nodeId;
+              loadGraph(suggestion.label, hops).then(() => {
+                // After graph reloads, find and select the target node
+                if (targetId) {
+                  const node = graphDataRef.current.nodes.find(
+                    (n) => n.id === targetId,
+                  );
+                  if (node) {
+                    onNodeClick(node);
+                    // Zoom to the selected node after a short delay for layout settle
+                    setTimeout(() => {
+                      canvasRef.current?.zoomToNodes(new Set([targetId]), 600);
+                    }, 100);
+                  }
+                }
+              });
               break;
+            }
           }
         },
-        [applyFilter, hops, loadGraph],
+        [applyFilter, hops, loadGraph, onNodeClick],
       );
 
       const legendLinkItems = useMemo(() => {
@@ -1456,24 +1479,9 @@ const GraphViewer = memo(
                     className="export-db-btn"
                     title="Export database"
                     disabled={exporting}
-                    onClick={async () => {
+                    onClick={() => {
                       if (!store.exportDatabase || exporting) return;
-                      setExporting(true);
-                      try {
-                        const data = await store.exportDatabase();
-                        const buf = new Uint8Array(data).buffer as ArrayBuffer;
-                        const blob = new Blob([buf], {
-                          type: 'application/octet-stream',
-                        });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'opentrace.parquet.zip';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      } finally {
-                        setExporting(false);
-                      }
+                      setShowExportModal(true);
                     }}
                   >
                     {exporting ? (
@@ -1563,6 +1571,31 @@ const GraphViewer = memo(
             <ResetConfirmModal
               onConfirm={() => window.location.reload()}
               onCancel={() => setShowResetConfirm(false)}
+            />
+          )}
+
+          {showExportModal && store.exportDatabase && (
+            <ExportModal
+              onCancel={() => setShowExportModal(false)}
+              onExport={async ({ includeSource }) => {
+                setShowExportModal(false);
+                setExporting(true);
+                try {
+                  const data = await store.exportDatabase!({ includeSource });
+                  const buf = new Uint8Array(data).buffer as ArrayBuffer;
+                  const blob = new Blob([buf], {
+                    type: 'application/octet-stream',
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'opentrace.parquet.zip';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } finally {
+                  setExporting(false);
+                }
+              }}
             />
           )}
 

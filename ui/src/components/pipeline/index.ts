@@ -141,6 +141,7 @@ export {
   ResolveStage,
   SummarizeStage,
   StoreStage,
+  EmbedStage,
 } from './concurrent/stages';
 export type {
   FileCacheStageConfig,

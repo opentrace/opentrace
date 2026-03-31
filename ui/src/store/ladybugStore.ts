@@ -71,7 +71,7 @@ import type {
 } from '@opentrace/components/utils';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
 import { BM25Index } from './search/bm25';
-import { VectorIndex } from './search/vector';
+// VectorIndex no longer needed — using LadybugDB native QUERY_VECTOR_INDEX
 import { rrfFuse } from './search/rrf';
 
 // ---- Typed schema constants ----
@@ -132,6 +132,27 @@ function generateTypedNodeCSV(nodes: ImportBatchRequest['nodes']): string {
   for (const node of nodes) {
     const props = JSON.stringify(node.properties ?? {});
     lines.push([node.id, node.name, props].map(csvEscape).join(','));
+  }
+  return lines.join('\n');
+}
+
+/** Max file content stored in the SourceText table for FTS indexing. */
+const MAX_SOURCE_TEXT_CHARS = 10_000;
+
+/** Generate CSV for the SourceText table (file-level source for FTS). */
+function generateSourceTextCSV(
+  snippets: Map<string, string>,
+  sourceCache: Map<
+    string,
+    { compressed: Uint8Array; path: string; binary?: boolean }
+  >,
+): string {
+  const lines = ['id,name,source_text'];
+  for (const [id, text] of snippets) {
+    const name = sourceCache.get(id)?.path ?? id;
+    lines.push(
+      [id, name, text.slice(0, MAX_SOURCE_TEXT_CHARS)].map(csvEscape).join(','),
+    );
   }
   return lines.join('\n');
 }
@@ -229,6 +250,10 @@ function buildSchemaStatements(): string[] {
   const pairs = REL_PAIRS.map(([f, t]) => `FROM ${f} TO ${t}`).join(', ');
   stmts.push(
     `CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`,
+  );
+  // Ephemeral source text table — used for FTS content search, never exported by default
+  stmts.push(
+    `CREATE NODE TABLE IF NOT EXISTS SourceText(id STRING PRIMARY KEY, name STRING, source_text STRING)`,
   );
   return stmts;
 }
@@ -334,9 +359,13 @@ export class LadybugGraphStore implements GraphStore {
   private totalNodesBuffered = 0;
   private totalRelsBuffered = 0;
 
+  // --- Source text for FTS indexing (populated by storeSource, consumed by flush) ---
+  private sourceSnippets = new Map<string, string>();
+
   // --- JS-side indexes ---
-  private bm25Index = new BM25Index();
-  private vectorIndex: VectorIndex | null = null;
+  private bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
+  /** Whether the LadybugDB vector index has been created for the current session. */
+  private hasVectorIndex = false;
 
   /** Maps node ID → typed table name. Populated eagerly during importBatch. */
   private nodeTypeMap = new Map<string, string>();
@@ -354,6 +383,7 @@ export class LadybugGraphStore implements GraphStore {
    *  repos so the same ID can arrive from multiple pipeline runs — skip
    *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
   private flushedPackageIds = new Set<string>();
+  private flushedSourceIds = new Set<string>();
 
   // --- Visualization limits ---
   private maxVisNodes = 20000;
@@ -409,6 +439,88 @@ export class LadybugGraphStore implements GraphStore {
     for (const stmt of SCHEMA_STATEMENTS) {
       const result = await this.conn.query(stmt);
       await result.close();
+    }
+    // Create FTS indexes on code-bearing node types for content search
+    await this.createFTSIndexes();
+    // Create NodeVector table + vector index for persistent semantic search
+    await this.initVectorSchema();
+  }
+
+  /** Install VECTOR extension and create the NodeVector table for persistent embeddings. */
+  private async initVectorSchema(): Promise<void> {
+    try {
+      const r1 = await this.conn.query('INSTALL VECTOR');
+      await r1.close();
+      const r2 = await this.conn.query('LOAD EXTENSION VECTOR');
+      await r2.close();
+    } catch {
+      // Already installed/loaded — safe to ignore
+    }
+    try {
+      const r = await this.conn.query(
+        'CREATE NODE TABLE IF NOT EXISTS NodeVector(id STRING PRIMARY KEY, vec FLOAT[384])',
+      );
+      await r.close();
+    } catch {
+      // Table may already exist
+    }
+  }
+
+  /** Create the vector index on NodeVector. Call once after all embeddings are loaded. */
+  private async createVectorIndex(): Promise<void> {
+    try {
+      const r = await this.conn.query(
+        `CALL CREATE_VECTOR_INDEX('NodeVector', 'nodevec_idx', 'vec', metric := 'cosine')`,
+      );
+      await r.close();
+      this.hasVectorIndex = true;
+    } catch {
+      // Index may already exist — check if we can query it
+      this.hasVectorIndex = true;
+    }
+  }
+
+  /** Install and load the FTS extension, then create per-type search indexes. */
+  private async createFTSIndexes(): Promise<void> {
+    // LadybugDB requires the FTS extension to be installed and loaded
+    try {
+      const r1 = await this.conn.query('INSTALL FTS');
+      await r1.close();
+      const r2 = await this.conn.query('LOAD EXTENSION FTS');
+      await r2.close();
+    } catch {
+      // Already installed/loaded — safe to ignore
+    }
+
+    // Create FTS index on the SourceText table (name + source content)
+    try {
+      const result = await this.conn.query(
+        `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
+      );
+      await result.close();
+    } catch {
+      // Index may already exist on re-init — safe to ignore
+    }
+  }
+
+  /** Drop and recreate the SourceText FTS index after data mutations.
+   *  LadybugDB FTS indexes are static — new rows require a rebuild. */
+  private async rebuildSourceFTS(): Promise<void> {
+    try {
+      const r = await this.conn.query(
+        `CALL DROP_FTS_INDEX('SourceText', 'search_idx_source')`,
+      );
+      await r.close();
+    } catch {
+      // Index may not exist yet — safe to ignore
+    }
+    try {
+      const r = await this.conn.query(
+        `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
+      );
+      await r.close();
+    } catch {
+      // Empty table is fine — index will be rebuilt on next flush
     }
   }
 
@@ -478,6 +590,71 @@ export class LadybugGraphStore implements GraphStore {
         this.nodeCache.delete(oldest.value);
       }
     }
+  }
+
+  /** Search stored source files for exact text patterns (regex).
+   *  Yields to the event loop every GREP_YIELD_INTERVAL files to avoid blocking the UI. */
+  async grepSource(
+    pattern: string,
+    options?: {
+      caseSensitive?: boolean;
+      maxResults?: number;
+      fileFilter?: string;
+    },
+  ): Promise<
+    { nodeId: string; filePath: string; line: number; text: string }[]
+  > {
+    const maxResults = options?.maxResults ?? 100;
+    const caseSensitive = options?.caseSensitive ?? false;
+    const fileFilter = options?.fileFilter;
+
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+    } catch {
+      return []; // Invalid regex — return empty
+    }
+
+    const results: {
+      nodeId: string;
+      filePath: string;
+      line: number;
+      text: string;
+    }[] = [];
+
+    const YIELD_INTERVAL = 50; // Yield to event loop every N files
+    let filesProcessed = 0;
+
+    for (const [id, entry] of this.sourceCache) {
+      if (entry.binary) continue;
+      if (fileFilter && !entry.path.includes(fileFilter)) continue;
+
+      try {
+        const content = new TextDecoder().decode(inflateSync(entry.compressed));
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            results.push({
+              nodeId: id,
+              filePath: entry.path,
+              line: i + 1,
+              text: lines[i].trim().slice(0, 200),
+            });
+            regex.lastIndex = 0; // Reset regex state
+            if (results.length >= maxResults) return results;
+          }
+        }
+      } catch {
+        // Decompression failure — skip
+      }
+
+      // Yield to event loop periodically to keep UI responsive
+      if (++filesProcessed % YIELD_INTERVAL === 0) {
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+    }
+
+    return results;
   }
 
   /** Close the database connection and release WASM resources. */
@@ -888,9 +1065,25 @@ export class LadybugGraphStore implements GraphStore {
       const bm25Results = this.bm25Index.search(search, 50);
       if (bm25Results.length > 0) rankedLists.push(bm25Results);
 
-      if (queryEmbedding && this.vectorIndex && this.vectorIndex.size > 0) {
-        const vecResults = this.vectorIndex.search(queryEmbedding, 50);
-        if (vecResults.length > 0) rankedLists.push(vecResults);
+      if (queryEmbedding && this.hasVectorIndex) {
+        try {
+          const dims = queryEmbedding.length;
+          const vecLiteral = `[${queryEmbedding.join(',')}]`;
+          const rows = await this.query(
+            `CALL QUERY_VECTOR_INDEX('NodeVector', 'nodevec_idx', ` +
+              `CAST(${vecLiteral} AS FLOAT[${dims}]), 50) ` +
+              `YIELD node AS v, distance AS dist ` +
+              `WITH v, dist WHERE dist < 0.65 ` +
+              `RETURN v.id AS id, dist ` +
+              `ORDER BY dist`,
+          );
+          const vecResults = (rows as { id: string; dist: number }[]).map(
+            (r) => ({ id: r.id, score: Math.exp(-2 * r.dist) }),
+          );
+          if (vecResults.length > 0) rankedLists.push(vecResults);
+        } catch {
+          // Vector index may not exist yet
+        }
       }
 
       if (rankedLists.length > 0) {
@@ -1054,20 +1247,23 @@ export class LadybugGraphStore implements GraphStore {
         }
       }
     }
-    // Drop all typed node tables
+    // Drop all typed node tables and SourceText
     for (const type of NODE_TYPES) {
       await this.exec(`DROP TABLE IF EXISTS ${type}`);
     }
+    await this.exec(`DROP TABLE IF EXISTS SourceText`);
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
       await this.exec(stmt);
     }
-    this.vectorIndex = null;
-    this.bm25Index = new BM25Index();
+    this.hasVectorIndex = false;
+    this.bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
     this.nodeTypeMap.clear();
     this.nodeCache.clear();
     this.flushedPackageIds.clear();
+    this.flushedSourceIds.clear();
     this.sourceCache.clear();
+    this.sourceSnippets.clear();
   }
 
   async importDatabase(
@@ -1236,20 +1432,63 @@ export class LadybugGraphStore implements GraphStore {
       }
     }
 
+    // Import SourceText from Parquet (if present in archive)
+    const sourceData = entries['source_text.parquet'];
+    if (sourceData) {
+      onProgress?.('Importing source text for FTS');
+      const arrowTable = await parquetToArrow(sourceData);
+      const snippets = new Map<string, string>();
+      const fakeCache = new Map<
+        string,
+        { compressed: Uint8Array; path: string; binary?: boolean }
+      >();
+      for (let i = 0; i < arrowTable.numRows; i++) {
+        const id = String(arrowTable.getChild('id')?.get(i) ?? '');
+        const name = String(arrowTable.getChild('name')?.get(i) ?? '');
+        const text = String(arrowTable.getChild('source_text')?.get(i) ?? '');
+        if (id && text) {
+          snippets.set(id, text);
+          fakeCache.set(id, {
+            compressed: new Uint8Array(),
+            path: name,
+          });
+        }
+      }
+      if (snippets.size > 0) {
+        const csv = generateSourceTextCSV(snippets, fakeCache);
+        const csvPath = '/import_source_text.csv';
+        await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+        try {
+          await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
+        } finally {
+          await lbug.FS.unlink(csvPath);
+        }
+        console.log(
+          `[LadybugStore] imported SourceText: ${snippets.size} rows`,
+        );
+      }
+    }
+
+    // Rebuild FTS index on SourceText (whether from import or empty)
+    onProgress?.('Rebuilding search indexes');
+    await this.rebuildSourceFTS();
+
     console.log(
       `[LadybugStore] importDatabase complete: ${totalNodes} nodes, ${totalRels} rels`,
     );
-    onProgress?.('Rebuilding search indexes');
     return {
       nodes_created: totalNodes,
       relationships_created: totalRels,
     };
   }
 
-  async exportDatabase(): Promise<Uint8Array> {
+  async exportDatabase(options?: {
+    includeSource?: boolean;
+  }): Promise<Uint8Array> {
     await this.ensureReady();
     await this.flush();
 
+    const includeSource = options?.includeSource ?? false;
     const files: Record<string, Uint8Array> = {};
 
     // Export each typed node table as a Parquet file via JS Arrow → parquet-wasm
@@ -1268,6 +1507,23 @@ export class LadybugGraphStore implements GraphStore {
       console.log(
         `[LadybugStore] exported ${type}: ${rows.length} nodes, ${data.byteLength} bytes`,
       );
+    }
+
+    // Optionally export SourceText table (source code for FTS)
+    if (includeSource) {
+      const sourceRows = await this.query(
+        `MATCH (n:SourceText) RETURN n.id AS id, n.name AS name, n.source_text AS source_text`,
+      );
+      if (sourceRows.length > 0) {
+        const data = await rowsToParquet(
+          sourceRows as Record<string, string>[],
+          ['id', 'name', 'source_text'],
+        );
+        files['source_text.parquet'] = data;
+        console.log(
+          `[LadybugStore] exported SourceText: ${sourceRows.length} rows, ${data.byteLength} bytes`,
+        );
+      }
     }
 
     // Export all relationships as a single Parquet file
@@ -1289,7 +1545,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     console.log(
-      `[LadybugStore] exportDatabase: ${Object.keys(files).length} parquet files`,
+      `[LadybugStore] exportDatabase: ${Object.keys(files).length} parquet files (includeSource=${includeSource})`,
     );
 
     if (Object.keys(files).length === 0) {
@@ -1322,6 +1578,33 @@ export class LadybugGraphStore implements GraphStore {
       nodes_created: batch.nodes.length,
       relationships_created: batch.relationships.length,
     };
+  }
+
+  /**
+   * Import embedding vectors directly into the NodeVector table and the
+   * in-memory vector index, without touching the typed node tables.
+   */
+  async importVectors(vectors: { id: string; vec: number[] }[]): Promise<void> {
+    if (vectors.length === 0) return;
+    await this.ensureReady();
+
+    // Persist to LadybugDB NodeVector table in chunks
+    for (let offset = 0; offset < vectors.length; offset += FLUSH_CHUNK_SIZE) {
+      const chunk = vectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
+      const lines = ['id,vec'];
+      for (const { id, vec } of chunk) {
+        lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+      }
+      const csv = lines.join('\n');
+      const path = '/vectors_embed.csv';
+      await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+      await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
+      await lbug.FS.unlink(path);
+    }
+
+    if (!this.hasVectorIndex) {
+      await this.createVectorIndex();
+    }
   }
 
   /**
@@ -1361,6 +1644,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     // --- Update JS-side indexes + bucket by type ---
+    const pendingVectors: { id: string; vec: number[] }[] = [];
     const buckets = new Map<string, ImportBatchRequest['nodes']>();
     let nodeCount = 0;
 
@@ -1375,17 +1659,17 @@ export class LadybugGraphStore implements GraphStore {
         properties: JSON.stringify(props),
       });
 
-      // BM25 index
+      // BM25 index with field boosting (name field weighted 2x)
       const searchParts = [node.name, node.type];
       if (typeof props.summary === 'string') searchParts.push(props.summary);
       if (typeof props.path === 'string') searchParts.push(props.path);
-      this.bm25Index.addDocument(node.id, searchParts.join(' '));
+      this.bm25Index.addDocument(node.id, searchParts.join(' '), {
+        name: node.name,
+      });
 
-      // Vector index
+      // Collect embeddings for persistent vector storage
       if (node.embedding && node.embedding.length > 0) {
-        if (!this.vectorIndex)
-          this.vectorIndex = new VectorIndex(node.embedding.length);
-        this.vectorIndex.addVector(node.id, node.embedding);
+        pendingVectors.push({ id: node.id, vec: node.embedding });
       }
 
       // Bucket by type, skipping unknown types and duplicate packages
@@ -1420,6 +1704,58 @@ export class LadybugGraphStore implements GraphStore {
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
         await lbug.FS.unlink(path);
+      }
+    }
+
+    // --- Flush source text for FTS indexing (file-level only) ---
+    // Only flush snippets not yet in the SourceText table (avoid PK violations)
+    const newSnippets = new Map<string, string>();
+    for (const [id, text] of this.sourceSnippets) {
+      if (!this.flushedSourceIds.has(id)) {
+        newSnippets.set(id, text);
+      }
+    }
+    if (newSnippets.size > 0) {
+      const entries = Array.from(newSnippets.entries());
+      for (
+        let offset = 0;
+        offset < entries.length;
+        offset += FLUSH_CHUNK_SIZE
+      ) {
+        const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
+        const csv = generateSourceTextCSV(chunk, this.sourceCache);
+        const path = '/source_text.csv';
+        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
+        await lbug.FS.unlink(path);
+      }
+      for (const id of newSnippets.keys()) {
+        this.flushedSourceIds.add(id);
+      }
+      await this.rebuildSourceFTS();
+    }
+
+    // --- Flush embeddings to NodeVector table ---
+    if (pendingVectors.length > 0) {
+      for (
+        let offset = 0;
+        offset < pendingVectors.length;
+        offset += FLUSH_CHUNK_SIZE
+      ) {
+        const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
+        const lines = ['id,vec'];
+        for (const { id, vec } of chunk) {
+          lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+        }
+        const csv = lines.join('\n');
+        const path = '/vectors.csv';
+        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
+        await lbug.FS.unlink(path);
+      }
+      // Create vector index if not yet created
+      if (!this.hasVectorIndex) {
+        await this.createVectorIndex();
       }
     }
 
@@ -1500,6 +1836,13 @@ export class LadybugGraphStore implements GraphStore {
         path: f.path,
         binary: f.binary,
       });
+      // Store truncated source for FTS indexing (flushed to SourceText table)
+      if (!f.binary && f.content) {
+        this.sourceSnippets.set(
+          f.id,
+          f.content.slice(0, MAX_SOURCE_TEXT_CHARS),
+        );
+      }
     }
   }
 
@@ -1547,6 +1890,31 @@ export class LadybugGraphStore implements GraphStore {
     };
   }
 
+  // ---- FTS search helpers ----
+
+  /**
+   * Query the SourceText FTS index for file-level content matches.
+   * Returns file node IDs ranked by FTS relevance score.
+   */
+  private async queryFTSIndexes(
+    queryStr: string,
+    limit: number,
+  ): Promise<{ id: string; score: number }[]> {
+    const escaped = esc(queryStr);
+    try {
+      const rows = await this.query(
+        `CALL QUERY_FTS_INDEX('SourceText', 'search_idx_source', '${escaped}') ` +
+          `YIELD node, score ` +
+          `RETURN node.id AS id, score ` +
+          `ORDER BY score DESC LIMIT ${limit}`,
+      );
+      return rows as { id: string; score: number }[];
+    } catch {
+      // FTS index may not exist yet (before first flush) — safe to skip
+      return [];
+    }
+  }
+
   // ---- Chat tool methods ----
 
   async searchNodes(
@@ -1555,125 +1923,173 @@ export class LadybugGraphStore implements GraphStore {
     nodeTypes?: string[],
   ): Promise<NodeResult[]> {
     const t0 = performance.now();
+    console.debug(
+      `[searchNodes] query="${queryStr}" bm25.size=${this.bm25Index.size} nodeTypes=${nodeTypes?.join(',') ?? 'all'}`,
+    );
 
-    // Phase 1: Embedding
-    let queryEmbedding: number[] | undefined;
-    if (this.embedder) {
-      try {
-        const embeddings = await this.embedder.embed([queryStr]);
-        if (embeddings.length > 0 && embeddings[0].length > 0) {
-          queryEmbedding = embeddings[0];
+    try {
+      // Phase 1: Embedding
+      let queryEmbedding: number[] | undefined;
+      if (this.embedder) {
+        try {
+          const embeddings = await this.embedder.embed([queryStr]);
+          if (embeddings.length > 0 && embeddings[0].length > 0) {
+            queryEmbedding = embeddings[0];
+          }
+        } catch {
+          // Embedding failure is non-fatal
         }
-      } catch {
-        // Embedding failure is non-fatal
       }
-    }
-    const tEmbed = performance.now();
+      const tEmbed = performance.now();
 
-    // Phase 2: BM25 + vector ranking
-    const effectiveLimit = limit ?? 50;
-    const rankedLists: { id: string; score: number }[][] = [];
+      // Phase 2: BM25 (in-memory) + LadybugDB FTS (content) + vector ranking
+      const effectiveLimit = limit ?? 50;
+      const rankedLists: { id: string; score: number }[][] = [];
 
-    const bm25Results = this.bm25Index.search(queryStr, effectiveLimit * 2);
-    if (bm25Results.length > 0) rankedLists.push(bm25Results);
+      // 2a: In-memory BM25 — fast metadata search (name + type + summary + path)
+      const bm25Results = this.bm25Index.search(queryStr, effectiveLimit * 2);
+      if (bm25Results.length > 0) rankedLists.push(bm25Results);
 
-    if (queryEmbedding && this.vectorIndex && this.vectorIndex.size > 0) {
-      const vecResults = this.vectorIndex.search(
-        queryEmbedding,
+      // 2b: LadybugDB native FTS — content search across per-type indexes
+      const ftsResults = await this.queryFTSIndexes(
+        queryStr,
         effectiveLimit * 2,
       );
-      if (vecResults.length > 0) rankedLists.push(vecResults);
-    }
-    const tRank = performance.now();
+      if (ftsResults.length > 0) rankedLists.push(ftsResults);
 
-    // Phase 3: Fusion / fallback text search
-    let seedIds: string[];
-    let searchPath: string;
-    // If the fallback returns full node data, we can skip the fetch phase
-    let prefetchedRows: Record<string, string>[] | null = null;
+      // 2c: Vector search — LadybugDB native vector index
+      if (queryEmbedding && this.hasVectorIndex) {
+        try {
+          const dims = queryEmbedding.length;
+          const vecLiteral = `[${queryEmbedding.join(',')}]`;
+          const vecRows = await this.query(
+            `CALL QUERY_VECTOR_INDEX('NodeVector', 'nodevec_idx', ` +
+              `CAST(${vecLiteral} AS FLOAT[${dims}]), ${effectiveLimit * 2}) ` +
+              `YIELD node AS v, distance AS dist ` +
+              `WITH v, dist WHERE dist < 0.65 ` +
+              `RETURN v.id AS id, dist ` +
+              `ORDER BY dist`,
+          );
+          const vecResults = (vecRows as { id: string; dist: number }[]).map(
+            (r) => ({ id: r.id, score: Math.exp(-2 * r.dist) }),
+          );
+          if (vecResults.length > 0) rankedLists.push(vecResults);
+        } catch {
+          // Vector index may not exist yet — safe to skip
+        }
+      }
+      const tRank = performance.now();
 
-    if (rankedLists.length > 0) {
-      const fused = rrfFuse(rankedLists, effectiveLimit * 2);
-      seedIds = fused.map((r) => r.id);
-      searchPath = `rrf(bm25=${bm25Results.length},vec=${queryEmbedding ? (rankedLists.length > 1 ? (rankedLists[1]?.length ?? 0) : 0) : 'off'})`;
-    } else {
-      // Cypher CONTAINS fallback — return full node data in one round-trip
-      const q = esc(queryStr.toLowerCase());
-      const rows = await this.query(unionAllTextSearchFull(q));
-      prefetchedRows = rows as Record<string, string>[];
-      seedIds = prefetchedRows.map((r) => r.id);
-      searchPath = 'cypher-contains';
-    }
-    const tFuse = performance.now();
+      // Phase 3: Fusion / fallback text search
+      let seedIds: string[];
+      let searchPath: string;
+      // If the fallback returns full node data, we can skip the fetch phase
+      let prefetchedRows: Record<string, string>[] | null = null;
 
-    if (seedIds.length === 0) {
+      if (rankedLists.length > 0) {
+        const fused = rrfFuse(rankedLists, effectiveLimit * 2);
+        seedIds = fused.map((r) => r.id);
+        searchPath = `rrf(bm25=${bm25Results.length},fts=${ftsResults.length},vec=${queryEmbedding ? 'on' : 'off'})`;
+      } else {
+        console.warn(
+          `[searchNodes] No ranked results for "${queryStr}" — bm25.size=${this.bm25Index.size}, bm25hits=${bm25Results.length}, ftsHits=${ftsResults.length}`,
+        );
+        // Cypher CONTAINS fallback — return full node data in one round-trip
+        const q = esc(queryStr.toLowerCase());
+        const rows = await this.query(unionAllTextSearchFull(q));
+        prefetchedRows = rows as Record<string, string>[];
+        seedIds = prefetchedRows.map((r) => r.id);
+        searchPath = 'cypher-contains';
+      }
+      const tFuse = performance.now();
+
+      if (seedIds.length === 0) {
+        logPerf(
+          'searchNodes',
+          {
+            queryStr,
+            limit,
+            nodeTypes,
+            results: 0,
+            seedIds: 0,
+            searchPath,
+            embed_ms: +(tEmbed - t0).toFixed(1),
+            rank_ms: +(tRank - tEmbed).toFixed(1),
+            fuse_ms: +(tFuse - tRank).toFixed(1),
+            fetch_ms: 0,
+          },
+          0,
+          performance.now() - t0,
+        );
+        return [];
+      }
+
+      // Phase 4: Fetch full node details (skip if already fetched in phase 3)
+      console.debug(
+        `[searchNodes] Phase 4: seedIds=${seedIds.length}, path=${searchPath}, top3=${seedIds.slice(0, 3).join(', ')}`,
+      );
+      const nodeRows = prefetchedRows ?? (await this.fetchNodesByIds(seedIds));
+      const tFetch = performance.now();
+
+      if (nodeRows.length < seedIds.length) {
+        console.warn(
+          `[searchNodes] fetchNodesByIds returned ${nodeRows.length} rows for ${seedIds.length} seeds — ${seedIds.length - nodeRows.length} nodes not found in DB`,
+        );
+      }
+
+      let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
+        (r) => {
+          const props = parseProps(r.properties);
+          return {
+            id: r.id,
+            type: r.type,
+            name: r.name,
+            ...(props && { properties: props }),
+          };
+        },
+      );
+
+      if (nodeTypes && nodeTypes.length > 0) {
+        const typeSet = new Set(nodeTypes.map((t) => t.trim()));
+        const beforeFilter = results.length;
+        results = results.filter((n) => typeSet.has(n.type));
+        if (results.length < beforeFilter) {
+          console.debug(
+            `[searchNodes] nodeType filter: ${beforeFilter} → ${results.length} (types=${nodeTypes.join(',')})`,
+          );
+        }
+      }
+
+      // Preserve ranked order
+      const orderMap = new Map(seedIds.map((id, idx) => [id, idx]));
+      results.sort(
+        (a, b) =>
+          (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
+      );
+
+      const final = results.slice(0, effectiveLimit);
       logPerf(
         'searchNodes',
         {
           queryStr,
           limit,
           nodeTypes,
-          results: 0,
-          seedIds: 0,
           searchPath,
+          seedIds: seedIds.length,
+          results: final.length,
           embed_ms: +(tEmbed - t0).toFixed(1),
           rank_ms: +(tRank - tEmbed).toFixed(1),
           fuse_ms: +(tFuse - tRank).toFixed(1),
-          fetch_ms: 0,
+          fetch_ms: +(tFetch - tFuse).toFixed(1),
         },
-        0,
+        final.length,
         performance.now() - t0,
       );
+      return final;
+    } catch (err) {
+      console.error('[searchNodes] EXCEPTION during search:', err);
       return [];
     }
-
-    // Phase 4: Fetch full node details (skip if already fetched in phase 3)
-    const nodeRows = prefetchedRows ?? (await this.fetchNodesByIds(seedIds));
-    const tFetch = performance.now();
-
-    let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
-      (r) => {
-        const props = parseProps(r.properties);
-        return {
-          id: r.id,
-          type: r.type,
-          name: r.name,
-          ...(props && { properties: props }),
-        };
-      },
-    );
-
-    if (nodeTypes && nodeTypes.length > 0) {
-      const typeSet = new Set(nodeTypes.map((t) => t.trim()));
-      results = results.filter((n) => typeSet.has(n.type));
-    }
-
-    // Preserve ranked order
-    const orderMap = new Map(seedIds.map((id, idx) => [id, idx]));
-    results.sort(
-      (a, b) =>
-        (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity),
-    );
-
-    const final = results.slice(0, effectiveLimit);
-    logPerf(
-      'searchNodes',
-      {
-        queryStr,
-        limit,
-        nodeTypes,
-        searchPath,
-        seedIds: seedIds.length,
-        results: final.length,
-        embed_ms: +(tEmbed - t0).toFixed(1),
-        rank_ms: +(tRank - tEmbed).toFixed(1),
-        fuse_ms: +(tFuse - tRank).toFixed(1),
-        fetch_ms: +(tFetch - tFuse).toFixed(1),
-      },
-      final.length,
-      performance.now() - t0,
-    );
-    return final;
   }
 
   async listNodes(
@@ -1707,7 +2123,8 @@ export class LadybugGraphStore implements GraphStore {
       results = results.filter((n) => {
         if (!n.properties) return false;
         return Object.entries(filters).every(
-          ([k, v]) => String(n.properties![k]) === v,
+          ([k, v]) =>
+            String(n.properties![k]).toLowerCase() === v.toLowerCase(),
         );
       });
     }

@@ -66,22 +66,96 @@ const STOP_WORDS = new Set([
   'with',
 ]);
 
-/** Split text into lowercase tokens, stripping punctuation and stop words. */
+/**
+ * Split text into lowercase tokens, preserving compound identifiers and
+ * expanding camelCase. Filters punctuation and stop words.
+ *
+ * "coms-license-service" → ["coms-license-service", "coms", "license", "service"]
+ * "getUserById"          → ["getuserbyid", "get", "user", "by", "id"]
+ */
 export function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
+  const lower = text.toLowerCase();
+  const tokens: string[] = [];
+
+  // Pass 1: extract hyphenated compound identifiers (e.g. "coms-license-service")
+  const compoundRe = /[a-z][a-z0-9]*(?:-[a-z0-9]+)+/g;
+  const compounds = lower.match(compoundRe) ?? [];
+  const withoutCompounds = lower.replace(compoundRe, ' ');
+
+  for (const compound of compounds) {
+    tokens.push(compound); // whole compound
+    for (const part of compound.split('-')) {
+      if (part.length > 1) tokens.push(part); // sub-parts
+    }
+  }
+
+  // Pass 2: expand camelCase in the original (pre-lowered) text
+  // "getUserById" → ["getuserbyid", "get", "user", "by", "id"]
+  const camelRe = /[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+/g;
+  const camelMatches = text.match(camelRe) ?? [];
+  for (const camel of camelMatches) {
+    const whole = camel.toLowerCase();
+    if (whole.length > 1) tokens.push(whole);
+    // Split on uppercase boundaries
+    const parts = camel.split(/(?=[A-Z])/).map((p) => p.toLowerCase());
+    for (const part of parts) {
+      if (part.length > 1) tokens.push(part);
+    }
+  }
+
+  // Pass 3: standard tokenization on remaining text
+  const standard = withoutCompounds
     .replace(/[^a-z0-9_]/g, ' ')
     .split(/\s+/)
     .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+  tokens.push(...standard);
+
+  // Deduplicate while preserving order
+  return [...new Set(tokens)];
+}
+
+// ---- Fuzzy matching ----
+
+/**
+ * Compute Levenshtein edit distance between two strings.
+ * Bails out early if distance exceeds maxDist (avoids full matrix for distant pairs).
+ */
+export function editDistance(a: string, b: string, maxDist = 2): number {
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  if (a === b) return 0;
+
+  // Single-row DP (space-optimized)
+  const m = a.length;
+  const n = b.length;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+
+  for (let j = 0; j <= n; j++) prev[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    let rowMin = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    // Early exit: if minimum in this row already exceeds maxDist, no point continuing
+    if (rowMin > maxDist) return maxDist + 1;
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
 }
 
 // ---- BM25 Index ----
 
 interface DocEntry {
-  /** Token frequencies for this document. */
+  /** Token frequencies for this document, per field. */
   termFreqs: Map<string, number>;
   /** Total token count. */
   length: number;
+  /** Per-field token frequencies (for field boosting). */
+  fieldFreqs?: Map<string, Map<string, number>>;
 }
 
 export interface BM25Result {
@@ -89,8 +163,19 @@ export interface BM25Result {
   score: number;
 }
 
+/** Field weight configuration. Keys are field names, values are boost multipliers. */
+export interface FieldWeights {
+  [field: string]: number;
+}
+
 /** Maximum number of prefix-expanded tokens to consider per query term. */
 const MAX_PREFIX_EXPANSIONS = 20;
+
+/** Maximum number of fuzzy-expanded tokens to consider per query term. */
+const MAX_FUZZY_EXPANSIONS = 10;
+
+/** Discount applied to fuzzy matches (edit distance > 0). */
+const FUZZY_PENALTY = 0.6;
 
 export class BM25Index {
   private docs = new Map<string, DocEntry>();
@@ -102,18 +187,36 @@ export class BM25Index {
   private totalLength = 0;
   private k1: number;
   private b: number;
+  /** Field weight multipliers (e.g. { name: 2.0, content: 1.0 }). */
+  private fieldWeights: FieldWeights;
+  /** Maximum edit distance for fuzzy matching. 0 = disabled. */
+  private fuzzyMaxDist: number;
 
-  constructor(k1 = 1.5, b = 0.75) {
+  constructor(
+    k1 = 1.5,
+    b = 0.75,
+    fieldWeights?: FieldWeights,
+    fuzzyMaxDist = 1,
+  ) {
     this.k1 = k1;
     this.b = b;
+    this.fieldWeights = fieldWeights ?? {};
+    this.fuzzyMaxDist = fuzzyMaxDist;
   }
 
   get size(): number {
     return this.docs.size;
   }
 
-  /** Add or update a document in the index. */
-  addDocument(id: string, text: string): void {
+  /**
+   * Add or update a document in the index.
+   *
+   * @param id - Document identifier.
+   * @param text - Full document text (used when no fields are provided).
+   * @param fields - Optional field map (e.g. `{ name: "foo.ts", content: "import ..." }`).
+   *                 When provided, tokens from each field are boosted according to `fieldWeights`.
+   */
+  addDocument(id: string, text: string, fields?: Record<string, string>): void {
     // Remove old version if updating
     if (this.docs.has(id)) {
       this.removeDocument(id);
@@ -134,7 +237,22 @@ export class BM25Index {
       posting.add(id);
     }
 
-    this.docs.set(id, { termFreqs, length: tokens.length });
+    // Build per-field frequencies for field boosting
+    let fieldFreqs: Map<string, Map<string, number>> | undefined;
+    if (fields && Object.keys(this.fieldWeights).length > 0) {
+      fieldFreqs = new Map();
+      for (const [field, value] of Object.entries(fields)) {
+        if (!value) continue;
+        const fieldTokens = tokenize(value);
+        const freqs = new Map<string, number>();
+        for (const token of fieldTokens) {
+          freqs.set(token, (freqs.get(token) ?? 0) + 1);
+        }
+        fieldFreqs.set(field, freqs);
+      }
+    }
+
+    this.docs.set(id, { termFreqs, length: tokens.length, fieldFreqs });
     this.totalLength += tokens.length;
   }
 
@@ -169,17 +287,16 @@ export class BM25Index {
 
     const avgdl = this.totalLength / N;
     const scores = new Map<string, number>();
+    const hasFieldWeights = Object.keys(this.fieldWeights).length > 0;
 
     for (const term of queryTokens) {
-      // Exact match first, then prefix expansion if no exact match
+      // Exact match first, then prefix expansion, then fuzzy expansion
       const postings = this.getPostings(term);
 
-      for (const [token, posting] of postings) {
+      for (const [token, posting, matchPenalty] of postings) {
         const df = posting.size;
         // IDF with smoothing to avoid negative scores
         const idf = Math.log((N - df + 0.5) / (df + 0.5) + 1);
-        // Discount prefix matches slightly so exact matches rank higher
-        const prefixPenalty = token === term ? 1.0 : 0.8;
 
         for (const docId of posting) {
           const doc = this.docs.get(docId)!;
@@ -187,9 +304,21 @@ export class BM25Index {
           const norm = 1 - this.b + this.b * (doc.length / avgdl);
           const tfScore = (tf * (this.k1 + 1)) / (tf + this.k1 * norm);
 
+          // Field boosting: if the token appears in a high-weight field, boost the score
+          let fieldBoost = 1.0;
+          if (hasFieldWeights && doc.fieldFreqs) {
+            for (const [field, freqs] of doc.fieldFreqs) {
+              if (freqs.has(token)) {
+                const weight = this.fieldWeights[field] ?? 1.0;
+                if (weight > fieldBoost) fieldBoost = weight;
+              }
+            }
+          }
+
           scores.set(
             docId,
-            (scores.get(docId) ?? 0) + idf * tfScore * prefixPenalty,
+            (scores.get(docId) ?? 0) +
+              idf * tfScore * matchPenalty * fieldBoost,
           );
         }
       }
@@ -202,42 +331,68 @@ export class BM25Index {
   }
 
   /**
-   * Get posting lists for a term. Returns exact match if available,
-   * otherwise expands to prefix matches (e.g. "sqlite" → "sqlite3").
+   * Get posting lists for a term. Returns [token, postings, penalty] tuples.
+   *
+   * Resolution order:
+   * 1. Exact match (penalty 1.0)
+   * 2. Prefix expansion (penalty 0.8) — "sqlite" → "sqlite3"
+   * 3. Fuzzy expansion (penalty 0.6) — "licnese" → "license"
    */
-  private getPostings(term: string): Array<[string, Set<string>]> {
+  private getPostings(term: string): Array<[string, Set<string>, number]> {
     // Exact match — fast path
     const exact = this.invertedIndex.get(term);
-    if (exact) return [[term, exact]];
+    if (exact) return [[term, exact, 1.0]];
 
     // Prefix expansion — only for terms ≥ 3 chars to avoid overly broad matches
-    if (term.length < 3) return [];
+    if (term.length >= 3) {
+      this.ensureSortedTokens();
+      const prefixResults: Array<[string, Set<string>, number]> = [];
 
-    this.ensureSortedTokens();
-    const results: Array<[string, Set<string>]> = [];
+      // Binary search to find the first token ≥ term
+      let lo = 0;
+      let hi = this.sortedTokens.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (this.sortedTokens[mid] < term) lo = mid + 1;
+        else hi = mid;
+      }
 
-    // Binary search to find the first token ≥ term
-    let lo = 0;
-    let hi = this.sortedTokens.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (this.sortedTokens[mid] < term) lo = mid + 1;
-      else hi = mid;
+      // Scan forward while tokens start with the prefix
+      for (
+        let i = lo;
+        i < this.sortedTokens.length &&
+        prefixResults.length < MAX_PREFIX_EXPANSIONS;
+        i++
+      ) {
+        const token = this.sortedTokens[i];
+        if (!token.startsWith(term)) break;
+        const posting = this.invertedIndex.get(token);
+        if (posting) prefixResults.push([token, posting, 0.8]);
+      }
+
+      if (prefixResults.length > 0) return prefixResults;
     }
 
-    // Scan forward while tokens start with the prefix
-    for (
-      let i = lo;
-      i < this.sortedTokens.length && results.length < MAX_PREFIX_EXPANSIONS;
-      i++
-    ) {
-      const token = this.sortedTokens[i];
-      if (!token.startsWith(term)) break;
-      const posting = this.invertedIndex.get(token);
-      if (posting) results.push([token, posting]);
+    // Fuzzy expansion — only for terms ≥ 4 chars (short terms produce too many false matches)
+    if (this.fuzzyMaxDist > 0 && term.length >= 4) {
+      this.ensureSortedTokens();
+      const fuzzyResults: Array<[string, Set<string>, number]> = [];
+
+      for (const token of this.sortedTokens) {
+        if (fuzzyResults.length >= MAX_FUZZY_EXPANSIONS) break;
+        // Skip tokens with large length difference (cheap pre-filter)
+        if (Math.abs(token.length - term.length) > this.fuzzyMaxDist) continue;
+        const dist = editDistance(term, token, this.fuzzyMaxDist);
+        if (dist > 0 && dist <= this.fuzzyMaxDist) {
+          const posting = this.invertedIndex.get(token);
+          if (posting) fuzzyResults.push([token, posting, FUZZY_PENALTY]);
+        }
+      }
+
+      if (fuzzyResults.length > 0) return fuzzyResults;
     }
 
-    return results;
+    return [];
   }
 
   /** Rebuild sorted token list if dirty. */

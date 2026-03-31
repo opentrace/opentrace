@@ -80,6 +80,7 @@ export function createChatAgent(
     listener?.(agentName, step);
 
   const subAgentTools = makeSubAgentTools(llm, store, emitProgress, prTools);
+
   const agent = createReactAgent({
     llm,
     tools: [...graphTools, ...prTools, ...subAgentTools],

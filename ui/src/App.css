@@ -874,6 +874,50 @@
   background: color-mix(in oklch, var(--destructive) 85%, black);
 }
 
+/* Export modal */
+.export-options {
+  width: 380px;
+}
+
+.export-options h2 {
+  margin: 0 0 8px;
+}
+
+.export-options-text {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+
+.export-options-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.85rem;
+  margin: 0 0 20px;
+  cursor: pointer;
+}
+
+.export-options-checkbox input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.export-options-hint {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.export-options-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.export-options-actions .btn-cta {
+  flex: 1;
+}
+
 /* Theme selector */
 .theme-selector-wrapper {
   position: relative;
