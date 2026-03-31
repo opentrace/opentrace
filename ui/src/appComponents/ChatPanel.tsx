@@ -598,16 +598,18 @@ export default function ChatPanel({
             <path d="M5 18H3" />
           </svg>
           <h3>AI Assistant</h3>
-          {!showSettingsView && !showHistory && (apiKey || providerId === 'local') && (
-            <span
-              className="provider-tag"
-              onClick={() => setShowSettings(true)}
-              title="Click to change provider or model"
-            >
-              {PROVIDERS[providerId].models.find((m) => m.id === modelId)
-                ?.name ?? modelId}
-            </span>
-          )}
+          {!showSettingsView &&
+            !showHistory &&
+            (apiKey || providerId === 'local') && (
+              <span
+                className="provider-tag"
+                onClick={() => setShowSettings(true)}
+                title="Click to change provider or model"
+              >
+                {PROVIDERS[providerId].models.find((m) => m.id === modelId)
+                  ?.name ?? modelId}
+              </span>
+            )}
         </div>
         <div className="panel-header-actions">
           {hasFoundNodes && (
