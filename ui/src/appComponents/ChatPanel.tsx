@@ -401,9 +401,14 @@ export default function ChatPanel({
             if (hasFileAtts) {
               for (const att of atts) {
                 if (att.kind === 'file') {
+                  const lines = att.textContent.split('\n').length;
+                  const bytes = new Blob([att.textContent]).size;
                   contentParts.push({
                     type: 'text' as const,
-                    text: `--- File: ${att.name} ---\n${att.textContent}\n--- End of ${att.name} ---`,
+                    text:
+                      `<attached_file name="${att.name}" lines="${lines}" bytes="${bytes}">\n` +
+                      `${att.textContent}\n` +
+                      `</attached_file>`,
                   });
                 } else if (att.kind === 'image') {
                   contentParts.push({

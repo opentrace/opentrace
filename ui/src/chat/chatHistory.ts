@@ -196,9 +196,12 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
       }
       if (!needsHydration && m.attachments) {
         for (const att of m.attachments) {
+          const kind = att.kind ?? ('dataUrl' in att ? 'image' : 'file');
           if (
-            (att.kind === 'image' && !att.dataUrl) ||
-            (att.kind === 'file' && !att.textContent)
+            (kind === 'image' &&
+              !('dataUrl' in att && (att as ImageAttachment).dataUrl)) ||
+            (kind === 'file' &&
+              !('textContent' in att && (att as FileAttachment).textContent))
           ) {
             needsHydration = true;
             break;
@@ -243,20 +246,33 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
         result = {
           ...result,
           attachments: m.attachments.map((att): Attachment => {
-            if (att.kind === 'image' && !att.dataUrl) {
-              const blob = blobMap.get(att.id);
-              return {
-                ...att,
-                dataUrl: blob?.dataUrl ?? MISSING_IMAGE_PLACEHOLDER,
-              };
-            } else if (att.kind === 'file' && !att.textContent) {
-              const blob = blobMap.get(att.id);
-              return {
-                ...att,
-                textContent: blob?.textContent ?? '[File content unavailable]',
-              } as FileAttachment;
+            // Infer kind from shape if missing (defensive for stored data)
+            const kind =
+              att.kind ??
+              ('dataUrl' in att ? ('image' as const) : ('file' as const));
+
+            if (kind === 'image') {
+              const img = { ...att, kind } as ImageAttachment;
+              if (!img.dataUrl) {
+                const blob = blobMap.get(img.id);
+                return {
+                  ...img,
+                  dataUrl: blob?.dataUrl ?? MISSING_IMAGE_PLACEHOLDER,
+                };
+              }
+              return img;
+            } else {
+              const file = { ...att, kind } as FileAttachment;
+              if (!file.textContent) {
+                const blob = blobMap.get(file.id);
+                return {
+                  ...file,
+                  textContent:
+                    blob?.textContent ?? '[File content unavailable]',
+                };
+              }
+              return file;
             }
-            return att;
           }),
         };
       }
