@@ -51,7 +51,10 @@ def load_config(path: Path) -> dict[str, Any]:
     text = path.read_text()
     if not text.strip():
         return {}
-    data = yaml.safe_load(text)
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
     return data if isinstance(data, dict) else {}
 
 

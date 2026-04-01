@@ -60,7 +60,14 @@ def test_save_creates_parent_dirs(tmp_path: Path) -> None:
 runner = CliRunner()
 
 
+def _make_repo(base: Path) -> Path:
+    """Create a fake git repo root so directory walk stays bounded."""
+    (base / ".git").mkdir(exist_ok=True)
+    return base
+
+
 def test_config_set_creates_file(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["config", "set", "org", "acme_corp"])
     assert result.exit_code == 0
@@ -72,6 +79,7 @@ def test_config_set_creates_file(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_get_returns_value(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     runner.invoke(app, ["config", "set", "org", "org_abc123"])
     result = runner.invoke(app, ["config", "get", "org"])
@@ -80,6 +88,7 @@ def test_config_get_returns_value(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_get_missing_key(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["config", "get", "org"])
     assert result.exit_code != 0
@@ -87,6 +96,7 @@ def test_config_get_missing_key(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_show_empty(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["config", "show"])
     assert result.exit_code == 0
@@ -94,6 +104,7 @@ def test_config_show_empty(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_show_with_values(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     runner.invoke(app, ["config", "set", "org", "acme_corp"])
     result = runner.invoke(app, ["config", "show"])
@@ -102,6 +113,7 @@ def test_config_show_with_values(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_set_overwrites(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     runner.invoke(app, ["config", "set", "org", "old_org"])
     runner.invoke(app, ["config", "set", "org", "new_org"])
@@ -111,6 +123,7 @@ def test_config_set_overwrites(tmp_path: Path, monkeypatch: object) -> None:
 
 def test_config_set_uses_existing_opentrace_dir(tmp_path: Path, monkeypatch: object) -> None:
     """If .opentrace/ already exists (e.g. from indexing), config writes there."""
+    _make_repo(tmp_path)
     ot_dir = tmp_path / ".opentrace"
     ot_dir.mkdir()
     (ot_dir / "index.db").touch()
@@ -124,6 +137,7 @@ def test_config_set_uses_existing_opentrace_dir(tmp_path: Path, monkeypatch: obj
 
 
 def test_config_path(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["config", "path"])
     assert result.exit_code == 0
@@ -132,6 +146,7 @@ def test_config_path(tmp_path: Path, monkeypatch: object) -> None:
 
 
 def test_config_set_creates_gitignore(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     runner.invoke(app, ["config", "set", "org", "acme_corp"])
     gi = tmp_path / ".opentrace" / ".gitignore"
@@ -139,6 +154,7 @@ def test_config_set_creates_gitignore(tmp_path: Path, monkeypatch: object) -> No
 
 
 def test_config_set_invalid_key(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["config", "set", "bad_key", "val"])
     assert result.exit_code != 0

@@ -54,8 +54,8 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def find_db(start: Path | None = None) -> Path | None:
-    """Walk up from *start* looking for ``.opentrace/index.db``.
+def _find_opentrace_dir(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for an existing ``.opentrace/`` directory.
 
     Security boundaries:
     - Stops at the git repo root (or filesystem root).
@@ -72,8 +72,8 @@ def find_db(start: Path | None = None) -> Path | None:
 
     current = start
     for _ in range(_MAX_WALK_DEPTH):
-        candidate = current / OPENTRACE_DIR / DB_NAME
-        if candidate.exists():
+        candidate = current / OPENTRACE_DIR
+        if candidate.is_dir():
             resolved = candidate.resolve()
             # Reject if the resolved path escapes the repo boundary.
             if _is_under(resolved, boundary):
@@ -83,6 +83,22 @@ def find_db(start: Path | None = None) -> Path | None:
             break
         current = current.parent
 
+    return None
+
+
+def find_db(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for ``.opentrace/index.db``.
+
+    Security boundaries:
+    - Stops at the git repo root (or filesystem root).
+    - Rejects symlinks that resolve outside the boundary.
+    - Caps upward traversal at ``_MAX_WALK_DEPTH`` levels.
+    """
+    ot_dir = _find_opentrace_dir(start)
+    if ot_dir is not None:
+        db_path = ot_dir / DB_NAME
+        if db_path.exists():
+            return db_path
     return None
 
 
@@ -477,32 +493,6 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 # config command group
 # ---------------------------------------------------------------------------
-
-
-def _find_opentrace_dir(start: Path | None = None) -> Path | None:
-    """Walk up from *start* looking for an existing ``.opentrace/`` directory.
-
-    Uses the same security boundaries as :func:`find_db`.
-    """
-    if start is None:
-        start = Path.cwd()
-    start = start.resolve()
-
-    git_root = _find_git_root(start)
-    boundary = git_root if git_root and _is_under(start, git_root) else Path(start.anchor)
-
-    current = start
-    for _ in range(_MAX_WALK_DEPTH):
-        candidate = current / OPENTRACE_DIR
-        if candidate.is_dir():
-            resolved = candidate.resolve()
-            if _is_under(resolved, boundary):
-                return resolved
-        if current == boundary or current.parent == current:
-            break
-        current = current.parent
-
-    return None
 
 
 def _resolve_config_path() -> Path:
