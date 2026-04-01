@@ -40,16 +40,21 @@ export function shouldHideNode(
     return true;
   }
 
-  // Sub-type filter: only applies when the node type has sub-types
+  // Sub-type filter: when the node type has sub-types, sub-type visibility
+  // takes precedence over the top-level type filter (matching filteredGraphData).
   const subTypes = availableSubTypes.get(node.type);
   if (subTypes && subTypes.length > 0) {
     const subType = getSubType(node);
-    if (subType && filterState.hiddenSubTypes.has(`${node.type}:${subType}`)) {
-      return true;
+    if (subType) {
+      return filterState.hiddenSubTypes.has(`${node.type}:${subType}`);
     }
+    // Node has no sub-type — hide only if ALL sub-types are hidden
+    return subTypes.every((s) =>
+      filterState.hiddenSubTypes.has(`${node.type}:${s.subType}`),
+    );
   }
 
-  // Type filter
+  // Type filter (only for types without sub-types)
   if (filterState.hiddenNodeTypes.has(node.type)) {
     return true;
   }
