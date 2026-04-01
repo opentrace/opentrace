@@ -392,6 +392,88 @@ def augment(pattern: str, db_path: str | None) -> None:
     run_augment(pattern, resolved)
 
 
+@app.command("export")
+@click.argument("output", default="opentrace.parquet.zip", type=click.Path())
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def export_cmd(output: str, db_path: str | None, verbose: bool) -> None:
+    """Export the graph database as a .parquet.zip archive.
+
+    The archive can be imported in the UI or via `opentraceai import`.
+    """
+    _configure_logging(verbose)
+
+    from opentrace_agent.cli.export_import import export_database
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    click.echo(f"Opening database at {resolved_db} ...")
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        click.echo("Exporting ...")
+        data = export_database(store)
+    finally:
+        store.close()
+
+    out = Path(output)
+    out.write_bytes(data)
+    size_kb = len(data) / 1024
+    click.echo(f"Wrote {out} ({size_kb:.1f} KB)")
+
+
+@app.command("import")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, resolve_path=True))
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help=f"Database path (default: ./{OPENTRACE_DIR}/{DB_NAME}).",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
+    """Import a .parquet.zip archive into the graph database.
+
+    Accepts archives exported from the UI or via `opentraceai export`.
+    """
+    _configure_logging(verbose)
+
+    from opentrace_agent.cli.export_import import import_database
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path)
+    db_dir = Path(resolved_db).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    click.echo(f"Opening database at {resolved_db} ...")
+    store = GraphStore(resolved_db)
+
+    data = Path(archive).read_bytes()
+    click.echo(f"Importing {archive} ({len(data) / 1024:.1f} KB) ...")
+
+    def on_progress(msg: str) -> None:
+        click.echo(f"  {msg}")
+
+    try:
+        result = import_database(store, data, on_progress=on_progress)
+    finally:
+        store.close()
+
+    click.echo(
+        f"Imported {result['nodes_created']} nodes, "
+        f"{result['relationships_created']} relationships "
+        f"({result['errors']} errors)"
+    )
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
