@@ -176,10 +176,10 @@ def processing(
                     pkg_props: dict[str, str] = {"registry": registry}
                     source_url = package_source_url(registry, pkg_name)
                     if source_url:
-                        pkg_props["source_uri"] = source_url
+                        pkg_props["sourceUri"] = source_url
                     package_nodes[pkg_id] = GraphNode(
                         id=pkg_id,
-                        type="Package",
+                        type="Dependency",
                         name=pkg_name,
                         properties=pkg_props,
                     )
@@ -334,7 +334,7 @@ def _symbol_to_graph(
         rels.append(
             GraphRelationship(
                 id=f"{node_id}->DEFINED_IN->{parent_id}",
-                type="DEFINED_IN",
+                type="DEFINES",
                 source_id=node_id,
                 target_id=parent_id,
                 properties={},
@@ -385,7 +385,7 @@ def _symbol_to_graph(
         rels.append(
             GraphRelationship(
                 id=f"{node_id}->DEFINED_IN->{parent_id}",
-                type="DEFINED_IN",
+                type="DEFINES",
                 source_id=node_id,
                 target_id=parent_id,
                 properties={},

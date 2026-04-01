@@ -174,7 +174,7 @@ const SEARCH_DESC =
 
 const LIST_DESC =
   'List nodes of a specific type. Valid types include: Repository, ' +
-  'Class, Function, File, Directory, Package, PullRequest.';
+  'Class, Function, File, Directory, Dependency.';
 
 const GET_DESC =
   'Get full details of a single node by its ID, including all properties.';

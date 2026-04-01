@@ -136,7 +136,7 @@ function getSubType(node: GraphNode): string | null {
     const lang = node.properties?.language as string | undefined;
     return lang || null;
   }
-  if (node.type === 'Package') {
+  if (node.type === 'Dependency') {
     const registry = node.properties?.registry as string | undefined;
     return registry || null;
   }
@@ -244,11 +244,10 @@ const GraphViewer = memo(
             if (cancelled) return;
             setIndexedRepos(
               nodes
-                .filter((n) => n.properties?.source_uri || n.properties?.url)
+                .filter((n) => n.properties?.sourceUri || n.properties?.url)
                 .map((n) => ({
                   name: n.name,
-                  url: (n.properties!.source_uri ??
-                    n.properties!.url) as string,
+                  url: (n.properties!.sourceUri ?? n.properties!.url) as string,
                 })),
             );
           })
@@ -334,7 +333,7 @@ const GraphViewer = memo(
       const [hiddenCommunities, setHiddenCommunities] = useState(
         new Set<number>(),
       );
-      // Track whether we've applied the default Package hiding
+      // Track whether we've applied the default Dependency hiding
       const defaultsApplied = useRef(false);
       const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
         null,
@@ -562,16 +561,16 @@ const GraphViewer = memo(
         return result;
       }, [graphData.nodes]);
 
-      // On first data load, hide all Package sub-types by default
+      // On first data load, hide all Dependency sub-types by default
       useEffect(() => {
         if (defaultsApplied.current) return;
-        const pkgSubs = availableSubTypes.get('Package');
-        if (pkgSubs && pkgSubs.length > 0) {
+        const depSubs = availableSubTypes.get('Dependency');
+        if (depSubs && depSubs.length > 0) {
           defaultsApplied.current = true;
           // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
           setHiddenSubTypes((prev) => {
             const next = new Set(prev);
-            pkgSubs.forEach((s) => next.add(`Package:${s.subType}`));
+            depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
             return next;
           });
         }
@@ -712,10 +711,10 @@ const GraphViewer = memo(
         setSourceError(null);
         setNodeSource(null);
 
-        const startLine = selectedNode.properties?.start_line as
+        const startLine = selectedNode.properties?.startLine as
           | number
           | undefined;
-        const endLine = selectedNode.properties?.end_line as number | undefined;
+        const endLine = selectedNode.properties?.endLine as number | undefined;
 
         store
           .fetchSource(selectedNode.id, startLine, endLine)

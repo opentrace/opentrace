@@ -19,7 +19,7 @@
  *
  * For each parseable file:
  * 1. Parse with tree-sitter
- * 2. Extract symbols → Class/Function nodes + DEFINED_IN rels
+ * 2. Extract symbols → Class/Function nodes + DEFINES rels
  * 3. Populate registries + allCallInfo
  * 4. Analyze imports → IMPORTS rels + Package nodes
  * 5. Yield per-file nodes/rels as stage_progress
@@ -184,7 +184,7 @@ export function* execute(
             if (!packageNodes.has(pkgId)) {
               const pkgNode: GraphNode = {
                 id: pkgId,
-                type: 'Package',
+                type: 'Dependency',
                 name: pkgName,
                 properties: { registry: pkgId.split(':')[1] },
               };

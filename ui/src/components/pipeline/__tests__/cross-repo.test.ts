@@ -168,9 +168,9 @@ describe('cross-repo: same project imported twice with different repo names', ()
     }
   });
 
-  it('DEFINED_IN relationships never cross repo boundaries', () => {
+  it('DEFINES relationships never cross repo boundaries', () => {
     const definedInRels = [...store.relationships.values()].filter(
-      (r) => r.type === 'DEFINED_IN',
+      (r) => r.type === 'DEFINES',
     );
     expect(definedInRels.length).toBeGreaterThan(0);
 
@@ -195,7 +195,7 @@ describe('cross-repo: same project imported twice with different repo names', ()
   it('external packages are shared (not duplicated per repo)', () => {
     // flask Package node should appear once, referenced by both repos
     const flaskNodes = [...store.nodes.values()].filter(
-      (n) => n.type === 'Package' && n.name === 'flask',
+      (n) => n.type === 'Dependency' && n.name === 'flask',
     );
     expect(flaskNodes).toHaveLength(1);
 
@@ -248,7 +248,7 @@ describe('cross-repo: same project imported twice with different repo names', ()
     expect(duplicates.length).toBeGreaterThan(0);
     for (const dup of duplicates) {
       const node = allEmittedNodes.find((n) => n.id === dup.id);
-      expect(node!.type).toBe('Package');
+      expect(node!.type).toBe('Dependency');
     }
   });
 

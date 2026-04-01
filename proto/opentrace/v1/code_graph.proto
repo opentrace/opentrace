@@ -32,35 +32,23 @@ import "ladybug/options.proto";
 
 // ---- Node types ----------------------------------------------------------
 
-// RepoNode represents a source code repository.
-message RepoNode {
+// RepositoryNode represents a source code repository.
+message RepositoryNode {
   string id             = 1;
   string name           = 2;
   string ref            = 3;
   string source_uri     = 4 [(ladybug.column) = "sourceUri"];
   string provider       = 5;
   string default_branch = 6 [(ladybug.column) = "defaultBranch"];
+  string summary        = 7;
 }
 
-// DirNode represents a directory in a repository.
-message DirNode {
-  string id   = 1;
-  string name = 2;
-  string path = 3;
-}
-
-// ModuleNode represents a language-level module or package.
-// Examples: Python module/package, Java package, Go package, Rust crate/module,
-// Node.js package, C# namespace/assembly.
-message ModuleNode {
-  string id       = 1;
-  string name     = 2;
-  string language = 3;
-  string path     = 4;   // filesystem path or qualified name (e.g. "com.example.auth")
-  string kind     = 5;   // "module", "package", "crate", "namespace", "assembly"
-  string version  = 6;   // for external dependencies
-  string docs     = 7;
-  bool   exported = 8;
+// DirectoryNode represents a directory in a repository.
+message DirectoryNode {
+  string id      = 1;
+  string name    = 2;
+  string path    = 3;
+  string summary = 4;
 }
 
 // FileNode represents a source code file.
@@ -72,11 +60,10 @@ message FileNode {
   string language   = 5;
   string source_uri = 6 [(ladybug.column) = "sourceUri"];
   int32  lines      = 7;   // total line count
+  string summary    = 8;
 }
 
 // ClassNode represents a class, struct, record, type alias, or similar type definition.
-// For type aliases (e.g. TS `type Props = { ... }`, Go `type Handler func(...)`),
-// use kind="type_alias". For anonymous types, add "anonymous" to modifiers.
 message ClassNode {
   string id         = 1;
   string name       = 2;
@@ -85,34 +72,14 @@ message ClassNode {
   int32  end_line   = 5 [(ladybug.column) = "endLine"];
   string signature  = 6;
   string docs       = 7;
-  bool   exported   = 8;
-  string kind       = 9;   // "class", "struct", "record", "dataclass", "union", "type_alias"
-  repeated string modifiers       = 10;  // "public", "abstract", "sealed", "final", "static", "anonymous", etc.
-  repeated string superclasses    = 11;
-  repeated string interfaces      = 12;
-  repeated string type_parameters = 13 [(ladybug.column) = "typeParameters"];  // generics: ["T", "U extends Foo"]
-  repeated string decorators      = 14;  // @dataclass, @Entity, @Component, #[derive(...)], etc.
+  string kind       = 8;   // "class", "struct", "interface", "record", "dataclass", "type_alias"
+  repeated string superclasses = 9;
+  repeated string interfaces   = 10;
+  string summary               = 11;
 }
 
-// EnumNode represents an enum type definition.
-// The enum itself is a node; its variants/members are represented as
-// Variable nodes with kind="enum_variant", connected via Defines edges.
-message EnumNode {
-  string id         = 1;
-  string name       = 2;
-  string language   = 3;
-  int32  start_line = 4 [(ladybug.column) = "startLine"];
-  int32  end_line   = 5 [(ladybug.column) = "endLine"];
-  string docs       = 6;
-  bool   exported   = 7;
-  string kind       = 8;   // "enum", "flags", "adt" (Rust algebraic), "string_enum" (TS)
-  repeated string modifiers       = 9;
-  repeated string type_parameters = 10 [(ladybug.column) = "typeParameters"];  // Rust: enum Option<T>
-  repeated string decorators      = 11;
-}
-
-// InterfaceNode represents an interface, trait, or protocol definition.
-message InterfaceNode {
+// FunctionNode represents a standalone function or method.
+message FunctionNode {
   string id         = 1;
   string name       = 2;
   string language   = 3;
@@ -120,73 +87,33 @@ message InterfaceNode {
   int32  end_line   = 5 [(ladybug.column) = "endLine"];
   string signature  = 6;
   string docs       = 7;
-  bool   exported   = 8;
-  string kind       = 9;   // "interface", "trait", "protocol", "abstract_class"
-  repeated string modifiers       = 10;  // "public", "sealed", "partial", etc.
-  repeated string type_parameters = 11 [(ladybug.column) = "typeParameters"];
-  repeated string decorators      = 12;
-}
-
-// MethodNode represents a method defined on a class or interface.
-message MethodNode {
-  string id          = 1;
-  string name        = 2;
-  string language    = 3;
-  int32  start_line  = 4 [(ladybug.column) = "startLine"];
-  int32  end_line    = 5 [(ladybug.column) = "endLine"];
-  string signature   = 6;
-  string docs        = 7;
-  bool   exported    = 8;
-  string return_type = 9  [(ladybug.column) = "returnType"];
-  repeated string modifiers       = 10;  // "public", "private", "static", "abstract", "async", "virtual", "override", etc.
-  repeated string type_parameters = 11 [(ladybug.column) = "typeParameters"];
-  repeated string decorators      = 12;  // @override, @staticmethod, @property, etc.
-  repeated string parameters      = 13;  // parameter names: ["ctx", "name", "options"]
-  repeated string throws          = 14;  // declared exceptions: Java throws, Kotlin @Throws, Swift throws
-}
-
-// FunctionNode represents a standalone function (not bound to a class).
-message FunctionNode {
-  string id          = 1;
-  string name        = 2;
-  string language    = 3;
-  int32  start_line  = 4 [(ladybug.column) = "startLine"];
-  int32  end_line    = 5 [(ladybug.column) = "endLine"];
-  string signature   = 6;
-  string docs        = 7;
-  bool   exported    = 8;
-  string return_type = 9  [(ladybug.column) = "returnType"];
-  repeated string modifiers       = 10;  // "async", "export", "inline", "unsafe", "extern", etc.
-  repeated string type_parameters = 11 [(ladybug.column) = "typeParameters"];
-  repeated string decorators      = 12;  // @app.route(), @click.command(), #[test], etc.
-  repeated string parameters      = 13;  // parameter names: ["req", "res"]
-  repeated string throws          = 14;  // declared exceptions
+  string summary    = 8;
 }
 
 // DependencyNode represents an external package dependency declared in a manifest
 // (package.json, pyproject.toml, go.mod, pom.xml, Cargo.toml, Gemfile, etc.).
-// Linked from Module/Repo via DependsOn edges.
 message DependencyNode {
   string id       = 1;
   string name     = 2;
   string version  = 3;   // version constraint: "^4.17", ">=2.28", "v1.2.3"
   string registry = 4;   // "npm", "pypi", "go", "maven", "crates.io", "rubygems"
-  string kind     = 5;   // "runtime", "dev", "peer", "optional", "build"
 }
 
-// VariableNode represents a module-level variable, constant, field, or export.
-message VariableNode {
-  string id              = 1;
-  string name            = 2;
-  string language        = 3;
-  int32  start_line      = 4 [(ladybug.column) = "startLine"];
-  int32  end_line        = 5 [(ladybug.column) = "endLine"];
-  string kind            = 6;  // "const", "let", "var", "field", "property", "parameter"
-  bool   exported        = 7;
-  string type_annotation = 8 [(ladybug.column) = "typeAnnotation"];  // declared type if present
-  string docs            = 9;
-  repeated string modifiers  = 10;  // "public", "private", "static", "readonly", "volatile", "final", "lazy", etc.
-  repeated string decorators = 11;  // @property, @Value, #[serde(...)], etc.
+// PullRequestNode represents a pull/merge request.
+message PullRequestNode {
+  string id            = 1;
+  string name          = 2;
+  int32  number        = 3;
+  string title         = 4;
+  string state         = 5;   // "open", "closed", "merged"
+  string author        = 6;
+  string url           = 7;
+  string created_at    = 8  [(ladybug.column) = "createdAt"];
+  string base_branch   = 9  [(ladybug.column) = "baseBranch"];
+  string head_branch   = 10 [(ladybug.column) = "headBranch"];
+  int32  additions     = 11;
+  int32  deletions     = 12;
+  int32  files_changed = 13 [(ladybug.column) = "filesChanged"];
 }
 
 // ---- Relationship types --------------------------------------------------
@@ -221,40 +148,16 @@ message CallsRel {
   float  confidence = 4;
 }
 
-// ImplementsRel represents a class implementing an interface.
-message ImplementsRel {
-  string id        = 1;
-  string source_id = 2;
-  string target_id = 3;
-}
-
-// ExtendsRel represents class inheritance.
-message ExtendsRel {
-  string id        = 1;
-  string source_id = 2;
-  string target_id = 3;
-}
-
-// OverridesRel represents a method overriding a parent class/interface method.
-// Method --Overrides--> Method
-message OverridesRel {
-  string id        = 1;
-  string source_id = 2;
-  string target_id = 3;
-}
-
 // DependsOnRel represents a build-level package dependency.
-// Module/Repo --DependsOn--> Dependency
+// Repository --DependsOn--> Dependency
 message DependsOnRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
 }
 
-// ReferencesRel represents a read/use of a variable, constant, or type
-// without invoking it (distinct from Calls).
-// Function/Method --References--> Variable/Class/Enum
-message ReferencesRel {
+// TargetsRepoRel links a PullRequest to its target Repository.
+message TargetsRepoRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from opentrace_agent.models.nodes import DirectoryNode, FileNode, RepoNode
 from opentrace_agent.sources.code.directory_walker import DirectoryWalker
 
 
@@ -42,29 +41,28 @@ class TestDirectoryWalker:
     def test_walk_basic_structure(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo", url="https://github.com/org/repo")
+        result = walker.walk(tmp_path, "org/repo", "repo", url="https://github.com/org/repo")
 
-        assert isinstance(repo, RepoNode)
-        assert repo.id == "org/repo"
-        assert repo.name == "repo"
-        assert repo.url == "https://github.com/org/repo"
+        repo_nodes = [n for n in result.nodes if n.type == "Repository"]
+        assert len(repo_nodes) == 1
+        assert repo_nodes[0].id == "org/repo"
+        assert repo_nodes[0].name == "repo"
 
     def test_walk_creates_directories(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        # Root should have src dir and README.md directly
-        child_names = {rel.target.name for rel in repo.children}
-        assert "src" in child_names
-        assert "README.md" in child_names
+        dir_names = {n.name for n in result.nodes if n.type == "Directory"}
+        assert "src" in dir_names
+        assert "sub" in dir_names
 
     def test_walk_excludes_dirs(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        all_names = _collect_names(repo)
+        all_names = {n.name for n in result.nodes}
         assert "node_modules" not in all_names
         assert ".git" not in all_names
         assert "dep.js" not in all_names
@@ -72,98 +70,79 @@ class TestDirectoryWalker:
     def test_walk_excludes_non_included_extensions(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        all_names = _collect_names(repo)
+        all_names = {n.name for n in result.nodes}
         assert "image.png" not in all_names
 
     def test_walk_file_nodes_have_correct_attributes(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        files = _collect_files(repo)
-        main_py = next(f for f in files if f.name == "main.py")
+        file_nodes = [n for n in result.nodes if n.type == "File"]
+        main_py = next(n for n in file_nodes if n.name == "main.py")
         assert main_py.id == "org/repo/src/main.py"
-        assert main_py.path == "src/main.py"
-        assert main_py.extension == ".py"
-        assert main_py.language == "python"
-        assert main_py.abs_path == str(tmp_path / "src" / "main.py")
+        assert main_py.properties["path"] == "src/main.py"
+        assert main_py.properties["extension"] == ".py"
+        assert main_py.properties["language"] == "python"
 
     def test_walk_nested_directory_ids(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        dirs = _collect_dirs(repo)
-        sub_dir = next(d for d in dirs if d.name == "sub")
+        dir_nodes = [n for n in result.nodes if n.type == "Directory"]
+        sub_dir = next(d for d in dir_nodes if d.name == "sub")
         assert sub_dir.id == "org/repo/src/sub"
-        assert sub_dir.path == "src/sub"
+        assert sub_dir.properties["path"] == "src/sub"
 
     def test_walk_empty_directory(self, tmp_path: Path):
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/empty", "empty")
-        assert repo.id == "org/empty"
-        assert len(repo.children) == 0
+        result = walker.walk(tmp_path, "org/empty", "empty")
+        # Only the Repository node
+        assert len(result.nodes) == 1
+        assert result.nodes[0].type == "Repository"
+        assert len(result.relationships) == 0
 
     def test_walk_typescript_file(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        files = _collect_files(repo)
-        ts_file = next(f for f in files if f.name == "module.ts")
-        assert ts_file.extension == ".ts"
-        assert ts_file.language == "typescript"
+        file_nodes = [n for n in result.nodes if n.type == "File"]
+        ts_file = next(n for n in file_nodes if n.name == "module.ts")
+        assert ts_file.properties["extension"] == ".ts"
+        assert ts_file.properties["language"] == "typescript"
 
-    def test_walk_parent_references(self, tmp_path: Path):
+    def test_walk_defines_relationships(self, tmp_path: Path):
         self._make_tree(tmp_path)
         walker = DirectoryWalker()
-        repo = walker.walk(tmp_path, "org/repo", "repo")
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-        files = _collect_files(repo)
-        main_py = next(f for f in files if f.name == "main.py")
-        # Parent should be the src DirectoryNode
-        assert main_py.parent is not None
-        assert isinstance(main_py.parent, DirectoryNode)
-        assert main_py.parent.name == "src"
+        # src dir → repo
+        src_rel = next(r for r in result.relationships if r.source_id == "org/repo/src" and r.type == "DEFINES")
+        assert src_rel.target_id == "org/repo"
 
+        # main.py → src dir
+        main_rel = next(
+            r for r in result.relationships if r.source_id == "org/repo/src/main.py" and r.type == "DEFINES"
+        )
+        assert main_rel.target_id == "org/repo/src"
 
-def _collect_names(node: RepoNode) -> set[str]:
-    """Collect all node names in the tree."""
-    names = {node.name}
-    for rel in node.children:
-        names.add(rel.target.name)
-        if hasattr(rel.target, "children"):
-            names.update(_collect_names_inner(rel.target))
-    return names
+    def test_walk_file_entries(self, tmp_path: Path):
+        self._make_tree(tmp_path)
+        walker = DirectoryWalker()
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
+        parseable_paths = {fe.path for fe in result.file_entries}
+        assert "src/main.py" in parseable_paths
+        assert "src/utils.py" in parseable_paths
+        assert "src/sub/module.ts" in parseable_paths
 
-def _collect_names_inner(node) -> set[str]:
-    names = set()
-    for rel in node.children:
-        names.add(rel.target.name)
-        if hasattr(rel.target, "children"):
-            names.update(_collect_names_inner(rel.target))
-    return names
+    def test_walk_path_to_file_id(self, tmp_path: Path):
+        self._make_tree(tmp_path)
+        walker = DirectoryWalker()
+        result = walker.walk(tmp_path, "org/repo", "repo")
 
-
-def _collect_files(node) -> list[FileNode]:
-    """Collect all FileNodes in the tree."""
-    files = []
-    for rel in node.children:
-        if isinstance(rel.target, FileNode):
-            files.append(rel.target)
-        else:
-            files.extend(_collect_files(rel.target))
-    return files
-
-
-def _collect_dirs(node) -> list[DirectoryNode]:
-    """Collect all DirectoryNodes in the tree."""
-    dirs = []
-    for rel in node.children:
-        if isinstance(rel.target, DirectoryNode):
-            dirs.append(rel.target)
-            dirs.extend(_collect_dirs(rel.target))
-    return dirs
+        assert result.path_to_file_id["src/main.py"] == "org/repo/src/main.py"

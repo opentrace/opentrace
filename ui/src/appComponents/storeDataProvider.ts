@@ -67,7 +67,7 @@ export function createStoreDataProvider(
       } else {
         queries.push(
           store
-            .traverse(nodeId, 'incoming', 1, 'DEFINED_IN')
+            .traverse(nodeId, 'incoming', 1, 'DEFINES')
             .then((r) =>
               r.filter((x) => x.node.id !== nodeId).map((x) => x.node),
             ),
@@ -106,7 +106,7 @@ export function createStoreDataProvider(
           currentId,
           'outgoing',
           1,
-          'DEFINED_IN',
+          'DEFINES',
         );
         const parent = results.find((r) => r.node.id !== currentId);
         if (!parent) break;

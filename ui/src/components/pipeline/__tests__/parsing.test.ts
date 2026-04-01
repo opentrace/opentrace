@@ -48,7 +48,7 @@ describe('parsing stage', () => {
 
     const rel = relationships.find((r) => r.source_id === funcNode!.id);
     expect(rel?.target_id).toBe('testorg/testrepo/app.py');
-    expect(rel?.type).toBe('DEFINED_IN');
+    expect(rel?.type).toBe('DEFINES');
   });
 
   it('extracts class', () => {
@@ -102,12 +102,12 @@ def bar():
     const { nodes } = runBoth([{ path: 'lib.py', content: src }]);
 
     const foo = nodes.find((n) => n.name === 'foo');
-    expect(foo?.properties?.start_line).toBe(2);
-    expect(foo?.properties?.end_line).toBe(3);
+    expect(foo?.properties?.startLine).toBe(2);
+    expect(foo?.properties?.endLine).toBe(3);
 
     const bar = nodes.find((n) => n.name === 'bar');
-    expect(bar?.properties?.start_line).toBe(5);
-    expect(bar?.properties?.end_line).toBe(7);
+    expect(bar?.properties?.startLine).toBe(5);
+    expect(bar?.properties?.endLine).toBe(7);
   });
 
   it('captures signature', () => {

@@ -142,7 +142,7 @@ export async function runPipeline(
     const props: Record<string, unknown> = { branch };
     if (provider) props.source_name = provider;
     const uri = buildSourceUri(filePath, startLine, endLine);
-    if (uri) props.source_uri = uri;
+    if (uri) props.sourceUri = uri;
     return props;
   }
 
@@ -193,11 +193,11 @@ export async function runPipeline(
       sourceProps(dp),
     );
 
-    // Link file to parent dir (or repo): File DEFINED_IN Directory
+    // Link file to parent dir (or repo): File DEFINES Directory
     const parentId = dirPath ? `${repoId}/${dirPath}` : repoId;
     structureRels.push({
-      id: `${fileId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
+      id: `${fileId}->DEFINES->${parentId}`,
+      type: 'DEFINES',
       source_id: fileId,
       target_id: parentId,
     });
@@ -241,16 +241,14 @@ export async function runPipeline(
         const pkgUrl = packageSourceUrl(dep.registry, dep.name);
         packageNodes.set(pkgId, {
           id: pkgId,
-          type: 'Package',
+          type: 'Dependency',
           name: dep.name,
           properties: {
             version: dep.version,
             registry: dep.registry,
             source: dep.source,
             dependency_type: dep.dependencyType,
-            ...(pkgUrl
-              ? { source_uri: pkgUrl, source_name: dep.registry }
-              : {}),
+            ...(pkgUrl ? { sourceUri: pkgUrl, source_name: dep.registry } : {}),
           },
         });
       }
@@ -330,7 +328,7 @@ export async function runPipeline(
       const ext = getExtension(file.path);
       const language = EXTENSION_LANGUAGE_MAP[ext];
 
-      // Per-file batch: symbol nodes + DEFINED_IN rels + summary update nodes
+      // Per-file batch: symbol nodes + DEFINES rels + summary update nodes
       const fileBatch: GraphBatch = { nodes: [], relationships: [] };
 
       // Local array replaces the old symbolLineInfo map
@@ -369,11 +367,11 @@ export async function runPipeline(
             const pkgUrl = packageSourceUrl(reg, pkgName);
             packageNodes.set(pkgId, {
               id: pkgId,
-              type: 'Package',
+              type: 'Dependency',
               name: pkgName,
               properties: {
                 registry: reg,
-                ...(pkgUrl ? { source_uri: pkgUrl, source_name: reg } : {}),
+                ...(pkgUrl ? { sourceUri: pkgUrl, source_name: reg } : {}),
               },
             });
           }
@@ -742,8 +740,8 @@ function processSymbol(
       name: symbol.name,
       properties: {
         language,
-        start_line: symbol.startLine,
-        end_line: symbol.endLine,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
         signature: symbol.signature ?? undefined,
         superclasses: symbol.superclasses ?? undefined,
         interfaces: symbol.interfaces ?? undefined,
@@ -754,8 +752,8 @@ function processSymbol(
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
+      id: `${nodeId}->DEFINES->${parentId}`,
+      type: 'DEFINES',
       source_id: nodeId,
       target_id: parentId,
     });
@@ -810,8 +808,8 @@ function processSymbol(
       name: symbol.name,
       properties: {
         language,
-        start_line: symbol.startLine,
-        end_line: symbol.endLine,
+        startLine: symbol.startLine,
+        endLine: symbol.endLine,
         signature: symbol.signature ?? undefined,
         docs: symbol.docs ?? undefined,
         ...extraProps?.(symbol.startLine, symbol.endLine),
@@ -819,8 +817,8 @@ function processSymbol(
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
+      id: `${nodeId}->DEFINES->${parentId}`,
+      type: 'DEFINES',
       source_id: nodeId,
       target_id: parentId,
     });
@@ -901,15 +899,15 @@ function ensureDirectoryChain(
     ensureDirectoryChain(repoId, parentPath, dirNodes, rels, extraProps);
     const parentDirId = `${repoId}/${parentPath}`;
     rels.push({
-      id: `${dirId}->DEFINED_IN->${parentDirId}`,
-      type: 'DEFINED_IN',
+      id: `${dirId}->DEFINES->${parentDirId}`,
+      type: 'DEFINES',
       source_id: dirId,
       target_id: parentDirId,
     });
   } else {
     rels.push({
-      id: `${dirId}->DEFINED_IN->${repoId}`,
-      type: 'DEFINED_IN',
+      id: `${dirId}->DEFINES->${repoId}`,
+      type: 'DEFINES',
       source_id: dirId,
       target_id: repoId,
     });

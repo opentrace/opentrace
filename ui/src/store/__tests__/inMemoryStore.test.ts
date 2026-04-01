@@ -29,7 +29,7 @@ describe('InMemoryGraphStore', () => {
             id: 'file::func',
             type: 'Function',
             name: 'getUserById',
-            properties: { language: 'python', start_line: 1, end_line: 5 },
+            properties: { language: 'python', startLine: 1, endLine: 5 },
           },
         ],
         relationships: [],
@@ -52,8 +52,8 @@ describe('InMemoryGraphStore', () => {
       const result = await store.getNode('file::func');
       expect(result).toBeDefined();
       expect(result!.properties.language).toBe('python');
-      expect(result!.properties.start_line).toBe(1);
-      expect(result!.properties.end_line).toBe(5);
+      expect(result!.properties.startLine).toBe(1);
+      expect(result!.properties.endLine).toBe(5);
       expect(result!.properties.summary).toBe('Retrieves user by ID');
     });
 
@@ -99,7 +99,7 @@ describe('InMemoryGraphStore', () => {
             name: 'Foo',
             properties: {
               language: 'go',
-              start_line: 10,
+              startLine: 10,
               docs: 'Foo does things',
             },
           },
@@ -123,7 +123,7 @@ describe('InMemoryGraphStore', () => {
       const result = await store.getNode('n1');
       expect(result!.properties).toEqual({
         language: 'go',
-        start_line: 10,
+        startLine: 10,
         docs: 'Foo does things',
         summary: 'Foo class',
       });

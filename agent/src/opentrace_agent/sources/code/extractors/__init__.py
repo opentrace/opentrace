@@ -26,11 +26,20 @@ from opentrace_agent.sources.code.extractors.typescript_extractor import (
     TypeScriptExtractor,
 )
 
+_DEFAULT_EXTRACTORS: list[SymbolExtractor] = [
+    PythonExtractor(),
+    TypeScriptExtractor(),
+    GoExtractor(),
+]
+
+PARSEABLE_EXTENSIONS: frozenset[str] = frozenset().union(*(frozenset(ext.extensions) for ext in _DEFAULT_EXTRACTORS))
+
 __all__ = [
     "CallRef",
     "CodeSymbol",
     "ExtractionResult",
     "GoExtractor",
+    "PARSEABLE_EXTENSIONS",
     "PythonExtractor",
     "SymbolExtractor",
     "TypeScriptExtractor",

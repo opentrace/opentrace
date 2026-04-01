@@ -182,7 +182,7 @@ export default function NodeDetailsPanel({
   const hasEnrichment = !!(
     node.properties?.summary || node.properties?.has_embedding
   );
-  const sourceUri = node.properties?.source_uri as string | undefined;
+  const sourceUri = node.properties?.sourceUri as string | undefined;
   const sourceName = (
     node.properties?.source_name as string | undefined
   )?.toLowerCase();
@@ -267,7 +267,7 @@ export default function NodeDetailsPanel({
             .filter(
               ([k]) =>
                 k !== 'has_embedding' &&
-                k !== 'source_uri' &&
+                k !== 'sourceUri' &&
                 k !== 'source_name',
             )
             .map(([k, v]) => (
