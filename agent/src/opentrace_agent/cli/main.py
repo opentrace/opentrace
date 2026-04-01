@@ -564,6 +564,65 @@ def config_path() -> None:
     click.echo(_resolve_config_path())
 
 
+@app.command()
+def login() -> None:
+    """Log in to api.opentrace.ai via your browser."""
+    from opentrace_agent.cli.auth import load_tokens
+    from opentrace_agent.cli.auth import login as do_login
+
+    existing = load_tokens()
+    if existing and existing.get("access_token"):
+        if not click.confirm("Already logged in. Re-authenticate?", default=False):
+            return
+
+    click.echo("Opening browser to log in to OpenTrace ...")
+    try:
+        payload = do_login()
+    except TimeoutError:
+        raise click.ClickException("Login timed out — no response from browser within 5 minutes.")
+    except Exception as exc:
+        raise click.ClickException(f"Login failed: {exc}")
+
+    scope = payload.get("scope", "")
+    click.echo(f"Logged in to {payload.get('issuer', 'OpenTrace')} (scope: {scope}).")
+
+
+@app.command()
+def logout() -> None:
+    """Log out and remove saved credentials."""
+    from opentrace_agent.cli.auth import clear_tokens
+
+    if clear_tokens():
+        click.echo("Logged out.")
+    else:
+        click.echo("Not logged in.")
+
+
+@app.command()
+def whoami() -> None:
+    """Show the current authentication status."""
+    from opentrace_agent.cli.auth import load_tokens
+
+    tokens = load_tokens()
+    if not tokens:
+        click.echo("Not logged in. Run 'opentraceai login' to authenticate.")
+        return
+
+    issuer = tokens.get("issuer", "unknown")
+    scope = tokens.get("scope", "none")
+    token_type = tokens.get("token_type", "bearer")
+    created = tokens.get("created_at")
+
+    click.echo(f"Issuer:  {issuer}")
+    click.echo(f"Type:    {token_type}")
+    click.echo(f"Scope:   {scope}")
+    if created:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(created, tz=timezone.utc)
+        click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(

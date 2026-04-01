@@ -1051,6 +1051,7 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "cryptography" },
     { name = "gitpython" },
     { name = "mcp" },
     { name = "pyarrow" },
@@ -1085,6 +1086,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", marker = "extra == 'swe-bench'", specifier = ">=0.40" },
     { name = "click", specifier = ">=8.0" },
+    { name = "cryptography", specifier = ">=42.0" },
     { name = "gitpython", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "optimum", extras = ["onnxruntime"], marker = "extra == 'summarization'", specifier = ">=1.17" },
