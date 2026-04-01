@@ -1478,8 +1478,25 @@ export class PixiRenderer {
       const tx = this.mode3d ? t.sprite.position.x : t.x;
       const ty = this.mode3d ? t.sprite.position.y : t.y;
 
+      // Early bounding-box pruning
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const lenSq = dx * dx + dy * dy;
+      const isCurve = this.bp.edgeStyle === 'curve';
+      const padding =
+        maxDistance + (isCurve ? Math.sqrt(lenSq) * this.curvature : 0);
+
+      if (
+        worldX < Math.min(sx, tx) - padding ||
+        worldX > Math.max(sx, tx) + padding ||
+        worldY < Math.min(sy, ty) - padding ||
+        worldY > Math.max(sy, ty) + padding
+      ) {
+        continue;
+      }
+
       let dist: number;
-      if (this.bp.edgeStyle === 'curve') {
+      if (isCurve) {
         dist = pointToQuadraticDist(
           worldX,
           worldY,
