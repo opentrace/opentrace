@@ -324,7 +324,9 @@ export default function AddRepoModal({
   const [error, setError] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [serverUrl, setServerUrl] = useState('http://localhost:8787');
+  const [serverUrl, setServerUrl] = useState(
+    import.meta.env.VITE_SERVER_URL ?? '',
+  );
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -572,7 +574,7 @@ export default function AddRepoModal({
                 <input
                   type="url"
                   className="input-pill"
-                  placeholder="http://localhost:8787"
+                  placeholder="https://your-server.example.com"
                   value={serverUrl}
                   onChange={(e) => setServerUrl(e.target.value)}
                   autoFocus
