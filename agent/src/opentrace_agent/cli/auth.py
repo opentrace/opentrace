@@ -44,7 +44,7 @@ from opentrace_agent.cli.credentials import (
 )
 
 # Re-export for convenience — callers can ``from opentrace_agent.cli.auth import load_tokens``.
-__all__ = ["clear_tokens", "discover", "load_tokens", "login", "save_tokens"]
+__all__ = ["clear_tokens", "discover", "load_tokens", "login", "refresh", "save_tokens"]
 
 ISSUER = "https://api.opentrace.ai"
 DISCOVERY_PATH = "/.well-known/oauth-authorization-server"
@@ -309,9 +309,62 @@ def _exchange_code(
         return json.loads(resp.read())
 
 
+def _refresh_token(token_endpoint: str, client_id: str, refresh_token: str) -> dict[str, Any]:
+    """Exchange a refresh token for a new access token."""
+    payload = urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": refresh_token,
+        }
+    ).encode()
+
+    req = urllib.request.Request(
+        token_endpoint,
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def refresh() -> dict[str, Any]:
+    """Refresh the access token using the stored refresh token.
+
+    Returns the updated auth payload.
+    Raises RuntimeError if not logged in or no refresh token is available.
+    """
+    tokens = load_tokens()
+    if not tokens:
+        raise RuntimeError("Not logged in. Run 'opentraceai login' first.")
+
+    rt = tokens.get("refresh_token")
+    if not rt:
+        raise RuntimeError("No refresh token available. Run 'opentraceai login' to re-authenticate.")
+
+    disco = discover()
+    client = load_client()
+    if not client:
+        raise RuntimeError("No registered client found. Run 'opentraceai login' first.")
+
+    new_tokens = _refresh_token(disco["token_endpoint"], client["client_id"], rt)
+
+    payload: dict[str, Any] = {
+        **tokens,  # preserve issuer, created_at, etc.
+        **new_tokens,  # overwrite access_token, expires_in, etc.
+        "refreshed_at": int(time.time()),
+    }
+    # Keep the old refresh_token if the server didn't issue a new one.
+    if "refresh_token" not in new_tokens:
+        payload["refresh_token"] = rt
+
+    save_tokens(payload)
+    return payload
 
 
 def login() -> dict[str, Any]:

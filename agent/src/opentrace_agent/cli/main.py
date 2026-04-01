@@ -623,6 +623,25 @@ def whoami() -> None:
         click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
 
 
+@app.command()
+def refresh() -> None:
+    """Refresh the access token using the stored refresh token."""
+    from opentrace_agent.cli.auth import refresh as do_refresh
+
+    try:
+        payload = do_refresh()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    except Exception as exc:
+        raise click.ClickException(f"Token refresh failed: {exc}")
+
+    expires_in = payload.get("expires_in")
+    if expires_in:
+        click.echo(f"Token refreshed (expires in {expires_in}s).")
+    else:
+        click.echo("Token refreshed.")
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
