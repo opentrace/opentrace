@@ -22,7 +22,7 @@ import { useStore } from '../store/context';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
-import NodeDetailsPanel from './NodeDetailsPanel';
+import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import HistoryPanel from './HistoryPanel';
 import type { HistoryEntry } from './historyTypes';
@@ -44,6 +44,12 @@ interface SidePanelProps {
   communityName?: string;
   /** Community color for the selected node */
   communityColor?: string;
+
+  /** Edges connected to the selected node */
+  selectedNodeEdges?: NodeEdge[];
+
+  /** Callback to select an edge from the node edges list */
+  onSelectEdge?: (edge: NodeEdge) => void;
 
   /* Edge details props */
   selectedLink: SelectedEdge | null;
@@ -78,6 +84,8 @@ export default function SidePanel({
   sourceLoading,
   sourceError,
   onCloseDetails,
+  selectedNodeEdges,
+  onSelectEdge,
   selectedLink,
   onSelectNode,
   nodeHistory = [],
@@ -242,6 +250,9 @@ export default function SidePanel({
               communityName={communityName}
               communityColor={communityColor}
               sourceError={sourceError}
+              edges={selectedNodeEdges}
+              onSelectNode={onSelectNode}
+              onSelectEdge={onSelectEdge}
             />
           ) : selectedLink ? (
             <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />
