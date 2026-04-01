@@ -14,20 +14,20 @@
 
 """Valid node types for the OpenTrace knowledge graph.
 
-Mirrors the Go ``ValidNodeTypes`` allowlist in ``api/pkg/graph/types.go``
-so that databases created by either backend are interoperable.
+Derived from the proto-generated schema (code_graph.proto) plus
+legacy runtime types (Service, Span, etc.) for backward compat.
 """
 
+from opentrace_agent.gen.schema_gen import NODE_TYPES as _PROTO_NODE_TYPES
+
+# Proto-defined code graph types + legacy runtime graph types
 VALID_NODE_TYPES = {
-    "Service",
+    *_PROTO_NODE_TYPES,
+    # Legacy aliases (accepted on input, not emitted)
     "Repo",
-    "Repository",
-    "Class",
-    "Module",
-    "Function",
-    "File",
-    "Directory",
     "Package",
+    # Runtime / observability types (not in code_graph.proto)
+    "Service",
     "Cluster",
     "Namespace",
     "Deployment",

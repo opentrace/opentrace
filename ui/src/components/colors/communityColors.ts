@@ -66,7 +66,7 @@ export function buildCommunityColorMap(
 }
 
 // Node types that represent structural containers (ordered by priority — most specific first)
-const CONTAINER_TYPES = ['Package', 'Directory', 'Repository'];
+const CONTAINER_TYPES = ['Dependency', 'Directory', 'Repository'];
 
 interface NameableNode {
   id: string;
@@ -78,7 +78,7 @@ interface NameableNode {
  * Derive a human-readable name for each community based on its member nodes.
  *
  * Strategy (in priority order):
- * 1. Highest-priority container node (Module > Package > Directory > ...)
+ * 1. Highest-priority container node (Dependency > Directory > ...)
  * 2. Longest common path prefix of node names (e.g., "src/components")
  * 3. Hub node — the node whose name appears most often as a prefix/substring
  *    in other members' names, or failing that, the shortest-named node

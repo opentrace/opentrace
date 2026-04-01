@@ -73,24 +73,22 @@ import type { Embedder } from '../runner/browser/enricher/embedder/types';
 import { BM25Index } from './search/bm25';
 // VectorIndex no longer needed — using LadybugDB native QUERY_VECTOR_INDEX
 import { rrfFuse } from './search/rrf';
+import {
+  NODE_SCHEMA_STATEMENTS,
+  NODE_TYPES,
+  NODE_COLUMNS,
+  NODE_COLUMN_NAMES,
+  type NodeType,
+  type ColumnType,
+} from '../gen/schema.gen';
 
 // ---- Typed schema constants ----
 
-/** Node types emitted by the indexing pipeline. */
-const NODE_TYPES = [
-  'Repository',
-  'Directory',
-  'File',
-  'Package',
-  'Class',
-  'Function',
-  'PullRequest',
-] as const;
-type NodeType = (typeof NODE_TYPES)[number];
-
 const NODE_TYPE_SET: ReadonlySet<string> = new Set<string>(NODE_TYPES);
 
-/** Valid FROM→TO pairs for the RELATES REL TABLE GROUP. */
+/** Valid FROM→TO pairs for the RELATES REL TABLE GROUP.
+ *  Relationships are kept in a single RELATES group for now; per-type
+ *  relationship tables are a future migration. */
 const REL_PAIRS: readonly [NodeType, NodeType][] = [
   ['Function', 'Function'],
   ['Function', 'File'],
@@ -99,11 +97,11 @@ const REL_PAIRS: readonly [NodeType, NodeType][] = [
   ['Class', 'Class'],
   ['File', 'Directory'],
   ['File', 'File'],
-  ['File', 'Package'],
+  ['File', 'Dependency'],
   ['File', 'Repository'],
   ['Directory', 'Directory'],
   ['Directory', 'Repository'],
-  ['Repository', 'Package'],
+  ['Repository', 'Dependency'],
   ['PullRequest', 'Repository'],
   ['PullRequest', 'File'],
 ];
@@ -126,12 +124,58 @@ function csvEscape(value: string): string {
   return '"' + safe + '"';
 }
 
-/** Generate CSV for a typed node table (no type column — table name IS the type). */
-function generateTypedNodeCSV(nodes: ImportBatchRequest['nodes']): string {
-  const lines = ['id,name,properties'];
+/** Format a value for a LadybugDB CSV column based on its type. */
+function csvFormatValue(value: unknown, colType: ColumnType): string {
+  if (value == null || value === '') {
+    // LadybugDB treats empty quoted strings as empty; use defaults per type
+    if (colType === 'INT32') return csvEscape('0');
+    if (colType === 'FLOAT') return csvEscape('0');
+    if (colType === 'BOOL') return csvEscape('false');
+    if (colType === 'STRING[]') return csvEscape('[]');
+    return csvEscape('');
+  }
+  if (colType === 'STRING[]') {
+    const arr = Array.isArray(value) ? value : [];
+    // LadybugDB CSV array format: ["a","b","c"]
+    return csvEscape(
+      '[' + arr.map((v: unknown) => JSON.stringify(String(v))).join(',') + ']',
+    );
+  }
+  if (colType === 'BOOL') {
+    return csvEscape(value ? 'true' : 'false');
+  }
+  return csvEscape(String(value));
+}
+
+/**
+ * Generate CSV for a typed node table using the proto-defined column schema.
+ * Each node type has its own set of columns (e.g. File has path, extension, language, etc.)
+ * instead of a single JSON properties column.
+ */
+function generateTypedNodeCSV(
+  nodeType: string,
+  nodes: ImportBatchRequest['nodes'],
+): string {
+  const columns = NODE_COLUMNS[nodeType as NodeType];
+  if (!columns) {
+    // Fallback for unknown types — shouldn't happen with proto-driven schema
+    const lines = ['id,name'];
+    for (const node of nodes) {
+      lines.push([node.id, node.name].map(csvEscape).join(','));
+    }
+    return lines.join('\n');
+  }
+
+  const header = columns.map((c) => c.name).join(',');
+  const lines = [header];
   for (const node of nodes) {
-    const props = JSON.stringify(node.properties ?? {});
-    lines.push([node.id, node.name, props].map(csvEscape).join(','));
+    const props = node.properties ?? {};
+    const values = columns.map((col) => {
+      if (col.name === 'id') return csvEscape(node.id);
+      if (col.name === 'name') return csvEscape(node.name);
+      return csvFormatValue(props[col.name], col.type);
+    });
+    lines.push(values.join(','));
   }
   return lines.join('\n');
 }
@@ -241,12 +285,10 @@ function parseProps(raw: unknown): Record<string, unknown> | undefined {
 // ---- Schema ----
 
 function buildSchemaStatements(): string[] {
-  const stmts: string[] = [];
-  for (const type of NODE_TYPES) {
-    stmts.push(
-      `CREATE NODE TABLE IF NOT EXISTS ${type}(id STRING PRIMARY KEY, name STRING, properties STRING)`,
-    );
-  }
+  // Node tables from proto-generated schema (typed columns)
+  const stmts: string[] = [...NODE_SCHEMA_STATEMENTS];
+  // Single RELATES REL TABLE GROUP spanning all valid FROM→TO pairs.
+  // Relationship-specific typed tables are a future migration.
   const pairs = REL_PAIRS.map(([f, t]) => `FROM ${f} TO ${t}`).join(', ');
   stmts.push(
     `CREATE REL TABLE GROUP IF NOT EXISTS RELATES(${pairs}, id STRING, type STRING, properties STRING)`,
@@ -262,13 +304,60 @@ const SCHEMA_STATEMENTS = buildSchemaStatements();
 
 // ---- UNION ALL helpers ----
 
-/** Build a UNION ALL query across all typed node tables. */
+/**
+ * Build a Cypher RETURN clause for a typed node table that selects all
+ * property columns (besides id/name) and packs them into the result row.
+ * Each typed column is returned individually; the caller reconstructs the
+ * properties object from the row.
+ */
+function typedReturnClause(nodeType: NodeType): string {
+  const propCols = NODE_COLUMNS[nodeType].filter(
+    (c) => c.name !== 'id' && c.name !== 'name',
+  );
+  const parts = [`n.id AS id`, `'${nodeType}' AS type`, `n.name AS name`];
+  for (const col of propCols) {
+    parts.push(`n.${col.name} AS ${col.name}`);
+  }
+  return parts.join(', ');
+}
+
+/**
+ * Build a row object from a DB result row into a properties dict.
+ * Extracts typed columns (everything except id, type, name) and bundles
+ * them into a Record, filtering out empty/default values.
+ */
+function rowToProperties(
+  row: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const props: Record<string, unknown> = {};
+  let hasProps = false;
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'id' || key === 'type' || key === 'name') continue;
+    // Skip empty/default values
+    if (value == null || value === '' || value === 0 || value === false)
+      continue;
+    // Skip empty arrays
+    if (Array.isArray(value) && value.length === 0) continue;
+    props[key] = value;
+    hasProps = true;
+  }
+  return hasProps ? props : undefined;
+}
+
+// TODO: UNION ALL returns only common columns (id, type, name) because typed
+// tables have different column counts. Callers needing full properties should
+// use fetchNodesByIds() or the node cache. Fix before merge — consider whether
+// LadybugDB supports a way to return heterogeneous columns in UNION ALL, or
+// pad with NULLs for the superset of all columns.
+
+/** Build a UNION ALL query across all typed node tables.
+ *  Returns only id, type, name — use node cache for properties. */
 function unionAllNodes(where?: string, suffix?: string): string {
   return (
     NODE_TYPES.map((t) => {
       let q = `MATCH (n:${t})`;
       if (where) q += ` WHERE ${where}`;
-      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name, n.properties AS properties`;
+      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name`;
       return q;
     }).join(' UNION ALL ') + (suffix ?? '')
   );
@@ -282,11 +371,11 @@ function unionAllTextSearch(escapedLower: string): string {
   ).join(' UNION ALL ');
 }
 
-/** Build a UNION ALL text search returning full node data (saves a round-trip). */
+/** Build a UNION ALL text search returning id, type, name. */
 function unionAllTextSearchFull(escapedLower: string): string {
   return NODE_TYPES.map(
     (t) =>
-      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id, '${t}' AS type, n.name AS name, n.properties AS properties`,
+      `MATCH (n:${t}) WHERE lower(n.name) CONTAINS '${escapedLower}' RETURN n.id AS id, '${t}' AS type, n.name AS name`,
   ).join(' UNION ALL ');
 }
 
@@ -375,7 +464,7 @@ export class LadybugGraphStore implements GraphStore {
    *  NODE_CACHE_MAX entries — Map insertion order acts as the eviction queue. */
   private nodeCache = new Map<
     string,
-    { type: string; name: string; properties: string }
+    { type: string; name: string; properties: Record<string, unknown> }
   >();
   private static readonly NODE_CACHE_MAX = 10_000;
 
@@ -571,7 +660,7 @@ export class LadybugGraphStore implements GraphStore {
   /** Set a node in the LRU cache, evicting oldest entries if over capacity. */
   private cacheNode(
     id: string,
-    entry: { type: string; name: string; properties: string },
+    entry: { type: string; name: string; properties: Record<string, unknown> },
   ): void {
     // Delete first so re-insert moves to end (most recent)
     this.nodeCache.delete(id);
@@ -784,12 +873,12 @@ export class LadybugGraphStore implements GraphStore {
       // Fetch connected nodes — routed by type instead of 7-way UNION ALL
       const cappedIds = [...connectedIds].slice(0, this.maxVisNodes);
       const nodeRows = await this.fetchNodesByIds(cappedIds);
-      const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
+      const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
         (r) => ({
-          id: r.id,
-          type: r.type,
-          name: r.name,
-          properties: parseProps(r.properties),
+          id: String(r.id),
+          type: String(r.type),
+          name: String(r.name),
+          properties: rowToProperties(r),
         }),
       );
 
@@ -803,15 +892,20 @@ export class LadybugGraphStore implements GraphStore {
       return { nodes, links: filteredLinks };
     }
 
-    // Small graph — fetch everything via UNION ALL
+    // Small graph — fetch everything via UNION ALL (returns id/type/name only,
+    // properties come from the JS-side node cache)
     const nodeRows = await this.query(unionAllNodes());
-    const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
-      (r) => ({
-        id: r.id,
-        type: r.type,
-        name: r.name,
-        properties: parseProps(r.properties),
-      }),
+    const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
+      (r) => {
+        const id = String(r.id);
+        const cached = this.nodeCache.get(id);
+        return {
+          id,
+          type: String(r.type),
+          name: String(r.name),
+          properties: cached?.properties,
+        };
+      },
     );
 
     const relRows = await this.query(
@@ -908,7 +1002,7 @@ export class LadybugGraphStore implements GraphStore {
       fromId: string;
       neighborId: string;
       neighborName: string;
-      neighborProps: string;
+      neighborProps: Record<string, unknown> | undefined;
       relId: string;
       relType: string;
       relProps: string;
@@ -931,7 +1025,7 @@ export class LadybugGraphStore implements GraphStore {
       fromId: string;
       neighborId: string;
       neighborName: string;
-      neighborProps: string;
+      neighborProps: Record<string, unknown> | undefined;
       relId: string;
       relType: string;
       relProps: string;
@@ -958,15 +1052,18 @@ export class LadybugGraphStore implements GraphStore {
 
         const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
         const rows = await this.query(
-          `${pattern} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, b.properties AS properties, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
+          `${pattern} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
         );
 
         for (const row of rows as Record<string, string>[]) {
+          // Neighbor properties come from the JS-side cache (typed columns
+          // vary per type, so we can't select them in a cross-type query)
+          const cached = this.nodeCache.get(row.id);
           results.push({
             fromId: row.fromId,
             neighborId: row.id,
             neighborName: row.name,
-            neighborProps: row.properties,
+            neighborProps: cached?.properties,
             relId: row.rel_id,
             relType: row.rel_type,
             relProps: row.rel_properties,
@@ -988,7 +1085,7 @@ export class LadybugGraphStore implements GraphStore {
     ids: Iterable<string>,
   ): Promise<Record<string, string>[]> {
     // Serve from JS-side node cache where possible
-    const allRows: Record<string, string>[] = [];
+    const allRows: Record<string, unknown>[] = [];
     const missIds: string[] = [];
 
     for (const id of ids) {
@@ -998,7 +1095,7 @@ export class LadybugGraphStore implements GraphStore {
           id,
           type: cached.type,
           name: cached.name,
-          properties: cached.properties,
+          ...cached.properties,
         });
       } else {
         missIds.push(id);
@@ -1006,7 +1103,7 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     // All hits — no DB round-trip needed
-    if (missIds.length === 0) return allRows;
+    if (missIds.length === 0) return allRows as Record<string, string>[];
 
     // Fetch misses from DB
     const byType = new Map<string, string[]>();
@@ -1026,28 +1123,24 @@ export class LadybugGraphStore implements GraphStore {
       }
     }
 
-    // Build a single UNION ALL across only the types that have misses
-    const parts: string[] = [];
-
+    // Fetch misses per type with typed columns (separate queries to avoid
+    // UNION ALL column count mismatch between different typed tables)
     for (const [type, typeIds] of byType) {
       const idList = typeIds.map((i) => `'${esc(i)}'`).join(', ');
-      parts.push(
-        `MATCH (n:${type}) WHERE n.id IN [${idList}] RETURN n.id AS id, '${type}' AS type, n.name AS name, n.properties AS properties`,
+      const rows = await this.query(
+        `MATCH (n:${type as NodeType}) WHERE n.id IN [${idList}] RETURN ${typedReturnClause(type as NodeType)}`,
       );
+      allRows.push(...(rows as Record<string, unknown>[]));
     }
 
-    // Fallback for IDs with unknown type — scan all tables
+    // Fallback for IDs with unknown type — UNION ALL returns id/type/name only
     if (unknownIds.length > 0) {
       const idList = unknownIds.map((i) => `'${esc(i)}'`).join(', ');
-      parts.push(unionAllNodes(`n.id IN [${idList}]`));
+      const rows = await this.query(unionAllNodes(`n.id IN [${idList}]`));
+      allRows.push(...(rows as Record<string, unknown>[]));
     }
 
-    if (parts.length > 0) {
-      const rows = await this.query(parts.join(' UNION ALL '));
-      allRows.push(...(rows as Record<string, string>[]));
-    }
-
-    return allRows;
+    return allRows as Record<string, string>[];
   }
 
   private async searchGraph(
@@ -1116,12 +1209,12 @@ export class LadybugGraphStore implements GraphStore {
 
     // Fetch full node details — routed by type instead of 7-way UNION ALL
     const nodeRows = await this.fetchNodesByIds(visitedNodes);
-    const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
+    const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
       (r) => ({
-        id: r.id,
-        type: r.type,
-        name: r.name,
-        properties: parseProps(r.properties),
+        id: String(r.id),
+        type: String(r.type),
+        name: String(r.name),
+        properties: rowToProperties(r),
       }),
     );
 
@@ -1148,7 +1241,7 @@ export class LadybugGraphStore implements GraphStore {
     typeName: string,
     hops: number,
   ): Promise<GraphData> {
-    // Find the matching KuzuDB table type (case-insensitive)
+    // Find the matching typed table (case-insensitive)
     const matchedType = NODE_TYPES.find(
       (t) => t.toLowerCase() === typeName.toLowerCase(),
     );
@@ -1178,12 +1271,12 @@ export class LadybugGraphStore implements GraphStore {
 
     // Fetch full node details — routed by type instead of 7-way UNION ALL
     const nodeRows = await this.fetchNodesByIds(visitedNodes);
-    const nodes: GraphNode[] = (nodeRows as Record<string, string>[]).map(
+    const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
       (r) => ({
-        id: r.id,
-        type: r.type,
-        name: r.name,
-        properties: parseProps(r.properties),
+        id: String(r.id),
+        type: String(r.type),
+        name: String(r.name),
+        properties: rowToProperties(r),
       }),
     );
 
@@ -1308,24 +1401,65 @@ export class LadybugGraphStore implements GraphStore {
     let totalRels = 0;
 
     // Import node tables from Parquet files → CSV → COPY FROM
+    // Also check for legacy node types (Package → Dependency)
+    const LEGACY_TYPE_MAP: Record<string, NodeType> = {
+      Package: 'Dependency',
+    };
+
     for (const type of NODE_TYPES) {
+      // Check for both current and legacy file names
       const fileName = `nodes_${type}.parquet`;
-      const fileData = entries[fileName];
+      let fileData = entries[fileName];
+
+      // Check for legacy type name
+      const legacyName = Object.entries(LEGACY_TYPE_MAP).find(
+        ([, v]) => v === type,
+      )?.[0];
+      if (!fileData && legacyName) {
+        fileData = entries[`nodes_${legacyName}.parquet`];
+      }
       if (!fileData) continue;
 
       onProgress?.(`Importing ${type} nodes`);
-      // Read Parquet → Arrow IPC → JS Arrow table → CSV for COPY FROM
       const arrowTable = await parquetToArrow(fileData);
-      const csv = generateTypedNodeCSV(
-        Array.from({ length: arrowTable.numRows }, (_, i) => ({
-          id: String(arrowTable.getChild('id')?.get(i) ?? ''),
-          type,
-          name: String(arrowTable.getChild('name')?.get(i) ?? ''),
-          properties: safeJsonParse(
+      const columns = NODE_COLUMN_NAMES[type] as string[];
+
+      // Detect old vs new format: old format has a 'properties' column
+      const hasPropertiesCol = arrowTable.getChild('properties') != null;
+
+      let nodes: ImportBatchRequest['nodes'];
+      if (hasPropertiesCol) {
+        // Legacy format: {id, name, properties (JSON string)}
+        nodes = Array.from({ length: arrowTable.numRows }, (_, i) => {
+          const props = safeJsonParse(
             String(arrowTable.getChild('properties')?.get(i) ?? '{}'),
-          ),
-        })),
-      );
+          );
+          return {
+            id: String(arrowTable.getChild('id')?.get(i) ?? ''),
+            type,
+            name: String(arrowTable.getChild('name')?.get(i) ?? ''),
+            properties: props,
+          };
+        });
+      } else {
+        // New format: typed columns matching proto schema
+        nodes = Array.from({ length: arrowTable.numRows }, (_, i) => {
+          const props: Record<string, unknown> = {};
+          for (const col of columns) {
+            if (col === 'id' || col === 'name') continue;
+            const val = arrowTable.getChild(col)?.get(i);
+            if (val != null && val !== '') props[col] = val;
+          }
+          return {
+            id: String(arrowTable.getChild('id')?.get(i) ?? ''),
+            type,
+            name: String(arrowTable.getChild('name')?.get(i) ?? ''),
+            properties: props,
+          };
+        });
+      }
+
+      const csv = generateTypedNodeCSV(type, nodes);
       const csvPath = `/import_nodes_${type}.csv`;
       await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
       try {
@@ -1336,19 +1470,18 @@ export class LadybugGraphStore implements GraphStore {
 
       // Rebuild nodeTypeMap, BM25 index, and node cache for this type
       const rows = await this.query(
-        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
+        `MATCH (n:${type}) RETURN ${typedReturnClause(type)}`,
       );
-      for (const r of rows as Record<string, string>[]) {
-        this.nodeTypeMap.set(r.id, type);
-        this.bm25Index.addDocument(r.id, `${r.name ?? ''} ${type}`);
-        this.cacheNode(r.id, {
-          type,
-          name: r.name ?? '',
-          properties:
-            typeof r.properties === 'string'
-              ? r.properties
-              : JSON.stringify(r.properties ?? {}),
-        });
+      for (const r of rows as Record<string, unknown>[]) {
+        const id = String(r.id);
+        const name = String(r.name ?? '');
+        this.nodeTypeMap.set(id, type);
+        const props = rowToProperties(r) ?? {};
+        const searchParts = [name, type];
+        if (typeof props.summary === 'string') searchParts.push(props.summary);
+        if (typeof props.path === 'string') searchParts.push(props.path);
+        this.bm25Index.addDocument(id, searchParts.join(' '));
+        this.cacheNode(id, { type, name, properties: props });
         totalNodes++;
       }
       console.log(
@@ -1493,16 +1626,17 @@ export class LadybugGraphStore implements GraphStore {
 
     // Export each typed node table as a Parquet file via JS Arrow → parquet-wasm
     for (const type of NODE_TYPES) {
+      const columns = NODE_COLUMN_NAMES[type];
       const rows = await this.query(
-        `MATCH (n:${type}) RETURN n.id AS id, n.name AS name, n.properties AS properties`,
+        `MATCH (n:${type}) RETURN ${typedReturnClause(type)}`,
       );
       if (rows.length === 0) continue;
 
-      const data = await rowsToParquet(rows as Record<string, string>[], [
-        'id',
-        'name',
-        'properties',
-      ]);
+      // Flatten rows: typed columns are already individual fields in the result
+      const data = await rowsToParquet(
+        rows as Record<string, string>[],
+        columns as string[],
+      );
       files[`nodes_${type}.parquet`] = data;
       console.log(
         `[LadybugStore] exported ${type}: ${rows.length} nodes, ${data.byteLength} bytes`,
@@ -1656,7 +1790,7 @@ export class LadybugGraphStore implements GraphStore {
       this.cacheNode(node.id, {
         type: node.type,
         name: node.name,
-        properties: JSON.stringify(props),
+        properties: props,
       });
 
       // BM25 index with field boosting (name field weighted 2x)
@@ -1679,10 +1813,10 @@ export class LadybugGraphStore implements GraphStore {
         );
         continue;
       }
-      if (node.type === 'Package' && this.flushedPackageIds.has(node.id)) {
+      if (node.type === 'Dependency' && this.flushedPackageIds.has(node.id)) {
         continue;
       }
-      if (node.type === 'Package') {
+      if (node.type === 'Dependency') {
         this.flushedPackageIds.add(node.id);
       }
 
@@ -1699,7 +1833,7 @@ export class LadybugGraphStore implements GraphStore {
     for (const [type, bucket] of buckets) {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const csv = generateTypedNodeCSV(chunk);
+        const csv = generateTypedNodeCSV(type, chunk);
         const path = `/nodes_${type}.csv`;
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
@@ -2037,13 +2171,13 @@ export class LadybugGraphStore implements GraphStore {
         );
       }
 
-      let results: NodeResult[] = (nodeRows as Record<string, string>[]).map(
+      let results: NodeResult[] = (nodeRows as Record<string, unknown>[]).map(
         (r) => {
-          const props = parseProps(r.properties);
+          const props = rowToProperties(r);
           return {
-            id: r.id,
-            type: r.type,
-            name: r.name,
+            id: String(r.id),
+            type: String(r.type),
+            name: String(r.name),
             ...(props && { properties: props }),
           };
         },
@@ -2106,15 +2240,15 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     const rows = await this.query(
-      `MATCH (n:${type}) RETURN n.id AS id, '${type}' AS type, n.name AS name, n.properties AS properties LIMIT ${effectiveLimit}`,
+      `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} LIMIT ${effectiveLimit}`,
     );
 
-    let results: NodeResult[] = (rows as Record<string, string>[]).map((r) => {
-      const props = parseProps(r.properties);
+    let results: NodeResult[] = (rows as Record<string, unknown>[]).map((r) => {
+      const props = rowToProperties(r);
       return {
-        id: r.id,
-        type: r.type,
-        name: r.name,
+        id: String(r.id),
+        type: String(r.type),
+        name: String(r.name),
         ...(props && { properties: props }),
       };
     });
@@ -2147,7 +2281,10 @@ export class LadybugGraphStore implements GraphStore {
       // Promote to most-recent (LRU)
       this.nodeCache.delete(nodeId);
       this.nodeCache.set(nodeId, cached);
-      const props = parseProps(cached.properties);
+      const props =
+        Object.keys(cached.properties).length > 0
+          ? cached.properties
+          : undefined;
       logPerf('getNode', { nodeId, path: 'cache' }, 1, performance.now() - t0);
       return {
         id: nodeId,
@@ -2162,7 +2299,7 @@ export class LadybugGraphStore implements GraphStore {
     if (nodeType) {
       // Fast path: known type → direct table lookup
       const rows = await this.query(
-        `MATCH (n:${nodeType} {id: '${esc(nodeId)}'}) RETURN n.id AS id, '${nodeType}' AS type, n.name AS name, n.properties AS properties`,
+        `MATCH (n:${nodeType} {id: '${esc(nodeId)}'}) RETURN ${typedReturnClause(nodeType as NodeType)}`,
       );
       if (rows.length === 0) {
         logPerf(
@@ -2173,30 +2310,40 @@ export class LadybugGraphStore implements GraphStore {
         );
         return null;
       }
-      const r = rows[0] as Record<string, string>;
-      const props = parseProps(r.properties);
+      const r = rows[0] as Record<string, unknown>;
+      const props = rowToProperties(r);
       logPerf('getNode', { nodeId, path: 'typed' }, 1, performance.now() - t0);
       return {
-        id: r.id,
-        type: r.type,
-        name: r.name,
+        id: String(r.id),
+        type: String(r.type),
+        name: String(r.name),
         ...(props && { properties: props }),
       };
     }
 
-    // Slow path: unknown type → UNION ALL across all tables
-    const rows = await this.query(unionAllNodes(`n.id = '${esc(nodeId)}'`));
+    // Slow path: unknown type → UNION ALL to discover type, then typed query
+    const discoverRows = await this.query(
+      unionAllNodes(`n.id = '${esc(nodeId)}'`),
+    );
+    if (discoverRows.length === 0) return null;
+
+    const discovered = discoverRows[0] as Record<string, string>;
+    const discoveredType = discovered.type;
+    this.nodeTypeMap.set(nodeId, discoveredType);
+
+    // Now fetch with typed columns
+    const rows = await this.query(
+      `MATCH (n:${discoveredType} {id: '${esc(nodeId)}'}) RETURN ${typedReturnClause(discoveredType as NodeType)}`,
+    );
     if (rows.length === 0) return null;
 
-    const r = rows[0] as Record<string, string>;
-    const props = parseProps(r.properties);
-    // Cache the discovered type for future lookups
-    this.nodeTypeMap.set(r.id, r.type);
+    const r = rows[0] as Record<string, unknown>;
+    const props = rowToProperties(r);
     logPerf('getNode', { nodeId, path: 'union' }, 1, performance.now() - t0);
     return {
-      id: r.id,
-      type: r.type,
-      name: r.name,
+      id: String(r.id),
+      type: String(r.type),
+      name: String(r.name),
       ...(props && { properties: props }),
     };
   }
@@ -2232,12 +2379,11 @@ export class LadybugGraphStore implements GraphStore {
         nextFrontier.add(nb.neighborId);
 
         const bType = this.nodeTypeMap.get(nb.neighborId) ?? 'Unknown';
-        const props = parseProps(nb.neighborProps);
         const node: NodeResult = {
           id: nb.neighborId,
           type: bType,
           name: nb.neighborName,
-          ...(props && { properties: props }),
+          ...(nb.neighborProps && { properties: nb.neighborProps }),
         };
 
         const isOutgoing =

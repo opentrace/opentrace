@@ -1,0 +1,164 @@
+// Copyright 2026 OpenTrace Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Code graph schema for protoc-gen-ladybug.
+//
+// Defines the node types and relationship types used by the code indexing
+// pipeline. Running protoc-gen-ladybug on this file generates TypeScript
+// constants (NODE_SCHEMA_STATEMENTS, REL_SCHEMA, NodeType, RelType) that
+// the LadybugDB store uses to create typed tables.
+//
+// Usage:
+//   make graph   # from proto/
+
+syntax = "proto3";
+
+package opentrace.v1;
+
+option go_package = "github.com/opentrace/opentrace/api/pkg/gen/otv1";
+
+import "ladybug/options.proto";
+
+// ---- Node types ----------------------------------------------------------
+
+// RepositoryNode represents a source code repository.
+message RepositoryNode {
+  string id             = 1;
+  string name           = 2;
+  string ref            = 3;
+  string source_uri     = 4 [(ladybug.column) = "sourceUri"];
+  string provider       = 5;
+  string default_branch = 6 [(ladybug.column) = "defaultBranch"];
+  string summary        = 7;
+}
+
+// DirectoryNode represents a directory in a repository.
+message DirectoryNode {
+  string id      = 1;
+  string name    = 2;
+  string path    = 3;
+  string summary = 4;
+}
+
+// FileNode represents a source code file.
+message FileNode {
+  string id         = 1;
+  string name       = 2;
+  string path       = 3;
+  string extension  = 4;
+  string language   = 5;
+  string source_uri = 6 [(ladybug.column) = "sourceUri"];
+  int32  lines      = 7;   // total line count
+  string summary    = 8;
+}
+
+// ClassNode represents a class, struct, record, type alias, or similar type definition.
+message ClassNode {
+  string id         = 1;
+  string name       = 2;
+  string language   = 3;
+  int32  start_line = 4 [(ladybug.column) = "startLine"];
+  int32  end_line   = 5 [(ladybug.column) = "endLine"];
+  string signature  = 6;
+  string docs       = 7;
+  string kind       = 8;   // "class", "struct", "interface", "record", "dataclass", "type_alias"
+  repeated string superclasses = 9;
+  repeated string interfaces   = 10;
+  string summary               = 11;
+}
+
+// FunctionNode represents a standalone function or method.
+message FunctionNode {
+  string id         = 1;
+  string name       = 2;
+  string language   = 3;
+  int32  start_line = 4 [(ladybug.column) = "startLine"];
+  int32  end_line   = 5 [(ladybug.column) = "endLine"];
+  string signature  = 6;
+  string docs       = 7;
+  string summary    = 8;
+}
+
+// DependencyNode represents an external package dependency declared in a manifest
+// (package.json, pyproject.toml, go.mod, pom.xml, Cargo.toml, Gemfile, etc.).
+message DependencyNode {
+  string id       = 1;
+  string name     = 2;
+  string version  = 3;   // version constraint: "^4.17", ">=2.28", "v1.2.3"
+  string registry = 4;   // "npm", "pypi", "go", "maven", "crates.io", "rubygems"
+}
+
+// PullRequestNode represents a pull/merge request.
+message PullRequestNode {
+  string id            = 1;
+  string name          = 2;
+  int32  number        = 3;
+  string title         = 4;
+  string state         = 5;   // "open", "closed", "merged"
+  string author        = 6;
+  string url           = 7;
+  string created_at    = 8  [(ladybug.column) = "createdAt"];
+  string base_branch   = 9  [(ladybug.column) = "baseBranch"];
+  string head_branch   = 10 [(ladybug.column) = "headBranch"];
+  int32  additions     = 11;
+  int32  deletions     = 12;
+  int32  files_changed = 13 [(ladybug.column) = "filesChanged"];
+}
+
+// ---- Relationship types --------------------------------------------------
+
+// DefinesRel represents a structural containment relationship:
+// Repo defines Dir, Dir defines File, File defines Class, etc.
+message DefinesRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// ImportsRel represents an import/use/require dependency.
+// Source is the logical consumer (Module, Class); target is what it depends on.
+// Examples:
+//   Module --Imports--> Module    (Python: import os, Go: import "fmt")
+//   Module --Imports--> Class     (Python: from collections import OrderedDict)
+//   Module --Imports--> Function  (Python: from os.path import join)
+//   Class  --Imports--> Class     (Java: import com.example.Foo)
+message ImportsRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+  string alias     = 4;  // import alias if renamed (e.g. "import numpy as np" → alias="np")
+}
+
+// CallsRel represents a function/method call relationship.
+message CallsRel {
+  string id         = 1;
+  string source_id  = 2;
+  string target_id  = 3;
+  float  confidence = 4;
+}
+
+// DependsOnRel represents a build-level package dependency.
+// Repository --DependsOn--> Dependency
+message DependsOnRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// TargetsRepoRel links a PullRequest to its target Repository.
+message TargetsRepoRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}

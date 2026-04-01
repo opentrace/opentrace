@@ -73,7 +73,7 @@ def test_end_to_end_pipeline(tmp_path: Path) -> None:
 
     # Relationship types
     rel_types = {r.type for r in rels}
-    assert "DEFINED_IN" in rel_types
+    assert "DEFINES" in rel_types
     # CALLS should exist (self.name in greet, or import-based calls)
 
 

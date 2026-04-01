@@ -153,7 +153,7 @@ export interface ExtractStageConfig {
 /**
  * Processes File nodes: parses with tree-sitter, extracts symbols,
  * analyzes imports. Produces Class/Function/Package nodes and
- * DEFINED_IN/IMPORTS relationships.
+ * DEFINES/IMPORTS relationships.
  *
  * Non-File nodes (and non-parseable files) pass through unchanged.
  *
@@ -283,7 +283,7 @@ export class ExtractStage implements INodeStage {
           if (!this.packageNodes.has(pkgId)) {
             const pkgNode: GraphNode = {
               id: pkgId,
-              type: 'Package',
+              type: 'Dependency',
               name: pkgName,
               properties: { registry: pkgId.split(':')[1] },
             };
@@ -392,9 +392,8 @@ export class SummarizeStage implements INodeStage {
       signature: props.signature as string | undefined,
       language: props.language as string | undefined,
       lineCount:
-        typeof props.start_line === 'number' &&
-        typeof props.end_line === 'number'
-          ? props.end_line - props.start_line + 1
+        typeof props.startLine === 'number' && typeof props.endLine === 'number'
+          ? props.endLine - props.startLine + 1
           : undefined,
       receiverType: props.receiver_type as string | undefined,
       fileName:

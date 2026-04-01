@@ -45,7 +45,7 @@ def _mock_events() -> list[PipelineEvent]:
             relationships=[
                 GraphRelationship(
                     id="rel-1",
-                    type="DEFINED_IN",
+                    type="DEFINES",
                     source_id="repo/file.py",
                     target_id="repo",
                 ),
@@ -61,7 +61,7 @@ def _mock_events() -> list[PipelineEvent]:
             relationships=[
                 GraphRelationship(
                     id="rel-2",
-                    type="DEFINED_IN",
+                    type="DEFINES",
                     source_id="repo/file.py::Foo",
                     target_id="repo/file.py",
                 ),
