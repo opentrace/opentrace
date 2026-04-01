@@ -348,15 +348,12 @@ const GraphViewer = memo(
       useEffect(() => {
         if (!chatHighlightNodes || chatHighlightNodes.size === 0) return;
         const now = Date.now();
-        const nodeMap = new Map(
-          graphDataRef.current.nodes.map((n) => [n.id, n]),
-        );
         setNodeHistory((prev) => {
           const existing = new Set(prev.map((e) => e.id));
           const newEntries: HistoryEntry[] = [];
           for (const id of chatHighlightNodes) {
             if (existing.has(id)) continue;
-            const node = nodeMap.get(id);
+            const node = graphDataRef.current.nodes.find((n) => n.id === id);
             if (!node) continue;
             newEntries.push({
               id: node.id,

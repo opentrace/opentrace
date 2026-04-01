@@ -36,10 +36,10 @@ export default function HistoryPanel({
   );
 
   const filtered = useMemo(() => {
+    const q = filter.toLowerCase().trim();
     return entries.filter((e) => {
       if (sourceFilter !== 'all' && e.source !== sourceFilter) return false;
-      if (!filter) return true;
-      const q = filter.toLowerCase();
+      if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q)
       );
@@ -59,6 +59,7 @@ export default function HistoryPanel({
           />
           {filter && (
             <button
+              type="button"
               className="history-filter-clear"
               onClick={() => setFilter('')}
               title="Clear filter"
@@ -67,17 +68,6 @@ export default function HistoryPanel({
             </button>
           )}
         </div>
-        {entries.length > 0 && (
-          <div className="history-controls">
-            <button
-              className="history-control-btn"
-              onClick={onClear}
-              title="Clear history"
-            >
-              Clear
-            </button>
-          </div>
-        )}
       </div>
       {entries.length > 0 && (
         <div className="history-source-toggle">
@@ -85,6 +75,7 @@ export default function HistoryPanel({
             {(['all', 'user', 'chat'] as const).map((s) => (
               <button
                 key={s}
+                type="button"
                 className={`history-source-btn${sourceFilter === s ? ' history-source-btn--active' : ''}`}
                 onClick={() => setSourceFilter(s)}
               >
@@ -92,6 +83,14 @@ export default function HistoryPanel({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="history-clear-all"
+            onClick={onClear}
+            title="Clear history"
+          >
+            Clear All
+          </button>
         </div>
       )}
       <div className="history-panel-list">
@@ -108,6 +107,7 @@ export default function HistoryPanel({
           filtered.map((entry, i) => (
             <button
               key={`${entry.id}-${entry.timestamp}-${i}`}
+              type="button"
               className="history-row"
               onClick={() => onSelectNode(entry.id)}
             >

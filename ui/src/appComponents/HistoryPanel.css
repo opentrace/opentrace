@@ -77,42 +77,27 @@
   color: var(--foreground);
 }
 
-/* Clear button — matches .discover-tree-controls / .discover-tree-control-btn */
-.history-controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.history-control-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  height: 24px;
+/* Clear all history — sits at end of source toggle row */
+.history-clear-all {
   background: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
+  border: none;
   color: var(--muted-foreground);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   cursor: pointer;
-  transition:
-    color 0.15s,
-    background 0.15s,
-    border-color 0.15s;
+  padding: 0 4px;
+  flex-shrink: 0;
+  transition: color 0.15s;
 }
 
-.history-control-btn:hover {
+.history-clear-all:hover {
   color: var(--foreground);
-  background: color-mix(in oklch, var(--accent) 40%, transparent);
-  border-color: color-mix(in oklch, var(--border) 30%, transparent);
 }
 
 /* Source toggles — matches .discover-graph-toggle row */
 .history-source-toggle {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 0 10px 8px;
 }
 
