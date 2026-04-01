@@ -363,9 +363,19 @@ def _extract_annotated_field(assignment_node: tree_sitter.Node) -> VariableSymbo
 
 
 def _extract_self_assignments(body_node: tree_sitter.Node) -> list[VariableSymbol]:
-    """Extract ``self.x = ...`` assignments from a function body."""
+    """Extract ``self.x = ...`` assignments from a function body.
+
+    Recursively walks into nested blocks (if/else/try/etc.) to catch
+    conditional self-assignments, but stops at nested function/class scopes.
+    """
     variables: list[VariableSymbol] = []
-    for child in body_node.children:
+    _walk_for_self_assignments(body_node, variables)
+    return variables
+
+
+def _walk_for_self_assignments(node: tree_sitter.Node, variables: list[VariableSymbol]) -> None:
+    """Recursively collect self.x assignments."""
+    for child in node.children:
         if child.type == "expression_statement" and child.children:
             inner = child.children[0]
             if inner.type == "assignment":
@@ -386,28 +396,40 @@ def _extract_self_assignments(body_node: tree_sitter.Node) -> list[VariableSymbo
                                 derived_from=derivation,
                             )
                         )
-    return variables
+        # Skip nested scopes
+        if child.type in _NEW_SCOPE_TYPES or child.type == "decorated_definition":
+            continue
+        _walk_for_self_assignments(child, variables)
 
 
 def _derivation_from_expr(expr_node: tree_sitter.Node) -> list[DerivationRef]:
-    """Determine derivation references from a right-hand-side expression."""
+    """Determine derivation references from a right-hand-side expression.
+
+    Handles simple cases (identifier, call, attribute) directly, and
+    recursively collects identifiers from compound expressions
+    (e.g., ``y + z``, ``[a, b]``, ``f(x) + g(y)``).
+    """
     if expr_node.type == "identifier":
         return [DerivationRef(kind="identifier", name=expr_node.text.decode())]
-    elif expr_node.type == "call":
+    if expr_node.type == "call":
         func = expr_node.child_by_field_name("function")
         if func and func.type == "identifier":
             return [DerivationRef(kind="call", name=func.text.decode())]
-        elif func and func.type == "attribute":
+        if func and func.type == "attribute":
             obj = func.child_by_field_name("object")
             attr = func.child_by_field_name("attribute")
             if obj and attr:
                 return [DerivationRef(kind="call", name=attr.text.decode(), receiver=obj.text.decode())]
-    elif expr_node.type == "attribute":
+    if expr_node.type == "attribute":
         obj = expr_node.child_by_field_name("object")
         attr = expr_node.child_by_field_name("attribute")
         if obj and attr:
             return [DerivationRef(kind="attribute", name=attr.text.decode(), receiver=obj.text.decode())]
-    return []
+    # Compound expression — recursively collect from all children
+    refs: list[DerivationRef] = []
+    for child in expr_node.children:
+        refs.extend(_derivation_from_expr(child))
+    return refs
 
 
 def _collect_variables(body_node: tree_sitter.Node) -> list[VariableSymbol]:
@@ -418,12 +440,19 @@ def _collect_variables(body_node: tree_sitter.Node) -> list[VariableSymbol]:
     return variables
 
 
+_NEW_SCOPE_TYPES = frozenset({"class_definition", "function_definition"})
+
+
 def _walk_body_for_variables(
     node: tree_sitter.Node,
     variables: list[VariableSymbol],
     seen: set[str],
 ) -> None:
-    """Recursively walk a function body for variable assignments."""
+    """Recursively walk a function body for variable assignments.
+
+    Recurses into all children (if/elif/else/for/while/with/try/except/finally
+    blocks) but stops at new scopes (nested class or function definitions).
+    """
     for child in node.children:
         if child.type == "expression_statement" and child.children:
             inner = child.children[0]
@@ -432,11 +461,13 @@ def _walk_body_for_variables(
                 if var and var.name not in seen:
                     seen.add(var.name)
                     variables.append(var)
-        # Recurse into blocks (if, for, while, with, try)
-        if child.type in ("if_statement", "for_statement", "while_statement", "with_statement", "try_statement"):
-            for sub in child.children:
-                if sub.type == "block":
-                    _walk_body_for_variables(sub, variables, seen)
+        # Skip nested scopes — they define their own variables
+        if child.type in _NEW_SCOPE_TYPES:
+            continue
+        if child.type == "decorated_definition":
+            continue
+        # Recurse into everything else (blocks, clauses, etc.)
+        _walk_body_for_variables(child, variables, seen)
 
 
 def _extract_local_assignment(assignment_node: tree_sitter.Node) -> VariableSymbol | None:
