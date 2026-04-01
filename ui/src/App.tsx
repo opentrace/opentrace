@@ -41,7 +41,12 @@ interface AppProps {
   onConnectServer?: (serverUrl: string) => void;
 }
 
-function App({ version, buildTime, initialRepoUrl, onConnectServer }: AppProps = {}) {
+function App({
+  version,
+  buildTime,
+  initialRepoUrl,
+  onConnectServer,
+}: AppProps = {}) {
   const { store } = useStore();
   const jobService = useJobService();
   const {

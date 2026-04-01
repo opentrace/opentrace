@@ -93,17 +93,22 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       // Server-backed stores don't know if data exists until they've called
       // the API. Probe the server, then load if it has data.
       let cancelled = false;
-      store.ensureReady().then(() => {
-        if (cancelled) return;
-        if (store.hasData()) {
-          loadGraph();
-        } else {
-          setLoading(false);
-        }
-      }).catch(() => {
-        if (!cancelled) setLoading(false);
-      });
-      return () => { cancelled = true; };
+      store
+        .ensureReady()
+        .then(() => {
+          if (cancelled) return;
+          if (store.hasData()) {
+            loadGraph();
+          } else {
+            setLoading(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
     } else {
       setLoading(false);
     }

@@ -41,7 +41,9 @@ function detectInitialMode(): StoreMode {
       new URL(serverUrl); // validate
       return `server:${serverUrl}`;
     }
-  } catch { /* invalid URL or SSR / non-browser */ }
+  } catch {
+    /* invalid URL or SSR / non-browser */
+  }
   return 'local';
 }
 
@@ -73,7 +75,9 @@ export function OpenTraceApp({
   repoUrl,
 }: OpenTraceAppProps = {}) {
   const [mode, setMode] = useState<StoreMode>(detectInitialMode);
-  const [store, setStore] = useState<GraphStore>(() => createStoreForMode(mode));
+  const [store, setStore] = useState<GraphStore>(() =>
+    createStoreForMode(mode),
+  );
 
   const handleConnectServer = useCallback((serverUrl: string) => {
     const nextMode: StoreMode = `server:${serverUrl}`;

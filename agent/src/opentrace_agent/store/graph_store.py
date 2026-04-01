@@ -629,7 +629,9 @@ class GraphStore:
         return pairs
 
     def list_relationships_for_nodes(
-        self, node_ids: set[str], limit: int = 10000,
+        self,
+        node_ids: set[str],
+        limit: int = 10000,
     ) -> list[dict[str, Any]]:
         """Return relationships where both endpoints are in *node_ids*."""
         if not node_ids:
