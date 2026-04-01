@@ -56,10 +56,10 @@ def create_app(store: GraphStore) -> Starlette:
         return JSONResponse(data)
 
     async def fetch_graph(request: Request) -> JSONResponse:
-        """GET /api/graph?query=&hops=
+        """GET /api/graph?query=&hops=&limit=
 
         When *query* is empty, returns all nodes and relationships (capped by
-        *limit*, default 500) so the UI can render the full graph on initial load.
+        *limit*, default 10 000) so the UI can render the full graph on initial load.
         """
         query = request.query_params.get("query", "")
         try:
@@ -82,7 +82,7 @@ def create_app(store: GraphStore) -> Starlette:
             all_nodes = all_nodes[:limit]
 
             node_ids = {n["id"] for n in all_nodes}
-            all_rels = store._list_all_relationships(limit * 2)
+            all_rels = store.list_relationships_for_nodes(node_ids, limit * 2)
             links = [
                 {
                     "source": r["source_id"],
@@ -92,7 +92,6 @@ def create_app(store: GraphStore) -> Starlette:
                     "properties": r.get("properties"),
                 }
                 for r in all_rels
-                if r["source_id"] in node_ids and r["target_id"] in node_ids
             ]
             return JSONResponse({"nodes": all_nodes, "links": links})
 

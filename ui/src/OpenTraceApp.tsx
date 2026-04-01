@@ -37,8 +37,11 @@ type StoreMode = 'local' | `server:${string}`;
 function detectInitialMode(): StoreMode {
   try {
     const serverUrl = new URLSearchParams(window.location.search).get('server');
-    if (serverUrl) return `server:${serverUrl}`;
-  } catch { /* SSR / non-browser */ }
+    if (serverUrl) {
+      new URL(serverUrl); // validate
+      return `server:${serverUrl}`;
+    }
+  } catch { /* invalid URL or SSR / non-browser */ }
   return 'local';
 }
 

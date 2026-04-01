@@ -48,7 +48,8 @@ export class ServerGraphStore implements GraphStore {
     path: string,
     params?: Record<string, string>,
   ): Promise<T> {
-    const url = new URL(path, this.baseUrl);
+    const base = this.baseUrl.endsWith('/') ? this.baseUrl : this.baseUrl + '/';
+    const url = new URL(path.startsWith('/') ? path.slice(1) : path, base);
     if (params) {
       for (const [k, v] of Object.entries(params)) {
         if (v !== undefined && v !== '') url.searchParams.set(k, v);
@@ -63,7 +64,8 @@ export class ServerGraphStore implements GraphStore {
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
-    const url = new URL(path, this.baseUrl);
+    const base = this.baseUrl.endsWith('/') ? this.baseUrl : this.baseUrl + '/';
+    const url = new URL(path.startsWith('/') ? path.slice(1) : path, base);
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
