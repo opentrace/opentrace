@@ -123,6 +123,76 @@ function hexToNum(hex: string): number {
   return EDGE_FALLBACK_COLOR;
 }
 
+// ─── Geometry helpers for edge hit-testing ──────────────────────────────
+
+/** Minimum distance from point (px,py) to line segment (ax,ay)→(bx,by). */
+function pointToSegmentDist(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 0.0001) {
+    // Degenerate segment — just distance to the point
+    const ex = px - ax;
+    const ey = py - ay;
+    return Math.sqrt(ex * ex + ey * ey);
+  }
+  // Project point onto the line, clamping t to [0,1]
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  const ex = px - cx;
+  const ey = py - cy;
+  return Math.sqrt(ex * ex + ey * ey);
+}
+
+/**
+ * Approximate minimum distance from point to a quadratic Bézier curve.
+ * Samples the curve at fixed intervals — fast enough for interactive use.
+ */
+function pointToQuadraticDist(
+  px: number,
+  py: number,
+  sx: number,
+  sy: number,
+  tx: number,
+  ty: number,
+  curvature: number,
+): number {
+  const mx = (sx + tx) / 2;
+  const my = (sy + ty) / 2;
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 0.001) return Math.sqrt((px - sx) ** 2 + (py - sy) ** 2);
+  const offset = len * curvature;
+  const cpx = mx + (-dy / len) * offset;
+  const cpy = my + (dx / len) * offset;
+
+  // Sample 10 segments along the curve
+  const SAMPLES = 10;
+  let best = Infinity;
+  let prevX = sx;
+  let prevY = sy;
+  for (let i = 1; i <= SAMPLES; i++) {
+    const u = i / SAMPLES;
+    const inv = 1 - u;
+    const cx = inv * inv * sx + 2 * inv * u * cpx + u * u * tx;
+    const cy = inv * inv * sy + 2 * inv * u * cpy + u * u * ty;
+    const d = pointToSegmentDist(px, py, prevX, prevY, cx, cy);
+    if (d < best) best = d;
+    prevX = cx;
+    prevY = cy;
+  }
+  return best;
+}
+
 // ─── Renderer Class ─────────────────────────────────────────────────────
 
 export class PixiRenderer {
@@ -1386,6 +1456,66 @@ export class PixiRenderer {
     return this._quadtree.find(worldX, worldY, maxDistance) ?? null;
   }
 
+  /**
+   * Find the nearest edge to (worldX, worldY) within maxDistance.
+   * Uses point-to-segment (or point-to-quadratic-curve) distance testing.
+   */
+  findEdgeAt(worldX: number, worldY: number, maxDistance = 8): PixiEdge | null {
+    if (this.edges.length === 0) return null;
+
+    let bestEdge: PixiEdge | null = null;
+    let bestDist = maxDistance;
+
+    for (let i = 0; i < this.edges.length; i++) {
+      const e = this.edges[i];
+      if (this.hiddenLinkTypes.has(e.label)) continue;
+      const s = this.nodes.get(e.sourceId);
+      const t = this.nodes.get(e.targetId);
+      if (!s?.visible || !t?.visible) continue;
+
+      const sx = this.mode3d ? s.sprite.position.x : s.x;
+      const sy = this.mode3d ? s.sprite.position.y : s.y;
+      const tx = this.mode3d ? t.sprite.position.x : t.x;
+      const ty = this.mode3d ? t.sprite.position.y : t.y;
+
+      let dist: number;
+      if (this.bp.edgeStyle === 'curve') {
+        dist = pointToQuadraticDist(
+          worldX,
+          worldY,
+          sx,
+          sy,
+          tx,
+          ty,
+          this.curvature,
+        );
+      } else {
+        dist = pointToSegmentDist(worldX, worldY, sx, sy, tx, ty);
+      }
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestEdge = e;
+      }
+    }
+
+    return bestEdge;
+  }
+
+  /** Build a SelectedEdge from a PixiEdge, resolving source/target nodes. */
+  private buildSelectedEdge(edge: PixiEdge): SelectedEdge {
+    const sourceNode = this.nodes.get(edge.sourceId)?.graphNode;
+    const targetNode = this.nodes.get(edge.targetId)?.graphNode;
+    return {
+      source: edge.sourceId,
+      target: edge.targetId,
+      label: edge.label,
+      properties: edge.graphLink.properties,
+      sourceNode,
+      targetNode,
+    };
+  }
+
   // ─── Viewport ─────────────────────────────────────────────────────
 
   getViewport(): Viewport {
@@ -1596,7 +1726,14 @@ export class PixiRenderer {
           const sy = e.clientY - rect.top;
           const w = screenToWorld(sx, sy, this.vp);
           const hit = this.findNodeAt(w.x, w.y, 15 / this.vp.scale);
-          canvas.style.cursor = hit ? 'pointer' : 'default';
+          if (hit) {
+            canvas.style.cursor = 'pointer';
+          } else {
+            const edgeHit = this.edgesEnabled
+              ? this.findEdgeAt(w.x, w.y, 10 / this.vp.scale)
+              : null;
+            canvas.style.cursor = edgeHit ? 'pointer' : 'default';
+          }
           return;
         }
 
@@ -1691,12 +1828,24 @@ export class PixiRenderer {
           }
           this.callbacks.onNodeClick?.(hitNode.graphNode);
         } else {
-          // Resume 3D rotation on stage click (deselect)
-          if (this.mode3d && !this.mode3dAutoRotate) {
-            this.mode3dAutoRotate = true;
-            this.callbacks.on3DAutoRotateChange?.(true);
+          // No node hit — check for edge hit
+          const hitEdge = this.edgesEnabled
+            ? this.findEdgeAt(world.x, world.y, 10 / this.vp.scale)
+            : null;
+          if (hitEdge) {
+            if (this.mode3d && this.mode3dAutoRotate) {
+              this.mode3dAutoRotate = false;
+              this.callbacks.on3DAutoRotateChange?.(false);
+            }
+            this.callbacks.onEdgeClick?.(this.buildSelectedEdge(hitEdge));
+          } else {
+            // Resume 3D rotation on stage click (deselect)
+            if (this.mode3d && !this.mode3dAutoRotate) {
+              this.mode3dAutoRotate = true;
+              this.callbacks.on3DAutoRotateChange?.(true);
+            }
+            this.callbacks.onStageClick?.();
           }
-          this.callbacks.onStageClick?.();
         }
       }
 
