@@ -66,6 +66,7 @@ import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';
 import type { HistoryEntry } from './historyTypes';
+import type { NodeEdge } from './NodeDetailsPanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
@@ -979,10 +980,14 @@ const GraphViewer = memo(
         const nodeId = selectedNode.id;
         const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
         return filteredGraphData.links
-          .filter((l) => l.source === nodeId || l.target === nodeId)
+          .filter(
+            (l) => linkId(l.source) === nodeId || linkId(l.target) === nodeId,
+          )
           .map((l) => {
-            const isOutgoing = l.source === nodeId;
-            const otherId = isOutgoing ? l.target : l.source;
+            const sourceId = linkId(l.source);
+            const targetId = linkId(l.target);
+            const isOutgoing = sourceId === nodeId;
+            const otherId = isOutgoing ? targetId : sourceId;
             const otherNode = nodeMap.get(otherId);
             return {
               label: l.label,
@@ -999,7 +1004,7 @@ const GraphViewer = memo(
 
       // Convert a NodeEdge back to a SelectedEdge and trigger edge selection
       const handleSelectEdgeFromNode = useCallback(
-        (edge: import('./NodeDetailsPanel').NodeEdge) => {
+        (edge: NodeEdge) => {
           if (!selectedNode) return;
           const nodeMap = new Map(
             graphDataRef.current.nodes.map((n) => [n.id, n]),
