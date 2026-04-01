@@ -1728,11 +1728,11 @@ export class PixiRenderer {
           const hit = this.findNodeAt(w.x, w.y, 15 / this.vp.scale);
           if (hit) {
             canvas.style.cursor = 'pointer';
-          } else {
-            const edgeHit = this.edgesEnabled
-              ? this.findEdgeAt(w.x, w.y, 10 / this.vp.scale)
-              : null;
+          } else if (this.edgesEnabled && this.bp.edgeHoverHitTest) {
+            const edgeHit = this.findEdgeAt(w.x, w.y, 10 / this.vp.scale);
             canvas.style.cursor = edgeHit ? 'pointer' : 'default';
+          } else {
+            canvas.style.cursor = 'default';
           }
           return;
         }
