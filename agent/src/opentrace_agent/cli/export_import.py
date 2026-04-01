@@ -53,6 +53,7 @@ def export_database(store: GraphStore) -> bytes:
     if stats["total_nodes"] == 0:
         raise ValueError("Nothing to export — the graph is empty.")
 
+    all_node_ids: set[str] = set()
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Group nodes by type and write one parquet file per type
@@ -69,6 +70,7 @@ def export_database(store: GraphStore) -> bytes:
                 }
                 for n in nodes
             ]
+            all_node_ids.update(r["id"] for r in rows)
             table = pa.Table.from_pylist(rows)
 
             buf = io.BytesIO()
@@ -77,7 +79,7 @@ def export_database(store: GraphStore) -> bytes:
             logger.debug("Exported %s: %d nodes", node_type, len(nodes))
 
         # Export relationships
-        rels = store._list_all_relationships(2**31 - 1)
+        rels = store.list_relationships_for_nodes(all_node_ids)
         if rels:
             rel_rows = [
                 {

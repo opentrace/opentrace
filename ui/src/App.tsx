@@ -37,9 +37,16 @@ interface AppProps {
   version?: string;
   buildTime?: string;
   initialRepoUrl?: string;
+  /** Called when the user connects to a remote server via the AddRepo modal. */
+  onConnectServer?: (serverUrl: string) => void;
 }
 
-function App({ version, buildTime, initialRepoUrl }: AppProps = {}) {
+function App({
+  version,
+  buildTime,
+  initialRepoUrl,
+  onConnectServer,
+}: AppProps = {}) {
   const { store } = useStore();
   const jobService = useJobService();
   const {
@@ -87,6 +94,10 @@ function App({ version, buildTime, initialRepoUrl }: AppProps = {}) {
 
   const handleJobSubmit = useCallback(
     (message: JobMessage) => {
+      if (message.type === 'connect-server') {
+        onConnectServer?.(message.serverUrl);
+        return;
+      }
       if (message.type === 'index-repo') {
         setActiveRepoUrl(message.repoUrl);
       } else if (message.type === 'index-directory') {

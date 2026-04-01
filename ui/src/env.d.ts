@@ -19,6 +19,7 @@ declare const __BUILD_TIME__: string;
 
 interface ImportMetaEnv {
   readonly VITE_ARCHIVE_URL?: string;
+  readonly VITE_SERVER_URL?: string;
 }
 
 interface ImportMeta {

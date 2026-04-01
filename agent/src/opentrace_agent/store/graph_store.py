@@ -484,10 +484,8 @@ class GraphStore:
                         rel_map[rid] = t["relationship"]
         else:
             # hops=0: return only relationships between matched nodes
-            all_rels = self._list_all_relationships(limit * 2)
-            for r in all_rels:
-                if r["source_id"] in node_map and r["target_id"] in node_map:
-                    rel_map[r["id"]] = r
+            for r in self.list_relationships_for_nodes(set(node_map.keys()), limit * 2):
+                rel_map[r["id"]] = r
 
         return list(node_map.values()), list(rel_map.values())
 
@@ -630,10 +628,20 @@ class GraphStore:
                 pairs.append((node, rel))
         return pairs
 
-    def _list_all_relationships(self, limit: int) -> list[dict[str, Any]]:
-        """List all relationships (used for hops=0 search_graph)."""
+    def list_relationships_for_nodes(
+        self,
+        node_ids: set[str],
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """Return relationships where both endpoints are in *node_ids*."""
+        if not node_ids:
+            return []
         result = self._conn.execute(
-            f"MATCH (a:Node)-[r:RELATES]->(b:Node) RETURN r.id, r.type, r.properties, a.id, b.id LIMIT {limit}"
+            "MATCH (a:Node)-[r:RELATES]->(b:Node) "
+            "WHERE a.id IN $ids AND b.id IN $ids "
+            "RETURN r.id, r.type, r.properties, a.id, b.id "
+            f"LIMIT {limit}",
+            parameters={"ids": list(node_ids)},
         )
         rels: list[dict[str, Any]] = []
         while result.has_next():

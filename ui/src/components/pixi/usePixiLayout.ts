@@ -204,7 +204,9 @@ export function usePixiLayout(
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
 
     // ── Same nodes (metadata change like communityData) — skip ──
-    if (isSameNodes) return;
+    // Also guard on workerRef: if the worker was killed (e.g. by React
+    // StrictMode's cleanup cycle), fall through to full-init to recreate it.
+    if (isSameNodes && workerRef.current) return;
 
     // ── Incremental: send add-nodes to existing worker ──
     if (isIncremental) {
