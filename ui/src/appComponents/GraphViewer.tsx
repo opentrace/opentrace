@@ -1455,7 +1455,7 @@ const GraphViewer = memo(
       const linkFilterItems: FilterItem[] = availableLinkTypes.map(
         ({ type, count }) => ({
           key: type,
-          label: type.toLowerCase(),
+          label: type.toUpperCase(),
           count,
           color: getLinkColor(type),
           hidden: hiddenLinkTypes.has(type),
