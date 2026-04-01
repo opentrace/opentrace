@@ -65,6 +65,7 @@ import { GitHubIcon, GitLabIcon } from './providerIcons';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';
+import type { HistoryEntry } from './historyTypes';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
@@ -340,6 +341,35 @@ const GraphViewer = memo(
       );
       const [sourceLoading, setSourceLoading] = useState(false);
       const [sourceError, setSourceError] = useState<string | null>(null);
+
+      const [nodeHistory, setNodeHistory] = useState<HistoryEntry[]>([]);
+
+      // Append chat-highlighted nodes to session history
+      useEffect(() => {
+        if (!chatHighlightNodes || chatHighlightNodes.size === 0) return;
+        const now = Date.now();
+        const nodeMap = new Map(
+          graphDataRef.current.nodes.map((n) => [n.id, n]),
+        );
+        setNodeHistory((prev) => {
+          const existing = new Set(prev.map((e) => e.id));
+          const newEntries: HistoryEntry[] = [];
+          for (const id of chatHighlightNodes) {
+            if (existing.has(id)) continue;
+            const node = nodeMap.get(id);
+            if (!node) continue;
+            newEntries.push({
+              id: node.id,
+              name: node.name,
+              type: node.type,
+              timestamp: now,
+              source: 'chat',
+            });
+          }
+          if (newEntries.length === 0) return prev;
+          return [...newEntries, ...prev].slice(0, 500);
+        });
+      }, [chatHighlightNodes]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -639,6 +669,18 @@ const GraphViewer = memo(
         setEdgeHighlightLinks(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
         setFocusedCommunityNodes(EMPTY_SET);
+        // Record in session history (skip consecutive duplicates)
+        setNodeHistory((prev) => {
+          if (prev.length > 0 && prev[0].id === node.id) return prev;
+          const entry: HistoryEntry = {
+            id: node.id,
+            name: node.name,
+            type: node.type,
+            timestamp: Date.now(),
+            source: 'user',
+          };
+          return [entry, ...prev].slice(0, 500);
+        });
         // Zoom is handled by the effect below after highlights are computed
       }, []);
 
@@ -1319,6 +1361,8 @@ const GraphViewer = memo(
             graphVersion={graphVersion}
             graphNodeIds={graphNodeIds}
             hopMap={hopMap}
+            nodeHistory={nodeHistory}
+            onClearHistory={() => setNodeHistory([])}
             mobileActiveTab={mobilePanelTab}
             onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}

@@ -1,0 +1,194 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.history-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  flex-shrink: 0;
+}
+
+.history-panel-header-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.history-panel-clear {
+  background: none;
+  border: none;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+}
+
+.history-panel-clear:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 50%, transparent);
+}
+
+.history-panel-filter {
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  flex-shrink: 0;
+}
+
+.history-panel-filter-input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--background) 80%, transparent);
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.history-panel-filter-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.history-panel-filter-input:focus {
+  border-color: var(--primary);
+}
+
+.history-panel-source-toggles {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.history-panel-source-btn {
+  flex: 1;
+  background: none;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  border-radius: var(--radius);
+  padding: 3px 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.history-panel-source-btn:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+.history-panel-source-btn--active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+.history-panel-item-source {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.history-panel-item-source--user {
+  color: color-mix(in oklch, var(--primary) 90%, var(--foreground));
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+}
+
+.history-panel-item-source--chat {
+  color: color-mix(in oklch, oklch(0.7 0.15 160) 90%, var(--foreground));
+  background: color-mix(in oklch, oklch(0.7 0.15 160) 15%, transparent);
+}
+
+.history-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 80px;
+}
+
+.history-panel-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+}
+
+.history-panel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.history-panel-item:hover {
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.history-panel-item-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.history-panel-item-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.history-panel-item-name {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-panel-item-meta {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.history-panel-item-type {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
