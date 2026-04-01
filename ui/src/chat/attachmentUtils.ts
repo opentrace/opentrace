@@ -100,12 +100,7 @@ function isImageFile(file: File): boolean {
 
 function isTextFile(file: File): boolean {
   if (TEXT_MIME_TYPES.includes(file.type)) return true;
-  if (file.type === '' || file.type === 'application/octet-stream') {
-    const ext = getExtension(file.name);
-    return TEXT_EXTENSIONS.has(ext);
-  }
-  const ext = getExtension(file.name);
-  return TEXT_EXTENSIONS.has(ext);
+  return TEXT_EXTENSIONS.has(getExtension(file.name));
 }
 
 function getExtension(name: string): string {
