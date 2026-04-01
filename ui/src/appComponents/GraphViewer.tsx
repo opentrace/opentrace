@@ -973,6 +973,53 @@ const GraphViewer = memo(
       }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
       /* eslint-enable react-hooks/set-state-in-effect */
 
+      // Compute edges connected to the selected node for the details panel
+      const selectedNodeEdges = useMemo(() => {
+        if (!selectedNode) return [];
+        const nodeId = selectedNode.id;
+        const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
+        return filteredGraphData.links
+          .filter((l) => l.source === nodeId || l.target === nodeId)
+          .map((l) => {
+            const isOutgoing = l.source === nodeId;
+            const otherId = isOutgoing ? l.target : l.source;
+            const otherNode = nodeMap.get(otherId);
+            return {
+              label: l.label,
+              direction: isOutgoing
+                ? ('outgoing' as const)
+                : ('incoming' as const),
+              otherNodeId: otherId,
+              otherNodeName: otherNode?.name ?? otherId,
+              otherNodeType: otherNode?.type,
+              properties: l.properties,
+            };
+          });
+      }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
+
+      // Convert a NodeEdge back to a SelectedEdge and trigger edge selection
+      const handleSelectEdgeFromNode = useCallback(
+        (edge: import('./NodeDetailsPanel').NodeEdge) => {
+          if (!selectedNode) return;
+          const nodeMap = new Map(
+            graphDataRef.current.nodes.map((n) => [n.id, n]),
+          );
+          const sourceId =
+            edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
+          const targetId =
+            edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
+          onLinkClick({
+            source: sourceId,
+            target: targetId,
+            label: edge.label,
+            properties: edge.properties,
+            sourceNode: nodeMap.get(sourceId),
+            targetNode: nodeMap.get(targetId),
+          });
+        },
+        [selectedNode, onLinkClick],
+      );
+
       // Compute degree (connection count) per node for size scaling
       const graphNodeIds = useMemo(
         () => graphData.nodes.map((n) => n.id as string),
@@ -1541,6 +1588,8 @@ const GraphViewer = memo(
             sourceError={sourceError}
             communityName={selectedCommunityName}
             communityColor={selectedCommunityColor}
+            selectedNodeEdges={selectedNodeEdges}
+            onSelectEdge={handleSelectEdgeFromNode}
             selectedLink={selectedLink}
             onSelectNode={(nodeId) => {
               const node = graphDataRef.current.nodes.find(
