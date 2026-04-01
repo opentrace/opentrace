@@ -25,16 +25,6 @@ interface HistoryPanelProps {
   onClear: () => void;
 }
 
-function formatTimeAgo(ts: number): string {
-  const seconds = Math.floor((Date.now() - ts) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 export default function HistoryPanel({
   entries,
   onSelectNode,
@@ -58,28 +48,29 @@ export default function HistoryPanel({
 
   return (
     <div className="history-panel">
-      <div className="history-panel-header">
-        <span className="history-panel-header-title">Selection History</span>
+      <div className="history-filter-bar">
+        <input
+          className="history-filter-input"
+          type="text"
+          placeholder="Filter history..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
         {entries.length > 0 && (
-          <button className="history-panel-clear" onClick={onClear}>
-            Clear
-          </button>
+          <div className="history-controls">
+            <button className="history-control-btn" onClick={onClear}>
+              Clear
+            </button>
+          </div>
         )}
       </div>
       {entries.length > 0 && (
-        <div className="history-panel-filter">
-          <input
-            className="history-panel-filter-input"
-            type="text"
-            placeholder="Filter by name or type..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <div className="history-panel-source-toggles">
+        <div className="history-source-toggle">
+          <div className="history-source-toggles">
             {(['all', 'user', 'chat'] as const).map((s) => (
               <button
                 key={s}
-                className={`history-panel-source-btn${sourceFilter === s ? ' history-panel-source-btn--active' : ''}`}
+                className={`history-source-btn${sourceFilter === s ? ' history-source-btn--active' : ''}`}
                 onClick={() => setSourceFilter(s)}
               >
                 {s === 'all' ? 'All' : s === 'user' ? 'User' : 'Chat'}
@@ -102,27 +93,20 @@ export default function HistoryPanel({
           filtered.map((entry, i) => (
             <button
               key={`${entry.id}-${entry.timestamp}-${i}`}
-              className="history-panel-item"
+              className="history-row"
               onClick={() => onSelectNode(entry.id)}
             >
               <span
-                className="history-panel-item-dot"
+                className="history-row-dot"
                 style={{ background: getNodeColor(entry.type) }}
               />
-              <div className="history-panel-item-info">
-                <div className="history-panel-item-name">{entry.name}</div>
-                <div className="history-panel-item-meta">
-                  <span
-                    className={`history-panel-item-source history-panel-item-source--${entry.source}`}
-                  >
-                    {entry.source}
-                  </span>
-                  <span>&middot;</span>
-                  <span className="history-panel-item-type">{entry.type}</span>
-                  <span>&middot;</span>
-                  <span>{formatTimeAgo(entry.timestamp)}</span>
-                </div>
-              </div>
+              <span className="history-row-name">{entry.name}</span>
+              <span
+                className={`history-row-source history-row-source--${entry.source}`}
+              >
+                {entry.source}
+              </span>
+              <span className="history-row-type">{entry.type}</span>
             </button>
           ))
         )}
