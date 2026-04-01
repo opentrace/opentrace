@@ -54,8 +54,8 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def find_db(start: Path | None = None) -> Path | None:
-    """Walk up from *start* looking for ``.opentrace/index.db``.
+def _find_opentrace_dir(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for an existing ``.opentrace/`` directory.
 
     Security boundaries:
     - Stops at the git repo root (or filesystem root).
@@ -72,8 +72,8 @@ def find_db(start: Path | None = None) -> Path | None:
 
     current = start
     for _ in range(_MAX_WALK_DEPTH):
-        candidate = current / OPENTRACE_DIR / DB_NAME
-        if candidate.exists():
+        candidate = current / OPENTRACE_DIR
+        if candidate.is_dir():
             resolved = candidate.resolve()
             # Reject if the resolved path escapes the repo boundary.
             if _is_under(resolved, boundary):
@@ -83,6 +83,22 @@ def find_db(start: Path | None = None) -> Path | None:
             break
         current = current.parent
 
+    return None
+
+
+def find_db(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for ``.opentrace/index.db``.
+
+    Security boundaries:
+    - Stops at the git repo root (or filesystem root).
+    - Rejects symlinks that resolve outside the boundary.
+    - Caps upward traversal at ``_MAX_WALK_DEPTH`` levels.
+    """
+    ot_dir = _find_opentrace_dir(start)
+    if ot_dir is not None:
+        db_path = ot_dir / DB_NAME
+        if db_path.exists():
+            return db_path
     return None
 
 
@@ -472,6 +488,80 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
         f"{result['relationships_created']} relationships "
         f"({result['errors']} errors)"
     )
+
+
+# ---------------------------------------------------------------------------
+# config command group
+# ---------------------------------------------------------------------------
+
+
+def _resolve_config_path() -> Path:
+    """Return the config file path, preferring an existing .opentrace/ dir."""
+    from opentrace_agent.cli.config import CONFIG_NAME
+
+    ot_dir = _find_opentrace_dir()
+    if ot_dir is not None:
+        return ot_dir / CONFIG_NAME
+    return Path.cwd() / OPENTRACE_DIR / CONFIG_NAME
+
+
+@app.group()
+def config() -> None:
+    """Read or write project configuration (.opentrace/config.yaml)."""
+
+
+@config.command("set")
+@click.argument("key", type=click.Choice(["org"]))
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set a configuration value.
+
+    \b
+    Supported keys:
+      org   Organisation ID (org_xxx) or slug (acme_corp)
+    """
+    from opentrace_agent.cli.config import load_config, save_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    data[key] = value
+    save_config(path, data)
+    _ensure_gitignore(path.parent)
+    click.echo(f"{key}: {value}")
+
+
+@config.command("get")
+@click.argument("key", type=click.Choice(["org"]))
+def config_get(key: str) -> None:
+    """Get a configuration value."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    val = data.get(key)
+    if val is None:
+        raise click.UsageError(f"'{key}' is not set. Run: opentraceai config set {key} <value>")
+    click.echo(val)
+
+
+@config.command("show")
+def config_show() -> None:
+    """Show all configuration values."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    if not data:
+        click.echo("No configuration set.")
+        return
+    for k, v in data.items():
+        click.echo(f"{k}: {v}")
+
+
+@config.command("path")
+def config_path() -> None:
+    """Print the config file path."""
+    click.echo(_resolve_config_path())
 
 
 def _configure_logging(verbose: bool) -> None:
