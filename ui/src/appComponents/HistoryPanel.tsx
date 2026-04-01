@@ -49,16 +49,31 @@ export default function HistoryPanel({
   return (
     <div className="history-panel">
       <div className="history-filter-bar">
-        <input
-          className="history-filter-input"
-          type="text"
-          placeholder="Filter history..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        <div className="history-filter-wrap">
+          <input
+            className="history-filter-input"
+            type="text"
+            placeholder="Filter history..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {filter && (
+            <button
+              className="history-filter-clear"
+              onClick={() => setFilter('')}
+              title="Clear filter"
+            >
+              &times;
+            </button>
+          )}
+        </div>
         {entries.length > 0 && (
           <div className="history-controls">
-            <button className="history-control-btn" onClick={onClear}>
+            <button
+              className="history-control-btn"
+              onClick={onClear}
+              title="Clear history"
+            >
               Clear
             </button>
           </div>

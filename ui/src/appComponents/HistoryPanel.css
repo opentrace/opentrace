@@ -32,12 +32,17 @@
   gap: 4px;
 }
 
-.history-filter-input {
+.history-filter-wrap {
   flex: 1;
+  position: relative;
+}
+
+.history-filter-input {
+  width: 100%;
   background: color-mix(in oklch, var(--accent) 40%, transparent);
   border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
   border-radius: var(--radius);
-  padding: 5px 10px;
+  padding: 5px 28px 5px 10px;
   font-size: 0.78rem;
   color: var(--foreground);
   outline: none;
@@ -50,6 +55,26 @@
 
 .history-filter-input:focus {
   border-color: var(--primary);
+}
+
+/* Clear filter × — matches .discover-filter-clear */
+.history-filter-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: var(--radius);
+}
+
+.history-filter-clear:hover {
+  color: var(--foreground);
 }
 
 /* Clear button — matches .discover-tree-controls / .discover-tree-control-btn */
