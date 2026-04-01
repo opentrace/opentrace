@@ -8,6 +8,7 @@ export const NODE_SCHEMA_STATEMENTS = [
   `CREATE NODE TABLE IF NOT EXISTS Function(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, summary STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)`,
+  `CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)`,
 ] as const;
 
 export const NODE_TYPES = [
@@ -18,6 +19,7 @@ export const NODE_TYPES = [
   'Function',
   'Dependency',
   'PullRequest',
+  'Variable',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -103,6 +105,17 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'deletions', type: 'INT32' },
     { name: 'filesChanged', type: 'INT32' },
   ],
+  Variable: [
+    { name: 'id', type: 'STRING' },
+    { name: 'name', type: 'STRING' },
+    { name: 'language', type: 'STRING' },
+    { name: 'startLine', type: 'INT32' },
+    { name: 'endLine', type: 'INT32' },
+    { name: 'kind', type: 'STRING' },
+    { name: 'exported', type: 'BOOL' },
+    { name: 'typeAnnotation', type: 'STRING' },
+    { name: 'docs', type: 'STRING' },
+  ],
 } as const;
 
 export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = {
@@ -175,6 +188,17 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'deletions',
     'filesChanged',
   ],
+  Variable: [
+    'id',
+    'name',
+    'language',
+    'startLine',
+    'endLine',
+    'kind',
+    'exported',
+    'typeAnnotation',
+    'docs',
+  ],
 } as const;
 
 export const REL_SCHEMA = {
@@ -183,9 +207,11 @@ export const REL_SCHEMA = {
   IMPORTS: (from: string, to: string) =>
     `CREATE REL TABLE IF NOT EXISTS IMPORTS(FROM ${from} TO ${to}, id STRING, alias STRING)`,
   CALLS: (from: string, to: string) =>
-    `CREATE REL TABLE IF NOT EXISTS CALLS(FROM ${from} TO ${to}, id STRING, confidence FLOAT)`,
+    `CREATE REL TABLE IF NOT EXISTS CALLS(FROM ${from} TO ${to}, id STRING, confidence FLOAT, args STRING[])`,
   DEPENDS_ON: (from: string, to: string) =>
     `CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM ${from} TO ${to}, id STRING)`,
+  DERIVED_FROM: (from: string, to: string) =>
+    `CREATE REL TABLE IF NOT EXISTS DERIVED_FROM(FROM ${from} TO ${to}, id STRING, transform STRING)`,
   TARGETS_REPO: (from: string, to: string) =>
     `CREATE REL TABLE IF NOT EXISTS TARGETS_REPO(FROM ${from} TO ${to}, id STRING)`,
 } as const;
@@ -195,6 +221,7 @@ export const REL_TYPES = [
   'IMPORTS',
   'CALLS',
   'DEPENDS_ON',
+  'DERIVED_FROM',
   'TARGETS_REPO',
 ] as const;
 
@@ -211,9 +238,14 @@ export const REL_COLUMNS: Readonly<Record<RelType, readonly ColumnDef[]>> = {
   CALLS: [
     { name: 'id', type: 'STRING' },
     { name: 'confidence', type: 'FLOAT' },
+    { name: 'args', type: 'STRING[]' },
   ],
   DEPENDS_ON: [
     { name: 'id', type: 'STRING' },
+  ],
+  DERIVED_FROM: [
+    { name: 'id', type: 'STRING' },
+    { name: 'transform', type: 'STRING' },
   ],
   TARGETS_REPO: [
     { name: 'id', type: 'STRING' },
@@ -231,9 +263,14 @@ export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
   CALLS: [
     'id',
     'confidence',
+    'args',
   ],
   DEPENDS_ON: [
     'id',
+  ],
+  DERIVED_FROM: [
+    'id',
+    'transform',
   ],
   TARGETS_REPO: [
     'id',

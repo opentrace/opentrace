@@ -195,17 +195,17 @@ describe('fixture: Python project', () => {
     );
     expect(createUser).toBeDefined();
 
-    // Class methods are DEFINES the class, not the file
+    // Class DEFINES its methods (parent → child)
     const initRel = [...store.relationships.values()].find(
-      (r) => r.source_id === 'fixture/py-project/db.py::Database::__init__',
+      (r) => r.target_id === 'fixture/py-project/db.py::Database::__init__',
     );
-    expect(initRel?.target_id).toBe('fixture/py-project/db.py::Database');
+    expect(initRel?.source_id).toBe('fixture/py-project/db.py::Database');
 
-    // Class is DEFINES the file
+    // File DEFINES the class (parent → child)
     const classRel = [...store.relationships.values()].find(
-      (r) => r.source_id === 'fixture/py-project/db.py::Database',
+      (r) => r.target_id === 'fixture/py-project/db.py::Database',
     );
-    expect(classRel?.target_id).toBe('fixture/py-project/db.py');
+    expect(classRel?.source_id).toBe('fixture/py-project/db.py');
 
     // All DEFINES relationships point to valid nodes
     const definedInRels = [...store.relationships.values()].filter(

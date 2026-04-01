@@ -46,8 +46,8 @@ describe('parsing stage', () => {
     expect(funcNode).toBeDefined();
     expect(funcNode!.id).toBe('testorg/testrepo/app.py::hello');
 
-    const rel = relationships.find((r) => r.source_id === funcNode!.id);
-    expect(rel?.target_id).toBe('testorg/testrepo/app.py');
+    const rel = relationships.find((r) => r.target_id === funcNode!.id);
+    expect(rel?.source_id).toBe('testorg/testrepo/app.py');
     expect(rel?.type).toBe('DEFINES');
   });
 
@@ -62,8 +62,8 @@ describe('parsing stage', () => {
     expect(classNode).toBeDefined();
     expect(classNode!.id).toBe('testorg/testrepo/models.py::User');
 
-    const rel = relationships.find((r) => r.source_id === classNode!.id);
-    expect(rel?.target_id).toBe('testorg/testrepo/models.py');
+    const rel = relationships.find((r) => r.target_id === classNode!.id);
+    expect(rel?.source_id).toBe('testorg/testrepo/models.py');
   });
 
   it('extracts class methods', () => {
@@ -81,8 +81,8 @@ describe('parsing stage', () => {
     expect(bark).toBeDefined();
     expect(bark!.id).toBe('testorg/testrepo/animals.py::Dog::bark');
 
-    const barkRel = relationships.find((r) => r.source_id === bark!.id);
-    expect(barkRel?.target_id).toBe('testorg/testrepo/animals.py::Dog');
+    const barkRel = relationships.find((r) => r.target_id === bark!.id);
+    expect(barkRel?.source_id).toBe('testorg/testrepo/animals.py::Dog');
 
     const fetch = nodes.find(
       (n) => n.name === 'fetch' && n.type === 'Function',

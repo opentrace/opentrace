@@ -142,6 +142,10 @@ function getSubType(node: GraphNode): string | null {
     const registry = node.properties?.registry as string | undefined;
     return registry || null;
   }
+  if (node.type === 'Variable') {
+    const kind = node.properties?.kind as string | undefined;
+    return kind || null;
+  }
   return null;
 }
 

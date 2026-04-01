@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from opentrace_agent.sources.code.extractors.base import CallRef
+from opentrace_agent.sources.code.extractors.base import CallRef, DerivationRef
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
 
 
@@ -193,3 +193,146 @@ class Service:
         handle = cls.children[0]
         assert CallRef("validate", receiver="self", kind="attribute") in handle.calls
         assert CallRef("save", receiver="self", kind="attribute") in handle.calls
+
+    # --- variable extraction tests ---
+
+    def test_extract_function_parameters(self):
+        """Function parameters are extracted as VariableSymbol(kind='parameter')."""
+        source = b"def greet(name: str, count: int = 1):\n    pass\n"
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        params = [v for v in fn.variables if v.kind == "parameter"]
+        names = [p.name for p in params]
+        assert "name" in names
+        assert "count" in names
+        name_var = next(p for p in params if p.name == "name")
+        assert name_var.type_annotation == "str"
+
+    def test_extract_skips_self_cls_parameters(self):
+        """self and cls parameters are not extracted."""
+        source = b"""\
+class Foo:
+    def method(self, x):
+        pass
+    @classmethod
+    def from_val(cls, val):
+        pass
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        method = cls.children[0]
+        param_names = [v.name for v in method.variables if v.kind == "parameter"]
+        assert "self" not in param_names
+        assert "x" in param_names
+        from_val = cls.children[1]
+        param_names2 = [v.name for v in from_val.variables if v.kind == "parameter"]
+        assert "cls" not in param_names2
+        assert "val" in param_names2
+
+    def test_extract_local_from_call(self):
+        """Local variable assigned from a function call."""
+        source = b"""\
+def process():
+    result = compute()
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "result"
+        assert DerivationRef(kind="call", name="compute") in locals_[0].derived_from
+
+    def test_extract_local_from_variable(self):
+        """Local variable assigned from another variable."""
+        source = b"""\
+def copy(x):
+    y = x
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "y"
+        assert DerivationRef(kind="identifier", name="x") in locals_[0].derived_from
+
+    def test_extract_local_from_method_call(self):
+        """Local variable assigned from a method call (attribute)."""
+        source = b"""\
+def fetch(client):
+    data = client.get()
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert DerivationRef(kind="call", name="get", receiver="client") in locals_[0].derived_from
+
+    def test_extract_local_from_attribute(self):
+        """Local variable assigned from attribute access."""
+        source = b"""\
+def read(obj):
+    val = obj.value
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert DerivationRef(kind="attribute", name="value", receiver="obj") in locals_[0].derived_from
+
+    def test_extract_class_fields_dataclass(self):
+        """Dataclass-style annotated fields are extracted."""
+        source = b"""\
+class Config:
+    name: str = "default"
+    port: int = 8080
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        field_names = [v.name for v in cls.variables if v.kind == "field"]
+        assert "name" in field_names
+        assert "port" in field_names
+        name_field = next(v for v in cls.variables if v.name == "name")
+        assert name_field.type_annotation == "str"
+
+    def test_extract_self_assignments_as_fields(self):
+        """self.x = ... in __init__ creates class fields."""
+        source = b"""\
+class Foo:
+    def __init__(self, val):
+        self.val = val
+        self.computed = process(val)
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        field_names = [v.name for v in cls.variables if v.kind == "field"]
+        assert "val" in field_names
+        assert "computed" in field_names
+        val_field = next(v for v in cls.variables if v.name == "val")
+        assert DerivationRef(kind="identifier", name="val") in val_field.derived_from
+        computed_field = next(v for v in cls.variables if v.name == "computed")
+        assert DerivationRef(kind="call", name="process") in computed_field.derived_from
+
+    def test_extract_call_args(self):
+        """Identifier arguments to function calls are captured."""
+        source = b"""\
+def main():
+    process(data, config)
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        assert len(fn.calls) == 1
+        assert fn.calls[0].args == ["data", "config"]
+
+    def test_extract_annotated_local(self):
+        """Annotated local variable assignment."""
+        source = b"""\
+def typed():
+    x: int = compute()
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "x"
+        assert locals_[0].type_annotation == "int"
+        assert DerivationRef(kind="call", name="compute") in locals_[0].derived_from

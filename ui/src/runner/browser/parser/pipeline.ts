@@ -193,13 +193,13 @@ export async function runPipeline(
       sourceProps(dp),
     );
 
-    // Link file to parent dir (or repo): File DEFINES Directory
+    // Link parent dir (or repo) to file: Directory DEFINES File
     const parentId = dirPath ? `${repoId}/${dirPath}` : repoId;
     structureRels.push({
-      id: `${fileId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${fileId}`,
       type: 'DEFINES',
-      source_id: fileId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: fileId,
     });
 
     if (language && PARSEABLE_LANGUAGES.has(language)) {
@@ -752,10 +752,10 @@ function processSymbol(
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${nodeId}`,
       type: 'DEFINES',
-      source_id: nodeId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     // Collect symbol info for inline summarization
@@ -817,10 +817,10 @@ function processSymbol(
     };
     batch.nodes.push(graphNode);
     batch.relationships.push({
-      id: `${nodeId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${nodeId}`,
       type: 'DEFINES',
-      source_id: nodeId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     // Collect symbol info for inline summarization
@@ -899,17 +899,17 @@ function ensureDirectoryChain(
     ensureDirectoryChain(repoId, parentPath, dirNodes, rels, extraProps);
     const parentDirId = `${repoId}/${parentPath}`;
     rels.push({
-      id: `${dirId}->DEFINES->${parentDirId}`,
+      id: `${parentDirId}->DEFINES->${dirId}`,
       type: 'DEFINES',
-      source_id: dirId,
-      target_id: parentDirId,
+      source_id: parentDirId,
+      target_id: dirId,
     });
   } else {
     rels.push({
-      id: `${dirId}->DEFINES->${repoId}`,
+      id: `${repoId}->DEFINES->${dirId}`,
       type: 'DEFINES',
-      source_id: dirId,
-      target_id: repoId,
+      source_id: repoId,
+      target_id: dirId,
     });
   }
 }

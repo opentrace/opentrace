@@ -299,13 +299,13 @@ describe('runPipeline', () => {
     });
     await runPipeline(repo, emptyParsers, callbacks, makeNoopStrategy());
 
-    // Root file should link directly to repo node
+    // Root file should link directly to repo node (parent → child)
     const allRels = callbacks.batches.flatMap((b) => b.relationships);
     const fileRel = allRels.find(
       (r) =>
-        r.source_id === 'testowner/testrepo/main.go' && r.type === 'DEFINES',
+        r.target_id === 'testowner/testrepo/main.go' && r.type === 'DEFINES',
     );
-    expect(fileRel?.target_id).toBe('testowner/testrepo');
+    expect(fileRel?.source_id).toBe('testowner/testrepo');
   });
 });
 

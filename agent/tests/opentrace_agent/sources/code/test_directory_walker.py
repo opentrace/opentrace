@@ -120,15 +120,15 @@ class TestDirectoryWalker:
         walker = DirectoryWalker()
         result = walker.walk(tmp_path, "org/repo", "repo")
 
-        # src dir → repo
-        src_rel = next(r for r in result.relationships if r.source_id == "org/repo/src" and r.type == "DEFINES")
-        assert src_rel.target_id == "org/repo"
+        # repo → src dir
+        src_rel = next(r for r in result.relationships if r.target_id == "org/repo/src" and r.type == "DEFINES")
+        assert src_rel.source_id == "org/repo"
 
-        # main.py → src dir
+        # src dir → main.py
         main_rel = next(
-            r for r in result.relationships if r.source_id == "org/repo/src/main.py" and r.type == "DEFINES"
+            r for r in result.relationships if r.target_id == "org/repo/src/main.py" and r.type == "DEFINES"
         )
-        assert main_rel.target_id == "org/repo/src"
+        assert main_rel.source_id == "org/repo/src"
 
     def test_walk_file_entries(self, tmp_path: Path):
         self._make_tree(tmp_path)

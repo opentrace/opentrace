@@ -127,10 +127,10 @@ export function* execute(
 
     const parentId = dir ? `${repoId}/${dir}` : repoId;
     structureRels.push({
-      id: `${fileId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${fileId}`,
       type: 'DEFINES',
-      source_id: fileId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: fileId,
     });
 
     if (language && PARSEABLE_LANGUAGES.has(language)) {

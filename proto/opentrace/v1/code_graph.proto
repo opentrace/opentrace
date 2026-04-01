@@ -116,6 +116,19 @@ message PullRequestNode {
   int32  files_changed = 13 [(ladybug.column) = "filesChanged"];
 }
 
+// VariableNode represents a variable, parameter, or field.
+message VariableNode {
+  string id              = 1;
+  string name            = 2;
+  string language        = 3;
+  int32  start_line      = 4 [(ladybug.column) = "startLine"];
+  int32  end_line        = 5 [(ladybug.column) = "endLine"];
+  string kind            = 6;   // "parameter", "local", "field"
+  bool   exported        = 7;
+  string type_annotation = 8 [(ladybug.column) = "typeAnnotation"];
+  string docs            = 9;
+}
+
 // ---- Relationship types --------------------------------------------------
 
 // DefinesRel represents a structural containment relationship:
@@ -146,6 +159,7 @@ message CallsRel {
   string source_id  = 2;
   string target_id  = 3;
   float  confidence = 4;
+  repeated string args = 5;
 }
 
 // DependsOnRel represents a build-level package dependency.
@@ -154,6 +168,15 @@ message DependsOnRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
+}
+
+// DerivedFromRel represents a data-flow relationship between variables.
+// Source variable's value is derived from the target variable/function.
+message DerivedFromRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+  string transform = 4;  // "identity", "call", "attribute"
 }
 
 // TargetsRepoRel links a PullRequest to its target Repository.

@@ -22,6 +22,7 @@ from typing import Generator
 
 from opentrace_agent.pipeline.types import (
     CallInfo,
+    DerivationInfo,
     EventKind,
     GraphNode,
     GraphRelationship,
@@ -41,7 +42,7 @@ from opentrace_agent.sources.code.extractors import (
     SymbolExtractor,
     TypeScriptExtractor,
 )
-from opentrace_agent.sources.code.extractors.base import CodeSymbol
+from opentrace_agent.sources.code.extractors.base import CodeSymbol, VariableSymbol
 from opentrace_agent.sources.code.extractors.typescript_extractor import (
     TypeScriptExtractor as TSExtractor,
 )
@@ -82,7 +83,7 @@ def processing(
     Per file:
     1. Read source bytes from disk
     2. Run language-specific extractor
-    3. Convert CodeSymbol → GraphNode + GraphRelationship (DEFINED_IN)
+    3. Convert CodeSymbol → GraphNode + GraphRelationship (DEFINES)
     4. Analyze imports using the same tree-sitter AST (no re-parse)
     5. Populate registries for call resolution
     """
@@ -96,10 +97,12 @@ def processing(
 
     registries = Registries()
     call_infos: list[CallInfo] = []
+    derivation_infos: list[DerivationInfo] = []
     emitted_ids: set[str] = set()
     package_nodes: dict[str, GraphNode] = {}
     total_classes = 0
     total_functions = 0
+    total_variables = 0
     total_nodes = 0
     total_rels = 0
     files_processed = 0
@@ -194,22 +197,25 @@ def processing(
                 )
 
         for symbol in result.symbols:
-            nodes, rels, sym_infos, calls, c, f = _symbol_to_graph(
+            nodes, rels, sym_infos, calls, derivs, c, f, v = _symbol_to_graph(
                 symbol,
                 file_id,
                 result.language,
+                registries,
                 emitted_ids,
             )
             file_nodes.extend(nodes)
             file_rels.extend(rels)
             total_classes += c
             total_functions += f
+            total_variables += v
 
             # Register symbols
             for si in sym_infos:
                 _register_symbol(si, registries)
 
             call_infos.extend(calls)
+            derivation_infos.extend(derivs)
 
         files_processed += 1
         total_nodes += len(file_nodes)
@@ -239,17 +245,22 @@ def processing(
     yield PipelineEvent(
         kind=EventKind.STAGE_STOP,
         phase=Phase.PROCESSING,
-        message=(f"Extracted {total_classes} classes, {total_functions} functions from {files_processed} files"),
+        message=(
+            f"Extracted {total_classes} classes, {total_functions} functions, "
+            f"{total_variables} variables from {files_processed} files"
+        ),
     )
 
     out.value = ProcessingOutput(
         registries=registries,
         call_infos=call_infos,
+        derivation_infos=derivation_infos,
         nodes_created=total_nodes,
         relationships_created=total_rels,
         files_processed=files_processed,
         classes_extracted=total_classes,
         functions_extracted=total_functions,
+        variables_extracted=total_variables,
         errors=errors,
     )
 
@@ -275,25 +286,31 @@ def _symbol_to_graph(
     symbol: CodeSymbol,
     parent_id: str,
     language: str,
+    registries: Registries,
     emitted_ids: set[str] | None = None,
 ) -> tuple[
     list[GraphNode],
     list[GraphRelationship],
     list[SymbolInfo],
     list[CallInfo],
+    list[DerivationInfo],
     int,  # classes
     int,  # functions
+    int,  # variables
 ]:
     """Convert a CodeSymbol tree into flat GraphNode/GraphRelationship lists.
 
-    Returns (nodes, rels, symbol_infos, call_infos, classes_count, functions_count).
+    Returns (nodes, rels, symbol_infos, call_infos, derivation_infos,
+             classes_count, functions_count, variables_count).
     """
     nodes: list[GraphNode] = []
     rels: list[GraphRelationship] = []
     sym_infos: list[SymbolInfo] = []
     call_infos: list[CallInfo] = []
+    derivation_infos: list[DerivationInfo] = []
     classes = 0
     functions = 0
+    variables = 0
 
     file_id = parent_id.split("::")[0]
     name_part = f"{symbol.receiver_type}.{symbol.name}" if symbol.receiver_type else symbol.name
@@ -302,7 +319,7 @@ def _symbol_to_graph(
     # Deduplication guard
     if emitted_ids is not None:
         if node_id in emitted_ids:
-            return nodes, rels, sym_infos, call_infos, classes, functions
+            return nodes, rels, sym_infos, call_infos, derivation_infos, classes, functions, variables
         emitted_ids.add(node_id)
 
     if symbol.kind == "class":
@@ -330,27 +347,38 @@ def _symbol_to_graph(
             language=language,
         )
 
-        # DEFINED_IN: class is defined in the file (file → class direction)
+        # Parent defines this class (File → Class, or outer Class → inner Class)
         rels.append(
             GraphRelationship(
-                id=f"{node_id}->DEFINED_IN->{parent_id}",
+                id=f"{parent_id}->DEFINES->{node_id}",
                 type="DEFINES",
-                source_id=node_id,
-                target_id=parent_id,
+                source_id=parent_id,
+                target_id=node_id,
                 properties={},
             )
         )
 
+        # Variables (class fields)
+        var_nodes, var_rels, var_derivs, v = _variables_to_graph(
+            symbol.variables, node_id, file_id, language, registries
+        )
+        nodes.extend(var_nodes)
+        rels.extend(var_rels)
+        derivation_infos.extend(var_derivs)
+        variables += v
+
         # Process child methods
         for child_sym in symbol.children:
-            child_nodes, child_rels, child_sis, child_calls, c, f = _symbol_to_graph(
-                child_sym, node_id, language, emitted_ids
+            child_nodes, child_rels, child_sis, child_calls, child_derivs, c, f, cv = _symbol_to_graph(
+                child_sym, node_id, language, registries, emitted_ids
             )
             nodes.extend(child_nodes)
             rels.extend(child_rels)
             call_infos.extend(child_calls)
+            derivation_infos.extend(child_derivs)
             classes += c
             functions += f
+            variables += cv
             si.children.extend(child_sis)
             for child_si in child_sis:
                 sym_infos.append(child_si)
@@ -381,16 +409,25 @@ def _symbol_to_graph(
         )
         sym_infos.append(si)
 
-        # DEFINED_IN relationship
+        # Parent defines this function (File → Function, or Class → Method)
         rels.append(
             GraphRelationship(
-                id=f"{node_id}->DEFINED_IN->{parent_id}",
+                id=f"{parent_id}->DEFINES->{node_id}",
                 type="DEFINES",
-                source_id=node_id,
-                target_id=parent_id,
+                source_id=parent_id,
+                target_id=node_id,
                 properties={},
             )
         )
+
+        # Variables (parameters + locals)
+        var_nodes, var_rels, var_derivs, v = _variables_to_graph(
+            symbol.variables, node_id, file_id, language, registries
+        )
+        nodes.extend(var_nodes)
+        rels.extend(var_rels)
+        derivation_infos.extend(var_derivs)
+        variables += v
 
         # Collect calls for later resolution
         if symbol.calls:
@@ -406,7 +443,65 @@ def _symbol_to_graph(
                 )
             )
 
-    return nodes, rels, sym_infos, call_infos, classes, functions
+    return nodes, rels, sym_infos, call_infos, derivation_infos, classes, functions, variables
+
+
+def _variables_to_graph(
+    variables: list[VariableSymbol],
+    scope_id: str,
+    file_id: str,
+    language: str,
+    registries: Registries,
+) -> tuple[list[GraphNode], list[GraphRelationship], list[DerivationInfo], int]:
+    """Convert VariableSymbol list into graph nodes, DEFINES rels, and derivation infos.
+
+    Returns (nodes, relationships, derivation_infos, variable_count).
+    """
+    nodes: list[GraphNode] = []
+    rels: list[GraphRelationship] = []
+    derivs: list[DerivationInfo] = []
+    count = 0
+
+    scope_vars = registries.variable_registry.setdefault(scope_id, {})
+
+    for var in variables:
+        var_id = f"{scope_id}::{var.name}"
+        props: dict[str, str | int | bool | None] = {
+            "language": language,
+            "kind": var.kind,
+        }
+        if var.start_line is not None:
+            props["startLine"] = var.start_line
+        if var.end_line is not None:
+            props["endLine"] = var.end_line
+        if var.type_annotation:
+            props["typeAnnotation"] = var.type_annotation
+
+        nodes.append(GraphNode(id=var_id, type="Variable", name=var.name, properties=props))
+        rels.append(
+            GraphRelationship(
+                id=f"{scope_id}->DEFINES->{var_id}",
+                type="DEFINES",
+                source_id=scope_id,
+                target_id=var_id,
+                properties={},
+            )
+        )
+        scope_vars[var.name] = var_id
+        count += 1
+
+        # Queue derivation refs for resolution
+        if var.derived_from:
+            derivs.append(
+                DerivationInfo(
+                    variable_id=var_id,
+                    scope_id=scope_id,
+                    file_id=file_id,
+                    refs=[(d.name, d.receiver, d.kind) for d in var.derived_from],
+                )
+            )
+
+    return nodes, rels, derivs, count
 
 
 def _register_symbol(si: SymbolInfo, registries: Registries) -> None:
