@@ -44,3 +44,4 @@ otindex.db.wal
 
 # Developer Files
 config.yaml
+!.opentrace/config.yaml
