@@ -237,6 +237,30 @@ class GraphStore:
             },
         )
 
+    def merge_relationship(
+        self,
+        id: str,
+        rel_type: str,
+        source_id: str,
+        target_id: str,
+        properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Create or update a relationship, matched by ID.
+
+        Unlike :meth:`add_relationship`, this deletes any existing relationship
+        with the same ``id`` before creating the new one, making it safe for
+        idempotent imports.
+        """
+        # LadybugDB REL tables don't support MERGE, so delete-then-create.
+        try:
+            self._conn.execute(
+                "MATCH (a:Node)-[r:RELATES {id: $id}]->(b:Node) DELETE r",
+                parameters={"id": id},
+            )
+        except Exception:
+            pass  # relationship didn't exist
+        self.add_relationship(id, rel_type, source_id, target_id, properties)
+
     def import_batch(
         self,
         nodes: list[dict[str, Any]],
@@ -280,12 +304,12 @@ class GraphStore:
             # Fall back to individual writes
             nodes_ok, errors = self._import_nodes_individually(nodes)
 
-        # --- Relationships in a single transaction ---
+        # --- Relationships in a single transaction (idempotent via merge) ---
         self._conn.execute("BEGIN TRANSACTION")
         try:
             for r in relationships:
                 try:
-                    self.add_relationship(
+                    self.merge_relationship(
                         id=r["id"],
                         rel_type=r["type"],
                         source_id=r["source_id"],
@@ -338,7 +362,7 @@ class GraphStore:
         errs = 0
         for r in relationships:
             try:
-                self.add_relationship(
+                self.merge_relationship(
                     id=r["id"],
                     rel_type=r["type"],
                     source_id=r["source_id"],
