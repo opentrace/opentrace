@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html as html_mod
 import json
 import secrets
 import socketserver
@@ -138,7 +139,7 @@ def _ensure_client(disco: dict[str, Any], redirect_uris: list[str]) -> dict[str,
     reg_endpoint = disco.get("registration_endpoint")
     if not reg_endpoint:
         raise RuntimeError(
-            "OIDC provider does not support dynamic client registration "
+            "Authorization server does not support dynamic client registration "
             "(no registration_endpoint in discovery document). "
             "Register a client manually and save to ~/.opentrace/client.json"
         )
@@ -209,7 +210,7 @@ class _OAuthResult:
         self.ready.set()
 
 
-def _make_handler(result: _OAuthResult) -> type[BaseHTTPRequestHandler]:
+def _make_handler(result: _OAuthResult, expected_state: str) -> type[BaseHTTPRequestHandler]:
     """Create a request handler class bound to a specific result instance."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -229,11 +230,18 @@ def _make_handler(result: _OAuthResult) -> type[BaseHTTPRequestHandler]:
 
             qs = parse_qs(parsed.query)
 
+            # Validate state to prevent CSRF.
+            received_state = qs.get("state", [None])[0]
+            if received_state != expected_state:
+                result.set_error("Invalid state parameter — possible CSRF attack")
+                self._respond(400, _ERROR_HTML.format(error="Invalid state parameter"))
+                return
+
             error = qs.get("error", [None])[0]
             if error:
                 desc = qs.get("error_description", [error])[0]
                 result.set_error(desc)
-                self._respond(400, _ERROR_HTML.format(error=desc))
+                self._respond(400, _ERROR_HTML.format(error=html_mod.escape(desc)))
                 return
 
             code = qs.get("code", [None])[0]
@@ -405,7 +413,7 @@ def login() -> dict[str, Any]:
     authorize_url = f"{disco['authorization_endpoint']}?{params}"
 
     result = _OAuthResult()
-    handler_cls = _make_handler(result)
+    handler_cls = _make_handler(result, state)
 
     server = _ThreadedHTTPServer((CALLBACK_HOST, port), handler_cls)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -435,3 +443,4 @@ def login() -> dict[str, Any]:
         return payload
     finally:
         server.shutdown()
+        server.server_close()

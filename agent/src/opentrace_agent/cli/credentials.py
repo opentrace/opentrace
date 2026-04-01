@@ -27,6 +27,7 @@ Permissions:
 from __future__ import annotations
 
 import base64
+import getpass
 import hashlib
 import json
 import logging
@@ -138,7 +139,7 @@ def _get_machine_id() -> str:
             pass
 
     # Fallback
-    return f"{platform.node()}:{os.getlogin()}"
+    return f"{platform.node()}:{getpass.getuser()}"
 
 
 def _salt_path() -> Path:
