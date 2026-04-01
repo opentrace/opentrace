@@ -42,16 +42,28 @@ export interface ToolCallPart {
 export type MessagePart = TextPart | ThoughtPart | ToolCallPart;
 
 export interface ImageAttachment {
+  kind: 'image';
   id: string;
   dataUrl: string;
   mimeType: string;
   name?: string;
 }
 
+export interface FileAttachment {
+  kind: 'file';
+  id: string;
+  textContent: string;
+  mimeType: string;
+  name: string;
+}
+
+export type Attachment = ImageAttachment | FileAttachment;
+
 export interface UserMessage {
   role: 'user';
   content: string;
   images?: ImageAttachment[];
+  attachments?: Attachment[];
 }
 
 export interface AssistantMessage {

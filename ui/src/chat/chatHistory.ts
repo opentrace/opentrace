@@ -21,7 +21,11 @@ import type {
   ConversationSummary,
 } from './chatHistoryStore';
 import type { ChatMessage } from './providers';
-import type { ImageAttachment } from '../components/chat/types';
+import type {
+  Attachment,
+  ImageAttachment,
+  FileAttachment,
+} from '../components/chat/types';
 
 // Re-export types so existing consumers don't need to change imports
 export type { Conversation, ConversationSummary, ChatHistoryStore };
@@ -32,10 +36,12 @@ const STORE_NAME = 'conversations';
 const BLOB_STORE = 'image_blobs';
 
 interface StoredBlob {
-  /** Same as ImageAttachment.id */
+  /** Same as Attachment.id */
   id: string;
   conversationId: string;
   dataUrl: string;
+  /** For file attachments, stores the text content */
+  textContent?: string;
 }
 
 /** Placeholder used when the blob is missing (deleted externally, etc.) */
@@ -108,7 +114,7 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
   }
 
   /**
-   * Extract image blobs from messages and return stripped messages + blobs.
+   * Extract blobs from messages and return stripped messages + blobs.
    */
   private stripBlobs(
     convId: string,
@@ -116,26 +122,59 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
   ): { stripped: ChatMessage[]; blobs: StoredBlob[] } {
     const blobs: StoredBlob[] = [];
     const stripped = messages.map((m) => {
-      if (m.role !== 'user' || !m.images?.length) return m;
-      return {
-        ...m,
-        images: m.images.map((img) => {
-          if (img.dataUrl) {
-            blobs.push({
-              id: img.id,
-              conversationId: convId,
-              dataUrl: img.dataUrl,
-            });
-          }
-          return { ...img, dataUrl: '' };
-        }),
-      };
+      if (m.role !== 'user') return m;
+      let result = m;
+
+      // Strip legacy image blobs
+      if (m.images?.length) {
+        result = {
+          ...result,
+          images: m.images.map((img) => {
+            if (img.dataUrl) {
+              blobs.push({
+                id: img.id,
+                conversationId: convId,
+                dataUrl: img.dataUrl,
+              });
+            }
+            return { ...img, dataUrl: '' };
+          }),
+        };
+      }
+
+      // Strip attachment blobs
+      if (m.attachments?.length) {
+        result = {
+          ...result,
+          attachments: m.attachments.map((att) => {
+            if (att.kind === 'image' && att.dataUrl) {
+              blobs.push({
+                id: att.id,
+                conversationId: convId,
+                dataUrl: att.dataUrl,
+              });
+              return { ...att, dataUrl: '' };
+            } else if (att.kind === 'file' && att.textContent) {
+              blobs.push({
+                id: att.id,
+                conversationId: convId,
+                dataUrl: '',
+                textContent: att.textContent,
+              });
+              return { ...att, textContent: '' };
+            }
+            return att;
+          }),
+        };
+      }
+
+      return result;
     });
     return { stripped, blobs };
   }
 
   /**
-   * Re-hydrate image dataUrls from the blob store into messages.
+   * Re-hydrate blobs from the blob store into messages.
    * Uses getAllFromIndex to fetch all blobs for the conversation in one call.
    */
   private async hydrateBlobs(
@@ -143,12 +182,24 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
     convId: string,
     messages: ChatMessage[],
   ): Promise<ChatMessage[]> {
-    // Check if any images need hydrating
+    // Check if anything needs hydrating
     let needsHydration = false;
     for (const m of messages) {
-      if (m.role === 'user' && m.images) {
+      if (m.role !== 'user') continue;
+      if (m.images) {
         for (const img of m.images) {
           if (!img.dataUrl) {
+            needsHydration = true;
+            break;
+          }
+        }
+      }
+      if (!needsHydration && m.attachments) {
+        for (const att of m.attachments) {
+          if (
+            (att.kind === 'image' && !att.dataUrl) ||
+            (att.kind === 'file' && !att.textContent)
+          ) {
             needsHydration = true;
             break;
           }
@@ -164,23 +215,53 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
       'conversationId',
       convId,
     );
-    const blobMap = new Map<string, string>();
+    const blobMap = new Map<string, StoredBlob>();
     for (const blob of allBlobs) {
-      blobMap.set(blob.id, blob.dataUrl);
+      blobMap.set(blob.id, blob);
     }
 
     return messages.map((m) => {
-      if (m.role !== 'user' || !m.images?.length) return m;
-      return {
-        ...m,
-        images: m.images.map((img): ImageAttachment => {
-          if (img.dataUrl) return img;
-          return {
-            ...img,
-            dataUrl: blobMap.get(img.id) ?? MISSING_IMAGE_PLACEHOLDER,
-          };
-        }),
-      };
+      if (m.role !== 'user') return m;
+      let result = m;
+
+      if (m.images?.length) {
+        result = {
+          ...result,
+          images: m.images.map((img): ImageAttachment => {
+            const base: ImageAttachment = { ...img, kind: 'image' };
+            if (base.dataUrl) return base;
+            const blob = blobMap.get(base.id);
+            return {
+              ...base,
+              dataUrl: blob?.dataUrl ?? MISSING_IMAGE_PLACEHOLDER,
+            };
+          }),
+        };
+      }
+
+      if (m.attachments?.length) {
+        result = {
+          ...result,
+          attachments: m.attachments.map((att): Attachment => {
+            if (att.kind === 'image' && !att.dataUrl) {
+              const blob = blobMap.get(att.id);
+              return {
+                ...att,
+                dataUrl: blob?.dataUrl ?? MISSING_IMAGE_PLACEHOLDER,
+              };
+            } else if (att.kind === 'file' && !att.textContent) {
+              const blob = blobMap.get(att.id);
+              return {
+                ...att,
+                textContent: blob?.textContent ?? '[File content unavailable]',
+              } as FileAttachment;
+            }
+            return att;
+          }),
+        };
+      }
+
+      return result;
     });
   }
 
