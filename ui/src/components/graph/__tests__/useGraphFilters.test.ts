@@ -145,7 +145,7 @@ describe('shouldHideNode', () => {
     ).toBe(false);
   });
 
-  it('hides by type even when sub-type does not match', () => {
+  it('ignores hiddenNodeTypes when the type has sub-types', () => {
     const node: GraphNode = { id: 'n1', name: 'foo.go', type: 'File' };
     const availableSubTypes = new Map([
       [
@@ -160,7 +160,62 @@ describe('shouldHideNode', () => {
       hiddenNodeTypes: new Set(['File']),
       hiddenSubTypes: new Set(['File:ts']), // different sub-type
     });
-    // Type filter catches it even though sub-type doesn't match
+    // Sub-type filters take precedence — File:go is not hidden
+    expect(
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        availableSubTypes,
+        defaultGetSubType,
+      ),
+    ).toBe(false);
+  });
+
+  it('shows node after hide-all then unhiding its sub-type', () => {
+    const node: GraphNode = { id: 'n1', name: 'data.json', type: 'File' };
+    const availableSubTypes = new Map([
+      [
+        'File',
+        [
+          { subType: 'json', count: 2 },
+          { subType: 'ts', count: 5 },
+          { subType: 'go', count: 3 },
+        ],
+      ],
+    ]);
+    // Simulates: hide-all sets both hiddenNodeTypes and hiddenSubTypes,
+    // then user un-hides .json only
+    const filterState = makeFilterState({
+      hiddenNodeTypes: new Set(['File', 'Function', 'Class']),
+      hiddenSubTypes: new Set(['File:ts', 'File:go']), // .json removed
+    });
+    expect(
+      shouldHideNode(
+        node,
+        filterState,
+        noAssignments,
+        availableSubTypes,
+        defaultGetSubType,
+      ),
+    ).toBe(false);
+  });
+
+  it('hides node without sub-type when all sub-types are hidden', () => {
+    // A file with no extension
+    const node: GraphNode = { id: 'n1', name: 'Makefile', type: 'File' };
+    const availableSubTypes = new Map([
+      [
+        'File',
+        [
+          { subType: 'ts', count: 5 },
+          { subType: 'go', count: 3 },
+        ],
+      ],
+    ]);
+    const filterState = makeFilterState({
+      hiddenSubTypes: new Set(['File:ts', 'File:go']),
+    });
     expect(
       shouldHideNode(
         node,
