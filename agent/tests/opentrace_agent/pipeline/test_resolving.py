@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
-from opentrace_agent.pipeline.resolving import resolve_calls, resolving
+from opentrace_agent.pipeline.resolving import resolve_calls, resolve_derivations, resolving
 from opentrace_agent.pipeline.types import (
     CallInfo,
+    DerivationInfo,
     EventKind,
     Phase,
     PipelineContext,
@@ -253,6 +254,90 @@ def test_skip_recursive_call() -> None:
 
     rels = resolve_calls(call_infos, regs)
     assert len(rels) == 0
+
+
+def test_derivation_variable_to_variable() -> None:
+    """Derivation from one variable to another in the same scope."""
+    regs = Registries()
+    scope_id = "test/app.py::process"
+    regs.variable_registry[scope_id] = {
+        "x": f"{scope_id}::x",
+        "y": f"{scope_id}::y",
+    }
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{scope_id}::y",
+            scope_id=scope_id,
+            file_id="test/app.py",
+            refs=[("x", None, "identifier")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 1
+    assert rels[0].source_id == f"{scope_id}::y"
+    assert rels[0].target_id == f"{scope_id}::x"
+    assert rels[0].type == "DERIVED_FROM"
+    assert rels[0].properties["transform"] == "identifier"
+
+
+def test_derivation_self_field() -> None:
+    """self.field derivation skips local scope and looks in class scope."""
+    regs = Registries()
+    file_id = "test/app.py"
+    class_scope = f"{file_id}::MyClass"
+    method_scope = f"{class_scope}::process"
+
+    # Class has a field 'data'
+    regs.variable_registry[class_scope] = {"data": f"{class_scope}::data"}
+    # Method has a local 'result'
+    regs.variable_registry[method_scope] = {"result": f"{method_scope}::result"}
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{method_scope}::result",
+            scope_id=method_scope,
+            file_id=file_id,
+            refs=[("data", "self", "attribute")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 1
+    assert rels[0].target_id == f"{class_scope}::data"
+    assert rels[0].properties["transform"] == "attribute"
+
+
+def test_derivation_from_call() -> None:
+    """Derivation from a function call resolves to the function."""
+    regs = Registries()
+    file_id = "test/app.py"
+    scope_id = f"{file_id}::main"
+
+    compute_fn = SymbolInfo(
+        node_id=f"{file_id}::compute",
+        name="compute",
+        kind="function",
+        file_id=file_id,
+        language="python",
+    )
+    regs.name_registry["compute"] = [compute_fn]
+    regs.file_registry[file_id] = {"compute": compute_fn}
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{scope_id}::result",
+            scope_id=scope_id,
+            file_id=file_id,
+            refs=[("compute", None, "call")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 1
+    assert rels[0].target_id == f"{file_id}::compute"
+    assert rels[0].properties["transform"] == "call"
 
 
 def test_resolving_stage_events() -> None:

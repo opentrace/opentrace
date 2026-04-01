@@ -10,6 +10,7 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS Function(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, summary STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)",
     "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
+    "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
 ]
 
 NODE_TYPE_REPOSITORY: Final[str] = "Repository"
@@ -19,6 +20,7 @@ NODE_TYPE_CLASS: Final[str] = "Class"
 NODE_TYPE_FUNCTION: Final[str] = "Function"
 NODE_TYPE_DEPENDENCY: Final[str] = "Dependency"
 NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
+NODE_TYPE_VARIABLE: Final[str] = "Variable"
 
 NODE_TYPES: Final[list[str]] = [
     NODE_TYPE_REPOSITORY,
@@ -28,6 +30,7 @@ NODE_TYPES: Final[list[str]] = [
     NODE_TYPE_FUNCTION,
     NODE_TYPE_DEPENDENCY,
     NODE_TYPE_PULL_REQUEST,
+    NODE_TYPE_VARIABLE,
 ]
 
 NODE_COLUMNS: Final[dict[str, list[tuple[str, str]]]] = {
@@ -99,6 +102,17 @@ NODE_COLUMNS: Final[dict[str, list[tuple[str, str]]]] = {
         ("additions", "INT32"),
         ("deletions", "INT32"),
         ("filesChanged", "INT32"),
+    ],
+    "Variable": [
+        ("id", "STRING"),
+        ("name", "STRING"),
+        ("language", "STRING"),
+        ("startLine", "INT32"),
+        ("endLine", "INT32"),
+        ("kind", "STRING"),
+        ("exported", "BOOL"),
+        ("typeAnnotation", "STRING"),
+        ("docs", "STRING"),
     ],
 }
 
@@ -172,6 +186,17 @@ NODE_COLUMN_NAMES: Final[dict[str, list[str]]] = {
         "deletions",
         "filesChanged",
     ],
+    "Variable": [
+        "id",
+        "name",
+        "language",
+        "startLine",
+        "endLine",
+        "kind",
+        "exported",
+        "typeAnnotation",
+        "docs",
+    ],
 }
 
 
@@ -187,12 +212,17 @@ def rel_schema_imports(from_node: str, to_node: str) -> str:
 
 def rel_schema_calls(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for Calls relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS CALLS(FROM {from_node} TO {to_node}, id STRING, confidence FLOAT)"
+    return f"CREATE REL TABLE IF NOT EXISTS CALLS(FROM {from_node} TO {to_node}, id STRING, confidence FLOAT, args STRING[])"
 
 
 def rel_schema_depends_on(from_node: str, to_node: str) -> str:
     """Return the CREATE REL TABLE DDL for DependsOn relationships."""
     return f"CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM {from_node} TO {to_node}, id STRING)"
+
+
+def rel_schema_derived_from(from_node: str, to_node: str) -> str:
+    """Return the CREATE REL TABLE DDL for DerivedFrom relationships."""
+    return f"CREATE REL TABLE IF NOT EXISTS DERIVED_FROM(FROM {from_node} TO {to_node}, id STRING, transform STRING)"
 
 
 def rel_schema_targets_repo(from_node: str, to_node: str) -> str:
@@ -204,6 +234,7 @@ REL_TYPE_DEFINES: Final[str] = "DEFINES"
 REL_TYPE_IMPORTS: Final[str] = "IMPORTS"
 REL_TYPE_CALLS: Final[str] = "CALLS"
 REL_TYPE_DEPENDS_ON: Final[str] = "DEPENDS_ON"
+REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
 REL_TYPES: Final[list[str]] = [
@@ -211,6 +242,7 @@ REL_TYPES: Final[list[str]] = [
     REL_TYPE_IMPORTS,
     REL_TYPE_CALLS,
     REL_TYPE_DEPENDS_ON,
+    REL_TYPE_DERIVED_FROM,
     REL_TYPE_TARGETS_REPO,
 ]
 
@@ -225,9 +257,14 @@ REL_COLUMNS: Final[dict[str, list[tuple[str, str]]]] = {
     "CALLS": [
         ("id", "STRING"),
         ("confidence", "FLOAT"),
+        ("args", "STRING[]"),
     ],
     "DEPENDS_ON": [
         ("id", "STRING"),
+    ],
+    "DERIVED_FROM": [
+        ("id", "STRING"),
+        ("transform", "STRING"),
     ],
     "TARGETS_REPO": [
         ("id", "STRING"),
@@ -245,9 +282,14 @@ REL_COLUMN_NAMES: Final[dict[str, list[str]]] = {
     "CALLS": [
         "id",
         "confidence",
+        "args",
     ],
     "DEPENDS_ON": [
         "id",
+    ],
+    "DERIVED_FROM": [
+        "id",
+        "transform",
     ],
     "TARGETS_REPO": [
         "id",

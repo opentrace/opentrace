@@ -187,10 +187,10 @@ class DirectoryWalker:
                 parent_id = f"{repo_id}/{parent_rel}" if parent_rel else repo_id
                 result.relationships.append(
                     GraphRelationship(
-                        id=f"{dir_id}->DEFINES->{parent_id}",
+                        id=f"{parent_id}->DEFINES->{dir_id}",
                         type="DEFINES",
-                        source_id=dir_id,
-                        target_id=parent_id,
+                        source_id=parent_id,
+                        target_id=dir_id,
                     )
                 )
 
@@ -221,10 +221,10 @@ class DirectoryWalker:
                 result.nodes.append(GraphNode(id=file_id, type="File", name=filename, properties=file_props))
                 result.relationships.append(
                     GraphRelationship(
-                        id=f"{file_id}->DEFINES->{parent_id}",
+                        id=f"{parent_id}->DEFINES->{file_id}",
                         type="DEFINES",
-                        source_id=file_id,
-                        target_id=parent_id,
+                        source_id=parent_id,
+                        target_id=file_id,
                     )
                 )
 

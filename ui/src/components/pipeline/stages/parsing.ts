@@ -191,10 +191,10 @@ export function processSymbol(
     });
 
     rels.push({
-      id: `${nodeId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${nodeId}`,
       type: 'DEFINES',
-      source_id: nodeId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     const symbolNode: SymbolNode = {
@@ -244,10 +244,10 @@ export function processSymbol(
     });
 
     rels.push({
-      id: `${nodeId}->DEFINES->${parentId}`,
+      id: `${parentId}->DEFINES->${nodeId}`,
       type: 'DEFINES',
-      source_id: nodeId,
-      target_id: parentId,
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     const symbolNode: SymbolNode = {
@@ -340,10 +340,10 @@ function convertSymbol(
   });
 
   rels.push({
-    id: `${symId}->DEFINES->${parentId}`,
+    id: `${parentId}->DEFINES->${symId}`,
     type: 'DEFINES',
-    source_id: symId,
-    target_id: parentId,
+    source_id: parentId,
+    target_id: symId,
   });
 
   if (sym.kind === 'class') {

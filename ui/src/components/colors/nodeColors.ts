@@ -46,6 +46,7 @@ const FALLBACK_KNOWN: Record<string, string> = {
   Function: '#a855f7',
   File: '#84cc16',
   Directory: '#06b6d4',
+  Variable: '#f59e0b',
 };
 
 function djb2(str: string): number {

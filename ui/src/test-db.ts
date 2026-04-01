@@ -112,18 +112,18 @@ function generateDataset(nodeCount: number): {
       repos.length > 0 ? repos[Math.floor(rand() * repos.length)] : 0;
     rels.push({
       id: `r-di-${d}`,
-      source_id: `n-${d}`,
-      target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      source_id: `n-${parent}`,
+      target_id: `n-${d}`,
+      type: 'DEFINES',
     });
   }
   for (const f of files) {
     const parent = dirs.length > 0 ? dirs[Math.floor(rand() * dirs.length)] : 0;
     rels.push({
       id: `r-di-${f}`,
-      source_id: `n-${f}`,
-      target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      source_id: `n-${parent}`,
+      target_id: `n-${f}`,
+      type: 'DEFINES',
     });
   }
   for (const c of classes) {
@@ -131,9 +131,9 @@ function generateDataset(nodeCount: number): {
       files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
     rels.push({
       id: `r-di-${c}`,
-      source_id: `n-${c}`,
-      target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      source_id: `n-${parent}`,
+      target_id: `n-${c}`,
+      type: 'DEFINES',
     });
   }
   for (const fn of functions) {
@@ -141,9 +141,9 @@ function generateDataset(nodeCount: number): {
       files.length > 0 ? files[Math.floor(rand() * files.length)] : 0;
     rels.push({
       id: `r-di-${fn}`,
-      source_id: `n-${fn}`,
-      target_id: `n-${parent}`,
-      type: 'DEFINED_IN',
+      source_id: `n-${parent}`,
+      target_id: `n-${fn}`,
+      type: 'DEFINES',
     });
   }
   for (let i = 0; i < functions.length * 0.3; i++) {

@@ -17,8 +17,10 @@
 from opentrace_agent.sources.code.extractors.base import (
     CallRef,
     CodeSymbol,
+    DerivationRef,
     ExtractionResult,
     SymbolExtractor,
+    VariableSymbol,
 )
 from opentrace_agent.sources.code.extractors.go_extractor import GoExtractor
 from opentrace_agent.sources.code.extractors.python_extractor import PythonExtractor
@@ -37,10 +39,11 @@ PARSEABLE_EXTENSIONS: frozenset[str] = frozenset().union(*(frozenset(ext.extensi
 __all__ = [
     "CallRef",
     "CodeSymbol",
+    "DerivationRef",
     "ExtractionResult",
-    "GoExtractor",
     "PARSEABLE_EXTENSIONS",
     "PythonExtractor",
     "SymbolExtractor",
     "TypeScriptExtractor",
+    "VariableSymbol",
 ]
