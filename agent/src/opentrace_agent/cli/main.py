@@ -474,6 +474,106 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# config command group
+# ---------------------------------------------------------------------------
+
+
+def _find_opentrace_dir(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for an existing ``.opentrace/`` directory.
+
+    Uses the same security boundaries as :func:`find_db`.
+    """
+    if start is None:
+        start = Path.cwd()
+    start = start.resolve()
+
+    git_root = _find_git_root(start)
+    boundary = git_root if git_root and _is_under(start, git_root) else Path(start.anchor)
+
+    current = start
+    for _ in range(_MAX_WALK_DEPTH):
+        candidate = current / OPENTRACE_DIR
+        if candidate.is_dir():
+            resolved = candidate.resolve()
+            if _is_under(resolved, boundary):
+                return resolved
+        if current == boundary or current.parent == current:
+            break
+        current = current.parent
+
+    return None
+
+
+def _resolve_config_path() -> Path:
+    """Return the config file path, preferring an existing .opentrace/ dir."""
+    from opentrace_agent.cli.config import CONFIG_NAME
+
+    ot_dir = _find_opentrace_dir()
+    if ot_dir is not None:
+        return ot_dir / CONFIG_NAME
+    return Path.cwd() / OPENTRACE_DIR / CONFIG_NAME
+
+
+@app.group()
+def config() -> None:
+    """Read or write project configuration (.opentrace/config.yaml)."""
+
+
+@config.command("set")
+@click.argument("key", type=click.Choice(["org"]))
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set a configuration value.
+
+    \b
+    Supported keys:
+      org   Organisation ID (org_xxx) or slug (acme_corp)
+    """
+    from opentrace_agent.cli.config import load_config, save_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    data[key] = value
+    save_config(path, data)
+    _ensure_gitignore(path.parent)
+    click.echo(f"{key}: {value}")
+
+
+@config.command("get")
+@click.argument("key", type=click.Choice(["org"]))
+def config_get(key: str) -> None:
+    """Get a configuration value."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    val = data.get(key)
+    if val is None:
+        raise click.UsageError(f"'{key}' is not set. Run: opentraceai config set {key} <value>")
+    click.echo(val)
+
+
+@config.command("show")
+def config_show() -> None:
+    """Show all configuration values."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    if not data:
+        click.echo("No configuration set.")
+        return
+    for k, v in data.items():
+        click.echo(f"{k}: {v}")
+
+
+@config.command("path")
+def config_path() -> None:
+    """Print the config file path."""
+    click.echo(_resolve_config_path())
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
