@@ -24,7 +24,6 @@ from click.testing import CliRunner
 from opentrace_agent.cli.config import load_config, save_config
 from opentrace_agent.cli.main import app
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for load_config / save_config
 # ---------------------------------------------------------------------------
