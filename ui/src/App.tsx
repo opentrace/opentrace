@@ -21,6 +21,7 @@ import GraphViewer from './appComponents/GraphViewer';
 import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
+import HelpDrawer from './appComponents/HelpDrawer';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
@@ -66,9 +67,11 @@ function App({
     new URLSearchParams(window.location.search).has('repo'),
   );
 
-  const [showChat, setShowChat] = useState(true);
+  const isNewUser = !localStorage.getItem('ot:hasVisited');
+  const [showChat, setShowChat] = useState(!isNewUser);
   const [chatWidth, setChatWidth] = useState(480);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(isNewUser);
   const [animationSettings, setAnimationSettings] = useState<AnimationSettings>(
     loadAnimationSettings,
   );
@@ -200,12 +203,38 @@ function App({
     setShowAddRepo(true);
   }, []);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
-  const handleToggleChat = useCallback(() => setShowChat((v) => !v), []);
+  const handleToggleChat = useCallback(() => {
+    setShowChat((v) => {
+      if (!v) {
+        setShowSettings(false);
+        setShowHelp(false);
+        localStorage.setItem('ot:hasVisited', '1');
+      }
+      return !v;
+    });
+  }, []);
   const handleChatWidthChange = useCallback((w: number) => setChatWidth(w), []);
-  const handleToggleSettings = useCallback(
-    () => setShowSettings((v) => !v),
-    [],
-  );
+  const handleToggleSettings = useCallback(() => {
+    setShowSettings((v) => {
+      if (!v) {
+        setShowChat(false);
+        setShowHelp(false);
+        localStorage.setItem('ot:hasVisited', '1');
+      }
+      return !v;
+    });
+  }, []);
+  const handleToggleHelp = useCallback(() => {
+    setShowHelp((v) => {
+      if (!v) {
+        setShowChat(false);
+        setShowSettings(false);
+      } else {
+        localStorage.setItem('ot:hasVisited', '1');
+      }
+      return !v;
+    });
+  }, []);
 
   return (
     <div className="app" ref={containerRef}>
@@ -230,6 +259,8 @@ function App({
           onToggleChat={handleToggleChat}
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
+          showHelp={showHelp}
+          onToggleHelp={handleToggleHelp}
           onGraphDataChange={setChatGraphData}
           chatHighlightNodes={chatHighlightNodes}
           animationSettings={animationSettings}
@@ -263,6 +294,18 @@ function App({
           />
         )}
       </div>
+
+      {showHelp && (
+        <HelpDrawer
+          onClose={() => setShowHelp(false)}
+          onOpenAddRepo={() => {
+            setShowHelp(false);
+            handleAddRepoOpen();
+          }}
+          onOpenChat={handleToggleChat}
+          onOpenSettings={handleToggleSettings}
+        />
+      )}
 
       {showSettings && (
         <SettingsDrawer
