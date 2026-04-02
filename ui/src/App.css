@@ -591,7 +591,7 @@
 .chat-action-btn {
   width: 36px;
   height: 36px;
-  padding: 0;
+  padding: 0 !important;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -604,12 +604,6 @@
   border: 1px solid var(--border) !important;
   border-radius: var(--radius);
   font-size: 1.1rem !important;
-  padding: 0 !important;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .attach-menu-wrapper {
@@ -622,14 +616,8 @@
   border: 1px solid var(--border) !important;
   font-size: 1.25rem !important;
   font-weight: 600;
-  padding: 0 !important;
-  width: 36px;
-  height: 36px;
   line-height: 36px;
   border-radius: var(--radius);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   cursor: pointer;
   transition:
     background 0.15s,

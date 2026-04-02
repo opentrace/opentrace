@@ -1224,7 +1224,7 @@ export default function ChatPanel({
                 )}
               </div>
               <button
-                className="settings-btn"
+                className="settings-btn chat-action-btn"
                 onClick={() => setShowSettings(true)}
                 title="Provider Settings"
               >
