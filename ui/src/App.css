@@ -1324,6 +1324,12 @@
     color: var(--primary);
   }
 
+  /* Sub-menu toggle buttons need full width inside their wrappers */
+  .ot-toolbar-nav .theme-toggle-btn,
+  .ot-toolbar-nav .help-toggle-btn {
+    width: 100%;
+  }
+
   /* Theme selector inline in dropdown */
   .ot-toolbar-nav .theme-selector-wrapper {
     width: 100%;
