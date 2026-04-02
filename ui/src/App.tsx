@@ -292,9 +292,7 @@ function App({
         {showChat && (
           <div
             style={
-              graphFullscreen
-                ? { display: 'none' }
-                : { display: 'contents' }
+              graphFullscreen ? { display: 'none' } : { display: 'contents' }
             }
           >
             <ChatPanel
