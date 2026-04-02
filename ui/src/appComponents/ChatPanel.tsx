@@ -1371,6 +1371,24 @@ export default function ChatPanel({
                 ))}
               </div>
             )}
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              placeholder="Ask a question..."
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              onPaste={handlePaste}
+            />
             <div className="chat-input-row">
               <input
                 ref={fileInputRef}
@@ -1385,7 +1403,7 @@ export default function ChatPanel({
               />
               <div className="attach-menu-wrapper" ref={attachMenuRef}>
                 <button
-                  className="attach-btn"
+                  className="attach-btn chat-action-btn"
                   onClick={() => setShowAttachMenu((v) => !v)}
                   title="Attach"
                 >
@@ -1406,40 +1424,37 @@ export default function ChatPanel({
                   </div>
                 )}
               </div>
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                placeholder="Ask a question..."
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  e.target.style.height = 'auto';
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSubmit();
-                  }
-                }}
-                onPaste={handlePaste}
-              />
               <button
+                className="settings-btn chat-action-btn"
+                onClick={() => setShowSettings(true)}
+                title="Provider Settings"
+              >
+                &#9881;
+              </button>
+              <div style={{ flex: 1 }} />
+              <button
+                className="chat-action-btn"
                 onClick={handleSubmit}
                 disabled={
                   streaming ||
                   (!input.trim() && pendingAttachments.length === 0)
                 }
                 data-testid="chat-send-btn"
+                title="Send"
               >
-                Send
-              </button>
-              <button
-                className="settings-btn"
-                onClick={() => setShowSettings(true)}
-                title="Provider Settings"
-              >
-                &#9881;
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14" />
+                  <path d="m12 5 7 7-7 7" />
+                </svg>
               </button>
             </div>
           </div>
