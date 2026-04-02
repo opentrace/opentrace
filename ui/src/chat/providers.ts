@@ -19,6 +19,7 @@ export type {
   UserMessage,
   AssistantMessage,
   MessagePart,
+  TokenUsage,
 } from '@opentrace/components/chat';
 
 export interface ModelInfo {
