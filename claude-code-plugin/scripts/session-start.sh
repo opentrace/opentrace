@@ -53,8 +53,7 @@ json_escape() {
 CONTEXT="You have access to OpenTrace, a knowledge graph that maps the user's system architecture, service relationships, and project metadata. Use your local tools (Read, Grep, Glob, etc.) for anything within the current codebase. Use OpenTrace when you need context beyond the local project — such as discovering upstream/downstream services, finding related classes or endpoints in other repositories, understanding deployment topology, looking up issues and tickets, or tracing how components connect across the system. When a question touches anything outside the current repo, consider checking OpenTrace. Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status, /index."
 
 if [ -n "$GRAPH_STATS" ]; then
-  SAFE_STATS=$(json_escape "${GRAPH_STATS}")
-  SYSTEM_MSG="OpenTrace is active — ${SAFE_STATS}"
+  SYSTEM_MSG="OpenTrace is active — ${GRAPH_STATS}"
 else
   SYSTEM_MSG="OpenTrace is active — index found at ${DB_PATH}. Run /graph-status or call get_stats to see what's indexed."
 fi
