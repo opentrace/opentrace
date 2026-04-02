@@ -31,6 +31,44 @@ if [ -n "$cwd" ] && [ -d "$cwd" ]; then
   fi
 fi
 
+# PR number — cached per branch, refreshed every 5 minutes
+pr_number=""
+if [ -n "$branch" ] && [ -n "$cwd" ] && command -v gh &>/dev/null; then
+  cache_dir="/tmp/statusline-pr-cache"
+  mkdir -p "$cache_dir" 2>/dev/null
+  cache_key=$(echo "$cwd:$branch" | (md5sum 2>/dev/null || md5 2>/dev/null || echo "default") | cut -d' ' -f1)
+  cache_file="$cache_dir/$cache_key"
+  now=$(date +%s)
+  if [ -f "$cache_file" ]; then
+    cache_age=$(( now - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
+    if [ "$cache_age" -lt 300 ]; then
+      pr_number=$(cat "$cache_file")
+      pr_cached=1
+    fi
+  fi
+  if [ -z "$pr_cached" ]; then
+    pr_number=$(cd "$cwd" && GIT_OPTIONAL_LOCKS=0 gh pr view "$branch" --json number -q '.number' 2>/dev/null || echo "")
+    echo "$pr_number" > "$cache_file" 2>/dev/null
+  fi
+fi
+
+# Dev server port — find a vite process whose cwd is under this project
+dev_port=""
+if [ -n "$cwd" ] && [ -d "$cwd" ] && command -v ss &>/dev/null; then
+  while IFS= read -r line; do
+    port=$(echo "$line" | grep -oP ':\K517[0-9](?=\s)')
+    pid=$(echo "$line" | grep -oP 'pid=\K[0-9]+')
+    if [ -n "$port" ] && [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+      proc_cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+      if [ -n "$proc_cwd" ] && [[ "$proc_cwd" == "$cwd"/* || "$proc_cwd" == "$cwd" ]] \
+         && [[ "$proc_cwd" != "$cwd/.claude/worktrees/"* ]]; then
+        dev_port="$port"
+        break
+      fi
+    fi
+  done < <(ss -tlnp 2>/dev/null | grep '517[0-9]')
+fi
+
 out="$model | ctx: $ctx_size_fmt"
 if [ -n "$used" ]; then
   used_int=$(printf "%.0f" "$used")
@@ -40,6 +78,12 @@ if [ -n "$branch" ]; then
   out="$out | $branch$worktree_label"
 elif [ -n "$worktree_label" ]; then
   out="$out |$worktree_label"
+fi
+if [ -n "$pr_number" ]; then
+  out="$out | PR #$pr_number"
+fi
+if [ -n "$dev_port" ]; then
+  out="$out | :$dev_port"
 fi
 
 printf "%s" "$out"
