@@ -228,7 +228,7 @@ export function useGraphInstance({
     const simLinks: { source: string; target: string }[] = [];
     for (const link of allLinks) {
       // In flat mode, all edges drive the force layout.
-      // In structured mode, only layoutEdgeType edges (e.g. DEFINED_IN) are used.
+      // In structured mode, only layoutEdgeType edges (e.g. DEFINES) are used.
       if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
       const source = endpointId(link.source);
       const target = endpointId(link.target);

@@ -16,7 +16,7 @@
 
 import { type ReactNode, useState } from 'react';
 import type { SelectedNode } from '@opentrace/components/utils';
-import { getNodeColor } from '@opentrace/components/utils';
+import { getNodeColor, getLinkColor } from '@opentrace/components/utils';
 import type { NodeSourceResponse } from '../store/types';
 import { IMAGE_MIME_TYPES } from '../runner/browser/loader/constants';
 import { Highlight, themes } from 'prism-react-renderer';
@@ -145,6 +145,15 @@ function detectLanguage(source: NodeSourceResponse): string {
   return EXT_TO_LANG[ext] ?? 'plaintext';
 }
 
+export interface NodeEdge {
+  label: string;
+  direction: 'incoming' | 'outgoing';
+  otherNodeId: string;
+  otherNodeName: string;
+  otherNodeType?: string;
+  properties?: Record<string, unknown>;
+}
+
 interface NodeDetailsPanelProps {
   node: SelectedNode;
   nodeSource: NodeSourceResponse | null;
@@ -152,6 +161,9 @@ interface NodeDetailsPanelProps {
   sourceError: string | null;
   communityName?: string;
   communityColor?: string;
+  edges?: NodeEdge[];
+  onSelectNode?: (nodeId: string) => void;
+  onSelectEdge?: (edge: NodeEdge) => void;
 }
 
 type PreviewTab = 'rendered' | 'raw';
@@ -173,6 +185,9 @@ export default function NodeDetailsPanel({
   sourceError,
   communityName,
   communityColor,
+  edges,
+  onSelectNode,
+  onSelectEdge,
 }: NodeDetailsPanelProps) {
   const [previewTab, setPreviewTab] = useState<PreviewTab>('rendered');
   const color = getNodeColor(node.type);
@@ -182,7 +197,7 @@ export default function NodeDetailsPanel({
   const hasEnrichment = !!(
     node.properties?.summary || node.properties?.has_embedding
   );
-  const sourceUri = node.properties?.source_uri as string | undefined;
+  const sourceUri = node.properties?.sourceUri as string | undefined;
   const sourceName = (
     node.properties?.source_name as string | undefined
   )?.toLowerCase();
@@ -267,7 +282,7 @@ export default function NodeDetailsPanel({
             .filter(
               ([k]) =>
                 k !== 'has_embedding' &&
-                k !== 'source_uri' &&
+                k !== 'sourceUri' &&
                 k !== 'source_name',
             )
             .map(([k, v]) => (
@@ -516,6 +531,79 @@ export default function NodeDetailsPanel({
                 </div>
               );
             })()}
+        </div>
+      )}
+
+      {/* ── Edges ── */}
+      {edges && edges.length > 0 && (
+        <div className="node-edges-section">
+          <h4>Edges ({edges.length})</h4>
+          <div className="node-edges-list">
+            {edges.map((edge, i) => {
+              const linkColor = getLinkColor(edge.label);
+              return (
+                <div
+                  key={`${edge.direction}-${edge.label}-${edge.otherNodeId}-${i}`}
+                  className="node-edge-row"
+                >
+                  <button
+                    className="node-edge-main"
+                    onClick={() => onSelectNode?.(edge.otherNodeId)}
+                    title={`Select ${edge.otherNodeName}`}
+                  >
+                    <span
+                      className="node-edge-direction"
+                      data-dir={edge.direction}
+                    >
+                      {edge.direction === 'outgoing' ? '→' : '←'}
+                    </span>
+                    <span
+                      className="node-edge-label"
+                      style={{ backgroundColor: linkColor }}
+                    >
+                      {edge.label}
+                    </span>
+                    {edge.otherNodeType && (
+                      <span
+                        className="node-edge-node-type"
+                        style={{
+                          backgroundColor: getNodeColor(edge.otherNodeType),
+                        }}
+                      >
+                        {edge.otherNodeType}
+                      </span>
+                    )}
+                    <span className="node-edge-node-name">
+                      {edge.otherNodeName}
+                    </span>
+                  </button>
+                  <button
+                    className="node-edge-select-edge"
+                    onClick={() => onSelectEdge?.(edge)}
+                    title="View edge details"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <circle cx="12" cy="12" r="3" />
+                      <line x1="12" y1="2" x2="12" y2="6" />
+                      <line x1="12" y1="18" x2="12" y2="22" />
+                      <line x1="2" y1="12" x2="6" y2="12" />
+                      <line x1="18" y1="12" x2="22" y2="12" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

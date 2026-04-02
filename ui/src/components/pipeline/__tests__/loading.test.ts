@@ -76,17 +76,17 @@ describe('scanning stage', () => {
     expect(result.dirNodes.get('src')!.name).toBe('src');
     expect(result.dirNodes.get('src/utils')!.name).toBe('utils');
 
-    // Check DEFINED_IN chain: src/utils -> src -> repo
+    // Check DEFINES chain: repo -> src -> src/utils (parent → child)
     const utilsRel = result.structureRels.find(
       (r) =>
-        r.source_id === 'testorg/testrepo/src/utils' && r.type === 'DEFINED_IN',
+        r.target_id === 'testorg/testrepo/src/utils' && r.type === 'DEFINES',
     );
-    expect(utilsRel?.target_id).toBe('testorg/testrepo/src');
+    expect(utilsRel?.source_id).toBe('testorg/testrepo/src');
 
     const srcRel = result.structureRels.find(
-      (r) => r.source_id === 'testorg/testrepo/src' && r.type === 'DEFINED_IN',
+      (r) => r.target_id === 'testorg/testrepo/src' && r.type === 'DEFINES',
     );
-    expect(srcRel?.target_id).toBe('testorg/testrepo');
+    expect(srcRel?.source_id).toBe('testorg/testrepo');
   });
 
   it('root files link to Repository', () => {
@@ -94,9 +94,9 @@ describe('scanning stage', () => {
     const { result } = runScanning({ repo }, noopCtx());
 
     const rel = result.structureRels.find(
-      (r) => r.source_id === 'testorg/testrepo/setup.py',
+      (r) => r.target_id === 'testorg/testrepo/setup.py',
     );
-    expect(rel?.target_id).toBe('testorg/testrepo');
+    expect(rel?.source_id).toBe('testorg/testrepo');
   });
 
   it('root dirs link to Repository', () => {
@@ -104,9 +104,9 @@ describe('scanning stage', () => {
     const { result } = runScanning({ repo }, noopCtx());
 
     const rel = result.structureRels.find(
-      (r) => r.source_id === 'testorg/testrepo/lib' && r.type === 'DEFINED_IN',
+      (r) => r.target_id === 'testorg/testrepo/lib' && r.type === 'DEFINES',
     );
-    expect(rel?.target_id).toBe('testorg/testrepo');
+    expect(rel?.source_id).toBe('testorg/testrepo');
   });
 
   it('identifies parseable files', () => {
@@ -134,20 +134,20 @@ describe('scanning stage', () => {
     expect(result.repoNode).toBeDefined();
   });
 
-  it('sets source_uri properties when url/provider are set', () => {
+  it('sets sourceUri properties when url/provider are set', () => {
     const repo = makeRepoTree([{ path: 'app.py' }], {
       url: 'https://github.com/testorg/testrepo',
       provider: 'github',
     });
     const { result } = runScanning({ repo }, noopCtx());
 
-    expect(result.repoNode.properties?.source_uri).toBe(
+    expect(result.repoNode.properties?.sourceUri).toBe(
       'https://github.com/testorg/testrepo',
     );
     expect(result.repoNode.properties?.provider).toBe('github');
 
     const fileNode = result.fileNodes[0];
-    expect(fileNode.properties?.source_uri).toBe(
+    expect(fileNode.properties?.sourceUri).toBe(
       'https://github.com/testorg/testrepo/blob/main/app.py',
     );
   });

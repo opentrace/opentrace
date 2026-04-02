@@ -65,9 +65,12 @@ import { GitHubIcon, GitLabIcon } from './providerIcons';
 import JobMinimizedBar from './JobMinimizedBar';
 import SidePanel from './SidePanel';
 import type { SidePanelTab } from './SidePanel';
+import type { HistoryEntry } from './historyTypes';
+import type { NodeEdge } from './NodeDetailsPanel';
 import ThemeSelector from './ThemeSelector';
 import { OpenTraceLogo } from './OpenTraceLogo';
 import ResetConfirmModal from './ResetConfirmModal';
+import ExportModal from './ExportModal';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -135,9 +138,13 @@ function getSubType(node: GraphNode): string | null {
     const lang = node.properties?.language as string | undefined;
     return lang || null;
   }
-  if (node.type === 'Package') {
+  if (node.type === 'Dependency') {
     const registry = node.properties?.registry as string | undefined;
     return registry || null;
+  }
+  if (node.type === 'Variable') {
+    const kind = node.properties?.kind as string | undefined;
+    return kind || null;
   }
   return null;
 }
@@ -153,6 +160,199 @@ function linkId(endpoint: string | number | GraphNode | undefined): string {
 }
 
 // GraphLegend is now imported from @opentrace/components
+
+/** Dropdown help menu that appears on the toolbar. */
+function HelpMenuButton({
+  showHelp,
+  onToggleHelp,
+}: {
+  showHelp: boolean;
+  onToggleHelp: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="help-menu-container" ref={ref}>
+      <button
+        className={`help-toggle-btn ${showHelp ? 'active' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        title="Help"
+      >
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span className="ot-menu-label">Help</span>
+      </button>
+      {open && (
+        <div className="help-dropdown">
+          <button
+            className="help-dropdown-item"
+            onClick={() => {
+              setOpen(false);
+              onToggleHelp();
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            Getting Started
+          </button>
+          <a
+            className="help-dropdown-item"
+            href="https://opentrace.github.io/opentrace/"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+            </svg>
+            Documentation
+            <svg
+              className="help-external-icon"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </a>
+          <a
+            className="help-dropdown-item"
+            href="https://github.com/opentrace/opentrace"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+            </svg>
+            GitHub
+            <svg
+              className="help-external-icon"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </a>
+          <div className="help-dropdown-divider" />
+          <a
+            className="help-dropdown-item"
+            href="https://github.com/opentrace/opentrace/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            Report an Issue
+            <svg
+              className="help-external-icon"
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export interface GraphViewerHandle {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
@@ -183,6 +383,8 @@ export interface GraphViewerProps {
   onToggleChat: () => void;
   showSettings: boolean;
   onToggleSettings: () => void;
+  showHelp: boolean;
+  onToggleHelp: () => void;
   /** Called when graphData changes so parent can pass it reactively to siblings */
   onGraphDataChange?: (data: {
     nodes: GraphNode[];
@@ -219,6 +421,8 @@ const GraphViewer = memo(
         onToggleChat,
         showSettings,
         onToggleSettings,
+        showHelp,
+        onToggleHelp,
         onGraphDataChange,
         chatHighlightNodes,
         animationSettings,
@@ -243,11 +447,10 @@ const GraphViewer = memo(
             if (cancelled) return;
             setIndexedRepos(
               nodes
-                .filter((n) => n.properties?.source_uri || n.properties?.url)
+                .filter((n) => n.properties?.sourceUri || n.properties?.url)
                 .map((n) => ({
                   name: n.name,
-                  url: (n.properties!.source_uri ??
-                    n.properties!.url) as string,
+                  url: (n.properties!.sourceUri ?? n.properties!.url) as string,
                 })),
             );
           })
@@ -321,6 +524,7 @@ const GraphViewer = memo(
       );
       const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
+      const [showExportModal, setShowExportModal] = useState(false);
       const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
         null,
       );
@@ -332,13 +536,39 @@ const GraphViewer = memo(
       const [hiddenCommunities, setHiddenCommunities] = useState(
         new Set<number>(),
       );
-      // Track whether we've applied the default Package hiding
+      // Track whether we've applied the default Dependency hiding
       const defaultsApplied = useRef(false);
       const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
         null,
       );
       const [sourceLoading, setSourceLoading] = useState(false);
       const [sourceError, setSourceError] = useState<string | null>(null);
+
+      const [nodeHistory, setNodeHistory] = useState<HistoryEntry[]>([]);
+
+      // Append chat-highlighted nodes to session history
+      useEffect(() => {
+        if (!chatHighlightNodes || chatHighlightNodes.size === 0) return;
+        const now = Date.now();
+        setNodeHistory((prev) => {
+          const existing = new Set(prev.map((e) => e.id));
+          const newEntries: HistoryEntry[] = [];
+          for (const id of chatHighlightNodes) {
+            if (existing.has(id)) continue;
+            const node = graphDataRef.current.nodes.find((n) => n.id === id);
+            if (!node) continue;
+            newEntries.push({
+              id: node.id,
+              name: node.name,
+              type: node.type,
+              timestamp: now,
+              source: 'chat',
+            });
+          }
+          if (newEntries.length === 0) return prev;
+          return [...newEntries, ...prev].slice(0, 500);
+        });
+      }, [chatHighlightNodes]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -560,16 +790,16 @@ const GraphViewer = memo(
         return result;
       }, [graphData.nodes]);
 
-      // On first data load, hide all Package sub-types by default
+      // On first data load, hide all Dependency sub-types by default
       useEffect(() => {
         if (defaultsApplied.current) return;
-        const pkgSubs = availableSubTypes.get('Package');
-        if (pkgSubs && pkgSubs.length > 0) {
+        const depSubs = availableSubTypes.get('Dependency');
+        if (depSubs && depSubs.length > 0) {
           defaultsApplied.current = true;
           // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
           setHiddenSubTypes((prev) => {
             const next = new Set(prev);
-            pkgSubs.forEach((s) => next.add(`Package:${s.subType}`));
+            depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
             return next;
           });
         }
@@ -638,6 +868,18 @@ const GraphViewer = memo(
         setEdgeHighlightLinks(EMPTY_SET);
         setEdgeLabelNodes(EMPTY_SET);
         setFocusedCommunityNodes(EMPTY_SET);
+        // Record in session history (skip consecutive duplicates)
+        setNodeHistory((prev) => {
+          if (prev.length > 0 && prev[0].id === node.id) return prev;
+          const entry: HistoryEntry = {
+            id: node.id,
+            name: node.name,
+            type: node.type,
+            timestamp: Date.now(),
+            source: 'user',
+          };
+          return [entry, ...prev].slice(0, 500);
+        });
         // Zoom is handled by the effect below after highlights are computed
       }, []);
 
@@ -710,10 +952,10 @@ const GraphViewer = memo(
         setSourceError(null);
         setNodeSource(null);
 
-        const startLine = selectedNode.properties?.start_line as
+        const startLine = selectedNode.properties?.startLine as
           | number
           | undefined;
-        const endLine = selectedNode.properties?.end_line as number | undefined;
+        const endLine = selectedNode.properties?.endLine as number | undefined;
 
         store
           .fetchSource(selectedNode.id, startLine, endLine)
@@ -735,6 +977,57 @@ const GraphViewer = memo(
         };
       }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
       /* eslint-enable react-hooks/set-state-in-effect */
+
+      // Compute edges connected to the selected node for the details panel
+      const selectedNodeEdges = useMemo(() => {
+        if (!selectedNode) return [];
+        const nodeId = selectedNode.id;
+        const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
+        return filteredGraphData.links
+          .filter(
+            (l) => linkId(l.source) === nodeId || linkId(l.target) === nodeId,
+          )
+          .map((l) => {
+            const sourceId = linkId(l.source);
+            const targetId = linkId(l.target);
+            const isOutgoing = sourceId === nodeId;
+            const otherId = isOutgoing ? targetId : sourceId;
+            const otherNode = nodeMap.get(otherId);
+            return {
+              label: l.label,
+              direction: isOutgoing
+                ? ('outgoing' as const)
+                : ('incoming' as const),
+              otherNodeId: otherId,
+              otherNodeName: otherNode?.name ?? otherId,
+              otherNodeType: otherNode?.type,
+              properties: l.properties,
+            };
+          });
+      }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
+
+      // Convert a NodeEdge back to a SelectedEdge and trigger edge selection
+      const handleSelectEdgeFromNode = useCallback(
+        (edge: NodeEdge) => {
+          if (!selectedNode) return;
+          const nodeMap = new Map(
+            graphDataRef.current.nodes.map((n) => [n.id, n]),
+          );
+          const sourceId =
+            edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
+          const targetId =
+            edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
+          onLinkClick({
+            source: sourceId,
+            target: targetId,
+            label: edge.label,
+            properties: edge.properties,
+            sourceNode: nodeMap.get(sourceId),
+            targetNode: nodeMap.get(targetId),
+          });
+        },
+        [selectedNode, onLinkClick],
+      );
 
       // Compute degree (connection count) per node for size scaling
       const graphNodeIds = useMemo(
@@ -830,15 +1123,19 @@ const GraphViewer = memo(
 
       // Build autocomplete suggestions for the toolbar search
       const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
-        // Deduplicate names; pick first node's type/community for each name
+        // Deduplicate names; pick first node's type/community/id for each name
         const nameMap = new Map<
           string,
-          { type: string; communityId?: number }
+          { type: string; communityId?: number; nodeId: string }
         >();
         for (const n of graphData.nodes) {
           if (!nameMap.has(n.name)) {
             const cid = communityData.assignments[n.id];
-            nameMap.set(n.name, { type: n.type, communityId: cid });
+            nameMap.set(n.name, {
+              type: n.type,
+              communityId: cid,
+              nodeId: n.id,
+            });
           }
         }
         const suggestions: SearchSuggestion[] = [];
@@ -857,6 +1154,7 @@ const GraphViewer = memo(
             color: getNodeColor(info.type),
             communityLabel: cLabel,
             communityColor: cColor,
+            nodeId: info.nodeId,
           });
         }
         for (const [cid, name] of communityData.names) {
@@ -904,14 +1202,30 @@ const GraphViewer = memo(
               }
               break;
             }
-            default:
-              // name — normal search
+            default: {
+              // name — load graph centered on the search, then auto-select the node
               setActiveFilter(null);
-              loadGraph(suggestion.label, hops);
+              const targetId = suggestion.nodeId;
+              loadGraph(suggestion.label, hops).then(() => {
+                // After graph reloads, find and select the target node
+                if (targetId) {
+                  const node = graphDataRef.current.nodes.find(
+                    (n) => n.id === targetId,
+                  );
+                  if (node) {
+                    onNodeClick(node);
+                    // Zoom to the selected node after a short delay for layout settle
+                    setTimeout(() => {
+                      canvasRef.current?.zoomToNodes(new Set([targetId]), 600);
+                    }, 100);
+                  }
+                }
+              });
               break;
+            }
           }
         },
-        [applyFilter, hops, loadGraph],
+        [applyFilter, hops, loadGraph, onNodeClick],
       );
 
       const legendLinkItems = useMemo(() => {
@@ -1197,7 +1511,7 @@ const GraphViewer = memo(
       const linkFilterItems: FilterItem[] = availableLinkTypes.map(
         ({ type, count }) => ({
           key: type,
-          label: type.toLowerCase(),
+          label: type.toUpperCase(),
           count,
           color: getLinkColor(type),
           hidden: hiddenLinkTypes.has(type),
@@ -1283,6 +1597,8 @@ const GraphViewer = memo(
             sourceError={sourceError}
             communityName={selectedCommunityName}
             communityColor={selectedCommunityColor}
+            selectedNodeEdges={selectedNodeEdges}
+            onSelectEdge={handleSelectEdgeFromNode}
             selectedLink={selectedLink}
             onSelectNode={(nodeId) => {
               const node = graphDataRef.current.nodes.find(
@@ -1297,6 +1613,8 @@ const GraphViewer = memo(
             graphVersion={graphVersion}
             graphNodeIds={graphNodeIds}
             hopMap={hopMap}
+            nodeHistory={nodeHistory}
+            onClearHistory={() => setNodeHistory([])}
             mobileActiveTab={mobilePanelTab}
             onMobileTabChange={setMobilePanelTab}
             onMobileClose={() => setMobilePanelTab(null)}
@@ -1456,24 +1774,9 @@ const GraphViewer = memo(
                     className="export-db-btn"
                     title="Export database"
                     disabled={exporting}
-                    onClick={async () => {
+                    onClick={() => {
                       if (!store.exportDatabase || exporting) return;
-                      setExporting(true);
-                      try {
-                        const data = await store.exportDatabase();
-                        const buf = new Uint8Array(data).buffer as ArrayBuffer;
-                        const blob = new Blob([buf], {
-                          type: 'application/octet-stream',
-                        });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'opentrace.parquet.zip';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      } finally {
-                        setExporting(false);
-                      }
+                      setShowExportModal(true);
                     }}
                   >
                     {exporting ? (
@@ -1535,6 +1838,10 @@ const GraphViewer = memo(
                   </svg>
                   <span className="ot-menu-label">AI Chat</span>
                 </button>
+                <HelpMenuButton
+                  showHelp={showHelp}
+                  onToggleHelp={onToggleHelp}
+                />
                 <button
                   className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
                   onClick={onToggleSettings}
@@ -1563,6 +1870,31 @@ const GraphViewer = memo(
             <ResetConfirmModal
               onConfirm={() => window.location.reload()}
               onCancel={() => setShowResetConfirm(false)}
+            />
+          )}
+
+          {showExportModal && store.exportDatabase && (
+            <ExportModal
+              onCancel={() => setShowExportModal(false)}
+              onExport={async ({ includeSource }) => {
+                setShowExportModal(false);
+                setExporting(true);
+                try {
+                  const data = await store.exportDatabase!({ includeSource });
+                  const buf = new Uint8Array(data).buffer as ArrayBuffer;
+                  const blob = new Blob([buf], {
+                    type: 'application/octet-stream',
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'opentrace.parquet.zip';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } finally {
+                  setExporting(false);
+                }
+              }}
             />
           )}
 

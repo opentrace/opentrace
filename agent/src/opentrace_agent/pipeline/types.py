@@ -95,6 +95,8 @@ class PipelineResult:
     files_processed: int = 0
     classes_extracted: int = 0
     functions_extracted: int = 0
+    variables_extracted: int = 0
+    derivations_resolved: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -163,6 +165,16 @@ class CallInfo:
 
 
 @dataclass
+class DerivationInfo:
+    """A pending derivation reference to resolve."""
+
+    variable_id: str
+    scope_id: str
+    file_id: str
+    refs: list[tuple[str, str | None, str]]  # (name, receiver, kind)
+
+
+@dataclass
 class Registries:
     """Global registries populated during processing, consumed during resolving."""
 
@@ -170,6 +182,8 @@ class Registries:
     file_registry: dict[str, dict[str, SymbolInfo]] = field(default_factory=dict)
     class_registry: dict[str, list[SymbolInfo]] = field(default_factory=dict)
     import_registry: dict[str, dict[str, str]] = field(default_factory=dict)
+    variable_registry: dict[str, dict[str, str]] = field(default_factory=dict)
+    """scope_id → {variable_name → variable_node_id}"""
 
 
 @dataclass
@@ -178,9 +192,11 @@ class ProcessingOutput:
 
     registries: Registries = field(default_factory=Registries)
     call_infos: list[CallInfo] = field(default_factory=list)
+    derivation_infos: list[DerivationInfo] = field(default_factory=list)
     nodes_created: int = 0
     relationships_created: int = 0
     files_processed: int = 0
     classes_extracted: int = 0
     functions_extracted: int = 0
+    variables_extracted: int = 0
     errors: list[str] = field(default_factory=list)

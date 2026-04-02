@@ -45,7 +45,7 @@ const FALLBACK_KNOWN: Record<string, { varSuffix: string; color: string }> = {
   CALLS: { varSuffix: 'calls', color: '#93c5fd' },
   READS: { varSuffix: 'reads', color: '#fde68a' },
   WRITES: { varSuffix: 'writes', color: '#fdba74' },
-  DEFINED_IN: { varSuffix: 'defined-in', color: '#6ee7b7' },
+  DEFINES: { varSuffix: 'defines', color: '#6ee7b7' },
   PART_OF: { varSuffix: 'part-of', color: '#5eead4' },
   DEPENDS_ON: { varSuffix: 'depends-on', color: '#f9a8d4' },
   EXTENDS: { varSuffix: 'extends', color: '#c4b5fd' },

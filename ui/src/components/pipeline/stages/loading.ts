@@ -76,9 +76,9 @@ export function ensureDirChain(
 
   const targetId = parent ? `${repoId}/${parent}` : repoId;
   rels.push({
-    id: `${dirId}->DEFINED_IN->${targetId}`,
-    type: 'DEFINED_IN',
-    source_id: dirId,
-    target_id: targetId,
+    id: `${targetId}->DEFINES->${dirId}`,
+    type: 'DEFINES',
+    source_id: targetId,
+    target_id: dirId,
   });
 }

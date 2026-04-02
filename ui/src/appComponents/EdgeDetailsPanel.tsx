@@ -141,7 +141,7 @@ export default function EdgeDetailsPanel({
               .filter(
                 ([k]) =>
                   k !== 'has_embedding' &&
-                  k !== 'source_uri' &&
+                  k !== 'sourceUri' &&
                   k !== 'source_name',
               )
               .slice(0, 5)
@@ -166,7 +166,7 @@ export default function EdgeDetailsPanel({
               .filter(
                 ([k]) =>
                   k !== 'has_embedding' &&
-                  k !== 'source_uri' &&
+                  k !== 'sourceUri' &&
                   k !== 'source_name',
               )
               .slice(0, 5)

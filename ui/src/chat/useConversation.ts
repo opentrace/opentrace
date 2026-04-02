@@ -32,6 +32,8 @@ export interface UseConversationReturn {
   conversations: ConversationSummary[];
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /** Node IDs found by chat tools, restored when switching conversations */
+  foundNodeIds: string[];
   startNewConversation: () => void;
   switchConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
@@ -40,6 +42,7 @@ export interface UseConversationReturn {
     msgs: ChatMessage[],
     provider: string,
     model: string,
+    foundNodeIds?: string[],
   ) => Promise<void>;
   loadingConversation: boolean;
 }
@@ -51,6 +54,7 @@ export function useConversation(
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [foundNodeIds, setFoundNodeIds] = useState<string[]>([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
 
   // Ref to track the live conversation ID — avoids stale closures in callbacks
@@ -66,6 +70,7 @@ export function useConversation(
     setConversationId(null);
     conversationIdRef.current = null;
     setMessages([]);
+    setFoundNodeIds([]);
 
     (async () => {
       const list = await listConversations(projectKey);
@@ -88,6 +93,7 @@ export function useConversation(
     setConversationId(null);
     conversationIdRef.current = null;
     setMessages([]);
+    setFoundNodeIds([]);
   }, []);
 
   const switchConversation = useCallback(async (id: string) => {
@@ -101,6 +107,7 @@ export function useConversation(
         setConversationId(conv.id);
         conversationIdRef.current = conv.id;
         setMessages(conv.messages);
+        setFoundNodeIds(conv.foundNodeIds ?? []);
       }
     } finally {
       if (token === switchTokenRef.current) {
@@ -116,6 +123,7 @@ export function useConversation(
         setConversationId(null);
         conversationIdRef.current = null;
         setMessages([]);
+        setFoundNodeIds([]);
       }
       await refreshList();
     },
@@ -123,7 +131,12 @@ export function useConversation(
   );
 
   const persistMessages = useCallback(
-    async (msgs: ChatMessage[], provider: string, model: string) => {
+    async (
+      msgs: ChatMessage[],
+      provider: string,
+      model: string,
+      nodeIds?: string[],
+    ) => {
       if (!enabled || msgs.length === 0) return;
 
       // Use the ref to get the live ID, not the stale closure value
@@ -145,6 +158,7 @@ export function useConversation(
         model,
         projectKey: projectKey ?? '',
         messages: msgs,
+        foundNodeIds: nodeIds,
       };
 
       // Preserve original createdAt if conversation already exists
@@ -164,6 +178,7 @@ export function useConversation(
     conversations,
     messages,
     setMessages,
+    foundNodeIds,
     startNewConversation,
     switchConversation,
     deleteConversation,

@@ -58,6 +58,9 @@ export interface PixiScaleBreakpoint {
 
   // ── Labels ──────────────────────────────────────────────────────────
 
+  /** Run edge hit-testing on hover (O(n) per check). Disable at large scale to avoid jank. */
+  edgeHoverHitTest: boolean;
+
   /** Show node labels (degree-based auto-labeling). Disable at extreme scale for perf. */
   autoLabels: boolean;
 }
@@ -83,6 +86,7 @@ export const DEFAULT_BREAKPOINTS: PixiScaleBreakpoint[] = [
     interactionSettleDelay: 800,
     barnesHutTheta: 0.9,
     dragTheta: 0.9,
+    edgeHoverHitTest: true,
     autoLabels: true,
   },
   {
@@ -95,6 +99,7 @@ export const DEFAULT_BREAKPOINTS: PixiScaleBreakpoint[] = [
     interactionSettleDelay: 1000,
     barnesHutTheta: 0.9,
     dragTheta: 1.2,
+    edgeHoverHitTest: true,
     autoLabels: true,
   },
   {
@@ -107,6 +112,7 @@ export const DEFAULT_BREAKPOINTS: PixiScaleBreakpoint[] = [
     interactionSettleDelay: 1300,
     barnesHutTheta: 0.9,
     dragTheta: 1.5,
+    edgeHoverHitTest: false,
     autoLabels: true,
   },
   {
@@ -119,6 +125,7 @@ export const DEFAULT_BREAKPOINTS: PixiScaleBreakpoint[] = [
     interactionSettleDelay: 1300,
     barnesHutTheta: 1.0,
     dragTheta: 1.5,
+    edgeHoverHitTest: false,
     autoLabels: false,
   },
 ];

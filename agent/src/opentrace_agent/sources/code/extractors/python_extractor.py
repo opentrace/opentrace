@@ -24,8 +24,10 @@ import tree_sitter_python
 from opentrace_agent.sources.code.extractors.base import (
     CallRef,
     CodeSymbol,
+    DerivationRef,
     ExtractionResult,
     SymbolExtractor,
+    VariableSymbol,
 )
 
 _PARSER: tree_sitter.Parser | None = None
@@ -85,12 +87,14 @@ def _extract_class(node: tree_sitter.Node) -> CodeSymbol | None:
     children = _walk_class_body(node)
     superclasses = _extract_superclasses(node)
     docs = _extract_docstring(node)
+    variables = _extract_class_fields(node)
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="class",
         start_line=node.start_point.row + 1,
         end_line=node.end_point.row + 1,
         children=children,
+        variables=variables,
         superclasses=superclasses,
         docs=docs,
     )
@@ -126,6 +130,9 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     docs = _extract_docstring(node)
+    variables = _extract_parameters(params_node) if params_node else []
+    if body_node:
+        variables.extend(_collect_variables(body_node))
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="function",
@@ -133,6 +140,7 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         end_line=node.end_point.row + 1,
         signature=signature,
         calls=calls,
+        variables=variables,
         param_types=param_types,
         docs=docs,
     )
@@ -202,6 +210,18 @@ def _extract_docstring(node: tree_sitter.Node) -> str | None:
     return None
 
 
+def _collect_call_args(call_node: tree_sitter.Node) -> list[str]:
+    """Extract identifier names passed as arguments to a call."""
+    args: list[str] = []
+    args_node = call_node.child_by_field_name("arguments")
+    if args_node is None:
+        return args
+    for child in args_node.children:
+        if child.type == "identifier":
+            args.append(child.text.decode())
+    return args
+
+
 def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     """Collect function/method call references from a tree-sitter subtree.
 
@@ -212,8 +232,9 @@ def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     for child in node.children:
         if child.type == "call":
             func_node = child.child_by_field_name("function")
+            call_args = _collect_call_args(child)
             if func_node and func_node.type == "identifier":
-                calls.append(CallRef(name=func_node.text.decode()))
+                calls.append(CallRef(name=func_node.text.decode(), args=call_args))
             elif func_node and func_node.type == "attribute":
                 obj_node = func_node.child_by_field_name("object")
                 attr_node = func_node.child_by_field_name("attribute")
@@ -223,7 +244,260 @@ def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
                             name=attr_node.text.decode(),
                             receiver=obj_node.text.decode(),
                             kind="attribute",
+                            args=call_args,
                         )
                     )
         calls.extend(_collect_calls(child))
     return calls
+
+
+# --- Variable extraction ---
+
+
+def _extract_parameters(params_node: tree_sitter.Node) -> list[VariableSymbol]:
+    """Extract function parameters as VariableSymbol instances.
+
+    Skips ``self`` and ``cls`` parameters.
+    """
+    variables: list[VariableSymbol] = []
+    for child in params_node.children:
+        name: str | None = None
+        type_ann: str | None = None
+        if child.type == "identifier":
+            name = child.text.decode()
+        elif child.type in ("typed_parameter", "typed_default_parameter"):
+            for sub in child.children:
+                if sub.type == "identifier" and name is None:
+                    name = sub.text.decode()
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                type_ann = type_node.text.decode()
+        elif child.type == "default_parameter":
+            name_child = child.child_by_field_name("name")
+            if name_child:
+                name = name_child.text.decode()
+
+        if name and name not in ("self", "cls"):
+            line = child.start_point.row + 1
+            variables.append(
+                VariableSymbol(
+                    name=name,
+                    kind="parameter",
+                    start_line=line,
+                    end_line=line,
+                    type_annotation=type_ann,
+                )
+            )
+    return variables
+
+
+def _extract_class_fields(class_node: tree_sitter.Node) -> list[VariableSymbol]:
+    """Extract class-level fields from a class definition.
+
+    Handles:
+    - Annotated class attributes (dataclass fields): ``name: str = "default"``
+    - ``self.x = ...`` assignments in ``__init__``
+    """
+    variables: list[VariableSymbol] = []
+    seen: set[str] = set()
+    body = class_node.child_by_field_name("body")
+    if body is None:
+        return variables
+
+    for child in body.children:
+        # Annotated class attributes (e.g., dataclass fields) and plain assignments
+        if child.type == "expression_statement" and child.children:
+            inner = child.children[0]
+            if inner.type == "assignment":
+                var = _extract_annotated_field(inner)
+                if var and var.name not in seen:
+                    seen.add(var.name)
+                    variables.append(var)
+
+        # Find __init__ and extract self.x assignments
+        func_node = None
+        if child.type == "function_definition":
+            func_node = child
+        elif child.type == "decorated_definition":
+            for sub in child.children:
+                if sub.type == "function_definition":
+                    func_node = sub
+                    break
+
+        if func_node is not None:
+            name_node = func_node.child_by_field_name("name")
+            if name_node and name_node.text.decode() == "__init__":
+                init_body = func_node.child_by_field_name("body")
+                if init_body:
+                    for var in _extract_self_assignments(init_body):
+                        if var.name not in seen:
+                            seen.add(var.name)
+                            variables.append(var)
+
+    return variables
+
+
+def _extract_annotated_field(assignment_node: tree_sitter.Node) -> VariableSymbol | None:
+    """Extract a field from an assignment node (``name: str = "default"``)."""
+    left = assignment_node.child_by_field_name("left")
+    right = assignment_node.child_by_field_name("right")
+    if left is None:
+        return None
+
+    if left.type != "identifier":
+        return None
+
+    # Type annotation is a separate field on the assignment node
+    type_node = assignment_node.child_by_field_name("type")
+    type_ann = type_node.text.decode() if type_node else None
+    derivation = _derivation_from_expr(right) if right else []
+    line = assignment_node.start_point.row + 1
+    return VariableSymbol(
+        name=left.text.decode(),
+        kind="field",
+        start_line=line,
+        end_line=line,
+        type_annotation=type_ann,
+        derived_from=derivation,
+    )
+
+
+def _extract_self_assignments(body_node: tree_sitter.Node) -> list[VariableSymbol]:
+    """Extract ``self.x = ...`` assignments from a function body.
+
+    Recursively walks into nested blocks (if/else/try/etc.) to catch
+    conditional self-assignments, but stops at nested function/class scopes.
+    """
+    variables: list[VariableSymbol] = []
+    _walk_for_self_assignments(body_node, variables)
+    return variables
+
+
+def _walk_for_self_assignments(node: tree_sitter.Node, variables: list[VariableSymbol]) -> None:
+    """Recursively collect self.x assignments."""
+    for child in node.children:
+        if child.type == "expression_statement" and child.children:
+            inner = child.children[0]
+            if inner.type == "assignment":
+                left = inner.child_by_field_name("left")
+                right = inner.child_by_field_name("right")
+                if left and left.type == "attribute":
+                    obj = left.child_by_field_name("object")
+                    attr = left.child_by_field_name("attribute")
+                    if obj and attr and obj.text.decode() == "self":
+                        derivation = _derivation_from_expr(right) if right else []
+                        line = inner.start_point.row + 1
+                        variables.append(
+                            VariableSymbol(
+                                name=attr.text.decode(),
+                                kind="field",
+                                start_line=line,
+                                end_line=line,
+                                derived_from=derivation,
+                            )
+                        )
+        # Skip nested scopes
+        if child.type in _NEW_SCOPE_TYPES or child.type == "decorated_definition":
+            continue
+        _walk_for_self_assignments(child, variables)
+
+
+def _derivation_from_expr(expr_node: tree_sitter.Node) -> list[DerivationRef]:
+    """Determine derivation references from a right-hand-side expression.
+
+    Handles simple cases (identifier, call, attribute) directly, and
+    recursively collects identifiers from compound expressions
+    (e.g., ``y + z``, ``[a, b]``, ``f(x) + g(y)``).
+    """
+    if expr_node.type == "identifier":
+        return [DerivationRef(kind="identifier", name=expr_node.text.decode())]
+    if expr_node.type == "call":
+        func = expr_node.child_by_field_name("function")
+        if func and func.type == "identifier":
+            return [DerivationRef(kind="call", name=func.text.decode())]
+        if func and func.type == "attribute":
+            obj = func.child_by_field_name("object")
+            attr = func.child_by_field_name("attribute")
+            if obj and attr:
+                return [DerivationRef(kind="call", name=attr.text.decode(), receiver=obj.text.decode())]
+    if expr_node.type == "attribute":
+        obj = expr_node.child_by_field_name("object")
+        attr = expr_node.child_by_field_name("attribute")
+        if obj and attr:
+            return [DerivationRef(kind="attribute", name=attr.text.decode(), receiver=obj.text.decode())]
+    # Compound expression — recursively collect from all children
+    refs: list[DerivationRef] = []
+    for child in expr_node.children:
+        refs.extend(_derivation_from_expr(child))
+    return refs
+
+
+def _collect_variables(body_node: tree_sitter.Node) -> list[VariableSymbol]:
+    """Collect local variable assignments from a function body."""
+    variables: list[VariableSymbol] = []
+    seen: set[str] = set()
+    _walk_body_for_variables(body_node, variables, seen)
+    return variables
+
+
+_NEW_SCOPE_TYPES = frozenset({"class_definition", "function_definition"})
+
+
+def _walk_body_for_variables(
+    node: tree_sitter.Node,
+    variables: list[VariableSymbol],
+    seen: set[str],
+) -> None:
+    """Recursively walk a function body for variable assignments.
+
+    Recurses into all children (if/elif/else/for/while/with/try/except/finally
+    blocks) but stops at new scopes (nested class or function definitions).
+    """
+    for child in node.children:
+        if child.type == "expression_statement" and child.children:
+            inner = child.children[0]
+            if inner.type == "assignment":
+                var = _extract_local_assignment(inner)
+                if var and var.name not in seen:
+                    seen.add(var.name)
+                    variables.append(var)
+        # Skip nested scopes — they define their own variables
+        if child.type in _NEW_SCOPE_TYPES:
+            continue
+        if child.type == "decorated_definition":
+            continue
+        # Recurse into everything else (blocks, clauses, etc.)
+        _walk_body_for_variables(child, variables, seen)
+
+
+def _extract_local_assignment(assignment_node: tree_sitter.Node) -> VariableSymbol | None:
+    """Extract a local variable from an assignment node."""
+    left = assignment_node.child_by_field_name("left")
+    right = assignment_node.child_by_field_name("right")
+    if left is None:
+        return None
+
+    # Skip self.x assignments (those are class fields, not locals)
+    if left.type == "attribute":
+        return None
+    if left.type != "identifier":
+        return None
+
+    name = left.text.decode()
+    if name == "_":
+        return None
+
+    # Type annotation is a separate field on the assignment node
+    type_node = assignment_node.child_by_field_name("type")
+    type_ann = type_node.text.decode() if type_node else None
+
+    derivation = _derivation_from_expr(right) if right else []
+    line = assignment_node.start_point.row + 1
+    return VariableSymbol(
+        name=name,
+        kind="local",
+        start_line=line,
+        end_line=line,
+        type_annotation=type_ann,
+        derived_from=derivation,
+    )

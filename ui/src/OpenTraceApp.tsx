@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
+import { useCallback, useState } from 'react';
 import { StoreProvider, createLadybugStore } from './store';
+import type { GraphStore } from './store';
+import { ServerGraphStore } from './store/serverStore';
 import { JobServiceProvider } from './job';
 import App from './App';
 import './styles/index.css';
@@ -29,7 +32,27 @@ export interface OpenTraceAppProps {
   repoUrl?: string;
 }
 
-const store = createLadybugStore();
+type StoreMode = 'local' | `server:${string}`;
+
+function detectInitialMode(): StoreMode {
+  try {
+    const serverUrl = new URLSearchParams(window.location.search).get('server');
+    if (serverUrl) {
+      new URL(serverUrl); // validate
+      return `server:${serverUrl}`;
+    }
+  } catch {
+    /* invalid URL or SSR / non-browser */
+  }
+  return 'local';
+}
+
+function createStoreForMode(mode: StoreMode): GraphStore {
+  if (mode.startsWith('server:')) {
+    return new ServerGraphStore(mode.slice('server:'.length));
+  }
+  return createLadybugStore();
+}
 
 /**
  * Drop-in full OpenTrace application component.
@@ -51,10 +74,26 @@ export function OpenTraceApp({
   buildTime,
   repoUrl,
 }: OpenTraceAppProps = {}) {
+  const [mode, setMode] = useState<StoreMode>(detectInitialMode);
+  const [store, setStore] = useState<GraphStore>(() =>
+    createStoreForMode(mode),
+  );
+
+  const handleConnectServer = useCallback((serverUrl: string) => {
+    const nextMode: StoreMode = `server:${serverUrl}`;
+    setMode(nextMode);
+    setStore(createStoreForMode(nextMode));
+  }, []);
+
   return (
-    <StoreProvider store={store}>
+    <StoreProvider key={mode} store={store}>
       <JobServiceProvider>
-        <App version={version} buildTime={buildTime} initialRepoUrl={repoUrl} />
+        <App
+          version={version}
+          buildTime={buildTime}
+          initialRepoUrl={repoUrl}
+          onConnectServer={handleConnectServer}
+        />
       </JobServiceProvider>
     </StoreProvider>
   );

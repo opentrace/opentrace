@@ -28,6 +28,9 @@ dependencies = [
     "real-ladybug>=0.13",
     "starlette>=0.27",
     "uvicorn>=0.24",
+    "pyarrow>=15.0",
+    "pyyaml>=6.0",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +53,7 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-anyio", "ruff"]
+dev = ["pytest", "pytest-anyio", "ruff", "grpcio-tools"]
 
 [build-system]
 requires = ["hatchling"]
@@ -61,7 +64,7 @@ packages = ["src/opentrace_agent"]
 
 [tool.ruff]
 line-length = 120
-exclude = []
+exclude = ["src/opentrace_agent/gen"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

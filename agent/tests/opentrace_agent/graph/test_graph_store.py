@@ -309,12 +309,12 @@ class TestGraphStoreGetNode:
 
     def test_properties_roundtrip_with_integers(self, store):
         """Integer values survive the roundtrip."""
-        props = {"start_line": 25, "end_line": 38, "language": "go"}
+        props = {"startLine": 25, "endLine": 38, "language": "go"}
         store.add_node("rt-2", "Function", "main", props)
         node = store.get_node("rt-2")
         assert node["properties"] is not None
-        assert node["properties"]["start_line"] == 25
-        assert node["properties"]["end_line"] == 38
+        assert node["properties"]["startLine"] == 25
+        assert node["properties"]["endLine"] == 38
 
     def test_properties_roundtrip_with_booleans(self, store):
         """Boolean values survive the roundtrip."""
@@ -338,13 +338,13 @@ class TestGraphStoreGetNode:
     def test_properties_roundtrip_via_traverse(self, store):
         """Properties are correct on nodes reached via traversal."""
         store.add_node("rt-src", "Class", "Handler", {"exported": True})
-        store.add_node("rt-tgt", "Function", "handle", {"start_line": 10})
+        store.add_node("rt-tgt", "Function", "handle", {"startLine": 10})
         store.add_relationship("rt-rel", "DEFINES", "rt-src", "rt-tgt")
         results = store.traverse("rt-src", direction="outgoing", max_depth=1)
         assert len(results) == 1
         node_props = results[0]["node"]["properties"]
         assert isinstance(node_props, dict)
-        assert node_props["start_line"] == 10
+        assert node_props["startLine"] == 10
 
 
 class TestGraphStoreListNodes:

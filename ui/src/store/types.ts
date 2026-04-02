@@ -91,13 +91,17 @@ export interface GraphStore {
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   /** Flush any buffered writes to the backing store. No-op if unbuffered. */
   flush(): Promise<void>;
+  /** Import embedding vectors without re-inserting the node into typed tables. */
+  importVectors?(vectors: { id: string; vec: number[] }[]): Promise<void>;
   /** Import a Parquet zip archive into the store. */
   importDatabase?(
     data: Uint8Array,
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse>;
   /** Export the database as a Parquet zip archive. */
-  exportDatabase?(): Promise<Uint8Array>;
+  exportDatabase?(options?: { includeSource?: boolean }): Promise<Uint8Array>;
+  /** Set an embedder instance for query-time vector search. */
+  setEmbedder?(embedder: unknown): void;
   storeSource(files: SourceFile[]): void;
   fetchSource(
     nodeId: string,
@@ -123,4 +127,16 @@ export interface GraphStore {
     maxDepth?: number,
     relType?: string,
   ): Promise<TraverseResult[]>;
+
+  /** Search stored source files for exact text patterns (regex). */
+  grepSource?(
+    pattern: string,
+    options?: {
+      caseSensitive?: boolean;
+      maxResults?: number;
+      fileFilter?: string;
+    },
+  ): Promise<
+    { nodeId: string; filePath: string; line: number; text: string }[]
+  >;
 }

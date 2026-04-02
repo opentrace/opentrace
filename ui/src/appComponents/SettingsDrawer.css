@@ -20,11 +20,12 @@
   right: 0;
   bottom: 0;
   width: 420px;
+  padding-top: 68px;
   background: var(--background);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
-  z-index: 100;
+  z-index: 15;
   box-shadow: -4px 0 24px -4px hsl(0 0% 0% / 0.3);
   animation: slideInRight 0.25s ease-out;
 }
@@ -273,6 +274,8 @@
   .settings-drawer {
     width: 100%;
     max-width: 100vw;
+    padding-top: 0;
+    z-index: 100;
     border-left: none;
     padding-top: max(0px, env(safe-area-inset-top));
     padding-bottom: max(0px, env(safe-area-inset-bottom));

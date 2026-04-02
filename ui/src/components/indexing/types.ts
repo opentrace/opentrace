@@ -63,10 +63,16 @@ export interface ImportFileMessage {
   name: string;
 }
 
+export interface ConnectServerMessage {
+  type: 'connect-server';
+  serverUrl: string;
+}
+
 export type JobMessage =
   | IndexRepoMessage
   | IndexDirectoryMessage
-  | ImportFileMessage;
+  | ImportFileMessage
+  | ConnectServerMessage;
 
 // Component props
 export interface AddRepoModalProps {

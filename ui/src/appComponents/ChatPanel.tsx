@@ -24,13 +24,13 @@ import {
   type AssistantMessage,
   type MessagePart,
 } from '../chat/providers';
-import type { ImageAttachment } from '../components/chat/types';
+import type { Attachment, ImageAttachment } from '../components/chat/types';
 import {
-  processImageFiles,
-  clipboardToImageFiles,
-  dropToImageFiles,
-  MAX_IMAGES_PER_MESSAGE,
-} from '../chat/imageUtils';
+  processFiles,
+  clipboardToFiles,
+  dropToFiles,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+} from '../chat/attachmentUtils';
 import {
   loadApiKey,
   saveApiKey,
@@ -119,6 +119,7 @@ export default function ChatPanel({
     deleteConversation,
     persistMessages,
     loadingConversation,
+    foundNodeIds: restoredFoundNodeIds,
   } = useConversation(repoUrl, historyEnabled);
 
   const [showSettings, setShowSettings] = useState(false);
@@ -137,8 +138,10 @@ export default function ChatPanel({
   const keyInputRef = useRef<HTMLInputElement>(null);
   const localUrlInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
-  const [imageError, setImageError] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>(
+    [],
+  );
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const attachMenuRef = useRef<HTMLDivElement>(null);
@@ -200,6 +203,19 @@ export default function ChatPanel({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Restore chat graph highlights when switching conversations
+  useEffect(() => {
+    chatFoundNodesRef.current = new Set(restoredFoundNodeIds);
+    const hasNodes = restoredFoundNodeIds.length > 0;
+    setHasFoundNodes(hasNodes);
+    if (highlightEnabled && hasNodes) {
+      onChatHighlight?.(new Set(restoredFoundNodeIds), []);
+    } else {
+      onChatHighlight?.(new Set(), []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only fire when restored node IDs change
+  }, [restoredFoundNodeIds]);
 
   // Sync highlight state when toggle changes
   useEffect(() => {
@@ -314,11 +330,16 @@ export default function ChatPanel({
     });
   };
 
-  const sendMessage = async (text: string, images?: ImageAttachment[]) => {
+  const sendMessage = async (
+    text: string,
+    images?: ImageAttachment[],
+    attachments?: Attachment[],
+  ) => {
     const trimmed = text.trim();
     const hasImages = images && images.length > 0;
+    const hasAtts = attachments && attachments.length > 0;
     if (
-      (!trimmed && !hasImages) ||
+      (!trimmed && !hasImages && !hasAtts) ||
       (providerId !== 'local' && !apiKey) ||
       streaming
     )
@@ -333,6 +354,7 @@ export default function ChatPanel({
       role: 'user',
       content: trimmed,
       ...(hasImages ? { images } : {}),
+      ...(hasAtts ? { attachments } : {}),
     };
     const assistantMsg: AssistantMessage = {
       role: 'assistant',
@@ -375,22 +397,61 @@ export default function ChatPanel({
     });
 
     try {
-      // Convert to LangChain message format (text-only for history)
+      // Convert to LangChain message format
       const lcMessages = newMessages.map((m) => {
         if (m.role === 'user') {
           const imgs = m.images;
-          if (imgs && imgs.length > 0) {
-            return new HumanMessage({
-              content: [
-                ...(m.content
-                  ? [{ type: 'text' as const, text: m.content }]
-                  : []),
-                ...imgs.map((img) => ({
+          const atts = m.attachments;
+          const hasImgs = imgs && imgs.length > 0;
+          const hasFileAtts = atts && atts.length > 0;
+
+          if (hasImgs || hasFileAtts) {
+            const contentParts: Array<
+              | { type: 'text'; text: string }
+              | { type: 'image_url'; image_url: { url: string } }
+            > = [];
+
+            // Add file attachment contents as text blocks
+            if (hasFileAtts) {
+              for (const att of atts) {
+                if (att.kind === 'file') {
+                  const lines = att.textContent.split('\n').length;
+                  const bytes = new Blob([att.textContent]).size;
+                  contentParts.push({
+                    type: 'text' as const,
+                    text:
+                      `<attached_file name="${att.name}" lines="${lines}" bytes="${bytes}">\n` +
+                      `${att.textContent}\n` +
+                      `</attached_file>`,
+                  });
+                } else if (att.kind === 'image') {
+                  contentParts.push({
+                    type: 'image_url' as const,
+                    image_url: { url: att.dataUrl },
+                  });
+                }
+              }
+            }
+
+            // Legacy image attachments
+            if (hasImgs) {
+              for (const img of imgs) {
+                contentParts.push({
                   type: 'image_url' as const,
                   image_url: { url: img.dataUrl },
-                })),
-              ],
-            });
+                });
+              }
+            }
+
+            // User text
+            if (m.content) {
+              contentParts.push({
+                type: 'text' as const,
+                text: m.content,
+              });
+            }
+
+            return new HumanMessage({ content: contentParts });
           }
           return new HumanMessage(m.content);
         }
@@ -585,67 +646,75 @@ export default function ChatPanel({
         return parts;
       });
     } finally {
-      progress.setListener(null);
       setStreaming(false);
+      progress.setListener(null);
       // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
-        persistMessages(messagesRef.current, providerId, modelId);
+        persistMessages(
+          messagesRef.current,
+          providerId,
+          modelId,
+          Array.from(chatFoundNodesRef.current),
+        );
       }
     }
   };
 
   const handleSubmit = () => {
-    const images = pendingImages.length > 0 ? pendingImages : undefined;
+    const atts = pendingAttachments.length > 0 ? pendingAttachments : undefined;
     const trimmed = input.trim();
-    const hasImages = images && images.length > 0;
-    // Only clear images if sendMessage will actually proceed
+    const hasAtts = atts && atts.length > 0;
+    // Only clear attachments if sendMessage will actually proceed
     if (
-      (trimmed || hasImages) &&
+      (trimmed || hasAtts) &&
       (providerId === 'local' || apiKey) &&
       !streaming
     ) {
-      setPendingImages([]);
+      setPendingAttachments([]);
     }
-    sendMessage(input, images);
+    sendMessage(input, undefined, atts);
   };
   const handleTemplate = (prompt: string) => sendMessage(prompt);
 
-  const addImages = useCallback(
+  const addAttachments = useCallback(
     async (files: File[]) => {
-      setImageError(null);
-      const remaining = MAX_IMAGES_PER_MESSAGE - pendingImages.length;
+      setAttachError(null);
+      const remaining = MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.length;
       if (remaining <= 0) {
-        setImageError(`Maximum ${MAX_IMAGES_PER_MESSAGE} images per message.`);
+        setAttachError(
+          `Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message.`,
+        );
         return;
       }
-      const { images, errors } = await processImageFiles(
+      const { attachments, errors } = await processFiles(
         files.slice(0, remaining),
       );
-      if (errors.length) setImageError(errors.join(' '));
-      if (images.length) setPendingImages((prev) => [...prev, ...images]);
+      if (errors.length) setAttachError(errors.join(' '));
+      if (attachments.length)
+        setPendingAttachments((prev) => [...prev, ...attachments]);
     },
-    [pendingImages.length],
+    [pendingAttachments.length],
   );
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
-      const files = clipboardToImageFiles(e.nativeEvent as ClipboardEvent);
+      const files = clipboardToFiles(e.nativeEvent as ClipboardEvent);
       if (files.length > 0) {
         e.preventDefault();
-        addImages(files);
+        addAttachments(files);
       }
     },
-    [addImages],
+    [addAttachments],
   );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const files = dropToImageFiles(e.nativeEvent as DragEvent);
-      if (files.length > 0) addImages(files);
+      const files = dropToFiles(e.nativeEvent as DragEvent);
+      if (files.length > 0) addAttachments(files);
     },
-    [addImages],
+    [addAttachments],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -659,8 +728,8 @@ export default function ChatPanel({
     setDragOver(false);
   }, []);
 
-  const removeImage = useCallback((id: string) => {
-    setPendingImages((prev) => prev.filter((img) => img.id !== id));
+  const removeAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
   const handleClearChat = () => {
     abortRef.current?.abort();
@@ -712,8 +781,8 @@ export default function ChatPanel({
       {dragOver && (
         <div className="image-drop-overlay">
           <div className="image-drop-overlay-content">
-            <span className="image-drop-icon">&#128247;</span>
-            <span>Drop images here</span>
+            <span className="image-drop-icon">&#128206;</span>
+            <span>Drop files here</span>
           </div>
         </div>
       )}
@@ -1129,6 +1198,30 @@ export default function ChatPanel({
                   ) : (
                     <>
                       {m.content}
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className="user-message-attachments">
+                          {m.attachments.map((att) =>
+                            att.kind === 'image' ? (
+                              <img
+                                key={att.id}
+                                src={att.dataUrl}
+                                alt={att.name || 'Attached image'}
+                                className="user-message-image"
+                                onClick={() => setLightboxImage(att)}
+                              />
+                            ) : (
+                              <div
+                                key={att.id}
+                                className="user-message-file"
+                                title={att.name}
+                              >
+                                <span className="file-icon">&#128196;</span>
+                                <span className="file-name">{att.name}</span>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      )}
                       {m.images && m.images.length > 0 && (
                         <div className="user-message-images">
                           {m.images.map((img) => (
@@ -1149,20 +1242,34 @@ export default function ChatPanel({
             ))}
           </div>
           <div className="chat-input-area">
-            {imageError && (
+            {attachError && (
               <div className="image-error-banner">
-                {imageError}
-                <button onClick={() => setImageError(null)}>&times;</button>
+                {attachError}
+                <button onClick={() => setAttachError(null)}>&times;</button>
               </div>
             )}
-            {pendingImages.length > 0 && (
+            {pendingAttachments.length > 0 && (
               <div className="image-preview-strip">
-                {pendingImages.map((img) => (
-                  <div key={img.id} className="image-preview-thumb">
-                    <img src={img.dataUrl} alt={img.name || 'Attachment'} />
+                {pendingAttachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className={
+                      att.kind === 'image'
+                        ? 'image-preview-thumb'
+                        : 'file-preview-thumb'
+                    }
+                  >
+                    {att.kind === 'image' ? (
+                      <img src={att.dataUrl} alt={att.name || 'Attachment'} />
+                    ) : (
+                      <div className="file-preview-content">
+                        <span className="file-icon">&#128196;</span>
+                        <span className="file-preview-name">{att.name}</span>
+                      </div>
+                    )}
                     <button
                       className="image-remove-btn"
-                      onClick={() => removeImage(img.id)}
+                      onClick={() => removeAttachment(att.id)}
                     >
                       &times;
                     </button>
@@ -1200,6 +1307,17 @@ export default function ChatPanel({
               onPaste={handlePaste}
             />
             <div className="chat-input-row">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  if (e.target.files)
+                    addAttachments(Array.from(e.target.files));
+                  e.target.value = '';
+                }}
+              />
               <div className="attach-menu-wrapper" ref={attachMenuRef}>
                 <button
                   className="attach-btn chat-action-btn"
@@ -1217,8 +1335,8 @@ export default function ChatPanel({
                         setShowAttachMenu(false);
                       }}
                     >
-                      <span className="attach-menu-icon">&#128247;</span>
-                      Image
+                      <span className="attach-menu-icon">&#128206;</span>
+                      File / Image
                     </button>
                   </div>
                 )}
@@ -1235,7 +1353,8 @@ export default function ChatPanel({
                 className="chat-action-btn"
                 onClick={handleSubmit}
                 disabled={
-                  streaming || (!input.trim() && pendingImages.length === 0)
+                  streaming ||
+                  (!input.trim() && pendingAttachments.length === 0)
                 }
                 data-testid="chat-send-btn"
                 title="Send"

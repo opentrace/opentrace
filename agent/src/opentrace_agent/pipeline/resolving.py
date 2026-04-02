@@ -21,6 +21,7 @@ from typing import Generator
 
 from opentrace_agent.pipeline.types import (
     CallInfo,
+    DerivationInfo,
     EventKind,
     GraphRelationship,
     Phase,
@@ -41,12 +42,12 @@ def resolving(
     ctx: PipelineContext,
     out: StageResult[PipelineResult],
 ) -> Generator[PipelineEvent, None, None]:
-    """Resolve call references using registries and emit CALLS relationships."""
-    total = len(proc.call_infos)
+    """Resolve call references and derivations using registries."""
+    total = len(proc.call_infos) + len(proc.derivation_infos)
     yield PipelineEvent(
         kind=EventKind.STAGE_START,
         phase=Phase.RESOLVING,
-        message=f"Resolving calls from {total} callers",
+        message=f"Resolving calls from {len(proc.call_infos)} callers, {len(proc.derivation_infos)} derivations",
         detail=ProgressDetail(current=0, total=total),
     )
 
@@ -61,22 +62,37 @@ def resolving(
             kind=EventKind.STAGE_PROGRESS,
             phase=Phase.RESOLVING,
             message=f"Resolved {calls_count} call relationships",
-            detail=ProgressDetail(current=calls_count, total=calls_count),
+            detail=ProgressDetail(current=calls_count, total=total),
             relationships=resolved_rels,
+        )
+
+    # Resolve derivations
+    derivation_rels = resolve_derivations(proc.derivation_infos, proc.registries)
+    derivations_count = len(derivation_rels)
+
+    if derivation_rels:
+        yield PipelineEvent(
+            kind=EventKind.STAGE_PROGRESS,
+            phase=Phase.RESOLVING,
+            message=f"Resolved {derivations_count} derivation relationships",
+            detail=ProgressDetail(current=calls_count + derivations_count, total=total),
+            relationships=derivation_rels,
         )
 
     yield PipelineEvent(
         kind=EventKind.STAGE_STOP,
         phase=Phase.RESOLVING,
-        message=f"Resolved {calls_count} calls",
+        message=f"Resolved {calls_count} calls, {derivations_count} derivations",
     )
 
     out.value = PipelineResult(
         nodes_created=proc.nodes_created,
-        relationships_created=proc.relationships_created + calls_count,
+        relationships_created=proc.relationships_created + calls_count + derivations_count,
         files_processed=proc.files_processed,
         classes_extracted=proc.classes_extracted,
         functions_extracted=proc.functions_extracted,
+        variables_extracted=proc.variables_extracted,
+        derivations_resolved=derivations_count,
         errors=proc.errors,
     )
 
@@ -245,3 +261,97 @@ def _resolve_single_call(
             return cross_file[0].node_id, 0.8
 
     return None, 0.0
+
+
+def resolve_derivations(
+    derivation_infos: list[DerivationInfo],
+    registries: Registries,
+) -> list[GraphRelationship]:
+    """Resolve derivation references into DERIVED_FROM relationships.
+
+    For each derivation ref:
+    - identifier → scope-chain variable lookup
+    - call → name_registry / file_registry function lookup
+    - attribute → scope-chain for self.field (skip local scope), import-based otherwise
+    """
+    results: list[GraphRelationship] = []
+
+    for di in derivation_infos:
+        for name, receiver, kind in di.refs:
+            target_id: str | None = None
+            transform = kind
+
+            if kind == "identifier":
+                target_id = _find_variable_in_scopes(name, di.scope_id, registries.variable_registry)
+
+            elif kind == "call":
+                if receiver:
+                    # Attribute call: receiver.name() — try import-based
+                    file_imports = registries.import_registry.get(di.file_id, {})
+                    target_file_id = file_imports.get(receiver)
+                    if target_file_id:
+                        target_names = registries.file_registry.get(target_file_id, {})
+                        target_sym = target_names.get(name)
+                        if target_sym:
+                            target_id = target_sym.node_id
+                else:
+                    # Bare call: name() — try file_registry then name_registry
+                    file_names = registries.file_registry.get(di.file_id, {})
+                    target_sym = file_names.get(name)
+                    if target_sym:
+                        target_id = target_sym.node_id
+                    else:
+                        candidates = registries.name_registry.get(name, [])
+                        if len(candidates) == 1:
+                            target_id = candidates[0].node_id
+
+            elif kind == "attribute":
+                if receiver in ("self", "this"):
+                    # self.field — skip local scope, start from parent (class) scope
+                    parent_scope = "::".join(di.scope_id.rsplit("::", 1)[:-1]) if "::" in di.scope_id else None
+                    if parent_scope:
+                        target_id = _find_variable_in_scopes(name, parent_scope, registries.variable_registry)
+                else:
+                    # module.attr — try import-based
+                    file_imports = registries.import_registry.get(di.file_id, {})
+                    target_file_id = file_imports.get(receiver or "")
+                    if target_file_id:
+                        target_names = registries.file_registry.get(target_file_id, {})
+                        target_sym = target_names.get(name)
+                        if target_sym:
+                            target_id = target_sym.node_id
+
+            if target_id:
+                results.append(
+                    GraphRelationship(
+                        id=f"{di.variable_id}->DERIVED_FROM->{target_id}",
+                        type="DERIVED_FROM",
+                        source_id=di.variable_id,
+                        target_id=target_id,
+                        properties={"transform": transform},
+                    )
+                )
+
+    return results
+
+
+def _find_variable_in_scopes(
+    name: str,
+    scope_id: str,
+    variable_registry: dict[str, dict[str, str]],
+) -> str | None:
+    """Walk up the scope chain looking for a variable by name.
+
+    Scope chain is derived from the ``::``-separated node ID:
+    ``file::Class::method`` → try method scope, then Class scope, then file scope.
+    """
+    current = scope_id
+    while current:
+        scope_vars = variable_registry.get(current, {})
+        if name in scope_vars:
+            return scope_vars[name]
+        if "::" in current:
+            current = current.rsplit("::", 1)[0]
+        else:
+            break
+    return None

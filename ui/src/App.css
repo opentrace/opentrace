@@ -365,6 +365,98 @@
   border-color: var(--primary);
 }
 
+.help-toggle-btn {
+  pointer-events: auto;
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  color: var(--muted-foreground);
+  width: 36px;
+  height: 36px;
+  border-radius: calc(var(--radius) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.help-toggle-btn:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  color: var(--primary);
+  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+}
+
+.help-toggle-btn.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+/* Help dropdown menu */
+.help-menu-container {
+  position: relative;
+  pointer-events: auto;
+}
+
+.help-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 200px;
+  background: var(--popover, var(--card));
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.15),
+    0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 4px 0;
+  animation: helpDropdownIn 0.15s ease-out;
+}
+
+@keyframes helpDropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.help-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  color: var(--foreground);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+
+.help-dropdown-item:hover {
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+}
+
+.help-external-icon {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.help-dropdown-divider {
+  height: 1px;
+  background: color-mix(in oklch, var(--border) 40%, transparent);
+  margin: 4px 0;
+}
+
 /* GitHub Star Button */
 .github-star-btn {
   pointer-events: auto;
@@ -752,6 +844,72 @@
   opacity: 0.85;
 }
 
+.user-message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.user-message-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--bg-secondary) 60%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  font-size: 12px;
+  max-width: 200px;
+}
+
+.user-message-file .file-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.user-message-file .file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-thumb {
+  position: relative;
+  width: 80px;
+  height: 60px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: color-mix(in oklch, var(--bg-secondary) 60%, transparent);
+}
+
+.file-preview-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  gap: 2px;
+}
+
+.file-preview-content .file-icon {
+  font-size: 18px;
+}
+
+.file-preview-name {
+  font-size: 9px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  text-align: center;
+}
+
 .image-lightbox-overlay {
   position: fixed;
   inset: 0;
@@ -879,6 +1037,50 @@
 
 .btn-cta--destructive:hover:not(:disabled) {
   background: color-mix(in oklch, var(--destructive) 85%, black);
+}
+
+/* Export modal */
+.export-options {
+  width: 380px;
+}
+
+.export-options h2 {
+  margin: 0 0 8px;
+}
+
+.export-options-text {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+
+.export-options-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.85rem;
+  margin: 0 0 20px;
+  cursor: pointer;
+}
+
+.export-options-checkbox input[type='checkbox'] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.export-options-hint {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.export-options-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.export-options-actions .btn-cta {
+  flex: 1;
 }
 
 /* Theme selector */
@@ -1087,6 +1289,7 @@
   .ot-toolbar-nav .add-repo-btn,
   .ot-toolbar-nav .chat-toggle-btn,
   .ot-toolbar-nav .settings-toggle-btn,
+  .ot-toolbar-nav .help-toggle-btn,
   .ot-toolbar-nav .theme-toggle-btn {
     width: auto;
     height: auto;
@@ -1104,6 +1307,7 @@
   .ot-toolbar-nav .add-repo-btn:hover,
   .ot-toolbar-nav .chat-toggle-btn:hover,
   .ot-toolbar-nav .settings-toggle-btn:hover,
+  .ot-toolbar-nav .help-toggle-btn:hover,
   .ot-toolbar-nav .theme-toggle-btn:hover {
     background: var(--accent);
     color: var(--foreground);
@@ -1112,6 +1316,7 @@
 
   .ot-toolbar-nav .chat-toggle-btn.active,
   .ot-toolbar-nav .settings-toggle-btn.active,
+  .ot-toolbar-nav .help-toggle-btn.active,
   .ot-toolbar-nav .theme-toggle-btn.active {
     background: color-mix(in oklch, var(--primary) 15%, transparent);
     color: var(--primary);
@@ -1133,6 +1338,27 @@
 
   .ot-toolbar-nav .add-repo-btn {
     margin-left: 0;
+  }
+
+  /* Help menu: make container full-width and dropdown static in burger */
+  .ot-toolbar-nav .help-menu-container {
+    width: 100%;
+  }
+
+  .ot-toolbar-nav .help-dropdown {
+    position: static;
+    box-shadow: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    margin-top: 4px;
+    min-width: 0;
+    animation: none;
+  }
+
+  .ot-toolbar-nav .help-dropdown-item {
+    padding: 10px 16px 10px 28px;
+    font-size: 14px;
   }
 
   /* Job minimized bar as menu row */

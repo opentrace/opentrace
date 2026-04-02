@@ -175,6 +175,55 @@ def test_processing_handles_unreadable_file(tmp_path: Path) -> None:
     assert proc.files_processed == 0
 
 
+def test_processing_extracts_variables(tmp_path: Path) -> None:
+    """Variable nodes are emitted for parameters and locals."""
+    scan = _make_scan_result(tmp_path)
+    ctx = PipelineContext()
+    out: StageResult[ProcessingOutput] = StageResult()
+
+    events = list(processing(scan, ctx, out))
+    proc = out.value
+    assert proc is not None
+
+    assert proc.variables_extracted > 0
+
+    # Variable nodes should appear in progress events
+    all_nodes = []
+    for e in events:
+        if e.nodes:
+            all_nodes.extend(e.nodes)
+    var_nodes = [n for n in all_nodes if n.type == "Variable"]
+    assert len(var_nodes) > 0
+
+
+def test_processing_populates_variable_registry(tmp_path: Path) -> None:
+    """Variable registry is populated during processing."""
+    scan = _make_scan_result(tmp_path)
+    ctx = PipelineContext()
+    out: StageResult[ProcessingOutput] = StageResult()
+
+    list(processing(scan, ctx, out))
+    proc = out.value
+    assert proc is not None
+
+    # At least some scopes should have variables registered
+    assert len(proc.registries.variable_registry) > 0
+
+
+def test_processing_collects_derivation_infos(tmp_path: Path) -> None:
+    """Derivation infos are collected for variables with derivations."""
+    scan = _make_scan_result(tmp_path)
+    ctx = PipelineContext()
+    out: StageResult[ProcessingOutput] = StageResult()
+
+    list(processing(scan, ctx, out))
+    proc = out.value
+    assert proc is not None
+
+    # main() has `s = Server()` which should produce a derivation
+    assert len(proc.derivation_infos) > 0
+
+
 def test_processing_go_file(tmp_path: Path) -> None:
     """Go files are processed correctly."""
     go_file = tmp_path / "main.go"

@@ -54,8 +54,8 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def find_db(start: Path | None = None) -> Path | None:
-    """Walk up from *start* looking for ``.opentrace/index.db``.
+def _find_opentrace_dir(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for an existing ``.opentrace/`` directory.
 
     Security boundaries:
     - Stops at the git repo root (or filesystem root).
@@ -72,8 +72,8 @@ def find_db(start: Path | None = None) -> Path | None:
 
     current = start
     for _ in range(_MAX_WALK_DEPTH):
-        candidate = current / OPENTRACE_DIR / DB_NAME
-        if candidate.exists():
+        candidate = current / OPENTRACE_DIR
+        if candidate.is_dir():
             resolved = candidate.resolve()
             # Reject if the resolved path escapes the repo boundary.
             if _is_under(resolved, boundary):
@@ -83,6 +83,22 @@ def find_db(start: Path | None = None) -> Path | None:
             break
         current = current.parent
 
+    return None
+
+
+def find_db(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for ``.opentrace/index.db``.
+
+    Security boundaries:
+    - Stops at the git repo root (or filesystem root).
+    - Rejects symlinks that resolve outside the boundary.
+    - Caps upward traversal at ``_MAX_WALK_DEPTH`` levels.
+    """
+    ot_dir = _find_opentrace_dir(start)
+    if ot_dir is not None:
+        db_path = ot_dir / DB_NAME
+        if db_path.exists():
+            return db_path
     return None
 
 
@@ -390,6 +406,240 @@ def augment(pattern: str, db_path: str | None) -> None:
     except click.UsageError:
         resolved = None
     run_augment(pattern, resolved)
+
+
+@app.command("export")
+@click.argument("output", default="opentrace.parquet.zip", type=click.Path())
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def export_cmd(output: str, db_path: str | None, verbose: bool) -> None:
+    """Export the graph database as a .parquet.zip archive.
+
+    The archive can be imported in the UI or via `opentraceai import`.
+    """
+    _configure_logging(verbose)
+
+    from opentrace_agent.cli.export_import import export_database
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    click.echo(f"Opening database at {resolved_db} ...")
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        click.echo("Exporting ...")
+        data = export_database(store)
+    finally:
+        store.close()
+
+    out = Path(output)
+    out.write_bytes(data)
+    size_kb = len(data) / 1024
+    click.echo(f"Wrote {out} ({size_kb:.1f} KB)")
+
+
+@app.command("import")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, resolve_path=True))
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help=f"Database path (default: ./{OPENTRACE_DIR}/{DB_NAME}).",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
+    """Import a .parquet.zip archive into the graph database.
+
+    Accepts archives exported from the UI or via `opentraceai export`.
+    """
+    _configure_logging(verbose)
+
+    from opentrace_agent.cli.export_import import import_database
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path)
+    db_dir = Path(resolved_db).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    click.echo(f"Opening database at {resolved_db} ...")
+    store = GraphStore(resolved_db)
+
+    data = Path(archive).read_bytes()
+    click.echo(f"Importing {archive} ({len(data) / 1024:.1f} KB) ...")
+
+    def on_progress(msg: str) -> None:
+        click.echo(f"  {msg}")
+
+    try:
+        result = import_database(store, data, on_progress=on_progress)
+    finally:
+        store.close()
+
+    click.echo(
+        f"Imported {result['nodes_created']} nodes, "
+        f"{result['relationships_created']} relationships "
+        f"({result['errors']} errors)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# config command group
+# ---------------------------------------------------------------------------
+
+
+def _resolve_config_path() -> Path:
+    """Return the config file path, preferring an existing .opentrace/ dir."""
+    from opentrace_agent.cli.config import CONFIG_NAME
+
+    ot_dir = _find_opentrace_dir()
+    if ot_dir is not None:
+        return ot_dir / CONFIG_NAME
+    return Path.cwd() / OPENTRACE_DIR / CONFIG_NAME
+
+
+@app.group()
+def config() -> None:
+    """Read or write project configuration (.opentrace/config.yaml)."""
+
+
+@config.command("set")
+@click.argument("key", type=click.Choice(["org"]))
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set a configuration value.
+
+    \b
+    Supported keys:
+      org   Organisation ID (org_xxx) or slug (acme_corp)
+    """
+    from opentrace_agent.cli.config import load_config, save_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    data[key] = value
+    save_config(path, data)
+    _ensure_gitignore(path.parent)
+    click.echo(f"{key}: {value}")
+
+
+@config.command("get")
+@click.argument("key", type=click.Choice(["org"]))
+def config_get(key: str) -> None:
+    """Get a configuration value."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    val = data.get(key)
+    if val is None:
+        raise click.UsageError(f"'{key}' is not set. Run: opentraceai config set {key} <value>")
+    click.echo(val)
+
+
+@config.command("show")
+def config_show() -> None:
+    """Show all configuration values."""
+    from opentrace_agent.cli.config import load_config
+
+    path = _resolve_config_path()
+    data = load_config(path)
+    if not data:
+        click.echo("No configuration set.")
+        return
+    for k, v in data.items():
+        click.echo(f"{k}: {v}")
+
+
+@config.command("path")
+def config_path() -> None:
+    """Print the config file path."""
+    click.echo(_resolve_config_path())
+
+
+@app.command()
+def login() -> None:
+    """Log in to api.opentrace.ai via your browser."""
+    from opentrace_agent.cli.auth import load_tokens
+    from opentrace_agent.cli.auth import login as do_login
+
+    existing = load_tokens()
+    if existing and existing.get("access_token"):
+        if not click.confirm("Already logged in. Re-authenticate?", default=False):
+            return
+
+    click.echo("Opening browser to log in to OpenTrace ...")
+    try:
+        payload = do_login()
+    except TimeoutError:
+        raise click.ClickException("Login timed out — no response from browser within 5 minutes.")
+    except Exception as exc:
+        raise click.ClickException(f"Login failed: {exc}")
+
+    scope = payload.get("scope", "")
+    click.echo(f"Logged in to {payload.get('issuer', 'OpenTrace')} (scope: {scope}).")
+
+
+@app.command()
+def logout() -> None:
+    """Log out and remove saved credentials."""
+    from opentrace_agent.cli.auth import clear_tokens
+
+    if clear_tokens():
+        click.echo("Logged out.")
+    else:
+        click.echo("Not logged in.")
+
+
+@app.command()
+def whoami() -> None:
+    """Show the current authentication status."""
+    from opentrace_agent.cli.auth import load_tokens
+
+    tokens = load_tokens()
+    if not tokens:
+        click.echo("Not logged in. Run 'opentraceai login' to authenticate.")
+        return
+
+    issuer = tokens.get("issuer", "unknown")
+    scope = tokens.get("scope", "none")
+    token_type = tokens.get("token_type", "bearer")
+    created = tokens.get("created_at")
+
+    click.echo(f"Issuer:  {issuer}")
+    click.echo(f"Type:    {token_type}")
+    click.echo(f"Scope:   {scope}")
+    if created:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(created, tz=timezone.utc)
+        click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
+
+
+@app.command()
+def refresh() -> None:
+    """Refresh the access token using the stored refresh token."""
+    from opentrace_agent.cli.auth import refresh as do_refresh
+
+    try:
+        payload = do_refresh()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    except Exception as exc:
+        raise click.ClickException(f"Token refresh failed: {exc}")
+
+    expires_in = payload.get("expires_in")
+    if expires_in:
+        click.echo(f"Token refreshed (expires in {expires_in}s).")
+    else:
+        click.echo("Token refreshed.")
 
 
 def _configure_logging(verbose: bool) -> None:

@@ -181,7 +181,7 @@ describe('runPipeline', () => {
     expect(fileNodes.find((n) => n.name === 'README.md')).toBeDefined();
   });
 
-  it('creates Directory nodes with DEFINED_IN relationships', async () => {
+  it('creates Directory nodes with DEFINES relationships', async () => {
     const callbacks = makeCallbacks();
     const repo = makeRepo({
       files: [{ path: 'src/utils/helper.ts', content: '', sha: '', size: 0 }],
@@ -194,7 +194,7 @@ describe('runPipeline', () => {
     expect(dirNodes.find((n) => n.name === 'utils')).toBeDefined();
 
     const allRels = callbacks.batches.flatMap((b) => b.relationships);
-    const definedInRels = allRels.filter((r) => r.type === 'DEFINED_IN');
+    const definedInRels = allRels.filter((r) => r.type === 'DEFINES');
     expect(definedInRels.length).toBeGreaterThan(0);
   });
 
@@ -248,7 +248,7 @@ describe('runPipeline', () => {
 
     // Should at least have the repo node, directory node, file node
     expect(result.nodesCreated).toBeGreaterThanOrEqual(3);
-    // DEFINED_IN relationships
+    // DEFINES relationships
     expect(result.relationshipsCreated).toBeGreaterThanOrEqual(1);
   });
 
@@ -299,13 +299,13 @@ describe('runPipeline', () => {
     });
     await runPipeline(repo, emptyParsers, callbacks, makeNoopStrategy());
 
-    // Root file should link directly to repo node
+    // Root file should link directly to repo node (parent → child)
     const allRels = callbacks.batches.flatMap((b) => b.relationships);
     const fileRel = allRels.find(
       (r) =>
-        r.source_id === 'testowner/testrepo/main.go' && r.type === 'DEFINED_IN',
+        r.target_id === 'testowner/testrepo/main.go' && r.type === 'DEFINES',
     );
-    expect(fileRel?.target_id).toBe('testowner/testrepo');
+    expect(fileRel?.source_id).toBe('testowner/testrepo');
   });
 });
 
@@ -373,8 +373,8 @@ describe('runPipeline summary generation', () => {
     const funcNode = funcNodes[0];
     expect(funcNode.properties?.summary).toBe('Retrieves getUserById');
     expect(funcNode.properties?.language).toBe('python');
-    expect(funcNode.properties?.start_line).toBe(1);
-    expect(funcNode.properties?.end_line).toBe(3);
+    expect(funcNode.properties?.startLine).toBe(1);
+    expect(funcNode.properties?.endLine).toBe(3);
   });
 
   it('merges class summary into the same node', async () => {

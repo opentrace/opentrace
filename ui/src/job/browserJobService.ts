@@ -39,6 +39,7 @@ import {
   ResolveStage,
   SummarizeStage,
   StoreStage,
+  EmbedStage,
   PipelineDebugLog,
 } from '@opentrace/components/pipeline';
 import type {
@@ -49,6 +50,7 @@ import type {
   GraphNode,
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
+import { loadEmbedderConfig } from '../config/embedding';
 
 // --- Tree-sitter lazy initialization ---
 
@@ -128,12 +130,15 @@ function toProtoPhase(phase: PipelinePhase): JobPhase {
 }
 
 /** Map concurrent stage names → JobPhase for the UI.
- *  `cache` is omitted — it's an internal optimization, not user-visible. */
+ *  `cache` is omitted — it's an internal optimization, not user-visible.
+ *  `embed` maps to EMBEDDING but real progress comes from the
+ *  concurrent drain loop, not the sync pipeline events. */
 const CONCURRENT_PHASE_MAP: Record<string, JobPhase> = {
   extract: JobPhase.JOB_PHASE_PARSING,
   resolve: JobPhase.JOB_PHASE_RESOLVING,
   summarize: JobPhase.JOB_PHASE_SUMMARIZING,
   store: JobPhase.JOB_PHASE_SUBMITTING,
+  embed: JobPhase.JOB_PHASE_EMBEDDING,
 };
 
 /** Build a default empty JobEvent shell (proto fields are always present). */
@@ -354,6 +359,7 @@ export class BrowserJobService implements JobService {
       repoTree.files.length = 0;
       scanResult.parseableFiles.length = 0;
 
+      const embedderConfig = loadEmbedderConfig();
       const fileCacheStage = new FileCacheStage({ fileContentMap });
 
       // fileContentMap has been consumed by FileCacheStage — clear it so
@@ -366,6 +372,9 @@ export class BrowserJobService implements JobService {
       const resolveStage = new ResolveStage(extractStage);
       const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
+      const embedStage = embedderConfig.enabled
+        ? new EmbedStage({ config: embedderConfig, store: this.store })
+        : null;
 
       // Pre-feed scanning rels into the store stage
       storeStage.addRelationships(scanningRels);
@@ -386,17 +395,15 @@ export class BrowserJobService implements JobService {
       );
 
       // 5. Run concurrent pipeline
-      const concurrentPipeline = runNodePipeline({
-        ctx,
-        stages: [
-          fileCacheStage,
-          extractStage,
-          resolveStage,
-          summarizeStage,
-          storeStage,
-        ],
-        seeds,
-      });
+      const stages = [
+        fileCacheStage,
+        extractStage,
+        resolveStage,
+        summarizeStage,
+        storeStage,
+        ...(embedStage ? [embedStage] : []),
+      ];
+      const concurrentPipeline = runNodePipeline({ ctx, stages, seeds });
 
       // Reset persisted counts for this pipeline run
       persistedNodes = 0;
@@ -590,6 +597,19 @@ export class BrowserJobService implements JobService {
                   phase: JobPhase.JOB_PHASE_SUBMITTING,
                   message: `Persisted ${persistedNodes} nodes, ${persistedRels} relationships`,
                 });
+
+                // Graph is ready — UI can show it immediately while
+                // embedding continues as the next pipeline stage.
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+                  result: {
+                    nodesCreated: persistedNodes,
+                    relationshipsCreated: persistedRels,
+                    reposProcessed: 1,
+                  },
+                });
+
                 await new Promise((r) => setTimeout(r, 0));
                 continue;
               }
@@ -638,15 +658,39 @@ export class BrowserJobService implements JobService {
                 `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
               );
 
-              channel.push({
-                ...emptyEvent(),
-                kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
-                result: {
-                  nodesCreated: persistedNodes,
-                  relationshipsCreated: persistedRels,
-                  reposProcessed: 1,
-                },
-              });
+              // Run embedding — model was pre-loaded during pipeline
+              if (embedStage && embedStage.total > 0) {
+                debug.log(
+                  'embedding',
+                  `starting ${embedStage.total} embeddings`,
+                );
+                await embedStage.settle((embedded, total) => {
+                  channel.push({
+                    ...emptyEvent(),
+                    kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                    phase: JobPhase.JOB_PHASE_EMBEDDING,
+                    message: `Embedded ${embedded} of ${total} nodes`,
+                    detail: {
+                      current: embedded,
+                      total,
+                      fileName: '',
+                      nodesCreated: 0,
+                      relationshipsCreated: 0,
+                    },
+                  });
+                });
+                debug.log(
+                  'embedding',
+                  `completed: ${embedStage.embeddedCount} nodes embedded`,
+                );
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase: JobPhase.JOB_PHASE_EMBEDDING,
+                  message: `Embedded ${embedStage.embeddedCount} nodes`,
+                });
+              }
+
               channel.push({
                 ...emptyEvent(),
                 kind: JobEventKind.JOB_EVENT_KIND_DONE,

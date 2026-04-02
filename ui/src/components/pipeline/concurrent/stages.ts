@@ -153,7 +153,7 @@ export interface ExtractStageConfig {
 /**
  * Processes File nodes: parses with tree-sitter, extracts symbols,
  * analyzes imports. Produces Class/Function/Package nodes and
- * DEFINED_IN/IMPORTS relationships.
+ * DEFINES/IMPORTS relationships.
  *
  * Non-File nodes (and non-parseable files) pass through unchanged.
  *
@@ -283,7 +283,7 @@ export class ExtractStage implements INodeStage {
           if (!this.packageNodes.has(pkgId)) {
             const pkgNode: GraphNode = {
               id: pkgId,
-              type: 'Package',
+              type: 'Dependency',
               name: pkgName,
               properties: { registry: pkgId.split(':')[1] },
             };
@@ -392,9 +392,8 @@ export class SummarizeStage implements INodeStage {
       signature: props.signature as string | undefined,
       language: props.language as string | undefined,
       lineCount:
-        typeof props.start_line === 'number' &&
-        typeof props.end_line === 'number'
-          ? props.end_line - props.start_line + 1
+        typeof props.startLine === 'number' && typeof props.endLine === 'number'
+          ? props.endLine - props.startLine + 1
           : undefined,
       receiverType: props.receiver_type as string | undefined,
       fileName:
@@ -440,8 +439,8 @@ export class StoreStage implements INodeStage {
   process(node: GraphNode): StageMutation {
     this.bufferedNodes.push(node);
     this.totalNodes++;
-    // Terminal — do not forward nodes
-    return { nodes: [], relationships: [] };
+    // Forward the node so downstream stages (e.g. EmbedStage) can see it
+    return { nodes: [node], relationships: [] };
   }
 
   /**
@@ -495,5 +494,129 @@ export class StoreStage implements INodeStage {
       nodes: this.totalNodes,
       relationships: this.totalRelationships,
     };
+  }
+}
+
+// --- EmbedStage ---
+
+import type {
+  Embedder,
+  EmbedderConfig,
+} from '../../../runner/browser/enricher/embedder/types';
+import type { GraphStore } from '../../../store/types';
+
+export interface EmbedStageConfig {
+  config: EmbedderConfig;
+  store: GraphStore;
+}
+
+/**
+ * Embedding stage decoupled from the pipeline tick loop.
+ *
+ * process() collects File nodes without blocking. The ONNX model
+ * starts loading in the constructor so it overlaps with the entire
+ * pipeline. settle() runs the actual inference sequentially (one
+ * batch at a time) after the pipeline is done.
+ */
+export class EmbedStage implements INodeStage {
+  private initPromise: Promise<Embedder | null> | null = null;
+  private readonly embedderConfig: EmbedderConfig;
+  private readonly store: GraphStore;
+  private queue: GraphNode[] = [];
+  private embedded = 0;
+  private _total = 0;
+
+  constructor({ config, store }: EmbedStageConfig) {
+    this.embedderConfig = config;
+    this.store = store;
+    // Start model loading immediately — overlaps with earlier stages
+    this.ensureModel();
+  }
+
+  name(): string {
+    return 'embed';
+  }
+
+  private ensureModel(): Promise<Embedder | null> {
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        try {
+          const { MiniLmEmbedder } =
+            await import('../../../runner/browser/enricher/embedder/miniLmEmbedder');
+          const embedder = new MiniLmEmbedder(this.embedderConfig);
+          await embedder.init();
+          this.store.setEmbedder?.(embedder);
+          return embedder;
+        } catch {
+          return null;
+        }
+      })();
+    }
+    return this.initPromise;
+  }
+
+  process(node: GraphNode): StageMutation {
+    if (node.type === 'File' && !node.properties?.has_embedding) {
+      this.queue.push(node);
+      this._total++;
+    }
+    return { nodes: [], relationships: [] };
+  }
+
+  flush(): StageMutation {
+    return { nodes: [], relationships: [] };
+  }
+
+  /**
+   * Run embedding sequentially on all queued nodes. The model was
+   * pre-loaded in the constructor so init is already done by now.
+   */
+  async settle(
+    onProgress?: (embedded: number, total: number) => void,
+  ): Promise<void> {
+    const embedder = await this.ensureModel();
+    if (!embedder || this.queue.length === 0) return;
+
+    const BATCH = 8;
+    for (let off = 0; off < this.queue.length; off += BATCH) {
+      const batch = this.queue.slice(off, off + BATCH);
+      const texts = batch.map((n) => {
+        const parts = [n.name, n.type];
+        const props = n.properties ?? {};
+        if (typeof props.summary === 'string') parts.push(props.summary);
+        if (typeof props.path === 'string') parts.push(props.path);
+        return parts.join(' ');
+      });
+
+      try {
+        const vectors = await embedder.embed(texts);
+        const pending: { id: string; vec: number[] }[] = [];
+        for (let i = 0; i < batch.length; i++) {
+          if (vectors[i] && vectors[i].length > 0) {
+            pending.push({ id: batch[i].id, vec: vectors[i] });
+          }
+        }
+        if (pending.length > 0 && this.store.importVectors) {
+          await this.store.importVectors(pending);
+          this.embedded += pending.length;
+        }
+      } catch {
+        // Skip failed batch
+      }
+
+      onProgress?.(this.embedded, this.queue.length);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+
+    // Free node references — they're persisted in the DB now
+    this.queue = [];
+  }
+
+  get embeddedCount(): number {
+    return this.embedded;
+  }
+
+  get total(): number {
+    return this._total;
   }
 }

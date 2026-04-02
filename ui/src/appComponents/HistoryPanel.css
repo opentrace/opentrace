@@ -1,0 +1,220 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* History Panel — mirrors Discover panel layout */
+
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 0 0;
+}
+
+/* Filter bar — matches .discover-filter-bar */
+.history-filter-bar {
+  display: flex;
+  align-items: center;
+  padding: 0 10px 8px;
+  gap: 4px;
+}
+
+.history-filter-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.history-filter-input {
+  width: 100%;
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: var(--radius);
+  padding: 5px 28px 5px 10px;
+  font-size: 0.78rem;
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.history-filter-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.history-filter-input:focus {
+  border-color: var(--primary);
+}
+
+/* Clear filter × — matches .discover-filter-clear */
+.history-filter-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: var(--radius);
+}
+
+.history-filter-clear:hover {
+  color: var(--foreground);
+}
+
+/* Clear all history — sits at end of source toggle row */
+.history-clear-all {
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.history-clear-all:hover {
+  color: var(--foreground);
+}
+
+/* Source toggles — matches .discover-graph-toggle row */
+.history-source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 8px;
+}
+
+.history-source-toggles {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.history-source-btn {
+  flex: 1;
+  background: none;
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: var(--radius);
+  padding: 3px 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.history-source-btn:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+  border-color: color-mix(in oklch, var(--border) 30%, transparent);
+}
+
+.history-source-btn--active {
+  color: var(--primary);
+  border-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+}
+
+/* Scrollable list */
+.history-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 80px;
+}
+
+.history-panel-empty {
+  padding: 24px 16px;
+  color: var(--muted-foreground);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+/* Row — matches .discover-tree-row */
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 10px;
+  min-height: 28px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.history-row:hover {
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
+}
+
+.history-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Name — matches .discover-tree-name */
+.history-row-name {
+  font-size: 0.8rem;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-row:hover .history-row-name {
+  color: var(--primary);
+}
+
+/* Source badge */
+.history-row-source {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.history-row-source--user {
+  color: color-mix(in oklch, var(--primary) 90%, var(--foreground));
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+}
+
+.history-row-source--chat {
+  color: color-mix(in oklch, oklch(0.7 0.15 160) 90%, var(--foreground));
+  background: color-mix(in oklch, oklch(0.7 0.15 160) 15%, transparent);
+}
+
+/* Type label — matches .discover-tree-type */
+.history-row-type {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+  opacity: 0.7;
+}

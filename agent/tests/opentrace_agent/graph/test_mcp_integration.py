@@ -390,11 +390,11 @@ class TestMCPTraverseGraph:
             nodeId=file_id,
             depth=2,
             direction="both",
-            relationship="DEFINED_IN",
+            relationship="DEFINES",
         )
         assert isinstance(result, list)
         for entry in result:
-            assert entry["relationship"]["type"] == "DEFINED_IN"
+            assert entry["relationship"]["type"] == "DEFINES"
 
 
 # ---------------------------------------------------------------------------

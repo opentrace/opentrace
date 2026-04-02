@@ -22,14 +22,14 @@ describe('getLinkColor', () => {
     expect(getLinkColor('CALLS')).toBe('#93c5fd');
     expect(getLinkColor('READS')).toBe('#fde68a');
     expect(getLinkColor('WRITES')).toBe('#fdba74');
-    expect(getLinkColor('DEFINED_IN')).toBe('#6ee7b7');
+    expect(getLinkColor('DEFINES')).toBe('#6ee7b7');
     expect(getLinkColor('DEPENDS_ON')).toBe('#f9a8d4');
   });
 
   it('uppercases input before lookup', () => {
     expect(getLinkColor('calls')).toBe('#93c5fd');
     expect(getLinkColor('Reads')).toBe('#fde68a');
-    expect(getLinkColor('defined_in')).toBe('#6ee7b7');
+    expect(getLinkColor('defines')).toBe('#6ee7b7');
   });
 
   it('returns deterministic color for unknown types', () => {

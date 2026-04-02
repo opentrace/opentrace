@@ -129,7 +129,7 @@ function makeMockConfig(overrides: Partial<LayoutConfig> = {}): LayoutConfig {
     noverlapCommunityIterations: 20,
     louvainResolution: 1.0,
     edgeProgramThreshold: 50000,
-    layoutEdgeType: 'DEFINED_IN',
+    layoutEdgeType: 'DEFINES',
     structuralTypes: ['Repository', 'Directory'],
     getNodeColor: () => '#aaa',
     getLinkColor: () => '#666',

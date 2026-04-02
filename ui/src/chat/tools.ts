@@ -20,10 +20,49 @@ import type { GraphStore } from '../store/types';
 
 const MAX_RESULT_CHARS = 4000;
 const MAX_SOURCE_CHARS = 8000;
+const MAX_EXPLORE_CHARS = 12000;
 
+/**
+ * Truncate a JSON-serializable value to fit within a character limit.
+ * Instead of slicing the JSON string (which produces invalid JSON),
+ * we progressively trim array entries or string fields until it fits.
+ */
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
-  return text.slice(0, limit) + `\n...[truncated, ${text.length} chars total]`;
+
+  // Try to parse and trim the data structurally to keep valid JSON
+  try {
+    const data = JSON.parse(text);
+    // If the root has a 'results' or 'nodes' array, trim entries from the end
+    const arrayKey =
+      'results' in data ? 'results' : 'nodes' in data ? 'nodes' : null;
+    if (arrayKey && Array.isArray(data[arrayKey])) {
+      while (data[arrayKey].length > 1) {
+        data[arrayKey].pop();
+        const attempt = JSON.stringify({ ...data, truncated: true });
+        if (attempt.length <= limit) return attempt;
+      }
+      return JSON.stringify({ ...data, truncated: true }).slice(0, limit);
+    }
+    // For non-array results (e.g. explore_node), truncate source content string
+    if (data.source?.content && typeof data.source.content === 'string') {
+      while (data.source.content.length > 100) {
+        data.source.content = data.source.content.slice(
+          0,
+          Math.floor(data.source.content.length / 2),
+        );
+        const attempt = JSON.stringify({ ...data, truncated: true });
+        if (attempt.length <= limit) return attempt;
+      }
+    }
+  } catch {
+    // Not valid JSON — fall through to raw slice
+  }
+  // Last resort: slice and wrap in a valid JSON envelope
+  return JSON.stringify({
+    partial: text.slice(0, limit - 50),
+    truncated: true,
+  });
 }
 
 // ---- Tool schemas ----
@@ -31,7 +70,10 @@ function truncate(text: string, limit: number): string {
 const searchGraphSchema = z.object({
   query: z
     .string()
-    .describe('Search text to match against node names and properties'),
+    .describe(
+      'Search text to match against node names, properties, and file content. ' +
+        'For compound identifiers (e.g. "my-service-name"), try both hyphenated and space-separated forms.',
+    ),
   limit: z.number().optional().describe('Max results (default 50, max 1000)'),
   nodeTypes: z
     .string()
@@ -87,15 +129,52 @@ const loadSourceSchema = z.object({
     .describe('End line (1-based) for a partial read'),
 });
 
+const exploreNodeSchema = z.object({
+  nodeId: z.string().describe('Node ID to explore in depth'),
+  includeSource: z
+    .boolean()
+    .optional()
+    .describe('Include source code snippet (default true)'),
+  depth: z
+    .number()
+    .optional()
+    .describe('Relationship traversal depth (default 1, max 3)'),
+});
+
+const grepSchema = z.object({
+  pattern: z
+    .string()
+    .describe(
+      'Regex pattern to search for across all indexed source files ' +
+        '(e.g. "coms-license-service", "TODO", "apiEndpoint")',
+    ),
+  fileFilter: z
+    .string()
+    .optional()
+    .describe(
+      'Only search files whose path contains this string (e.g. ".cfm", "src/api")',
+    ),
+  caseSensitive: z
+    .boolean()
+    .optional()
+    .describe('Case-sensitive search (default: false)'),
+  maxResults: z
+    .number()
+    .optional()
+    .describe('Max results to return (default: 100)'),
+});
+
 // ---- Tool descriptions ----
 
 const SEARCH_DESC =
-  'Full-text search across graph nodes by name or properties. ' +
-  'Returns matching nodes with their types and properties.';
+  'Full-text search across graph nodes by name, properties, and file content. ' +
+  'Search is case-insensitive — "contactbus" matches "contactBus". ' +
+  'Returns matching nodes with their types, properties, and 1-hop connections for top results. ' +
+  'This is the most efficient way to find nodes — prefer this over list_nodes + traverse_graph.';
 
 const LIST_DESC =
   'List nodes of a specific type. Valid types include: Repository, ' +
-  'Class, Function, File, Directory, Package, PullRequest.';
+  'Class, Function, File, Directory, Dependency.';
 
 const GET_DESC =
   'Get full details of a single node by its ID, including all properties.';
@@ -111,6 +190,17 @@ const LOAD_SOURCE_DESC =
   'symbol suffixes are stripped automatically to find the file. ' +
   'Use startLine/endLine for partial reads. Only works for files loaded during indexing.';
 
+const EXPLORE_DESC =
+  'Deep inspection of a single node — returns full properties, incoming and outgoing ' +
+  'relationships, and source code in one call. Use this instead of separate get_node + ' +
+  'traverse_graph + load_source calls when you want to understand a specific component.';
+
+const GREP_DESC =
+  'Search for exact text patterns across all indexed source files using regex. ' +
+  'Best for finding specific strings like service names, API endpoints, error messages, ' +
+  'or configuration values that may not appear in node names. ' +
+  'Returns file paths and line numbers where the pattern was found.';
+
 // ---- Factory: returns tools wired to a GraphStore ----
 
 export function makeGraphTools(store: GraphStore) {
@@ -121,8 +211,34 @@ export function makeGraphTools(store: GraphStore) {
           ? nodeTypes.split(',').map((t) => t.trim())
           : undefined;
         const results = await store.searchNodes(query, limit, types);
+
+        // Enrich top 5 results with 1-hop connections for context in parallel
+        const enrichedResults = await Promise.all(
+          results.map(async (node, i) => {
+            if (i >= 5) return node;
+            try {
+              const rels = await store.traverse(node.id, 'both', 1);
+              return {
+                ...node,
+                connections: rels.slice(0, 10).map((r) => ({
+                  type: r.relationship.type,
+                  direction:
+                    r.relationship.source_id === node.id
+                      ? 'outgoing'
+                      : 'incoming',
+                  targetId: r.node.id,
+                  targetName: r.node.name,
+                  targetType: r.node.type,
+                })),
+              };
+            } catch {
+              return node;
+            }
+          }),
+        );
+
         return truncate(
-          JSON.stringify({ results, count: results.length }),
+          JSON.stringify({ results: enrichedResults, count: results.length }),
           MAX_RESULT_CHARS,
         );
       },
@@ -200,5 +316,91 @@ export function makeGraphTools(store: GraphStore) {
         schema: loadSourceSchema,
       },
     ),
+    tool(
+      async ({ nodeId, includeSource = true, depth = 1 }) => {
+        // 1. Get node details
+        const node = await store.getNode(nodeId);
+        if (!node)
+          return JSON.stringify({ error: 'Node not found', id: nodeId });
+
+        // 2. Get relationships (capped depth)
+        const traverseDepth = Math.min(depth, 3);
+        const rels = await store.traverse(nodeId, 'both', traverseDepth);
+
+        const connections = rels.map((r) => ({
+          type: r.relationship.type,
+          direction:
+            r.relationship.source_id === nodeId ? 'outgoing' : 'incoming',
+          nodeId: r.node.id,
+          nodeName: r.node.name,
+          nodeType: r.node.type,
+          depth: r.depth,
+        }));
+
+        // 3. Optionally include source code
+        let source: {
+          path: string;
+          content: string;
+          line_count: number;
+        } | null = null;
+        if (includeSource) {
+          // For symbol nodes (e.g. "repo/path::Class"), also try the file ID
+          const result = await store.fetchSource(nodeId);
+          if (result) {
+            source = {
+              path: result.path,
+              content: result.content,
+              line_count: result.line_count,
+            };
+          }
+        }
+
+        const result: Record<string, unknown> = {
+          node,
+          connections,
+          connectionCount: connections.length,
+        };
+        if (includeSource) {
+          result.source = source;
+        }
+        return truncate(JSON.stringify(result), MAX_EXPLORE_CHARS);
+      },
+      {
+        name: 'explore_node',
+        description: EXPLORE_DESC,
+        schema: exploreNodeSchema,
+      },
+    ),
+    ...(store.grepSource
+      ? [
+          tool(
+            async ({ pattern, fileFilter, caseSensitive, maxResults }) => {
+              const results = await store.grepSource!(pattern, {
+                caseSensitive,
+                maxResults,
+                fileFilter,
+              });
+              if (results.length === 0) {
+                return JSON.stringify({
+                  results: [],
+                  message: `No matches found for pattern "${pattern}"`,
+                });
+              }
+              return truncate(
+                JSON.stringify({
+                  results,
+                  count: results.length,
+                }),
+                MAX_RESULT_CHARS,
+              );
+            },
+            {
+              name: 'grep',
+              description: GREP_DESC,
+              schema: grepSchema,
+            },
+          ),
+        ]
+      : []),
   ];
 }

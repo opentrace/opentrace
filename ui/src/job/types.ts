@@ -37,7 +37,8 @@ import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 export type JobMessage =
   | IndexRepoMessage
   | IndexDirectoryMessage
-  | ImportFileMessage;
+  | ImportFileMessage
+  | ConnectServerMessage;
 
 export interface IndexRepoMessage {
   type: 'index-repo';
@@ -56,6 +57,11 @@ export interface ImportFileMessage {
   type: 'import-file';
   file: File;
   name: string;
+}
+
+export interface ConnectServerMessage {
+  type: 'connect-server';
+  serverUrl: string;
 }
 
 // --- Stream + Service interfaces ---

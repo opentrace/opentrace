@@ -22,11 +22,13 @@ import { useStore } from '../store/context';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
-import NodeDetailsPanel from './NodeDetailsPanel';
+import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
+import HistoryPanel from './HistoryPanel';
+import type { HistoryEntry } from './historyTypes';
 import './SidePanel.css';
 
-export type SidePanelTab = 'filters' | 'discover' | 'details';
+export type SidePanelTab = 'filters' | 'discover' | 'history' | 'details';
 
 interface SidePanelProps {
   /** Filter sections to render in the Filters tab. */
@@ -43,9 +45,20 @@ interface SidePanelProps {
   /** Community color for the selected node */
   communityColor?: string;
 
+  /** Edges connected to the selected node */
+  selectedNodeEdges?: NodeEdge[];
+
+  /** Callback to select an edge from the node edges list */
+  onSelectEdge?: (edge: NodeEdge) => void;
+
   /* Edge details props */
   selectedLink: SelectedEdge | null;
   onSelectNode?: (nodeId: string) => void;
+
+  /** Session history of selected nodes */
+  nodeHistory?: HistoryEntry[];
+  /** Callback to clear session history */
+  onClearHistory?: () => void;
 
   /** Bumps when the graph store changes (new indexing, PR import, etc.) */
   graphVersion?: number;
@@ -71,8 +84,12 @@ export default function SidePanel({
   sourceLoading,
   sourceError,
   onCloseDetails,
+  selectedNodeEdges,
+  onSelectEdge,
   selectedLink,
   onSelectNode,
+  nodeHistory = [],
+  onClearHistory,
   graphVersion,
   graphNodeIds,
   hopMap,
@@ -87,9 +104,9 @@ export default function SidePanel({
   );
 
   const [activeTab, setActiveTab] = useState<
-    'filters' | 'discover' | 'details'
+    'filters' | 'discover' | 'history' | 'details'
   >('filters');
-  const previousTab = useRef<'filters' | 'discover'>('filters');
+  const previousTab = useRef<'filters' | 'discover' | 'history'>('filters');
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -99,7 +116,8 @@ export default function SidePanel({
   const effectiveTab = mobileActiveTab ?? activeTab;
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
-  const expanded = hasSelection || effectiveTab === 'discover';
+  const expanded =
+    hasSelection || effectiveTab === 'discover' || effectiveTab === 'history';
 
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: expanded
@@ -116,7 +134,10 @@ export default function SidePanel({
     if (selectedNode || selectedLink) {
       // Remember where we were before switching to details
       if (activeTabRef.current !== 'details') {
-        previousTab.current = activeTabRef.current as 'filters' | 'discover';
+        previousTab.current = activeTabRef.current as
+          | 'filters'
+          | 'discover'
+          | 'history';
       }
       // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing tab to selection state
       setActiveTab('details');
@@ -155,6 +176,12 @@ export default function SidePanel({
           onClick={() => switchTab('discover')}
         >
           Discover
+        </button>
+        <button
+          className={`side-panel-tab ${effectiveTab === 'history' ? 'side-panel-tab--active' : ''}`}
+          onClick={() => switchTab('history')}
+        >
+          History
         </button>
         {hasSelection && (
           <>
@@ -203,6 +230,16 @@ export default function SidePanel({
           isActive={effectiveTab === 'discover'}
         />
       </div>
+      <div
+        className="side-panel-content"
+        style={{ display: effectiveTab === 'history' ? undefined : 'none' }}
+      >
+        <HistoryPanel
+          entries={nodeHistory}
+          onSelectNode={onSelectNode ?? (() => {})}
+          onClear={onClearHistory ?? (() => {})}
+        />
+      </div>
       {effectiveTab === 'details' && (
         <div className="side-panel-content">
           {selectedNode ? (
@@ -213,6 +250,9 @@ export default function SidePanel({
               communityName={communityName}
               communityColor={communityColor}
               sourceError={sourceError}
+              edges={selectedNodeEdges}
+              onSelectNode={onSelectNode}
+              onSelectEdge={onSelectEdge}
             />
           ) : selectedLink ? (
             <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />

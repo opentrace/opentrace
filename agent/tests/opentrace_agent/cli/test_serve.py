@@ -64,9 +64,11 @@ class TestStats:
 
 
 class TestFetchGraph:
-    def test_empty_query_returns_empty(self, client):
+    def test_empty_query_returns_all(self, client):
+        """Empty query returns all nodes and their relationships."""
         data = client.get("/api/graph").json()
-        assert data == {"nodes": [], "links": []}
+        assert len(data["nodes"]) == 3
+        assert len(data["links"]) == 2
 
     def test_search_returns_matches(self, client):
         data = client.get("/api/graph", params={"query": "UserService", "hops": "1"}).json()

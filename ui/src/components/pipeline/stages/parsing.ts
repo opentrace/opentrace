@@ -174,13 +174,13 @@ export function processSymbol(
   if (symbol.kind === 'class') {
     const props: Record<string, unknown> = {
       language,
-      start_line: symbol.startLine,
-      end_line: symbol.endLine,
+      startLine: symbol.startLine,
+      endLine: symbol.endLine,
     };
     if (symbol.signature) props.signature = symbol.signature;
     if (symbol.superclasses) props.superclasses = symbol.superclasses;
     if (symbol.interfaces) props.interfaces = symbol.interfaces;
-    if (symbol.subtype) props.subtype = symbol.subtype;
+    if (symbol.subtype) props.kind = symbol.subtype;
     if (symbol.docs) props.docs = symbol.docs;
 
     nodes.push({
@@ -191,10 +191,10 @@ export function processSymbol(
     });
 
     rels.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: nodeId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${nodeId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     const symbolNode: SymbolNode = {
@@ -230,8 +230,8 @@ export function processSymbol(
   } else {
     const props: Record<string, unknown> = {
       language,
-      start_line: symbol.startLine,
-      end_line: symbol.endLine,
+      startLine: symbol.startLine,
+      endLine: symbol.endLine,
     };
     if (symbol.signature) props.signature = symbol.signature;
     if (symbol.docs) props.docs = symbol.docs;
@@ -244,10 +244,10 @@ export function processSymbol(
     });
 
     rels.push({
-      id: `${nodeId}->DEFINED_IN->${parentId}`,
-      type: 'DEFINED_IN',
-      source_id: nodeId,
-      target_id: parentId,
+      id: `${parentId}->DEFINES->${nodeId}`,
+      type: 'DEFINES',
+      source_id: parentId,
+      target_id: nodeId,
     });
 
     const symbolNode: SymbolNode = {
@@ -323,14 +323,14 @@ function convertSymbol(
   const nodeType = sym.kind === 'class' ? 'Class' : 'Function';
 
   const props: Record<string, unknown> = {
-    start_line: sym.startLine,
-    end_line: sym.endLine,
+    startLine: sym.startLine,
+    endLine: sym.endLine,
   };
   if (sym.signature) props.signature = sym.signature;
   if (sym.docs) props.docs = sym.docs;
   if (sym.superclasses) props.superclasses = sym.superclasses;
   if (sym.interfaces) props.interfaces = sym.interfaces;
-  if (sym.subtype) props.subtype = sym.subtype;
+  if (sym.subtype) props.kind = sym.subtype;
 
   nodes.push({
     id: symId,
@@ -340,10 +340,10 @@ function convertSymbol(
   });
 
   rels.push({
-    id: `${symId}->DEFINED_IN->${parentId}`,
-    type: 'DEFINED_IN',
-    source_id: symId,
-    target_id: parentId,
+    id: `${parentId}->DEFINES->${symId}`,
+    type: 'DEFINES',
+    source_id: parentId,
+    target_id: symId,
   });
 
   if (sym.kind === 'class') {

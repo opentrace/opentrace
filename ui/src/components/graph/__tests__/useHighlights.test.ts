@@ -171,15 +171,15 @@ describe('useHighlights', () => {
     ];
     const links: GraphLink[] = [
       { source: 'a', target: 'b', label: 'CALLS' },
-      { source: 'a', target: 'c', label: 'DEFINED_IN' },
+      { source: 'a', target: 'c', label: 'DEFINES' },
     ];
     const filter = emptyFilter();
-    filter.hiddenLinkTypes.add('DEFINED_IN');
+    filter.hiddenLinkTypes.add('DEFINES');
 
     const { result } = renderHook(() =>
       useHighlights(graph, true, nodes, links, '', 'a', 1, filter),
     );
-    // b reachable via CALLS, c not reachable because DEFINED_IN is hidden
+    // b reachable via CALLS, c not reachable because DEFINES is hidden
     expect(result.current.highlightNodes.has('b')).toBe(true);
     expect(result.current.highlightNodes.has('c')).toBe(false);
   });
