@@ -1464,24 +1464,29 @@
     display: none;
   }
 
-  /* Show as full-width overlay when opened from burger menu */
+  /* Show as bottom 70% overlay (on top of chat) when opened from burger menu */
   .side-panel.side-panel--mobile-open {
     display: flex;
     position: fixed;
-    top: 0;
+    top: 30%;
     left: 0;
     right: 0;
     bottom: 0;
     width: 100% !important;
     z-index: 50;
-    padding-top: max(0px, env(safe-area-inset-top));
+    padding-top: 0;
     background: var(--background);
     border-right: none;
+    border-top: 1px solid var(--border);
     backdrop-filter: none;
   }
 
   .side-panel--mobile-open .side-panel-tabs {
-    padding-top: 8px;
+    padding-top: 0;
+  }
+
+  .side-panel--mobile-open .side-panel-drag-handle {
+    display: none;
   }
 }
 

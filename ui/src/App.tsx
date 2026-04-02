@@ -226,10 +226,10 @@ function App({
     : dimensions.height;
   const handleToggleGraphFullscreen = useCallback(() => {
     setGraphFullscreen((v) => !v);
-    // Wait a frame for the canvas to resize, then fit the graph
-    requestAnimationFrame(() => {
+    // Wait for React to re-render with new dimensions and the canvas to resize
+    setTimeout(() => {
       graphViewerRef.current?.resetCamera();
-    });
+    }, 150);
   }, []);
   const handleToggleSettings = useCallback(() => {
     setShowSettings((v) => {
