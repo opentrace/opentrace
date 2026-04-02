@@ -1287,6 +1287,7 @@
 
   /* Style all action buttons as full-width menu rows */
   .ot-toolbar-nav .add-repo-btn,
+  .ot-toolbar-nav .export-db-btn,
   .ot-toolbar-nav .chat-toggle-btn,
   .ot-toolbar-nav .settings-toggle-btn,
   .ot-toolbar-nav .help-toggle-btn,
@@ -1305,6 +1306,7 @@
   }
 
   .ot-toolbar-nav .add-repo-btn:hover,
+  .ot-toolbar-nav .export-db-btn:hover,
   .ot-toolbar-nav .chat-toggle-btn:hover,
   .ot-toolbar-nav .settings-toggle-btn:hover,
   .ot-toolbar-nav .help-toggle-btn:hover,
@@ -1320,6 +1322,12 @@
   .ot-toolbar-nav .theme-toggle-btn.active {
     background: color-mix(in oklch, var(--primary) 15%, transparent);
     color: var(--primary);
+  }
+
+  /* Sub-menu toggle buttons need full width inside their wrappers */
+  .ot-toolbar-nav .theme-toggle-btn,
+  .ot-toolbar-nav .help-toggle-btn {
+    width: 100%;
   }
 
   /* Theme selector inline in dropdown */
