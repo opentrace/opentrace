@@ -214,6 +214,23 @@ function App({
     });
   }, []);
   const handleChatWidthChange = useCallback((w: number) => setChatWidth(w), []);
+
+  /** On tablet/mobile (≤1024px) with chat open, split vertically: graph on top, chat below */
+  const MOBILE_BREAKPOINT = 1024;
+  const MOBILE_GRAPH_RATIO = 0.3;
+  const isMobile = dimensions.width <= MOBILE_BREAKPOINT;
+  const [graphFullscreen, setGraphFullscreen] = useState(false);
+  const isMobileSplit = isMobile && showChat && !graphFullscreen;
+  const graphHeight = isMobileSplit
+    ? Math.round(dimensions.height * MOBILE_GRAPH_RATIO)
+    : dimensions.height;
+  const handleToggleGraphFullscreen = useCallback(() => {
+    setGraphFullscreen((v) => !v);
+    // Wait a frame for the canvas to resize, then fit the graph
+    requestAnimationFrame(() => {
+      graphViewerRef.current?.resetCamera();
+    });
+  }, []);
   const handleToggleSettings = useCallback(() => {
     setShowSettings((v) => {
       if (!v) {
@@ -238,11 +255,13 @@ function App({
 
   return (
     <div className="app" ref={containerRef}>
-      <div className="app-body">
+      <div
+        className={`app-body${isMobileSplit ? ' app-body--mobile-split' : ''}`}
+      >
         <GraphViewer
           ref={graphViewerRef}
           width={dimensions.width}
-          height={dimensions.height}
+          height={graphHeight}
           jobState={jobState}
           activeRepoUrl={activeRepoUrl}
           jobExpanded={jobExpanded}
@@ -255,7 +274,7 @@ function App({
           onAddRepoClose={handleAddRepoClose}
           onJobSubmit={handleJobSubmit}
           showChat={showChat}
-          chatWidth={chatWidth}
+          chatWidth={isMobileSplit || graphFullscreen ? 0 : chatWidth}
           onToggleChat={handleToggleChat}
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
@@ -264,34 +283,44 @@ function App({
           onGraphDataChange={setChatGraphData}
           chatHighlightNodes={chatHighlightNodes}
           animationSettings={animationSettings}
+          graphFullscreen={isMobile ? graphFullscreen : undefined}
+          onToggleGraphFullscreen={
+            isMobile ? handleToggleGraphFullscreen : undefined
+          }
         />
 
         {showChat && (
-          <ChatPanel
-            graphData={chatGraphData}
-            onClose={() => setShowChat(false)}
-            onNodeSelect={(nodeId) => {
-              graphViewerRef.current?.selectNode(nodeId);
-            }}
-            onChatHighlight={(allIds, newIds) => {
-              setChatHighlightNodes(allIds);
-              if (newIds.length > 0) {
-                graphViewerRef.current?.triggerPing(newIds);
-              }
-            }}
-            onGraphChange={async (focusNodeId) => {
-              // Reload scoped to the PR node — 2 hops shows PR → Files → their neighbors
-              await graphViewerRef.current?.reload(focusNodeId, 2);
-              if (focusNodeId) {
-                // Wait for React to commit the re-render with new graph data
-                setTimeout(() => {
-                  graphViewerRef.current?.selectNode(focusNodeId, 2);
-                }, 100);
-              }
-            }}
-            repoUrl={activeRepoUrl}
-            onWidthChange={handleChatWidthChange}
-          />
+          <div
+            style={
+              graphFullscreen ? { display: 'none' } : { display: 'contents' }
+            }
+          >
+            <ChatPanel
+              graphData={chatGraphData}
+              onClose={() => setShowChat(false)}
+              onNodeSelect={(nodeId) => {
+                graphViewerRef.current?.selectNode(nodeId);
+              }}
+              onChatHighlight={(allIds, newIds) => {
+                setChatHighlightNodes(allIds);
+                if (newIds.length > 0) {
+                  graphViewerRef.current?.triggerPing(newIds);
+                }
+              }}
+              onGraphChange={async (focusNodeId) => {
+                // Reload scoped to the PR node — 2 hops shows PR → Files → their neighbors
+                await graphViewerRef.current?.reload(focusNodeId, 2);
+                if (focusNodeId) {
+                  // Wait for React to commit the re-render with new graph data
+                  setTimeout(() => {
+                    graphViewerRef.current?.selectNode(focusNodeId, 2);
+                  }, 100);
+                }
+              }}
+              repoUrl={activeRepoUrl}
+              onWidthChange={handleChatWidthChange}
+            />
+          </div>
         )}
       </div>
 
