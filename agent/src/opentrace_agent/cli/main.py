@@ -787,6 +787,55 @@ def _print_table(columns: list[str], rows: list[list]) -> None:
         click.echo(line)
 
 
+@app.command()
+@click.argument("file_path")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option(
+    "--lines",
+    "line_spec",
+    default=None,
+    help="Comma-separated line ranges, e.g. '10-25,40-60'.",
+)
+def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
+    """Analyze the blast radius of changes to a file.
+
+    Finds functions/classes defined in FILE_PATH, then walks incoming
+    relationships (CALLS, IMPORTS, DEPENDS_ON) to show what depends on them.
+    Exits 0 with no output when the file is not indexed or no index is found.
+    """
+    from opentrace_agent.cli.impact import run_impact
+
+    try:
+        resolved = _resolve_db(db_path, must_exist=True)
+    except click.UsageError:
+        resolved = None
+
+    line_ranges: list[tuple[int, int]] | None = None
+    if line_spec:
+        line_ranges = []
+        for part in line_spec.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                if "-" in part:
+                    lo, hi = part.split("-", 1)
+                    line_ranges.append((int(lo), int(hi)))
+                else:
+                    n = int(part)
+                    line_ranges.append((n, n))
+            except ValueError:
+                continue
+
+    run_impact(file_path, resolved, line_ranges)
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
