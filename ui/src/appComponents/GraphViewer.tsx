@@ -359,6 +359,7 @@ export interface GraphViewerHandle {
   selectNode: (nodeId: string, hops?: number) => void;
   reload: (query?: string, hops?: number) => Promise<void>;
   triggerPing: (nodeIds: Iterable<string>) => void;
+  resetCamera: () => void;
 }
 
 export interface GraphViewerProps {
@@ -397,6 +398,10 @@ export interface GraphViewerProps {
   /** Additional React elements rendered in the toolbar's actions area (right side).
    *  Appended after the built-in buttons (chat toggle, settings, theme). */
   toolbarActions?: React.ReactNode;
+  /** Mobile: whether the graph is in fullscreen mode (hides chat) */
+  graphFullscreen?: boolean;
+  /** Mobile: toggle graph fullscreen */
+  onToggleGraphFullscreen?: () => void;
 }
 
 const GraphViewer = memo(
@@ -427,6 +432,8 @@ const GraphViewer = memo(
         chatHighlightNodes,
         animationSettings,
         toolbarActions,
+        graphFullscreen,
+        onToggleGraphFullscreen,
       } = props;
 
       const { store } = useStore();
@@ -598,6 +605,8 @@ const GraphViewer = memo(
 
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      // Mobile: collapsed graph controls menu
+      const [showGraphMenu, setShowGraphMenu] = useState(false);
       // Persisted graph settings — restored from localStorage on mount
       const stored = useMemo(() => {
         try {
@@ -920,6 +929,9 @@ const GraphViewer = memo(
           reload: (query?: string, hops?: number) => loadGraph(query, hops),
           triggerPing: (nodeIds: Iterable<string>) => {
             canvasRef.current?.triggerPing?.(nodeIds);
+          },
+          resetCamera: () => {
+            canvasRef.current?.resetCamera();
           },
         }),
         [graphData, loadGraph, onNodeClick],
@@ -2107,14 +2119,46 @@ const GraphViewer = memo(
           )}
 
           <div className="graph-controls">
+            {/* Mobile: fullscreen toggle (visible alongside trigger) */}
+            {onToggleGraphFullscreen && (
+              <button
+                className={`graph-control-btn graph-controls-fullscreen${graphFullscreen ? ' graph-control-btn--active' : ''}`}
+                onClick={onToggleGraphFullscreen}
+                title={graphFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {graphFullscreen ? (
+                    /* Exit fullscreen: corners pointing inward */
+                    <>
+                      <polyline points="4 14 4 20 10 20" />
+                      <polyline points="20 10 20 4 14 4" />
+                    </>
+                  ) : (
+                    /* Enter fullscreen: corners pointing outward */
+                    <>
+                      <polyline points="3 8 3 3 8 3" />
+                      <polyline points="16 3 21 3 21 8" />
+                      <polyline points="21 16 21 21 16 21" />
+                      <polyline points="8 21 3 21 3 16" />
+                    </>
+                  )}
+                </svg>
+              </button>
+            )}
+            {/* Mobile: single trigger button that opens a popup */}
             <button
-              className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setZoomOnSelect((z) => !z)}
-              title={
-                zoomOnSelect
-                  ? 'Zoom to node on click (on)'
-                  : 'Zoom to node on click (off)'
-              }
+              className={`graph-control-btn graph-controls-trigger${showGraphMenu ? ' graph-control-btn--active' : ''}`}
+              onClick={() => setShowGraphMenu((v) => !v)}
+              title="Graph controls"
             >
               <svg
                 width="16"
@@ -2126,162 +2170,190 @@ const GraphViewer = memo(
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                {zoomOnSelect && (
-                  <>
-                    <line x1="11" y1="8" x2="11" y2="14" />
-                    <line x1="8" y1="11" x2="14" y2="11" />
-                  </>
-                )}
+                <circle cx="12" cy="5" r="1" />
+                <circle cx="12" cy="12" r="1" />
+                <circle cx="12" cy="19" r="1" />
               </svg>
             </button>
-            <button
-              className="graph-control-btn"
-              onClick={() => canvasRef.current?.zoomIn()}
-              title="Zoom in"
+            <div
+              className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+              <button
+                className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
+                onClick={() => setZoomOnSelect((z) => !z)}
+                title={
+                  zoomOnSelect
+                    ? 'Zoom to node on click (on)'
+                    : 'Zoom to node on click (off)'
+                }
               >
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
-            <button
-              className="graph-control-btn"
-              onClick={() => canvasRef.current?.zoomOut()}
-              title="Zoom out"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  {zoomOnSelect && (
+                    <>
+                      <line x1="11" y1="8" x2="11" y2="14" />
+                      <line x1="8" y1="11" x2="14" y2="11" />
+                    </>
+                  )}
+                </svg>
+              </button>
+              <button
+                className="graph-control-btn"
+                onClick={() => canvasRef.current?.zoomIn()}
+                title="Zoom in"
               >
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
-            <button
-              className="graph-control-btn"
-              onClick={() => canvasRef.current?.resetCamera()}
-              title="Zoom to fit"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <button
+                className="graph-control-btn"
+                onClick={() => canvasRef.current?.zoomOut()}
+                title="Zoom out"
               >
-                <polyline points="15 3 21 3 21 9" />
-                <polyline points="9 21 3 21 3 15" />
-                <line x1="21" y1="3" x2="14" y2="10" />
-                <line x1="3" y1="21" x2="10" y2="14" />
-              </svg>
-            </button>
-            <button
-              className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setShowPhysicsPanel((v) => !v)}
-              title="Physics tuner"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <button
+                className="graph-control-btn"
+                onClick={() => canvasRef.current?.resetCamera()}
+                title="Zoom to fit"
               >
-                <line x1="4" y1="21" x2="4" y2="14" />
-                <line x1="4" y1="10" x2="4" y2="3" />
-                <line x1="12" y1="21" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12" y2="3" />
-                <line x1="20" y1="21" x2="20" y2="16" />
-                <line x1="20" y1="12" x2="20" y2="3" />
-                <line x1="1" y1="14" x2="7" y2="14" />
-                <line x1="9" y1="8" x2="15" y2="8" />
-                <line x1="17" y1="16" x2="23" y2="16" />
-              </svg>
-            </button>
-            <button
-              className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
-              onClick={() => {
-                const next = layoutMode === 'spread' ? 'compact' : 'spread';
-                setLayoutMode(next);
-                canvasRef.current?.setLayoutMode?.(next);
-              }}
-              title={
-                layoutMode === 'compact'
-                  ? 'Switch to spread layout'
-                  : 'Switch to compact layout'
-              }
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="15 3 21 3 21 9" />
+                  <polyline points="9 21 3 21 3 15" />
+                  <line x1="21" y1="3" x2="14" y2="10" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              </button>
+              <button
+                className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
+                onClick={() => setShowPhysicsPanel((v) => !v)}
+                title="Physics tuner"
               >
-                {layoutMode === 'compact' ? (
-                  /* Expand/spread icon */
-                  <>
-                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                  </>
-                ) : (
-                  /* Compact/circle icon */
-                  <circle cx="12" cy="12" r="9" />
-                )}
-              </svg>
-            </button>
-            <button
-              className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
-              onClick={() => {
-                const next = !mode3d;
-                setMode3d(next);
-                canvasRef.current?.set3DMode?.(next);
-              }}
-              title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="4" y1="21" x2="4" y2="14" />
+                  <line x1="4" y1="10" x2="4" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" y2="3" />
+                  <line x1="20" y1="21" x2="20" y2="16" />
+                  <line x1="20" y1="12" x2="20" y2="3" />
+                  <line x1="1" y1="14" x2="7" y2="14" />
+                  <line x1="9" y1="8" x2="15" y2="8" />
+                  <line x1="17" y1="16" x2="23" y2="16" />
+                </svg>
+              </button>
+              <button
+                className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
+                onClick={() => {
+                  const next = layoutMode === 'spread' ? 'compact' : 'spread';
+                  setLayoutMode(next);
+                  canvasRef.current?.setLayoutMode?.(next);
+                }}
+                title={
+                  layoutMode === 'compact'
+                    ? 'Switch to spread layout'
+                    : 'Switch to compact layout'
+                }
               >
-                {mode3d ? (
-                  /* 2D grid icon */
-                  <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
-                ) : (
-                  /* 3D cube icon */
-                  <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
-                )}
-              </svg>
-            </button>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {layoutMode === 'compact' ? (
+                    /* Expand/spread icon */
+                    <>
+                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                    </>
+                  ) : (
+                    /* Compact/circle icon */
+                    <circle cx="12" cy="12" r="9" />
+                  )}
+                </svg>
+              </button>
+              <button
+                className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
+                onClick={() => {
+                  const next = !mode3d;
+                  setMode3d(next);
+                  canvasRef.current?.set3DMode?.(next);
+                }}
+                title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {mode3d ? (
+                    /* 2D grid icon */
+                    <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
+                  ) : (
+                    /* 3D cube icon */
+                    <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
+                  )}
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       );
