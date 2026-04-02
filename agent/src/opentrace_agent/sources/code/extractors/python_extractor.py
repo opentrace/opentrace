@@ -276,6 +276,12 @@ def _extract_parameters(params_node: tree_sitter.Node) -> list[VariableSymbol]:
             name_child = child.child_by_field_name("name")
             if name_child:
                 name = name_child.text.decode()
+        elif child.type in ("list_splat_pattern", "dictionary_splat_pattern"):
+            # *args, **kwargs
+            for sub in child.children:
+                if sub.type == "identifier":
+                    name = sub.text.decode()
+                    break
 
         if name and name not in ("self", "cls"):
             line = child.start_point.row + 1
@@ -330,6 +336,7 @@ def _extract_class_fields(class_node: tree_sitter.Node) -> list[VariableSymbol]:
                 init_body = func_node.child_by_field_name("body")
                 if init_body:
                     for var in _extract_self_assignments(init_body):
+                        var.origin_scope = "__init__"
                         if var.name not in seen:
                             seen.add(var.name)
                             variables.append(var)
@@ -457,10 +464,22 @@ def _walk_body_for_variables(
         if child.type == "expression_statement" and child.children:
             inner = child.children[0]
             if inner.type == "assignment":
-                var = _extract_local_assignment(inner)
-                if var and var.name not in seen:
-                    seen.add(var.name)
-                    variables.append(var)
+                for var in _extract_local_assignments(inner):
+                    if var.name not in seen:
+                        seen.add(var.name)
+                        variables.append(var)
+        # for loop target variable: ``for item in items``
+        if child.type == "for_statement":
+            var = _extract_for_variable(child)
+            if var and var.name not in seen:
+                seen.add(var.name)
+                variables.append(var)
+        # with-as variable: ``with expr as name``
+        if child.type == "with_statement":
+            var = _extract_with_variable(child)
+            if var and var.name not in seen:
+                seen.add(var.name)
+                variables.append(var)
         # Skip nested scopes — they define their own variables
         if child.type in _NEW_SCOPE_TYPES:
             continue
@@ -470,22 +489,46 @@ def _walk_body_for_variables(
         _walk_body_for_variables(child, variables, seen)
 
 
-def _extract_local_assignment(assignment_node: tree_sitter.Node) -> VariableSymbol | None:
-    """Extract a local variable from an assignment node."""
+def _extract_local_assignments(assignment_node: tree_sitter.Node) -> list[VariableSymbol]:
+    """Extract local variables from an assignment node.
+
+    Handles simple assignment (``x = expr``), annotated (``x: int = expr``),
+    and tuple unpacking (``a, b = expr``).
+    """
     left = assignment_node.child_by_field_name("left")
     right = assignment_node.child_by_field_name("right")
     if left is None:
-        return None
+        return []
 
     # Skip self.x assignments (those are class fields, not locals)
     if left.type == "attribute":
-        return None
+        return []
+
+    # Tuple unpacking: ``a, b = expr``
+    if left.type == "pattern_list":
+        derivation = _derivation_from_expr(right) if right else []
+        results: list[VariableSymbol] = []
+        for sub in left.children:
+            if sub.type == "identifier":
+                name = sub.text.decode()
+                if name != "_":
+                    results.append(
+                        VariableSymbol(
+                            name=name,
+                            kind="local",
+                            start_line=sub.start_point.row + 1,
+                            end_line=sub.start_point.row + 1,
+                            derived_from=derivation,
+                        )
+                    )
+        return results
+
     if left.type != "identifier":
-        return None
+        return []
 
     name = left.text.decode()
     if name == "_":
-        return None
+        return []
 
     # Type annotation is a separate field on the assignment node
     type_node = assignment_node.child_by_field_name("type")
@@ -493,11 +536,51 @@ def _extract_local_assignment(assignment_node: tree_sitter.Node) -> VariableSymb
 
     derivation = _derivation_from_expr(right) if right else []
     line = assignment_node.start_point.row + 1
-    return VariableSymbol(
-        name=name,
-        kind="local",
-        start_line=line,
-        end_line=line,
-        type_annotation=type_ann,
-        derived_from=derivation,
-    )
+    return [
+        VariableSymbol(
+            name=name,
+            kind="local",
+            start_line=line,
+            end_line=line,
+            type_annotation=type_ann,
+            derived_from=derivation,
+        )
+    ]
+
+
+def _extract_for_variable(for_node: tree_sitter.Node) -> VariableSymbol | None:
+    """Extract the loop variable from a for statement."""
+    # for_statement children: 'for', identifier, 'in', expr, ':', block
+    for child in for_node.children:
+        if child.type == "identifier":
+            name = child.text.decode()
+            if name != "_":
+                return VariableSymbol(
+                    name=name,
+                    kind="local",
+                    start_line=child.start_point.row + 1,
+                    end_line=child.start_point.row + 1,
+                )
+            break
+    return None
+
+
+def _extract_with_variable(with_node: tree_sitter.Node) -> VariableSymbol | None:
+    """Extract the ``as`` variable from a with statement."""
+    for child in with_node.children:
+        if child.type == "with_clause":
+            for item in child.children:
+                if item.type == "with_item":
+                    for sub in item.children:
+                        if sub.type == "as_pattern":
+                            for part in sub.children:
+                                if part.type == "as_pattern_target":
+                                    for ident in part.children:
+                                        if ident.type == "identifier":
+                                            return VariableSymbol(
+                                                name=ident.text.decode(),
+                                                kind="local",
+                                                start_line=ident.start_point.row + 1,
+                                                end_line=ident.start_point.row + 1,
+                                            )
+    return None

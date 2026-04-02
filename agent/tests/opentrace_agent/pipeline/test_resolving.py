@@ -340,6 +340,113 @@ def test_derivation_from_call() -> None:
     assert rels[0].properties["transform"] == "call"
 
 
+def test_derivation_parent_scope_lookup() -> None:
+    """Identifier derivation walks up to parent scope when not found locally."""
+    regs = Registries()
+    file_id = "test/app.py"
+    func_scope = f"{file_id}::outer"
+    inner_scope = f"{func_scope}::inner"
+
+    # Variable 'x' is in the outer scope, referenced from inner
+    regs.variable_registry[func_scope] = {"x": f"{func_scope}::x"}
+    regs.variable_registry[inner_scope] = {"y": f"{inner_scope}::y"}
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{inner_scope}::y",
+            scope_id=inner_scope,
+            file_id=file_id,
+            refs=[("x", None, "identifier")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 1
+    assert rels[0].target_id == f"{func_scope}::x"
+
+
+def test_derivation_attribute_call_import() -> None:
+    """Attribute call derivation resolves via import registry."""
+    regs = Registries()
+    file_id = "test/app.py"
+    utils_file_id = "test/utils.py"
+    scope_id = f"{file_id}::main"
+
+    helper_fn = SymbolInfo(
+        node_id=f"{utils_file_id}::helper",
+        name="helper",
+        kind="function",
+        file_id=utils_file_id,
+        language="python",
+    )
+    regs.name_registry["helper"] = [helper_fn]
+    regs.file_registry[utils_file_id] = {"helper": helper_fn}
+    regs.import_registry[file_id] = {"utils": utils_file_id}
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{scope_id}::result",
+            scope_id=scope_id,
+            file_id=file_id,
+            refs=[("helper", "utils", "call")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 1
+    assert rels[0].target_id == f"{utils_file_id}::helper"
+    assert rels[0].properties["transform"] == "call"
+
+
+def test_derivation_unresolved_produces_no_edge() -> None:
+    """Unresolved derivation ref produces no DERIVED_FROM edge."""
+    regs = Registries()
+    scope_id = "test/app.py::main"
+    regs.variable_registry[scope_id] = {"result": f"{scope_id}::result"}
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{scope_id}::result",
+            scope_id=scope_id,
+            file_id="test/app.py",
+            refs=[("nonexistent", None, "identifier")],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 0
+
+
+def test_derivation_compound_multiple_refs() -> None:
+    """Compound expression with multiple refs produces multiple edges."""
+    regs = Registries()
+    file_id = "test/app.py"
+    scope_id = f"{file_id}::combine"
+    regs.variable_registry[scope_id] = {
+        "a": f"{scope_id}::a",
+        "b": f"{scope_id}::b",
+        "total": f"{scope_id}::total",
+    }
+
+    derivation_infos = [
+        DerivationInfo(
+            variable_id=f"{scope_id}::total",
+            scope_id=scope_id,
+            file_id=file_id,
+            refs=[
+                ("a", None, "identifier"),
+                ("b", None, "identifier"),
+            ],
+        ),
+    ]
+
+    rels = resolve_derivations(derivation_infos, regs)
+    assert len(rels) == 2
+    targets = {r.target_id for r in rels}
+    assert f"{scope_id}::a" in targets
+    assert f"{scope_id}::b" in targets
+
+
 def test_resolving_stage_events() -> None:
     """The resolving generator emits correct events."""
     regs, call_infos = _build_registries()
