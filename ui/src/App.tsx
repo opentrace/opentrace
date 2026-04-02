@@ -290,7 +290,13 @@ function App({
         />
 
         {showChat && (
-          <div style={graphFullscreen ? { display: 'none' } : undefined}>
+          <div
+            style={
+              graphFullscreen
+                ? { display: 'none' }
+                : { display: 'contents' }
+            }
+          >
             <ChatPanel
               graphData={chatGraphData}
               onClose={() => setShowChat(false)}
