@@ -485,14 +485,12 @@
   white-space: nowrap;
 }
 
-/* Conversation-level token total */
+/* Conversation-level token total (inline between input buttons) */
 .token-usage-total {
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   color: var(--muted-foreground, #888);
-  text-align: center;
-  padding: 4px 12px;
+  white-space: nowrap;
   opacity: 0.7;
-  border-top: 1px solid var(--border, #333);
 }
 
 @media (max-width: 640px) {
