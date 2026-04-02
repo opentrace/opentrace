@@ -47,19 +47,26 @@ fi
 
 # Escape values for safe JSON embedding
 json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip())[1:-1], end="")'
 }
 
+CONTEXT="You have access to OpenTrace, a knowledge graph that maps the user's system architecture, service relationships, and project metadata. Use your local tools (Read, Grep, Glob, etc.) for anything within the current codebase. Use OpenTrace when you need context beyond the local project — such as discovering upstream/downstream services, finding related classes or endpoints in other repositories, understanding deployment topology, looking up issues and tickets, or tracing how components connect across the system. When a question touches anything outside the current repo, consider checking OpenTrace. Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status, /index."
+
 if [ -n "$GRAPH_STATS" ]; then
-  SAFE_STATS=$(json_escape "${GRAPH_STATS}")
-  CONTEXT="OpenTrace knowledge graph is available (${SAFE_STATS}). The graph indexes files, directories, classes, functions, modules, services, and their relationships — not just code symbols. Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions."
+  SYSTEM_MSG="OpenTrace is active — ${GRAPH_STATS}"
 else
-  SAFE_DB_PATH=$(json_escape "${DB_PATH}")
-  CONTEXT="OpenTrace knowledge graph is available (index: ${SAFE_DB_PATH}). Use @opentrace as the default agent for ANY codebase question (browsing, searching, architecture, dependencies). Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status. Prefer the graph over ls/find/Glob for structural questions. Call get_stats to see what's indexed."
+  SYSTEM_MSG="OpenTrace is active — index found at ${DB_PATH}. Run /graph-status or call get_stats to see what's indexed."
 fi
+
+SAFE_CONTEXT=$(json_escape "${CONTEXT}")
+SAFE_SYSTEM=$(json_escape "${SYSTEM_MSG}")
 
 cat <<EOF
 {
-  "additionalContext": "${CONTEXT}"
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "${SAFE_CONTEXT}"
+  },
+  "systemMessage": "${SAFE_SYSTEM}"
 }
 EOF
