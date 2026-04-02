@@ -255,9 +255,7 @@ function App({
 
   return (
     <div className="app" ref={containerRef}>
-      <div
-        className={`app-body${isMobileSplit ? ' app-body--mobile-split' : ''}`}
-      >
+      <div className={`app-body${isMobileSplit ? ' app-body--mobile-split' : ''}`}>
         <GraphViewer
           ref={graphViewerRef}
           width={dimensions.width}
@@ -284,17 +282,11 @@ function App({
           chatHighlightNodes={chatHighlightNodes}
           animationSettings={animationSettings}
           graphFullscreen={isMobile ? graphFullscreen : undefined}
-          onToggleGraphFullscreen={
-            isMobile ? handleToggleGraphFullscreen : undefined
-          }
+          onToggleGraphFullscreen={isMobile ? handleToggleGraphFullscreen : undefined}
         />
 
         {showChat && (
-          <div
-            style={
-              graphFullscreen ? { display: 'none' } : { display: 'contents' }
-            }
-          >
+          <div style={graphFullscreen ? { display: 'none' } : undefined}>
             <ChatPanel
               graphData={chatGraphData}
               onClose={() => setShowChat(false)}
