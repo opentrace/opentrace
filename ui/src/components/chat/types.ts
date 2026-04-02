@@ -41,6 +41,14 @@ export interface ToolCallPart {
 
 export type MessagePart = TextPart | ThoughtPart | ToolCallPart;
 
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
+
 export interface ImageAttachment {
   kind: 'image';
   id: string;
@@ -70,6 +78,7 @@ export interface AssistantMessage {
   role: 'assistant';
   content: string;
   parts: MessagePart[];
+  usage?: TokenUsage;
 }
 
 export type ChatMessage = UserMessage | AssistantMessage;

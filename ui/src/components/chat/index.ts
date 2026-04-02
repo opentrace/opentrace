@@ -28,6 +28,7 @@ export type {
   ThoughtPart,
   ToolCallPart,
   MessagePart,
+  TokenUsage,
   UserMessage,
   AssistantMessage,
   ChatMessage,

@@ -23,6 +23,7 @@ import {
   type ChatMessage,
   type AssistantMessage,
   type MessagePart,
+  type TokenUsage,
 } from '../chat/providers';
 import type { Attachment, ImageAttachment } from '../components/chat/types';
 import {
@@ -58,6 +59,24 @@ import { useResizablePanel } from '../hooks/useResizablePanel';
 import { useConversation } from '../chat/useConversation';
 import PRListPanel from './PRListPanel';
 import './ChatPanel.css';
+
+function TokenUsageFooter({ usage }: { usage: TokenUsage }) {
+  return (
+    <div className="token-usage">
+      <span title="Input tokens">
+        &uarr; {usage.inputTokens.toLocaleString()}
+      </span>
+      <span title="Output tokens">
+        &darr; {usage.outputTokens.toLocaleString()}
+      </span>
+      {usage.cacheReadTokens != null && usage.cacheReadTokens > 0 && (
+        <span title="Cache read tokens">
+          ({usage.cacheReadTokens.toLocaleString()} cached)
+        </span>
+      )}
+    </div>
+  );
+}
 
 type TabId = 'chat' | 'prs';
 
@@ -396,6 +415,13 @@ export default function ChatPanel({
       });
     });
 
+    // Accumulate token usage from streaming chunks
+    const usageAccum: TokenUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+
     try {
       // Convert to LangChain message format
       const lcMessages = newMessages.map((m) => {
@@ -637,6 +663,34 @@ export default function ChatPanel({
             return parts;
           });
         }
+
+        // Accumulate token usage from usage_metadata (sent by most providers)
+        const usage = chunk.usage_metadata as
+          | {
+              input_tokens?: number;
+              output_tokens?: number;
+              total_tokens?: number;
+              input_token_details?: {
+                cache_read?: number;
+                cache_creation?: number;
+              };
+            }
+          | undefined;
+        if (usage) {
+          usageAccum.inputTokens += usage.input_tokens ?? 0;
+          usageAccum.outputTokens += usage.output_tokens ?? 0;
+          usageAccum.totalTokens += usage.total_tokens ?? 0;
+          if (usage.input_token_details?.cache_read) {
+            usageAccum.cacheReadTokens =
+              (usageAccum.cacheReadTokens ?? 0) +
+              usage.input_token_details.cache_read;
+          }
+          if (usage.input_token_details?.cache_creation) {
+            usageAccum.cacheCreationTokens =
+              (usageAccum.cacheCreationTokens ?? 0) +
+              usage.input_token_details.cache_creation;
+          }
+        }
       }
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
@@ -648,13 +702,32 @@ export default function ChatPanel({
     } finally {
       setStreaming(false);
       progress.setListener(null);
+      // Attach accumulated token usage to the assistant message
+      if (usageAccum.totalTokens > 0) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === 'assistant') {
+            updated[updated.length - 1] = {
+              ...(last as AssistantMessage),
+              usage: usageAccum,
+            };
+          }
+          return updated;
+        });
+      }
       // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
-        persistMessages(
-          messagesRef.current,
-          providerId,
-          modelId,
-          Array.from(chatFoundNodesRef.current),
+        // Use a short delay to ensure the usage state update is applied
+        setTimeout(
+          () =>
+            persistMessages(
+              messagesRef.current,
+              providerId,
+              modelId,
+              Array.from(chatFoundNodesRef.current),
+            ),
+          0,
         );
       }
     }
@@ -768,6 +841,17 @@ export default function ChatPanel({
   const needsKey = providerId !== 'local' && !apiKey;
   const showSettingsView = showSettings || needsKey;
   const hasPRTab = !!prClient;
+
+  // Compute conversation-level token totals
+  const conversationUsage = useMemo(() => {
+    let total = 0;
+    for (const m of messages) {
+      if (m.role === 'assistant' && (m as AssistantMessage).usage) {
+        total += (m as AssistantMessage).usage!.totalTokens;
+      }
+    }
+    return total > 0 ? total : null;
+  }, [messages]);
 
   return (
     <div
@@ -1238,9 +1322,19 @@ export default function ChatPanel({
                     </>
                   )}
                 </div>
+                {m.role === 'assistant' &&
+                  (m as AssistantMessage).usage &&
+                  !(streaming && i === messages.length - 1) && (
+                    <TokenUsageFooter usage={(m as AssistantMessage).usage!} />
+                  )}
               </div>
             ))}
           </div>
+          {conversationUsage != null && !streaming && (
+            <div className="token-usage-total">
+              Session: {conversationUsage.toLocaleString()} tokens
+            </div>
+          )}
           <div className="chat-input-area">
             {attachError && (
               <div className="image-error-banner">

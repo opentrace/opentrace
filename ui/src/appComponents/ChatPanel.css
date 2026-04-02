@@ -471,6 +471,30 @@
   }
 }
 
+/* Token usage footer per message */
+.token-usage {
+  display: flex;
+  gap: 8px;
+  font-size: 0.65rem;
+  color: var(--muted-foreground, #888);
+  padding: 4px 0 0;
+  opacity: 0.7;
+}
+
+.token-usage span {
+  white-space: nowrap;
+}
+
+/* Conversation-level token total */
+.token-usage-total {
+  font-size: 0.65rem;
+  color: var(--muted-foreground, #888);
+  text-align: center;
+  padding: 4px 12px;
+  opacity: 0.7;
+  border-top: 1px solid var(--border, #333);
+}
+
 @media (max-width: 640px) {
   .templates-grid {
     grid-template-columns: 1fr;
