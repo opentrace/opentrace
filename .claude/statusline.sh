@@ -36,17 +36,18 @@ pr_number=""
 if [ -n "$branch" ] && [ -n "$cwd" ] && command -v gh &>/dev/null; then
   cache_dir="/tmp/statusline-pr-cache"
   mkdir -p "$cache_dir" 2>/dev/null
-  cache_key=$(echo "$cwd:$branch" | md5sum | cut -d' ' -f1)
+  cache_key=$(echo "$cwd:$branch" | (md5sum 2>/dev/null || md5 2>/dev/null || echo "default") | cut -d' ' -f1)
   cache_file="$cache_dir/$cache_key"
   now=$(date +%s)
   if [ -f "$cache_file" ]; then
-    cache_age=$(( now - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0) ))
+    cache_age=$(( now - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0) ))
     if [ "$cache_age" -lt 300 ]; then
       pr_number=$(cat "$cache_file")
+      pr_cached=1
     fi
   fi
-  if [ -z "$pr_number" ] || [ ! -f "$cache_file" ] || [ "$cache_age" -ge 300 ]; then
-    pr_number=$(GIT_DIR="$(GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --git-dir 2>/dev/null)" gh pr view "$branch" --json number -q '.number' 2>/dev/null || echo "")
+  if [ -z "$pr_cached" ]; then
+    pr_number=$(cd "$cwd" && GIT_OPTIONAL_LOCKS=0 gh pr view "$branch" --json number -q '.number' 2>/dev/null || echo "")
     echo "$pr_number" > "$cache_file" 2>/dev/null
   fi
 fi
