@@ -283,6 +283,14 @@ def resolve_derivations(
 
             if kind == "identifier":
                 target_id = _find_variable_in_scopes(name, di.scope_id, registries.variable_registry)
+                # Fallback: imported symbol (e.g., from other import CONSTANT)
+                if target_id is None:
+                    file_imports = registries.import_registry.get(di.file_id, {})
+                    target_file_id = file_imports.get(name)
+                    if target_file_id:
+                        target_sym = registries.file_registry.get(target_file_id, {}).get(name)
+                        if target_sym:
+                            target_id = target_sym.node_id
 
             elif kind == "call":
                 if receiver:
@@ -295,12 +303,20 @@ def resolve_derivations(
                         if target_sym:
                             target_id = target_sym.node_id
                 else:
-                    # Bare call: name() — try file_registry then name_registry
+                    # Bare call: name() — try file_registry, import_registry, then name_registry
                     file_names = registries.file_registry.get(di.file_id, {})
                     target_sym = file_names.get(name)
                     if target_sym:
                         target_id = target_sym.node_id
-                    else:
+                    if target_id is None:
+                        # Import-based: from X import func → func()
+                        file_imports = registries.import_registry.get(di.file_id, {})
+                        target_file_id = file_imports.get(name)
+                        if target_file_id:
+                            target_sym = registries.file_registry.get(target_file_id, {}).get(name)
+                            if target_sym:
+                                target_id = target_sym.node_id
+                    if target_id is None:
                         candidates = registries.name_registry.get(name, [])
                         if len(candidates) == 1:
                             target_id = candidates[0].node_id

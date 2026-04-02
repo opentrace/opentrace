@@ -379,10 +379,12 @@ class TestDerivedFromEdges:
         target_ids = {t[0] for t in targets}
         assert f"{SVC_FILE_ID}::UserService::get_user::rows" in target_ids
 
-    def test_create_user_batch_literal_no_derivation(self):
-        """created = 0 → no DERIVED_FROM edges."""
+    def test_create_user_batch_reassignment_merges(self):
+        """created = 0; created = created + 1 → merges derivation from reassignment."""
         targets = _derived_targets("UserService::create_user_batch", "created")
-        assert len(targets) == 0
+        # Second assignment `created = created + 1` adds a self-referencing derivation
+        target_ids = {t[0] for t in targets}
+        assert f"{SVC_FILE_ID}::UserService::create_user_batch::created" in target_ids
 
     def test_validate_email_list_derivation(self):
         """parts = [address, pattern] → derives from both parameters/locals."""
@@ -417,10 +419,12 @@ class TestDerivedFromEdges:
         target_ids = {t[0] for t in targets}
         assert f"{SVC_FILE_ID}::process_batch::items" in target_ids
 
-    def test_process_batch_chained_call_unresolved(self):
-        """result = transform(parse(data)) → unresolved (neither defined)."""
+    def test_process_batch_chained_call_resolves_args(self):
+        """result = transform(parse(data)) → data resolved from call args."""
         targets = _derived_targets("process_batch", "result")
-        assert len(targets) == 0
+        target_ids = {t[0] for t in targets}
+        # transform/parse are unresolved, but data (passed as arg) is resolved
+        assert f"{SVC_FILE_ID}::process_batch::data" in target_ids
 
 
 # ─── UserService.status: self-field reads ────────────────────────────
