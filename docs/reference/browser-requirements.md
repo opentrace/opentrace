@@ -17,11 +17,14 @@ When both headers are present, the browser sets `window.crossOriginIsolated = tr
 
 Any modern browser supports cross-origin isolation:
 
-| Browser | Minimum Version |
-|---------|----------------|
-| Chrome / Edge | 91+ |
-| Firefox | 119+ (for `credentialless`) |
-| Safari | 15.2+ |
+| Browser | Minimum Version | Notes |
+|---------|----------------|-------|
+| Chrome / Edge | 91+ | Full `credentialless` support |
+| Firefox | 119+ | Requires 119+ for `credentialless` |
+| Safari | 15.2+ | Only supports `require-corp`, not `credentialless` |
+
+!!! note "Safari and `credentialless`"
+    Safari supports cross-origin isolation via `require-corp` but does **not** support the `credentialless` COEP value. OpenTrace uses `credentialless` because it allows cross-origin fetches (e.g. GitHub API) without adding `crossorigin` attributes to every resource. As a result, Safari will not report `crossOriginIsolated = true` and will show the unsupported browser page. This is a known WebKit limitation — see [WebKit Bug 243424](https://bugs.webkit.org/show_bug.cgi?id=243424).
 
 ## Unsupported Environments
 

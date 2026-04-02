@@ -21,7 +21,7 @@ import { OpenTraceApp } from './OpenTraceApp';
 
 const root = document.getElementById('root')!;
 
-if (!crossOriginIsolated) {
+if (!window.crossOriginIsolated) {
   root.innerHTML =
     '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;color:#888;text-align:center;padding:2rem">' +
     '<div>' +
