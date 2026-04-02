@@ -702,41 +702,30 @@ export default function ChatPanel({
     } finally {
       setStreaming(false);
       progress.setListener(null);
-      // Attach accumulated token usage and persist in one step
+      // Attach accumulated token usage to the assistant message
+      const hasUsage =
+        usageAccum.inputTokens > 0 || usageAccum.outputTokens > 0;
+      let updatedMessages = messagesRef.current;
+      if (hasUsage) {
+        const updated = [...updatedMessages];
+        const last = updated[updated.length - 1];
+        if (last?.role === 'assistant') {
+          updated[updated.length - 1] = {
+            ...(last as AssistantMessage),
+            usage: usageAccum,
+          };
+        }
+        updatedMessages = updated;
+        setMessages(updated);
+      }
+      // Persist conversation after each completed turn (skip if user aborted)
       if (!controller.signal.aborted) {
-        setMessages((prev) => {
-          const updated = [...prev];
-          if (usageAccum.totalTokens > 0) {
-            const last = updated[updated.length - 1];
-            if (last?.role === 'assistant') {
-              updated[updated.length - 1] = {
-                ...(last as AssistantMessage),
-                usage: usageAccum,
-              };
-            }
-          }
-          // Persist with the final messages (including usage)
-          persistMessages(
-            updated,
-            providerId,
-            modelId,
-            Array.from(chatFoundNodesRef.current),
-          );
-          return updated;
-        });
-      } else if (usageAccum.totalTokens > 0) {
-        // Still attach usage even if aborted, just don't persist
-        setMessages((prev) => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role === 'assistant') {
-            updated[updated.length - 1] = {
-              ...(last as AssistantMessage),
-              usage: usageAccum,
-            };
-          }
-          return updated;
-        });
+        persistMessages(
+          updatedMessages,
+          providerId,
+          modelId,
+          Array.from(chatFoundNodesRef.current),
+        );
       }
     }
   };
