@@ -192,7 +192,7 @@ function HelpMenuButton({
   return (
     <div className="help-menu-container" ref={ref}>
       <button
-        className={`help-toggle-btn ${showHelp ? 'active' : ''}`}
+        className={`help-toggle-btn ot-submenu-toggle ${showHelp ? 'active' : ''}`}
         onClick={() => setOpen((v) => !v)}
         title="Help"
       >

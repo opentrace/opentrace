@@ -156,13 +156,16 @@ export default function GraphToolbar({
     const target = e.target as HTMLElement;
     // Walk up to find if a <button> or <a> was clicked (but not the search input)
     const clickable = target.closest('button, a');
+    if (!clickable) return;
+    // Don't close the menu for search controls or sub-menu toggle buttons
     if (
-      clickable &&
-      !clickable.classList.contains('ot-clear-search') &&
-      !clickable.classList.contains('ot-search-btn')
+      clickable.classList.contains('ot-clear-search') ||
+      clickable.classList.contains('ot-search-btn') ||
+      clickable.classList.contains('ot-submenu-toggle')
     ) {
-      setMenuOpen(false);
+      return;
     }
+    setMenuOpen(false);
   }, []);
 
   const visibleTabs = mobilePanelTabs?.filter((t) => t.visible !== false);

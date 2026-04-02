@@ -24,7 +24,7 @@ export default function ThemeSelector() {
   return (
     <div className="theme-selector-wrapper" ref={dropdownRef}>
       <button
-        className={`theme-toggle-btn ${open ? 'active' : ''}`}
+        className={`theme-toggle-btn ot-submenu-toggle ${open ? 'active' : ''}`}
         onClick={() => setOpen(!open)}
         title="Select theme"
         aria-expanded={open}
