@@ -246,8 +246,9 @@
 }
 
 .graph-control-btn--active {
-  background: rgba(99, 102, 241, 0.3);
-  border-color: rgba(99, 102, 241, 0.6);
+  background: color-mix(in oklch, var(--primary) 20%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+  color: var(--primary);
 }
 
 .panel-header {
