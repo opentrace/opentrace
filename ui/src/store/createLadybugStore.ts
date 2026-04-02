@@ -21,19 +21,9 @@ import { LadybugGraphStore } from './ladybugStore';
 // two independent in-memory databases), so imports go to one and reads to the other.
 let singletonStore: LadybugGraphStore | null = null;
 
-/**
- * Returns a singleton LadybugGraphStore backed by the in-browser WASM engine.
- *
- * Requires Cross-Origin Isolation (COOP/COEP headers).
- */
+/** Returns a singleton LadybugGraphStore backed by the in-browser WASM engine. */
 export function createLadybugStore(): LadybugGraphStore {
   if (!singletonStore) {
-    if (!crossOriginIsolated) {
-      throw new Error(
-        'Cross-Origin Isolation (COOP/COEP headers) is required ' +
-          'for in-browser LadybugDB. Serve with appropriate headers.',
-      );
-    }
     singletonStore = new LadybugGraphStore();
   }
   return singletonStore;
