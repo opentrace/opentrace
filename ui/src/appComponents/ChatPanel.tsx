@@ -1277,17 +1277,6 @@ export default function ChatPanel({
                 ))}
               </div>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                if (e.target.files) addImages(Array.from(e.target.files));
-                e.target.value = '';
-              }}
-            />
             <textarea
               ref={textareaRef}
               rows={1}
