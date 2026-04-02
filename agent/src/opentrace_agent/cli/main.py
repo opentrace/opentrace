@@ -642,6 +642,151 @@ def refresh() -> None:
         click.echo("Token refreshed.")
 
 
+# ---------------------------------------------------------------------------
+# query command
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+@click.argument("query_string")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+@click.option(
+    "-t",
+    "--type",
+    "query_type",
+    type=click.Choice(["cypher", "fts"]),
+    default="cypher",
+    show_default=True,
+    help="Query language: cypher (default) or fts (full-text search).",
+)
+@click.option(
+    "--limit",
+    default=100,
+    show_default=True,
+    help="Maximum rows to return (FTS only).",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["table", "json", "jsonl"]),
+    default="table",
+    show_default=True,
+    help="Output format.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def query(
+    query_string: str,
+    db_path: str | None,
+    query_type: str,
+    limit: int,
+    output_format: str,
+    verbose: bool,
+) -> None:
+    """Run a Cypher or full-text search query against the graph database.
+
+    \b
+    Examples:
+      opentraceai query "MATCH (n:Node) RETURN n.type, count(n)"
+      opentraceai query "MATCH (n:Node {type: 'Function'}) RETURN n.name LIMIT 10"
+      opentraceai query "parse" --type fts
+      opentraceai query "MATCH (a)-[r:RELATES]->(b) RETURN a.name, r.type, b.name LIMIT 5"
+      opentraceai query "GraphStore" --type fts --output json
+    """
+    import json as json_mod
+    import time
+
+    _configure_logging(verbose)
+
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        t0 = time.monotonic()
+
+        if query_type == "fts":
+            rows, columns = _run_fts_query(store, query_string, limit)
+        else:
+            rows, columns = _run_cypher_query(store, query_string)
+
+        elapsed = time.monotonic() - t0
+
+        if output_format == "json":
+            data = [dict(zip(columns, row)) for row in rows]
+            click.echo(json_mod.dumps(data, indent=2, default=str))
+        elif output_format == "jsonl":
+            for row in rows:
+                click.echo(json_mod.dumps(dict(zip(columns, row)), default=str))
+        else:
+            _print_table(columns, rows)
+
+        click.echo(f"\n{len(rows)} row(s) in {elapsed:.3f}s", err=True)
+    finally:
+        store.close()
+
+
+def _run_cypher_query(
+    store: "GraphStore",  # noqa: F821
+    query_string: str,
+) -> tuple[list[list], list[str]]:
+    """Execute a Cypher query and return (rows, column_names)."""
+    result = store._conn.execute(query_string)
+    columns = result.get_column_names()
+    rows: list[list] = []
+    while result.has_next():
+        rows.append(result.get_next())
+    return rows, columns
+
+
+def _run_fts_query(
+    store: "GraphStore",  # noqa: F821
+    query_string: str,
+    limit: int,
+) -> tuple[list[list], list[str]]:
+    """Run an FTS query and return matching nodes with scores."""
+    result = store._conn.execute(
+        "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $limit) RETURN node.id, node.name, node.type, score",
+        parameters={"query": query_string, "limit": limit},
+    )
+    columns = ["id", "name", "type", "score"]
+    rows: list[list] = []
+    while result.has_next():
+        rows.append(result.get_next())
+    return rows, columns
+
+
+def _print_table(columns: list[str], rows: list[list]) -> None:
+    """Print rows as an aligned text table."""
+    if not rows:
+        click.echo("(no results)")
+        return
+
+    # Stringify all values
+    str_rows = [[str(v) for v in row] for row in rows]
+    widths = [len(c) for c in columns]
+    for row in str_rows:
+        for i, val in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(val))
+
+    # Header
+    header = "  ".join(c.ljust(widths[i]) for i, c in enumerate(columns))
+    click.echo(header)
+    click.echo("  ".join("─" * w for w in widths))
+
+    # Rows
+    for row in str_rows:
+        line = "  ".join((row[i] if i < len(row) else "").ljust(widths[i]) for i in range(len(columns)))
+        click.echo(line)
+
+
 def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
