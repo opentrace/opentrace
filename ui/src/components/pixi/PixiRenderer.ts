@@ -313,14 +313,27 @@ export class PixiRenderer {
     this.height = height;
 
     const app = new Application();
-    await app.init({
-      width,
-      height,
-      backgroundColor: 0x0d1117,
-      antialias: true,
-      resolution: window.devicePixelRatio || 1,
-      autoDensity: true,
-    });
+    try {
+      await app.init({
+        width,
+        height,
+        backgroundColor: 0x0d1117,
+        antialias: true,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+      });
+    } catch (err) {
+      if (
+        err instanceof TypeError &&
+        /dynamically imported module|importing a module script/i.test(
+          err.message,
+        )
+      ) {
+        window.location.reload();
+        return;
+      }
+      throw err;
+    }
 
     // Guard: if destroy() was called while init was pending, don't proceed
     if (this.destroyed) {
