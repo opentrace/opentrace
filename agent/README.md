@@ -29,12 +29,12 @@ Requires Python 3.12+.
 opentraceai index /path/to/repo
 ```
 
-This parses every supported file, extracts symbols and relationships, and writes the graph to `./otindex.db`.
+This parses every supported file, extracts symbols and relationships, and writes the graph to `.opentrace/index.db`.
 
 ```
-$ opentraceai index ~/projects/myapp
-Opening LadybugDB at ./otindex.db ...
-Indexing /home/user/projects/myapp ...
+$ opentraceai index /path/to/repo
+Opening LadybugDB at /path/to/repo/.opentrace/index.db ...
+Indexing /path/to/repo ...
   1284 nodes, 3421 relationships, 187 files, 95 classes, 412 functions
 Done in 4.2s.
 ```
@@ -44,7 +44,7 @@ Done in 4.2s.
 Start a stdio MCP server against the indexed database:
 
 ```bash
-opentraceai mcp --db ./otindex.db
+opentraceai mcp --db ./opentrace/index.db
 ```
 
 This exposes graph query tools over stdin/stdout for any MCP-compatible client.
@@ -59,7 +59,7 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
     "opentrace": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["opentraceai", "mcp", "--db", "./otindex.db"]
+      "args": ["opentraceai", "mcp", "--db", "./opentrace/index.db"]
     }
   }
 }
@@ -92,7 +92,7 @@ opentraceai index [PATH] [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `PATH` | `.` | Directory to index |
-| `--db` | `./otindex.db` | Database path |
+| `--db` | `./opentrace/index.db` | Database path |
 | `--repo-id` | directory name | Repository identifier |
 | `--batch-size` | 200 | Items per write batch |
 | `-v, --verbose` | off | Debug logging |
@@ -103,7 +103,7 @@ opentraceai mcp [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--db` | `./otindex.db` | Database path |
+| `--db` | `./opentrace/index.db` | Database path |
 | `-v, --verbose` | off | Debug logging |
 
 ## Part of OpenTrace

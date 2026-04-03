@@ -4,18 +4,60 @@ Gives Claude Code access to an indexed codebase knowledge graph via MCP.
 
 ## Setup
 
-### 1. Index a codebase
+### 1. Index your codebase
+
+From your project directory:
 
 ```bash
-uvx opentraceai index /path/to/repo
+uvx opentraceai index
 ```
 
-This creates an `otindex.db` database in the current directory.
+This creates a `.opentrace/index.db` knowledge graph in your project root. You can also pass a path explicitly: `uvx opentraceai index /path/to/repo`.
 
 ### 2. Install the plugin
 
-The `.mcp.json` is configured to run `uvx opentraceai mcp --db ./otindex.db`.
-Update the `--db` path to point at your indexed database.
+#### Claude Code
+
+Add the OpenTrace marketplace and install the plugin:
+
+```bash
+claude plugin marketplace add https://github.com/opentrace/opentrace
+claude plugin install opentrace-oss@opentrace-oss
+```
+
+#### Gemini
+
+```bash
+gemini mcp add --scope project opentrace-oss uvx opentraceai mcp
+```
+
+#### GitHub Copilot (VS Code)
+
+Add to `.vscode/mcp.json` in your project root (create it if it doesn't exist):
+
+```json
+{
+  "servers": {
+    "opentrace-oss": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["opentraceai", "mcp"]
+    }
+  }
+}
+```
+
+The MCP server auto-discovers `.opentrace/index.db` by walking up from the current directory.
+
+#### Other MCP clients (local LLMs, custom tooling)
+
+Configure your MCP client to run the stdio server directly:
+
+```bash
+uvx opentraceai mcp --db /path/to/repo/.opentrace/index.db
+```
+
+If your client launches the server from the project directory, the `--db` flag can be omitted and the database will be auto-discovered.
 
 ## Dev mode
 
@@ -32,7 +74,7 @@ To run against a local checkout of the agent (e.g. when developing new MCP tools
         "run",
         "--directory", "/path/to/opentrace/agent",
         "opentrace", "mcp",
-        "--db", "/path/to/otindex.db"
+        "--db", "/path/to/repo/.opentrace/index.db"
       ],
       "description": "OpenTrace knowledge graph tools (dev)."
     }

@@ -13,7 +13,28 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 **[Docs](https://opentrace.github.io/opentrace/reference/chat-providers/)** - for help and support
 
-## Quick Start
+## Quick Start MCP in Local Project
+
+Chat with AI about your local project, using the knowledge graph, integrated with your local tooling.
+
+~~~bash
+cd $PROJECT_DIR
+uvx opentraceai index .
+
+# Claude users: install plugin
+claude plugin marketplace add https://github.com/opentrace/opentrace
+claude plugin install opentrace-oss@opentrace-oss
+
+# Gemini user: configure MCP
+# - change scope from 'project' to 'user' to add it for all projects
+gemini mcp add --scope project opentraceai uvx opentraceai mcp
+~~~
+
+The next time claude or gemini is started, it will have opentrace configured.
+
+See [agent/README.md](agent/README.md) for more information on using the `opentraceai` agent, and [claude-code-plugin/README.md](claude-code-plugin/README.md) for more on configuring it as an MCP plugin.
+
+## Quick Start the Web UI
 
 ```bash
 git clone https://github.com/opentrace/opentrace.git
@@ -46,7 +67,7 @@ OpenTrace indexes source code directly in your browser — no server required. P
 │                                  │  WASM parsers   │ │
 │                                  └─────────────────┘ │
 │                                  ┌─────────────────┐ │
-│                                  │  LadybugDB WASM    │ │
+│                                  │  LadybugDB WASM │ │
 │                                  │  graph store    │ │
 │                                  └─────────────────┘ │
 └──────────────────────────────────────────────────────┘
