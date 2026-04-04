@@ -44,7 +44,7 @@ Done in 4.2s.
 Start a stdio MCP server against the indexed database:
 
 ```bash
-opentraceai mcp --db ./opentrace/index.db
+opentraceai mcp --db .opentrace/index.db
 ```
 
 This exposes graph query tools over stdin/stdout for any MCP-compatible client.
@@ -59,7 +59,7 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
     "opentrace": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["opentraceai", "mcp", "--db", "./opentrace/index.db"]
+      "args": ["opentraceai", "mcp", "--db", ".opentrace/index.db"]
     }
   }
 }
@@ -92,7 +92,7 @@ opentraceai index [PATH] [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `PATH` | `.` | Directory to index |
-| `--db` | `./opentrace/index.db` | Database path |
+| `--db` | `.opentrace/index.db` | Database path |
 | `--repo-id` | directory name | Repository identifier |
 | `--batch-size` | 200 | Items per write batch |
 | `-v, --verbose` | off | Debug logging |
@@ -103,7 +103,7 @@ opentraceai mcp [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--db` | `./opentrace/index.db` | Database path |
+| `--db` | `.opentrace/index.db` | Database path |
 | `-v, --verbose` | off | Debug logging |
 
 ## Part of OpenTrace

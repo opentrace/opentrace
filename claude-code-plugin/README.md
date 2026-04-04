@@ -28,7 +28,7 @@ claude plugin install opentrace-oss@opentrace-oss
 #### Gemini
 
 ```bash
-gemini mcp add --scope project opentrace-oss uvx opentraceai mcp
+gemini mcp add --scope project opentraceai uvx opentraceai mcp
 ```
 
 #### GitHub Copilot (VS Code)
