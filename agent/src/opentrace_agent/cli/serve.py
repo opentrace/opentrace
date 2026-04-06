@@ -164,6 +164,10 @@ def create_app(store: GraphStore) -> Starlette:
             return _error(404, str(e))
         return JSONResponse(results)
 
+    async def get_metadata(request: Request) -> JSONResponse:
+        """GET /api/metadata"""
+        return JSONResponse(store.get_metadata())
+
     async def health(request: Request) -> JSONResponse:
         """GET /api/health"""
         return JSONResponse({"status": "ok"})
@@ -171,6 +175,7 @@ def create_app(store: GraphStore) -> Starlette:
     routes = [
         Route("/api/health", health, methods=["GET"]),
         Route("/api/stats", get_stats, methods=["GET"]),
+        Route("/api/metadata", get_metadata, methods=["GET"]),
         Route("/api/graph", fetch_graph, methods=["GET"]),
         Route("/api/nodes/search", search_nodes, methods=["GET"]),
         Route("/api/nodes/list", list_nodes, methods=["GET"]),

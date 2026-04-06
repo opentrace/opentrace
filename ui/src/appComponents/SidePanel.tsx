@@ -25,6 +25,7 @@ import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import HistoryPanel from './HistoryPanel';
+import IndexMetadataPanel from './IndexMetadataPanel';
 import type { HistoryEntry } from './historyTypes';
 import './SidePanel.css';
 
@@ -214,6 +215,7 @@ export default function SidePanel({
           {filterSections.map((section) => (
             <FilterPanel key={section.title} {...section} />
           ))}
+          <IndexMetadataPanel graphVersion={graphVersion} />
         </div>
       </div>
       <div

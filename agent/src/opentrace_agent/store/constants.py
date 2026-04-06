@@ -18,11 +18,15 @@ Derived from the proto-generated schema (code_graph.proto) plus
 legacy runtime types (Service, Span, etc.) for backward compat.
 """
 
+from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
 from opentrace_agent.gen.schema_gen import NODE_TYPES as _PROTO_NODE_TYPES
+
+# Internal node types — valid in the DB but excluded from graph queries, stats, and search.
+INTERNAL_NODE_TYPES = {NODE_TYPE_INDEX_METADATA}
 
 # Proto-defined code graph types + legacy runtime graph types
 VALID_NODE_TYPES = {
-    *_PROTO_NODE_TYPES,
+    *(t for t in _PROTO_NODE_TYPES if t not in INTERNAL_NODE_TYPES),
     # Legacy aliases (accepted on input, not emitted)
     "Repo",
     "Package",

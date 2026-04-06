@@ -79,6 +79,23 @@ export interface SourceFile {
   binary?: boolean;
 }
 
+export interface IndexMetadata {
+  indexedAt?: string;
+  durationSeconds?: number;
+  repoId?: string;
+  repoPath?: string;
+  sourceUri?: string;
+  commitSha?: string;
+  commitMessage?: string;
+  branch?: string;
+  opentraceaiVersion?: string;
+  nodesCreated?: number;
+  relationshipsCreated?: number;
+  filesProcessed?: number;
+  classesExtracted?: number;
+  functionsExtracted?: number;
+}
+
 export interface GraphStore {
   /** True if any data has been imported (synchronous, no DB call). */
   hasData(): boolean;
@@ -86,6 +103,7 @@ export interface GraphStore {
   ensureReady?(): Promise<void>;
   fetchGraph(query?: string, hops?: number): Promise<GraphData>;
   fetchStats(): Promise<GraphStats>;
+  fetchMetadata(): Promise<IndexMetadata[]>;
   clearGraph(): Promise<void>;
   setLimits?(maxNodes: number, maxEdges: number): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
@@ -98,8 +116,12 @@ export interface GraphStore {
     data: Uint8Array,
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse>;
-  /** Export the database as a Parquet zip archive. */
-  exportDatabase?(options?: { includeSource?: boolean }): Promise<Uint8Array>;
+  /** Export the database as a Parquet zip archive.
+   *  When repoId is provided, only nodes belonging to that repo are exported. */
+  exportDatabase?(options?: {
+    includeSource?: boolean;
+    repoId?: string;
+  }): Promise<Uint8Array>;
   /** Set an embedder instance for query-time vector search. */
   setEmbedder?(embedder: unknown): void;
   storeSource(files: SourceFile[]): void;

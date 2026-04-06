@@ -199,6 +199,7 @@ export class BrowserJobService implements JobService {
     let storeStage: StoreStage | undefined;
 
     const run = async () => {
+      const pipelineStartTime = performance.now();
       debug.start();
 
       // 1. Initialize parsers + DB in parallel
@@ -649,6 +650,8 @@ export class BrowserJobService implements JobService {
 
             case 'pipeline_done': {
               const cacheStats = fileCacheStage.stats();
+              const durationSeconds =
+                Math.round((performance.now() - pipelineStartTime) / 10) / 100;
               debug.log(
                 'pipeline',
                 `done — persisted: ${persistedNodes} nodes, ${persistedRels} rels`,
@@ -657,6 +660,35 @@ export class BrowserJobService implements JobService {
                 'pipeline',
                 `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
               );
+
+              // Persist index metadata
+              await this.store.importBatch({
+                nodes: [
+                  {
+                    id: `_meta:index:${repoId}`,
+                    type: 'IndexMetadata',
+                    name: 'index',
+                    properties: {
+                      indexedAt: new Date().toISOString(),
+                      durationSeconds,
+                      repoId: repoId,
+                      repoPath: repoTree.url ?? repoId,
+                      sourceUri: repoTree.url ?? '',
+                      commitSha: repoTree.sha ?? '',
+                      commitMessage: repoTree.commitMessage ?? '',
+                      branch: repoTree.branch ?? repoTree.ref ?? '',
+                      nodesCreated: persistedNodes,
+                      relationshipsCreated: persistedRels,
+                      filesProcessed:
+                        scanResult?.parseableFiles?.length ??
+                        scanResult?.fileNodes?.length ??
+                        0,
+                    },
+                  },
+                ],
+                relationships: [],
+              });
+              await this.store.flush();
 
               // Run embedding — model was pre-loaded during pipeline
               if (embedStage && embedStage.total > 0) {

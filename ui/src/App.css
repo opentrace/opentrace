@@ -1086,6 +1086,29 @@
   font-size: 0.8rem;
 }
 
+.export-options-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.export-options-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.export-options-select {
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.85rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 .export-options-actions {
   display: flex;
   gap: 10px;
@@ -1093,6 +1116,11 @@
 
 .export-options-actions .btn-cta {
   flex: 1;
+}
+
+.export-options-actions .btn-cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Theme selector */

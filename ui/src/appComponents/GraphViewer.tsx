@@ -1888,11 +1888,14 @@ const GraphViewer = memo(
           {showExportModal && store.exportDatabase && (
             <ExportModal
               onCancel={() => setShowExportModal(false)}
-              onExport={async ({ includeSource }) => {
+              onExport={async ({ includeSource, repoId }) => {
                 setShowExportModal(false);
                 setExporting(true);
                 try {
-                  const data = await store.exportDatabase!({ includeSource });
+                  const data = await store.exportDatabase!({
+                    includeSource,
+                    repoId,
+                  });
                   const buf = new Uint8Array(data).buffer as ArrayBuffer;
                   const blob = new Blob([buf], {
                     type: 'application/octet-stream',
@@ -1900,7 +1903,10 @@ const GraphViewer = memo(
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  a.download = 'opentrace.parquet.zip';
+                  const safeName = repoId
+                    ? repoId.replace(/\//g, '-')
+                    : 'opentrace';
+                  a.download = `${safeName}.parquet.zip`;
                   a.click();
                   URL.revokeObjectURL(url);
                 } finally {

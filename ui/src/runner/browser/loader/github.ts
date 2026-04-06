@@ -78,13 +78,13 @@ async function fetchViaZipball(
     fetchHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const zipBuffer = await fetchResolvedArchive(
+  const { data, gitMeta } = await fetchResolvedArchive(
     resolveUrl,
     fetchHeaders,
     signal,
     onProgress,
   );
-  const entries = unzipSync(zipBuffer);
+  const entries = unzipSync(data);
 
   const files = extractFilesFromZip(entries, onProgress);
 
@@ -94,6 +94,9 @@ async function fetchViaZipball(
     ref,
     url: `https://github.com/${owner}/${repo}`,
     provider: 'github',
+    sha: gitMeta.sha,
+    branch: gitMeta.branch,
+    commitMessage: gitMeta.commitMessage?.split('\n', 1)[0],
     files,
   };
 }

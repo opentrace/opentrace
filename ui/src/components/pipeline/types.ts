@@ -79,6 +79,12 @@ export interface RepoTree {
   ref: string;
   url?: string;
   provider?: string;
+  /** Resolved commit SHA from the archive proxy. */
+  sha?: string;
+  /** Branch name from the archive proxy. */
+  branch?: string;
+  /** First line of the commit message from the archive proxy. */
+  commitMessage?: string;
   files: RepoFile[];
 }
 

@@ -120,6 +120,22 @@ def test_import_empty_zip(tmp_path):
     s.close()
 
 
+def test_roundtrip_preserves_metadata(store, tmp_path):
+    """Index metadata should survive export/import."""
+    store.save_metadata({"repoId": "test/repo", "commitSha": "abc123", "indexedAt": "2026-01-01"})
+    data = export_database(store)
+
+    db_path2 = str(tmp_path / "meta_imported.db")
+    store2 = GraphStore(db_path2)
+    import_database(store2, data)
+
+    entries = store2.get_metadata()
+    assert len(entries) == 1
+    assert entries[0]["repoId"] == "test/repo"
+    assert entries[0]["commitSha"] == "abc123"
+    store2.close()
+
+
 def test_import_progress_callback(store, tmp_path):
     data = export_database(store)
     messages: list[str] = []

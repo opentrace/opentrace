@@ -132,6 +132,14 @@ export class ServerGraphStore implements GraphStore {
     return stats;
   }
 
+  async fetchMetadata(): Promise<import('./types').IndexMetadata[]> {
+    try {
+      return await this.get<import('./types').IndexMetadata[]>('/api/metadata');
+    } catch {
+      return [];
+    }
+  }
+
   async searchNodes(
     query: string,
     limit = 50,

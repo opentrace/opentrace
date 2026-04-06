@@ -193,12 +193,20 @@ def index(
 
     inp = PipelineInput(path=str(root), repo_id=repo_id)
 
+    last_result = None
     for event in run_pipeline(inp, store=store):
         _print_event(event, verbose)
+        if getattr(event, "result", None) is not None:
+            last_result = event.result
+
+    elapsed = time.monotonic() - t0
+
+    # Save index metadata.
+    metadata = _collect_metadata(root, repo_id, elapsed, last_result)
+    graph_store.save_metadata(metadata)
 
     store.close()
 
-    elapsed = time.monotonic() - t0
     click.echo(f"Done in {elapsed:.1f}s.")
 
 
@@ -233,6 +241,65 @@ def _print_event(event: object, verbose: bool) -> None:
             click.echo(f"    {err}", err=True)
 
 
+def _collect_metadata(root: Path, repo_id: str | None, elapsed: float, result: object | None) -> dict[str, object]:
+    """Gather index metadata from the repo and pipeline result.
+
+    Keys use camelCase column names matching the proto-generated IndexMetadata
+    schema so both Python and TypeScript consumers see the same shape.
+    """
+    from datetime import datetime, timezone
+
+    meta: dict[str, object] = {
+        "indexedAt": datetime.now(timezone.utc).isoformat(),
+        "durationSeconds": round(elapsed, 2),
+        "repoId": repo_id,
+        "repoPath": str(root),
+        "opentraceaiVersion": _get_version(),
+    }
+
+    # Git info — best-effort, non-fatal.
+    try:
+        import git
+
+        repo = git.Repo(root, search_parent_directories=True)
+        head = repo.head.commit
+        meta["commitSha"] = head.hexsha
+        meta["commitMessage"] = head.message.strip().split("\n", 1)[0]
+        meta["branch"] = repo.active_branch.name if not repo.head.is_detached else None
+        # Remote URL — prefer 'origin', fall back to first remote.
+        if repo.remotes:
+            remote = repo.remotes["origin"] if "origin" in repo.remotes else repo.remotes[0]
+            meta["sourceUri"] = remote.url
+    except Exception:
+        pass
+
+    # Pipeline result stats.
+    if result is not None:
+        _ATTR_MAP = {
+            "nodes_created": "nodesCreated",
+            "relationships_created": "relationshipsCreated",
+            "files_processed": "filesProcessed",
+            "classes_extracted": "classesExtracted",
+            "functions_extracted": "functionsExtracted",
+        }
+        for attr, key in _ATTR_MAP.items():
+            val = getattr(result, attr, None)
+            if val is not None:
+                meta[key] = val
+
+    return meta
+
+
+def _get_version() -> str:
+    """Return the installed opentraceai version."""
+    try:
+        from importlib.metadata import version
+
+        return version("opentraceai")
+    except Exception:
+        return "unknown"
+
+
 @app.command()
 @click.option(
     "--db",
@@ -259,8 +326,12 @@ def stats(db_path: str | None, output_format: str) -> None:
     store = GraphStore(resolved_db, read_only=True)
     try:
         data = store.get_stats()
+        metadata = store.get_metadata()
     finally:
         store.close()
+
+    if metadata:
+        data["metadata"] = metadata
 
     if output_format == "json":
         click.echo(json.dumps(data))
@@ -270,6 +341,26 @@ def stats(db_path: str | None, output_format: str) -> None:
     nodes_by_type = data.get("nodes_by_type", {})
     parts = [f"{count} {ntype}" for ntype, count in sorted(nodes_by_type.items(), key=lambda x: -x[1])]
     click.echo(f"{data['total_nodes']} nodes, {data['total_edges']} edges: {', '.join(parts)}")
+
+    for entry in metadata:
+        repo_id = entry.get("repoId", "")
+        commit_sha = entry.get("commitSha", "")
+        commit = commit_sha[:8] if commit_sha else ""
+        branch = entry.get("branch", "")
+        indexed_at = entry.get("indexedAt", "")
+        duration = entry.get("durationSeconds", "")
+        ref = f"{branch}@{commit}" if branch and commit else commit or branch
+        parts = []
+        if repo_id:
+            parts.append(repo_id)
+        if ref:
+            parts.append(ref)
+        if indexed_at:
+            parts.append(indexed_at)
+        if duration:
+            parts.append(f"{duration}s")
+        if parts:
+            click.echo(f"  Indexed: {', '.join(parts)}")
 
 
 @app.command("mcp")

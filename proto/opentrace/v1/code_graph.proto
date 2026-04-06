@@ -129,6 +129,27 @@ message VariableNode {
   string docs            = 9;
 }
 
+// IndexMetadataNode stores a single record of index provenance per database.
+// Written by the CLI after each `opentraceai index` run.
+message IndexMetadataNode {
+  string id                  = 1;
+  string name                = 2;
+  string indexed_at          = 3 [(ladybug.column) = "indexedAt"];           // ISO-8601 UTC timestamp
+  double duration_seconds    = 4 [(ladybug.column) = "durationSeconds"];
+  string repo_id             = 5 [(ladybug.column) = "repoId"];
+  string repo_path           = 6 [(ladybug.column) = "repoPath"];
+  string commit_sha          = 7 [(ladybug.column) = "commitSha"];
+  string commit_message      = 8 [(ladybug.column) = "commitMessage"];
+  string branch              = 9;
+  string source_uri          = 10 [(ladybug.column) = "sourceUri"];          // git remote URL
+  string opentraceai_version = 11 [(ladybug.column) = "opentraceaiVersion"];
+  int32  nodes_created       = 12 [(ladybug.column) = "nodesCreated"];
+  int32  relationships_created = 13 [(ladybug.column) = "relationshipsCreated"];
+  int32  files_processed     = 14 [(ladybug.column) = "filesProcessed"];
+  int32  classes_extracted   = 15 [(ladybug.column) = "classesExtracted"];
+  int32  functions_extracted = 16 [(ladybug.column) = "functionsExtracted"];
+}
+
 // ---- Relationship types --------------------------------------------------
 
 // DefinesRel represents a structural containment relationship:

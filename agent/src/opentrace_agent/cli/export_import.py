@@ -56,8 +56,14 @@ def export_database(store: GraphStore) -> bytes:
     all_node_ids: set[str] = set()
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Group nodes by type and write one parquet file per type
-        for node_type, count in stats["nodes_by_type"].items():
+        # Group nodes by type and write one parquet file per type.
+        # Include IndexMetadata (excluded from stats) so it survives export/import.
+        type_counts = dict(stats["nodes_by_type"])
+        metadata = store.get_metadata()
+        if metadata:
+            type_counts["IndexMetadata"] = len(metadata)
+
+        for node_type, count in type_counts.items():
             nodes = store.list_nodes(node_type, limit=count + 1000)
             if not nodes:
                 continue

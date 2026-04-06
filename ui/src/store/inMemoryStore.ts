@@ -266,6 +266,16 @@ export class InMemoryGraphStore implements GraphStore {
     return result;
   }
 
+  async fetchMetadata(): Promise<import('./types').IndexMetadata[]> {
+    const entries: import('./types').IndexMetadata[] = [];
+    for (const node of this.nodes.values()) {
+      if (node.type === 'IndexMetadata' && node.properties) {
+        entries.push(node.properties as import('./types').IndexMetadata);
+      }
+    }
+    return entries;
+  }
+
   async clearGraph(): Promise<void> {
     this.nodes.clear();
     this.rels.clear();
