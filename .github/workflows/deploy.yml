@@ -37,3 +37,35 @@ jobs:
           exit 1
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
+
+  post-deploy-check:
+    name: Post-Deploy Health Check
+    needs: trigger-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check /api/health
+        run: |
+          for i in $(seq 1 10); do
+            STATUS=$(curl -sf "${{ vars.PRODUCTION_URL }}/api/health" \
+              | jq -r '.status' 2>/dev/null || true)
+            if [ "$STATUS" = "ok" ]; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i/10 failed, retrying in $((i * 5))s..."
+            sleep $((i * 5))
+          done
+          echo "::error::Health check failed after 10 attempts"
+          exit 1
+
+      - name: Check /api/stats returns valid JSON
+        run: |
+          curl -sf "${{ vars.PRODUCTION_URL }}/api/stats" | jq . > /dev/null
+          echo "Stats endpoint returned valid JSON"
+
+      - name: Check UI serves HTML
+        run: |
+          CONTENT_TYPE=$(curl -sI "${{ vars.PRODUCTION_URL }}" | grep -i content-type | head -1)
+          echo "$CONTENT_TYPE"
+          echo "$CONTENT_TYPE" | grep -qi "text/html" \
+            || { echo "::error::UI did not return HTML"; exit 1; }

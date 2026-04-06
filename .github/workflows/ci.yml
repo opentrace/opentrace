@@ -86,3 +86,7 @@ jobs:
       - name: Build
         working-directory: ui
         run: npm run build
+
+      - name: Validate build output
+        working-directory: ui
+        run: node scripts/validate-build.mjs
