@@ -1377,7 +1377,21 @@ export class LadybugGraphStore implements GraphStore {
   async fetchMetadata(): Promise<import('./types').IndexMetadata[]> {
     try {
       const rows = await this.query(
-        `MATCH (n:IndexMetadata) RETURN n.indexedAt, n.durationSeconds, n.repoId, n.repoPath, n.sourceUri, n.commitSha, n.commitMessage, n.branch, n.opentraceaiVersion, n.nodesCreated, n.relationshipsCreated, n.filesProcessed, n.classesExtracted, n.functionsExtracted`,
+        `MATCH (n:IndexMetadata) RETURN ` +
+          `n.indexedAt AS indexedAt, ` +
+          `n.durationSeconds AS durationSeconds, ` +
+          `n.repoId AS repoId, ` +
+          `n.repoPath AS repoPath, ` +
+          `n.sourceUri AS sourceUri, ` +
+          `n.commitSha AS commitSha, ` +
+          `n.commitMessage AS commitMessage, ` +
+          `n.branch AS branch, ` +
+          `n.opentraceaiVersion AS opentraceaiVersion, ` +
+          `n.nodesCreated AS nodesCreated, ` +
+          `n.relationshipsCreated AS relationshipsCreated, ` +
+          `n.filesProcessed AS filesProcessed, ` +
+          `n.classesExtracted AS classesExtracted, ` +
+          `n.functionsExtracted AS functionsExtracted`,
       );
       const str = (v: unknown): string | undefined =>
         v != null && v !== '' ? String(v) : undefined;
@@ -1385,20 +1399,20 @@ export class LadybugGraphStore implements GraphStore {
         v != null ? Number(v) : undefined;
 
       return (rows as Record<string, unknown>[]).map((r) => ({
-        indexedAt: str(r['n.indexedAt']),
-        durationSeconds: num(r['n.durationSeconds']),
-        repoId: str(r['n.repoId']),
-        repoPath: str(r['n.repoPath']),
-        sourceUri: str(r['n.sourceUri']),
-        commitSha: str(r['n.commitSha']),
-        commitMessage: str(r['n.commitMessage']),
-        branch: str(r['n.branch']),
-        opentraceaiVersion: str(r['n.opentraceaiVersion']),
-        nodesCreated: num(r['n.nodesCreated']),
-        relationshipsCreated: num(r['n.relationshipsCreated']),
-        filesProcessed: num(r['n.filesProcessed']),
-        classesExtracted: num(r['n.classesExtracted']),
-        functionsExtracted: num(r['n.functionsExtracted']),
+        indexedAt: str(r.indexedAt),
+        durationSeconds: num(r.durationSeconds),
+        repoId: str(r.repoId),
+        repoPath: str(r.repoPath),
+        sourceUri: str(r.sourceUri),
+        commitSha: str(r.commitSha),
+        commitMessage: str(r.commitMessage),
+        branch: str(r.branch),
+        opentraceaiVersion: str(r.opentraceaiVersion),
+        nodesCreated: num(r.nodesCreated),
+        relationshipsCreated: num(r.relationshipsCreated),
+        filesProcessed: num(r.filesProcessed),
+        classesExtracted: num(r.classesExtracted),
+        functionsExtracted: num(r.functionsExtracted),
       }));
     } catch {
       return [];

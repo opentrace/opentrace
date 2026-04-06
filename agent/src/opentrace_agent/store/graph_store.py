@@ -596,10 +596,8 @@ class GraphStore:
         entries: list[dict[str, Any]] = []
         while result.has_next():
             raw = result.get_next()[0]
-            if raw:
-                data = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(data, dict):
-                    entries.append(data)
+            if props := _parse_props(raw):
+                entries.append(props)
         return entries
 
     # -- lifecycle -------------------------------------------------------
