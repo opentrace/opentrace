@@ -57,6 +57,7 @@ type Connection = InstanceType<typeof lbug.Connection>;
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
+  IndexMetadata,
   NodeResult,
   NodeSourceResponse,
   TraverseResult,
@@ -1374,7 +1375,7 @@ export class LadybugGraphStore implements GraphStore {
     return { total_nodes, total_edges, nodes_by_type };
   }
 
-  async fetchMetadata(): Promise<import('./types').IndexMetadata[]> {
+  async fetchMetadata(): Promise<IndexMetadata[]> {
     try {
       const rows = await this.query(
         `MATCH (n:IndexMetadata) RETURN ` +

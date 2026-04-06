@@ -27,6 +27,7 @@ import type {
   GraphStore,
   ImportBatchRequest,
   ImportBatchResponse,
+  IndexMetadata,
   NodeResult,
   NodeSourceResponse,
   SourceFile,
@@ -132,9 +133,9 @@ export class ServerGraphStore implements GraphStore {
     return stats;
   }
 
-  async fetchMetadata(): Promise<import('./types').IndexMetadata[]> {
+  async fetchMetadata(): Promise<IndexMetadata[]> {
     try {
-      return await this.get<import('./types').IndexMetadata[]>('/api/metadata');
+      return await this.get<IndexMetadata[]>('/api/metadata');
     } catch {
       return [];
     }
