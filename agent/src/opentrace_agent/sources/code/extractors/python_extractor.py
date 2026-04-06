@@ -133,6 +133,9 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
     variables = _extract_parameters(params_node) if params_node else []
     if body_node:
         variables.extend(_collect_variables(body_node))
+    type_signature = _extract_type_signature(params_node) if params_node else None
+    return_type_node = node.child_by_field_name("return_type")
+    return_type = _normalize_type(return_type_node.text.decode()) if return_type_node else None
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="function",
@@ -143,6 +146,8 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         variables=variables,
         param_types=param_types,
         docs=docs,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -171,6 +176,51 @@ def _extract_param_types(params_node: tree_sitter.Node) -> dict[str, str] | None
                 leaf = type_text.rsplit(".", 1)[-1] if "." in type_text else type_text
                 types[param_name] = leaf
     return types if types else None
+
+
+def _extract_type_signature(params_node: tree_sitter.Node) -> str | None:
+    """Build a Java-style type signature from Python parameter type annotations.
+
+    Returns None if any non-self/cls param lacks a type annotation, or if there
+    are zero non-self/cls params.
+    """
+    types: list[str] = []
+    has_untyped = False
+
+    for child in params_node.children:
+        if child.type in ("typed_parameter", "typed_default_parameter"):
+            name_node = None
+            for sub in child.children:
+                if sub.type == "identifier":
+                    name_node = sub
+                    break
+            if name_node and name_node.text.decode() in ("self", "cls"):
+                continue
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                type_text = type_node.text.decode()
+                leaf = type_text.rsplit(".", 1)[-1] if "." in type_text else type_text
+                types.append(leaf)
+            else:
+                has_untyped = True
+        elif child.type == "identifier":
+            if child.text.decode() in ("self", "cls"):
+                continue
+            has_untyped = True
+        elif child.type == "default_parameter":
+            has_untyped = True
+        elif child.type in ("list_splat_pattern", "dictionary_splat_pattern"):
+            has_untyped = True
+
+    if has_untyped or not types:
+        return None
+    return f"({','.join(types)})"
+
+
+def _normalize_type(raw: str) -> str:
+    """Normalize a type annotation to a leaf type name."""
+    trimmed = raw.strip()
+    return trimmed.rsplit(".", 1)[-1] if "." in trimmed else trimmed
 
 
 def _extract_superclasses(node: tree_sitter.Node) -> list[str] | None:

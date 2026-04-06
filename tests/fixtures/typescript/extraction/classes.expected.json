@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 22,
     "signature": null,
+    "type_signature": null,
+    "return_type": null,
     "children": [
       {
         "name": "constructor",
@@ -12,6 +14,8 @@
         "start_line": 18,
         "end_line": 18,
         "signature": "(private db: Database)",
+        "type_signature": "(:Database)",
+        "return_type": null,
         "children": [],
         "calls": []
       },
@@ -21,6 +25,8 @@
         "start_line": 19,
         "end_line": 21,
         "signature": "(id: string)",
+        "type_signature": "(:string)",
+        "return_type": null,
         "children": [],
         "calls": [
           {
@@ -39,6 +45,8 @@
     "start_line": 23,
     "end_line": 23,
     "signature": null,
+    "type_signature": null,
+    "return_type": null,
     "children": [],
     "calls": []
   }

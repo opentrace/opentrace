@@ -16,12 +16,19 @@
 
 class Logger {
     fun log(msg: String) {}
+    fun getLevel(): Int { return 0 }
+    fun isEnabled(): Boolean { return true }
 }
 
 fun createLogger(): Logger {
     return Logger()
 }
 
+fun greet(name: String): String {
+    return "Hello $name"
+}
+
 object Config {
     fun load() {}
+    fun getPort(): Int { return 8080 }
 }

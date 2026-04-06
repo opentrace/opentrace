@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 19,
     "signature": "(name: string)",
+    "type_signature": "(:string)",
+    "return_type": ":string",
     "children": [],
     "calls": []
   },
@@ -14,6 +16,8 @@
     "start_line": 20,
     "end_line": 20,
     "signature": "()",
+    "type_signature": "()",
+    "return_type": ":void",
     "children": [],
     "calls": []
   },
@@ -23,6 +27,8 @@
     "start_line": 21,
     "end_line": 24,
     "signature": "(url: string)",
+    "type_signature": "(:string)",
+    "return_type": ":Promise<Response>",
     "children": [],
     "calls": [
       {
@@ -33,6 +39,45 @@
       {
         "name": "json",
         "receiver": "resp",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "getItems",
+    "kind": "function",
+    "start_line": 25,
+    "end_line": 27,
+    "signature": "()",
+    "type_signature": "()",
+    "return_type": ":string[]",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "findUser",
+    "kind": "function",
+    "start_line": 28,
+    "end_line": 30,
+    "signature": "(id: number)",
+    "type_signature": "(:number)",
+    "return_type": ":User|null",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "noReturnType",
+    "kind": "function",
+    "start_line": 31,
+    "end_line": 33,
+    "signature": "(x: number)",
+    "type_signature": "(:number)",
+    "return_type": null,
+    "children": [],
+    "calls": [
+      {
+        "name": "log",
+        "receiver": "console",
         "kind": "attribute"
       }
     ]

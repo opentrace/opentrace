@@ -21,3 +21,11 @@ int add(int a, int b) {
 void process(const char* name, int count) {
     return;
 }
+
+double divide(double a, double b) {
+    return a / b;
+}
+
+bool isValid(int x) {
+    return x > 0;
+}

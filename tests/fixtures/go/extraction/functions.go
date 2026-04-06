@@ -21,3 +21,17 @@ func main() {
 func add(a int, b int) int {
 	return a + b
 }
+
+func getName() string {
+	return "Alice"
+}
+
+func divide(a, b float64) (float64, error) {
+	if b == 0 {
+		return 0, fmt.Errorf("division by zero")
+	}
+	return a / b, nil
+}
+
+func doNothing() {
+}

@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 19,
     "signature": "()",
+    "type_signature": "()",
+    "return_type": null,
     "receiver_var": null,
     "receiver_type": null,
     "children": [],
@@ -22,6 +24,53 @@
     "start_line": 21,
     "end_line": 23,
     "signature": "(a int, b int)",
+    "type_signature": "(int,int)",
+    "return_type": "int",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "getName",
+    "kind": "function",
+    "start_line": 25,
+    "end_line": 27,
+    "signature": "()",
+    "type_signature": "()",
+    "return_type": "string",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "divide",
+    "kind": "function",
+    "start_line": 29,
+    "end_line": 34,
+    "signature": "(a, b float64)",
+    "type_signature": "(float64,float64)",
+    "return_type": "(float64,error)",
+    "receiver_var": null,
+    "receiver_type": null,
+    "children": [],
+    "calls": [
+      {
+        "name": "Errorf",
+        "receiver": "fmt",
+        "kind": "attribute"
+      }
+    ]
+  },
+  {
+    "name": "doNothing",
+    "kind": "function",
+    "start_line": 36,
+    "end_line": 37,
+    "signature": "()",
+    "type_signature": "()",
+    "return_type": null,
     "receiver_var": null,
     "receiver_type": null,
     "children": [],

@@ -102,6 +102,10 @@ class CodeSymbol:
     """Structural subtype: "struct", "interface", "enum", etc."""
     docs: str | None = None
     """Docstring or doc-comment text."""
+    type_signature: str | None = None
+    """Java-style type signature for overload disambiguation, e.g. "(String,int)"."""
+    return_type: str | None = None
+    """Normalized return type name, e.g. "str", "void", "error"."""
 
 
 @dataclass

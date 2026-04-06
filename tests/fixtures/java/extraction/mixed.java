@@ -24,6 +24,18 @@ public class User {
     public String getName() {
         return name;
     }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public List<String> getRoles() {
+        return new ArrayList<>();
+    }
+
+    public int getId() {
+        return 0;
+    }
 }
 
 public enum Role {

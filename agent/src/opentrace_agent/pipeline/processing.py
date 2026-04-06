@@ -313,7 +313,8 @@ def _symbol_to_graph(
     variables = 0
 
     file_id = parent_id.split("::")[0]
-    name_part = f"{symbol.receiver_type}.{symbol.name}" if symbol.receiver_type else symbol.name
+    sig = symbol.type_signature or ""
+    name_part = f"{symbol.receiver_type}.{symbol.name}{sig}" if symbol.receiver_type else f"{symbol.name}{sig}"
     node_id = f"{parent_id}::{name_part}"
 
     # Deduplication guard
@@ -390,11 +391,16 @@ def _symbol_to_graph(
             props["start_line"] = symbol.start_line
         if symbol.end_line is not None:
             props["end_line"] = symbol.end_line
-        if symbol.signature:
+        if symbol.type_signature:
+            props["signature"] = symbol.type_signature
+        elif symbol.signature:
             props["signature"] = symbol.signature
+        if symbol.return_type:
+            props["return_type"] = symbol.return_type
         if symbol.docs:
             props["docs"] = symbol.docs
-        nodes.append(GraphNode(id=node_id, type="Function", name=symbol.name, properties=props))
+        display_name = f"{symbol.name}{symbol.type_signature}" if symbol.type_signature else symbol.name
+        nodes.append(GraphNode(id=node_id, type="Function", name=display_name, properties=props))
         functions = 1
 
         si = SymbolInfo(

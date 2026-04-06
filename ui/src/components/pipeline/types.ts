@@ -128,6 +128,10 @@ export interface CodeSymbol {
   interfaces?: string[];
   subtype?: string;
   docs?: string;
+  /** Java-style type signature for overload disambiguation, e.g. "(String,int)" */
+  typeSignature?: string | null;
+  /** Normalized return type name, e.g. "string", "void", "error" */
+  returnType?: string | null;
 }
 
 export interface ExtractionResult {

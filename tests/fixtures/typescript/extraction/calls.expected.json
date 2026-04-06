@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 21,
     "signature": "()",
+    "type_signature": "()",
+    "return_type": null,
     "children": [],
     "calls": [
       {
@@ -30,6 +32,8 @@
     "start_line": 22,
     "end_line": 25,
     "signature": "(event: string)",
+    "type_signature": "(:string)",
+    "return_type": null,
     "children": [],
     "calls": [
       {

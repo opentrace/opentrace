@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 21,
     "signature": null,
+    "type_signature": null,
+    "return_type": null,
     "children": [
       {
         "name": "value",
@@ -12,6 +14,8 @@
         "start_line": 18,
         "end_line": 20,
         "signature": "()",
+        "type_signature": "()",
+        "return_type": null,
         "children": [],
         "calls": []
       }
@@ -24,6 +28,8 @@
     "start_line": 22,
     "end_line": 25,
     "signature": "(opts: Options)",
+    "type_signature": "(:Options)",
+    "return_type": null,
     "children": [],
     "calls": [
       {
@@ -44,6 +50,8 @@
     "start_line": 26,
     "end_line": 28,
     "signature": "()",
+    "type_signature": "()",
+    "return_type": null,
     "children": [],
     "calls": [
       {

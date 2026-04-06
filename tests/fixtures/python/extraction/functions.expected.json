@@ -5,6 +5,8 @@
     "start_line": 15,
     "end_line": 16,
     "signature": "(name)",
+    "type_signature": null,
+    "return_type": null,
     "children": [],
     "calls": []
   },
@@ -14,15 +16,52 @@
     "start_line": 18,
     "end_line": 19,
     "signature": "(a: int, b: int)",
+    "type_signature": "(int,int)",
+    "return_type": "int",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "get_name",
+    "kind": "function",
+    "start_line": 21,
+    "end_line": 22,
+    "signature": "()",
+    "type_signature": null,
+    "return_type": "str",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "get_users",
+    "kind": "function",
+    "start_line": 24,
+    "end_line": 25,
+    "signature": "()",
+    "type_signature": null,
+    "return_type": "list[dict]",
+    "children": [],
+    "calls": []
+  },
+  {
+    "name": "do_nothing",
+    "kind": "function",
+    "start_line": 27,
+    "end_line": 28,
+    "signature": "()",
+    "type_signature": null,
+    "return_type": "None",
     "children": [],
     "calls": []
   },
   {
     "name": "fetch_data",
     "kind": "function",
-    "start_line": 21,
-    "end_line": 23,
+    "start_line": 30,
+    "end_line": 32,
     "signature": "(url: str)",
+    "type_signature": "(str)",
+    "return_type": null,
     "children": [],
     "calls": [
       {

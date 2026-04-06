@@ -19,3 +19,11 @@ fn add(a: i32, b: i32) -> i32 {
 fn greet(name: &str) {
     println!("Hello, {}", name);
 }
+
+fn get_name() -> String {
+    String::from("Alice")
+}
+
+fn parse(input: &str) -> Result<i32, String> {
+    input.parse().map_err(|e| format!("{}", e))
+}

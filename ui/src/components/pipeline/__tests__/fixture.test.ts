@@ -182,7 +182,7 @@ describe('fixture: Python project', () => {
     expect(dbClass!.type).toBe('Class');
 
     const initMethod = store.nodes.get(
-      'fixture/py-project/db.py::Database::__init__',
+      'fixture/py-project/db.py::Database::__init__(str)',
     );
     expect(initMethod).toBeDefined();
     expect(initMethod!.type).toBe('Function');
@@ -193,7 +193,7 @@ describe('fixture: Python project', () => {
     expect(getAllUsers).toBeDefined();
 
     const insertUser = store.nodes.get(
-      'fixture/py-project/db.py::Database::insert_user',
+      'fixture/py-project/db.py::Database::insert_user(str,str)',
     );
     expect(insertUser).toBeDefined();
 
@@ -209,7 +209,8 @@ describe('fixture: Python project', () => {
 
     // Class DEFINES its methods (parent → child)
     const initRel = [...store.relationships.values()].find(
-      (r) => r.target_id === 'fixture/py-project/db.py::Database::__init__',
+      (r) =>
+        r.target_id === 'fixture/py-project/db.py::Database::__init__(str)',
     );
     expect(initRel?.source_id).toBe('fixture/py-project/db.py::Database');
 

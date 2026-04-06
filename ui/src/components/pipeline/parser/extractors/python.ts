@@ -135,6 +135,9 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
   const paramsNode = node.childForFieldName('parameters');
   const signature = paramsNode ? paramsNode.text : null;
   const paramTypes = paramsNode ? extractParamTypes(paramsNode) : null;
+  const typeSignature = paramsNode ? extractTypeSignature(paramsNode) : null;
+  const returnTypeNode = node.childForFieldName('return_type');
+  const returnType = returnTypeNode ? normalizeType(returnTypeNode.text) : null;
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
   const docs = extractDocstring(bodyNode);
@@ -150,6 +153,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverType: null,
     paramTypes,
     docs,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -184,6 +189,59 @@ function extractParamTypes(
     }
   }
   return Object.keys(types).length > 0 ? types : null;
+}
+
+/** Build a Java-style type signature from Python parameter type annotations.
+ *  Returns null if any non-self/cls param lacks a type annotation, or if there are zero params. */
+function extractTypeSignature(paramsNode: SyntaxNode): string | null {
+  const types: string[] = [];
+  let hasUntyped = false;
+
+  for (const child of paramsNode.children) {
+    if (
+      child.type === 'typed_parameter' ||
+      child.type === 'typed_default_parameter'
+    ) {
+      let nameNode: SyntaxNode | null = null;
+      for (const sub of child.children) {
+        if (sub.type === 'identifier') {
+          nameNode = sub;
+          break;
+        }
+      }
+      if (nameNode && (nameNode.text === 'self' || nameNode.text === 'cls'))
+        continue;
+      const typeNode = child.childForFieldName('type');
+      if (typeNode) {
+        const typeText = typeNode.text;
+        const leaf = typeText.includes('.')
+          ? typeText.split('.').pop()!
+          : typeText;
+        types.push(leaf);
+      } else {
+        hasUntyped = true;
+      }
+    } else if (child.type === 'identifier') {
+      if (child.text === 'self' || child.text === 'cls') continue;
+      hasUntyped = true;
+    } else if (child.type === 'default_parameter') {
+      hasUntyped = true;
+    } else if (
+      child.type === 'list_splat_pattern' ||
+      child.type === 'dictionary_splat_pattern'
+    ) {
+      hasUntyped = true;
+    }
+  }
+
+  if (hasUntyped || types.length === 0) return null;
+  return `(${types.join(',')})`;
+}
+
+/** Normalize a type annotation to a leaf type name. */
+function normalizeType(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.includes('.') ? trimmed.split('.').pop()! : trimmed;
 }
 
 function collectCalls(node: SyntaxNode): CallRef[] {

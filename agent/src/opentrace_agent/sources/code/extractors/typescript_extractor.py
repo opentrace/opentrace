@@ -137,9 +137,11 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         return None
     params_node = node.child_by_field_name("parameters")
     signature = params_node.text.decode() if params_node else None
+    type_signature = _extract_ts_type_signature(params_node) if params_node else None
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     docs = _extract_jsdoc(node)
+    return_type = _extract_return_type(node)
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="function",
@@ -148,6 +150,8 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         signature=signature,
         calls=calls,
         docs=docs,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -157,6 +161,8 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
         return None
     params_node = node.child_by_field_name("parameters")
     signature = params_node.text.decode() if params_node else None
+    type_signature = _extract_ts_type_signature(params_node) if params_node else None
+    return_type = _extract_return_type(node)
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     return CodeSymbol(
@@ -166,6 +172,8 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
         end_line=node.end_point.row + 1,
         signature=signature,
         calls=calls,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -198,6 +206,8 @@ def _extract_arrow_function(
     """Extract a function symbol from an arrow function or function expression."""
     params_node = value_node.child_by_field_name("parameters")
     signature = params_node.text.decode() if params_node else None
+    type_signature = _extract_ts_type_signature(params_node) if params_node else None
+    return_type = _extract_return_type(value_node)
     body_node = value_node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     return CodeSymbol(
@@ -207,6 +217,8 @@ def _extract_arrow_function(
         end_line=decl_node.end_point.row + 1,
         signature=signature,
         calls=calls,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -253,6 +265,47 @@ def _extract_heritage(
                             if name_node and name_node.type == "identifier":
                                 interfaces.append(name_node.text.decode())
     return (superclasses or None, interfaces or None)
+
+
+def _extract_return_type(node: tree_sitter.Node) -> str | None:
+    """Extract the return type annotation from a TS/JS function node."""
+    return_type_node = node.child_by_field_name("return_type")
+    if return_type_node is None:
+        return None
+    raw = return_type_node.text.decode().replace(" ", "")
+    return raw.rsplit(".", 1)[-1] if "." in raw else raw
+
+
+def _extract_ts_type_signature(params_node: tree_sitter.Node) -> str | None:
+    """Build a Java-style type signature from TS/JS parameter type annotations.
+
+    Returns ``"()"`` for zero-param functions, ``"(string,number)"`` when all
+    params are typed, or ``None`` when any param lacks a type annotation.
+    """
+    types: list[str] = []
+    param_count = 0
+
+    for child in params_node.children:
+        if child.type in ("required_parameter", "optional_parameter"):
+            param_count += 1
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                raw = type_node.text.decode().replace(" ", "")
+                leaf = raw.rsplit(".", 1)[-1] if "." in raw else raw
+                types.append(leaf)
+        elif child.type == "rest_parameter":
+            param_count += 1
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                raw = type_node.text.decode().replace(" ", "")
+                leaf = raw.rsplit(".", 1)[-1] if "." in raw else raw
+                types.append(leaf + "[]")
+
+    if param_count == 0:
+        return "()"
+    if len(types) != param_count:
+        return None
+    return f"({','.join(types)})"
 
 
 def _extract_jsdoc(node: tree_sitter.Node) -> str | None:

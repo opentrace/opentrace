@@ -16,10 +16,16 @@
 
 class Logger {
     func log(_ message: String) {}
+    func getLevel() -> Int { return 0 }
+    func isEnabled() -> Bool { return true }
 }
 
 func createLogger() -> Logger {
     return Logger()
+}
+
+func greet(name: String) -> String {
+    return "Hello \(name)"
 }
 
 struct Config {

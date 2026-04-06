@@ -36,6 +36,10 @@ interface LanguageConfig {
   functionTypes: Set<string>;
   /** AST node types whose body should be recursed into for child methods */
   containerTypes: Set<string>;
+  /** AST node types that represent individual parameters in a param list */
+  paramChildTypes?: Set<string>;
+  /** Whether the language has mandatory type annotations (enables typeSignature) */
+  typed?: boolean;
 }
 
 /** Maps AST node types → subtype strings for class-like nodes. */
@@ -64,6 +68,8 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
     classTypes: new Set(['struct_specifier', 'enum_specifier']),
     functionTypes: new Set(['function_definition']),
     containerTypes: new Set(),
+    paramChildTypes: new Set(['parameter_declaration']),
+    typed: true,
   },
   cpp: {
     classTypes: new Set([
@@ -73,6 +79,8 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
     ]),
     functionTypes: new Set(['function_definition']),
     containerTypes: new Set(['class_specifier', 'namespace_definition']),
+    paramChildTypes: new Set(['parameter_declaration']),
+    typed: true,
   },
   csharp: {
     classTypes: new Set([
@@ -87,6 +95,8 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
       'interface_declaration',
       'namespace_declaration',
     ]),
+    paramChildTypes: new Set(['parameter']),
+    typed: true,
   },
   java: {
     classTypes: new Set([
@@ -96,21 +106,28 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
     ]),
     functionTypes: new Set(['method_declaration', 'constructor_declaration']),
     containerTypes: new Set(['class_declaration', 'interface_declaration']),
+    paramChildTypes: new Set(['formal_parameter', 'spread_parameter']),
+    typed: true,
   },
   kotlin: {
     classTypes: new Set(['class_declaration', 'object_declaration']),
     functionTypes: new Set(['function_declaration']),
     containerTypes: new Set(['class_declaration', 'object_declaration']),
+    paramChildTypes: new Set(['function_value_parameter']),
+    typed: true,
   },
   ruby: {
     classTypes: new Set(['class', 'module']),
     functionTypes: new Set(['method', 'singleton_method']),
     containerTypes: new Set(['class', 'module']),
+    // Ruby has no type annotations
   },
   rust: {
     classTypes: new Set(['struct_item', 'enum_item', 'trait_item']),
     functionTypes: new Set(['function_item', 'function_signature_item']),
     containerTypes: new Set(['impl_item', 'trait_item']),
+    paramChildTypes: new Set(['parameter']),
+    typed: true,
   },
   swift: {
     classTypes: new Set([
@@ -125,6 +142,8 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
       'protocol_declaration',
       'struct_declaration',
     ]),
+    paramChildTypes: new Set(['parameter']),
+    typed: true,
   },
 };
 
@@ -209,7 +228,7 @@ function extractNode(
   if (config.classTypes.has(node.type)) {
     sym = extractClass(node, config);
   } else if (config.functionTypes.has(node.type)) {
-    sym = extractFunction(node);
+    sym = extractFunction(node, config);
   }
   if (sym) {
     sym.docs = extractPrecedingDoc(node);
@@ -246,7 +265,10 @@ function extractClass(
   };
 }
 
-function extractFunction(node: SyntaxNode): CodeSymbol | null {
+function extractFunction(
+  node: SyntaxNode,
+  config?: LanguageConfig,
+): CodeSymbol | null {
   const name = extractName(node);
   if (!name) return null;
 
@@ -259,6 +281,11 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     }
   }
   const signature = paramsNode ? paramsNode.text : null;
+  const typeSignature =
+    paramsNode && config
+      ? extractGenericTypeSignature(paramsNode, config)
+      : null;
+  const returnType = config?.typed ? extractGenericReturnType(node) : null;
 
   return {
     name,
@@ -271,6 +298,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverVar: null,
     receiverType: null,
     paramTypes: null,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -356,7 +385,7 @@ function extractMethods(
   const methods: CodeSymbol[] = [];
   for (const child of body.children) {
     if (config.functionTypes.has(child.type)) {
-      const sym = extractFunction(child);
+      const sym = extractFunction(child, config);
       if (sym) methods.push(sym);
     } else if (config.classTypes.has(child.type)) {
       // Nested class
@@ -410,6 +439,127 @@ function extractName(node: SyntaxNode): string | null {
       child.type === 'constant'
     ) {
       return child.text;
+    }
+  }
+
+  return null;
+}
+
+// --- Type signature extraction ---
+
+/** AST node types that represent type annotations. */
+const TYPE_NODE_TYPES = new Set([
+  'type_identifier',
+  'predefined_type',
+  'primitive_type',
+  'user_type',
+  'generic_type',
+  'template_type',
+  'pointer_type',
+  'slice_type',
+  'array_type',
+  'nullable_type',
+  'reference_type',
+  'scoped_type_identifier',
+  'simple_type',
+  'optional_type',
+]);
+
+/** Build a Java-style type signature from a generic parameter list.
+ *  Returns "(String,int)" for typed languages, or null for untyped ones. */
+function extractGenericTypeSignature(
+  paramsNode: SyntaxNode,
+  config: LanguageConfig,
+): string | null {
+  if (!config.paramChildTypes || !config.typed) return null;
+
+  const types: string[] = [];
+  let paramCount = 0;
+
+  for (const child of paramsNode.namedChildren) {
+    if (config.paramChildTypes.has(child.type)) {
+      paramCount++;
+      const typeName = extractParamType(child);
+      if (typeName) {
+        types.push(typeName);
+      }
+    }
+  }
+
+  // Zero params → "()" for typed languages
+  if (paramCount === 0) return '()';
+  // All params must be typed for a valid signature
+  if (types.length !== paramCount) return null;
+  return `(${types.join(',')})`;
+}
+
+/** Extract the type name from a single parameter AST node. */
+function extractParamType(paramNode: SyntaxNode): string | null {
+  // Strategy 1: field name 'type' — works for Java, C#, Rust, C/C++
+  const typeField = paramNode.childForFieldName('type');
+  if (typeField) return normalizeTypeName(typeField.text);
+
+  // Strategy 2: scan named children for type-like nodes
+  for (const child of paramNode.namedChildren) {
+    if (TYPE_NODE_TYPES.has(child.type)) {
+      return normalizeTypeName(child.text);
+    }
+    // Kotlin: function_value_parameter → parameter → user_type
+    if (child.namedChildCount > 0) {
+      for (const sub of child.namedChildren) {
+        if (TYPE_NODE_TYPES.has(sub.type)) {
+          return normalizeTypeName(sub.text);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Normalize a type name to a clean Java-style format.
+ *  Strips pointer/reference markers, const qualifiers, and namespace prefixes. */
+function normalizeTypeName(raw: string): string {
+  let name = raw
+    .replace(/\bconst\b\s*/g, '')
+    .replace(/^[*&]+|[*&]+$/g, '')
+    .trim();
+  // Take leaf of qualified names (std::string → string, java.util.List → List)
+  if (name.includes('::')) name = name.split('::').pop()!;
+  if (name.includes('.')) name = name.split('.').pop()!;
+  return name;
+}
+
+/** Extract the return type from a function node.
+ *  Tries field names used across languages: 'type' (Java/C#), 'return_type' (Rust/Swift),
+ *  then falls back to C/C++ pattern (type specifier before declarator). */
+function extractGenericReturnType(node: SyntaxNode): string | null {
+  // Java/C#/Kotlin: method_declaration has a 'type' field for return type
+  const typeField = node.childForFieldName('type');
+  if (typeField && TYPE_NODE_TYPES.has(typeField.type)) {
+    return normalizeTypeName(typeField.text);
+  }
+
+  // Rust/Swift: 'return_type' field
+  const returnTypeField = node.childForFieldName('return_type');
+  if (returnTypeField) {
+    return normalizeTypeName(returnTypeField.text);
+  }
+
+  // C/C++: return type is a type specifier child before the declarator
+  for (const child of node.namedChildren) {
+    if (
+      child.type === 'primitive_type' ||
+      child.type === 'type_identifier' ||
+      child.type === 'template_type'
+    ) {
+      return normalizeTypeName(child.text);
+    }
+    // Stop scanning once we hit the declarator or body
+    if (
+      child.type === 'function_declarator' ||
+      child.type === 'compound_statement'
+    ) {
+      break;
     }
   }
 

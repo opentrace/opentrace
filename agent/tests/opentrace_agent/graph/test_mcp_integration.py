@@ -121,7 +121,8 @@ class TestGoProjectGraph:
     def test_has_functions(self, indexed_go_store):
         functions = indexed_go_store.list_nodes("Function")
         names = {f["name"] for f in functions}
-        assert "main" in names or "Main" in names
+        # Go functions include type signatures in name: "main()" not "main"
+        assert "main()" in names or any("main" in n for n in names)
 
     def test_has_classes_or_structs(self, indexed_go_store):
         classes = indexed_go_store.list_nodes("Class")

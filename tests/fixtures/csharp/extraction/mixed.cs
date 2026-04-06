@@ -22,6 +22,9 @@ public struct Point {
 public class Service {
     public void Start() {}
     public void Stop() {}
+    public string GetName() { return ""; }
+    public int GetPort() { return 0; }
+    public List<string> GetEndpoints() { return new List<string>(); }
 }
 
 public enum LogLevel {

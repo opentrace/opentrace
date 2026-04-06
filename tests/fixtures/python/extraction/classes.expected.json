@@ -5,6 +5,8 @@
     "start_line": 15,
     "end_line": 20,
     "signature": null,
+    "type_signature": null,
+    "return_type": null,
     "children": [
       {
         "name": "__init__",
@@ -12,6 +14,8 @@
         "start_line": 16,
         "end_line": 17,
         "signature": "(self, db)",
+        "type_signature": null,
+        "return_type": null,
         "children": [],
         "calls": []
       },
@@ -21,6 +25,8 @@
         "start_line": 19,
         "end_line": 20,
         "signature": "(self, user_id: str)",
+        "type_signature": "(str)",
+        "return_type": null,
         "children": [],
         "calls": [
           {
@@ -39,6 +45,8 @@
     "start_line": 22,
     "end_line": 24,
     "signature": null,
+    "type_signature": null,
+    "return_type": null,
     "children": [
       {
         "name": "promote",
@@ -46,6 +54,8 @@
         "start_line": 23,
         "end_line": 24,
         "signature": "(self)",
+        "type_signature": null,
+        "return_type": null,
         "children": [],
         "calls": []
       }
