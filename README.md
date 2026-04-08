@@ -7,6 +7,10 @@
 
 A knowledge graph that maps your codebase structure, service architecture, and system relationships — then exposes it all through MCP so AI tools can understand your systems.
 
+<video src="https://github.com/user-attachments/assets/90be3c48-e0bf-4e09-b799-aff0976e2c40" controls width="100%"></video>
+
+<p align="center"><em>Index any repo, any size, in seconds. Build a knowledge graph and watch your LLM fetch true codebase context in realtime.</em></p>
+
 ## Try Now
 
 **[oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
