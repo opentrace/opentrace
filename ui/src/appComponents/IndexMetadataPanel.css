@@ -1,0 +1,73 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+.index-metadata {
+  padding: 0 14px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+.index-metadata-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.index-metadata-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.index-metadata-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.index-metadata-entry + .index-metadata-entry {
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in oklch, var(--border) 15%, transparent);
+}
+
+.index-metadata-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.index-metadata-label {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+  min-width: 52px;
+}
+
+.index-metadata-value {
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.index-metadata-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.68rem;
+}

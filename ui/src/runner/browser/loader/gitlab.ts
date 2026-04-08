@@ -105,13 +105,13 @@ async function fetchGitLabViaZipball(
     fetchHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const zipBuffer = await fetchResolvedArchive(
+  const { data, gitMeta } = await fetchResolvedArchive(
     resolveUrl,
     fetchHeaders,
     signal,
     onProgress,
   );
-  const entries = unzipSync(zipBuffer);
+  const entries = unzipSync(data);
 
   const files = extractFilesFromZip(entries, onProgress);
 
@@ -121,6 +121,9 @@ async function fetchGitLabViaZipball(
     ref,
     url: `https://${parsed.host}/${parsed.namespace}/${parsed.project}`,
     provider: 'gitlab',
+    sha: gitMeta.sha,
+    branch: gitMeta.branch,
+    commitMessage: gitMeta.commitMessage?.split('\n', 1)[0],
     files,
   };
 }

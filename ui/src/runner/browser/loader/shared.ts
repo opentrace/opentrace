@@ -163,7 +163,27 @@ export function extractFilesFromZip(
 /** Response from the archive resolve endpoint. */
 interface ResolveResult {
   url: string;
-  contentLength: number;
+  contentLength?: number;
+  sha?: string;
+  branch?: string;
+  commitMessage?: string;
+  authorName?: string;
+  authorDate?: string;
+}
+
+/** Git metadata returned by the archive resolve endpoint. */
+export interface ArchiveGitMeta {
+  sha?: string;
+  branch?: string;
+  commitMessage?: string;
+  authorName?: string;
+  authorDate?: string;
+}
+
+/** Result of fetchResolvedArchive: zip bytes + optional git metadata. */
+export interface ArchiveResult {
+  data: Uint8Array;
+  gitMeta: ArchiveGitMeta;
 }
 
 /**
@@ -175,14 +195,22 @@ export async function fetchResolvedArchive(
   headers: Record<string, string>,
   signal: AbortSignal | undefined,
   onProgress?: (progress: FetchProgress) => void,
-): Promise<Uint8Array> {
-  // Step 1: resolve → { url, contentLength }
+): Promise<ArchiveResult> {
+  // Step 1: resolve → { url, contentLength, sha, branch, commitMessage, ... }
   const resolveRes = await fetch(resolveUrl, { headers, signal });
   if (!resolveRes.ok) {
     const text = await resolveRes.text();
     throw new Error(`Archive resolve error ${resolveRes.status}: ${text}`);
   }
-  const { url, contentLength } = (await resolveRes.json()) as ResolveResult;
+  const resolved = (await resolveRes.json()) as ResolveResult;
+  const { url, contentLength } = resolved;
+  const gitMeta: ArchiveGitMeta = {
+    sha: resolved.sha,
+    branch: resolved.branch,
+    commitMessage: resolved.commitMessage,
+    authorName: resolved.authorName,
+    authorDate: resolved.authorDate,
+  };
 
   // Step 2: fetch the actual zip, streaming for progress
   const zipRes = await fetch(url, { headers, signal });
@@ -197,7 +225,7 @@ export async function fetchResolvedArchive(
   if (!zipRes.body) {
     const buf = new Uint8Array(await zipRes.arrayBuffer());
     onProgress?.({ phase: 'download', current: buf.length, total: buf.length });
-    return buf;
+    return { data: buf, gitMeta };
   }
 
   // Stream with progress
@@ -214,13 +242,13 @@ export async function fetchResolvedArchive(
   }
 
   // Concatenate chunks
-  const result = new Uint8Array(received);
+  const buf = new Uint8Array(received);
   let offset = 0;
   for (const chunk of chunks) {
-    result.set(chunk, offset);
+    buf.set(chunk, offset);
     offset += chunk.length;
   }
-  return result;
+  return { data: buf, gitMeta };
 }
 
 /**

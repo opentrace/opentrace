@@ -136,13 +136,13 @@ export async function fetchAzureDevOpsRepoTree(
     fetchHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const zipBuffer = await fetchResolvedArchive(
+  const { data, gitMeta } = await fetchResolvedArchive(
     resolveUrl,
     fetchHeaders,
     signal,
     onProgress,
   );
-  const entries = unzipSync(zipBuffer);
+  const entries = unzipSync(data);
 
   const files = extractFilesFromZip(entries, onProgress);
 
@@ -152,6 +152,9 @@ export async function fetchAzureDevOpsRepoTree(
     ref,
     url: `https://dev.azure.com/${parsed.org}/${parsed.project}/_git/${parsed.repo}`,
     provider: 'azuredevops',
+    sha: gitMeta.sha,
+    branch: gitMeta.branch,
+    commitMessage: gitMeta.commitMessage?.split('\n', 1)[0],
     files,
   };
 }

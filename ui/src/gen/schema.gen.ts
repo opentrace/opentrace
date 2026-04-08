@@ -9,6 +9,7 @@ export const NODE_SCHEMA_STATEMENTS = [
   `CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)`,
   `CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)`,
 ] as const;
 
 export const NODE_TYPES = [
@@ -20,6 +21,7 @@ export const NODE_TYPES = [
   'Dependency',
   'PullRequest',
   'Variable',
+  'IndexMetadata',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -116,6 +118,24 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'typeAnnotation', type: 'STRING' },
     { name: 'docs', type: 'STRING' },
   ],
+  IndexMetadata: [
+    { name: 'id', type: 'STRING' },
+    { name: 'name', type: 'STRING' },
+    { name: 'indexedAt', type: 'STRING' },
+    { name: 'durationSeconds', type: 'DOUBLE' },
+    { name: 'repoId', type: 'STRING' },
+    { name: 'repoPath', type: 'STRING' },
+    { name: 'commitSha', type: 'STRING' },
+    { name: 'commitMessage', type: 'STRING' },
+    { name: 'branch', type: 'STRING' },
+    { name: 'sourceUri', type: 'STRING' },
+    { name: 'opentraceaiVersion', type: 'STRING' },
+    { name: 'nodesCreated', type: 'INT32' },
+    { name: 'relationshipsCreated', type: 'INT32' },
+    { name: 'filesProcessed', type: 'INT32' },
+    { name: 'classesExtracted', type: 'INT32' },
+    { name: 'functionsExtracted', type: 'INT32' },
+  ],
 } as const;
 
 export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = {
@@ -199,6 +219,24 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'typeAnnotation',
     'docs',
   ],
+  IndexMetadata: [
+    'id',
+    'name',
+    'indexedAt',
+    'durationSeconds',
+    'repoId',
+    'repoPath',
+    'commitSha',
+    'commitMessage',
+    'branch',
+    'sourceUri',
+    'opentraceaiVersion',
+    'nodesCreated',
+    'relationshipsCreated',
+    'filesProcessed',
+    'classesExtracted',
+    'functionsExtracted',
+  ],
 } as const;
 
 export const REL_SCHEMA = {
@@ -276,3 +314,73 @@ export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
     'id',
   ],
 } as const;
+
+const COLUMN_TO_PROTO: Partial<Readonly<Record<NodeType | RelType, Readonly<Record<string, string>>>>> = {
+  Repository: { 'sourceUri': 'source_uri', 'defaultBranch': 'default_branch' },
+  File: { 'sourceUri': 'source_uri' },
+  Class: { 'startLine': 'start_line', 'endLine': 'end_line' },
+  Function: { 'startLine': 'start_line', 'endLine': 'end_line' },
+  PullRequest: { 'createdAt': 'created_at', 'baseBranch': 'base_branch', 'headBranch': 'head_branch', 'filesChanged': 'files_changed' },
+  Variable: { 'startLine': 'start_line', 'endLine': 'end_line', 'typeAnnotation': 'type_annotation' },
+  IndexMetadata: { 'indexedAt': 'indexed_at', 'durationSeconds': 'duration_seconds', 'repoId': 'repo_id', 'repoPath': 'repo_path', 'commitSha': 'commit_sha', 'commitMessage': 'commit_message', 'sourceUri': 'source_uri', 'opentraceaiVersion': 'opentraceai_version', 'nodesCreated': 'nodes_created', 'relationshipsCreated': 'relationships_created', 'filesProcessed': 'files_processed', 'classesExtracted': 'classes_extracted', 'functionsExtracted': 'functions_extracted' },
+} as const;
+
+const PROTO_TO_COLUMN: Partial<Readonly<Record<NodeType | RelType, Readonly<Record<string, string>>>>> = {
+  Repository: { 'source_uri': 'sourceUri', 'default_branch': 'defaultBranch' },
+  File: { 'source_uri': 'sourceUri' },
+  Class: { 'start_line': 'startLine', 'end_line': 'endLine' },
+  Function: { 'start_line': 'startLine', 'end_line': 'endLine' },
+  PullRequest: { 'created_at': 'createdAt', 'base_branch': 'baseBranch', 'head_branch': 'headBranch', 'files_changed': 'filesChanged' },
+  Variable: { 'start_line': 'startLine', 'end_line': 'endLine', 'type_annotation': 'typeAnnotation' },
+  IndexMetadata: { 'indexed_at': 'indexedAt', 'duration_seconds': 'durationSeconds', 'repo_id': 'repoId', 'repo_path': 'repoPath', 'commit_sha': 'commitSha', 'commit_message': 'commitMessage', 'source_uri': 'sourceUri', 'opentraceai_version': 'opentraceaiVersion', 'nodes_created': 'nodesCreated', 'relationships_created': 'relationshipsCreated', 'files_processed': 'filesProcessed', 'classes_extracted': 'classesExtracted', 'functions_extracted': 'functionsExtracted' },
+} as const;
+
+/**
+ * Remap LadybugDB column names to protobuf field names.
+ *
+ * Use this when reading a row from the database and converting it to a
+ * protobuf message. Only columns with a `(ladybug.column)` override are
+ * remapped; all other keys pass through unchanged. Returns the input
+ * unchanged for types with no remapped columns.
+ *
+ * @example
+ * ```ts
+ * const row = { id: 's1', name: 'api', repoUrl: 'https://...' };
+ * const protoObj = ladybugToProto('Service', row);
+ * // { id: 's1', name: 'api', repo_url: 'https://...' }
+ * ```
+ */
+export function ladybugToProto(typeName: NodeType | RelType, row: Record<string, unknown>): Record<string, unknown> {
+  const mapping = COLUMN_TO_PROTO[typeName];
+  if (!mapping) return row;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    result[mapping[key] ?? key] = value;
+  }
+  return result;
+}
+
+/**
+ * Remap protobuf field names to LadybugDB column names.
+ *
+ * Use this when converting a protobuf message (or its dict representation)
+ * to a row suitable for writing to the database. Only fields with a
+ * `(ladybug.column)` override are remapped; all other keys pass through
+ * unchanged. Returns the input unchanged for types with no remapped columns.
+ *
+ * @example
+ * ```ts
+ * const obj = { id: 's1', name: 'api', repo_url: 'https://...' };
+ * const row = protoToLadybug('Service', obj);
+ * // { id: 's1', name: 'api', repoUrl: 'https://...' }
+ * ```
+ */
+export function protoToLadybug(typeName: NodeType | RelType, obj: Record<string, unknown>): Record<string, unknown> {
+  const mapping = PROTO_TO_COLUMN[typeName];
+  if (!mapping) return obj;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[mapping[key] ?? key] = value;
+  }
+  return result;
+}

@@ -26,6 +26,8 @@ from typing import Any
 
 import real_ladybug as ladybug
 
+from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -416,6 +418,8 @@ class GraphStore:
 
         Tries FTS first, falls back to CONTAINS on name.
         """
+        from opentrace_agent.store.constants import INTERNAL_NODE_TYPES
+
         # Try FTS first
         try:
             fts_results = self._fts_search(query, limit * 2)
@@ -425,6 +429,8 @@ class GraphStore:
                 for node_id, _score in fts_results:
                     n = self.get_node(node_id)
                     if n is None:
+                        continue
+                    if n["type"] in INTERNAL_NODE_TYPES:
                         continue
                     if type_set and n["type"] not in type_set:
                         continue
@@ -438,8 +444,9 @@ class GraphStore:
         # Substring fallback
         q = query.lower()
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE lower(n.name) CONTAINS $query RETURN n.id, n.type, n.name, n.properties",
-            parameters={"query": q},
+            "MATCH (n:Node) WHERE lower(n.name) CONTAINS $query AND n.type <> $meta "
+            "RETURN n.id, n.type, n.name, n.properties",
+            parameters={"query": q, "meta": self._METADATA_TYPE},
         )
         type_set = set(node_types) if node_types else None
         nodes = []
@@ -537,7 +544,10 @@ class GraphStore:
 
     def get_stats(self) -> dict[str, Any]:
         """Return aggregate counts: total_nodes, total_edges, nodes_by_type."""
-        result = self._conn.execute("MATCH (n:Node) RETURN n.type, count(n)")
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type <> $meta RETURN n.type, count(n)",
+            parameters={"meta": self._METADATA_TYPE},
+        )
         nodes_by_type: dict[str, int] = {}
         total_nodes = 0
         while result.has_next():
@@ -557,6 +567,38 @@ class GraphStore:
             "total_edges": total_edges,
             "nodes_by_type": nodes_by_type,
         }
+
+    # -- metadata --------------------------------------------------------
+
+    _METADATA_ID_PREFIX = "_meta:index:"
+    _METADATA_TYPE = NODE_TYPE_INDEX_METADATA
+
+    def save_metadata(self, metadata: dict[str, Any]) -> None:
+        """Store index metadata for a repo (upserted on each index run).
+
+        The node ID is ``_meta:index:{repoId}`` so each repo keeps its own
+        metadata entry.
+        """
+        repo_id = metadata.get("repoId", "unknown")
+        self.add_node(
+            id=f"{self._METADATA_ID_PREFIX}{repo_id}",
+            node_type=self._METADATA_TYPE,
+            name="index",
+            properties=metadata,
+        )
+
+    def get_metadata(self) -> list[dict[str, Any]]:
+        """Return all stored index metadata entries (one per indexed repo)."""
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = $meta RETURN n.properties",
+            parameters={"meta": self._METADATA_TYPE},
+        )
+        entries: list[dict[str, Any]] = []
+        while result.has_next():
+            raw = result.get_next()[0]
+            if props := _parse_props(raw):
+                entries.append(props)
+        return entries
 
     # -- lifecycle -------------------------------------------------------
 

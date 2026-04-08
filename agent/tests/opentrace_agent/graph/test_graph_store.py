@@ -537,6 +537,48 @@ class TestGraphStoreImportBatch:
         assert summary["relationships_created"] == 0
 
 
+class TestGraphStoreMetadata:
+    def test_save_and_get(self, store):
+        store.save_metadata({"repoId": "owner/repo", "indexedAt": "2026-01-01T00:00:00Z"})
+        entries = store.get_metadata()
+        assert len(entries) == 1
+        assert entries[0]["repoId"] == "owner/repo"
+        assert entries[0]["indexedAt"] == "2026-01-01T00:00:00Z"
+
+    def test_multi_repo(self, store):
+        store.save_metadata({"repoId": "org/alpha", "commitSha": "aaa"})
+        store.save_metadata({"repoId": "org/beta", "commitSha": "bbb"})
+        entries = store.get_metadata()
+        assert len(entries) == 2
+        repo_ids = {e["repoId"] for e in entries}
+        assert repo_ids == {"org/alpha", "org/beta"}
+
+    def test_upsert_same_repo(self, store):
+        store.save_metadata({"repoId": "org/repo", "commitSha": "111"})
+        store.save_metadata({"repoId": "org/repo", "commitSha": "222"})
+        entries = store.get_metadata()
+        assert len(entries) == 1
+        assert entries[0]["commitSha"] == "222"
+
+    def test_empty_when_no_metadata(self, store):
+        assert store.get_metadata() == []
+
+    def test_excluded_from_stats(self, store):
+        _seed(store)
+        store.save_metadata({"repoId": "test/repo"})
+        stats = store.get_stats()
+        assert "IndexMetadata" not in stats["nodes_by_type"]
+        # Node count should not include the metadata node
+        assert stats["total_nodes"] == 5
+
+    def test_excluded_from_search(self, store):
+        store.save_metadata({"repoId": "test/repo", "commitSha": "abc123"})
+        results = store.search_nodes("index")
+        assert all(n["type"] != "IndexMetadata" for n in results)
+        results = store.search_nodes("test/repo")
+        assert all(n["type"] != "IndexMetadata" for n in results)
+
+
 class TestGraphStoreContextManager:
     def test_context_manager(self, tmp_path):
         db_path = str(tmp_path / "ctxdb")

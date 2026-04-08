@@ -26,6 +26,7 @@ import type {
   GraphStore,
   ImportBatchRequest,
   ImportBatchResponse,
+  IndexMetadata,
   NodeResult,
   NodeSourceResponse,
   SourceFile,
@@ -264,6 +265,16 @@ export class InMemoryGraphStore implements GraphStore {
     };
     logPerf('fetchStats', {}, this.nodes.size, performance.now() - t0);
     return result;
+  }
+
+  async fetchMetadata(): Promise<IndexMetadata[]> {
+    const entries: IndexMetadata[] = [];
+    for (const node of this.nodes.values()) {
+      if (node.type === 'IndexMetadata' && node.properties) {
+        entries.push(node.properties as IndexMetadata);
+      }
+    }
+    return entries;
   }
 
   async clearGraph(): Promise<void> {

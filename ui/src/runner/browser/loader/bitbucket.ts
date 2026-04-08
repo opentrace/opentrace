@@ -66,13 +66,13 @@ export async function fetchBitbucketRepoTree(
     fetchHeaders.Authorization = `Bearer ${token}`;
   }
 
-  const zipBuffer = await fetchResolvedArchive(
+  const { data, gitMeta } = await fetchResolvedArchive(
     resolveUrl,
     fetchHeaders,
     signal,
     onProgress,
   );
-  const entries = unzipSync(zipBuffer);
+  const entries = unzipSync(data);
 
   const files = extractFilesFromZip(entries, onProgress);
 
@@ -82,6 +82,9 @@ export async function fetchBitbucketRepoTree(
     ref,
     url: `https://bitbucket.org/${workspace}/${repo}`,
     provider: 'bitbucket',
+    sha: gitMeta.sha,
+    branch: gitMeta.branch,
+    commitMessage: gitMeta.commitMessage?.split('\n', 1)[0],
     files,
   };
 }

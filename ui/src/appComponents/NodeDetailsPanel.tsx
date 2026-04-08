@@ -288,7 +288,9 @@ export default function NodeDetailsPanel({
             .map(([k, v]) => (
               <div key={k} className="detail-row">
                 <span className="label">{k}</span>
-                <span className="value">{String(v)}</span>
+                <span className="value">
+                  {Array.isArray(v) ? v.map(String).join(', ') : String(v)}
+                </span>
               </div>
             ))}
         </div>
