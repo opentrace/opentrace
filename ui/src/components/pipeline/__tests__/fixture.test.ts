@@ -227,8 +227,8 @@ describe('fixture: Python project', () => {
     expect(importRels.length).toBeGreaterThan(0);
 
     // Stats
-    expect(done!.result!.classesExtracted).toBe(1);
-    // 4 methods + 2 top-level functions = 6
-    expect(done!.result!.functionsExtracted).toBe(6);
+    expect(done!.result!.classesExtracted).toBe(2);
+    // db.py: 4 methods, main.py: 2 functions, service.py: 4 methods + 3 functions = 13
+    expect(done!.result!.functionsExtracted).toBe(13);
   });
 });
