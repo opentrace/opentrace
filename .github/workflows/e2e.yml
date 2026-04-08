@@ -16,7 +16,7 @@ name: E2E
 
 on:
   workflow_run:
-    workflows: ["Trigger Deployment"]
+    workflows: ["Trigger Deployment", "Deploy Preview"]
     types: [completed]
 
 jobs:
@@ -41,11 +41,20 @@ jobs:
         working-directory: ui
         run: npx playwright install --with-deps chromium
 
+      - name: Resolve target URL
+        id: url
+        run: |
+          if [ "${{ github.event.workflow_run.name }}" = "Deploy Preview" ]; then
+            echo "base_url=${{ vars.PREVIEW_URL }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_url=${{ vars.PRODUCTION_URL }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run E2E tests
         working-directory: ui
         run: npx playwright test
         env:
-          BASE_URL: ${{ vars.PRODUCTION_URL }}
+          BASE_URL: ${{ steps.url.outputs.base_url }}
 
       - name: Upload report on failure
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
