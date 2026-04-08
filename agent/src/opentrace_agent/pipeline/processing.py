@@ -391,15 +391,15 @@ def _symbol_to_graph(
             props["start_line"] = symbol.start_line
         if symbol.end_line is not None:
             props["end_line"] = symbol.end_line
-        if symbol.type_signature:
-            props["signature"] = symbol.type_signature
-        elif symbol.signature:
+        if symbol.signature:
             props["signature"] = symbol.signature
+        if symbol.type_signature:
+            props["type_signature"] = symbol.type_signature
         if symbol.return_type:
             props["return_type"] = symbol.return_type
         if symbol.docs:
             props["docs"] = symbol.docs
-        display_name = f"{symbol.name}{symbol.type_signature}" if symbol.type_signature else symbol.name
+        display_name = f"{symbol.name}{symbol.signature}" if symbol.signature else symbol.name
         nodes.append(GraphNode(id=node_id, type="Function", name=display_name, properties=props))
         functions = 1
 

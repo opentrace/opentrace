@@ -242,7 +242,7 @@ def _normalize_go_type(type_node: tree_sitter.Node) -> str:
     """Normalize a Go type node to a clean Java-style type name."""
     if type_node.type == "pointer_type":
         for sub in type_node.children:
-            if sub.type in ("type_identifier", "qualified_type"):
+            if sub.type in ("type_identifier", "qualified_type", "pointer_type", "slice_type"):
                 return _normalize_go_type(sub)
     if type_node.type == "slice_type":
         elem = type_node.child_by_field_name("element")

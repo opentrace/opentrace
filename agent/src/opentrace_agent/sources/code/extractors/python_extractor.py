@@ -212,7 +212,7 @@ def _extract_type_signature(params_node: tree_sitter.Node) -> str | None:
         elif child.type in ("list_splat_pattern", "dictionary_splat_pattern"):
             has_untyped = True
 
-    if has_untyped or not types:
+    if has_untyped:
         return None
     return f"({','.join(types)})"
 

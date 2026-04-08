@@ -33,7 +33,7 @@
     "start_line": 26,
     "end_line": 31,
     "signature": "(host: &str, port: u16)",
-    "type_signature": "(str,u16)",
+    "type_signature": "(&str,u16)",
     "return_type": "Server",
     "subtype": null,
     "superclasses": null,

@@ -234,7 +234,7 @@ function extractTypeSignature(paramsNode: SyntaxNode): string | null {
     }
   }
 
-  if (hasUntyped || types.length === 0) return null;
+  if (hasUntyped) return null;
   return `(${types.join(',')})`;
 }
 

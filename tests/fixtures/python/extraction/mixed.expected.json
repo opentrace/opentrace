@@ -16,7 +16,7 @@
     "start_line": 18,
     "end_line": 19,
     "signature": "()",
-    "type_signature": null,
+    "type_signature": "()",
     "return_type": null,
     "children": [],
     "calls": [
@@ -42,7 +42,7 @@
         "start_line": 22,
         "end_line": 23,
         "signature": "(self)",
-        "type_signature": null,
+        "type_signature": "()",
         "return_type": null,
         "children": [],
         "calls": [
@@ -62,7 +62,7 @@
     "start_line": 25,
     "end_line": 26,
     "signature": "()",
-    "type_signature": null,
+    "type_signature": "()",
     "return_type": null,
     "children": [],
     "calls": [

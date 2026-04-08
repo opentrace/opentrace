@@ -200,7 +200,7 @@ def main():
 
     // Functions should have summaries
     const getUserById = nodes.find(
-      (n) => n.type === 'Function' && n.name === 'getUserById',
+      (n) => n.type === 'Function' && n.name === 'getUserById(user_id)',
     );
     expect(getUserById).toBeDefined();
     expect(getUserById!.properties?.summary).toBeTruthy();

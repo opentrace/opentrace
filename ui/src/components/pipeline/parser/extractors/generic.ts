@@ -517,11 +517,12 @@ function extractParamType(paramNode: SyntaxNode): string | null {
 }
 
 /** Normalize a type name to a clean Java-style format.
- *  Strips pointer/reference markers, const qualifiers, and namespace prefixes. */
+ *  Strips const qualifiers and namespace prefixes but preserves pointer/reference
+ *  markers (* and &) since they distinguish overloads in C++ and C#. */
 function normalizeTypeName(raw: string): string {
   let name = raw
     .replace(/\bconst\b\s*/g, '')
-    .replace(/^[*&]+|[*&]+$/g, '')
+    .replace(/\s*([*&])\s*/g, '$1') // Normalize spacing around * and &
     .trim();
   // Take leaf of qualified names (std::string → string, java.util.List → List)
   if (name.includes('::')) name = name.split('::').pop()!;

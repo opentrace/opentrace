@@ -54,7 +54,7 @@
         "start_line": 23,
         "end_line": 24,
         "signature": "(self)",
-        "type_signature": null,
+        "type_signature": "()",
         "return_type": null,
         "children": [],
         "calls": []

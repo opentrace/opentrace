@@ -234,13 +234,13 @@ export function processSymbol(
       startLine: symbol.startLine,
       endLine: symbol.endLine,
     };
-    if (symbol.typeSignature) props.signature = symbol.typeSignature;
-    else if (symbol.signature) props.signature = symbol.signature;
+    if (symbol.signature) props.signature = symbol.signature;
+    if (symbol.typeSignature) props.typeSignature = symbol.typeSignature;
     if (symbol.returnType) props.returnType = symbol.returnType;
     if (symbol.docs) props.docs = symbol.docs;
 
-    const displayName = symbol.typeSignature
-      ? `${symbol.name}${symbol.typeSignature}`
+    const displayName = symbol.signature
+      ? `${symbol.name}${symbol.signature}`
       : symbol.name;
 
     nodes.push({
@@ -334,10 +334,9 @@ function convertSymbol(
     startLine: sym.startLine,
     endLine: sym.endLine,
   };
+  if (sym.signature) props.signature = sym.signature;
   if (sym.kind === 'function' && sym.typeSignature) {
-    props.signature = sym.typeSignature;
-  } else if (sym.signature) {
-    props.signature = sym.signature;
+    props.typeSignature = sym.typeSignature;
   }
   if (sym.kind === 'function' && sym.returnType) {
     props.returnType = sym.returnType;
@@ -348,8 +347,8 @@ function convertSymbol(
   if (sym.subtype) props.kind = sym.subtype;
 
   const displayName =
-    sym.kind === 'function' && sym.typeSignature
-      ? `${sym.name}${sym.typeSignature}`
+    sym.kind === 'function' && sym.signature
+      ? `${sym.name}${sym.signature}`
       : sym.name;
 
   nodes.push({

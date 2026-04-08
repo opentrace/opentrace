@@ -188,7 +188,7 @@ describe('fixture: Python project', () => {
     expect(initMethod!.type).toBe('Function');
 
     const getAllUsers = store.nodes.get(
-      'fixture/py-project/db.py::Database::get_all_users',
+      'fixture/py-project/db.py::Database::get_all_users()',
     );
     expect(getAllUsers).toBeDefined();
 
@@ -198,12 +198,14 @@ describe('fixture: Python project', () => {
     expect(insertUser).toBeDefined();
 
     // main.py has: list_users, create_user (top-level functions)
-    const listUsers = store.nodes.get('fixture/py-project/main.py::list_users');
+    const listUsers = store.nodes.get(
+      'fixture/py-project/main.py::list_users()',
+    );
     expect(listUsers).toBeDefined();
     expect(listUsers!.type).toBe('Function');
 
     const createUser = store.nodes.get(
-      'fixture/py-project/main.py::create_user',
+      'fixture/py-project/main.py::create_user()',
     );
     expect(createUser).toBeDefined();
 

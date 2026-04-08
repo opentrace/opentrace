@@ -41,10 +41,10 @@ describe('parsing stage', () => {
     ]);
 
     const funcNode = nodes.find(
-      (n) => n.type === 'Function' && n.name === 'hello',
+      (n) => n.type === 'Function' && n.name === 'hello()',
     );
     expect(funcNode).toBeDefined();
-    expect(funcNode!.id).toBe('testorg/testrepo/app.py::hello');
+    expect(funcNode!.id).toBe('testorg/testrepo/app.py::hello()');
 
     const rel = relationships.find((r) => r.target_id === funcNode!.id);
     expect(rel?.source_id).toBe('testorg/testrepo/app.py');
@@ -77,15 +77,17 @@ describe('parsing stage', () => {
       { path: 'animals.py', content: src },
     ]);
 
-    const bark = nodes.find((n) => n.name === 'bark' && n.type === 'Function');
+    const bark = nodes.find(
+      (n) => n.name === 'bark(self)' && n.type === 'Function',
+    );
     expect(bark).toBeDefined();
-    expect(bark!.id).toBe('testorg/testrepo/animals.py::Dog::bark');
+    expect(bark!.id).toBe('testorg/testrepo/animals.py::Dog::bark()');
 
     const barkRel = relationships.find((r) => r.target_id === bark!.id);
     expect(barkRel?.source_id).toBe('testorg/testrepo/animals.py::Dog');
 
     const fetch = nodes.find(
-      (n) => n.name === 'fetch' && n.type === 'Function',
+      (n) => n.name === 'fetch(self, item)' && n.type === 'Function',
     );
     expect(fetch).toBeDefined();
   });
@@ -101,11 +103,11 @@ def bar():
 `;
     const { nodes } = runBoth([{ path: 'lib.py', content: src }]);
 
-    const foo = nodes.find((n) => n.name === 'foo');
+    const foo = nodes.find((n) => n.name === 'foo()');
     expect(foo?.properties?.startLine).toBe(2);
     expect(foo?.properties?.endLine).toBe(3);
 
-    const bar = nodes.find((n) => n.name === 'bar');
+    const bar = nodes.find((n) => n.name === 'bar()');
     expect(bar?.properties?.startLine).toBe(5);
     expect(bar?.properties?.endLine).toBe(7);
   });
@@ -115,7 +117,7 @@ def bar():
       { path: 'a.py', content: 'def greet(name, greeting="hi"):\n    pass\n' },
     ]);
 
-    const func = nodes.find((n) => n.name === 'greet');
+    const func = nodes.find((n) => n.name === 'greet(name, greeting="hi")');
     expect(func?.properties?.signature).toBe('(name, greeting="hi")');
   });
 
@@ -126,7 +128,7 @@ def bar():
 `;
     const { nodes } = runBoth([{ path: 'doc.py', content: src }]);
 
-    const func = nodes.find((n) => n.name === 'documented');
+    const func = nodes.find((n) => n.name === 'documented()');
     expect(func?.properties?.docs).toBe('This function is documented.');
   });
 
@@ -178,7 +180,7 @@ def standalone():
       { path: 'bad.py', content: 'def (\n' },
     ]);
 
-    const okFunc = nodes.find((n) => n.name === 'ok');
+    const okFunc = nodes.find((n) => n.name === 'ok()');
     expect(okFunc).toBeDefined();
 
     const done = events.find((e) => e.kind === 'done');
