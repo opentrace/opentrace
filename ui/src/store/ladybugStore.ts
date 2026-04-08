@@ -102,7 +102,7 @@ const NODE_TYPE_SET: ReadonlySet<string> = new Set<string>(GRAPH_NODE_TYPES);
 /** Valid FROM→TO pairs for the RELATES REL TABLE GROUP.
  *  Relationships are kept in a single RELATES group for now; per-type
  *  relationship tables are a future migration. */
-const REL_PAIRS: readonly [NodeType, NodeType][] = [
+export const REL_PAIRS: readonly [NodeType, NodeType][] = [
   // DEFINES: parent → child (scanning)
   ['Repository', 'Directory'],
   ['Repository', 'File'],
