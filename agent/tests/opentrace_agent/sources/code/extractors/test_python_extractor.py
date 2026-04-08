@@ -336,3 +336,173 @@ def typed():
         assert locals_[0].name == "x"
         assert locals_[0].type_annotation == "int"
         assert DerivationRef(kind="call", name="compute") in locals_[0].derived_from
+
+    def test_extract_untyped_bare_parameter(self):
+        """Bare parameter without type annotation."""
+        source = b"def f(x, y):\n    pass\n"
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        params = [v for v in fn.variables if v.kind == "parameter"]
+        assert len(params) == 2
+        assert params[0].name == "x"
+        assert params[0].type_annotation is None
+        assert params[1].name == "y"
+
+    def test_extract_local_compound_expression(self):
+        """Compound RHS expression collects all identifier derivations."""
+        source = b"""\
+def combine(a, b):
+    total = a + b
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        assert locals_[0].name == "total"
+        ref_names = {d.name for d in locals_[0].derived_from}
+        assert "a" in ref_names
+        assert "b" in ref_names
+
+    def test_extract_local_in_nested_block(self):
+        """Variables in if/else blocks are extracted."""
+        source = b"""\
+def branch(flag):
+    if flag:
+        x = compute()
+    else:
+        y = fallback()
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        local_names = {v.name for v in locals_}
+        assert "x" in local_names
+        assert "y" in local_names
+
+    def test_extract_local_literal_no_derivation(self):
+        """Local assigned from a literal has no derivation refs."""
+        source = b"""\
+def init():
+    count = 0
+    name = "hello"
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 2
+        count_var = next(v for v in locals_ if v.name == "count")
+        assert count_var.derived_from == []
+        name_var = next(v for v in locals_ if v.name == "name")
+        assert name_var.derived_from == []
+
+    def test_extract_bare_annotation_field(self):
+        """Bare type annotation without assignment is extracted as field."""
+        source = b"""\
+class Schema:
+    name: str
+    age: int
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        fields = [v for v in cls.variables if v.kind == "field"]
+        assert len(fields) == 2
+        name_field = next(v for v in fields if v.name == "name")
+        assert name_field.type_annotation == "str"
+        assert name_field.derived_from == []
+
+    def test_extract_self_field_from_method_call(self):
+        """self.x assigned from a method call."""
+        source = b"""\
+class Svc:
+    def __init__(self, client):
+        self.data = client.fetch()
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        fields = [v for v in cls.variables if v.kind == "field"]
+        data_field = next(v for v in fields if v.name == "data")
+        assert DerivationRef(kind="call", name="fetch", receiver="client") in data_field.derived_from
+
+    def test_extract_self_field_from_attribute(self):
+        """self.x assigned from attribute access."""
+        source = b"""\
+class Svc:
+    def __init__(self, config):
+        self.host = config.host
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        fields = [v for v in cls.variables if v.kind == "field"]
+        host_field = next(v for v in fields if v.name == "host")
+        assert DerivationRef(kind="attribute", name="host", receiver="config") in host_field.derived_from
+
+    def test_extract_self_field_in_nested_block(self):
+        """self.x in a nested if block inside __init__ is extracted."""
+        source = b"""\
+class Svc:
+    def __init__(self, debug):
+        if debug:
+            self.logger = make_logger()
+        else:
+            self.logger = None
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        field_names = [v.name for v in cls.variables if v.kind == "field"]
+        assert "logger" in field_names
+
+    def test_field_dedup_annotated_and_self(self):
+        """Annotated class attr and self.x for same name are deduplicated."""
+        source = b"""\
+class Model:
+    name: str
+    def __init__(self, name):
+        self.name = name
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        name_fields = [v for v in cls.variables if v.name == "name" and v.kind == "field"]
+        assert len(name_fields) == 1
+
+    def test_extract_local_in_try_except(self):
+        """Variables in try/except/finally blocks are extracted."""
+        source = b"""\
+def safe():
+    try:
+        result = compute()
+    except Exception:
+        result = fallback()
+    finally:
+        cleanup = done()
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        local_names = {v.name for v in fn.variables if v.kind == "local"}
+        assert "result" in local_names
+        assert "cleanup" in local_names
+
+    def test_extract_local_in_for_loop(self):
+        """Variable assigned inside a for loop body is extracted."""
+        source = b"""\
+def loop(items):
+    for item in items:
+        processed = transform(item)
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        local_names = {v.name for v in fn.variables if v.kind == "local"}
+        assert "processed" in local_names
+
+    def test_extract_local_list_comprehension_rhs(self):
+        """List/dict literal RHS collects identifiers from elements."""
+        source = b"""\
+def build(a, b):
+    items = [a, b]
+"""
+        result = self.extractor.extract(source)
+        fn = result.symbols[0]
+        locals_ = [v for v in fn.variables if v.kind == "local"]
+        assert len(locals_) == 1
+        ref_names = {d.name for d in locals_[0].derived_from}
+        assert "a" in ref_names
+        assert "b" in ref_names

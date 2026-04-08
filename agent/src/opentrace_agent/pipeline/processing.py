@@ -492,10 +492,13 @@ def _variables_to_graph(
 
         # Queue derivation refs for resolution
         if var.derived_from:
+            # For fields extracted from a method (e.g., self.x in __init__),
+            # resolve derivations using that method's scope, not the class scope.
+            deriv_scope = f"{scope_id}::{var.origin_scope}" if var.origin_scope else scope_id
             derivs.append(
                 DerivationInfo(
                     variable_id=var_id,
-                    scope_id=scope_id,
+                    scope_id=deriv_scope,
                     file_id=file_id,
                     refs=[(d.name, d.receiver, d.kind) for d in var.derived_from],
                 )

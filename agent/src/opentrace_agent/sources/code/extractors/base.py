@@ -71,6 +71,8 @@ class VariableSymbol:
     type_annotation: str | None = None
     derived_from: list[DerivationRef] = field(default_factory=list)
     """References to names this variable's value is derived from."""
+    origin_scope: str | None = None
+    """For fields extracted from a method (e.g., self.x in __init__), the method name."""
 
 
 @dataclass
