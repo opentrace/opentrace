@@ -74,6 +74,10 @@ if (indexStat) {
 
   // 2. Each referenced asset exists on disk
   for (const ref of assetRefs) {
+    // Skip data URIs (inlined assets) and external URLs
+    if (ref.startsWith("data:") || ref.startsWith("http://") || ref.startsWith("https://")) {
+      continue;
+    }
     // Strip leading slash for file path resolution
     const assetPath = join(DIST, ref.replace(/^\//, ""));
     checkFile(assetPath, `Referenced asset: ${ref}`);

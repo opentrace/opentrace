@@ -44,8 +44,7 @@ test.describe("App smoke tests", () => {
     });
 
     await page.goto("/");
-    // Wait for initial render to settle
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState("networkidle");
 
     // Filter out known non-critical errors (e.g. favicon 404, dev warnings)
     const critical = errors.filter(
