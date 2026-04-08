@@ -14,28 +14,28 @@
  * limitations under the License.
  */
 
-import { defineConfig } from "@playwright/test";
+import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: './e2e',
   timeout: 30_000,
   retries: 1,
-  reporter: [["html", { open: "never" }]],
+  reporter: [['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.BASE_URL || "http://localhost:4173",
-    screenshot: "only-on-failure",
-    trace: "retain-on-failure",
+    baseURL: process.env.BASE_URL || 'http://localhost:4173',
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
   },
   projects: [
     {
-      name: "chromium",
-      use: { browserName: "chromium" },
+      name: 'chromium',
+      use: { browserName: 'chromium' },
     },
   ],
   webServer: process.env.BASE_URL
     ? undefined
     : {
-        command: "npm run preview",
+        command: 'npm run preview',
         port: 4173,
         reuseExistingServer: true,
       },

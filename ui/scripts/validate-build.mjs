@@ -27,12 +27,12 @@
  * Usage: node scripts/validate-build.mjs
  */
 
-import { readFileSync, statSync, readdirSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync, statSync, readdirSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const DIST = resolve(__dirname, "..", "dist");
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const DIST = resolve(__dirname, '..', 'dist');
 const MAX_BUNDLE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const errors = [];
@@ -55,80 +55,86 @@ function checkFile(path, label) {
 }
 
 // 1. dist/index.html exists and has content
-const indexPath = join(DIST, "index.html");
-const indexStat = checkFile(indexPath, "dist/index.html");
+const indexPath = join(DIST, 'index.html');
+const indexStat = checkFile(indexPath, 'dist/index.html');
 
 if (indexStat) {
-  const html = readFileSync(indexPath, "utf-8");
+  const html = readFileSync(indexPath, 'utf-8');
 
   // Extract asset references from script and link tags
   const scriptRefs = [...html.matchAll(/src="([^"]+)"/g)].map((m) => m[1]);
-  const styleRefs = [
-    ...html.matchAll(/href="([^"]+\.css[^"]*)"/g),
-  ].map((m) => m[1]);
+  const styleRefs = [...html.matchAll(/href="([^"]+\.css[^"]*)"/g)].map(
+    (m) => m[1],
+  );
   const assetRefs = [...scriptRefs, ...styleRefs];
 
   if (assetRefs.length === 0) {
-    fail("index.html contains no script or stylesheet references");
+    fail('index.html contains no script or stylesheet references');
   }
 
   // 2. Each referenced asset exists on disk
   for (const ref of assetRefs) {
     // Skip data URIs (inlined assets) and external URLs
-    if (ref.startsWith("data:") || ref.startsWith("http://") || ref.startsWith("https://")) {
+    if (
+      ref.startsWith('data:') ||
+      ref.startsWith('http://') ||
+      ref.startsWith('https://')
+    ) {
       continue;
     }
     // Strip leading slash for file path resolution
-    const assetPath = join(DIST, ref.replace(/^\//, ""));
+    const assetPath = join(DIST, ref.replace(/^\//, ''));
     checkFile(assetPath, `Referenced asset: ${ref}`);
   }
 }
 
 // 3. At least one .js and one .css in dist/assets/
-const assetsDir = join(DIST, "assets");
+const assetsDir = join(DIST, 'assets');
 if (existsSync(assetsDir)) {
   const files = readdirSync(assetsDir);
-  const hasJS = files.some((f) => f.endsWith(".js"));
-  const hasCSS = files.some((f) => f.endsWith(".css"));
-  if (!hasJS) fail("No .js files found in dist/assets/");
-  if (!hasCSS) fail("No .css files found in dist/assets/");
+  const hasJS = files.some((f) => f.endsWith('.js'));
+  const hasCSS = files.some((f) => f.endsWith('.css'));
+  if (!hasJS) fail('No .js files found in dist/assets/');
+  if (!hasCSS) fail('No .css files found in dist/assets/');
 
   // 5. Check bundle sizes
   for (const f of files) {
-    if (!f.endsWith(".js")) continue;
+    if (!f.endsWith('.js')) continue;
     const filePath = join(assetsDir, f);
     const stat = statSync(filePath);
     if (stat.size > MAX_BUNDLE_SIZE) {
       const sizeMB = (stat.size / 1024 / 1024).toFixed(2);
-      fail(`Bundle too large: ${f} is ${sizeMB} MB (max ${MAX_BUNDLE_SIZE / 1024 / 1024} MB)`);
+      fail(
+        `Bundle too large: ${f} is ${sizeMB} MB (max ${MAX_BUNDLE_SIZE / 1024 / 1024} MB)`,
+      );
     }
   }
 } else {
-  fail("dist/assets/ directory does not exist");
+  fail('dist/assets/ directory does not exist');
 }
 
 // 4. WASM files present (Vite copies public/ to dist/)
-const wasmDir = join(DIST, "wasm");
+const wasmDir = join(DIST, 'wasm');
 if (existsSync(wasmDir)) {
-  const wasmFiles = readdirSync(wasmDir).filter((f) => f.endsWith(".wasm"));
+  const wasmFiles = readdirSync(wasmDir).filter((f) => f.endsWith('.wasm'));
   if (wasmFiles.length === 0) {
-    fail("No .wasm files found in dist/wasm/");
+    fail('No .wasm files found in dist/wasm/');
   }
   // web-tree-sitter.wasm is required for the indexer
-  const coreWasm = join(wasmDir, "web-tree-sitter.wasm");
-  checkFile(coreWasm, "web-tree-sitter.wasm");
+  const coreWasm = join(wasmDir, 'web-tree-sitter.wasm');
+  checkFile(coreWasm, 'web-tree-sitter.wasm');
 } else {
-  fail("dist/wasm/ directory does not exist");
+  fail('dist/wasm/ directory does not exist');
 }
 
 // Report
 if (errors.length > 0) {
-  console.error("\n❌ Build validation failed:\n");
+  console.error('\n❌ Build validation failed:\n');
   for (const e of errors) {
     console.error(`  • ${e}`);
   }
-  console.error("");
+  console.error('');
   process.exit(1);
 } else {
-  console.log("✅ Build validation passed");
+  console.log('✅ Build validation passed');
 }

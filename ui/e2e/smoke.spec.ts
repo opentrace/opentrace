@@ -21,47 +21,47 @@
  * via the BASE_URL env var.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from '@playwright/test';
 
-test.describe("App smoke tests", () => {
-  test("app loads without blank screen", async ({ page }) => {
-    await page.goto("/");
+test.describe('App smoke tests', () => {
+  test('app loads without blank screen', async ({ page }) => {
+    await page.goto('/');
 
     // The root div should have children (app rendered)
-    const root = page.locator("#root");
+    const root = page.locator('#root');
     await expect(root).not.toBeEmpty();
 
     // Page title should be set
     await expect(page).toHaveTitle(/OpenTrace/);
   });
 
-  test("no critical console errors on load", async ({ page }) => {
+  test('no critical console errors on load', async ({ page }) => {
     const errors: string[] = [];
-    page.on("console", (msg) => {
-      if (msg.type() === "error") {
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') {
         errors.push(msg.text());
       }
     });
 
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
 
     // Filter out known non-critical errors (e.g. favicon 404, dev warnings)
     const critical = errors.filter(
       (e) =>
-        !e.includes("favicon") &&
-        !e.includes("DevTools") &&
-        !e.includes("Download the React DevTools"),
+        !e.includes('favicon') &&
+        !e.includes('DevTools') &&
+        !e.includes('Download the React DevTools'),
     );
 
     expect(critical).toEqual([]);
   });
 
-  test("graph container renders", async ({ page }) => {
-    await page.goto("/");
+  test('graph container renders', async ({ page }) => {
+    await page.goto('/');
 
     // The graph viewer renders a canvas (Pixi.js) or a container div
-    const canvas = page.locator("canvas");
+    const canvas = page.locator('canvas');
     const graphContainer = page.locator(
       '[class*="graph"], [class*="Graph"], [data-testid*="graph"]',
     );
@@ -72,8 +72,8 @@ test.describe("App smoke tests", () => {
     expect(canvasCount + containerCount).toBeGreaterThan(0);
   });
 
-  test("search input is present and interactive", async ({ page }) => {
-    await page.goto("/");
+  test('search input is present and interactive', async ({ page }) => {
+    await page.goto('/');
 
     const searchInput = page.locator(
       'input[placeholder*="Search"], .ot-search-input',
@@ -83,14 +83,14 @@ test.describe("App smoke tests", () => {
     await expect(searchInput.first()).toBeVisible({ timeout: 10_000 });
 
     // Should accept text input
-    await searchInput.first().fill("test query");
-    await expect(searchInput.first()).toHaveValue("test query");
+    await searchInput.first().fill('test query');
+    await expect(searchInput.first()).toHaveValue('test query');
   });
 
-  test("static assets load successfully", async ({ page }) => {
+  test('static assets load successfully', async ({ page }) => {
     const failedRequests: string[] = [];
 
-    page.on("response", (response) => {
+    page.on('response', (response) => {
       const url = response.url();
       const status = response.status();
       // Check JS, CSS, and WASM assets
@@ -99,8 +99,8 @@ test.describe("App smoke tests", () => {
       }
     });
 
-    await page.goto("/");
-    await page.waitForLoadState("networkidle");
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
 
     expect(failedRequests).toEqual([]);
   });
