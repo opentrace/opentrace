@@ -1062,11 +1062,16 @@ const GraphViewer = memo(
         filterState,
       );
 
-      // Zoom to highlighted neighborhood when a node is selected.
+      // Zoom to highlighted neighborhood when a node is selected,
+      // or zoom to fit all nodes when deselected.
       // Only trigger on selectedNode identity change, not on highlight recalculation
       // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
       useEffect(() => {
-        if (!zoomOnSelect || !selectedNode) return;
+        if (!zoomOnSelect) return;
+        if (!selectedNode) {
+          canvasRef.current?.zoomToFit(600);
+          return;
+        }
         if (highlights.highlightNodes.size > 0) {
           canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
         }
