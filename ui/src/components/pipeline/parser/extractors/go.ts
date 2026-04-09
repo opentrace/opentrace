@@ -211,17 +211,12 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
   const paramsNode = node.childForFieldName('parameters');
   const receiverNode = node.childForFieldName('receiver');
 
-  const parts: string[] = [];
+  const signature = paramsNode ? paramsNode.text : null;
   let receiverVar: string | null = null;
   let receiverType: string | null = null;
   if (receiverNode) {
-    parts.push(receiverNode.text);
     [receiverVar, receiverType] = parseReceiver(receiverNode);
   }
-  if (paramsNode) {
-    parts.push(paramsNode.text);
-  }
-  const signature = parts.length > 0 ? parts.join(' ') : null;
   const typeSignature = paramsNode ? extractGoTypeSignature(paramsNode) : '()';
   const returnType = extractGoReturnType(node);
 

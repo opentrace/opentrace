@@ -103,9 +103,9 @@ func (s *Server) Start(port int) error {
 
         method = next(s for s in result.symbols if s.name == "Start")
         assert method.kind == "function"
-        # Signature should include the receiver
-        assert "(s *Server)" in method.signature
-        assert "(port int)" in method.signature
+        # Signature is params only (receiver is stored separately)
+        assert method.signature == "(port int)"
+        assert method.receiver_type == "Server"
 
     def test_extract_method_receiver_fields(self):
         """Go method declarations should populate receiver_var and receiver_type."""

@@ -157,16 +157,11 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
         return None
     params_node = node.child_by_field_name("parameters")
     receiver_node = node.child_by_field_name("receiver")
-    # Build signature including receiver
-    parts: list[str] = []
+    signature = params_node.text.decode() if params_node else None
     receiver_var: str | None = None
     receiver_type: str | None = None
     if receiver_node:
-        parts.append(receiver_node.text.decode())
         receiver_var, receiver_type = _parse_receiver(receiver_node)
-    if params_node:
-        parts.append(params_node.text.decode())
-    signature = " ".join(parts) if parts else None
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     docs = _extract_godoc(node)

@@ -239,8 +239,9 @@ export function processSymbol(
     if (symbol.returnType) props.returnType = symbol.returnType;
     if (symbol.docs) props.docs = symbol.docs;
 
-    const displayName = symbol.signature
-      ? `${symbol.name}${symbol.signature}`
+    const displaySig = symbol.typeSignature ?? symbol.signature ?? '';
+    const displayName = displaySig
+      ? `${symbol.name}${displaySig}`
       : symbol.name;
 
     nodes.push({
@@ -346,10 +347,13 @@ function convertSymbol(
   if (sym.interfaces) props.interfaces = sym.interfaces;
   if (sym.subtype) props.kind = sym.subtype;
 
-  const displayName =
-    sym.kind === 'function' && sym.signature
-      ? `${sym.name}${sym.signature}`
-      : sym.name;
+  const displaySig =
+    sym.kind === 'function'
+      ? (sym.typeSignature ?? sym.signature ?? '')
+      : '';
+  const displayName = displaySig
+    ? `${sym.name}${displaySig}`
+    : sym.name;
 
   nodes.push({
     id: symId,

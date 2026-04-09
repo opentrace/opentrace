@@ -399,7 +399,8 @@ def _symbol_to_graph(
             props["return_type"] = symbol.return_type
         if symbol.docs:
             props["docs"] = symbol.docs
-        display_name = f"{symbol.name}{symbol.signature}" if symbol.signature else symbol.name
+        display_sig = symbol.type_signature or symbol.signature or ""
+        display_name = f"{symbol.name}{display_sig}" if display_sig else symbol.name
         nodes.append(GraphNode(id=node_id, type="Function", name=display_name, properties=props))
         functions = 1
 

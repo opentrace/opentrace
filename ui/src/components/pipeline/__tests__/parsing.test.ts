@@ -78,7 +78,7 @@ describe('parsing stage', () => {
     ]);
 
     const bark = nodes.find(
-      (n) => n.name === 'bark(self)' && n.type === 'Function',
+      (n) => n.name === 'bark()' && n.type === 'Function',
     );
     expect(bark).toBeDefined();
     expect(bark!.id).toBe('testorg/testrepo/animals.py::Dog::bark()');

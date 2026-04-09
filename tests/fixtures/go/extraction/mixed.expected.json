@@ -57,7 +57,7 @@
     "kind": "function",
     "start_line": 29,
     "end_line": 31,
-    "signature": "(c *Config) ()",
+    "signature": "()",
     "type_signature": "()",
     "return_type": "error",
     "receiver_var": "c",
