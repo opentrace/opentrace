@@ -46,10 +46,12 @@ def _error_response(tool_name: str, e: Exception) -> str:
     return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
 
-NO_INDEX_MSG = json.dumps({
-    "status": "ok",
-    "message": "No index available. Run 'opentraceai index' to create one.",
-})
+NO_INDEX_MSG = json.dumps(
+    {
+        "status": "ok",
+        "message": "No index available. Run 'opentraceai index' to create one.",
+    }
+)
 
 
 def create_mcp_server(store: GraphStore | None) -> FastMCP:
