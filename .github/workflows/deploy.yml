@@ -46,7 +46,7 @@ jobs:
       - name: Check /api/health
         run: |
           for i in $(seq 1 10); do
-            STATUS=$(curl -sf "${{ vars.PRODUCTION_URL }}/api/health" \
+            STATUS=$(curl -sf "https://oss.opentrace.ai/api/health" \
               | jq -r '.status' 2>/dev/null || true)
             if [ "$STATUS" = "ok" ]; then
               echo "Health check passed"
@@ -60,12 +60,12 @@ jobs:
 
       - name: Check /api/stats returns valid JSON
         run: |
-          curl -sf "${{ vars.PRODUCTION_URL }}/api/stats" | jq . > /dev/null
+          curl -sf "https://oss.opentrace.ai/api/stats" | jq . > /dev/null
           echo "Stats endpoint returned valid JSON"
 
       - name: Check UI serves HTML
         run: |
-          CONTENT_TYPE=$(curl -sI "${{ vars.PRODUCTION_URL }}" | grep -i content-type | head -1)
+          CONTENT_TYPE=$(curl -sI "https://oss.opentrace.ai" | grep -i content-type | head -1)
           echo "$CONTENT_TYPE"
           echo "$CONTENT_TYPE" | grep -qi "text/html" \
             || { echo "::error::UI did not return HTML"; exit 1; }
@@ -95,7 +95,7 @@ jobs:
         working-directory: ui
         run: npx playwright test
         env:
-          BASE_URL: ${{ vars.PRODUCTION_URL }}
+          BASE_URL: https://oss.opentrace.ai
 
       - name: Upload report on failure
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
