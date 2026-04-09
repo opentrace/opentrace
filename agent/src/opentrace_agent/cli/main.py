@@ -714,11 +714,7 @@ def whoami() -> None:
     issuer = tokens.get("issuer", "unknown")
     scope = tokens.get("scope", "none")
     access_token = tokens.get("access_token", "")
-    token_type = (
-        "user (otuat)"
-        if access_token.startswith("otuat_")
-        else "org-scoped (legacy)"
-    )
+    token_type = "user (otuat)" if access_token.startswith("otuat_") else "org-scoped (legacy)"
     created = tokens.get("created_at")
 
     click.echo(f"Issuer:  {issuer}")

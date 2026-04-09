@@ -514,17 +514,11 @@ def resolve_org_token(org_id: str) -> dict[str, Any]:
         error_body = exc.read().decode("utf-8", errors="replace")
         if exc.code == 404:
             raise RuntimeError(
-                f"Organization '{org_id}' not found. "
-                f"Check your .opentrace/config.yaml org value."
+                f"Organization '{org_id}' not found. Check your .opentrace/config.yaml org value."
             ) from exc
         if exc.code == 401:
-            raise RuntimeError(
-                "User token expired or invalid. "
-                "Run 'opentraceai login' to re-authenticate."
-            ) from exc
-        raise RuntimeError(
-            f"Org token exchange failed ({exc.code}): {error_body}"
-        ) from exc
+            raise RuntimeError("User token expired or invalid. Run 'opentraceai login' to re-authenticate.") from exc
+        raise RuntimeError(f"Org token exchange failed ({exc.code}): {error_body}") from exc
 
     # Add local expiry timestamp for cache checking
     expires_in = result.get("expires_in", 259200)  # default 3 days
