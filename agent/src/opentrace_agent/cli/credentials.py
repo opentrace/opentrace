@@ -35,6 +35,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -242,6 +243,50 @@ def clear_tokens() -> bool:
         path.unlink()
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Per-org tokens  (org_tokens/{org_id}.json) — encrypted
+# ---------------------------------------------------------------------------
+
+
+def _org_tokens_dir() -> Path:
+    """Return ``~/.opentrace/org_tokens/``, creating with secure permissions if needed."""
+    d = _base_dir() / "org_tokens"
+    if not d.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        _secure_path(d)
+    return d
+
+
+def load_org_token(org_id: str) -> dict[str, Any] | None:
+    """Load a cached org-scoped access token, or ``None`` if missing/expired."""
+    path = _org_tokens_dir() / f"{org_id}.json"
+    data = _read_encrypted(path)
+    if data and "access_token" in data:
+        expires_at = data.get("expires_at")
+        if expires_at and time.time() > expires_at:
+            path.unlink(missing_ok=True)
+            return None
+        return data
+    return None
+
+
+def save_org_token(org_id: str, tokens: dict[str, Any]) -> None:
+    """Persist an org-scoped access token (encrypted)."""
+    _write_encrypted(_org_tokens_dir() / f"{org_id}.json", tokens)
+
+
+def clear_org_tokens() -> int:
+    """Remove all cached org tokens. Returns count removed."""
+    d = _org_tokens_dir()
+    if not d.exists():
+        return 0
+    count = 0
+    for f in d.glob("*.json"):
+        f.unlink()
+        count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------

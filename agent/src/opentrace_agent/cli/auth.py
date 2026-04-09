@@ -45,7 +45,16 @@ from opentrace_agent.cli.credentials import (
 )
 
 # Re-export for convenience — callers can ``from opentrace_agent.cli.auth import load_tokens``.
-__all__ = ["clear_tokens", "discover", "load_tokens", "login", "refresh", "save_tokens"]
+__all__ = [
+    "clear_tokens",
+    "discover",
+    "get_api_token",
+    "load_tokens",
+    "login",
+    "refresh",
+    "resolve_org_token",
+    "save_tokens",
+]
 
 ISSUER = "https://api.opentrace.ai"
 DISCOVERY_PATH = "/.well-known/oauth-authorization-server"
@@ -408,6 +417,7 @@ def login() -> dict[str, Any]:
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
+            "prompt": "none",  # Skip org selector — CLI controls org via config
         }
     )
     authorize_url = f"{disco['authorization_endpoint']}?{params}"
@@ -444,3 +454,109 @@ def login() -> dict[str, Any]:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# Org-token resolution
+# ---------------------------------------------------------------------------
+
+
+def resolve_org_token(org_id: str) -> dict[str, Any]:
+    """Get an org-scoped ``otoat_`` token, exchanging the ``otuat_`` if needed.
+
+    1. Check cache in ``~/.opentrace/org_tokens/{org_id}.json``
+    2. If missing/expired, exchange ``otuat_`` + org via API
+    3. Cache and return
+
+    Raises :class:`RuntimeError` if not logged in or exchange fails.
+    """
+    from opentrace_agent.cli.credentials import load_org_token, save_org_token
+
+    # Check cache
+    cached = load_org_token(org_id)
+    if cached is not None:
+        return cached
+
+    # Load user token
+    user_tokens = load_tokens()
+    if not user_tokens or not user_tokens.get("access_token"):
+        raise RuntimeError("Not logged in. Run 'opentraceai login' first.")
+
+    user_token = user_tokens["access_token"]
+
+    # Handle legacy: if user has an old otoat_ token from before this change
+    if user_token.startswith("otoat_"):
+        raise RuntimeError(
+            "Your login token is org-scoped (legacy format). "
+            "Run 'opentraceai logout' then 'opentraceai login' to get a user token."
+        )
+
+    # Exchange otuat_ for org-scoped otoat_
+    disco = discover()
+    issuer = disco.get("issuer", ISSUER)
+    exchange_url = f"{issuer}/oauth/exchange-org-token"
+
+    body = json.dumps({"org": org_id}).encode()
+    req = urllib.request.Request(
+        exchange_url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {user_token}",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 404:
+            raise RuntimeError(
+                f"Organization '{org_id}' not found. "
+                f"Check your .opentrace/config.yaml org value."
+            ) from exc
+        if exc.code == 401:
+            raise RuntimeError(
+                "User token expired or invalid. "
+                "Run 'opentraceai login' to re-authenticate."
+            ) from exc
+        raise RuntimeError(
+            f"Org token exchange failed ({exc.code}): {error_body}"
+        ) from exc
+
+    # Add local expiry timestamp for cache checking
+    expires_in = result.get("expires_in", 259200)  # default 3 days
+    result["expires_at"] = int(time.time()) + expires_in
+
+    save_org_token(org_id, result)
+    return result
+
+
+def get_api_token() -> str:
+    """Get the appropriate access token for the current project context.
+
+    If a project config with org exists, returns an org-scoped ``otoat_``.
+    Otherwise returns the user-level ``otuat_``.
+
+    Raises :class:`RuntimeError` if not logged in.
+    """
+    from opentrace_agent.cli.config import find_config, load_config
+    from opentrace_agent.cli.main import _find_opentrace_dir
+
+    ot_dir = _find_opentrace_dir()
+    config_path = find_config(ot_dir)
+
+    if config_path is not None:
+        config = load_config(config_path)
+        org = config.get("org")
+        if org:
+            org_tokens = resolve_org_token(org)
+            return org_tokens["access_token"]
+
+    # No org config — return user token directly
+    tokens = load_tokens()
+    if not tokens or not tokens.get("access_token"):
+        raise RuntimeError("Not logged in. Run 'opentraceai login' first.")
+    return tokens["access_token"]

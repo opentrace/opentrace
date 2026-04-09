@@ -684,9 +684,17 @@ def login() -> None:
 def logout() -> None:
     """Log out and remove saved credentials."""
     from opentrace_agent.cli.auth import clear_tokens
+    from opentrace_agent.cli.credentials import clear_org_tokens
 
-    if clear_tokens():
-        click.echo("Logged out.")
+    cleared_user = clear_tokens()
+    org_count = clear_org_tokens()
+    if cleared_user or org_count:
+        parts = []
+        if cleared_user:
+            parts.append("user credentials")
+        if org_count:
+            parts.append(f"{org_count} org token(s)")
+        click.echo(f"Logged out. Removed {', '.join(parts)}.")
     else:
         click.echo("Not logged in.")
 
@@ -695,6 +703,8 @@ def logout() -> None:
 def whoami() -> None:
     """Show the current authentication status."""
     from opentrace_agent.cli.auth import load_tokens
+    from opentrace_agent.cli.config import find_config, load_config
+    from opentrace_agent.cli.credentials import load_org_token
 
     tokens = load_tokens()
     if not tokens:
@@ -703,7 +713,12 @@ def whoami() -> None:
 
     issuer = tokens.get("issuer", "unknown")
     scope = tokens.get("scope", "none")
-    token_type = tokens.get("token_type", "bearer")
+    access_token = tokens.get("access_token", "")
+    token_type = (
+        "user (otuat)"
+        if access_token.startswith("otuat_")
+        else "org-scoped (legacy)"
+    )
     created = tokens.get("created_at")
 
     click.echo(f"Issuer:  {issuer}")
@@ -714,6 +729,19 @@ def whoami() -> None:
 
         dt = datetime.fromtimestamp(created, tz=timezone.utc)
         click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
+
+    # Show project org context
+    ot_dir = _find_opentrace_dir()
+    config_path = find_config(ot_dir)
+    if config_path is not None:
+        config = load_config(config_path)
+        org = config.get("org")
+        if org:
+            org_token = load_org_token(org)
+            if org_token:
+                click.echo(f"Org:     {org} (token cached)")
+            else:
+                click.echo(f"Org:     {org} (not yet authenticated)")
 
 
 @app.command()
