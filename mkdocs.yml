@@ -53,4 +53,6 @@ nav:
   - Reference:
       - Browser Requirements: reference/browser-requirements.md
       - Chat Providers: reference/chat-providers.md
+      - Claude Code Plugin: reference/claude-code-plugin.md
+      - Graph Tools: reference/graph-tools.md
       - Supported Languages: reference/languages.md

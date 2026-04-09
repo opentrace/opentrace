@@ -4,6 +4,7 @@
 
 - Node.js 22+ (see `ui/.nvmrc`)
 - npm
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/) (for the agent)
 
 ## Getting Started
 
@@ -38,6 +39,8 @@ npm run lint          # ESLint + Prettier check
 
 ```
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
+agent/                — Python agent (loads data into the graph)
 proto/                — Protobuf definitions (shared API contracts)
 claude-code-plugin/   — Claude Code plugin (MCP server config)
+benchmark/            — Performance benchmarks
 ```

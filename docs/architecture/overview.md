@@ -10,7 +10,7 @@
 │                                  │  WASM parsers   │ │
 │                                  └─────────────────┘ │
 │                                  ┌─────────────────┐ │
-│                                  │  LadybugDB WASM    │ │
+│                                  │  LadybugDB WASM │ │
 │                                  │  graph store    │ │
 │                                  └─────────────────┘ │
 └──────────────────────────────────────────────────────┘
@@ -27,10 +27,14 @@ React/TypeScript frontend that runs entirely in the browser. Includes:
 - **LadybugDB WASM** — embedded graph database for storing and querying the knowledge graph
 - **Chat Agent** — in-app AI agent with access to graph tools via MCP
 
+### Agent (`agent/`)
+
+Python agent that loads data into the knowledge graph. Managed with [uv](https://docs.astral.sh/uv/), it runs as an MCP server and handles data ingestion from external sources.
+
 ### Protobuf Definitions (`proto/`)
 
 Shared API contracts used across components.
 
 ### Claude Code Plugin (`claude-code-plugin/`)
 
-MCP server configuration that connects Claude Code to OpenTrace.
+MCP server configuration that connects Claude Code to OpenTrace. See the [Claude Code Plugin reference](../reference/claude-code-plugin.md) for details.
