@@ -26,6 +26,7 @@ Visit **[oss.opentrace.ai](https://oss.opentrace.ai)**, add a GitHub repo, and e
 ### Claude Code Plugin
 
 ```bash
+claude plugin marketplace add https://github.com/opentrace/opentrace 
 claude plugin install opentrace-oss@opentrace-oss
 ```
 
