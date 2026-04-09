@@ -19,6 +19,36 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 ## Quick Start
 
+### Browser (no install)
+
+Visit **[oss.opentrace.ai](https://oss.opentrace.ai)**, add a GitHub repo, and explore the graph.
+
+### Claude Code Plugin
+
+```bash
+claude plugin install opentrace-oss@opentrace-oss
+```
+
+Then index your codebase and start exploring:
+
+```bash
+opentraceai index .        # index the current repo
+```
+
+The plugin gives Claude Code 5 agents, 4 slash commands, and graph query tools — see [Claude Code Plugin](#claude-code-plugin) for details.
+
+### CLI Agent (standalone)
+
+```bash
+pip install opentraceai     # or: uvx opentraceai index .
+opentraceai index /path/to/repo
+opentraceai mcp             # start MCP server for any compatible client
+```
+
+The database is stored at `.opentrace/index.db` and auto-discovered by all commands.
+
+### Run from Source
+
 ```bash
 git clone https://github.com/opentrace/opentrace.git
 cd opentrace
@@ -170,14 +200,14 @@ Repository, Directory, File, Class, Function, Variable, Dependency, PullRequest,
 
 ## Claude Code Plugin
 
-OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server. Install it with:
+OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server.
 
 ```bash
-claude plugin marketplace add ./
+claude plugin marketplace add https://github.com/opentrace/opentrace
 claude plugin install opentrace-oss@opentrace-oss
 ```
 
-The plugin provides 5 agents, 4 slash commands, and MCP graph tools — see `claude-code-plugin/` for details.
+The plugin provides 5 agents, 4 slash commands, and MCP graph tools. See `claude-code-plugin/` for full documentation.
 
 ## Contributing
 
