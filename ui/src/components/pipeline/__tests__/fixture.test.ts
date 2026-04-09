@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { runPipeline, initParsers } from '../pipeline';
 import { MemoryStore } from '../store/memory';
@@ -37,20 +37,23 @@ const repoRoot = join(
   '..',
 );
 
-/**
- * Read an explicit list of fixture files. Using a known file list rather than
- * directory globbing avoids flakiness from stray/generated files on disk.
- */
-async function readFixtureFiles(
+async function readAllFiles(
   dir: string,
-  paths: string[],
 ): Promise<Array<{ path: string; content: string }>> {
-  return Promise.all(
-    paths.map(async (p) => ({
-      path: p,
-      content: await readFile(join(dir, p), 'utf-8'),
-    })),
-  );
+  const entries = await readdir(dir, { withFileTypes: true });
+  const results: Array<{ path: string; content: string }> = [];
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...(await readAllFiles(fullPath)));
+    } else {
+      results.push({
+        path: relative(dir, fullPath),
+        content: await readFile(fullPath, 'utf-8'),
+      });
+    }
+  }
+  return results;
 }
 
 function runAndLog(
@@ -91,25 +94,10 @@ function countDirs(files: Array<{ path: string }>): number {
   return dirs.size;
 }
 
-const GO_FIXTURE_FILES = [
-  'cmd/server/main.go',
-  'go.mod',
-  'go.sum',
-  'internal/db/db.go',
-  'internal/handler/handler.go',
-];
-
-const PYTHON_FIXTURE_FILES = [
-  'db.py',
-  'main.py',
-  'pyproject.toml',
-  'service.py',
-];
-
 describe('fixture: Go project', () => {
   it('indexes Go project and saves to store', async () => {
     const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'go', 'project');
-    const files = await readFixtureFiles(fixtureDir, GO_FIXTURE_FILES);
+    const files = await readAllFiles(fixtureDir);
 
     const { events, store } = runAndLog(files, {
       owner: 'fixture',
@@ -152,7 +140,7 @@ describe('fixture: Go project', () => {
 describe('fixture: Python project', () => {
   it('indexes Python project and saves to store', async () => {
     const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'python', 'project');
-    const files = await readFixtureFiles(fixtureDir, PYTHON_FIXTURE_FILES);
+    const files = await readAllFiles(fixtureDir);
 
     const { events, store } = runAndLog(files, {
       owner: 'fixture',
@@ -182,34 +170,37 @@ describe('fixture: Python project', () => {
     expect(dbClass!.type).toBe('Class');
 
     const initMethod = store.nodes.get(
-      'fixture/py-project/db.py::Database::__init__',
+      'fixture/py-project/db.py::Database::__init__(str)',
     );
     expect(initMethod).toBeDefined();
     expect(initMethod!.type).toBe('Function');
 
     const getAllUsers = store.nodes.get(
-      'fixture/py-project/db.py::Database::get_all_users',
+      'fixture/py-project/db.py::Database::get_all_users()',
     );
     expect(getAllUsers).toBeDefined();
 
     const insertUser = store.nodes.get(
-      'fixture/py-project/db.py::Database::insert_user',
+      'fixture/py-project/db.py::Database::insert_user(str,str)',
     );
     expect(insertUser).toBeDefined();
 
     // main.py has: list_users, create_user (top-level functions)
-    const listUsers = store.nodes.get('fixture/py-project/main.py::list_users');
+    const listUsers = store.nodes.get(
+      'fixture/py-project/main.py::list_users()',
+    );
     expect(listUsers).toBeDefined();
     expect(listUsers!.type).toBe('Function');
 
     const createUser = store.nodes.get(
-      'fixture/py-project/main.py::create_user',
+      'fixture/py-project/main.py::create_user()',
     );
     expect(createUser).toBeDefined();
 
     // Class DEFINES its methods (parent → child)
     const initRel = [...store.relationships.values()].find(
-      (r) => r.target_id === 'fixture/py-project/db.py::Database::__init__',
+      (r) =>
+        r.target_id === 'fixture/py-project/db.py::Database::__init__(str)',
     );
     expect(initRel?.source_id).toBe('fixture/py-project/db.py::Database');
 
@@ -239,8 +230,9 @@ describe('fixture: Python project', () => {
     expect(importRels.length).toBeGreaterThan(0);
 
     // Stats
+    // db.py::Database + service.py::UserService = 2 classes
     expect(done!.result!.classesExtracted).toBe(2);
-    // db.py: 4 methods, main.py: 2 functions, service.py: 4 methods + 3 functions = 13
+    // db.py: 4 methods + main.py: 2 functions + service.py: 4 methods + 3 functions = 13
     expect(done!.result!.functionsExtracted).toBe(13);
   });
 });

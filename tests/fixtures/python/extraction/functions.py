@@ -18,6 +18,15 @@ def greet(name):
 def add(a: int, b: int) -> int:
     return a + b
 
+def get_name() -> str:
+    return "Alice"
+
+def get_users() -> list[dict]:
+    return []
+
+def do_nothing() -> None:
+    pass
+
 async def fetch_data(url: str):
     response = await get(url)
     return response

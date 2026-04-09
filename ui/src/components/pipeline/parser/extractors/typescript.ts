@@ -161,6 +161,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
   if (!nameNode) return null;
   const paramsNode = node.childForFieldName('parameters');
   const signature = paramsNode ? paramsNode.text : null;
+  const typeSignature = paramsNode ? extractTypeSignature(paramsNode) : null;
+  const returnType = extractReturnType(node);
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
   const docs = extractJSDoc(node);
@@ -176,6 +178,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverType: null,
     paramTypes: null,
     docs,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -184,6 +188,8 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
   if (!nameNode) return null;
   const paramsNode = node.childForFieldName('parameters');
   const signature = paramsNode ? paramsNode.text : null;
+  const typeSignature = paramsNode ? extractTypeSignature(paramsNode) : null;
+  const returnType = extractReturnType(node);
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
   const docs = extractJSDoc(node);
@@ -199,6 +205,8 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
     receiverType: null,
     paramTypes: null,
     docs,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -232,6 +240,8 @@ function extractArrowFunction(
 ): CodeSymbol {
   const paramsNode = valueNode.childForFieldName('parameters');
   const signature = paramsNode ? paramsNode.text : null;
+  const typeSignature = paramsNode ? extractTypeSignature(paramsNode) : null;
+  const returnType = extractReturnType(valueNode);
   const bodyNode = valueNode.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
   const docs = extractJSDoc(declNode);
@@ -247,6 +257,8 @@ function extractArrowFunction(
     receiverType: null,
     paramTypes: null,
     docs,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -273,6 +285,54 @@ function extractClassExpression(
     interfaces: interfaces.length > 0 ? interfaces : undefined,
     docs,
   };
+}
+
+/** Build a Java-style type signature from TS/JS parameter type annotations.
+ *  Returns "()" for zero-param functions, "(string,number)" when all params are typed,
+ *  or null when any param lacks a type annotation. */
+function extractTypeSignature(paramsNode: SyntaxNode): string | null {
+  const types: string[] = [];
+  let paramCount = 0;
+
+  for (const child of paramsNode.namedChildren) {
+    if (
+      child.type === 'required_parameter' ||
+      child.type === 'optional_parameter'
+    ) {
+      paramCount++;
+      const typeAnnotation = child.childForFieldName('type');
+      if (typeAnnotation) {
+        types.push(normalizeTypeName(typeAnnotation.text));
+      }
+    } else if (child.type === 'rest_parameter') {
+      paramCount++;
+      const typeAnnotation = child.childForFieldName('type');
+      if (typeAnnotation) {
+        types.push(normalizeTypeName(typeAnnotation.text) + '[]');
+      }
+    }
+  }
+
+  // Zero params → "()" for typed languages
+  if (paramCount === 0) return '()';
+  // All params must be typed for a valid signature
+  if (types.length !== paramCount) return null;
+  return `(${types.join(',')})`;
+}
+
+/** Extract the return type annotation from a function/method/arrow node. */
+function extractReturnType(node: SyntaxNode): string | null {
+  const returnTypeNode = node.childForFieldName('return_type');
+  if (!returnTypeNode) return null;
+  return normalizeTypeName(returnTypeNode.text);
+}
+
+/** Normalize a type annotation to a clean Java-style type name. */
+function normalizeTypeName(raw: string): string {
+  return raw
+    .replace(/\s+/g, '') // strip whitespace
+    .split('.')
+    .pop()!; // take leaf of qualified names
 }
 
 function collectCalls(node: SyntaxNode): CallRef[] {

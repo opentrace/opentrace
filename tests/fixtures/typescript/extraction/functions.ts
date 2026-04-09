@@ -22,3 +22,12 @@ async function fetchData(url: string): Promise<Response> {
   const resp = await fetch(url);
   return resp.json();
 }
+function getItems(): string[] {
+  return [];
+}
+function findUser(id: number): User | null {
+  return null;
+}
+function noReturnType(x: number) {
+  console.log(x);
+}

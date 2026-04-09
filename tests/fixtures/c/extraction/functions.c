@@ -22,6 +22,10 @@ void greet(const char* name) {
     printf("Hello, %s\n", name);
 }
 
+double divide(double a, double b) {
+    return a / b;
+}
+
 int main() {
     return 0;
 }

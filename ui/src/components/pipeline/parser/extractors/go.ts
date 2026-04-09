@@ -172,6 +172,7 @@ function extractInterfaceMethods(node: SyntaxNode): CodeSymbol[] {
           receiverVar: null,
           receiverType: null,
           paramTypes: null,
+          typeSignature: paramsNode ? extractGoTypeSignature(paramsNode) : '()',
         });
       }
     }
@@ -184,6 +185,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
   if (!nameNode) return null;
   const paramsNode = node.childForFieldName('parameters');
   const signature = paramsNode ? paramsNode.text : null;
+  const typeSignature = paramsNode ? extractGoTypeSignature(paramsNode) : '()';
+  const returnType = extractGoReturnType(node);
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
   return {
@@ -197,6 +200,8 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     receiverVar: null,
     receiverType: null,
     paramTypes: null,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -206,17 +211,14 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
   const paramsNode = node.childForFieldName('parameters');
   const receiverNode = node.childForFieldName('receiver');
 
-  const parts: string[] = [];
+  const signature = paramsNode ? paramsNode.text : null;
   let receiverVar: string | null = null;
   let receiverType: string | null = null;
   if (receiverNode) {
-    parts.push(receiverNode.text);
     [receiverVar, receiverType] = parseReceiver(receiverNode);
   }
-  if (paramsNode) {
-    parts.push(paramsNode.text);
-  }
-  const signature = parts.length > 0 ? parts.join(' ') : null;
+  const typeSignature = paramsNode ? extractGoTypeSignature(paramsNode) : '()';
+  const returnType = extractGoReturnType(node);
 
   const bodyNode = node.childForFieldName('body');
   const calls = bodyNode ? collectCalls(bodyNode) : [];
@@ -231,6 +233,8 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
     receiverVar,
     receiverType,
     paramTypes: null,
+    typeSignature,
+    returnType,
   };
 }
 
@@ -260,6 +264,85 @@ function parseReceiver(
     }
   }
   return [null, null];
+}
+
+/** Build a Java-style type signature from Go parameter declarations.
+ *  Go always has types, so this always returns a signature.
+ *  Handles grouped params like `(a, b int)` → "(int,int)". */
+function extractGoTypeSignature(paramsNode: SyntaxNode): string {
+  const types: string[] = [];
+
+  for (const child of paramsNode.namedChildren) {
+    if (child.type === 'parameter_declaration') {
+      const typeNode = child.childForFieldName('type');
+      if (!typeNode) continue;
+      const typeName = normalizeGoType(typeNode);
+      // Count how many names share this type (e.g., `a, b int` → 2 params)
+      let nameCount = 0;
+      for (const sub of child.namedChildren) {
+        if (sub.type === 'identifier') nameCount++;
+      }
+      // If no names (e.g., unnamed params like `func(int, string)`), count as 1
+      const count = nameCount > 0 ? nameCount : 1;
+      for (let i = 0; i < count; i++) {
+        types.push(typeName);
+      }
+    } else if (child.type === 'variadic_parameter_declaration') {
+      const typeNode = child.childForFieldName('type');
+      if (typeNode) {
+        types.push(normalizeGoType(typeNode) + '...');
+      }
+    }
+  }
+
+  return `(${types.join(',')})`;
+}
+
+/** Normalize a Go type node to a clean type name. */
+function normalizeGoType(typeNode: SyntaxNode): string {
+  if (typeNode.type === 'pointer_type') {
+    for (const sub of typeNode.namedChildren) {
+      return normalizeGoType(sub);
+    }
+  }
+  if (typeNode.type === 'slice_type') {
+    const elem = typeNode.childForFieldName('element');
+    if (elem) return normalizeGoType(elem) + '[]';
+  }
+  if (typeNode.type === 'qualified_type') {
+    // e.g., `http.Handler` → take just the type name
+    const nameNode = typeNode.childForFieldName('name');
+    if (nameNode) return nameNode.text;
+  }
+  return typeNode.text;
+}
+
+/** Extract the return type from a Go function/method declaration.
+ *  Handles single returns (`string`) and multiple returns (`(string, error)`).
+ *  Returns null for void functions. */
+function extractGoReturnType(node: SyntaxNode): string | null {
+  const resultNode = node.childForFieldName('result');
+  if (!resultNode) return null;
+
+  // Single return type: type_identifier, pointer_type, etc.
+  if (resultNode.type !== 'parameter_list') {
+    return normalizeGoType(resultNode);
+  }
+
+  // Multiple return types: (string, error)
+  const types: string[] = [];
+  for (const child of resultNode.namedChildren) {
+    if (child.type === 'parameter_declaration') {
+      const typeNode = child.childForFieldName('type');
+      if (typeNode) types.push(normalizeGoType(typeNode));
+    } else {
+      // Unnamed results like `(string, error)` — direct type nodes
+      types.push(normalizeGoType(child));
+    }
+  }
+  if (types.length === 0) return null;
+  if (types.length === 1) return types[0];
+  return `(${types.join(',')})`;
 }
 
 function collectCalls(node: SyntaxNode): CallRef[] {

@@ -264,7 +264,7 @@ func (c *Cache) Set(key string, val interface{}) {
       expect(method.receiverType).toBe('Cache');
     });
 
-    it('includes receiver in method signature', async () => {
+    it('signature has params only, receiver is stored separately', async () => {
       const root = await parseGo(`package main
 
 type DB struct{}
@@ -275,8 +275,8 @@ func (db *DB) Query(sql string) error {
 `);
       const result = extractGo(root);
       const method = result.symbols.find((s) => s.name === 'Query')!;
-      expect(method.signature).toContain('db *DB');
-      expect(method.signature).toContain('sql string');
+      expect(method.signature).toBe('(sql string)');
+      expect(method.receiverType).toBe('DB');
     });
 
     it('captures calls from method bodies', async () => {

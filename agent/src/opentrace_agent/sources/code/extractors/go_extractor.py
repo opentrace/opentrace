@@ -132,9 +132,11 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         return None
     params_node = node.child_by_field_name("parameters")
     signature = params_node.text.decode() if params_node else None
+    type_signature = _extract_go_type_signature(params_node) if params_node else "()"
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     docs = _extract_godoc(node)
+    return_type = _extract_go_return_type(node)
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="function",
@@ -143,6 +145,8 @@ def _extract_function(node: tree_sitter.Node) -> CodeSymbol | None:
         signature=signature,
         calls=calls,
         docs=docs,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -153,19 +157,16 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
         return None
     params_node = node.child_by_field_name("parameters")
     receiver_node = node.child_by_field_name("receiver")
-    # Build signature including receiver
-    parts: list[str] = []
+    signature = params_node.text.decode() if params_node else None
     receiver_var: str | None = None
     receiver_type: str | None = None
     if receiver_node:
-        parts.append(receiver_node.text.decode())
         receiver_var, receiver_type = _parse_receiver(receiver_node)
-    if params_node:
-        parts.append(params_node.text.decode())
-    signature = " ".join(parts) if parts else None
     body_node = node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     docs = _extract_godoc(node)
+    type_signature = _extract_go_type_signature(params_node) if params_node else "()"
+    return_type = _extract_go_return_type(node)
     return CodeSymbol(
         name=name_node.text.decode(),
         kind="function",
@@ -176,6 +177,8 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
         receiver_var=receiver_var,
         receiver_type=receiver_type,
         docs=docs,
+        type_signature=type_signature,
+        return_type=return_type,
     )
 
 
@@ -204,6 +207,77 @@ def _parse_receiver(receiver_node: tree_sitter.Node) -> tuple[str | None, str | 
                     type_name = type_child.text.decode()
             return var_name, type_name
     return None, None
+
+
+def _extract_go_type_signature(params_node: tree_sitter.Node) -> str:
+    """Build a Java-style type signature from Go parameter declarations.
+
+    Go always has types, so this always returns a signature.
+    Handles grouped params like ``(a, b int)`` → ``(int,int)``.
+    """
+    types: list[str] = []
+    for child in params_node.children:
+        if child.type == "parameter_declaration":
+            type_node = child.child_by_field_name("type")
+            if not type_node:
+                continue
+            type_name = _normalize_go_type(type_node)
+            # Count how many names share this type (e.g. `a, b int` → 2 params)
+            name_count = sum(1 for sub in child.children if sub.type == "identifier")
+            count = name_count if name_count > 0 else 1
+            types.extend([type_name] * count)
+        elif child.type == "variadic_parameter_declaration":
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                types.append(_normalize_go_type(type_node) + "...")
+    return f"({','.join(types)})"
+
+
+def _normalize_go_type(type_node: tree_sitter.Node) -> str:
+    """Normalize a Go type node to a clean Java-style type name."""
+    if type_node.type == "pointer_type":
+        for sub in type_node.children:
+            if sub.type in ("type_identifier", "qualified_type", "pointer_type", "slice_type"):
+                return _normalize_go_type(sub)
+    if type_node.type == "slice_type":
+        elem = type_node.child_by_field_name("element")
+        if elem:
+            return _normalize_go_type(elem) + "[]"
+    if type_node.type == "qualified_type":
+        name_node = type_node.child_by_field_name("name")
+        if name_node:
+            return name_node.text.decode()
+    return type_node.text.decode()
+
+
+def _extract_go_return_type(node: tree_sitter.Node) -> str | None:
+    """Extract the return type from a Go function/method declaration.
+
+    Handles single returns (``string``) and multiple returns (``(string, error)``).
+    Returns None for void functions.
+    """
+    result_node = node.child_by_field_name("result")
+    if result_node is None:
+        return None
+
+    # Single return type
+    if result_node.type != "parameter_list":
+        return _normalize_go_type(result_node)
+
+    # Multiple return types: (string, error)
+    types: list[str] = []
+    for child in result_node.children:
+        if child.type == "parameter_declaration":
+            type_node = child.child_by_field_name("type")
+            if type_node:
+                types.append(_normalize_go_type(type_node))
+        elif child.is_named:
+            types.append(_normalize_go_type(child))
+    if not types:
+        return None
+    if len(types) == 1:
+        return types[0]
+    return f"({','.join(types)})"
 
 
 def _extract_embedded_structs(struct_node: tree_sitter.Node) -> list[str] | None:

@@ -160,9 +160,10 @@ export function processSymbol(
   emittedNodeIds: Set<string>,
 ): SymbolNode | null {
   const fileId = parentId.split('::')[0];
+  const sig = symbol.typeSignature ?? '';
   const namePart = symbol.receiverType
-    ? `${symbol.receiverType}.${symbol.name}`
-    : symbol.name;
+    ? `${symbol.receiverType}.${symbol.name}${sig}`
+    : `${symbol.name}${sig}`;
   const nodeId = `${parentId}::${namePart}`;
 
   // Guard against duplicate node IDs (e.g. C++ constructors sharing class name)
@@ -234,12 +235,19 @@ export function processSymbol(
       endLine: symbol.endLine,
     };
     if (symbol.signature) props.signature = symbol.signature;
+    if (symbol.typeSignature) props.typeSignature = symbol.typeSignature;
+    if (symbol.returnType) props.returnType = symbol.returnType;
     if (symbol.docs) props.docs = symbol.docs;
+
+    const displaySig = symbol.typeSignature ?? symbol.signature ?? '';
+    const displayName = displaySig
+      ? `${symbol.name}${displaySig}`
+      : symbol.name;
 
     nodes.push({
       id: nodeId,
       type: 'Function',
-      name: symbol.name,
+      name: displayName,
       properties: props,
     });
 
@@ -316,9 +324,10 @@ function convertSymbol(
   rels: GraphRelationship[],
   stats: { classesExtracted: number; functionsExtracted: number },
 ): void {
+  const sig = sym.typeSignature ?? '';
   const namePart = sym.receiverType
-    ? `${sym.receiverType}.${sym.name}`
-    : sym.name;
+    ? `${sym.receiverType}.${sym.name}${sig}`
+    : `${sym.name}${sig}`;
   const symId = `${parentId}::${namePart}`;
   const nodeType = sym.kind === 'class' ? 'Class' : 'Function';
 
@@ -327,15 +336,25 @@ function convertSymbol(
     endLine: sym.endLine,
   };
   if (sym.signature) props.signature = sym.signature;
+  if (sym.kind === 'function' && sym.typeSignature) {
+    props.typeSignature = sym.typeSignature;
+  }
+  if (sym.kind === 'function' && sym.returnType) {
+    props.returnType = sym.returnType;
+  }
   if (sym.docs) props.docs = sym.docs;
   if (sym.superclasses) props.superclasses = sym.superclasses;
   if (sym.interfaces) props.interfaces = sym.interfaces;
   if (sym.subtype) props.kind = sym.subtype;
 
+  const displaySig =
+    sym.kind === 'function' ? (sym.typeSignature ?? sym.signature ?? '') : '';
+  const displayName = displaySig ? `${sym.name}${displaySig}` : sym.name;
+
   nodes.push({
     id: symId,
     type: nodeType,
-    name: sym.name,
+    name: displayName,
     properties: props,
   });
 

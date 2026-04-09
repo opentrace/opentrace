@@ -5,6 +5,8 @@
     "start_line": 17,
     "end_line": 19,
     "signature": "(name: string)",
+    "type_signature": "(:string)",
+    "return_type": ":string",
     "children": [],
     "calls": []
   },
@@ -14,6 +16,8 @@
     "start_line": 20,
     "end_line": 20,
     "signature": "(n: number)",
+    "type_signature": "(:number)",
+    "return_type": null,
     "children": [],
     "calls": []
   },
@@ -23,6 +27,8 @@
     "start_line": 21,
     "end_line": 23,
     "signature": "(req: Request)",
+    "type_signature": "(:Request)",
+    "return_type": null,
     "children": [],
     "calls": [
       {
