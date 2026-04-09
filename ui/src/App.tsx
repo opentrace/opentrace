@@ -275,7 +275,13 @@ function App({
           onAddRepoClose={handleAddRepoClose}
           onJobSubmit={handleJobSubmit}
           showChat={showChat}
-          chatWidth={isMobileSplit || graphFullscreen ? 0 : showHelp ? helpWidth : chatWidth}
+          chatWidth={
+            isMobileSplit || graphFullscreen
+              ? 0
+              : showHelp
+                ? helpWidth
+                : chatWidth
+          }
           onToggleChat={handleToggleChat}
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
