@@ -37,3 +37,70 @@ jobs:
           exit 1
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
+
+  post-deploy-check:
+    name: Post-Deploy Health Check
+    needs: trigger-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check /api/health
+        run: |
+          for i in $(seq 1 10); do
+            STATUS=$(curl -sf "https://oss.opentrace.ai/api/health" \
+              | jq -r '.status' 2>/dev/null || true)
+            if [ "$STATUS" = "ok" ]; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i/10 failed, retrying in $((i * 5))s..."
+            sleep $((i * 5))
+          done
+          echo "::error::Health check failed after 10 attempts"
+          exit 1
+
+      - name: Check /api/stats returns valid JSON
+        run: |
+          curl -sf "https://oss.opentrace.ai/api/stats" | jq . > /dev/null
+          echo "Stats endpoint returned valid JSON"
+
+      - name: Check UI serves HTML
+        run: |
+          CONTENT_TYPE=$(curl -sI "https://oss.opentrace.ai" | grep -i content-type | head -1)
+          echo "$CONTENT_TYPE"
+          echo "$CONTENT_TYPE" | grep -qi "text/html" \
+            || { echo "::error::UI did not return HTML"; exit 1; }
+
+  e2e:
+    name: Playwright Smoke
+    needs: post-deploy-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: ui
+        run: npx playwright test
+        env:
+          BASE_URL: https://oss.opentrace.ai
+
+      - name: Upload report on failure
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: ui/playwright-report/
+          retention-days: 14

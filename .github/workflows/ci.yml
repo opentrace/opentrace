@@ -86,3 +86,66 @@ jobs:
       - name: Build
         working-directory: ui
         run: npm run build
+
+      - name: Validate build output
+        working-directory: ui
+        run: node scripts/validate-build.mjs
+
+  e2e:
+    name: Playwright Smoke
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'preview-deploy')
+    steps:
+      - name: Wait for preview deployment
+        uses: lewagon/wait-on-check-action@74049309dfeff245fe8009a0137eacf28136cb3c # v1.5.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: 'Deploy Preview'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+          allowed-conclusions: success
+
+      - name: Extract preview URL from PR comments
+        id: preview-url
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '.[] | select(.body | test("firebase-preview-bot")) | .body' \
+            | grep -oP 'https://[^\s]+\.web\.app' | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error::Could not find preview URL in PR comments"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $URL"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: ui
+        run: npx playwright test
+        env:
+          BASE_URL: ${{ steps.preview-url.outputs.url }}
+
+      - name: Upload report on failure
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: ui/playwright-report/
+          retention-days: 14

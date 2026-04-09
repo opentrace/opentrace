@@ -34,6 +34,7 @@ build:
 ## Run all tests
 test:
 	$(MAKE) -C agent test
+	$(MAKE) -C ui test
 
 ## Clean all build artifacts
 clean:

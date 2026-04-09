@@ -88,7 +88,10 @@
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate-build": "node scripts/validate-build.mjs",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
@@ -159,6 +162,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1",
+    "@playwright/test": "^1.52.0",
     "vitest": "^3.2.1"
   }
 }
