@@ -1062,16 +1062,26 @@ const GraphViewer = memo(
         filterState,
       );
 
-      // Zoom to highlighted neighborhood when a node is selected.
+      // Zoom to highlighted neighborhood when a node is selected,
+      // or zoom to fit all nodes when deselected.
       // Only trigger on selectedNode identity change, not on highlight recalculation
       // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
       useEffect(() => {
-        if (!zoomOnSelect || !selectedNode) return;
-        if (highlights.highlightNodes.size > 0) {
-          canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
+        if (!zoomOnSelect) return;
+        if (selectedNode) {
+          if (highlights.highlightNodes.size > 0) {
+            canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
+          }
+        } else if (!selectedLink && focusedCommunityNodes.size === 0) {
+          canvasRef.current?.zoomToFit(600);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [zoomOnSelect, selectedNode?.id]);
+      }, [
+        zoomOnSelect,
+        selectedNode?.id,
+        !!selectedLink,
+        focusedCommunityNodes.size,
+      ]);
 
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
