@@ -348,12 +348,8 @@ function convertSymbol(
   if (sym.subtype) props.kind = sym.subtype;
 
   const displaySig =
-    sym.kind === 'function'
-      ? (sym.typeSignature ?? sym.signature ?? '')
-      : '';
-  const displayName = displaySig
-    ? `${sym.name}${displaySig}`
-    : sym.name;
+    sym.kind === 'function' ? (sym.typeSignature ?? sym.signature ?? '') : '';
+  const displayName = displaySig ? `${sym.name}${displaySig}` : sym.name;
 
   nodes.push({
     id: symId,
