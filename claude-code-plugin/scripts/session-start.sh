@@ -34,8 +34,27 @@ for _ in $(seq 1 10); do
   CURRENT="$PARENT"
 done
 
+# Escape values for safe JSON embedding
+json_escape() {
+  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip())[1:-1], end="")'
+}
+
 if [ -z "$DB_PATH" ]; then
-  # No index found — nothing to inject
+  # No index found — start indexing in the background
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [ -n "$REPO_ROOT" ] && command -v uvx &>/dev/null; then
+    nohup uvx opentraceai index "$REPO_ROOT" \
+      >"${REPO_ROOT}/.opentrace-index.log" 2>&1 &
+  fi
+
+  NO_INDEX_MSG="OpenTrace: no index found — background indexing started. Tools will be available shortly."
+  SAFE_SYSTEM=$(json_escape "${NO_INDEX_MSG}")
+
+  cat <<EOF
+{
+  "systemMessage": "${SAFE_SYSTEM}"
+}
+EOF
   exit 0
 fi
 
@@ -44,11 +63,6 @@ GRAPH_STATS=""
 if command -v uvx &>/dev/null; then
   GRAPH_STATS=$(timeout 10 uvx opentraceai stats 2>/dev/null || true)
 fi
-
-# Escape values for safe JSON embedding
-json_escape() {
-  printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip())[1:-1], end="")'
-}
 
 CONTEXT="You have access to OpenTrace, a knowledge graph that maps the user's system architecture, service relationships, and project metadata. Use your local tools (Read, Grep, Glob, etc.) for anything within the current codebase. Use OpenTrace when you need context beyond the local project — such as discovering upstream/downstream services, finding related classes or endpoints in other repositories, understanding deployment topology, looking up issues and tickets, or tracing how components connect across the system. When a question touches anything outside the current repo, consider checking OpenTrace. Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status, /index."
 
