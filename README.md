@@ -76,18 +76,18 @@ Everything runs in the browser — no server required.
 ```
 ┌───────────────────────────────────────────────────────────┐
 │                      UI (React/TS)                        │
-│            Browser-based indexer + graph explorer          │
+│            Browser-based indexer + graph explorer         │
 │               localhost:5173 / oss.opentrace.ai           │
 │                                                           │
-│  ┌──────────────┐  ┌─────────────────┐  ┌──────────────┐ │
+│  ┌───────────────┐  ┌─────────────────┐  ┌──────────────┐ │
 │  │  Web Worker   │  │  LadybugDB WASM │  │  Chat Agent  │ │
 │  │  tree-sitter  │  │  (embedded      │  │  LLM-powered │ │
 │  │  WASM parsers │  │   graph store)  │  │  graph tools │ │
-│  └──────────────┘  └─────────────────┘  └──────────────┘ │
+│  └───────────────┘  └─────────────────┘  └──────────────┘ │
 └───────────────────────────────────────────────────────────┘
 
 ┌───────────────────────────────────────────────────────────┐
-│                 Claude Code Plugin (MCP)                   │
+│                 Claude Code Plugin (MCP)                  │
 │     Python agent exposes graph tools via MCP protocol     │
 │         uvx opentraceai mcp  →  stdio transport           │
 └───────────────────────────────────────────────────────────┘
