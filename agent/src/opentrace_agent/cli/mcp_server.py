@@ -46,8 +46,20 @@ def _error_response(tool_name: str, e: Exception) -> str:
     return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
 
-def create_mcp_server(store: GraphStore) -> FastMCP:
-    """Create a FastMCP server with graph query tools backed by *store*."""
+NO_INDEX_MSG = json.dumps(
+    {
+        "status": "ok",
+        "message": "No index available. Run 'opentraceai index' to create one.",
+    }
+)
+
+
+def create_mcp_server(store: GraphStore | None) -> FastMCP:
+    """Create a FastMCP server with graph query tools backed by *store*.
+
+    When *store* is ``None`` (no database found), every tool returns a
+    friendly "no index" response instead of raising an error.
+    """
     server = FastMCP("opentrace")
 
     @server.tool()
@@ -56,6 +68,9 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
 
         Returns matching nodes with their types and properties.
         """
+        if store is None:
+            logger.info("search_graph called but no index exists")
+            return NO_INDEX_MSG
         logger.debug("search_graph(query=%r, limit=%d, nodeTypes=%r)", query, limit, nodeTypes)
         try:
             node_types = [t.strip() for t in nodeTypes.split(",") if t.strip()] or None
@@ -73,6 +88,9 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
         Valid types include: Repository, Class, Function, File, Directory,
         Package, Module, Service, Endpoint, Database.
         """
+        if store is None:
+            logger.info("list_nodes called but no index exists")
+            return NO_INDEX_MSG
         logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
         try:
             limit = min(limit, 1000)
@@ -85,6 +103,9 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
     @server.tool()
     def get_node(nodeId: str) -> str:
         """Get full details of a single node by its ID, including all properties and immediate neighbors."""
+        if store is None:
+            logger.info("get_node called but no index exists")
+            return NO_INDEX_MSG
         logger.debug("get_node(nodeId=%r)", nodeId)
         try:
             node = store.get_node(nodeId)
@@ -115,6 +136,9 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
         Direction can be 'outgoing', 'incoming', or 'both'.
         Optionally filter by relationship type (e.g. 'CALLS', 'DEFINES', 'CONTAINS').
         """
+        if store is None:
+            logger.info("traverse_graph called but no index exists")
+            return NO_INDEX_MSG
         logger.debug(
             "traverse_graph(nodeId=%r, depth=%d, direction=%r, relationship=%r)",
             nodeId,
@@ -147,6 +171,9 @@ def create_mcp_server(store: GraphStore) -> FastMCP:
 
         Use this as a first step to understand what has been indexed before running targeted queries.
         """
+        if store is None:
+            logger.info("get_stats called but no index exists")
+            return NO_INDEX_MSG
         logger.debug("get_stats()")
         try:
             stats = store.get_stats()
