@@ -15,7 +15,7 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 **[oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
 
-**[Docs](https://opentrace.github.io/opentrace/reference/chat-providers/)** - for help and support
+**[Docs](https://opentrace.github.io/opentrace/)** — getting started, architecture, and reference guides
 
 ## Quick Start
 
@@ -40,20 +40,26 @@ OpenTrace indexes source code directly in your browser — no server required. P
 
 ## Architecture
 
+Everything runs in the browser — no server required.
+
 ```
-┌──────────────────────────────────────────────────────┐
-│                    UI (React/TS)                     │
-│         Browser-based indexer + graph explorer       │
-│           localhost:5173         ┌─────────────────┐ │
-│                                  │  Web Worker     │ │
-│                                  │  tree-sitter    │ │
-│                                  │  WASM parsers   │ │
-│                                  └─────────────────┘ │
-│                                  ┌─────────────────┐ │
-│                                  │  LadybugDB WASM    │ │
-│                                  │  graph store    │ │
-│                                  └─────────────────┘ │
-└──────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                      UI (React/TS)                        │
+│            Browser-based indexer + graph explorer          │
+│               localhost:5173 / oss.opentrace.ai           │
+│                                                           │
+│  ┌──────────────┐  ┌─────────────────┐  ┌──────────────┐ │
+│  │  Web Worker   │  │  LadybugDB WASM │  │  Chat Agent  │ │
+│  │  tree-sitter  │  │  (embedded      │  │  LLM-powered │ │
+│  │  WASM parsers │  │   graph store)  │  │  graph tools │ │
+│  └──────────────┘  └─────────────────┘  └──────────────┘ │
+└───────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────┐
+│                 Claude Code Plugin (MCP)                   │
+│     Python agent exposes graph tools via MCP protocol     │
+│         uvx opentraceai mcp  →  stdio transport           │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## Supported Languages
@@ -66,23 +72,38 @@ Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are index
 
 ## Graph Tools
 
-The built-in chat agent has access to these tools:
+### Browser Chat Agent
+
+| Tool | Description |
+|------|-------------|
+| `search_graph` | Full-text search across nodes by name, properties, and file content |
+| `list_nodes` | List nodes by type with optional property filters |
+| `get_node` | Get full details of a single node by ID |
+| `traverse_graph` | BFS traversal to discover connected nodes and relationships |
+| `load_source` | Fetch source code for an indexed file or symbol |
+| `explore_node` | Deep inspection — node details + relationships + source in one call |
+| `grep` | Regex search across all indexed source files |
+
+### Claude Code Plugin (MCP)
 
 | Tool | Description |
 |------|-------------|
 | `search_graph` | Full-text search across nodes by name or properties |
-| `list_nodes` | List nodes by type with optional property filters |
+| `list_nodes` | List nodes of a specific type |
 | `get_node` | Get full details of a single node by ID |
-| `traverse_graph` | BFS traversal to discover connected nodes |
-| `load_source` | Fetch source code for an indexed file or symbol |
+| `traverse_graph` | BFS traversal with direction and relationship filters |
+| `get_stats` | Graph statistics — total nodes, edges, and breakdown by type |
 
 ## Repository Structure
 
 ```
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
-agent/                — Python agent (loads data into the graph)
-proto/                — Protobuf definitions (shared API contracts)
-claude-code-plugin/   — Claude Code plugin (MCP server config)
+agent/                — Python agent (CLI + MCP server for Claude Code)
+proto/                — Protobuf definitions (shared schema)
+claude-code-plugin/   — Claude Code plugin (agents, commands, skills, hooks)
+docs/                 — Documentation site (mkdocs-material)
+tests/                — Cross-validation test fixtures
+benchmark/            — Accuracy benchmarks
 ```
 
 ## Development
@@ -95,15 +116,17 @@ claude-code-plugin/   — Claude Code plugin (MCP server config)
 ### Commands
 
 ```bash
-make install          # Install dependencies
+make install          # Install dependencies (agent + ui)
 make agent            # Run Python agent
 make ui               # Start dev server (localhost:5173)
 make build            # Production build
-make test             # Run tests
-make fmt              # Format code
-make lint             # Lint
+make test             # Run all tests (agent + ui)
+make fmt              # Format all code
+make lint             # Lint all code
 make proto            # Generate protobuf types
-make ui-build-static  # Static build (no API server dependency)
+make ui-build-static  # Static build (browser-only, no API dependency)
+make license-check    # Verify Apache 2.0 headers on all source files
+make plugin-reload    # Reinstall the Claude Code plugin locally
 ```
 
 ### Agent
@@ -126,23 +149,35 @@ npm run lint          # ESLint + Prettier check
 
 | Agent                  | Description                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------ |
-| `@code-explorer`       | Explore indexed code structure — find classes, functions, services and their relationships |
+| `@opentrace`           | Default catch-all — any codebase question routed to the knowledge graph                   |
+| `@code-explorer`       | Explore indexed code structure — find classes, functions, files, and their relationships   |
 | `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                                     |
+| `@find-usages`         | Find all callers, references, and usages of a component                                    |
+| `@explain-service`     | Top-down walkthrough of how a service or module works                                      |
 
 ## Commands
 
-| Command           | Description                                                     |
-| ----------------- | --------------------------------------------------------------- |
-| `/graph-status`   | Show overview of indexed nodes by type, list repos and services |
-| `/explore <name>` | Quick exploration of a named component in the graph             |
+| Command             | Description                                                     |
+| ------------------- | --------------------------------------------------------------- |
+| `/graph-status`     | Show overview of indexed nodes by type, list repos and services |
+| `/explore <name>`   | Quick exploration of a named component in the graph             |
+| `/index`            | Index (or re-index) the current project into the knowledge graph |
+| `/interrogate`      | Answer a question about the codebase without making changes      |
 
 ## Graph Node Types
 
-Service, Repo, Repository, Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable
+Repository, Directory, File, Class, Function, Variable, Dependency, PullRequest, IndexMetadata
 
 ## Claude Code Plugin
 
-OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server. See `claude-code-plugin/` for configuration.
+OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server. Install it with:
+
+```bash
+claude plugin marketplace add ./
+claude plugin install opentrace-oss@opentrace-oss
+```
+
+The plugin provides 5 agents, 4 slash commands, and MCP graph tools — see `claude-code-plugin/` for details.
 
 ## Contributing
 

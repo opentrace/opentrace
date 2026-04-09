@@ -125,7 +125,7 @@ src/
 
 - **Pixi.js** — GPU-accelerated 2D graph rendering
 - **Graphology** — In-memory graph data structure with Force-Atlas2 layout and Louvain community detection
-- **tree-sitter (WASM)** — In-browser code parsing for 14+ languages
+- **tree-sitter (WASM)** — In-browser code parsing for 15 languages
 - **LadybugDB** — Parquet-backed WASM graph store
 - **LangChain** — LLM orchestration for chat and code summarization
 

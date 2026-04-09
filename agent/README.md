@@ -29,11 +29,11 @@ Requires Python 3.12+.
 opentraceai index /path/to/repo
 ```
 
-This parses every supported file, extracts symbols and relationships, and writes the graph to `./otindex.db`.
+This parses every supported file, extracts symbols and relationships, and writes the graph to `.opentrace/index.db`.
 
 ```
 $ opentraceai index ~/projects/myapp
-Opening LadybugDB at ./otindex.db ...
+Opening database at .opentrace/index.db ...
 Indexing /home/user/projects/myapp ...
   1284 nodes, 3421 relationships, 187 files, 95 classes, 412 functions
 Done in 4.2s.
@@ -44,10 +44,10 @@ Done in 4.2s.
 Start a stdio MCP server against the indexed database:
 
 ```bash
-opentraceai mcp --db ./otindex.db
+opentraceai mcp
 ```
 
-This exposes graph query tools over stdin/stdout for any MCP-compatible client.
+The database is auto-discovered by walking up from the current directory to the git root, looking for `.opentrace/index.db`. You can override with `--db <path>`.
 
 ### Claude Code
 
@@ -59,7 +59,7 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
     "opentrace": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["opentraceai", "mcp", "--db", "./otindex.db"]
+      "args": ["opentraceai", "mcp"]
     }
   }
 }
@@ -70,10 +70,10 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
 | Tool | Description |
 |------|-------------|
 | `search_graph` | Full-text search across nodes by name or properties |
-| `list_nodes` | List nodes by type (Class, Function, Service, etc.) |
+| `list_nodes` | List nodes by type (Class, Function, File, etc.) |
 | `get_node` | Get a node's full details and immediate neighbors |
 | `traverse_graph` | Walk relationships from a node (outgoing, incoming, or both) |
-| `get_stats` | Get graph statistics — node/edge counts broken down by type |
+| `get_stats` | Graph statistics — node/edge counts broken down by type |
 
 ## Supported Languages
 
@@ -85,26 +85,86 @@ Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are index
 
 ## CLI Reference
 
-```
-opentraceai index [PATH] [OPTIONS]
-```
+### `opentraceai index [PATH]`
+
+Index a local codebase into a LadybugDB knowledge graph.
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `PATH` | `.` | Directory to index |
-| `--db` | `./otindex.db` | Database path |
+| `--db` | `.opentrace/index.db` | Database path |
 | `--repo-id` | directory name | Repository identifier |
-| `--batch-size` | 200 | Items per write batch |
+| `--batch-size` | `200` | Items per write batch |
 | `-v, --verbose` | off | Debug logging |
 
-```
-opentraceai mcp [OPTIONS]
-```
+### `opentraceai mcp`
+
+Start a stdio MCP server exposing graph query tools.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--db` | `./otindex.db` | Database path |
+| `--db` | auto-discovered | Database path |
 | `-v, --verbose` | off | Debug logging |
+
+### `opentraceai stats`
+
+Display graph statistics (node/edge counts by type).
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--db` | auto-discovered | Database path |
+| `--output` | `text` | Output format (`text` or `json`) |
+
+### `opentraceai serve`
+
+Start an HTTP server exposing the graph database as a REST API.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--db` | auto-discovered | Database path |
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `8787` | Bind port |
+| `-v, --verbose` | off | Debug logging |
+
+### `opentraceai query QUERY_STRING`
+
+Run a Cypher or full-text search query against the graph database.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--db` | auto-discovered | Database path |
+| `-t, --type` | `cypher` | Query language (`cypher` or `fts`) |
+| `--limit` | `100` | Max rows (FTS only) |
+| `--output` | `table` | Output format (`table`, `json`, or `jsonl`) |
+
+### `opentraceai export [OUTPUT]`
+
+Export the graph database as a `.parquet.zip` archive.
+
+### `opentraceai import ARCHIVE`
+
+Import a `.parquet.zip` archive into the graph database.
+
+### `opentraceai impact FILE_PATH`
+
+Analyze the blast radius of changes to a file.
+
+### `opentraceai config`
+
+Read or write project configuration (`.opentrace/config.yaml`). Subcommands: `set`, `get`, `show`, `path`.
+
+### `opentraceai login` / `logout` / `whoami` / `refresh`
+
+Authenticate with api.opentrace.ai.
+
+## Development
+
+```bash
+uv sync          # Install dependencies
+uv run pytest    # Run tests
+uv run ruff check src/ tests/   # Lint
+uv run ruff format src/ tests/  # Format
+```
 
 ## Part of OpenTrace
 
