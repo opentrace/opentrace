@@ -1068,15 +1068,20 @@ const GraphViewer = memo(
       // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
       useEffect(() => {
         if (!zoomOnSelect) return;
-        if (!selectedNode) {
+        if (selectedNode) {
+          if (highlights.highlightNodes.size > 0) {
+            canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
+          }
+        } else if (!selectedLink && focusedCommunityNodes.size === 0) {
           canvasRef.current?.zoomToFit(600);
-          return;
-        }
-        if (highlights.highlightNodes.size > 0) {
-          canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [zoomOnSelect, selectedNode?.id]);
+      }, [
+        zoomOnSelect,
+        selectedNode?.id,
+        !!selectedLink,
+        focusedCommunityNodes.size,
+      ]);
 
       const hopMap = useMemo(() => {
         if (selectedLink) return new Map<string, number>();
