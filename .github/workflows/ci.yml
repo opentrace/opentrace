@@ -105,6 +105,21 @@ jobs:
           wait-interval: 10
           allowed-conclusions: success
 
+      - name: Extract preview URL from PR comments
+        id: preview-url
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          URL=$(gh pr view ${{ github.event.pull_request.number }} \
+            --json comments -q '.comments[] | select(.body | test("firebase-preview-bot")) | .body' \
+            | grep -oP 'https://[^\s]+\.web\.app' | head -1)
+          if [ -z "$URL" ]; then
+            echo "::error::Could not find preview URL in PR comments"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $URL"
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -125,7 +140,7 @@ jobs:
         working-directory: ui
         run: npx playwright test
         env:
-          BASE_URL: ${{ vars.PREVIEW_URL }}
+          BASE_URL: ${{ steps.preview-url.outputs.url }}
 
       - name: Upload report on failure
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
