@@ -64,12 +64,28 @@ if command -v uvx &>/dev/null; then
   GRAPH_STATS=$(timeout 10 uvx opentraceai stats 2>/dev/null || true)
 fi
 
+# Check for CLI updates (best-effort, timeout 5s)
+UPDATE_NOTICE=""
+if command -v uvx &>/dev/null && command -v curl &>/dev/null; then
+  INSTALLED_VERSION=$(timeout 5 uvx opentraceai --version 2>/dev/null | grep -oP '[\d]+\.[\d]+\.[\d]+' || true)
+  LATEST_VERSION=$(timeout 5 curl -sS https://pypi.org/pypi/opentraceai/json 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])" 2>/dev/null || true)
+  if [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] && [ "$INSTALLED_VERSION" != "$LATEST_VERSION" ]; then
+    UPDATE_NOTICE="Update available: opentraceai ${INSTALLED_VERSION} → ${LATEST_VERSION}. Run /update to upgrade."
+  fi
+fi
+
+
 CONTEXT="You have access to OpenTrace, a knowledge graph that maps the user's system architecture, service relationships, and project metadata. Use your local tools (Read, Grep, Glob, etc.) for anything within the current codebase. Use OpenTrace when you need context beyond the local project — such as discovering upstream/downstream services, finding related classes or endpoints in other repositories, understanding deployment topology, looking up issues and tickets, or tracing how components connect across the system. When a question touches anything outside the current repo, consider checking OpenTrace. Specialist agents: @code-explorer, @dependency-analyzer, @find-usages, @explain-service. Commands: /explore <name>, /graph-status, /index."
 
 if [ -n "$GRAPH_STATS" ]; then
   SYSTEM_MSG="OpenTrace is active — ${GRAPH_STATS}"
 else
   SYSTEM_MSG="OpenTrace is active — index found at ${DB_PATH}. Run /graph-status or call get_stats to see what's indexed."
+fi
+
+if [ -n "$UPDATE_NOTICE" ]; then
+  SYSTEM_MSG="${SYSTEM_MSG} | ${UPDATE_NOTICE}"
 fi
 
 SAFE_CONTEXT=$(json_escape "${CONTEXT}")
