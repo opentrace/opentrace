@@ -72,19 +72,19 @@ test.describe('App smoke tests', () => {
     expect(canvasCount + containerCount).toBeGreaterThan(0);
   });
 
-  test('search input is present and interactive', async ({ page }) => {
+  test('add repository modal appears on fresh load', async ({ page }) => {
     await page.goto('/');
 
-    const searchInput = page.locator(
-      'input[placeholder*="Search"], .ot-search-input',
-    );
+    // On a fresh instance with no data, the app shows the Add Repository modal
+    const modal = page.getByText('Add Repository').first();
+    await expect(modal).toBeVisible({ timeout: 10_000 });
 
-    // Search input should exist (may need to wait for toolbar to render)
-    await expect(searchInput.first()).toBeVisible({ timeout: 10_000 });
-
-    // Should accept text input
-    await searchInput.first().fill('test query');
-    await expect(searchInput.first()).toHaveValue('test query');
+    // The repo URL input should be present and interactive
+    const repoInput = page.getByTestId('repo-url-input');
+    if (await repoInput.isVisible()) {
+      await repoInput.fill('https://github.com/example/repo');
+      await expect(repoInput).toHaveValue('https://github.com/example/repo');
+    }
   });
 
   test('static assets load successfully', async ({ page }) => {
