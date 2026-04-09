@@ -11,6 +11,7 @@ __pycache__/
 *.pyc
 
 # Node
+node_modules/
 ui/node_modules/
 ui/dist/
 functions/node_modules/
