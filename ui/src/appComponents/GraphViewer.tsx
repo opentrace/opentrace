@@ -1266,7 +1266,7 @@ const GraphViewer = memo(
         ((jobState.status === 'enriching' || jobState.status === 'done') &&
           (jobExpanded || (loading && isEmpty)));
 
-      const graphWidth = showChat ? width - chatWidth : width;
+      const graphWidth = showChat || showHelp ? width - chatWidth : width;
 
       // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
       // to the "Computing layout" overlay without flashing "no data").
