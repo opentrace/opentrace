@@ -110,8 +110,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          URL=$(gh pr view ${{ github.event.pull_request.number }} \
-            --json comments -q '.comments[] | select(.body | test("firebase-preview-bot")) | .body' \
+          URL=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '.[] | select(.body | test("firebase-preview-bot")) | .body' \
             | grep -oP 'https://[^\s]+\.web\.app' | head -1)
           if [ -z "$URL" ]; then
             echo "::error::Could not find preview URL in PR comments"
