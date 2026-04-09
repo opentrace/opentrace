@@ -213,22 +213,22 @@ class TestUserServiceInitFields:
 
 class TestUserServiceInitParams:
     def test_db_param(self):
-        node = _var_node("UserService::__init__", "db")
+        node = _var_node("UserService::__init__(Database,bool)", "db")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "Database"
 
     def test_debug_param_with_default(self):
-        node = _var_node("UserService::__init__", "debug")
+        node = _var_node("UserService::__init__(Database,bool)", "debug")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "bool"
 
     def test_self_skipped(self):
         var_ids = {n.id for n in _var_nodes()}
-        assert f"{SVC_FILE_ID}::UserService::__init__::self" not in var_ids
+        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::self" not in var_ids
 
     def test_defines_params(self):
-        assert _has_defines("UserService::__init__", "UserService::__init__", "db")
-        assert _has_defines("UserService::__init__", "UserService::__init__", "debug")
+        assert _has_defines("UserService::__init__(Database,bool)", "UserService::__init__(Database,bool)", "db")
+        assert _has_defines("UserService::__init__(Database,bool)", "UserService::__init__(Database,bool)", "debug")
 
 
 # ─── UserService.get_user: parameters + locals ───────────────────────
@@ -236,38 +236,38 @@ class TestUserServiceInitParams:
 
 class TestGetUser:
     def test_param(self):
-        node = _var_node("UserService::get_user", "user_id")
+        node = _var_node("UserService::get_user(int)", "user_id")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "int"
 
     def test_local_from_method_call(self):
         """rows = self.db.get_all_users()"""
-        node = _var_node("UserService::get_user", "rows")
+        node = _var_node("UserService::get_user(int)", "rows")
         assert node.properties["kind"] == "local"
 
     def test_local_from_identifier(self):
         """data = rows"""
-        node = _var_node("UserService::get_user", "data")
+        node = _var_node("UserService::get_user(int)", "data")
         assert node.properties["kind"] == "local"
 
     def test_local_from_attribute(self):
         """count = rows.__len__"""
-        node = _var_node("UserService::get_user", "count")
+        node = _var_node("UserService::get_user(int)", "count")
         assert node.properties["kind"] == "local"
 
     def test_annotated_local(self):
         """result: dict = {}"""
-        node = _var_node("UserService::get_user", "result")
+        node = _var_node("UserService::get_user(int)", "result")
         assert node.properties["kind"] == "local"
         assert node.properties["typeAnnotation"] == "dict"
 
     def test_local_in_if_else(self):
         """user assigned in if/else block."""
-        node = _var_node("UserService::get_user", "user")
+        node = _var_node("UserService::get_user(int)", "user")
         assert node.properties["kind"] == "local"
 
     def test_defines_locals(self):
-        scope = "UserService::get_user"
+        scope = "UserService::get_user(int)"
         for name in ("rows", "data", "count", "result", "user"):
             assert _has_defines(scope, scope, name), f"Missing DEFINES for {scope}::{name}"
 
@@ -277,40 +277,40 @@ class TestGetUser:
 
 class TestCreateUserBatch:
     def test_params(self):
-        names = _var_node("UserService::create_user_batch", "names")
+        names = _var_node("UserService::create_user_batch(list,list)", "names")
         assert names.properties["kind"] == "parameter"
         assert names.properties["typeAnnotation"] == "list"
-        emails = _var_node("UserService::create_user_batch", "emails")
+        emails = _var_node("UserService::create_user_batch(list,list)", "emails")
         assert emails.properties["kind"] == "parameter"
         assert emails.properties["typeAnnotation"] == "list"
 
     def test_for_loop_var(self):
         """for i in range(total) → loop variable."""
-        node = _var_node("UserService::create_user_batch", "i")
+        node = _var_node("UserService::create_user_batch(list,list)", "i")
         assert node.properties["kind"] == "local"
 
     def test_local_compound(self):
         """total = len(names) + len(emails) → compound expression."""
-        node = _var_node("UserService::create_user_batch", "total")
+        node = _var_node("UserService::create_user_batch(list,list)", "total")
         assert node.properties["kind"] == "local"
 
     def test_local_literal(self):
         """created = 0 → literal, no derivation."""
-        node = _var_node("UserService::create_user_batch", "created")
+        node = _var_node("UserService::create_user_batch(list,list)", "created")
         assert node.properties["kind"] == "local"
 
     def test_local_in_for_loop(self):
         """result assigned inside for loop body."""
-        node = _var_node("UserService::create_user_batch", "result")
+        node = _var_node("UserService::create_user_batch(list,list)", "result")
         assert node.properties["kind"] == "local"
 
     def test_local_in_try_except(self):
         """summary assigned in try/except."""
-        node = _var_node("UserService::create_user_batch", "summary")
+        node = _var_node("UserService::create_user_batch(list,list)", "summary")
         assert node.properties["kind"] == "local"
 
     def test_defines_all(self):
-        scope = "UserService::create_user_batch"
+        scope = "UserService::create_user_batch(list,list)"
         for name in ("names", "emails", "total", "created", "i", "result", "summary"):
             assert _has_defines(scope, scope, name), f"Missing DEFINES for {scope}::{name}"
 
@@ -320,33 +320,35 @@ class TestCreateUserBatch:
 
 class TestValidateEmail:
     def test_typed_param(self):
-        node = _var_node("validate_email", "address")
+        node = _var_node("validate_email(str,bool)", "address")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "str"
 
     def test_default_param(self):
-        node = _var_node("validate_email", "strict")
+        node = _var_node("validate_email(str,bool)", "strict")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "bool"
 
     def test_local_unresolved_call(self):
         """pattern = compile_pattern() → unresolved (not in file)."""
-        node = _var_node("validate_email", "pattern")
+        node = _var_node("validate_email(str,bool)", "pattern")
         assert node.properties["kind"] == "local"
 
     def test_local_list_derivation(self):
         """parts = [address, pattern] → list with identifiers."""
-        node = _var_node("validate_email", "parts")
+        node = _var_node("validate_email(str,bool)", "parts")
         assert node.properties["kind"] == "local"
 
     def test_local_literal(self):
         """valid = False → literal, no derivation."""
-        node = _var_node("validate_email", "valid")
+        node = _var_node("validate_email(str,bool)", "valid")
         assert node.properties["kind"] == "local"
 
     def test_defines_params_and_locals(self):
         for name in ("address", "strict", "pattern", "parts", "valid"):
-            assert _has_defines("validate_email", "validate_email", name), f"Missing DEFINES for validate_email::{name}"
+            assert _has_defines("validate_email(str,bool)", "validate_email(str,bool)", name), (
+                f"Missing DEFINES for validate_email::{name}"
+            )
 
 
 # ─── DERIVED_FROM edges ─────────────────────────────────────────────
@@ -357,7 +359,7 @@ class TestDerivedFromEdges:
         """self.db = db → DERIVED_FROM → __init__::db parameter."""
         targets = _derived_targets("UserService", "db")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::__init__::db" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::db" in target_ids
 
     def test_self_conn_from_attribute(self):
         """self.conn = db.conn → attribute, receiver 'db' resolves in __init__ scope.
@@ -375,41 +377,41 @@ class TestDerivedFromEdges:
 
     def test_get_user_data_from_identifier(self):
         """data = rows → DERIVED_FROM → rows (same scope)."""
-        targets = _derived_targets("UserService::get_user", "data")
+        targets = _derived_targets("UserService::get_user(int)", "data")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::get_user::rows" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::get_user(int)::rows" in target_ids
 
     def test_create_user_batch_reassignment_merges(self):
         """created = 0; created = created + 1 → merges derivation from reassignment."""
-        targets = _derived_targets("UserService::create_user_batch", "created")
+        targets = _derived_targets("UserService::create_user_batch(list,list)", "created")
         # Second assignment `created = created + 1` adds a self-referencing derivation
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::create_user_batch::created" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::create_user_batch(list,list)::created" in target_ids
 
     def test_validate_email_list_derivation(self):
         """parts = [address, pattern] → derives from both parameters/locals."""
-        targets = _derived_targets("validate_email", "parts")
+        targets = _derived_targets("validate_email(str,bool)", "parts")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::validate_email::address" in target_ids
-        assert f"{SVC_FILE_ID}::validate_email::pattern" in target_ids
+        assert f"{SVC_FILE_ID}::validate_email(str,bool)::address" in target_ids
+        assert f"{SVC_FILE_ID}::validate_email(str,bool)::pattern" in target_ids
 
     def test_validate_email_literal_no_derivation(self):
         """valid = False → no DERIVED_FROM edges."""
-        targets = _derived_targets("validate_email", "valid")
+        targets = _derived_targets("validate_email(str,bool)", "valid")
         assert len(targets) == 0
 
     def test_status_retries_from_self_field(self):
         """retries = self.max_retries → DERIVED_FROM → class field."""
-        targets = _derived_targets("UserService::status", "retries")
+        targets = _derived_targets("UserService::status()", "retries")
         target_ids = {t[0] for t in targets}
         assert f"{SVC_FILE_ID}::UserService::max_retries" in target_ids
         assert any(t[1] == "attribute" for t in targets)
 
     def test_status_remaining_compound_with_literal(self):
         """remaining = retries - 1 → derives from retries only (literal ignored)."""
-        targets = _derived_targets("UserService::status", "remaining")
+        targets = _derived_targets("UserService::status()", "remaining")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::status::retries" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::status()::retries" in target_ids
         # '1' is a literal — should not appear as a derivation
         assert len(targets) == 1
 
@@ -432,19 +434,19 @@ class TestDerivedFromEdges:
 
 class TestStatusMethod:
     def test_retries_local(self):
-        node = _var_node("UserService::status", "retries")
+        node = _var_node("UserService::status()", "retries")
         assert node.properties["kind"] == "local"
 
     def test_remaining_local(self):
-        node = _var_node("UserService::status", "remaining")
+        node = _var_node("UserService::status()", "remaining")
         assert node.properties["kind"] == "local"
 
     def test_name_local(self):
-        node = _var_node("UserService::status", "name")
+        node = _var_node("UserService::status()", "name")
         assert node.properties["kind"] == "local"
 
     def test_defines_locals(self):
-        scope = "UserService::status"
+        scope = "UserService::status()"
         for name in ("retries", "remaining", "name"):
             assert _has_defines(scope, scope, name), f"Missing DEFINES for {scope}::{name}"
 
@@ -531,7 +533,7 @@ class TestDbFileVariables:
         return matches[0]
 
     def test_init_path_param(self):
-        node = self._db_var("Database::__init__", "path")
+        node = self._db_var("Database::__init__(str)", "path")
         assert node.properties["kind"] == "parameter"
         assert node.properties["typeAnnotation"] == "str"
 
@@ -546,30 +548,30 @@ class TestDbFileVariables:
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]
         target_ids = {t[0] for t in derivs}
-        assert f"{DB_FILE_ID}::Database::__init__::path" in target_ids
+        assert f"{DB_FILE_ID}::Database::__init__(str)::path" in target_ids
 
     def test_init_self_conn_field(self):
         node = self._db_var("Database", "conn")
         assert node.properties["kind"] == "field"
 
     def test_get_all_users_cursor_local(self):
-        node = self._db_var("Database::get_all_users", "cursor")
+        node = self._db_var("Database::get_all_users()", "cursor")
         assert node.properties["kind"] == "local"
 
     def test_get_all_users_rows_local(self):
-        node = self._db_var("Database::get_all_users", "rows")
+        node = self._db_var("Database::get_all_users()", "rows")
         assert node.properties["kind"] == "local"
 
     def test_insert_user_params(self):
-        name = self._db_var("Database::insert_user", "name")
+        name = self._db_var("Database::insert_user(str,str)", "name")
         assert name.properties["kind"] == "parameter"
         assert name.properties["typeAnnotation"] == "str"
-        email = self._db_var("Database::insert_user", "email")
+        email = self._db_var("Database::insert_user(str,str)", "email")
         assert email.properties["kind"] == "parameter"
         assert email.properties["typeAnnotation"] == "str"
 
     def test_insert_user_cursor_local(self):
-        node = self._db_var("Database::insert_user", "cursor")
+        node = self._db_var("Database::insert_user(str,str)", "cursor")
         assert node.properties["kind"] == "local"
 
 
@@ -587,35 +589,35 @@ class TestMainFileVariables:
 
     def test_list_users_local(self):
         """users = db.get_all_users() → cross-file call derivation."""
-        node = self._main_var("list_users", "users")
+        node = self._main_var("list_users()", "users")
         assert node.properties["kind"] == "local"
 
     def test_list_users_derivation(self):
         """users → DERIVED_FROM → Database::get_all_users (cross-file)."""
-        var_id = f"{MAIN_FILE_ID}::list_users::users"
+        var_id = f"{MAIN_FILE_ID}::list_users()::users"
         derivs = [
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]
         target_ids = {t[0] for t in derivs}
-        assert f"{DB_FILE_ID}::Database::get_all_users" in target_ids
+        assert f"{DB_FILE_ID}::Database::get_all_users()" in target_ids
 
     def test_create_user_data_local(self):
-        node = self._main_var("create_user", "data")
+        node = self._main_var("create_user()", "data")
         assert node.properties["kind"] == "local"
 
     def test_create_user_local(self):
         """user = db.insert_user(...) → cross-file call derivation."""
-        node = self._main_var("create_user", "user")
+        node = self._main_var("create_user()", "user")
         assert node.properties["kind"] == "local"
 
     def test_create_user_derivation(self):
         """user → DERIVED_FROM → Database::insert_user (cross-file)."""
-        var_id = f"{MAIN_FILE_ID}::create_user::user"
+        var_id = f"{MAIN_FILE_ID}::create_user()::user"
         derivs = [
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]
         target_ids = {t[0] for t in derivs}
-        assert f"{DB_FILE_ID}::Database::insert_user" in target_ids
+        assert f"{DB_FILE_ID}::Database::insert_user(str,str)" in target_ids
 
 
 # ─── Pipeline stats ──────────────────────────────────────────────────
@@ -631,10 +633,10 @@ class TestPipelineStats:
         proc = _proc()
         scopes = proc.registries.variable_registry
         assert f"{SVC_FILE_ID}::UserService" in scopes
-        assert f"{SVC_FILE_ID}::UserService::__init__" in scopes
-        assert f"{SVC_FILE_ID}::UserService::get_user" in scopes
-        assert f"{SVC_FILE_ID}::UserService::status" in scopes
-        assert f"{SVC_FILE_ID}::validate_email" in scopes
+        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)" in scopes
+        assert f"{SVC_FILE_ID}::UserService::get_user(int)" in scopes
+        assert f"{SVC_FILE_ID}::UserService::status()" in scopes
+        assert f"{SVC_FILE_ID}::validate_email(str,bool)" in scopes
         assert f"{SVC_FILE_ID}::process_batch" in scopes
         assert f"{SVC_FILE_ID}::advanced_patterns" in scopes
         assert f"{DB_FILE_ID}::Database" in scopes

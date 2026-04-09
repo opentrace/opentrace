@@ -384,8 +384,11 @@ def _extract_class_fields(class_node: tree_sitter.Node) -> list[VariableSymbol]:
             if name_node and name_node.text.decode() == "__init__":
                 init_body = func_node.child_by_field_name("body")
                 if init_body:
+                    init_params = func_node.child_by_field_name("parameters")
+                    init_sig = _extract_type_signature(init_params) if init_params else None
+                    scope_name = f"__init__{init_sig}" if init_sig else "__init__"
                     for var in _extract_self_assignments(init_body):
-                        var.origin_scope = "__init__"
+                        var.origin_scope = scope_name
                         _merge_or_add(var, variables, by_name)
 
     return variables
