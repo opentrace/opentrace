@@ -8,9 +8,9 @@ All API keys are stored locally in your browser — they are never sent to OpenT
 
 Provides access to the Claude model family.
 
-**Available models:** Claude Opus 4, Claude Sonnet 4.5, Claude Sonnet 4, Claude Haiku 3.5
+**Available models:** Claude Opus 4.6, Claude Opus 4.5, Claude Sonnet 4.6, Claude Sonnet 4.5, Claude Haiku 4.5
 
-To get an API key, visit the [Anthropic Console](https://console.anthropic.com/).
+To get an API key, visit the [Anthropic Console](https://platform.claude.com/settings/keys).
 
 See the [Anthropic API documentation](https://docs.anthropic.com/en/api/getting-started) for details on plans, pricing, and usage.
 
@@ -18,7 +18,7 @@ See the [Anthropic API documentation](https://docs.anthropic.com/en/api/getting-
 
 Provides access to GPT and reasoning models.
 
-**Available models:** o3, o4-mini, GPT-4.1, GPT-4.1 Mini, GPT-4.1 Nano, GPT-4o, GPT-4o Mini
+**Available models:** o3, o4-mini, GPT-4.1, GPT-4.1 Mini, GPT-4o, GPT-4o Mini
 
 To get an API key, visit the [OpenAI Platform](https://platform.openai.com/api-keys).
 
