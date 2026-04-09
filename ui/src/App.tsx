@@ -331,15 +331,21 @@ function App({
         )}
 
         {showHelp && (
-          <HelpDrawer
-            onClose={() => setShowHelp(false)}
-            onOpenAddRepo={() => {
-              setShowHelp(false);
-              handleAddRepoOpen();
-            }}
-            onOpenChat={handleToggleChat}
-            onOpenSettings={handleToggleSettings}
-          />
+          <div
+            style={
+              graphFullscreen ? { display: 'none' } : { display: 'contents' }
+            }
+          >
+            <HelpDrawer
+              onClose={() => setShowHelp(false)}
+              onOpenAddRepo={() => {
+                setShowHelp(false);
+                handleAddRepoOpen();
+              }}
+              onOpenChat={handleToggleChat}
+              onOpenSettings={handleToggleSettings}
+            />
+          </div>
         )}
       </div>
 
