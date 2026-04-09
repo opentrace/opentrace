@@ -15,19 +15,15 @@
  */
 
 .help-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  flex-shrink: 0;
   width: 380px;
-  padding-top: 68px;
   background: var(--background);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
-  z-index: 15;
-  box-shadow: -4px 0 24px -4px hsl(0 0% 0% / 0.3);
-  animation: slideInRight 0.25s ease-out;
+  z-index: 10;
+  position: relative;
+  padding-top: 64px;
 }
 
 .help-content {
@@ -127,10 +123,13 @@
 }
 
 @media (max-width: 1024px) {
-  .help-drawer {
+  .app-body--mobile-split .help-drawer {
+    position: relative;
     width: 100%;
+    flex: 1;
+    flex-shrink: 1;
+    min-height: 0;
     padding-top: 0;
-    z-index: 100;
     border-left: none;
     padding-top: max(0px, env(safe-area-inset-top));
     padding-bottom: max(0px, env(safe-area-inset-bottom));

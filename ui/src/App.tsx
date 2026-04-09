@@ -72,6 +72,7 @@ function App({
   const [chatWidth, setChatWidth] = useState(480);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(isNewUser);
+  const helpWidth = 380;
   const [animationSettings, setAnimationSettings] = useState<AnimationSettings>(
     loadAnimationSettings,
   );
@@ -220,7 +221,7 @@ function App({
   const MOBILE_GRAPH_RATIO = 0.3;
   const isMobile = dimensions.width <= MOBILE_BREAKPOINT;
   const [graphFullscreen, setGraphFullscreen] = useState(false);
-  const isMobileSplit = isMobile && showChat && !graphFullscreen;
+  const isMobileSplit = isMobile && (showChat || showHelp) && !graphFullscreen;
   const graphHeight = isMobileSplit
     ? Math.round(dimensions.height * MOBILE_GRAPH_RATIO)
     : dimensions.height;
@@ -274,7 +275,7 @@ function App({
           onAddRepoClose={handleAddRepoClose}
           onJobSubmit={handleJobSubmit}
           showChat={showChat}
-          chatWidth={isMobileSplit || graphFullscreen ? 0 : chatWidth}
+          chatWidth={isMobileSplit || graphFullscreen ? 0 : showHelp ? helpWidth : chatWidth}
           onToggleChat={handleToggleChat}
           showSettings={showSettings}
           onToggleSettings={handleToggleSettings}
@@ -322,19 +323,19 @@ function App({
             />
           </div>
         )}
-      </div>
 
-      {showHelp && (
-        <HelpDrawer
-          onClose={() => setShowHelp(false)}
-          onOpenAddRepo={() => {
-            setShowHelp(false);
-            handleAddRepoOpen();
-          }}
-          onOpenChat={handleToggleChat}
-          onOpenSettings={handleToggleSettings}
-        />
-      )}
+        {showHelp && (
+          <HelpDrawer
+            onClose={() => setShowHelp(false)}
+            onOpenAddRepo={() => {
+              setShowHelp(false);
+              handleAddRepoOpen();
+            }}
+            onOpenChat={handleToggleChat}
+            onOpenSettings={handleToggleSettings}
+          />
+        )}
+      </div>
 
       {showSettings && (
         <SettingsDrawer
