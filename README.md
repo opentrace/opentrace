@@ -35,7 +35,7 @@ claude plugin install opentrace-oss@opentrace-oss
 Then index your codebase and start exploring:
 
 ```bash
-opentraceai index .        # index the current repo
+uvx opentraceai index        # index the current repo
 ```
 
 The plugin gives Claude Code 5 agents, 4 slash commands, and graph query tools — see [Claude Code Plugin](#claude-code-plugin) for details.
