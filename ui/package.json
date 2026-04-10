@@ -1,6 +1,6 @@
 {
   "name": "@opentrace/opentrace",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "React components for graph visualization — powered by Pixi.js and Graphology",
   "license": "Apache-2.0",
