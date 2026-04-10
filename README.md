@@ -2,7 +2,7 @@
 
 [![Deploy](https://github.com/opentrace/opentrace/actions/workflows/deploy.yml/badge.svg)](https://github.com/opentrace/opentrace/actions/workflows/deploy.yml)
 [![PyPI - Version](https://img.shields.io/pypi/v/opentraceai)](https://pypi.org/project/opentraceai/)
-[![NPM Version](https://img.shields.io/npm/v/%40opentrace%2Fcomponents)](https://www.npmjs.com/package/@opentrace/components)
+[![NPM Version](https://img.shields.io/npm/v/%40opentrace%2Fopentrace)](https://www.npmjs.com/package/@opentrace/opentrace)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 A knowledge graph that maps your codebase structure, service architecture, and system relationships — then exposes it all through MCP so AI tools can understand your systems.
