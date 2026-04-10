@@ -30,6 +30,8 @@ claude plugin marketplace add https://github.com/opentrace/opentrace
 claude plugin install opentrace-oss@opentrace-oss
 ```
 
+> We will automatically start an index in the background on session start.
+
 Then index your codebase and start exploring:
 
 ```bash
