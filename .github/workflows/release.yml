@@ -67,7 +67,6 @@ jobs:
 
           # Bump agent version
           sed -i "s/^version = .*/version = \"${VERSION}\"/" agent/pyproject.toml
-          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" agent/src/opentrace_agent/__init__.py
 
           # Bump UI version
           cd ui
@@ -81,7 +80,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout main
-          git add agent/pyproject.toml agent/src/opentrace_agent/__init__.py ui/package.json ui/package-lock.json CHANGELOG.md
+          git add agent/pyproject.toml ui/package.json ui/package-lock.json CHANGELOG.md
           git diff --cached --quiet || git commit -m "chore(release): bump to ${VERSION} and update changelog [skip ci]"
           git push
 
@@ -106,7 +105,6 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
-          sed -i "s/^__version__ = .*/__version__ = \"${VERSION}\"/" src/opentrace_agent/__init__.py
 
       - name: Build package
         working-directory: agent
