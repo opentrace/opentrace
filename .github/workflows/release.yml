@@ -50,8 +50,14 @@ jobs:
       - name: Generate release notes
         run: git-cliff --latest --strip header -o RELEASE_NOTES.md
 
-      - name: Create Release
-        run: gh release create ${{ github.ref_name }} opentrace-ui-${{ github.ref_name }}.zip --notes-file RELEASE_NOTES.md
+      - name: Create or update Release
+        run: |
+          if gh release view "${{ github.ref_name }}" &>/dev/null; then
+            gh release upload "${{ github.ref_name }}" opentrace-ui-${{ github.ref_name }}.zip --clobber
+            gh release edit "${{ github.ref_name }}" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "${{ github.ref_name }}" opentrace-ui-${{ github.ref_name }}.zip --notes-file RELEASE_NOTES.md
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 
