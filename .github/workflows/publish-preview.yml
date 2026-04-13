@@ -104,7 +104,7 @@ jobs:
           PR_NUMBER: ${{ steps.resolve_pr.outputs.pr_number }}
           BUILD_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
         run: |
-          VERSION=$(cat artifact/agent/preview-version.txt)
+          VERSION=$(cat artifact/preview-version.txt)
           if ! [[ "${VERSION}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
             echo "Invalid version string: ${VERSION}" >&2
             exit 1
@@ -121,7 +121,7 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
-          packages-dir: artifact/agent/dist/
+          packages-dir: artifact/dist/
 
       - name: Comment on PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
