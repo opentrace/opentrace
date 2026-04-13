@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 
@@ -189,29 +190,31 @@ def index(
     # that hold an exclusive lock on the live database.
     staging_db = resolved_db + ".staging"
 
-    click.echo(f"Opening database at {resolved_db} ...")
+    click.echo(f"Opening staging database at {staging_db} ...")
     try:
-        graph_store = GraphStore(staging_db)
-        store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+        with GraphStore(staging_db) as graph_store:
+            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
 
-        click.echo(f"Indexing {root} ...")
-        t0 = time.monotonic()
+            click.echo(f"Indexing {root} ...")
+            t0 = time.monotonic()
 
-        inp = PipelineInput(path=str(root), repo_id=repo_id)
+            inp = PipelineInput(path=str(root), repo_id=repo_id)
 
-        last_result = None
-        for event in run_pipeline(inp, store=store):
-            _print_event(event, verbose)
-            if getattr(event, "result", None) is not None:
-                last_result = event.result
+            last_result = None
+            for event in run_pipeline(inp, store=store):
+                _print_event(event, verbose)
+                if getattr(event, "result", None) is not None:
+                    last_result = event.result
 
-        elapsed = time.monotonic() - t0
+            elapsed = time.monotonic() - t0
 
-        # Save index metadata.
-        metadata = _collect_metadata(root, repo_id, elapsed, last_result)
-        graph_store.save_metadata(metadata)
+            # Save index metadata.
+            metadata = _collect_metadata(root, repo_id, elapsed, last_result)
+            graph_store.save_metadata(metadata)
 
-        store.close()
+            # Flush pending batches; the GraphStore is closed by the
+            # context manager on exit.
+            store.flush()
     except BaseException:
         # Clean up the staging file on failure.
         Path(staging_db).unlink(missing_ok=True)
@@ -393,6 +396,7 @@ class _ReloadableStore:
         self._db_path = db_path
         self._store = store
         self._inode = self._stat_inode()
+        self._lock = threading.Lock()
         self._log = logging.getLogger("opentrace_agent.mcp.reload")
 
     def _stat_inode(self) -> int | None:
@@ -404,39 +408,54 @@ class _ReloadableStore:
             return None
 
     def get(self) -> object | None:
-        """Return the current store, reopening if the DB file changed."""
+        """Return the current store, reopening if the DB file changed.
+
+        Thread-safe: FastMCP may dispatch tool calls from a thread pool,
+        so we serialize the inode check + reopen with a lock.
+        """
         if self._db_path is None:
             return self._store
 
-        current_inode = self._stat_inode()
-        if current_inode == self._inode:
+        with self._lock:
+            # Re-check inode under the lock (double-checked).
+            current_inode = self._stat_inode()
+            if current_inode == self._inode:
+                return self._store
+
+            self._log.info(
+                "Database file changed (inode %s → %s), reopening",
+                self._inode,
+                current_inode,
+            )
+
+            # Close the old store first.  LadybugDB associates a WAL file
+            # with the open database; if we tried to open the new file
+            # while the old store still holds its WAL open, the new open
+            # would fail with a "Database ID does not match" error.
+            if self._store is not None:
+                try:
+                    self._store.close()
+                except Exception:
+                    pass
+
+            self._store = None
+            self._inode = current_inode
+
+            if current_inode is not None:
+                from opentrace_agent.store import GraphStore
+
+                try:
+                    self._store = GraphStore(self._db_path, read_only=True)
+                except Exception as e:
+                    self._log.warning("Failed to reopen database: %s", e)
+
             return self._store
 
-        # File was replaced (or removed).
-        self._log.info("Database file changed (inode %s → %s), reopening", self._inode, current_inode)
-        if self._store is not None:
-            try:
-                self._store.close()
-            except Exception:
-                pass
-
-        self._store = None
-        self._inode = current_inode
-
-        if current_inode is not None:
-            from opentrace_agent.store import GraphStore
-
-            try:
-                self._store = GraphStore(self._db_path, read_only=True)
-            except Exception as e:
-                self._log.warning("Failed to reopen database: %s", e)
-
-        return self._store
-
     def close(self) -> None:
-        if self._store is not None:
-            self._store.close()
-            self._store = None
+        with self._lock:
+            if self._store is not None:
+                self._store.close()
+                self._store = None
 
 
 @app.command("mcp")
