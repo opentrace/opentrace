@@ -29,12 +29,14 @@ If you already know which path you want:
 === "CLI"
 
     ```bash
-    uvx opentraceai index .          # try without installing
-    # or
+    uvx opentraceai index .                  # try without installing
+    # or — permanent install (pick one):
+    uv tool install opentraceai --upgrade    # recommended
+    pipx install opentraceai
     pip install opentraceai
     ```
 
-    Requires Python 3.12+.
+    Requires Python 3.12+. See the [CLI guide](install-cli.md) for when to pick each.
 
 === "Source"
 

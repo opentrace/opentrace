@@ -6,11 +6,7 @@ Common install issues and how to fix them.
 
 The plugin and the "try without installing" CLI path both need [`uv`](https://docs.astral.sh/uv/) (which provides `uvx`).
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Then open a new shell (or `source` your profile) so `uvx` is on `PATH`.
+See the [`uv` install guide](https://docs.astral.sh/uv/getting-started/installation/). After installing, open a new shell so `uvx` is on `PATH`.
 
 ## `command not found: claude`
 

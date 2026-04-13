@@ -5,17 +5,26 @@ The OpenTrace plugin gives [Claude Code](https://docs.anthropic.com/en/docs/clau
 ## Prerequisites
 
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and working (`claude --version`).
-- **[`uv`](https://docs.astral.sh/uv/)** installed — the plugin uses `uvx` to run the `opentraceai` MCP server. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- **[`uv`](https://docs.astral.sh/uv/)** installed — the plugin uses `uvx` to run the `opentraceai` MCP server. See the [`uv` install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 !!! tip "Why `uv`?"
     The plugin doesn't bundle a Python environment. Instead it invokes `uvx opentraceai mcp`, which lets `uv` handle Python version, dependencies, and caching automatically. If `uv` isn't installed, the MCP server can't start and Claude won't see any graph tools.
 
 ## Install
 
-```bash
-claude plugin marketplace add https://github.com/opentrace/opentrace
-claude plugin install opentrace-oss@opentrace-oss
-```
+=== "Shell (`claude plugin`)"
+
+    ```bash
+    claude plugin marketplace add https://github.com/opentrace/opentrace
+    claude plugin install opentrace-oss@opentrace-oss
+    ```
+
+=== "Inside Claude Code (`/plugin`)"
+
+    ```text
+    /plugin marketplace add https://github.com/opentrace/opentrace
+    /plugin install opentrace-oss@opentrace-oss
+    ```
 
 That's the whole install. Restart Claude Code (or start a new session) and the plugin is active.
 
