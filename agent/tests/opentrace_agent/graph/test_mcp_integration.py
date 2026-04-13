@@ -21,6 +21,7 @@ GraphStore, then exercises every MCP tool against the resulting graph.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -440,3 +441,85 @@ class TestMCPRoundTrip:
         # Neighbors should include methods or the file it's defined in
         neighbor_types = {n["relationship"]["type"] for n in details["neighbors"]}
         assert len(neighbor_types) > 0
+
+
+# ---------------------------------------------------------------------------
+# Hot-reload: MCP picks up a replaced database
+# ---------------------------------------------------------------------------
+
+
+class TestMCPReload:
+    """Verify that a callable store provider enables hot-reload."""
+
+    def test_callable_provider_returns_fresh_store(self, tmp_path):
+        """MCP tools resolve the store per-request via callable."""
+        db = str(tmp_path / "test.db")
+        store = GraphStore(db)
+        store.add_node("n1", "File", "hello.py")
+        # keep store open — pass a callable that returns it
+
+        server = create_mcp_server(lambda: store)
+        tool = server._tool_manager._tools["get_stats"]
+        result = json.loads(tool.fn())
+        assert result["total_nodes"] >= 1
+        store.close()
+
+    def test_picks_up_replaced_database(self, tmp_path):
+        """Simulates the staging-swap pattern: MCP sees new data after replace."""
+        from opentrace_agent.cli.main import _ReloadableStore
+
+        db = str(tmp_path / "test.db")
+        staging = str(tmp_path / "test.db.staging")
+
+        # Create original DB with one node.
+        original = GraphStore(db)
+        original.add_node("original", "File", "old.py")
+        original.close()
+
+        # Open as read-only (like MCP does) via ReloadableStore.
+        ro = GraphStore(db, read_only=True)
+        reloadable = _ReloadableStore(db, ro)
+        server = create_mcp_server(reloadable.get)
+
+        # Verify initial state via MCP tool.
+        get_node = server._tool_manager._tools["get_node"]
+        result = json.loads(get_node.fn(nodeId="original"))
+        assert result["node"]["name"] == "old.py"
+
+        # Build a replacement DB and atomically swap.
+        replacement = GraphStore(staging)
+        replacement.add_node("replaced", "File", "new.py")
+        replacement.close()
+        os.replace(staging, db)
+
+        # MCP should detect the change and serve new data.
+        result2 = json.loads(get_node.fn(nodeId="replaced"))
+        assert result2["node"]["name"] == "new.py"
+
+        # Old node should be gone.
+        result3 = json.loads(get_node.fn(nodeId="original"))
+        assert "error" in result3
+
+        reloadable.close()
+
+    def test_no_index_after_db_removed(self, tmp_path):
+        """MCP returns no-index message when DB file is deleted."""
+        from opentrace_agent.cli.main import _ReloadableStore
+
+        db = str(tmp_path / "test.db")
+        store = GraphStore(db)
+        store.add_node("n1", "File", "f.py")
+        store.close()
+
+        ro = GraphStore(db, read_only=True)
+        reloadable = _ReloadableStore(db, ro)
+        server = create_mcp_server(reloadable.get)
+
+        # Remove the database.
+        os.unlink(db)
+
+        get_stats = server._tool_manager._tools["get_stats"]
+        result = json.loads(get_stats.fn())
+        assert result.get("message", "").startswith("No index available")
+
+        reloadable.close()

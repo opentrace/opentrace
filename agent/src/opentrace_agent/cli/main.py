@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import time
 from pathlib import Path
@@ -184,28 +185,42 @@ def index(
     db_dir.mkdir(parents=True, exist_ok=True)
     _ensure_gitignore(db_dir)
 
+    # Write to a staging file so we don't contend with readers (MCP)
+    # that hold an exclusive lock on the live database.
+    staging_db = resolved_db + ".staging"
+
     click.echo(f"Opening database at {resolved_db} ...")
-    graph_store = GraphStore(resolved_db)
-    store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+    try:
+        graph_store = GraphStore(staging_db)
+        store = GraphStoreAdapter(graph_store, batch_size=batch_size)
 
-    click.echo(f"Indexing {root} ...")
-    t0 = time.monotonic()
+        click.echo(f"Indexing {root} ...")
+        t0 = time.monotonic()
 
-    inp = PipelineInput(path=str(root), repo_id=repo_id)
+        inp = PipelineInput(path=str(root), repo_id=repo_id)
 
-    last_result = None
-    for event in run_pipeline(inp, store=store):
-        _print_event(event, verbose)
-        if getattr(event, "result", None) is not None:
-            last_result = event.result
+        last_result = None
+        for event in run_pipeline(inp, store=store):
+            _print_event(event, verbose)
+            if getattr(event, "result", None) is not None:
+                last_result = event.result
 
-    elapsed = time.monotonic() - t0
+        elapsed = time.monotonic() - t0
 
-    # Save index metadata.
-    metadata = _collect_metadata(root, repo_id, elapsed, last_result)
-    graph_store.save_metadata(metadata)
+        # Save index metadata.
+        metadata = _collect_metadata(root, repo_id, elapsed, last_result)
+        graph_store.save_metadata(metadata)
 
-    store.close()
+        store.close()
+    except BaseException:
+        # Clean up the staging file on failure.
+        Path(staging_db).unlink(missing_ok=True)
+        raise
+
+    # Atomically replace the live database.  Readers holding the old
+    # file descriptor continue to see the previous data until they
+    # detect the inode change and reopen.
+    os.replace(staging_db, resolved_db)
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
@@ -363,6 +378,67 @@ def stats(db_path: str | None, output_format: str) -> None:
             click.echo(f"  Indexed: {', '.join(parts)}")
 
 
+class _ReloadableStore:
+    """Mutable GraphStore handle that reopens when the DB file is replaced.
+
+    LadybugDB uses exclusive file locking, so a long-running reader (MCP)
+    blocks writers (``opentrace index``).  The indexer works around this by
+    writing to a staging file and atomically renaming it over the original.
+
+    This class detects the rename (via inode change) and transparently
+    reopens the database on the next access.
+    """
+
+    def __init__(self, db_path: str | None, store: object | None) -> None:
+        self._db_path = db_path
+        self._store = store
+        self._inode = self._stat_inode()
+        self._log = logging.getLogger("opentrace_agent.mcp.reload")
+
+    def _stat_inode(self) -> int | None:
+        if self._db_path is None:
+            return None
+        try:
+            return os.stat(self._db_path).st_ino
+        except OSError:
+            return None
+
+    def get(self) -> object | None:
+        """Return the current store, reopening if the DB file changed."""
+        if self._db_path is None:
+            return self._store
+
+        current_inode = self._stat_inode()
+        if current_inode == self._inode:
+            return self._store
+
+        # File was replaced (or removed).
+        self._log.info("Database file changed (inode %s → %s), reopening", self._inode, current_inode)
+        if self._store is not None:
+            try:
+                self._store.close()
+            except Exception:
+                pass
+
+        self._store = None
+        self._inode = current_inode
+
+        if current_inode is not None:
+            from opentrace_agent.store import GraphStore
+
+            try:
+                self._store = GraphStore(self._db_path, read_only=True)
+            except Exception as e:
+                self._log.warning("Failed to reopen database: %s", e)
+
+        return self._store
+
+    def close(self) -> None:
+        if self._store is not None:
+            self._store.close()
+            self._store = None
+
+
 @app.command("mcp")
 @click.option(
     "--db",
@@ -377,7 +453,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     _configure_logging(verbose)
     log = logging.getLogger("opentrace_agent.mcp")
 
-    log.debug("MCP server starting (pid=%d)", __import__("os").getpid())
+    log.debug("MCP server starting (pid=%d)", os.getpid())
 
     from opentrace_agent.cli.mcp_server import create_mcp_server
     from opentrace_agent.store import GraphStore
@@ -406,16 +482,17 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
             stats["total_edges"],
         )
 
+    reloadable = _ReloadableStore(resolved_db, store)
+
     def _shutdown(signum: int, _frame: object) -> None:
         log.debug("Received signal %d, shutting down", signum)
-        if store is not None:
-            store.close()
+        reloadable.close()
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        server = create_mcp_server(store)
+        server = create_mcp_server(reloadable.get)
         log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:
@@ -424,8 +501,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
         log.error("MCP server error: %s", e, exc_info=True)
         raise
     finally:
-        if store is not None:
-            store.close()
+        reloadable.close()
         log.debug("MCP server stopped")
 
 
