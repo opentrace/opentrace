@@ -144,6 +144,8 @@ export default function ChatPanel({
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
   const [highlightEnabled, setHighlightEnabled] = useState(true);
   const [hasFoundNodes, setHasFoundNodes] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('chat');
@@ -152,6 +154,7 @@ export default function ChatPanel({
   const messagesRef = useRef<ChatMessage[]>(messages);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const streamingRef = useRef(false);
   /** Accumulated node IDs found by chat tool results */
   const chatFoundNodesRef = useRef<Set<string>>(new Set());
   const keyInputRef = useRef<HTMLInputElement>(null);
@@ -360,7 +363,7 @@ export default function ChatPanel({
     if (
       (!trimmed && !hasImages && !hasAtts) ||
       (providerId !== 'local' && !apiKey) ||
-      streaming
+      streamingRef.current
     )
       return;
 
@@ -368,6 +371,7 @@ export default function ChatPanel({
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    streamingRef.current = true;
 
     const userMsg: ChatMessage = {
       role: 'user',
@@ -380,7 +384,7 @@ export default function ChatPanel({
       content: '',
       parts: [],
     };
-    const newMessages: ChatMessage[] = [...messages, userMsg];
+    const newMessages: ChatMessage[] = [...messagesRef.current, userMsg];
     setMessages([...newMessages, assistantMsg]);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -700,6 +704,7 @@ export default function ChatPanel({
         return parts;
       });
     } finally {
+      streamingRef.current = false;
       setStreaming(false);
       progress.setListener(null);
       // Attach accumulated token usage to the assistant message
@@ -743,6 +748,41 @@ export default function ChatPanel({
       setPendingAttachments([]);
     }
     sendMessage(input, undefined, atts);
+  };
+  const handleStop = () => {
+    abortRef.current?.abort();
+    streamingRef.current = false;
+    setStreaming(false);
+  };
+  const startEditMessage = (index: number) => {
+    const m = messages[index];
+    if (!m || m.role !== 'user') return;
+    setEditingIndex(index);
+    setEditText(m.content);
+  };
+  const cancelEditMessage = () => {
+    setEditingIndex(null);
+    setEditText('');
+  };
+  const submitEditMessage = async (index: number) => {
+    const original = messages[index];
+    if (!original || original.role !== 'user') return;
+    const trimmed = editText.trim();
+    const hasAtts = !!(original.attachments && original.attachments.length);
+    const hasImgs = !!(original.images && original.images.length);
+    if (!trimmed && !hasAtts && !hasImgs) return;
+    // If a response is still streaming for this turn, abort it before resending
+    if (streaming) {
+      abortRef.current?.abort();
+      streamingRef.current = false;
+      setStreaming(false);
+    }
+    const truncated = messages.slice(0, index);
+    setMessages(truncated);
+    messagesRef.current = truncated;
+    setEditingIndex(null);
+    setEditText('');
+    await sendMessage(trimmed, original.images, original.attachments);
   };
   const handleTemplate = (prompt: string) => sendMessage(prompt);
 
@@ -804,6 +844,7 @@ export default function ChatPanel({
   const handleClearChat = () => {
     abortRef.current?.abort();
     startNewConversation();
+    streamingRef.current = false;
     setStreaming(false);
     chatFoundNodesRef.current.clear();
     setHasFoundNodes(false);
@@ -1258,74 +1299,165 @@ export default function ChatPanel({
                 <ChatTemplates onSelect={handleTemplate} />
               </div>
             )}
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`message ${m.role === 'user' ? 'user' : 'ai'}`}
-                {...(m.role === 'assistant' &&
-                i === messages.length - 1 &&
-                !streaming
-                  ? { 'data-testid': 'chat-response-done' }
-                  : {})}
-              >
-                <div className="message-content">
-                  {m.role === 'assistant' ? (
-                    <ChatParts
-                      parts={(m as AssistantMessage).parts}
-                      streaming={streaming && i === messages.length - 1}
-                      onNodeSelect={onNodeSelect}
-                      onPostComment={prClient ? handlePostComment : undefined}
-                    />
-                  ) : (
-                    <>
-                      {m.content}
-                      {m.attachments && m.attachments.length > 0 && (
-                        <div className="user-message-attachments">
-                          {m.attachments.map((att) =>
-                            att.kind === 'image' ? (
-                              <img
-                                key={att.id}
-                                src={att.dataUrl}
-                                alt={att.name || 'Attached image'}
-                                className="user-message-image"
-                                onClick={() => setLightboxImage(att)}
-                              />
-                            ) : (
-                              <div
-                                key={att.id}
-                                className="user-message-file"
-                                title={att.name}
-                              >
-                                <span className="file-icon">&#128196;</span>
-                                <span className="file-name">{att.name}</span>
-                              </div>
-                            ),
+            {(() => {
+              let lastUserIdx = -1;
+              for (let k = messages.length - 1; k >= 0; k--) {
+                if (messages[k].role === 'user') {
+                  lastUserIdx = k;
+                  break;
+                }
+              }
+              return messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`message ${m.role === 'user' ? 'user' : 'ai'}`}
+                  {...(m.role === 'assistant' &&
+                  i === messages.length - 1 &&
+                  !streaming
+                    ? { 'data-testid': 'chat-response-done' }
+                    : {})}
+                >
+                  <div className="message-content">
+                    {m.role === 'assistant' ? (
+                      <ChatParts
+                        parts={(m as AssistantMessage).parts}
+                        streaming={streaming && i === messages.length - 1}
+                        onNodeSelect={onNodeSelect}
+                        onPostComment={prClient ? handlePostComment : undefined}
+                      />
+                    ) : editingIndex === i ? (
+                      <div className="message-edit-form">
+                        <textarea
+                          className="message-edit-textarea"
+                          value={editText}
+                          autoFocus
+                          rows={Math.min(
+                            8,
+                            Math.max(2, editText.split('\n').length),
                           )}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              submitEditMessage(i);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelEditMessage();
+                            }
+                          }}
+                        />
+                        <div className="message-edit-actions">
+                          <button
+                            className="message-edit-cancel"
+                            onClick={cancelEditMessage}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="message-edit-submit"
+                            onClick={() => submitEditMessage(i)}
+                            disabled={
+                              !editText.trim() &&
+                              !(m.attachments && m.attachments.length) &&
+                              !(m.images && m.images.length)
+                            }
+                            title="Resend edited message"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M5 12h14" />
+                              <path d="m12 5 7 7-7 7" />
+                            </svg>
+                            <span>Resend</span>
+                          </button>
                         </div>
-                      )}
-                      {m.images && m.images.length > 0 && (
-                        <div className="user-message-images">
-                          {m.images.map((img) => (
-                            <img
-                              key={img.id}
-                              src={img.dataUrl}
-                              alt={img.name || 'Attached image'}
-                              className="user-message-image"
-                              onClick={() => setLightboxImage(img)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
+                      </div>
+                    ) : (
+                      <>
+                        {m.content}
+                        {m.attachments && m.attachments.length > 0 && (
+                          <div className="user-message-attachments">
+                            {m.attachments.map((att) =>
+                              att.kind === 'image' ? (
+                                <img
+                                  key={att.id}
+                                  src={att.dataUrl}
+                                  alt={att.name || 'Attached image'}
+                                  className="user-message-image"
+                                  onClick={() => setLightboxImage(att)}
+                                />
+                              ) : (
+                                <div
+                                  key={att.id}
+                                  className="user-message-file"
+                                  title={att.name}
+                                >
+                                  <span className="file-icon">&#128196;</span>
+                                  <span className="file-name">{att.name}</span>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+                        {m.images && m.images.length > 0 && (
+                          <div className="user-message-images">
+                            {m.images.map((img) => (
+                              <img
+                                key={img.id}
+                                src={img.dataUrl}
+                                alt={img.name || 'Attached image'}
+                                className="user-message-image"
+                                onClick={() => setLightboxImage(img)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {m.role === 'assistant' &&
+                    (m as AssistantMessage).usage &&
+                    !(streaming && i === messages.length - 1) && (
+                      <TokenUsageFooter
+                        usage={(m as AssistantMessage).usage!}
+                      />
+                    )}
+                  {m.role === 'user' &&
+                    i === lastUserIdx &&
+                    editingIndex !== i && (
+                      <button
+                        className="edit-message-btn"
+                        onClick={() => startEditMessage(i)}
+                        title="Edit & resend"
+                        aria-label="Edit message"
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                        <span>Edit</span>
+                      </button>
+                    )}
                 </div>
-                {m.role === 'assistant' &&
-                  (m as AssistantMessage).usage &&
-                  !(streaming && i === messages.length - 1) && (
-                    <TokenUsageFooter usage={(m as AssistantMessage).usage!} />
-                  )}
-              </div>
-            ))}
+              ));
+            })()}
           </div>
           <div className="chat-input-area">
             {attachError && (
@@ -1429,30 +1561,45 @@ export default function ChatPanel({
                   {conversationUsage.toLocaleString()} tokens
                 </span>
               )}
-              <button
-                className="chat-action-btn"
-                onClick={handleSubmit}
-                disabled={
-                  streaming ||
-                  (!input.trim() && pendingAttachments.length === 0)
-                }
-                data-testid="chat-send-btn"
-                title="Send"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+              {streaming ? (
+                <button
+                  className="chat-action-btn stop-btn"
+                  onClick={handleStop}
+                  data-testid="chat-stop-btn"
+                  title="Stop generating"
                 >
-                  <path d="M5 12h14" />
-                  <path d="m12 5 7 7-7 7" />
-                </svg>
-              </button>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  className="chat-action-btn"
+                  onClick={handleSubmit}
+                  disabled={!input.trim() && pendingAttachments.length === 0}
+                  data-testid="chat-send-btn"
+                  title="Send"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
         </>
