@@ -13,67 +13,52 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 ## Try Now
 
-**[oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
+**[oss.opentrace.ai](https://oss.opentrace.ai)** — no install, runs in your browser.
 
-**[Docs](https://opentrace.github.io/opentrace/)** — getting started, architecture, and reference guides
+## Documentation
 
-## Quick Start
+**[opentrace.github.io/opentrace](https://opentrace.github.io/opentrace/)** — install guides, architecture, and reference.
 
-### Browser (no install)
+## Install
 
-Visit **[oss.opentrace.ai](https://oss.opentrace.ai)**, add a GitHub repo, and explore the graph.
+Pick the path that matches what you want to do. Every row links to a full guide.
 
-### Claude Code Plugin
+| You want to…                          | Use                              | Guide |
+|---------------------------------------|----------------------------------|-------|
+| See what OpenTrace is                 | Browser                          | [Browser](https://opentrace.github.io/opentrace/getting-started/install-browser/) |
+| Give Claude Code codebase awareness   | Claude Code plugin               | [Plugin](https://opentrace.github.io/opentrace/getting-started/install-plugin/) |
+| Index repos from a terminal           | CLI (`uvx` / `uv tool`)          | [CLI](https://opentrace.github.io/opentrace/getting-started/install-cli/) |
+| Hack on OpenTrace itself              | Source build                     | [Source](https://opentrace.github.io/opentrace/development/setup/) |
+
+### One-liner per path
 
 ```bash
-claude plugin marketplace add https://github.com/opentrace/opentrace 
+# Claude Code plugin — auto-indexes on session start
+claude plugin marketplace add https://github.com/opentrace/opentrace
 claude plugin install opentrace-oss@opentrace-oss
+
+# CLI — try without installing, or install permanently
+uvx opentraceai index .
+uv tool install opentraceai --upgrade
+
+# Source
+git clone https://github.com/opentrace/opentrace.git && cd opentrace
+make install && make ui
 ```
 
-> We will automatically start an index in the background on session start.
-
-Then index your codebase and start exploring:
-
-```bash
-uvx opentraceai index        # index the current repo
-```
-
-The plugin gives Claude Code 5 agents, 4 slash commands, and graph query tools — see [Claude Code Plugin](#claude-code-plugin) for details.
-
-### CLI Agent (standalone)
-
-```bash
-uv tool install opentraceai --upgrade   # install or upgrade the CLI
-opentraceai index /path/to/repo
-opentraceai mcp             # start MCP server for any compatible client
-```
-
-The database is stored at `.opentrace/index.db` and auto-discovered by all commands.
-
-### Run from Source
-
-```bash
-git clone https://github.com/opentrace/opentrace.git
-cd opentrace
-make install
-make ui
-```
-
-Open [http://localhost:5173](http://localhost:5173), add a GitHub repo, and explore the graph.
+> **Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.12+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
 
 ## What It Does
 
-OpenTrace indexes source code directly in your browser — no server required. Point it at a GitHub or GitLab repo and it will:
+OpenTrace indexes source code and builds a queryable knowledge graph. Point it at a repo and it will:
 
 1. **Parse** every file using tree-sitter WASM grammars (12 languages)
 2. **Extract** classes, functions, imports, and call relationships
-3. **Build** a knowledge graph stored in LadybugDB WASM (embedded graph database)
+3. **Build** a knowledge graph stored in LadybugDB (embedded graph database)
 4. **Summarize** every node using template-based identifier analysis
-5. **Expose** the graph to an in-app chat agent via MCP tools
+5. **Expose** the graph via MCP tools to any compatible AI client
 
 ## Architecture
-
-Everything runs in the browser — no server required.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -95,37 +80,36 @@ Everything runs in the browser — no server required.
 └───────────────────────────────────────────────────────────┘
 ```
 
+See [Architecture Overview](https://opentrace.github.io/opentrace/architecture/overview/) for details.
+
+## Claude Code Plugin
+
+The plugin gives Claude Code 5 agents, 4 slash commands, and MCP graph tools.
+
+| Agent                  | Description                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| `@opentrace`           | Default catch-all — any codebase question routed to the knowledge graph              |
+| `@code-explorer`       | Explore indexed code structure — find classes, functions, files, and relationships   |
+| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                               |
+| `@find-usages`         | Find all callers, references, and usages of a component                              |
+| `@explain-service`     | Top-down walkthrough of how a service or module works                                |
+
+| Command             | Description                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `/index`            | Index (or re-index) the current project into the knowledge graph |
+| `/graph-status`     | Show overview of indexed nodes by type                           |
+| `/explore <name>`   | Quick exploration of a named component in the graph              |
+| `/interrogate`      | Answer a question about the codebase without making changes     |
+
+Full details: [Claude Code Plugin reference](https://opentrace.github.io/opentrace/reference/claude-code-plugin/).
+
 ## Supported Languages
 
-| Full Extraction (symbols + calls + imports) | Structural Extraction (symbols only) |
-|---|---|
-| Python, TypeScript/JavaScript, Go | Rust, Java, Kotlin, C#, C/C++, Ruby, Swift |
+**Full extraction** (symbols + calls + imports): Python, TypeScript/JavaScript, Go
+**Structural extraction** (symbols only): Rust, Java, Kotlin, C#, C/C++, Ruby, Swift
+**Indexed as file nodes**: JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash
 
-Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are indexed as file nodes.
-
-## Graph Tools
-
-### Browser Chat Agent
-
-| Tool | Description |
-|------|-------------|
-| `search_graph` | Full-text search across nodes by name, properties, and file content |
-| `list_nodes` | List nodes by type with optional property filters |
-| `get_node` | Get full details of a single node by ID |
-| `traverse_graph` | BFS traversal to discover connected nodes and relationships |
-| `load_source` | Fetch source code for an indexed file or symbol |
-| `explore_node` | Deep inspection — node details + relationships + source in one call |
-| `grep` | Regex search across all indexed source files |
-
-### Claude Code Plugin (MCP)
-
-| Tool | Description |
-|------|-------------|
-| `search_graph` | Full-text search across nodes by name or properties |
-| `list_nodes` | List nodes of a specific type |
-| `get_node` | Get full details of a single node by ID |
-| `traverse_graph` | BFS traversal with direction and relationship filters |
-| `get_stats` | Graph statistics — total nodes, edges, and breakdown by type |
+Full language matrix: [Supported Languages](https://opentrace.github.io/opentrace/reference/languages/).
 
 ## Repository Structure
 
@@ -141,76 +125,7 @@ benchmark/            — Accuracy benchmarks
 
 ## Development
 
-### Prerequisites
-
-- Node.js 22+ (see `ui/.nvmrc`)
-- npm
-
-### Commands
-
-```bash
-make install          # Install dependencies (agent + ui)
-make agent            # Run Python agent
-make ui               # Start dev server (localhost:5173)
-make build            # Production build
-make test             # Run all tests (agent + ui)
-make fmt              # Format all code
-make lint             # Lint all code
-make proto            # Generate protobuf types
-make ui-build-static  # Static build (browser-only, no API dependency)
-make license-check    # Verify Apache 2.0 headers on all source files
-make plugin-reload    # Reinstall the Claude Code plugin locally
-```
-
-### Agent
-
-```bash
-cd agent
-uv sync          # Install dependencies
-uv run pytest    # Run tests
-```
-
-### Running Tests
-
-```bash
-cd ui
-npm test              # Run all tests
-npm run lint          # ESLint + Prettier check
-```
-
-## Agents
-
-| Agent                  | Description                                                                                |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| `@opentrace`           | Default catch-all — any codebase question routed to the knowledge graph                   |
-| `@code-explorer`       | Explore indexed code structure — find classes, functions, files, and their relationships   |
-| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                                     |
-| `@find-usages`         | Find all callers, references, and usages of a component                                    |
-| `@explain-service`     | Top-down walkthrough of how a service or module works                                      |
-
-## Commands
-
-| Command             | Description                                                     |
-| ------------------- | --------------------------------------------------------------- |
-| `/graph-status`     | Show overview of indexed nodes by type, list repos and services |
-| `/explore <name>`   | Quick exploration of a named component in the graph             |
-| `/index`            | Index (or re-index) the current project into the knowledge graph |
-| `/interrogate`      | Answer a question about the codebase without making changes      |
-
-## Graph Node Types
-
-Repository, Directory, File, Class, Function, Variable, Dependency, PullRequest, IndexMetadata
-
-## Claude Code Plugin
-
-OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server.
-
-```bash
-claude plugin marketplace add https://github.com/opentrace/opentrace
-claude plugin install opentrace-oss@opentrace-oss
-```
-
-The plugin provides 5 agents, 4 slash commands, and MCP graph tools. See `claude-code-plugin/` for full documentation.
+See [Development Setup](https://opentrace.github.io/opentrace/development/setup/) for prerequisites, commands, and the full dev workflow.
 
 ## Contributing
 

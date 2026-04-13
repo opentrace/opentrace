@@ -43,8 +43,12 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-      - Quick Start: getting-started/quickstart.md
+      - Pick Your Path: getting-started/quickstart.md
+      - Browser: getting-started/install-browser.md
+      - CLI: getting-started/install-cli.md
+      - Claude Code Plugin: getting-started/install-plugin.md
       - Configuration: getting-started/configuration.md
+      - Troubleshooting: getting-started/troubleshooting.md
   - Architecture:
       - Overview: architecture/overview.md
   - Development:
