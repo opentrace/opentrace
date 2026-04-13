@@ -2,17 +2,8 @@
 
 OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to the OpenTrace knowledge graph. Once installed, Claude can explore your indexed codebase — find components, trace dependencies, and answer architecture questions.
 
-## Installation
-
-```bash
-claude plugin install opentrace-oss@opentrace-oss
-```
-
-The plugin requires the `opentraceai` CLI. Install it with:
-
-```bash
-uvx opentraceai --help
-```
+!!! info "New here?"
+    This page is the **reference** for what's inside the plugin. For install instructions, see [Claude Code Plugin install](../getting-started/install-plugin.md).
 
 ## How It Works
 

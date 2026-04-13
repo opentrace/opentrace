@@ -4,27 +4,37 @@ A knowledge graph that maps your codebase structure, service architecture, and s
 
 **[Try it now at oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
 
+## Where to Start
+
+| Goal                                  | Start here |
+|---------------------------------------|------------|
+| See what OpenTrace is                 | [Browser (no install)](getting-started/install-browser.md) |
+| Give Claude Code codebase awareness   | [Claude Code Plugin](getting-started/install-plugin.md) |
+| Index repos from a terminal           | [CLI](getting-started/install-cli.md) |
+| Hack on OpenTrace itself              | [Development Setup](development/setup.md) |
+
+Not sure? → [Pick Your Path](getting-started/quickstart.md)
+
 ## What It Does
 
-OpenTrace indexes source code directly in your browser — no server required. Point it at a GitHub or GitLab repo and it will:
+OpenTrace indexes source code and builds a queryable knowledge graph. Point it at a repo and it will:
 
 1. **Parse** every file using tree-sitter WASM grammars (12 languages)
 2. **Extract** classes, functions, imports, and call relationships
-3. **Build** a knowledge graph stored in LadybugDB WASM (embedded graph database)
+3. **Build** a knowledge graph stored in LadybugDB (embedded graph database)
 4. **Summarize** every node using template-based identifier analysis
-5. **Expose** the graph to an in-app chat agent via MCP tools
+5. **Expose** the graph via MCP tools to any compatible AI client
 
-## Quick Start
+See [Architecture Overview](architecture/overview.md) for how the pieces fit together.
 
-```bash
-git clone https://github.com/opentrace/opentrace.git
-cd opentrace
-make install
-make ui
-```
+## Learn More
 
-Open [http://localhost:5173](http://localhost:5173), add a GitHub repo, and explore the graph.
+- **[Graph Tools](reference/graph-tools.md)** — the MCP tools exposed to AI agents
+- **[Supported Languages](reference/languages.md)** — full vs. structural extraction
+- **[Claude Code Plugin](reference/claude-code-plugin.md)** — agents, commands, and tools
+- **[Browser Requirements](reference/browser-requirements.md)** — why Safari doesn't work
+- **[Contributing](development/contributing.md)** — help improve OpenTrace
 
-## License
+## Source
 
-Apache License 2.0 — see [LICENSE](https://github.com/opentrace/opentrace/blob/main/LICENSE) for details.
+OpenTrace is open source under Apache 2.0 — [github.com/opentrace/opentrace](https://github.com/opentrace/opentrace).
