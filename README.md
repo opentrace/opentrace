@@ -43,7 +43,7 @@ The plugin gives Claude Code 5 agents, 4 slash commands, and graph query tools â
 ### CLI Agent (standalone)
 
 ```bash
-pip install opentraceai     # or: uvx opentraceai index .
+uv tool install opentraceai --upgrade   # install or upgrade the CLI
 opentraceai index /path/to/repo
 opentraceai mcp             # start MCP server for any compatible client
 ```
