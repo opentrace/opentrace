@@ -46,7 +46,7 @@ git clone https://github.com/opentrace/opentrace.git && cd opentrace
 make install && make ui
 ```
 
-> **Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.11+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
+> **Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.12+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
 
 ## What It Does
 

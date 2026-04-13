@@ -4,7 +4,7 @@ Install the `opentraceai` command-line tool to index repositories and run an MCP
 
 ## Prerequisites
 
-- **Python 3.11+**
+- **Python 3.12+**
 - **[`uv`](https://docs.astral.sh/uv/)** recommended — makes `uvx` and isolated installs trivial. Install with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 ## Install

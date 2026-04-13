@@ -34,7 +34,7 @@ If you already know which path you want:
     pip install opentraceai
     ```
 
-    Requires Python 3.11+.
+    Requires Python 3.12+.
 
 === "Source"
 
@@ -45,7 +45,7 @@ If you already know which path you want:
     make ui
     ```
 
-    Requires Node 22+ and Python 3.11+ with `uv`.
+    Requires Node 22+ and Python 3.12+ with `uv`.
 
 ## What Happens When You Index
 

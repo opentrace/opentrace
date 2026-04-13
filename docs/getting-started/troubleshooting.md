@@ -48,7 +48,7 @@ See [Configuration](configuration.md) for details.
 ## `make install` fails
 
 - **Node version.** OpenTrace needs Node.js 22+. Check with `node --version`; see `ui/.nvmrc`.
-- **Python version.** The agent needs Python 3.11+. Check with `python --version`.
+- **Python version.** The agent needs Python 3.12+. Check with `python --version`.
 - **Missing `uv`.** The agent install uses `uv sync`. Install `uv` as above.
 
 ## Something else

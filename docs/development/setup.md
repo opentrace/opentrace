@@ -4,7 +4,7 @@
 
 - Node.js 22+ (see `ui/.nvmrc`)
 - npm
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/) (for the agent)
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/) (for the agent)
 
 ## Getting Started
 
