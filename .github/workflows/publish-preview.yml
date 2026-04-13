@@ -12,8 +12,11 @@ name: Publish Preview Release
 #
 # Trust model:
 #   - The PR number and the `preview-publish` label are resolved here via the
-#     GitHub API from `workflow_run.head_sha` — never from the artifact, since
-#     the build workflow runs from fork-controlled code and could lie.
+#     GitHub API from the workflow_run's head ref (head_repository owner +
+#     head_branch) — never from the artifact, since the build workflow runs
+#     from fork-controlled code and could lie. We use the head ref rather than
+#     listPullRequestsAssociatedWithCommit because the latter is unreliable
+#     for fork PR commits (GitHub only indexes those associations post-merge).
 #   - The label gate from publish-preview-build.yml is re-verified here because
 #     a fork can edit the build workflow file in their PR to remove it.
 #   - The version string is read from the artifact but must end with the
@@ -44,24 +47,36 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
         with:
           script: |
             const headSha = process.env.HEAD_SHA;
+            const headBranch = process.env.HEAD_BRANCH;
+            const headRepoOwner = process.env.HEAD_REPO_OWNER;
 
-            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+            // Look up the PR by its head ref. listPullRequestsAssociatedWithCommit
+            // is unreliable for fork PR commits — GitHub only consistently indexes
+            // commit → PR associations after merge. The head ref (fork:branch) is
+            // the authoritative identifier from the workflow_run payload.
+            const headRef = `${headRepoOwner}:${headBranch}`;
+            const { data: pulls } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              commit_sha: headSha,
+              state: 'open',
+              head: headRef,
             });
 
-            // Match by head SHA so we only consider PRs whose head is this commit
-            // (not PRs that merely contain it via base-branch updates).
-            const pr = prs.find(p => p.head.sha === headSha && p.state === 'open');
-            if (!pr) {
-              core.setFailed(`No open PR found with head SHA ${headSha}`);
+            if (pulls.length === 0) {
+              core.setFailed(`No open PR found for head ref ${headRef} (build SHA ${headSha})`);
+              return;
+            }
+            if (pulls.length > 1) {
+              core.setFailed(`Multiple open PRs found for head ref ${headRef}: ${pulls.map(p => '#' + p.number).join(', ')}`);
               return;
             }
 
+            const pr = pulls[0];
             const hasLabel = pr.labels.some(l => l.name === 'preview-publish');
             if (!hasLabel) {
               core.setFailed(
@@ -73,7 +88,7 @@ jobs:
             }
 
             core.setOutput('pr_number', pr.number);
-            core.info(`Verified PR #${pr.number} has 'preview-publish' label`);
+            core.info(`Verified PR #${pr.number} (${headRef}, build SHA ${headSha}) has 'preview-publish' label`);
 
       - name: Download build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
