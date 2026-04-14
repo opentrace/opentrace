@@ -297,7 +297,7 @@ def test_whoami_org_cached(tmp_path: Path, monkeypatch: object) -> None:
     assert "(token cached)" in result.output
 
 
-def test_whoami_org_not_cached(tmp_path: Path, monkeypatch: object) -> None:
+def test_whoami_org_not_cached_resolve_fails(tmp_path: Path, monkeypatch: object) -> None:
     _make_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
@@ -310,7 +310,108 @@ def test_whoami_org_not_cached(tmp_path: Path, monkeypatch: object) -> None:
     # Only user token, no org token
     save_tokens({"access_token": "otuat_user", "issuer": "https://api.opentrace.ai", "scope": "read write"})
 
-    result = runner.invoke(app, ["whoami"])
+    with patch.object(auth, "resolve_org_token", side_effect=RuntimeError("token expired")):
+        result = runner.invoke(app, ["whoami"])
     assert result.exit_code == 0
     assert "org_nocache" in result.output
-    assert "(not yet authenticated)" in result.output
+    assert "(exchange failed:" in result.output
+
+
+def test_whoami_org_auto_resolves(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
+
+    ot_dir = tmp_path / ".opentrace"
+    ot_dir.mkdir(exist_ok=True)
+    save_config(ot_dir / "config.yaml", {"org": "org_resolved"})
+
+    save_tokens({"access_token": "otuat_user", "issuer": "https://api.opentrace.ai", "scope": "read write"})
+
+    with patch.object(auth, "resolve_org_token", return_value={"access_token": "otoat_new"}):
+        result = runner.invoke(app, ["whoami"])
+    assert result.exit_code == 0
+    assert "org_resolved" in result.output
+    assert "(token resolved)" in result.output
+
+
+# ---------------------------------------------------------------------------
+# CLI integration tests — login --resolve
+# ---------------------------------------------------------------------------
+
+
+def test_login_resolve_exchanges_org_token(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
+
+    ot_dir = tmp_path / ".opentrace"
+    ot_dir.mkdir(exist_ok=True)
+    save_config(ot_dir / "config.yaml", {"org": "org_test"})
+
+    fake_payload = {"issuer": "https://api.opentrace.ai", "scope": "read write", "access_token": "otuat_new"}
+
+    with (
+        patch.object(auth, "login", return_value=fake_payload),
+        patch.object(auth, "resolve_org_token", return_value={"access_token": "otoat_org"}) as mock_resolve,
+    ):
+        result = runner.invoke(app, ["login", "--resolve"])
+
+    assert result.exit_code == 0
+    assert "Org token resolved for 'org_test'" in result.output
+    mock_resolve.assert_called_once_with("org_test")
+
+
+def test_login_resolve_no_config(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
+
+    # No .opentrace/config.yaml
+
+    fake_payload = {"issuer": "https://api.opentrace.ai", "scope": "read write", "access_token": "otuat_new"}
+
+    with patch.object(auth, "login", return_value=fake_payload):
+        result = runner.invoke(app, ["login", "--resolve"])
+
+    assert result.exit_code == 0
+    assert "No .opentrace/config.yaml found" in result.output
+
+
+def test_login_resolve_no_org(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
+
+    ot_dir = tmp_path / ".opentrace"
+    ot_dir.mkdir(exist_ok=True)
+    save_config(ot_dir / "config.yaml", {})
+
+    fake_payload = {"issuer": "https://api.opentrace.ai", "scope": "read write", "access_token": "otuat_new"}
+
+    with patch.object(auth, "login", return_value=fake_payload):
+        result = runner.invoke(app, ["login", "--resolve"])
+
+    assert result.exit_code == 0
+    assert "No org set in config" in result.output
+
+
+def test_login_resolve_exchange_fails(tmp_path: Path, monkeypatch: object) -> None:
+    _make_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    _patch_base_dir(monkeypatch, tmp_path, subdir="home_opentrace")
+
+    ot_dir = tmp_path / ".opentrace"
+    ot_dir.mkdir(exist_ok=True)
+    save_config(ot_dir / "config.yaml", {"org": "org_fail"})
+
+    fake_payload = {"issuer": "https://api.opentrace.ai", "scope": "read write", "access_token": "otuat_new"}
+
+    with (
+        patch.object(auth, "login", return_value=fake_payload),
+        patch.object(auth, "resolve_org_token", side_effect=RuntimeError("token expired")),
+    ):
+        result = runner.invoke(app, ["login", "--resolve"])
+
+    assert result.exit_code != 0
+    assert "Org token resolution failed" in result.output
