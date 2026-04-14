@@ -316,13 +316,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       // setData() call. The effect closure still captures the latest colors from
       // the current render, so setData receives correct values when it does run.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-      layoutReady,
-      nodes,
-      links,
-      positions,
-      nodeSizes,
-    ]);
+    }, [layoutReady, nodes, links, positions, nodeSizes]);
 
     // ── Update node colors when colorMode or theme changes ────────────
     useEffect(() => {
