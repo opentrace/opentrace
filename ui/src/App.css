@@ -600,6 +600,141 @@
   padding: 10px 4px;
 }
 
+.message.user {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-end;
+  align-items: flex-end;
+  max-width: 85%;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  gap: 4px;
+  border-bottom-right-radius: 0;
+}
+
+.message.user > .message-content {
+  padding: 10px 14px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: calc(var(--radius) + 4px);
+  border-bottom-right-radius: 2px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.edit-message-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.edit-message-btn:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+/* When editing, expand the user message to the full chat-panel width */
+.message.user:has(.message-edit-form) {
+  align-self: stretch;
+  max-width: 100%;
+}
+
+.message.user:has(.message-edit-form) > .message-content {
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  border-radius: 0;
+}
+
+.message-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.message-edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  font: inherit;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.message-edit-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 20%, transparent);
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.message-edit-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  transition: background 0.15s;
+}
+
+.message-edit-actions .message-edit-cancel:hover {
+  background: color-mix(in oklch, var(--secondary) 70%, var(--foreground) 10%);
+}
+
+.message-edit-actions .message-edit-submit {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+.message-edit-actions .message-edit-submit:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--primary) 85%, black);
+}
+
+.message-edit-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.stop-btn {
+  background: var(--destructive, #ef4444) !important;
+  color: var(--destructive-foreground, #fff) !important;
+}
+
+.stop-btn:hover {
+  background: color-mix(
+    in oklch,
+    var(--destructive, #ef4444) 85%,
+    black
+  ) !important;
+}
+
 .empty-chat {
   display: flex;
   flex-direction: column;
