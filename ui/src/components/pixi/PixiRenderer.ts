@@ -982,6 +982,26 @@ export class PixiRenderer {
     }
   }
 
+  /** Update link colors and re-group for batched rendering. */
+  updateLinkColors(linkColors: Map<string, string>): void {
+    if (!this.app) return;
+    for (const edge of this.edges) {
+      edge.color = linkColors.get(edge.label) ?? '#3b4048';
+    }
+    // Re-group edges by color for batched rendering
+    this.edgeColorGroups.clear();
+    for (let i = 0; i < this.edges.length; i++) {
+      const color = this.edges[i].color;
+      let group = this.edgeColorGroups.get(color);
+      if (!group) {
+        group = [];
+        this.edgeColorGroups.set(color, group);
+      }
+      group.push(i);
+    }
+    this.redrawAllEdges();
+  }
+
   /** Re-read graph CSS variables and update canvas background + label styles. */
   setThemeColors(): void {
     if (!this.app) return;

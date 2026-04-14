@@ -28,6 +28,7 @@ import {
   NODE_SIZE_DIMMED_SCALE,
 } from '../config/graphLayout';
 import { getGraphThemeColors } from '../colors/graphThemeColors';
+import { useThemeKey } from './useThemeKey';
 
 // ─── Pre-computed color cache ───────────────────────────────────────────
 
@@ -77,6 +78,8 @@ export function useGraphVisuals(
   _degreeMap: Map<string, number>,
   isLargeGraph: boolean,
 ): void {
+  const themeKey = useThemeKey();
+
   useEffect(() => {
     if (!layoutReady || graph.order === 0) return;
 
@@ -159,5 +162,6 @@ export function useGraphVisuals(
       },
       { attributes: ['zIndex'] },
     );
-  }, [graph, layoutReady, visualState, layoutConfig, isLargeGraph]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, layoutReady, visualState, layoutConfig, isLargeGraph, themeKey]);
 }

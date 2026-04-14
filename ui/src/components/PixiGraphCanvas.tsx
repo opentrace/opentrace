@@ -327,6 +327,12 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
 
+    // ── Update link colors when theme changes ─────────────────────────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.updateLinkColors(linkColors);
+    }, [dataVersion, linkColors]);
+
     // ── Update canvas background + label colors when theme changes ──────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
