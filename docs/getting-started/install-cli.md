@@ -1,4 +1,4 @@
-# CLI
+# CLI and MCP
 
 Install the `opentraceai` command-line tool to index repositories and run an MCP server from your terminal.
 
@@ -69,6 +69,90 @@ The graph is stored at `.opentrace/index.db` at the repo root. Every `opentrace`
 `opentrace mcp` starts a Model Context Protocol server over stdio. Any MCP-compatible client (Claude Code, Cursor, etc.) can connect to it to query the graph.
 
 If you're using Claude Code, the [plugin](install-plugin.md) handles this for you.
+
+If you're using Gemini, MCP can be configured as follows:
+
+=== "uvx (try without installing)"
+
+    ~~~bash
+    gemini mcp add opentraceai uvx opentraceai mcp
+    ~~~
+
+=== "uv tool (recommended)"
+
+    ~~~bash
+    gemini mcp add opentraceai opentrace mcp
+    ~~~
+
+=== "pip"
+
+    ~~~bash
+    gemini mcp add opentraceai opentrace mcp
+    ~~~
+
+=== "pipx"
+
+    ~~~bash
+    gemini mcp add opentraceai opentrace mcp
+    ~~~
+
+To connect any other MCP-compatible client (Cursor, Copilot, etc.), add this to its MCP config:
+
+=== "uvx (try without installing)"
+
+    ```json
+    {
+        "mcpServers": {
+            "opentrace": {
+                "type": "stdio",
+                "command": "uvx",
+                "args": ["opentraceai", "mcp"]
+            }
+        }
+    }
+    ```
+
+=== "uv tool (recommended)"
+
+    ```json
+    {
+        "mcpServers": {
+            "opentrace": {
+                "type": "stdio",
+                "command": "opentrace",
+                "args": ["mcp"]
+            }
+        }
+    }
+    ```
+
+=== "pip"
+
+    ```json
+    {
+        "mcpServers": {
+            "opentrace": {
+                "type": "stdio",
+                "command": "opentrace",
+                "args": ["mcp"]
+            }
+        }
+    }
+    ```
+
+=== "pipx"
+
+    ```json
+    {
+        "mcpServers": {
+            "opentrace": {
+                "type": "stdio",
+                "command": "opentrace",
+                "args": ["mcp"]
+            }
+        }
+    }
+    ```
 
 ## What Next
 
