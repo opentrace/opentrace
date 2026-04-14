@@ -27,12 +27,25 @@ import {
   NODE_OPACITY_DIMMED,
   NODE_SIZE_DIMMED_SCALE,
 } from '../config/graphLayout';
+import { getGraphThemeColors } from '../colors/graphThemeColors';
 
 // ─── Pre-computed color cache ───────────────────────────────────────────
 
-const dimColorCache = new Map<string, string>();
+let dimColorCache = new Map<string, string>();
+let dimCacheThemeKey = '';
 
 function dimColor(hex: string, alpha: number): string {
+  // Invalidate cache when theme changes
+  const root =
+    typeof document !== 'undefined' ? document.documentElement : null;
+  const themeKey = root
+    ? `${root.dataset.theme ?? ''}_${root.dataset.mode ?? ''}`
+    : '';
+  if (themeKey !== dimCacheThemeKey) {
+    dimColorCache = new Map();
+    dimCacheThemeKey = themeKey;
+  }
+
   const key = `${hex}:${alpha}`;
   const cached = dimColorCache.get(key);
   if (cached) return cached;
@@ -40,13 +53,10 @@ function dimColor(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
-  // TODO: read from CSS variable for theme support
-  const bgR = 0x1a,
-    bgG = 0x1b,
-    bgB = 0x2e;
-  const nr = Math.round(r * alpha + bgR * (1 - alpha));
-  const ng = Math.round(g * alpha + bgG * (1 - alpha));
-  const nb = Math.round(b * alpha + bgB * (1 - alpha));
+  const { dimBg } = getGraphThemeColors();
+  const nr = Math.round(r * alpha + dimBg.r * (1 - alpha));
+  const ng = Math.round(g * alpha + dimBg.g * (1 - alpha));
+  const nb = Math.round(b * alpha + dimBg.b * (1 - alpha));
   const result = `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
   dimColorCache.set(key, result);
   return result;
