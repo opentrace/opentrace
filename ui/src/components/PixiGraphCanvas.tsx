@@ -310,15 +310,18 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       };
       // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
       // It never changes identity — the effect re-runs via `layoutReady` or when
-      // nodes/links/colors change.
+      // nodes/links change. nodeColors and linkColors are intentionally excluded:
+      // color-only changes (e.g. theme switch) are handled by the dedicated
+      // updateNodeColors / updateLinkColors effects below, avoiding an expensive
+      // setData() call. The effect closure still captures the latest colors from
+      // the current render, so setData receives correct values when it does run.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
       layoutReady,
       nodes,
       links,
       positions,
-      nodeColors,
       nodeSizes,
-      linkColors,
     ]);
 
     // ── Update node colors when colorMode or theme changes ────────────
