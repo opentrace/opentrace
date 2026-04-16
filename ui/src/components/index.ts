@@ -110,6 +110,10 @@ export {
   buildCommunityNames,
   getCommunityColor,
 } from './colors/communityColors';
+export {
+  getGraphThemeColors,
+  type GraphThemeColors,
+} from './colors/graphThemeColors';
 
 // ─── Indexing components ─────────────────────────────────────────────────
 export {

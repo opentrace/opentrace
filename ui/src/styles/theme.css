@@ -81,6 +81,11 @@
   --graph-edge-palette-9: #a3e635;
   --graph-edge-palette-10: #c084fc;
   --graph-edge-palette-11: #22d3ee;
+  /* Graph canvas colors — background, label fill, label shadow, dim blend */
+  --graph-bg: #0d1117;
+  --graph-label-color: #e2e8f0;
+  --graph-label-shadow: #0d1117;
+  --graph-dim-bg: #1a1b2e;
 }
 
 /* ── Clean (default) — cool indigo/blue base ─────────────────────────────── */
@@ -508,6 +513,14 @@
    Each theme gets a light override that inverts structural colors while
    keeping the same accent/primary hue.
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Graph canvas overrides for all light themes ────────────────────────── */
+[data-mode='light'] {
+  --graph-bg: #f8fafc;
+  --graph-label-color: #1e293b;
+  --graph-label-shadow: #f8fafc;
+  --graph-dim-bg: #e2e8f0;
+}
 
 /* ── Clean Light ─────────────────────────────────────────────────────────── */
 [data-theme='clean'][data-mode='light'],
