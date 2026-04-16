@@ -67,8 +67,8 @@ import {
   LABEL_MAX_LENGTH,
   LABEL_SIZE,
   LABEL_FONT,
-  LABEL_COLOR,
 } from '../config/graphLayout';
+import { getGraphThemeColors } from '../colors/graphThemeColors';
 
 /** Strip control characters and truncate to MAX_LABEL_LENGTH. */
 function cleanLabel(raw: string): string {
@@ -313,11 +313,12 @@ export class PixiRenderer {
     this.height = height;
 
     const app = new Application();
+    const themeColors = getGraphThemeColors();
     try {
       await app.init({
         width,
         height,
-        backgroundColor: 0x0d1117,
+        backgroundColor: hexToNum(themeColors.bg),
         antialias: true,
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
@@ -981,6 +982,48 @@ export class PixiRenderer {
     }
   }
 
+  /** Update link colors and re-group for batched rendering. */
+  updateLinkColors(linkColors: Map<string, string>): void {
+    if (!this.app) return;
+    for (const edge of this.edges) {
+      edge.color = linkColors.get(edge.label) ?? '#3b4048';
+    }
+    // Re-group edges by color for batched rendering
+    this.edgeColorGroups.clear();
+    for (let i = 0; i < this.edges.length; i++) {
+      const color = this.edges[i].color;
+      let group = this.edgeColorGroups.get(color);
+      if (!group) {
+        group = [];
+        this.edgeColorGroups.set(color, group);
+      }
+      group.push(i);
+    }
+    this.redrawAllEdges();
+  }
+
+  /** Re-read graph CSS variables and update canvas background + label styles. */
+  setThemeColors(): void {
+    if (!this.app) return;
+    const themeColors = getGraphThemeColors();
+
+    // Update Pixi canvas background
+    this.app.renderer.background.color = hexToNum(themeColors.bg);
+
+    // Update all existing label styles
+    for (const node of this.nodes.values()) {
+      if (!node.label) continue;
+      const s = node.label.style;
+      s.fill = themeColors.labelColor;
+      if (s.dropShadow && typeof s.dropShadow === 'object') {
+        s.dropShadow = {
+          ...s.dropShadow,
+          color: themeColors.labelShadow,
+        };
+      }
+    }
+  }
+
   private applyVisuals(): void {
     if (!this.app) return;
     const invScale = this.zoomInvScale();
@@ -1367,17 +1410,18 @@ export class PixiRenderer {
   /** Create a label Text for a node. Positioned to the right of the node. */
   private createLabel(node: PixiNode): Text {
     const lblInv = this.labelInvScale();
+    const themeColors = getGraphThemeColors();
     const label = new Text({
       text: cleanLabel(node.graphNode.name || node.id),
       style: new TextStyle({
         fontSize: LABEL_SIZE,
         fontFamily: LABEL_FONT,
         fontWeight: 'bold',
-        fill: LABEL_COLOR,
+        fill: themeColors.labelColor,
         dropShadow: {
           alpha: 0.9,
           blur: 3,
-          color: '#0d1117',
+          color: themeColors.labelShadow,
           distance: 0,
         },
       }),

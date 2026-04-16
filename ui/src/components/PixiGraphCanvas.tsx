@@ -37,6 +37,7 @@ import type { GraphCanvasHandle, GraphCanvasProps } from './types/canvas';
 import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
 import { shouldHideNode } from './graph/useGraphFilters';
+import { useThemeKey } from './graph/useThemeKey';
 import { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
 import { PixiRenderer } from './pixi/PixiRenderer';
 import { usePixiLayout } from './pixi/usePixiLayout';
@@ -89,6 +90,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const rendererRef = useRef<PixiRenderer | null>(null);
     // Incremented when setData completes so dependent effects re-run
     const [dataVersion, setDataVersion] = useState(0);
+    // Re-renders when data-theme or data-mode changes on <html>
+    const themeKey = useThemeKey();
     const dummyGraph = useMemo(
       () => new Graph({ multi: true, type: 'directed' }),
       [],
@@ -144,7 +147,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         }
       }
       return colors;
-    }, [nodes, colorMode, communityData, layoutConfig]);
+      // themeKey triggers recomputation when theme/mode changes — getNodeColor
+      // reads CSS variables whose values depend on the active theme.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodes, colorMode, communityData, layoutConfig, themeKey]);
 
     // ── Link colors ─────────────────────────────────────────────────────
     const linkColors = useMemo(() => {
@@ -155,7 +161,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         }
       }
       return colors;
-    }, [links, layoutConfig]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [links, layoutConfig, themeKey]);
 
     // ── Layout (d3-force simulation) ────────────────────────────────────
     const onLayoutTick = useCallback(
@@ -303,22 +310,31 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       };
       // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
       // It never changes identity — the effect re-runs via `layoutReady` or when
-      // nodes/links/colors change.
-    }, [
-      layoutReady,
-      nodes,
-      links,
-      positions,
-      nodeColors,
-      nodeSizes,
-      linkColors,
-    ]);
+      // nodes/links change. nodeColors and linkColors are intentionally excluded:
+      // color-only changes (e.g. theme switch) are handled by the dedicated
+      // updateNodeColors / updateLinkColors effects below, avoiding an expensive
+      // setData() call. The effect closure still captures the latest colors from
+      // the current render, so setData receives correct values when it does run.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [layoutReady, nodes, links, positions, nodeSizes]);
 
-    // ── Update node colors when colorMode changes ───────────────────────
+    // ── Update node colors when colorMode or theme changes ────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
+
+    // ── Update link colors when theme changes ─────────────────────────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.updateLinkColors(linkColors);
+    }, [dataVersion, linkColors]);
+
+    // ── Update canvas background + label colors when theme changes ──────
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setThemeColors();
+    }, [dataVersion, themeKey]);
 
     // ── Apply labels visibility when data is ready or prop changes ─────
     useEffect(() => {
