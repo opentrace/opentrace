@@ -1,4 +1,4 @@
-# CLI and MCP
+# CLI
 
 Install the `opentraceai` command-line tool to index repositories and run an MCP server from your terminal.
 
@@ -64,38 +64,13 @@ opentrace --help                # see all commands
 
 The graph is stored at `.opentrace/index.db` at the repo root. Every `opentrace` command walks up from your current directory to find it, so you can run commands from any subdirectory.
 
-## MCP Server
-
-`opentrace mcp` starts a Model Context Protocol server over stdio. Any MCP-compatible client (Claude Code, Cursor, etc.) can connect to it to query the graph.
-
-If you're using Claude Code, the [plugin](install-plugin.md) handles this for you.
-
-If you're using Gemini, MCP can be configured as follows:
-
-~~~bash
-gemini mcp add opentraceai uvx opentraceai mcp
-~~~
-
-To connect any other MCP-compatible client (Cursor, Copilot, etc.), add this to its MCP config:
-
-```json
-{
-    "mcpServers": {
-        "opentrace": {
-            "type": "stdio",
-            "command": "uvx",
-            "args": ["opentraceai", "mcp"]
-        }
-    }
-}
-```
-
 ## What Next
 
+- **Connect an MCP client?** → [MCP Server](install-mcp.md)
 - **Run it inside Claude Code?** → [Claude Code Plugin](install-plugin.md) (installs the CLI automatically)
 - **Something not working?** → [Troubleshooting](troubleshooting.md)
 - **See what the graph exposes** → [Graph Tools](../reference/graph-tools.md)
 
 ---
 
-*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)*
+*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [MCP](install-mcp.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)*
