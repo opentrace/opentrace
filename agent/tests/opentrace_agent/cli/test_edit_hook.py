@@ -26,7 +26,9 @@ from unittest.mock import patch
 # Import the hook module via importlib (it's not a package)
 # ---------------------------------------------------------------------------
 
-_HOOK_PATH = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts" / "edit-hook.py"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts"
+import sys as _sys; _sys.path.insert(0, str(_SCRIPTS_DIR))  # noqa: E702 — _debug must be importable
+_HOOK_PATH = _SCRIPTS_DIR / "edit-hook.py"
 _spec = importlib.util.spec_from_file_location("edit_hook", _HOOK_PATH)
 _hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_hook)

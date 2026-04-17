@@ -23,7 +23,9 @@ import importlib.util
 from pathlib import Path
 
 # Import the hook module from the plugin scripts directory
-_HOOK_PATH = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts" / "opentrace-hook.py"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts"
+import sys as _sys; _sys.path.insert(0, str(_SCRIPTS_DIR))  # noqa: E702 — _debug must be importable
+_HOOK_PATH = _SCRIPTS_DIR / "opentrace-hook.py"
 _spec = importlib.util.spec_from_file_location("opentrace_hook", _HOOK_PATH)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
