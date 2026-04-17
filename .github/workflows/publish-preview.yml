@@ -11,7 +11,7 @@ name: Publish Preview Release
 # executes here.
 #
 # Trust model:
-#   - The PR number and the `preview-publish` label are resolved here via the
+#   - The PR number and the `preview-pypi` label are resolved here via the
 #     GitHub API from the workflow_run's head ref (head_repository owner +
 #     head_branch) — never from the artifact, since the build workflow runs
 #     from fork-controlled code and could lie. We use the head ref rather than
@@ -77,10 +77,10 @@ jobs:
             }
 
             const pr = pulls[0];
-            const hasLabel = pr.labels.some(l => l.name === 'preview-publish');
+            const hasLabel = pr.labels.some(l => l.name === 'preview-pypi');
             if (!hasLabel) {
               core.setFailed(
-                `PR #${pr.number} does not have the 'preview-publish' label. ` +
+                `PR #${pr.number} does not have the 'preview-pypi' label. ` +
                 `Refusing to publish — the label gate in the build workflow can ` +
                 `be bypassed by editing the workflow file in a fork PR.`
               );
@@ -88,7 +88,7 @@ jobs:
             }
 
             core.setOutput('pr_number', pr.number);
-            core.info(`Verified PR #${pr.number} (${headRef}, build SHA ${headSha}) has 'preview-publish' label`);
+            core.info(`Verified PR #${pr.number} (${headRef}, build SHA ${headSha}) has 'preview-pypi' label`);
 
       - name: Download build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

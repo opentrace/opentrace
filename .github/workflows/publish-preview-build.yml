@@ -17,7 +17,7 @@ on:
 jobs:
   build:
     name: Build preview package
-    if: contains(github.event.pull_request.labels.*.name, 'preview-publish')
+    if: contains(github.event.pull_request.labels.*.name, 'preview-pypi')
     runs-on: ubuntu-latest
     permissions:
       contents: read
