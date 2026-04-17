@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -27,7 +28,9 @@ from unittest.mock import MagicMock, patch
 # Import the hook module via importlib (it's not a package)
 # ---------------------------------------------------------------------------
 
-_HOOK_PATH = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts" / "opentrace-hook.py"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts"
+sys.path.insert(0, str(_SCRIPTS_DIR))  # _debug must be importable
+_HOOK_PATH = _SCRIPTS_DIR / "opentrace-hook.py"
 _spec = importlib.util.spec_from_file_location("opentrace_hook", _HOOK_PATH)
 _hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_hook)
