@@ -102,7 +102,7 @@ class DebugLogger:
     def __call__(self, msg: str) -> None:
         if not _DEBUG:
             return
-        line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [{self.tag}] {msg}"
+        line = f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())} [{self.tag}] {msg}"
         # Always emit to stderr — surfaces in Claude Code's transcript logs.
         print(line, file=sys.stderr)
         # Also append to the log file when we have a resolved path.
