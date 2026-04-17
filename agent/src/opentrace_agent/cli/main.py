@@ -382,14 +382,15 @@ def stats(db_path: str | None, output_format: str) -> None:
 
 
 class _ReloadableStore:
-    """Mutable GraphStore handle that reopens when the DB file is replaced.
+    """Transparent proxy for GraphStore that reopens when the DB file is replaced.
 
     LadybugDB uses exclusive file locking, so a long-running reader (MCP)
     blocks writers (``opentrace index``).  The indexer works around this by
     writing to a staging file and atomically renaming it over the original.
 
-    This class detects the rename (via inode change) and transparently
-    reopens the database on the next access.
+    This proxy detects the rename (via inode change) and transparently
+    reopens the database.  Attribute access is delegated to the inner
+    store, so callers treat this as a regular ``GraphStore``.
     """
 
     def __init__(self, db_path: str | None, store: object | None) -> None:
@@ -399,6 +400,8 @@ class _ReloadableStore:
         self._lock = threading.Lock()
         self._log = logging.getLogger("opentrace_agent.mcp.reload")
 
+    # -- inode helpers -------------------------------------------------------
+
     def _stat_inode(self) -> int | None:
         if self._db_path is None:
             return None
@@ -407,20 +410,18 @@ class _ReloadableStore:
         except OSError:
             return None
 
-    def get(self) -> object | None:
-        """Return the current store, reopening if the DB file changed.
+    def _maybe_reload(self) -> None:
+        """Reopen the database if the file's inode has changed.
 
-        Thread-safe: FastMCP may dispatch tool calls from a thread pool,
-        so we serialize the inode check + reopen with a lock.
+        Thread-safe: FastMCP may dispatch tool calls from a thread pool.
         """
         if self._db_path is None:
-            return self._store
+            return
 
         with self._lock:
-            # Re-check inode under the lock (double-checked).
             current_inode = self._stat_inode()
             if current_inode == self._inode:
-                return self._store
+                return
 
             self._log.info(
                 "Database file changed (inode %s → %s), reopening",
@@ -449,7 +450,18 @@ class _ReloadableStore:
                 except Exception as e:
                     self._log.warning("Failed to reopen database: %s", e)
 
-            return self._store
+    # -- proxy protocol ------------------------------------------------------
+
+    def __bool__(self) -> bool:
+        self._maybe_reload()
+        return self._store is not None
+
+    def __getattr__(self, name: str) -> object:
+        self._maybe_reload()
+        store = self._store
+        if store is None:
+            raise AttributeError(name)
+        return getattr(store, name)
 
     def close(self) -> None:
         with self._lock:
@@ -511,7 +523,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        server = create_mcp_server(reloadable.get)
+        server = create_mcp_server(reloadable)
         log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:

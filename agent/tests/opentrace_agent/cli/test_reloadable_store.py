@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for _ReloadableStore — inode-based database hot-reload."""
+"""Tests for _ReloadableStore — inode-based database hot-reload proxy."""
 
 from __future__ import annotations
 
@@ -37,14 +37,14 @@ def _create_db(path: str, node_id: str = "n1") -> GraphStore:
 
 
 class TestReloadableStore:
-    def test_returns_store_when_unchanged(self, tmp_path):
+    def test_truthy_when_store_exists(self, tmp_path):
         db = str(tmp_path / "test.db")
         store = _create_db(db)
 
         reloadable = _ReloadableStore(db, store)
-        assert reloadable.get() is store
-        # Calling again still returns the same instance.
-        assert reloadable.get() is store
+        assert reloadable  # truthy
+        # Proxy delegates attribute access to the inner store.
+        assert reloadable.get_node("n1") is not None
         reloadable.close()
 
     def test_reopens_on_inode_change(self, tmp_path):
@@ -54,43 +54,37 @@ class TestReloadableStore:
         original = _create_db(db, node_id="original")
         reloadable = _ReloadableStore(db, original)
 
-        # Verify initial state.
-        s = reloadable.get()
-        assert s is not None
-        assert s.get_node("original") is not None
+        assert reloadable.get_node("original") is not None
 
         # Write a new DB with different content and atomically replace.
         replacement = _create_db(staging, node_id="replaced")
         replacement.close()
         os.replace(staging, db)
 
-        # Next get() should detect the inode change and reopen.
-        s2 = reloadable.get()
-        assert s2 is not original  # Different instance.
-        assert s2 is not None
-        assert s2.get_node("replaced") is not None
-        assert s2.get_node("original") is None
+        # Proxy should detect the inode change and serve new data.
+        assert reloadable.get_node("replaced") is not None
+        assert reloadable.get_node("original") is None
 
         reloadable.close()
 
-    def test_handles_missing_file(self, tmp_path):
+    def test_falsy_when_file_removed(self, tmp_path):
         db = str(tmp_path / "test.db")
         store = _create_db(db)
 
         reloadable = _ReloadableStore(db, store)
-        assert reloadable.get() is store
+        assert reloadable
 
         # Remove the DB file.
         os.unlink(db)
 
-        # Next get() should detect the disappearance and return None.
-        assert reloadable.get() is None
+        # Proxy should become falsy.
+        assert not reloadable
         reloadable.close()
 
-    def test_handles_no_db_path(self):
-        """When db_path is None, always returns the initial store."""
+    def test_falsy_when_no_db_path(self):
+        """When db_path is None, proxy is always falsy."""
         reloadable = _ReloadableStore(None, None)
-        assert reloadable.get() is None
+        assert not reloadable
         reloadable.close()
 
     def test_recovers_after_file_reappears(self, tmp_path):
@@ -101,15 +95,14 @@ class TestReloadableStore:
 
         # Remove the DB file.
         os.unlink(db)
-        assert reloadable.get() is None
+        assert not reloadable
 
         # Re-create a DB at the same path.
         new_store = _create_db(db, node_id="recovered")
         new_store.close()
 
-        s = reloadable.get()
-        assert s is not None
-        assert s.get_node("recovered") is not None
+        assert reloadable
+        assert reloadable.get_node("recovered") is not None
         reloadable.close()
 
     def test_close_is_idempotent(self, tmp_path):

@@ -449,20 +449,7 @@ class TestMCPRoundTrip:
 
 
 class TestMCPReload:
-    """Verify that a callable store provider enables hot-reload."""
-
-    def test_callable_provider_returns_fresh_store(self, tmp_path):
-        """MCP tools resolve the store per-request via callable."""
-        db = str(tmp_path / "test.db")
-        store = GraphStore(db)
-        store.add_node("n1", "File", "hello.py")
-        # keep store open — pass a callable that returns it
-
-        server = create_mcp_server(lambda: store)
-        tool = server._tool_manager._tools["get_stats"]
-        result = json.loads(tool.fn())
-        assert result["total_nodes"] >= 1
-        store.close()
+    """Verify that the ReloadableStore proxy enables hot-reload."""
 
     def test_picks_up_replaced_database(self, tmp_path):
         """Simulates the staging-swap pattern: MCP sees new data after replace."""
@@ -476,10 +463,10 @@ class TestMCPReload:
         original.add_node("original", "File", "old.py")
         original.close()
 
-        # Open as read-only (like MCP does) via ReloadableStore.
+        # Open as read-only (like MCP does) via ReloadableStore proxy.
         ro = GraphStore(db, read_only=True)
         reloadable = _ReloadableStore(db, ro)
-        server = create_mcp_server(reloadable.get)
+        server = create_mcp_server(reloadable)
 
         # Verify initial state via MCP tool.
         get_node = server._tool_manager._tools["get_node"]
@@ -513,7 +500,7 @@ class TestMCPReload:
 
         ro = GraphStore(db, read_only=True)
         reloadable = _ReloadableStore(db, ro)
-        server = create_mcp_server(reloadable.get)
+        server = create_mcp_server(reloadable)
 
         # Remove the database.
         os.unlink(db)

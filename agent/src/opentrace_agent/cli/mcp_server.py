@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 import traceback
-from collections.abc import Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -55,24 +54,12 @@ NO_INDEX_MSG = json.dumps(
 )
 
 
-def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None) -> FastMCP:
-    """Create a FastMCP server with graph query tools.
+def create_mcp_server(store: GraphStore | None) -> FastMCP:
+    """Create a FastMCP server with graph query tools backed by *store*.
 
-    *store* can be a :class:`GraphStore`, ``None``, or a **callable** that
-    returns a ``GraphStore | None`` on each invocation.  The callable form
-    lets the MCP server pick up a replaced database file without restarting.
-
-    When the resolved store is ``None``, every tool returns a friendly
-    "no index" response instead of raising an error.
+    When *store* is ``None`` (no database found), every tool returns a
+    friendly "no index" response instead of raising an error.
     """
-    if callable(store):
-        get_store = store
-    else:
-        _fixed = store
-
-        def get_store() -> GraphStore | None:
-            return _fixed
-
     server = FastMCP("opentrace")
 
     @server.tool()
@@ -81,8 +68,7 @@ def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None
 
         Returns matching nodes with their types and properties.
         """
-        store = get_store()
-        if store is None:
+        if not store:
             logger.info("search_graph called but no index exists")
             return NO_INDEX_MSG
         logger.debug("search_graph(query=%r, limit=%d, nodeTypes=%r)", query, limit, nodeTypes)
@@ -102,8 +88,7 @@ def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None
         Valid types include: Repository, Class, Function, File, Directory,
         Package, Module, Service, Endpoint, Database.
         """
-        store = get_store()
-        if store is None:
+        if not store:
             logger.info("list_nodes called but no index exists")
             return NO_INDEX_MSG
         logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
@@ -118,8 +103,7 @@ def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None
     @server.tool()
     def get_node(nodeId: str) -> str:
         """Get full details of a single node by its ID, including all properties and immediate neighbors."""
-        store = get_store()
-        if store is None:
+        if not store:
             logger.info("get_node called but no index exists")
             return NO_INDEX_MSG
         logger.debug("get_node(nodeId=%r)", nodeId)
@@ -152,8 +136,7 @@ def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None
         Direction can be 'outgoing', 'incoming', or 'both'.
         Optionally filter by relationship type (e.g. 'CALLS', 'DEFINES', 'CONTAINS').
         """
-        store = get_store()
-        if store is None:
+        if not store:
             logger.info("traverse_graph called but no index exists")
             return NO_INDEX_MSG
         logger.debug(
@@ -188,8 +171,7 @@ def create_mcp_server(store: GraphStore | Callable[[], GraphStore | None] | None
 
         Use this as a first step to understand what has been indexed before running targeted queries.
         """
-        store = get_store()
-        if store is None:
+        if not store:
             logger.info("get_stats called but no index exists")
             return NO_INDEX_MSG
         logger.debug("get_stats()")
