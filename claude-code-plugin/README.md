@@ -71,6 +71,23 @@ scripts/                    — Shell scripts used by hooks (session-start, etc.
 2. **MCP server** (`uvx opentraceai mcp`) starts over stdio and exposes graph query tools.
 3. **Agents** use the MCP tools to answer codebase questions — Claude Code routes user intent to the right agent based on the `description` field in each agent's frontmatter.
 
+## Debug Mode
+
+Set `OPENTRACE_DEBUG=1` before launching Claude Code to enable verbose hook logging:
+
+```bash
+OPENTRACE_DEBUG=1 claude
+```
+
+When enabled:
+- All hook scripts write timestamped trace lines to `.opentrace/hook-debug.log` (auto-discovered next to `index.db`).
+- The session-start systemMessage shows `| debug: <path>` so you can confirm it's active.
+- Lines also go to stderr for real-time `tail -f` if you have the process visible.
+
+Override the log path with `OPENTRACE_DEBUG_LOG=/path/to/file.log`.
+
+The log file is gitignored via the root `*.log` pattern.
+
 ## Dev Mode
 
 To run against a local checkout of the agent (e.g. when developing new MCP tools), override the MCP config to use `uv run` from the agent source directory:

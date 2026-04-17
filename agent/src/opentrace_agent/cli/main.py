@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
+import threading
 import time
 from pathlib import Path
 
@@ -184,28 +186,44 @@ def index(
     db_dir.mkdir(parents=True, exist_ok=True)
     _ensure_gitignore(db_dir)
 
-    click.echo(f"Opening database at {resolved_db} ...")
-    graph_store = GraphStore(resolved_db)
-    store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+    # Write to a staging file so we don't contend with readers (MCP)
+    # that hold an exclusive lock on the live database.
+    staging_db = resolved_db + ".staging"
 
-    click.echo(f"Indexing {root} ...")
-    t0 = time.monotonic()
+    click.echo(f"Opening staging database at {staging_db} ...")
+    try:
+        with GraphStore(staging_db) as graph_store:
+            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
 
-    inp = PipelineInput(path=str(root), repo_id=repo_id)
+            click.echo(f"Indexing {root} ...")
+            t0 = time.monotonic()
 
-    last_result = None
-    for event in run_pipeline(inp, store=store):
-        _print_event(event, verbose)
-        if getattr(event, "result", None) is not None:
-            last_result = event.result
+            inp = PipelineInput(path=str(root), repo_id=repo_id)
 
-    elapsed = time.monotonic() - t0
+            last_result = None
+            for event in run_pipeline(inp, store=store):
+                _print_event(event, verbose)
+                if getattr(event, "result", None) is not None:
+                    last_result = event.result
 
-    # Save index metadata.
-    metadata = _collect_metadata(root, repo_id, elapsed, last_result)
-    graph_store.save_metadata(metadata)
+            elapsed = time.monotonic() - t0
 
-    store.close()
+            # Save index metadata.
+            metadata = _collect_metadata(root, repo_id, elapsed, last_result)
+            graph_store.save_metadata(metadata)
+
+            # Flush pending batches; the GraphStore is closed by the
+            # context manager on exit.
+            store.flush()
+    except BaseException:
+        # Clean up the staging file on failure.
+        Path(staging_db).unlink(missing_ok=True)
+        raise
+
+    # Atomically replace the live database.  Readers holding the old
+    # file descriptor continue to see the previous data until they
+    # detect the inode change and reopen.
+    os.replace(staging_db, resolved_db)
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
@@ -363,6 +381,95 @@ def stats(db_path: str | None, output_format: str) -> None:
             click.echo(f"  Indexed: {', '.join(parts)}")
 
 
+class _ReloadableStore:
+    """Transparent proxy for GraphStore that reopens when the DB file is replaced.
+
+    LadybugDB uses exclusive file locking, so a long-running reader (MCP)
+    blocks writers (``opentrace index``).  The indexer works around this by
+    writing to a staging file and atomically renaming it over the original.
+
+    This proxy detects the rename (via inode change) and transparently
+    reopens the database.  Attribute access is delegated to the inner
+    store, so callers treat this as a regular ``GraphStore``.
+    """
+
+    def __init__(self, db_path: str | None, store: object | None) -> None:
+        self._db_path = db_path
+        self._store = store
+        self._inode = self._stat_inode()
+        self._lock = threading.Lock()
+        self._log = logging.getLogger("opentrace_agent.mcp.reload")
+
+    # -- inode helpers -------------------------------------------------------
+
+    def _stat_inode(self) -> int | None:
+        if self._db_path is None:
+            return None
+        try:
+            return os.stat(self._db_path).st_ino
+        except OSError:
+            return None
+
+    def _maybe_reload(self) -> None:
+        """Reopen the database if the file's inode has changed.
+
+        Thread-safe: FastMCP may dispatch tool calls from a thread pool.
+        """
+        if self._db_path is None:
+            return
+
+        with self._lock:
+            current_inode = self._stat_inode()
+            if current_inode == self._inode:
+                return
+
+            self._log.info(
+                "Database file changed (inode %s → %s), reopening",
+                self._inode,
+                current_inode,
+            )
+
+            # Close the old store first.  LadybugDB associates a WAL file
+            # with the open database; if we tried to open the new file
+            # while the old store still holds its WAL open, the new open
+            # would fail with a "Database ID does not match" error.
+            if self._store is not None:
+                try:
+                    self._store.close()
+                except Exception:
+                    pass
+
+            self._store = None
+            self._inode = current_inode
+
+            if current_inode is not None:
+                from opentrace_agent.store import GraphStore
+
+                try:
+                    self._store = GraphStore(self._db_path, read_only=True)
+                except Exception as e:
+                    self._log.warning("Failed to reopen database: %s", e)
+
+    # -- proxy protocol ------------------------------------------------------
+
+    def __bool__(self) -> bool:
+        self._maybe_reload()
+        return self._store is not None
+
+    def __getattr__(self, name: str) -> object:
+        self._maybe_reload()
+        store = self._store
+        if store is None:
+            raise AttributeError(name)
+        return getattr(store, name)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._store is not None:
+                self._store.close()
+                self._store = None
+
+
 @app.command("mcp")
 @click.option(
     "--db",
@@ -377,7 +484,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     _configure_logging(verbose)
     log = logging.getLogger("opentrace_agent.mcp")
 
-    log.debug("MCP server starting (pid=%d)", __import__("os").getpid())
+    log.debug("MCP server starting (pid=%d)", os.getpid())
 
     from opentrace_agent.cli.mcp_server import create_mcp_server
     from opentrace_agent.store import GraphStore
@@ -406,16 +513,17 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
             stats["total_edges"],
         )
 
+    reloadable = _ReloadableStore(resolved_db, store)
+
     def _shutdown(signum: int, _frame: object) -> None:
         log.debug("Received signal %d, shutting down", signum)
-        if store is not None:
-            store.close()
+        reloadable.close()
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        server = create_mcp_server(store)
+        server = create_mcp_server(reloadable)
         log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:
@@ -424,8 +532,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
         log.error("MCP server error: %s", e, exc_info=True)
         raise
     finally:
-        if store is not None:
-            store.close()
+        reloadable.close()
         log.debug("MCP server stopped")
 
 
@@ -658,7 +765,8 @@ def config_path() -> None:
 
 
 @app.command()
-def login() -> None:
+@click.option("--resolve", is_flag=True, help="Also resolve an org-scoped token from project config.")
+def login(resolve: bool) -> None:
     """Log in to api.opentrace.ai via your browser."""
     from opentrace_agent.cli.auth import load_tokens
     from opentrace_agent.cli.auth import login as do_login
@@ -679,14 +787,42 @@ def login() -> None:
     scope = payload.get("scope", "")
     click.echo(f"Logged in to {payload.get('issuer', 'OpenTrace')} (scope: {scope}).")
 
+    if resolve:
+        from opentrace_agent.cli.auth import resolve_org_token
+        from opentrace_agent.cli.config import find_config, load_config
+
+        ot_dir = _find_opentrace_dir()
+        config_path = find_config(ot_dir)
+        if config_path is None:
+            click.echo("No .opentrace/config.yaml found — skipping org token resolution.")
+            return
+        config = load_config(config_path)
+        org = config.get("org")
+        if not org:
+            click.echo("No org set in config — skipping org token resolution.")
+            return
+        try:
+            resolve_org_token(org)
+            click.echo(f"Org token resolved for '{org}'.")
+        except RuntimeError as exc:
+            raise click.ClickException(f"Org token resolution failed: {exc}")
+
 
 @app.command()
 def logout() -> None:
     """Log out and remove saved credentials."""
     from opentrace_agent.cli.auth import clear_tokens
+    from opentrace_agent.cli.credentials import clear_org_tokens
 
-    if clear_tokens():
-        click.echo("Logged out.")
+    cleared_user = clear_tokens()
+    org_count = clear_org_tokens()
+    if cleared_user or org_count:
+        parts = []
+        if cleared_user:
+            parts.append("user credentials")
+        if org_count:
+            parts.append(f"{org_count} org token(s)")
+        click.echo(f"Logged out. Removed {', '.join(parts)}.")
     else:
         click.echo("Not logged in.")
 
@@ -695,6 +831,8 @@ def logout() -> None:
 def whoami() -> None:
     """Show the current authentication status."""
     from opentrace_agent.cli.auth import load_tokens
+    from opentrace_agent.cli.config import find_config, load_config
+    from opentrace_agent.cli.credentials import load_org_token
 
     tokens = load_tokens()
     if not tokens:
@@ -703,7 +841,8 @@ def whoami() -> None:
 
     issuer = tokens.get("issuer", "unknown")
     scope = tokens.get("scope", "none")
-    token_type = tokens.get("token_type", "bearer")
+    access_token = tokens.get("access_token", "")
+    token_type = "user (otuat)" if access_token.startswith("otuat_") else "org-scoped (legacy)"
     created = tokens.get("created_at")
 
     click.echo(f"Issuer:  {issuer}")
@@ -714,6 +853,25 @@ def whoami() -> None:
 
         dt = datetime.fromtimestamp(created, tz=timezone.utc)
         click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
+
+    # Show project org context
+    ot_dir = _find_opentrace_dir()
+    config_path = find_config(ot_dir)
+    if config_path is not None:
+        config = load_config(config_path)
+        org = config.get("org")
+        if org:
+            org_token = load_org_token(org)
+            if org_token:
+                click.echo(f"Org:     {org} (token cached)")
+            else:
+                try:
+                    from opentrace_agent.cli.auth import resolve_org_token
+
+                    resolve_org_token(org)
+                    click.echo(f"Org:     {org} (token resolved)")
+                except RuntimeError as exc:
+                    click.echo(f"Org:     {org} (exchange failed: {exc})")
 
 
 @app.command()

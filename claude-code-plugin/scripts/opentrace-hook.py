@@ -28,17 +28,15 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
+
+from _debug import DebugLogger
 
 # ---------------------------------------------------------------------------
-# Debug logging — only when OPENTRACE_DEBUG is set
+# Debug logging — enabled via OPENTRACE_DEBUG. See scripts/_debug.py.
 # ---------------------------------------------------------------------------
 
-_DEBUG = bool(os.environ.get("OPENTRACE_DEBUG"))
-
-
-def _debug(msg: str) -> None:
-    if _DEBUG:
-        print(f"[opentrace-hook] {msg}", file=sys.stderr)
+_debug = DebugLogger("opentrace-hook")
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +83,8 @@ def extract_pattern(tool_name: str, tool_input: dict) -> str | None:
                     continue
                 if len(tok) >= 3:
                     return tok
-    except Exception:
-        _debug(f"extract_pattern error for {tool_name}")
+    except Exception as exc:
+        _debug(f"extract_pattern: error tool={tool_name}: {exc}")
     return None
 
 
@@ -97,14 +95,12 @@ def extract_pattern(tool_name: str, tool_input: dict) -> str | None:
 
 def run_opentraceai(args: list[str], cwd: str, timeout: int = 7) -> str | None:
     """Run the opentraceai CLI and return stdout on success."""
-    try:
-        exe = shutil.which("opentraceai")
-        if exe:
-            cmd = [exe, *args]
-        else:
-            cmd = ["uvx", "opentraceai", *args]
+    exe = shutil.which("opentraceai")
+    cmd = [exe, *args] if exe else ["uvx", "opentraceai", *args]
+    _debug(f"cli: exec={'direct' if exe else 'uvx'} cmd={cmd!r} cwd={cwd!r} timeout={timeout}")
 
-        _debug(f"running: {cmd}")
+    start = time.monotonic()
+    try:
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -112,12 +108,24 @@ def run_opentraceai(args: list[str], cwd: str, timeout: int = 7) -> str | None:
             cwd=cwd,
             timeout=timeout,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
     except subprocess.TimeoutExpired:
-        _debug("opentraceai timed out")
+        _debug(f"cli: TIMEOUT after {time.monotonic() - start:.2f}s")
+        return None
     except Exception as exc:
-        _debug(f"opentraceai error: {exc}")
+        _debug(f"cli: ERROR after {time.monotonic() - start:.2f}s: {exc}")
+        return None
+
+    duration = time.monotonic() - start
+    out = result.stdout.strip()
+    err = result.stderr.strip()
+    _debug(
+        f"cli: rc={result.returncode} duration={duration:.2f}s "
+        f"stdout_len={len(out)} stderr_len={len(err)}"
+    )
+    if err:
+        _debug(f"cli: stderr={err[:200]!r}")
+    if result.returncode == 0 and out:
+        return out
     return None
 
 
@@ -145,24 +153,29 @@ def handle_pre_tool_use(payload: dict) -> None:
     """Augment search tool calls with graph context."""
     try:
         cwd = payload.get("cwd", "")
-        if not cwd or not os.path.isabs(cwd):
-            _debug("no absolute cwd, skipping")
-            return
-
         tool_name = payload.get("tool_name", "")
         tool_input = payload.get("tool_input", {})
-        pattern = extract_pattern(tool_name, tool_input)
-        if not pattern or len(pattern) < 3:
-            _debug(f"pattern too short: {pattern!r}")
+        _debug(f"pre_tool_use: tool={tool_name!r} cwd={cwd!r} input_keys={list(tool_input)}")
+
+        if not cwd or not os.path.isabs(cwd):
+            _debug("pre_tool_use: skip — no absolute cwd")
             return
 
-        _debug(f"augmenting {tool_name} with pattern={pattern!r}")
+        pattern = extract_pattern(tool_name, tool_input)
+        if not pattern or len(pattern) < 3:
+            _debug(f"pre_tool_use: skip — pattern too short ({pattern!r})")
+            return
+
+        _debug(f"pre_tool_use: augmenting tool={tool_name} pattern={pattern!r}")
         # Let the CLI handle DB discovery via its own find_db()
         result = run_opentraceai(["augment", "--", pattern], cwd=cwd)
         if result:
+            _debug(f"pre_tool_use: hit — injecting {len(result)} chars of context")
             send_hook_response("PreToolUse", result)
+        else:
+            _debug("pre_tool_use: miss — no augment output")
     except Exception as exc:
-        _debug(f"handle_pre_tool_use error: {exc}")
+        _debug(f"pre_tool_use: unhandled error: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -180,14 +193,18 @@ def main() -> None:
         _debug(f"failed to parse stdin: {exc}")
         return
 
+    # Resolve the debug log path from the payload's cwd so subsequent
+    # log lines also land in the file (not just stderr).
+    _debug.set_cwd(payload.get("cwd", ""))
+
     event = payload.get("hook_event_name", "")
-    _debug(f"event={event}")
+    _debug(f"main: event={event!r} log={_debug.log_path!r}")
 
     try:
         if event == "PreToolUse":
             handle_pre_tool_use(payload)
     except Exception as exc:
-        _debug(f"unhandled error: {exc}")
+        _debug(f"main: unhandled error: {exc}")
 
 
 if __name__ == "__main__":
