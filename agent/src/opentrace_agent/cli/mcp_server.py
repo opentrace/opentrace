@@ -68,7 +68,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
         Returns matching nodes with their types and properties.
         """
-        if store is None:
+        if not store:
             logger.info("search_graph called but no index exists")
             return NO_INDEX_MSG
         logger.debug("search_graph(query=%r, limit=%d, nodeTypes=%r)", query, limit, nodeTypes)
@@ -88,7 +88,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         Valid types include: Repository, Class, Function, File, Directory,
         Package, Module, Service, Endpoint, Database.
         """
-        if store is None:
+        if not store:
             logger.info("list_nodes called but no index exists")
             return NO_INDEX_MSG
         logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
@@ -103,7 +103,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     @server.tool()
     def get_node(nodeId: str) -> str:
         """Get full details of a single node by its ID, including all properties and immediate neighbors."""
-        if store is None:
+        if not store:
             logger.info("get_node called but no index exists")
             return NO_INDEX_MSG
         logger.debug("get_node(nodeId=%r)", nodeId)
@@ -136,7 +136,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         Direction can be 'outgoing', 'incoming', or 'both'.
         Optionally filter by relationship type (e.g. 'CALLS', 'DEFINES', 'CONTAINS').
         """
-        if store is None:
+        if not store:
             logger.info("traverse_graph called but no index exists")
             return NO_INDEX_MSG
         logger.debug(
@@ -171,7 +171,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
         Use this as a first step to understand what has been indexed before running targeted queries.
         """
-        if store is None:
+        if not store:
             logger.info("get_stats called but no index exists")
             return NO_INDEX_MSG
         logger.debug("get_stats()")
