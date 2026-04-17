@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -27,7 +28,7 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "claude-code-plugin" / "scripts"
-import sys as _sys; _sys.path.insert(0, str(_SCRIPTS_DIR))  # noqa: E702 — _debug must be importable
+sys.path.insert(0, str(_SCRIPTS_DIR))  # _debug must be importable
 _HOOK_PATH = _SCRIPTS_DIR / "edit-hook.py"
 _spec = importlib.util.spec_from_file_location("edit_hook", _HOOK_PATH)
 _hook = importlib.util.module_from_spec(_spec)
