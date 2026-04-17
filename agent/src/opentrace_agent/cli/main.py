@@ -765,7 +765,8 @@ def config_path() -> None:
 
 
 @app.command()
-def login() -> None:
+@click.option("--resolve", is_flag=True, help="Also resolve an org-scoped token from project config.")
+def login(resolve: bool) -> None:
     """Log in to api.opentrace.ai via your browser."""
     from opentrace_agent.cli.auth import load_tokens
     from opentrace_agent.cli.auth import login as do_login
@@ -786,14 +787,42 @@ def login() -> None:
     scope = payload.get("scope", "")
     click.echo(f"Logged in to {payload.get('issuer', 'OpenTrace')} (scope: {scope}).")
 
+    if resolve:
+        from opentrace_agent.cli.auth import resolve_org_token
+        from opentrace_agent.cli.config import find_config, load_config
+
+        ot_dir = _find_opentrace_dir()
+        config_path = find_config(ot_dir)
+        if config_path is None:
+            click.echo("No .opentrace/config.yaml found — skipping org token resolution.")
+            return
+        config = load_config(config_path)
+        org = config.get("org")
+        if not org:
+            click.echo("No org set in config — skipping org token resolution.")
+            return
+        try:
+            resolve_org_token(org)
+            click.echo(f"Org token resolved for '{org}'.")
+        except RuntimeError as exc:
+            raise click.ClickException(f"Org token resolution failed: {exc}")
+
 
 @app.command()
 def logout() -> None:
     """Log out and remove saved credentials."""
     from opentrace_agent.cli.auth import clear_tokens
+    from opentrace_agent.cli.credentials import clear_org_tokens
 
-    if clear_tokens():
-        click.echo("Logged out.")
+    cleared_user = clear_tokens()
+    org_count = clear_org_tokens()
+    if cleared_user or org_count:
+        parts = []
+        if cleared_user:
+            parts.append("user credentials")
+        if org_count:
+            parts.append(f"{org_count} org token(s)")
+        click.echo(f"Logged out. Removed {', '.join(parts)}.")
     else:
         click.echo("Not logged in.")
 
@@ -802,6 +831,8 @@ def logout() -> None:
 def whoami() -> None:
     """Show the current authentication status."""
     from opentrace_agent.cli.auth import load_tokens
+    from opentrace_agent.cli.config import find_config, load_config
+    from opentrace_agent.cli.credentials import load_org_token
 
     tokens = load_tokens()
     if not tokens:
@@ -810,7 +841,8 @@ def whoami() -> None:
 
     issuer = tokens.get("issuer", "unknown")
     scope = tokens.get("scope", "none")
-    token_type = tokens.get("token_type", "bearer")
+    access_token = tokens.get("access_token", "")
+    token_type = "user (otuat)" if access_token.startswith("otuat_") else "org-scoped (legacy)"
     created = tokens.get("created_at")
 
     click.echo(f"Issuer:  {issuer}")
@@ -821,6 +853,25 @@ def whoami() -> None:
 
         dt = datetime.fromtimestamp(created, tz=timezone.utc)
         click.echo(f"Issued:  {dt:%Y-%m-%d %H:%M:%S UTC}")
+
+    # Show project org context
+    ot_dir = _find_opentrace_dir()
+    config_path = find_config(ot_dir)
+    if config_path is not None:
+        config = load_config(config_path)
+        org = config.get("org")
+        if org:
+            org_token = load_org_token(org)
+            if org_token:
+                click.echo(f"Org:     {org} (token cached)")
+            else:
+                try:
+                    from opentrace_agent.cli.auth import resolve_org_token
+
+                    resolve_org_token(org)
+                    click.echo(f"Org:     {org} (token resolved)")
+                except RuntimeError as exc:
+                    click.echo(f"Org:     {org} (exchange failed: {exc})")
 
 
 @app.command()
