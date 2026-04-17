@@ -30,17 +30,15 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+
+from _debug import DebugLogger
 
 # ---------------------------------------------------------------------------
-# Debug logging
+# Debug logging — enabled via OPENTRACE_DEBUG. See scripts/_debug.py.
 # ---------------------------------------------------------------------------
 
-_DEBUG = bool(os.environ.get("OPENTRACE_DEBUG"))
-
-
-def _debug(msg: str) -> None:
-    if _DEBUG:
-        print(f"[edit-hook] {msg}", file=sys.stderr)
+_debug = DebugLogger("edit-hook")
 
 
 # ---------------------------------------------------------------------------
@@ -79,14 +77,12 @@ def _estimate_line_range(old_string: str, new_string: str, file_path: str) -> st
 
 def run_opentraceai(args: list[str], cwd: str, timeout: int = 10) -> str | None:
     """Run the opentraceai CLI and return stdout on success."""
-    try:
-        exe = shutil.which("opentraceai")
-        if exe:
-            cmd = [exe, *args]
-        else:
-            cmd = ["uvx", "opentraceai", *args]
+    exe = shutil.which("opentraceai")
+    cmd = [exe, *args] if exe else ["uvx", "opentraceai", *args]
+    _debug(f"cli: exec={'direct' if exe else 'uvx'} cmd={cmd!r} cwd={cwd!r} timeout={timeout}")
 
-        _debug(f"running: {cmd}")
+    start = time.monotonic()
+    try:
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -94,12 +90,24 @@ def run_opentraceai(args: list[str], cwd: str, timeout: int = 10) -> str | None:
             cwd=cwd,
             timeout=timeout,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
     except subprocess.TimeoutExpired:
-        _debug("opentraceai timed out")
+        _debug(f"cli: TIMEOUT after {time.monotonic() - start:.2f}s")
+        return None
     except Exception as exc:
-        _debug(f"opentraceai error: {exc}")
+        _debug(f"cli: ERROR after {time.monotonic() - start:.2f}s: {exc}")
+        return None
+
+    duration = time.monotonic() - start
+    out = result.stdout.strip()
+    err = result.stderr.strip()
+    _debug(
+        f"cli: rc={result.returncode} duration={duration:.2f}s "
+        f"stdout_len={len(out)} stderr_len={len(err)}"
+    )
+    if err:
+        _debug(f"cli: stderr={err[:200]!r}")
+    if result.returncode == 0 and out:
+        return out
     return None
 
 
@@ -142,17 +150,18 @@ def _is_code_file(path: str) -> bool:
 def handle_post_tool_use(payload: dict) -> None:
     """Analyze the impact of an edit/write and inject context."""
     cwd = payload.get("cwd", "")
-    if not cwd or not os.path.isabs(cwd):
-        _debug("no absolute cwd, skipping")
-        return
-
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {})
+    _debug(f"post_tool_use: tool={tool_name!r} cwd={cwd!r} input_keys={list(tool_input)}")
+
+    if not cwd or not os.path.isabs(cwd):
+        _debug("post_tool_use: skip — no absolute cwd")
+        return
 
     # Extract file path
     file_path = tool_input.get("file_path", "")
     if not file_path:
-        _debug("no file_path in tool_input")
+        _debug("post_tool_use: skip — no file_path in tool_input")
         return
 
     # Ensure path is absolute if relative
@@ -160,10 +169,10 @@ def handle_post_tool_use(payload: dict) -> None:
         file_path = os.path.join(cwd, file_path)
 
     if not _is_code_file(file_path):
-        _debug(f"skipping non-code file: {file_path}")
+        _debug(f"post_tool_use: skip — non-code file: {file_path}")
         return
 
-    _debug(f"analyzing impact for {tool_name} on {file_path}")
+    _debug(f"post_tool_use: analyzing tool={tool_name} path={file_path}")
 
     # Build the CLI args
     args = ["impact", "--", file_path]
@@ -176,11 +185,16 @@ def handle_post_tool_use(payload: dict) -> None:
             line_spec = _estimate_line_range(old_string, new_string, file_path)
             if line_spec:
                 args = ["impact", "--lines", line_spec, "--", file_path]
-                _debug(f"estimated line range: {line_spec}")
+                _debug(f"post_tool_use: estimated line_range={line_spec}")
+            else:
+                _debug("post_tool_use: line_range=unknown (new_string not found in file)")
 
     result = run_opentraceai(args, cwd=cwd)
     if result:
+        _debug(f"post_tool_use: hit — injecting {len(result)} chars of context")
         send_hook_response(result)
+    else:
+        _debug("post_tool_use: miss — no impact output")
 
 
 # ---------------------------------------------------------------------------
@@ -197,14 +211,18 @@ def main() -> None:
         _debug(f"failed to parse stdin: {exc}")
         return
 
+    # Resolve the debug log path from the payload's cwd so subsequent
+    # log lines also land in the file (not just stderr).
+    _debug.set_cwd(payload.get("cwd", ""))
+
     event = payload.get("hook_event_name", "")
-    _debug(f"event={event}")
+    _debug(f"main: event={event!r} log={_debug.log_path!r}")
 
     try:
         if event == "PostToolUse":
             handle_post_tool_use(payload)
     except Exception as exc:
-        _debug(f"unhandled error: {exc}")
+        _debug(f"main: unhandled error: {exc}")
 
 
 if __name__ == "__main__":
