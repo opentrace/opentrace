@@ -970,7 +970,7 @@ export default function AddRepoModal({
           )}
 
           {source === 'url' && (
-            <div className="form-info form-info--limit">
+            <div className="form-info">
               <svg
                 width="14"
                 height="14"

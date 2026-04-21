@@ -225,13 +225,18 @@ export async function fetchResolvedArchive(
   // Reject archives that exceed the size limit
   if (total >= MAX_ARCHIVE_SIZE) {
     throw new Error(
-      `Repository exceeds 500 MB limit (${(total / 1024 / 1024).toFixed(0)} MB). Try a smaller repository or use the CLI agent for large codebases.`,
+      `Repository exceeds 500 MB limit (${(total / 1024 / 1024).toFixed(1)} MB). Try a smaller repository or use the CLI agent for large codebases.`,
     );
   }
 
   // If no ReadableStream body (unlikely in modern browsers), fall back
   if (!zipRes.body) {
     const buf = new Uint8Array(await zipRes.arrayBuffer());
+    if (buf.length >= MAX_ARCHIVE_SIZE) {
+      throw new Error(
+        `Repository exceeds 500 MB limit (${(buf.length / 1024 / 1024).toFixed(1)} MB). Try a smaller repository or use the CLI agent for large codebases.`,
+      );
+    }
     onProgress?.({ phase: 'download', current: buf.length, total: buf.length });
     return { data: buf, gitMeta };
   }
@@ -251,7 +256,7 @@ export async function fetchResolvedArchive(
     if (received >= MAX_ARCHIVE_SIZE) {
       reader.cancel();
       throw new Error(
-        'Repository exceeds 500 MB limit. Try a smaller repository or use the CLI agent for large codebases.',
+        `Repository exceeds 500 MB limit (reached ${(received / 1024 / 1024).toFixed(1)} MB). Try a smaller repository or use the CLI agent for large codebases.`,
       );
     }
   }
