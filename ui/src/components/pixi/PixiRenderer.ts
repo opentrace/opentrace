@@ -281,6 +281,7 @@ export class PixiRenderer {
   private mode3dPerspectiveD = 2000; // perspective distance
   private nodeDepthT: Map<string, number> = new Map(); // per-node depth [-1, 1]
   private mode3dRadius = 0; // computed from node positions at enable time
+  private mode3dFrameCounter = 0;
 
   // Animation cancel
   private cancelAnimation: (() => void) | null = null;
@@ -1971,6 +1972,7 @@ export class PixiRenderer {
     communityAssignments?: Record<string, number>,
   ): void {
     this.mode3d = enabled;
+    this.mode3dFrameCounter = 0;
     if (!enabled) {
       // Restore 2D positions from stored (x, y)
       for (const node of this.nodeArray) {
@@ -1985,13 +1987,11 @@ export class PixiRenderer {
       return;
     }
 
-    // Compute bounding radius from current positions
-    let maxDist = 0;
-    for (const node of this.nodeArray) {
-      const d = Math.sqrt(node.x * node.x + node.y * node.y);
-      if (d > maxDist) maxDist = d;
-    }
-    this.mode3dRadius = maxDist * 1.1 || 500;
+    // Compute initial bounding radius from current positions.
+    // Reset first so recomputeMode3DExtents() picks the real extent
+    // rather than a stale (possibly larger) previous radius.
+    this.mode3dRadius = 0;
+    this.recomputeMode3DExtents();
 
     // Assign Z depth per node: community-based + jitter
     this.nodeDepthT.clear();
@@ -2016,12 +2016,6 @@ export class PixiRenderer {
       }
     }
 
-    // Scale perspective distance to graph size so the 3D effect is proportional.
-    // PerspectiveD should be ~3-4x the radius for a natural look.
-    this.mode3dPerspectiveD = this.mode3dRadius * 3;
-    // Depth scale relative to radius — controls how "thick" the sphere is
-    this.mode3dDepthScale = this.mode3dRadius * 0.6;
-
     this.mode3dAngle = 0;
     this.mode3dAutoRotate = true;
 
@@ -2029,6 +2023,32 @@ export class PixiRenderer {
     this.update3D();
     this.lastLabelCull = 0;
     this.throttledLabelCull();
+  }
+
+  /**
+   * Recompute `mode3dRadius` (and derived perspective/depth scales) from the
+   * current node positions. Radius only grows: while the simulation is warm,
+   * nodes can drift outward and we must keep the sphere bounds in sync so
+   * `getNodeZ()` does not hard-clamp drifted nodes to Z=0 (which collapses the
+   * sphere into a disk). Called from `set3DMode()` and periodically from
+   * `update3D()`.
+   */
+  private recomputeMode3DExtents(): void {
+    let maxDist = 0;
+    for (const node of this.nodeArray) {
+      if (!node.visible) continue;
+      const d = Math.sqrt(node.x * node.x + node.y * node.y);
+      if (d > maxDist) maxDist = d;
+    }
+    const candidate = maxDist * 1.1 || 500;
+    const newRadius = Math.max(this.mode3dRadius, candidate);
+    if (newRadius !== this.mode3dRadius) {
+      this.mode3dRadius = newRadius;
+      // PerspectiveD ~3-4x the radius for a natural look.
+      this.mode3dPerspectiveD = newRadius * 3;
+      // Depth scale relative to radius — controls how "thick" the sphere is.
+      this.mode3dDepthScale = newRadius * 0.6;
+    }
   }
 
   /** Get Z coordinate for a node (filled sphere distribution). */
@@ -2072,6 +2092,14 @@ export class PixiRenderer {
       this.mode3dAngle += this.mode3dSpeed;
     }
 
+    // Keep sphere bounds in sync with drifting node positions (spread layout
+    // can push nodes beyond the initial radius over time). Throttled to every
+    // ~0.5s at 60fps — amortized cost is negligible even at thousands of nodes.
+    this.mode3dFrameCounter++;
+    if (this.mode3dFrameCounter % 30 === 0) {
+      this.recomputeMode3DExtents();
+    }
+
     const invScale = this.zoomInvScale();
     const lblInv = this.labelInvScale();
     for (const node of this.nodeArray) {
@@ -2081,7 +2109,10 @@ export class PixiRenderer {
       const z = this.getNodeZ(node);
       const p = this.project3d(node.x, node.y, z);
       node.sprite.position.set(p.px, p.py);
-      const depthScale = Math.max(p.scale, 0.3);
+      // Clamp both ends: the lower bound prevents far nodes from vanishing,
+      // the upper bound prevents near-singular perspective scale from exploding
+      // sprite/label sizes when rz approaches -mode3dPerspectiveD during rotation.
+      const depthScale = Math.max(0.3, Math.min(p.scale, 2));
       const depthAlpha = 0.3 + 0.6 * Math.max(Math.min(p.scale, 1), 0);
 
       // Depth sorting: closer nodes (lower rz) render on top (higher zIndex)
