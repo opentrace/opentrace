@@ -216,3 +216,10 @@ export const BINARY_EXTENSIONS = new Set([
 
 /** Max file size (bytes) to attempt parsing. Files larger are skipped. */
 export const MAX_FILE_SIZE = 1_000_000;
+
+/**
+ * Max archive size (bytes) for repository downloads.
+ * Matches the UI's MiB-based display boundary: fires as soon as
+ * `(bytes / 1024 / 1024).toFixed(1)` rounds to "500.0" MB.
+ */
+export const MAX_ARCHIVE_SIZE = Math.ceil(499.95 * 1024 * 1024);

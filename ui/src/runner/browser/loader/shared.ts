@@ -26,6 +26,7 @@ import {
   BINARY_EXTENSIONS,
   EXCLUDED_DIRS,
   IMAGE_EXTENSIONS,
+  MAX_ARCHIVE_SIZE,
   MAX_FILE_SIZE,
 } from './constants';
 import type { RepoFile } from '../types';
@@ -221,6 +222,13 @@ export async function fetchResolvedArchive(
 
   const total = contentLength || 0;
 
+  // Reject archives that exceed the size limit
+  if (total >= MAX_ARCHIVE_SIZE) {
+    throw new Error(
+      `Repository exceeds 500 MB limit (${(total / 1024 / 1024).toFixed(0)} MB). Try a smaller repository or use the CLI agent for large codebases.`,
+    );
+  }
+
   // If no ReadableStream body (unlikely in modern browsers), fall back
   if (!zipRes.body) {
     const buf = new Uint8Array(await zipRes.arrayBuffer());
@@ -238,7 +246,14 @@ export async function fetchResolvedArchive(
     if (done) break;
     chunks.push(value);
     received += value.length;
+    // Update UI first so the user sees the 500 MB value before the error.
     onProgress?.({ phase: 'download', current: received, total });
+    if (received >= MAX_ARCHIVE_SIZE) {
+      reader.cancel();
+      throw new Error(
+        'Repository exceeds 500 MB limit. Try a smaller repository or use the CLI agent for large codebases.',
+      );
+    }
   }
 
   // Concatenate chunks
