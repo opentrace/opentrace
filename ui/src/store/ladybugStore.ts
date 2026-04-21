@@ -1568,6 +1568,9 @@ export class LadybugGraphStore implements GraphStore {
         if (typeof props.path === 'string') searchParts.push(props.path);
         this.bm25Index.addDocument(id, searchParts.join(' '));
         this.cacheNode(id, { type, name, properties: props });
+        // Mirror the Dependency dedup invariant used by flush() — otherwise a
+        // subsequent index job emitting a shared package would re-COPY it.
+        if (type === 'Dependency') this.flushedPackageIds.add(id);
         totalNodes++;
       }
       console.log(
@@ -1683,7 +1686,8 @@ export class LadybugGraphStore implements GraphStore {
           await lbug.FS.unlink(csvPath);
         }
 
-        // Repopulate sourceCache so fetchSource can serve code views
+        // Repopulate sourceCache so fetchSource can serve code views, and
+        // mirror the SourceText dedup invariant used by flush().
         const encoder = new TextEncoder();
         for (const [id, text] of snippets) {
           const path = fakeCache.get(id)?.path ?? id;
@@ -1691,6 +1695,7 @@ export class LadybugGraphStore implements GraphStore {
             compressed: deflateSync(encoder.encode(text)),
             path,
           });
+          this.flushedSourceIds.add(id);
         }
 
         console.log(
