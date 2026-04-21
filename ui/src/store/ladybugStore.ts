@@ -1445,6 +1445,10 @@ export class LadybugGraphStore implements GraphStore {
     this.flushedSourceIds.clear();
     this.sourceCache.clear();
     this.sourceSnippets.clear();
+    this.pendingNodes = [];
+    this.pendingRels = [];
+    this.totalNodesBuffered = 0;
+    this.totalRelsBuffered = 0;
   }
 
   async importDatabase(
@@ -1476,13 +1480,7 @@ export class LadybugGraphStore implements GraphStore {
       );
     }
 
-    // Drain any pending buffered writes so they don't leak into the import
-    this.pendingNodes = [];
-    this.pendingRels = [];
-    this.totalNodesBuffered = 0;
-    this.totalRelsBuffered = 0;
-
-    // Clear current data and reset caches
+    // Clear current data and reset caches (also drains pending buffered writes)
     await this.clearGraph();
 
     let totalNodes = 0;
