@@ -978,7 +978,10 @@ const GraphViewer = memo(
             }
           })
           .catch((err) => {
-            if (!cancelled) setSourceError(err.message);
+            if (cancelled) return;
+            // Swallow AbortError — clearGraph fired mid-fetch, expected.
+            if (err?.name === 'AbortError') return;
+            setSourceError(err.message);
           })
           .finally(() => {
             if (!cancelled) setSourceLoading(false);
