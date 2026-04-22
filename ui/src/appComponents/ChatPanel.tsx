@@ -707,31 +707,42 @@ export default function ChatPanel({
       streamingRef.current = false;
       setStreaming(false);
       progress.setListener(null);
-      // Attach accumulated token usage to the assistant message
+      // Attach accumulated token usage to the assistant message, and persist
+      // from the same snapshot. A subtle-but-nasty React-18 batching bug
+      // lived here: we used to read `messagesRef.current` (which lags React
+      // state by one render) and pass a raw value to `setMessages(...)`.
+      // If the last few streamed chunks' functional setters hadn't flushed
+      // yet (common with bursty Anthropic SSE + automatic batching), the
+      // raw-value write would queue AFTER those setters and overwrite their
+      // results — silently truncating the visible response at whatever the
+      // stale snapshot happened to contain. Functional `setMessages` applies
+      // to the latest enqueued state, preserving every chunk.
       const hasUsage =
         usageAccum.inputTokens > 0 || usageAccum.outputTokens > 0;
-      let updatedMessages = messagesRef.current;
-      if (hasUsage) {
-        const updated = [...updatedMessages];
-        const last = updated[updated.length - 1];
-        if (last?.role === 'assistant') {
-          updated[updated.length - 1] = {
-            ...(last as AssistantMessage),
-            usage: usageAccum,
-          };
+      const persistAfterFlush = !controller.signal.aborted;
+      setMessages((prev) => {
+        let next = prev;
+        if (hasUsage) {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === 'assistant') {
+            updated[updated.length - 1] = {
+              ...(last as AssistantMessage),
+              usage: usageAccum,
+            };
+            next = updated;
+          }
         }
-        updatedMessages = updated;
-        setMessages(updated);
-      }
-      // Persist conversation after each completed turn (skip if user aborted)
-      if (!controller.signal.aborted) {
-        persistMessages(
-          updatedMessages,
-          providerId,
-          modelId,
-          Array.from(chatFoundNodesRef.current),
-        );
-      }
+        if (persistAfterFlush) {
+          persistMessages(
+            next,
+            providerId,
+            modelId,
+            Array.from(chatFoundNodesRef.current),
+          );
+        }
+        return next;
+      });
     }
   };
 
