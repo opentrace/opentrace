@@ -169,7 +169,8 @@ describe('LadybugGraphStore deleteRepo', () => {
     // rebuild.)
     expect(
       cyphers.some(
-        (c: string) => c.includes('MATCH (n:Dependency)') && c.includes('DELETE n'),
+        (c: string) =>
+          c.includes('MATCH (n:Dependency)') && c.includes('DELETE n'),
       ),
     ).toBe(false);
   });
