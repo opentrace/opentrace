@@ -36,12 +36,24 @@ import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 
 export type JobMessage =
   | IndexRepoMessage
+  | ReindexRepoMessage
   | IndexDirectoryMessage
   | ImportFileMessage
   | ConnectServerMessage;
 
 export interface IndexRepoMessage {
   type: 'index-repo';
+  repoUrl: string;
+  token?: string;
+  ref?: string;
+}
+
+/** Re-fetch a repo's files and rebuild its graph from scratch. Deletes the
+ *  repo's existing nodes/relationships after the fetch succeeds (so a failed
+ *  fetch leaves the existing data intact) and then runs the normal index
+ *  pipeline. Other repos in the graph are unaffected. */
+export interface ReindexRepoMessage {
+  type: 'reindex-repo';
   repoUrl: string;
   token?: string;
   ref?: string;

@@ -105,3 +105,241 @@ describe('LadybugGraphStore clearGraph abort behavior', () => {
     expect(s.generation).toBe(2);
   });
 });
+
+describe('LadybugGraphStore deleteRepo', () => {
+  it('issues scoped Cypher deletes (rels first, then each repo-scoped table)', async () => {
+    const { store, connQuery } = makeStoreWithMockConn();
+
+    await store.deleteRepo('alice/foo');
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    // Relationship delete must come before every node delete — Kuzu
+    // rejects node drops while endpoint rels still reference them. A
+    // single findIndex only proves the FIRST node-delete is ordered,
+    // so walk the whole list.
+    const relIdx = cyphers.findIndex((c: string) =>
+      c.includes('-[r:RELATES]->'),
+    );
+    expect(relIdx).toBeGreaterThanOrEqual(0);
+    const nodeDeletePattern =
+      /^MATCH \(n:(Repository|Directory|File|Class|Function|Variable|PullRequest|IndexMetadata|SourceText)\).*DELETE n$/;
+    const nodeDeleteIndexes = cyphers
+      .map((c: string, i: number) => (nodeDeletePattern.test(c) ? i : -1))
+      .filter((i: number) => i >= 0);
+    expect(nodeDeleteIndexes.length).toBeGreaterThan(0);
+    for (const idx of nodeDeleteIndexes) {
+      expect(idx).toBeGreaterThan(relIdx);
+    }
+
+    // Every repo-scoped table is targeted.
+    const tables = [
+      'Repository',
+      'Directory',
+      'File',
+      'Class',
+      'Function',
+      'Variable',
+      'PullRequest',
+      'IndexMetadata',
+      'SourceText',
+    ];
+    for (const table of tables) {
+      expect(
+        cyphers.some(
+          (c: string) =>
+            c.includes(`MATCH (n:${table})`) && c.includes('DELETE n'),
+        ),
+      ).toBe(true);
+    }
+
+    // Repo-scoped match clause uses the correct id patterns. Only
+    // applies to DELETE queries — the post-delete pass issues a global
+    // `MATCH (n:Dependency) RETURN n.id` to rebuild the dedup set, and
+    // that one intentionally has no repo predicate.
+    for (const c of cyphers) {
+      if (c.startsWith('MATCH (n:') && c.includes('DELETE n')) {
+        expect(c).toContain("'alice/foo'");
+        expect(c).toContain("'alice/foo/'");
+        expect(c).toContain("'_meta:index:alice/foo'");
+      }
+    }
+
+    // Dependency is the only global table; it must never be deleted.
+    // (A read-only MATCH on Dependency is expected — that's the dedup-set
+    // rebuild.)
+    expect(
+      cyphers.some(
+        (c: string) => c.includes('MATCH (n:Dependency)') && c.includes('DELETE n'),
+      ),
+    ).toBe(false);
+  });
+
+  it('prunes in-memory state keyed by the repo but spares other repos', async () => {
+    const { store, s, connQuery } = makeStoreWithMockConn();
+
+    // The post-delete pass queries surviving Dependency rows to rebuild
+    // the in-memory dedup set. Make the mock return the shared package
+    // so the assertion below sees a set populated from DB ground truth.
+    connQuery.mockImplementation(async (cypher: string) => ({
+      getAllObjects: async () =>
+        cypher.includes('(n:Dependency)') && cypher.includes('RETURN n.id')
+          ? [{ id: 'pkg:npm:lodash' }]
+          : [],
+      close: async () => {},
+    }));
+
+    // Seed state that would exist after an index run of two repos plus a
+    // shared package.
+    const aRepo = 'alice/foo';
+    const bRepo = 'bob/bar';
+    const seedNode = (id: string, type: string) => {
+      s.nodeTypeMap.set(id, type);
+      s.nodeCache.set(id, { type, name: id, properties: {} });
+      s.bm25Index.addDocument(id, `${id} ${type}`, { name: id });
+    };
+    const seedSource = (id: string) => {
+      s.sourceCache.set(id, {
+        compressed: new Uint8Array(),
+        path: id.split('/').slice(2).join('/'),
+      });
+      s.sourceSnippets.set(id, `// source of ${id}`);
+      s.flushedSourceIds.add(id);
+    };
+
+    // Repo A
+    seedNode(aRepo, 'Repository');
+    seedNode(`${aRepo}/src`, 'Directory');
+    seedNode(`${aRepo}/src/app.ts`, 'File');
+    seedNode(`${aRepo}/src/app.ts::App`, 'Class');
+    seedNode(`_meta:index:${aRepo}`, 'IndexMetadata');
+    seedSource(`${aRepo}/src/app.ts`);
+
+    // Repo B (must survive)
+    seedNode(bRepo, 'Repository');
+    seedNode(`${bRepo}/lib/util.ts`, 'File');
+    seedNode(`_meta:index:${bRepo}`, 'IndexMetadata');
+    seedSource(`${bRepo}/lib/util.ts`);
+
+    // Shared global Dependency (must survive, plus its flushedPackageIds guard)
+    seedNode('pkg:npm:lodash', 'Dependency');
+    s.flushedPackageIds.add('pkg:npm:lodash');
+
+    // Pending buffers contain entries for both repos.
+    s.pendingNodes = [
+      { id: `${aRepo}/src/new.ts`, type: 'File', name: 'new.ts' },
+      { id: `${bRepo}/lib/util.ts`, type: 'File', name: 'util.ts' },
+    ];
+    s.pendingRels = [
+      {
+        id: 'rel-a',
+        type: 'DEFINES',
+        source_id: aRepo,
+        target_id: `${aRepo}/src/new.ts`,
+      },
+      {
+        id: 'rel-b',
+        type: 'DEFINES',
+        source_id: bRepo,
+        target_id: `${bRepo}/lib/util.ts`,
+      },
+    ];
+    s.totalNodesBuffered = 2;
+    s.totalRelsBuffered = 2;
+
+    await store.deleteRepo(aRepo);
+
+    // Repo A state gone
+    for (const id of [
+      aRepo,
+      `${aRepo}/src`,
+      `${aRepo}/src/app.ts`,
+      `${aRepo}/src/app.ts::App`,
+      `_meta:index:${aRepo}`,
+    ]) {
+      expect(s.nodeTypeMap.has(id)).toBe(false);
+      expect(s.nodeCache.has(id)).toBe(false);
+    }
+    expect(s.sourceCache.has(`${aRepo}/src/app.ts`)).toBe(false);
+    expect(s.sourceSnippets.has(`${aRepo}/src/app.ts`)).toBe(false);
+    expect(s.flushedSourceIds.has(`${aRepo}/src/app.ts`)).toBe(false);
+
+    // BM25 forgot repo A's docs but kept repo B's.
+    expect(s.bm25Index.search('alice').length).toBe(0);
+    expect(s.bm25Index.search('bob').length).toBeGreaterThan(0);
+
+    // Repo B intact
+    expect(s.nodeTypeMap.has(bRepo)).toBe(true);
+    expect(s.nodeTypeMap.has(`${bRepo}/lib/util.ts`)).toBe(true);
+    expect(s.nodeTypeMap.has(`_meta:index:${bRepo}`)).toBe(true);
+    expect(s.sourceCache.has(`${bRepo}/lib/util.ts`)).toBe(true);
+
+    // Shared Dependency and its guard untouched
+    expect(s.nodeTypeMap.has('pkg:npm:lodash')).toBe(true);
+    expect(s.flushedPackageIds.has('pkg:npm:lodash')).toBe(true);
+
+    // Pending buffers filtered to only repo B's entries.
+    expect(s.pendingNodes).toEqual([
+      { id: `${bRepo}/lib/util.ts`, type: 'File', name: 'util.ts' },
+    ]);
+    expect(s.pendingRels).toEqual([
+      {
+        id: 'rel-b',
+        type: 'DEFINES',
+        source_id: bRepo,
+        target_id: `${bRepo}/lib/util.ts`,
+      },
+    ]);
+    expect(s.totalNodesBuffered).toBe(1);
+    expect(s.totalRelsBuffered).toBe(1);
+  });
+
+  it('does not bump the generation counter', async () => {
+    const { store, s } = makeStoreWithMockConn();
+
+    expect(s.generation).toBe(0);
+    await store.deleteRepo('alice/foo');
+    expect(s.generation).toBe(0);
+  });
+
+  it('is a no-op for an empty repoId', async () => {
+    const { store, connQuery } = makeStoreWithMockConn();
+
+    await store.deleteRepo('');
+    expect(connQuery).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds flushedPackageIds from surviving Dependency rows', async () => {
+    // The set guards COPY FROM against PK collisions on global Dependency
+    // rows. deleteRepo leaves Dependencies intact (they're shared across
+    // repos), but the in-memory set may be stale if we were populated from
+    // one subset of repos and a later reindex needs to see the full
+    // ground truth. The guard only works if the set matches the DB.
+    const { store, s, connQuery } = makeStoreWithMockConn();
+    connQuery.mockImplementation(async (cypher: string) => ({
+      getAllObjects: async () =>
+        cypher.includes('(n:Dependency)') && cypher.includes('RETURN n.id')
+          ? [
+              { id: 'pkg:npm:lodash' },
+              { id: 'pkg:npm:react' },
+              { id: 'pkg:pypi:requests' },
+            ]
+          : [],
+      close: async () => {},
+    }));
+
+    // Seed a stale set that disagrees with the DB (missing one entry,
+    // with an extra ghost entry left over from a deleted repo).
+    s.flushedPackageIds.add('pkg:npm:lodash');
+    s.flushedPackageIds.add('pkg:npm:ghost-from-deleted-repo');
+
+    await store.deleteRepo('alice/foo');
+
+    // Set matches what the mock returned: no ghost entries, all three
+    // real rows present.
+    expect([...s.flushedPackageIds].sort()).toEqual([
+      'pkg:npm:lodash',
+      'pkg:npm:react',
+      'pkg:pypi:requests',
+    ]);
+  });
+});
