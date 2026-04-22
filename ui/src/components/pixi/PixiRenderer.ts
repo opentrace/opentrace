@@ -1754,6 +1754,7 @@ export class PixiRenderer {
 
     // Pointer events for pan / drag / click
     let pointerDown = false;
+    let pointerDownButton = 0;
     let movedDistance = 0;
     // Track last pointer position to compute pan deltas manually,
     // avoiding movementX/Y which includes the full distance since pointerdown
@@ -1761,24 +1762,33 @@ export class PixiRenderer {
     let lastPointerX = 0;
     let lastPointerY = 0;
 
+    // Suppress the browser's right-click menu so right-drag can rotate in 3D mode.
+    canvas.addEventListener(
+      'contextmenu',
+      (e) => {
+        e.preventDefault();
+      },
+      { signal },
+    );
+
     canvas.addEventListener(
       'pointerdown',
       (e) => {
         pointerDown = true;
+        pointerDownButton = e.button;
         movedDistance = 0;
         lastPointerX = e.clientX;
         lastPointerY = e.clientY;
         this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
-        // Hit test
-        const rect = canvas.getBoundingClientRect();
-        const screenX = e.clientX - rect.left;
-        const screenY = e.clientY - rect.top;
-        const world = screenToWorld(screenX, screenY, this.vp);
-        const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
-
-        if (hitNode) {
-          this.pendingDragNode = hitNode;
+        // Hit test — only left button drags nodes; right button rotates in 3D.
+        if (e.button === 0) {
+          const rect = canvas.getBoundingClientRect();
+          const screenX = e.clientX - rect.left;
+          const screenY = e.clientY - rect.top;
+          const world = screenToWorld(screenX, screenY, this.vp);
+          const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
+          this.pendingDragNode = hitNode ?? null;
         } else {
           this.pendingDragNode = null;
         }
@@ -1841,8 +1851,8 @@ export class PixiRenderer {
             }
             this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
             this.redrawDragEdges(this.dragNode);
-          } else if (this.mode3d) {
-            // 3D mode: drag rotates the camera instead of panning
+          } else if (this.mode3d && pointerDownButton === 2) {
+            // 3D mode + right-drag: rotate the camera
             const rotateDx = e.clientX - lastPointerX;
             const rotateDy = e.clientY - lastPointerY;
             // Horizontal drag → Y-axis rotation
@@ -1886,7 +1896,7 @@ export class PixiRenderer {
         this.dragNode = null;
         canvas.style.cursor = 'default';
         this.redrawAllEdges();
-      } else if (movedDistance <= CLICK_THRESHOLD) {
+      } else if (pointerDownButton === 0 && movedDistance <= CLICK_THRESHOLD) {
         // Click
         const rect = canvas.getBoundingClientRect();
         const screenX = e.clientX - rect.left;
