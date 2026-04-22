@@ -105,6 +105,10 @@ export interface GraphStore {
   fetchStats(): Promise<GraphStats>;
   fetchMetadata(): Promise<IndexMetadata[]>;
   clearGraph(): Promise<void>;
+  /** Remove all data scoped to a single repo (nodes whose IDs start with the
+   *  repoId, plus their relationships). Global nodes like Dependency survive.
+   *  Optional: ServerGraphStore is read-only and omits this. */
+  deleteRepo?(repoId: string): Promise<void>;
   setLimits?(maxNodes: number, maxEdges: number): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   /** Flush any buffered writes to the backing store. No-op if unbuffered. */
