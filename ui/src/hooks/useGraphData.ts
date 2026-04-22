@@ -75,8 +75,11 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
             .catch(() => {});
         })
         .catch((err) => {
-          setError(err.message);
           setLoading(false);
+          // Swallow AbortError — clearGraph fired mid-load, expected on
+          // project switch. Any real error still surfaces.
+          if (err?.name === 'AbortError') return;
+          setError(err.message);
         });
     },
     [store],

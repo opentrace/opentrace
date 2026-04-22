@@ -282,6 +282,13 @@ function logQuery(cypher: string, rowCount: number, ms: number): void {
   );
 }
 
+/** Build an AbortError in the web-platform convention so callers can
+ *  pattern-match on err.name === 'AbortError' the same way they do
+ *  for fetch/AbortController. */
+function abortError(message: string): DOMException {
+  return new DOMException(message, 'AbortError');
+}
+
 // ---- Cypher helpers ----
 
 /** Escape a string for use inside a Cypher single-quoted literal. */
@@ -524,6 +531,12 @@ export class LadybugGraphStore implements GraphStore {
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
 
+  /** Monotonic counter bumped by clearGraph(). Each queued task captures the
+   *  current value at enqueue; when it runs, a mismatch means clearGraph fired
+   *  in the meantime and the task is aborted. Keeps clearGraph fast by letting
+   *  it skip work that's about to be invalidated anyway. */
+  private generation = 0;
+
   constructor() {
     // Don't init WASM here — the constructor runs at app startup.
     // WASM loads lazily on first DB operation via ensureReady().
@@ -660,12 +673,20 @@ export class LadybugGraphStore implements GraphStore {
    * Execute a Cypher query and return all result rows as objects.
    * Uses conn.query() + getAllObjects() for row extraction.
    * Serialized through a queue to prevent concurrent calls.
+   *
+   * If clearGraph() fires between the enqueue and the run, the task
+   * rejects with an AbortError (DOMException) instead of executing.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
+    const enqueuedGeneration = this.generation;
     await this.ensureReady();
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
+          if (this.generation !== enqueuedGeneration) {
+            reject(abortError('Query aborted: store was cleared'));
+            return;
+          }
           const qt0 = performance.now();
           const result = await this.conn.query(cypher);
           try {
@@ -684,8 +705,34 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher statement that doesn't return rows (DDL, COPY, etc.).
+   * Aborts with an AbortError if clearGraph() fires between enqueue and run.
    */
   private async exec(cypher: string): Promise<void> {
+    const enqueuedGeneration = this.generation;
+    await this.ensureReady();
+    return new Promise<void>((resolve, reject) => {
+      this.queue = this.queue
+        .then(async () => {
+          if (this.generation !== enqueuedGeneration) {
+            reject(abortError('Exec aborted: store was cleared'));
+            return;
+          }
+          const result = await this.conn.query(cypher);
+          await result.close();
+          resolve();
+        })
+        .catch((err) => {
+          reject(err);
+        });
+    });
+  }
+
+  /**
+   * Queue a DDL statement that bypasses the generation check. Used by
+   * clearGraph() for its own DROP/CREATE calls, since it's the thing
+   * bumping the generation.
+   */
+  private async execInternal(cypher: string): Promise<void> {
     await this.ensureReady();
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
@@ -1415,14 +1462,19 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   async clearGraph(): Promise<void> {
+    // Bump the generation synchronously before any await, so every task
+    // already on the queue sees a mismatch and aborts instead of running
+    // against state that's about to be torn down. Must happen before we
+    // enqueue our own DDL below — execInternal bypasses the check.
+    this.generation++;
     // Drop REL TABLE GROUP first (references node tables)
     try {
-      await this.exec(`DROP TABLE IF EXISTS RELATES`);
+      await this.execInternal(`DROP TABLE IF EXISTS RELATES`);
     } catch {
       // If group drop fails, try dropping individual sub-tables
       for (const [from, to] of REL_PAIRS) {
         try {
-          await this.exec(`DROP TABLE IF EXISTS RELATES_${from}_${to}`);
+          await this.execInternal(`DROP TABLE IF EXISTS RELATES_${from}_${to}`);
         } catch {
           /* ignore */
         }
@@ -1430,12 +1482,12 @@ export class LadybugGraphStore implements GraphStore {
     }
     // Drop all typed node tables and SourceText
     for (const type of NODE_TYPES) {
-      await this.exec(`DROP TABLE IF EXISTS ${type}`);
+      await this.execInternal(`DROP TABLE IF EXISTS ${type}`);
     }
-    await this.exec(`DROP TABLE IF EXISTS SourceText`);
+    await this.execInternal(`DROP TABLE IF EXISTS SourceText`);
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
-      await this.exec(stmt);
+      await this.execInternal(stmt);
     }
     this.hasVectorIndex = false;
     this.bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
