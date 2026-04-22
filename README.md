@@ -23,45 +23,43 @@ OpenTrace indexes source code and builds a queryable knowledge graph. Point it a
 
 ## Get Started
 
-**No install:** **[oss.opentrace.ai](https://oss.opentrace.ai)** — runs entirely in your browser.
-
-**Full documentation:** **[opentrace.github.io/opentrace](https://opentrace.github.io/opentrace/)** — install guides, architecture, and reference.
-
-Pick the path that matches what you want to do:
-
-| You want to…                          | Use                              | Guide |
-|---------------------------------------|----------------------------------|-------|
-| See what OpenTrace is                 | Browser                          | [Browser](https://opentrace.github.io/opentrace/getting-started/install-browser/) |
-| Give Claude Code codebase awareness   | Claude Code plugin               | [Plugin](https://opentrace.github.io/opentrace/getting-started/install-plugin/) |
-| Index repos from a terminal           | CLI (`uvx` / `uv tool`)          | [CLI](https://opentrace.github.io/opentrace/getting-started/install-cli/) |
-| Hack on OpenTrace itself              | Source build                     | [Source](https://opentrace.github.io/opentrace/development/setup/) |
-
-**Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.12+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
-
-
-### Quick Start CLI Examples
-
-~~~bash
-cd ${PROJECT_DIR}
-
-# Claude Code
-claude plugin marketplace add https://github.com/opentrace/opentrace
-claude plugin install opentrace-oss@opentrace-oss
-claude
-
-# Gemini
-uvx opentraceai index .
-gemini mcp add opentraceai uvx opentraceai mcp
-gemini
+### Linux/MacOS
+~~~sh
+uvx opentraceai index .   # Index a local project for use with MCP etc
 ~~~
 
-### Quick Start Local UI
+### Claude Plugin
+~~~
+/plugin marketplace add https://github.com/opentrace/opentrace
+/plugin install opentrace-oss@opentrace-oss
+/reload-plugins
+~~~
 
-```bash
-# Source
+More info: https://opentrace.github.io/opentrace/getting-started/install-plugin/
+
+### Gemini CLI
+~~~sh
+gemini mcp add opentraceai uvx opentraceai mcp
+~~~
+
+### Run Completely in the Browser
+
+**No install:** **[oss.opentrace.ai](https://oss.opentrace.ai)**
+
+### Run UI Locally
+
+```sh
 git clone https://github.com/opentrace/opentrace.git && cd opentrace
 make install && make ui  # Runs on http://localhost:5173/
 ```
+
+### More Information
+
+**Full documentation:** **[opentrace.github.io/opentrace](https://opentrace.github.io/opentrace/)** — install guides, architecture, and reference.
+
+
+**Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.12+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
+
 
 ## Claude Code Plugin
 
