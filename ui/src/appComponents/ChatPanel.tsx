@@ -784,6 +784,26 @@ export default function ChatPanel({
     setEditText('');
     await sendMessage(trimmed, original.images, original.attachments);
   };
+  const regenerateMessage = async (assistantIndex: number) => {
+    let userIdx = -1;
+    for (let k = assistantIndex - 1; k >= 0; k--) {
+      if (messages[k].role === 'user') {
+        userIdx = k;
+        break;
+      }
+    }
+    if (userIdx < 0) return;
+    const userMsg = messages[userIdx];
+    if (streaming) {
+      abortRef.current?.abort();
+      streamingRef.current = false;
+      setStreaming(false);
+    }
+    const truncated = messages.slice(0, userIdx);
+    setMessages(truncated);
+    messagesRef.current = truncated;
+    await sendMessage(userMsg.content, userMsg.images, userMsg.attachments);
+  };
   const handleTemplate = (prompt: string) => sendMessage(prompt);
 
   const addAttachments = useCallback(
@@ -1424,11 +1444,40 @@ export default function ChatPanel({
                     )}
                   </div>
                   {m.role === 'assistant' &&
-                    (m as AssistantMessage).usage &&
-                    !(streaming && i === messages.length - 1) && (
-                      <TokenUsageFooter
-                        usage={(m as AssistantMessage).usage!}
-                      />
+                    !(streaming && i === messages.length - 1) &&
+                    ((m as AssistantMessage).usage ||
+                      (i === messages.length - 1 && lastUserIdx >= 0)) && (
+                      <div className="assistant-message-footer">
+                        {(m as AssistantMessage).usage && (
+                          <TokenUsageFooter
+                            usage={(m as AssistantMessage).usage!}
+                          />
+                        )}
+                        {i === messages.length - 1 && lastUserIdx >= 0 && (
+                          <button
+                            className="regenerate-message-btn"
+                            onClick={() => regenerateMessage(i)}
+                            title="Regenerate response"
+                            aria-label="Regenerate response"
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+                              <path d="M21 3v5h-5" />
+                              <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+                              <path d="M3 21v-5h5" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     )}
                   {m.role === 'user' &&
                     i === lastUserIdx &&

@@ -623,7 +623,8 @@
   box-sizing: border-box;
 }
 
-.edit-message-btn {
+.edit-message-btn,
+.regenerate-message-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -637,9 +638,26 @@
   transition: all 0.15s;
 }
 
-.edit-message-btn:hover {
+.edit-message-btn:hover,
+.regenerate-message-btn:hover {
   color: var(--foreground);
   background: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+
+.regenerate-message-btn {
+  padding: 2px 4px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.regenerate-message-btn:hover {
+  opacity: 1;
+}
+
+.assistant-message-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* When editing, expand the user message to the full chat-panel width */
