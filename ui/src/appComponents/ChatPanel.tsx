@@ -794,6 +794,7 @@ export default function ChatPanel({
     }
     if (userIdx < 0) return;
     const userMsg = messages[userIdx];
+    if (userMsg.role !== 'user') return;
     if (streaming) {
       abortRef.current?.abort();
       streamingRef.current = false;
