@@ -368,6 +368,16 @@ export default function AddRepoModal({
     return onValidate(repoUrl);
   }, [source, repoUrl, onValidate]);
 
+  // Flag example repos already indexed by the consumer so we can disable
+  // them in the picker — clicking one would just land on the duplicate
+  // warning, so short-circuit that with a non-interactive chip.
+  const exampleRepoReasons = useMemo(() => {
+    if (!onValidate) return {} as Record<string, string | null>;
+    return Object.fromEntries(
+      EXAMPLE_REPOS.map((repo) => [repo.url, onValidate(repo.url)]),
+    );
+  }, [onValidate]);
+
   // Derive directory name from FileList
   const directoryName =
     selectedFiles?.[0]?.webkitRelativePath?.split('/')[0] ?? '';
@@ -715,22 +725,27 @@ export default function AddRepoModal({
                 {!provider && (
                   <div className="example-repos">
                     <span className="example-repos-label">Examples:</span>
-                    {EXAMPLE_REPOS.map((repo) => (
-                      <button
-                        key={repo.url}
-                        type="button"
-                        className="example-repo-chip"
-                        onClick={() => setRepoUrl(repo.url)}
-                        title={repo.description}
-                      >
-                        {repo.name}
-                        <span
-                          className={`example-repo-size example-repo-size--${repo.size.toLowerCase()}`}
+                    {EXAMPLE_REPOS.map((repo) => {
+                      const reason = exampleRepoReasons[repo.url];
+                      return (
+                        <button
+                          key={repo.url}
+                          type="button"
+                          className="example-repo-chip"
+                          onClick={() => setRepoUrl(repo.url)}
+                          disabled={!!reason}
+                          title={reason || repo.description}
+                          data-testid={`example-repo-chip-${repo.name}`}
                         >
-                          {repo.size}
-                        </span>
-                      </button>
-                    ))}
+                          {repo.name}
+                          <span
+                            className={`example-repo-size example-repo-size--${repo.size.toLowerCase()}`}
+                          >
+                            {repo.size}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 
