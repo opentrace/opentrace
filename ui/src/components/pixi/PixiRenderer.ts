@@ -1763,7 +1763,7 @@ export class PixiRenderer {
     let lastPointerX = 0;
     let lastPointerY = 0;
 
-    // Suppress the browser's right-click menu so right-drag can rotate in 3D mode.
+    // Suppress the browser's right-click menu so right-drag can pan in 3D mode.
     canvas.addEventListener(
       'contextmenu',
       (e) => {
@@ -1782,7 +1782,7 @@ export class PixiRenderer {
         lastPointerY = e.clientY;
         this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
-        // Hit test — only left button drags nodes; right button rotates in 3D.
+        // Hit test — only left button drags nodes; left-drag on empty area rotates in 3D.
         if (e.button === 0) {
           const rect = canvas.getBoundingClientRect();
           const screenX = e.clientX - rect.left;
@@ -1852,8 +1852,8 @@ export class PixiRenderer {
             }
             this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
             this.redrawDragEdges(this.dragNode);
-          } else if (this.mode3d && pointerDownButton === 2) {
-            // 3D mode + right-drag: rotate the camera
+          } else if (this.mode3d && pointerDownButton === 0) {
+            // 3D mode + left-drag on empty area: rotate the camera
             const rotateDx = e.clientX - lastPointerX;
             const rotateDy = e.clientY - lastPointerY;
             // Horizontal drag → Y-axis rotation
