@@ -178,14 +178,17 @@ describe('LadybugGraphStore deleteRepo', () => {
   it('prunes in-memory state keyed by the repo but spares other repos', async () => {
     const { store, s, connQuery } = makeStoreWithMockConn();
 
-    // The post-delete pass queries surviving Dependency rows to rebuild
-    // the in-memory dedup set. Make the mock return the shared package
-    // so the assertion below sees a set populated from DB ground truth.
+    // The post-delete pass runs two Dependency reads in order: the
+    // orphan-sweep query (distinguished by `count(r)`) which should see
+    // no orphans here because lodash is still referenced by bob/bar, and
+    // the dedup-set rebuild which returns surviving rows.
     connQuery.mockImplementation(async (cypher: string) => ({
-      getAllObjects: async () =>
-        cypher.includes('(n:Dependency)') && cypher.includes('RETURN n.id')
-          ? [{ id: 'pkg:npm:lodash' }]
-          : [],
+      getAllObjects: async () => {
+        if (!cypher.includes('(n:Dependency)')) return [];
+        if (cypher.includes('count(r)')) return []; // orphan sweep
+        if (cypher.includes('RETURN n.id')) return [{ id: 'pkg:npm:lodash' }];
+        return [];
+      },
       close: async () => {},
     }));
 
@@ -317,14 +320,20 @@ describe('LadybugGraphStore deleteRepo', () => {
     // ground truth. The guard only works if the set matches the DB.
     const { store, s, connQuery } = makeStoreWithMockConn();
     connQuery.mockImplementation(async (cypher: string) => ({
-      getAllObjects: async () =>
-        cypher.includes('(n:Dependency)') && cypher.includes('RETURN n.id')
-          ? [
-              { id: 'pkg:npm:lodash' },
-              { id: 'pkg:npm:react' },
-              { id: 'pkg:pypi:requests' },
-            ]
-          : [],
+      getAllObjects: async () => {
+        if (!cypher.includes('(n:Dependency)')) return [];
+        // Orphan sweep (distinguished by `count(r)`): none here — the
+        // focus of this test is the rebuild path, not the sweep.
+        if (cypher.includes('count(r)')) return [];
+        if (cypher.includes('RETURN n.id')) {
+          return [
+            { id: 'pkg:npm:lodash' },
+            { id: 'pkg:npm:react' },
+            { id: 'pkg:pypi:requests' },
+          ];
+        }
+        return [];
+      },
       close: async () => {},
     }));
 
@@ -342,5 +351,96 @@ describe('LadybugGraphStore deleteRepo', () => {
       'pkg:npm:react',
       'pkg:pypi:requests',
     ]);
+  });
+
+  it('sweeps Dependency nodes left orphaned by the deleted repo', async () => {
+    // After deleteRepo's RELATES sweep removes this repo's DEPENDS_ON /
+    // IMPORTS edges, any Dependency with zero remaining incoming edges
+    // was exclusively owned by this repo (Dependencies are only ever
+    // created paired with an edge) and is safe to delete. Shared
+    // dependencies still have edges from other repos and must survive.
+    const { store, connQuery } = makeStoreWithMockConn();
+    connQuery.mockImplementation(async (cypher: string) => ({
+      getAllObjects: async () => {
+        if (!cypher.includes('(n:Dependency)')) return [];
+        // Orphan sweep: one package exclusively used by alice/foo.
+        if (cypher.includes('count(r)')) {
+          return [{ id: 'pkg:npm:only-used-by-alice' }];
+        }
+        // Dedup rebuild (runs after the sweep): the shared survivor.
+        if (cypher.includes('RETURN n.id')) {
+          return [{ id: 'pkg:npm:lodash' }];
+        }
+        return [];
+      },
+      close: async () => {},
+    }));
+
+    await store.deleteRepo('alice/foo');
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+
+    // The orphan-detection query ran.
+    expect(
+      cyphers.some(
+        (c: string) =>
+          c.includes('MATCH (n:Dependency)') && c.includes('count(r)'),
+      ),
+    ).toBe(true);
+
+    // A Dependency DELETE was issued, targeting the orphan id.
+    const depDelete = cyphers.find(
+      (c: string) =>
+        c.startsWith('MATCH (n:Dependency)') && c.includes('DELETE n'),
+    );
+    expect(depDelete).toBeDefined();
+    expect(depDelete).toContain("'pkg:npm:only-used-by-alice'");
+    // The survivor is not in the DELETE target list.
+    expect(depDelete).not.toContain("'pkg:npm:lodash'");
+    // The DELETE predicate is an id-list, not a repo-prefix clause.
+    expect(depDelete).not.toContain("'alice/foo'");
+
+    // Ordering: sweep must run before rebuildPackageDedupIndex. If the
+    // rebuild ran first it would populate flushedPackageIds from rows
+    // that the sweep then deletes, leaving stale ids in the guard — a
+    // later re-index of the same repo would skip the COPY for those
+    // packages and leave rels pointing at non-existent Dependencies.
+    const orphanQueryIdx = cyphers.findIndex(
+      (c: string) =>
+        c.includes('MATCH (n:Dependency)') && c.includes('count(r)'),
+    );
+    const orphanDeleteIdx = cyphers.findIndex(
+      (c: string) =>
+        c.startsWith('MATCH (n:Dependency)') && c.includes('DELETE n'),
+    );
+    const rebuildIdx = cyphers.findIndex(
+      (c: string) =>
+        c.startsWith('MATCH (n:Dependency)') &&
+        c.includes('RETURN n.id') &&
+        !c.includes('count(r)'),
+    );
+    expect(orphanQueryIdx).toBeGreaterThanOrEqual(0);
+    expect(orphanDeleteIdx).toBeGreaterThanOrEqual(0);
+    expect(rebuildIdx).toBeGreaterThanOrEqual(0);
+    expect(orphanQueryIdx).toBeLessThan(rebuildIdx);
+    expect(orphanDeleteIdx).toBeLessThan(rebuildIdx);
+  });
+
+  it('skips the Dependency DELETE when no orphans exist', async () => {
+    // When the orphan query returns zero rows, sweepOrphanedDependencies
+    // returns early and never issues the DELETE. Guards against
+    // accidentally running `DELETE n ... WHERE n.id IN []` which some
+    // Cypher engines either reject or interpret unfavorably.
+    const { store, connQuery } = makeStoreWithMockConn();
+
+    await store.deleteRepo('alice/foo');
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    expect(
+      cyphers.some(
+        (c: string) =>
+          c.startsWith('MATCH (n:Dependency)') && c.includes('DELETE n'),
+      ),
+    ).toBe(false);
   });
 });
