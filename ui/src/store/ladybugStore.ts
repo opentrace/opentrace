@@ -1607,7 +1607,31 @@ export class LadybugGraphStore implements GraphStore {
       if (matches(id)) this.flushedSourceIds.delete(id);
     }
 
+    await this.sweepOrphanedDependencies();
     await this.rebuildPackageDedupIndex();
+  }
+
+  /** Delete Dependency nodes left with no incoming edges after
+   *  deleteRepo's RELATES sweep. Safe because Dependency nodes are only
+   *  ever created paired with an edge (DEPENDS_ON from Repository during
+   *  manifest parsing, IMPORTS from File during import analysis), so zero
+   *  incoming edges means the node was exclusively referenced by the
+   *  just-deleted repo. MUST run after the RELATES sweep, and before
+   *  rebuildPackageDedupIndex so flushedPackageIds resyncs from the
+   *  surviving rows. */
+  private async sweepOrphanedDependencies(): Promise<void> {
+    const orphans = (await this.query(
+      `MATCH (n:Dependency) ` +
+        `OPTIONAL MATCH ()-[r:RELATES]->(n) ` +
+        `WITH n, count(r) AS refs ` +
+        `WHERE refs = 0 ` +
+        `RETURN n.id AS id`,
+    )) as { id: string }[];
+    if (orphans.length === 0) return;
+    const idList = orphans.map((o) => `'${esc(o.id)}'`).join(', ');
+    await this.exec(
+      `MATCH (n:Dependency) WHERE n.id IN [${idList}] DELETE n`,
+    );
   }
 
   /** Rebuild `flushedPackageIds` from the current Dependency rows.
