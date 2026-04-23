@@ -1629,9 +1629,7 @@ export class LadybugGraphStore implements GraphStore {
     )) as { id: string }[];
     if (orphans.length === 0) return;
     const idList = orphans.map((o) => `'${esc(o.id)}'`).join(', ');
-    await this.exec(
-      `MATCH (n:Dependency) WHERE n.id IN [${idList}] DELETE n`,
-    );
+    await this.exec(`MATCH (n:Dependency) WHERE n.id IN [${idList}] DELETE n`);
   }
 
   /** Rebuild `flushedPackageIds` from the current Dependency rows.

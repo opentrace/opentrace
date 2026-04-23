@@ -183,15 +183,9 @@ def test_dependency_nodes_are_never_orphaned(tmp_path: Path) -> None:
     # also imports numpy, which is not declared in requirements.txt.
     # This covers all three possible Dependency provenances in one
     # fixture: manifest-only, import-only, and both.
-    (tmp_path / "requirements.txt").write_text(
-        "requests==2.31.0\npyyaml==6.0\nclick==8.1.7\n"
-    )
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\npyyaml==6.0\nclick==8.1.7\n")
     (tmp_path / "app.py").write_text(
-        "import requests\n"
-        "import numpy\n"
-        "\n"
-        "def fetch():\n"
-        "    return requests.get('https://example.com')\n"
+        "import requests\nimport numpy\n\ndef fetch():\n    return requests.get('https://example.com')\n"
     )
 
     inp = PipelineInput(path=str(tmp_path), repo_id="test/deps")
