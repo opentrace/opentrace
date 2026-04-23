@@ -55,6 +55,7 @@ export const INCLUDED_EXTENSIONS = new Set([
   '.hpp',
   '.cs',
   '.swift',
+  '.php',
   '.yaml',
   '.yml',
   '.json',
@@ -87,6 +88,7 @@ export const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   '.hpp': 'cpp',
   '.cs': 'csharp',
   '.swift': 'swift',
+  '.php': 'php',
   '.sh': 'bash',
   '.bash': 'bash',
   '.json': 'json',
@@ -111,6 +113,7 @@ export const PARSEABLE_LANGUAGES = new Set([
   'cpp',
   'ruby',
   'swift',
+  'php',
 ]);
 
 /** File extensions that map to a parseable language (i.e. can contain symbols). */
