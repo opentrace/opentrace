@@ -71,6 +71,7 @@ const PARSER_WASM_MAP: Record<string, string> = {
   cpp: 'tree-sitter-cpp.wasm',
   csharp: 'tree-sitter-c_sharp.wasm',
   swift: 'tree-sitter-swift.wasm',
+  php: 'tree-sitter-php.wasm',
 };
 
 async function loadParser(wasmFile: string): Promise<Parser> {
