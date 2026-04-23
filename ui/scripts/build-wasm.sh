@@ -25,8 +25,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UI_DIR="$(dirname "$SCRIPT_DIR")"
-PUBLIC_DIR="$UI_DIR/public"
+PUBLIC_DIR="$UI_DIR/public/wasm"
 NODE_MODULES="$UI_DIR/node_modules"
+
+mkdir -p "$PUBLIC_DIR"
 
 cd "$UI_DIR"
 
