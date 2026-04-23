@@ -19,6 +19,8 @@ The OpenTrace plugin gives [Claude Code](https://docs.anthropic.com/en/docs/clau
     claude plugin install opentrace-oss@opentrace-oss
     ```
 
+    This activates the plugin everywhere.  You may optionally install with `--scope project`, which activates the plugin only in the directory where the install line was run.
+
 === "Inside Claude Code (`/plugin`)"
 
     ```text
