@@ -45,16 +45,19 @@ const repoRoot = join(
 
 async function readAllFiles(
   dir: string,
+  root: string = dir,
 ): Promise<Array<{ path: string; content: string }>> {
   const entries = await readdir(dir, { withFileTypes: true });
   const results: Array<{ path: string; content: string }> = [];
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...(await readAllFiles(fullPath)));
+      // Pass the original root down so paths are relative to the fixture root,
+      // not the current recursion level.
+      results.push(...(await readAllFiles(fullPath, root)));
     } else {
       results.push({
-        path: relative(dir, fullPath),
+        path: relative(root, fullPath),
         content: await readFile(fullPath, 'utf-8'),
       });
     }

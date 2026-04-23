@@ -243,7 +243,11 @@ function add(int $a, int $b): int {
         (n) => n.type === 'Function' && n.name === 'add(int $a, int $b)',
       );
       expect(fn).toBeDefined();
-      expect(fn!.id).toBe('testorg/testrepo/math.php::add(int $a, int $b)');
+      // PHP is typed:false in the generic config, so typeSignature is null
+      // and the node ID uses the bare name. The raw param text only surfaces
+      // in the display name.
+      expect(fn!.id).toBe('testorg/testrepo/math.php::add');
+      expect(fn!.properties?.signature).toBe('(int $a, int $b)');
     });
 
     it('records the trait subtype on PHP traits', () => {
@@ -279,10 +283,13 @@ class UserService {
       );
       expect(cls).toBeDefined();
 
+      // ID uses the bare method name (PHP is typed:false → typeSignature
+      // null); the raw params land in the display name instead.
       const method = nodes.find(
-        (n) => n.type === 'Function' && n.id === `${cls!.id}::find(int $id)`,
+        (n) => n.type === 'Function' && n.id === `${cls!.id}::find`,
       );
       expect(method).toBeDefined();
+      expect(method!.name).toBe('find(int $id)');
     });
 
     it('stats count PHP classes and functions', () => {
