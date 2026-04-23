@@ -58,6 +58,7 @@ let rubyParser: Parser | null = null;
 let csharpParser: Parser | null = null;
 let kotlinParser: Parser | null = null;
 let swiftParser: Parser | null = null;
+let phpParser: Parser | null = null;
 
 export async function getTsParser(): Promise<Parser> {
   await ensureInit();
@@ -211,6 +212,16 @@ export async function getSwiftParser(): Promise<Parser> {
   return swiftParser;
 }
 
+export async function getPhpParser(): Promise<Parser> {
+  await ensureInit();
+  if (!phpParser) {
+    phpParser = new Parser();
+    const lang = await loadLanguage('tree-sitter-php.wasm');
+    phpParser.setLanguage(lang);
+  }
+  return phpParser;
+}
+
 /** Parse Rust source and return root node. */
 export async function parseRust(source: string): Promise<SyntaxNode> {
   const parser = await getRustParser();
@@ -272,5 +283,13 @@ export async function parseSwift(source: string): Promise<SyntaxNode> {
   const parser = await getSwiftParser();
   const tree = parser.parse(source);
   if (!tree) throw new Error('Failed to parse Swift source');
+  return tree.rootNode;
+}
+
+/** Parse PHP source and return root node. */
+export async function parsePhp(source: string): Promise<SyntaxNode> {
+  const parser = await getPhpParser();
+  const tree = parser.parse(source);
+  if (!tree) throw new Error('Failed to parse PHP source');
   return tree.rootNode;
 }

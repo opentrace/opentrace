@@ -80,6 +80,7 @@ const WASM_FILES: Record<string, string> = {
   java: 'tree-sitter-java.wasm',
   json: 'tree-sitter-json.wasm',
   kotlin: 'tree-sitter-kotlin.wasm',
+  php: 'tree-sitter-php.wasm',
   python: 'tree-sitter-python.wasm',
   ruby: 'tree-sitter-ruby.wasm',
   rust: 'tree-sitter-rust.wasm',
