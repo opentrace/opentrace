@@ -36,6 +36,7 @@ import {
   parseCsharp,
   parseKotlin,
   parseSwift,
+  parsePhp,
 } from './helpers';
 import {
   normalizeSymbolGeneric,
@@ -71,6 +72,7 @@ const GENERIC_LANGUAGES: Array<{
   { name: 'Ruby', ext: '.rb', lang: 'ruby', parse: parseRuby },
   { name: 'Rust', ext: '.rs', lang: 'rust', parse: parseRust },
   { name: 'Swift', ext: '.swift', lang: 'swift', parse: parseSwift },
+  { name: 'PHP', ext: '.php', lang: 'php', parse: parsePhp },
 ];
 
 for (const { name, ext, lang, parse } of GENERIC_LANGUAGES) {

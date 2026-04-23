@@ -21,11 +21,17 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { runPipeline, initParsers } from '../pipeline';
 import { MemoryStore } from '../store/memory';
 import type { PipelineEvent } from '../types';
-import { getPythonParser, makeRepoTree } from './helpers';
+import { getPhpParser, getPythonParser, makeRepoTree } from './helpers';
 
 beforeAll(async () => {
   const pyParser = await getPythonParser();
-  initParsers(new Map([['python', pyParser]]));
+  const phpParser = await getPhpParser();
+  initParsers(
+    new Map([
+      ['python', pyParser],
+      ['php', phpParser],
+    ]),
+  );
 });
 
 const repoRoot = join(
@@ -234,5 +240,73 @@ describe('fixture: Python project', () => {
     expect(done!.result!.classesExtracted).toBe(2);
     // db.py: 4 methods + main.py: 2 functions + service.py: 4 methods + 3 functions = 13
     expect(done!.result!.functionsExtracted).toBe(13);
+  });
+});
+
+describe('fixture: PHP project', () => {
+  it('indexes PHP project and extracts namespaced classes', async () => {
+    const fixtureDir = join(repoRoot, 'tests', 'fixtures', 'php', 'project');
+    const files = await readAllFiles(fixtureDir);
+
+    const { events, store } = runAndLog(files, {
+      owner: 'fixture',
+      repo: 'php-project',
+    });
+
+    const done = events.find((e) => e.kind === 'done');
+    expect(done).toBeDefined();
+
+    // Repository + File nodes
+    const repoNode = store.nodes.get('fixture/php-project');
+    expect(repoNode?.type).toBe('Repository');
+
+    const fileNodes = [...store.nodes.values()].filter(
+      (n) => n.type === 'File',
+    );
+    expect(fileNodes).toHaveLength(files.length);
+
+    // Only .php files are parsed
+    const phpFiles = files.filter((f) => f.path.endsWith('.php'));
+    expect(done!.result?.filesProcessed).toBe(phpFiles.length);
+
+    // UserDatabase class + methods
+    const userDb = store.nodes.get(
+      'fixture/php-project/src/Database/UserDatabase.php::UserDatabase',
+    );
+    expect(userDb).toBeDefined();
+    expect(userDb!.type).toBe('Class');
+
+    const classNodes = [...store.nodes.values()].filter(
+      (n) => n.type === 'Class',
+    );
+    const classNames = classNodes.map((n) => n.name).sort();
+    expect(classNames).toContain('UserDatabase');
+    expect(classNames).toContain('UserController');
+
+    // Methods exist as Function nodes beneath the class
+    const userDbMethods = [...store.nodes.values()].filter(
+      (n) =>
+        n.type === 'Function' &&
+        n.id.startsWith(
+          'fixture/php-project/src/Database/UserDatabase.php::UserDatabase::',
+        ),
+    );
+    const methodNames = userDbMethods.map((n) => n.name);
+    expect(methodNames.some((n) => n.startsWith('__construct'))).toBe(true);
+    expect(methodNames.some((n) => n.startsWith('initializeSchema'))).toBe(
+      true,
+    );
+    expect(methodNames.some((n) => n.startsWith('getAllUsers'))).toBe(true);
+    expect(methodNames.some((n) => n.startsWith('insertUser'))).toBe(true);
+
+    // All DEFINES relationship endpoints point to valid nodes
+    for (const rel of store.relationships.values()) {
+      expect(store.nodes.has(rel.source_id)).toBe(true);
+      expect(store.nodes.has(rel.target_id)).toBe(true);
+    }
+
+    // Stats: UserDatabase (4 methods) + UserController (3 methods) = 2 classes, 7 functions
+    expect(done!.result!.classesExtracted).toBe(2);
+    expect(done!.result!.functionsExtracted).toBe(7);
   });
 });

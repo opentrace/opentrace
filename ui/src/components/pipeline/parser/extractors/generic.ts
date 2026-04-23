@@ -61,6 +61,8 @@ const SUBTYPE_MAP: Record<string, string> = {
   trait_item: 'trait',
   // Swift
   protocol_declaration: 'protocol',
+  // PHP (interface_declaration/enum_declaration already mapped above for C#)
+  trait_declaration: 'trait',
 };
 
 const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
@@ -144,6 +146,29 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
     ]),
     paramChildTypes: new Set(['parameter']),
     typed: true,
+  },
+  php: {
+    classTypes: new Set([
+      'class_declaration',
+      'interface_declaration',
+      'trait_declaration',
+      'enum_declaration',
+    ]),
+    functionTypes: new Set(['function_definition', 'method_declaration']),
+    containerTypes: new Set([
+      'class_declaration',
+      'interface_declaration',
+      'trait_declaration',
+      'enum_declaration',
+      'namespace_definition',
+    ]),
+    paramChildTypes: new Set([
+      'simple_parameter',
+      'variadic_parameter',
+      'property_promotion_parameter',
+    ]),
+    // PHP has optional type hints — leave `typed` off so untyped params don't
+    // invalidate the signature
   },
 };
 

@@ -47,7 +47,8 @@ be served as static assets for browser-based code parsing.
 Options:
   --languages <list>  Comma-separated list of languages (default: all)
                       Available: python, typescript, tsx, go, rust, java,
-                      kotlin, ruby, c, cpp, csharp, swift, bash, json, toml
+                      kotlin, ruby, c, cpp, csharp, swift, php, bash, json,
+                      toml
   --runtime-only      Copy only the web-tree-sitter.wasm runtime
   --help              Show this help message
 

@@ -33,6 +33,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   '.hpp': 'cpp',
   '.cs': 'csharp',
   '.swift': 'swift',
+  '.php': 'php',
 };
 
 export function getExtension(path: string): string {

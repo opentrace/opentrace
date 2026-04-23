@@ -56,7 +56,7 @@ for entry in "${STANDARD_GRAMMARS[@]}"; do
   IFS=':' read -r pkg_suffix _ <<< "$entry"
   GRAMMAR_PKGS+=( "tree-sitter-$pkg_suffix" )
 done
-GRAMMAR_PKGS+=( "tree-sitter-typescript" )
+GRAMMAR_PKGS+=( "tree-sitter-typescript" "tree-sitter-php" )
 
 echo "Installing tree-sitter grammars..."
 npm install --no-save --legacy-peer-deps "${GRAMMAR_PKGS[@]}"
@@ -87,6 +87,22 @@ if [ -d "$TS_PKG" ]; then
   npx tree-sitter build --wasm -o "$PUBLIC_DIR/tree-sitter-tsx.wasm" "$TS_PKG/tsx"
 else
   echo "  SKIP tree-sitter-typescript (not installed)"
+fi
+
+# PHP has subdirectory layout (php handles embedded HTML; php_only is pure PHP).
+# We use `php` since source files typically open with <?php tags.
+PHP_PKG="$NODE_MODULES/tree-sitter-php"
+if [ -d "$PHP_PKG" ]; then
+  if [ -d "$PHP_PKG/php" ]; then
+    echo "  Building tree-sitter-php..."
+    npx tree-sitter build --wasm -o "$PUBLIC_DIR/tree-sitter-php.wasm" "$PHP_PKG/php"
+  else
+    # Older layouts ship the grammar at the package root
+    echo "  Building tree-sitter-php (flat layout)..."
+    npx tree-sitter build --wasm -o "$PUBLIC_DIR/tree-sitter-php.wasm" "$PHP_PKG"
+  fi
+else
+  echo "  SKIP tree-sitter-php (not installed)"
 fi
 
 echo ""

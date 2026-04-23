@@ -52,6 +52,19 @@ export async function parsePython(source: string): Promise<SyntaxNode> {
   return tree.rootNode;
 }
 
+let phpParser: Parser | null = null;
+
+export async function getPhpParser(): Promise<Parser> {
+  await initTreeSitter();
+  if (!phpParser) {
+    phpParser = new Parser();
+    const buf = await readFile(getWasmPath('php'));
+    const lang = await Language.load(buf);
+    phpParser.setLanguage(lang);
+  }
+  return phpParser;
+}
+
 export function makeRepoTree(
   files: Array<{ path: string; content?: string }>,
   opts?: {
