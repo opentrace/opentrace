@@ -215,9 +215,7 @@ class Greeter {
         { path: 'src/Greeter.php', content: src },
       ]);
 
-      const cls = nodes.find(
-        (n) => n.type === 'Class' && n.name === 'Greeter',
-      );
+      const cls = nodes.find((n) => n.type === 'Class' && n.name === 'Greeter');
       expect(cls).toBeDefined();
       expect(cls!.id).toBe('testorg/testrepo/src/Greeter.php::Greeter');
 
@@ -227,10 +225,7 @@ class Greeter {
 
       // Both methods appear as Function children
       const methodNames = nodes
-        .filter(
-          (n) =>
-            n.type === 'Function' && n.id.startsWith(`${cls!.id}::`),
-        )
+        .filter((n) => n.type === 'Function' && n.id.startsWith(`${cls!.id}::`))
         .map((n) => n.name);
       expect(methodNames).toContain('__construct(string $name)');
       expect(methodNames).toContain('greet()');
@@ -285,9 +280,7 @@ class UserService {
       expect(cls).toBeDefined();
 
       const method = nodes.find(
-        (n) =>
-          n.type === 'Function' &&
-          n.id === `${cls!.id}::find(int $id)`,
+        (n) => n.type === 'Function' && n.id === `${cls!.id}::find(int $id)`,
       );
       expect(method).toBeDefined();
     });
