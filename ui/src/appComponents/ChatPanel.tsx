@@ -56,6 +56,7 @@ import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
 import { PRClient, parseRepoUrl } from '../pr/client';
 import { useResizablePanel } from '../hooks/useResizablePanel';
+import { PanelResizeHandle } from '@opentrace/components';
 import { useConversation } from '../chat/useConversation';
 import PRListPanel from './PRListPanel';
 import './ChatPanel.css';
@@ -899,7 +900,7 @@ export default function ChatPanel({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="chat-panel-drag-handle" onMouseDown={handleMouseDown} />
+      <PanelResizeHandle side="left" onMouseDown={handleMouseDown} />
       {dragOver && (
         <div className="image-drop-overlay">
           <div className="image-drop-overlay-content">

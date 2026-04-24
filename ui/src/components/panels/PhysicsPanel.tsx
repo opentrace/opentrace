@@ -15,6 +15,11 @@
  */
 
 import { useCallback, useRef, useEffect } from 'react';
+import {
+  useResizablePanel,
+  useResizablePanelHeight,
+} from '../../hooks/useResizablePanel';
+import PanelResizeHandle from './PanelResizeHandle';
 import './PhysicsPanel.css';
 
 interface PhysicsPanelProps {
@@ -108,6 +113,21 @@ export default function PhysicsPanel({
   mode3dTilt = 35,
   onMode3dTiltChange,
 }: PhysicsPanelProps) {
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: 'ot_physics_panel_width',
+    defaultWidth: 240,
+    minWidth: 220,
+    maxWidth: 420,
+    side: 'left',
+  });
+  const { height: panelHeight, handleMouseDown: onHeightDrag } =
+    useResizablePanelHeight({
+      storageKey: 'ot_physics_panel_height',
+      minHeight: 240,
+      maxHeight: 900,
+      side: 'top',
+    });
+
   // Debounce repulsion slider changes (200ms)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localRef = useRef(repulsion);
@@ -140,7 +160,26 @@ export default function PhysicsPanel({
   }, []);
 
   return (
-    <div className="physics-panel">
+    <div
+      className="physics-panel"
+      style={
+        {
+          '--physics-panel-width': `${panelWidth}px`,
+          ...(panelHeight != null
+            ? { '--physics-panel-height': `${panelHeight}px` }
+            : {}),
+        } as React.CSSProperties
+      }
+    >
+      <PanelResizeHandle side="left" onMouseDown={handleMouseDown} />
+      <PanelResizeHandle side="top" onMouseDown={onHeightDrag} />
+      <PanelResizeHandle
+        side="top-left"
+        onMouseDown={(e) => {
+          handleMouseDown(e);
+          onHeightDrag(e);
+        }}
+      />
       <h4 className="physics-panel-title">Display</h4>
 
       <div

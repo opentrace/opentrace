@@ -20,7 +20,13 @@
   bottom: 20px;
   right: 68px;
   z-index: 10;
-  width: 240px;
+  width: var(--physics-panel-width, 240px);
+  /* Height: auto until the user drags the top edge, then an explicit pixel
+   * height. Cap at 80vh so the default content-height never overflows the
+   * viewport on short screens. */
+  height: var(--physics-panel-height, auto);
+  max-height: 80vh;
+  overflow-y: auto;
   background: color-mix(in oklch, var(--background) 85%, transparent);
   backdrop-filter: blur(12px);
   border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);

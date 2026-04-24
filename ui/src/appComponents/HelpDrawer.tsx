@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { PanelResizeHandle } from '@opentrace/components';
+import { useResizablePanel } from '../hooks/useResizablePanel';
 import './HelpDrawer.css';
 
 interface HelpDrawerProps {
@@ -29,8 +31,22 @@ export default function HelpDrawer({
   onOpenChat,
   onOpenSettings,
 }: HelpDrawerProps) {
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: 'ot_help_drawer_width',
+    defaultWidth: 380,
+    minWidth: 320,
+    maxWidth: 640,
+    side: 'left',
+  });
+
   return (
-    <div className="help-drawer">
+    <div
+      className="help-drawer"
+      style={
+        { '--help-drawer-width': `${panelWidth}px` } as React.CSSProperties
+      }
+    >
+      <PanelResizeHandle side="left" onMouseDown={handleMouseDown} />
       <div className="panel-header">
         <h3>Getting Started</h3>
         <button className="close-btn" onClick={onClose}>

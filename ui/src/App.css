@@ -533,33 +533,6 @@
   padding-top: 64px;
 }
 
-/* Drag handle on the left edge */
-.chat-panel-drag-handle {
-  position: absolute;
-  top: 0;
-  left: -3px;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  z-index: 20;
-}
-
-.chat-panel-drag-handle::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 2px;
-  bottom: 0;
-  width: 2px;
-  background: transparent;
-  transition: background 0.15s;
-}
-
-.chat-panel-drag-handle:hover::after,
-.chat-panel-drag-handle:active::after {
-  background: var(--primary);
-}
-
 @keyframes slideInRight {
   from {
     transform: translateX(100%);
@@ -1608,10 +1581,6 @@
     border-top: 1px solid var(--border);
     padding-top: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
-  }
-
-  .chat-panel-drag-handle {
-    display: none;
   }
 
   .chat-input-area {

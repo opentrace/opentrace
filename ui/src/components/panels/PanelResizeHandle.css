@@ -1,0 +1,246 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Shared drag handle for every resizable panel. A faint bar is always visible
+ * so users can discover the handle without hovering first.
+ *
+ * The bar is inset 10px from each end so it tucks inside panels with rounded
+ * corners (≤ 10px radius) and doesn't overshoot. Panels that want a different
+ * inset can set `--ot-panel-resize-inset` on the panel root. */
+
+.ot-panel-resize-handle {
+  position: absolute;
+  z-index: 20;
+  --ot-panel-resize-inset: 10px;
+}
+
+/* ── Edges ───────────────────────────────────────────────────────────── */
+
+/* Vertical edges — horizontal drag */
+.ot-panel-resize-handle--left,
+.ot-panel-resize-handle--right {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.ot-panel-resize-handle--left {
+  left: -3px;
+}
+
+.ot-panel-resize-handle--right {
+  right: -3px;
+}
+
+/* Horizontal edges — vertical drag */
+.ot-panel-resize-handle--top,
+.ot-panel-resize-handle--bottom {
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.ot-panel-resize-handle--top {
+  top: -3px;
+}
+
+.ot-panel-resize-handle--bottom {
+  bottom: -3px;
+}
+
+/* ── Corners ─────────────────────────────────────────────────────────── */
+
+.ot-panel-resize-handle--top-left,
+.ot-panel-resize-handle--top-right,
+.ot-panel-resize-handle--bottom-left,
+.ot-panel-resize-handle--bottom-right {
+  width: 14px;
+  height: 14px;
+  z-index: 21;
+}
+
+.ot-panel-resize-handle--top-left {
+  top: -3px;
+  left: -3px;
+  cursor: nwse-resize;
+}
+
+.ot-panel-resize-handle--top-right {
+  top: -3px;
+  right: -3px;
+  cursor: nesw-resize;
+}
+
+.ot-panel-resize-handle--bottom-left {
+  bottom: -3px;
+  left: -3px;
+  cursor: nesw-resize;
+}
+
+.ot-panel-resize-handle--bottom-right {
+  bottom: -3px;
+  right: -3px;
+  cursor: nwse-resize;
+}
+
+/* ── Edge indicator bars ─────────────────────────────────────────────── */
+
+.ot-panel-resize-handle--left::after,
+.ot-panel-resize-handle--right::after,
+.ot-panel-resize-handle--top::after,
+.ot-panel-resize-handle--bottom::after {
+  content: '';
+  position: absolute;
+  background: color-mix(in oklch, var(--border) 60%, transparent);
+  transition:
+    background 0.15s,
+    width 0.15s,
+    height 0.15s;
+}
+
+.ot-panel-resize-handle--left::after,
+.ot-panel-resize-handle--right::after {
+  top: var(--ot-panel-resize-inset);
+  bottom: var(--ot-panel-resize-inset);
+  width: 2px;
+}
+
+.ot-panel-resize-handle--left::after {
+  right: 2px;
+}
+
+.ot-panel-resize-handle--right::after {
+  left: 2px;
+}
+
+.ot-panel-resize-handle--top::after,
+.ot-panel-resize-handle--bottom::after {
+  left: var(--ot-panel-resize-inset);
+  right: var(--ot-panel-resize-inset);
+  height: 2px;
+}
+
+.ot-panel-resize-handle--top::after {
+  bottom: 2px;
+}
+
+.ot-panel-resize-handle--bottom::after {
+  top: 2px;
+}
+
+/* ── Corner indicator dots ───────────────────────────────────────────── */
+
+.ot-panel-resize-handle--top-left::after,
+.ot-panel-resize-handle--top-right::after,
+.ot-panel-resize-handle--bottom-left::after,
+.ot-panel-resize-handle--bottom-right::after {
+  content: '';
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: color-mix(in oklch, var(--border) 60%, transparent);
+  transition: background 0.15s;
+}
+
+.ot-panel-resize-handle--top-left::after {
+  top: 4px;
+  left: 4px;
+}
+
+.ot-panel-resize-handle--top-right::after {
+  top: 4px;
+  right: 4px;
+}
+
+.ot-panel-resize-handle--bottom-left::after {
+  bottom: 4px;
+  left: 4px;
+}
+
+.ot-panel-resize-handle--bottom-right::after {
+  bottom: 4px;
+  right: 4px;
+}
+
+/* ── Hover / active state ────────────────────────────────────────────── */
+
+.ot-panel-resize-handle:hover::after,
+.ot-panel-resize-handle:active::after {
+  background: var(--primary);
+}
+
+.ot-panel-resize-handle--left:hover::after,
+.ot-panel-resize-handle--left:active::after,
+.ot-panel-resize-handle--right:hover::after,
+.ot-panel-resize-handle--right:active::after {
+  width: 3px;
+}
+
+.ot-panel-resize-handle--top:hover::after,
+.ot-panel-resize-handle--top:active::after,
+.ot-panel-resize-handle--bottom:hover::after,
+.ot-panel-resize-handle--bottom:active::after {
+  height: 3px;
+}
+
+/* ── Corner hover/drag cascades to its two adjacent edge bars ────────── */
+
+/* Right edge brightens when a right-side corner is hovered/active */
+:has(> .ot-panel-resize-handle--top-right:is(:hover, :active))
+  > .ot-panel-resize-handle--right::after,
+:has(> .ot-panel-resize-handle--bottom-right:is(:hover, :active))
+  > .ot-panel-resize-handle--right::after {
+  background: var(--primary);
+  width: 3px;
+}
+
+/* Left edge brightens when a left-side corner is hovered/active */
+:has(> .ot-panel-resize-handle--top-left:is(:hover, :active))
+  > .ot-panel-resize-handle--left::after,
+:has(> .ot-panel-resize-handle--bottom-left:is(:hover, :active))
+  > .ot-panel-resize-handle--left::after {
+  background: var(--primary);
+  width: 3px;
+}
+
+/* Top edge brightens when a top-side corner is hovered/active */
+:has(> .ot-panel-resize-handle--top-left:is(:hover, :active))
+  > .ot-panel-resize-handle--top::after,
+:has(> .ot-panel-resize-handle--top-right:is(:hover, :active))
+  > .ot-panel-resize-handle--top::after {
+  background: var(--primary);
+  height: 3px;
+}
+
+/* Bottom edge brightens when a bottom-side corner is hovered/active */
+:has(> .ot-panel-resize-handle--bottom-left:is(:hover, :active))
+  > .ot-panel-resize-handle--bottom::after,
+:has(> .ot-panel-resize-handle--bottom-right:is(:hover, :active))
+  > .ot-panel-resize-handle--bottom::after {
+  background: var(--primary);
+  height: 3px;
+}
+
+/* ── Touch-first layouts: hide handles ───────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .ot-panel-resize-handle {
+    display: none;
+  }
+}
