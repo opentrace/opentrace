@@ -157,10 +157,19 @@ def _find_defined_symbols(
     walked ``incoming`` on the misconception that the schema was
     ``Symbol -DEFINED_IN-> File``; that schema has never existed in the
     graph, which is why impact used to always return zero symbols.)
+
+    File nodes also emit ``IMPORTS`` edges to File/Dependency nodes —
+    those happen to be filtered out today by the node-type check below
+    (Dependency/File aren't in the symbol set), but we additionally
+    gate on ``rel.type == "DEFINES"`` so a future schema addition
+    like ``File -REFERENCES-> Function`` can't silently inflate the
+    impact-affected symbol set.
     """
     neighbors = store._get_neighbors(file_node["id"], "outgoing")
     symbols: list[dict[str, Any]] = []
-    for nb_node, _nb_rel in neighbors:
+    for nb_node, nb_rel in neighbors:
+        if nb_rel.get("type") != "DEFINES":
+            continue
         if nb_node["type"] not in ("Function", "Class", "Module"):
             continue
         if not _in_line_range(nb_node, line_ranges):

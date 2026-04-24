@@ -342,6 +342,25 @@ class TestFindDefinedSymbols:
         symbols = _find_defined_symbols(store, file_node, None)
         assert symbols == [func]
 
+    def test_ignores_non_defines_edges_to_symbol_nodes(self) -> None:
+        """Defensive: a hypothetical future edge type targeting a
+        Function/Class node (say, File -REFERENCES-> Function) must not
+        leak into the 'symbols defined in this file' set. The filter
+        gates on rel.type == 'DEFINES', not just on the target node
+        type, so such an addition would need explicit opt-in rather
+        than silently inflating impact reports.
+        """
+        file_node = {"id": "f1", "type": "File", "name": "x.py", "properties": {}}
+        referenced_func = {"id": "fn_ref", "type": "Function", "name": "elsewhere", "properties": {}}
+        defined_func = {"id": "fn_def", "type": "Function", "name": "here", "properties": {}}
+        store = MagicMock()
+        store._get_neighbors.return_value = [
+            (referenced_func, {"type": "REFERENCES"}),
+            (defined_func, {"type": "DEFINES"}),
+        ]
+        symbols = _find_defined_symbols(store, file_node, None)
+        assert symbols == [defined_func]
+
 
 # -- JSON output (C2: requestedFile) -----------------------------------------
 
