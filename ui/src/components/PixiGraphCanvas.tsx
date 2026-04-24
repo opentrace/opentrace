@@ -178,6 +178,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         } else {
           renderer.updatePositions(positions);
         }
+        // Keep the view framed while the simulation is settling — gated by
+        // the renderer's `hasUserMovedCamera` flag and internally throttled,
+        // so manual pans stick and bursty ticks collapse to ~5 fits/sec.
+        renderer.scheduleAutoFit();
       },
       [],
     );
@@ -443,6 +447,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         },
         zoomToFit: (duration?: number) => {
           rendererRef.current?.zoomToFit(duration ?? 300);
+        },
+        scheduleAutoFit: (duration?: number) => {
+          rendererRef.current?.scheduleAutoFit(duration ?? 200);
         },
         zoomToNodes: (nodeIds: Iterable<string>, duration?: number) => {
           rendererRef.current?.zoomToNodes(nodeIds, duration ?? 300);

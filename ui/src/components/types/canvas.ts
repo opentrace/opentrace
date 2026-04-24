@@ -92,6 +92,13 @@ export interface GraphCanvasHandle {
   selectNode: (nodeId: string, hops?: number) => void;
   /** Zoom to fit all visible nodes. */
   zoomToFit: (duration?: number) => void;
+  /**
+   * Throttled auto-fit — re-frames the graph unless the user has taken
+   * manual control of the camera (via pan/zoom/rotate/zoomToNodes). Safe
+   * to call from bursty producers (e.g. the d3-force worker streaming
+   * positions during indexing); fires at most ~5×/sec.
+   */
+  scheduleAutoFit?: (duration?: number) => void;
   /** Zoom to specific node IDs. */
   zoomToNodes: (nodeIds: Iterable<string>, duration?: number) => void;
   /** Trigger a layout re-optimization. */

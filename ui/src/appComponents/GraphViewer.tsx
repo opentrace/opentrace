@@ -479,10 +479,25 @@ const GraphViewer = memo(
         [indexedRepos],
       );
 
+      // Set by the post-embedding reload effect to suppress the redundant
+      // auto-fit it would otherwise trigger (embeddings only add vector
+      // properties to existing nodes — the structural graph is unchanged).
+      //
+      // Known limitation: if the `persisted` loadGraph is still in-flight
+      // when `done` fires (tiny repos with near-instant embedding + slow
+      // fetchGraph), the wrong callback may consume the flag. The window
+      // is small in practice — embedding typically dominates `fetchGraph`
+      // by orders of magnitude — so we accept the race rather than thread
+      // per-promise suppression tokens through useGraphData.
+      const suppressNextFitRef = useRef(false);
       const onGraphLoaded = useCallback(() => {
-        setTimeout(() => {
-          canvasRef.current?.zoomToFit(400);
-        }, 500);
+        if (suppressNextFitRef.current) {
+          suppressNextFitRef.current = false;
+          return;
+        }
+        // scheduleAutoFit is throttled and gated by the user's pan/zoom state,
+        // so this is a no-op if the user has already moved the camera.
+        canvasRef.current?.scheduleAutoFit?.(400);
       }, []);
 
       const {
@@ -712,10 +727,17 @@ const GraphViewer = memo(
         }
       }, [jobState.status, loadGraph]);
 
-      // React to done: final graph refresh with enriched data
+      // React to done: final graph refresh with enriched data. Suppress the
+      // auto-fit this reload would otherwise trigger — embeddings only add
+      // vector properties to existing nodes, so the view should not re-animate.
       useEffect(() => {
         if (jobState.status === 'done') {
-          loadGraph();
+          suppressNextFitRef.current = true;
+          loadGraph().finally(() => {
+            // Defensive reset: if loadGraph failed or was aborted, onGraphLoaded
+            // never fired and the flag would leak onto the next unrelated call.
+            suppressNextFitRef.current = false;
+          });
         }
       }, [jobState.status, loadGraph]);
 
