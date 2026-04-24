@@ -107,10 +107,14 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            paths = sorted({_props(n).get("path", "<unknown>") for n in matches})
+            # Same relative path indexed across multiple repos: dedupe by
+            # node id (repo-prefixed) rather than properties.path so the
+            # user can tell the duplicates apart.
+            ids = sorted(n["id"] for n in matches)
             raise click.ClickException(
-                f"Ambiguous match for {file_path!r}: multiple File nodes share "
-                f"path={candidate!r}: {paths}"
+                f"Ambiguous match for {file_path!r}: multiple files in the "
+                f"graph share the relative path {candidate!r}: {ids}. "
+                f"Pass a fully-qualified node id to disambiguate."
             )
 
     basename = os.path.basename(file_path)
@@ -130,10 +134,11 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
         if len(basename_matches) == 1:
             return basename_matches[0]
         if len(basename_matches) > 1:
-            paths = sorted({_props(n).get("path", "<unknown>") for n in basename_matches})
+            ids = sorted(n["id"] for n in basename_matches)
             raise click.ClickException(
-                f"Ambiguous match for {file_path!r}: multiple files named "
-                f"{basename!r}: {paths[:_MAX_AMBIGUOUS_CANDIDATES]}. "
+                f"Ambiguous match for {file_path!r}: multiple files in the "
+                f"graph are named {basename!r}: "
+                f"{ids[:_MAX_AMBIGUOUS_CANDIDATES]}. "
                 f"Pass a repo-relative path to disambiguate."
             )
 

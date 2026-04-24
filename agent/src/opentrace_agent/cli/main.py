@@ -151,6 +151,30 @@ def app(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+def _safe_unlink(path_str: str, *, context: str) -> bool:
+    """Unlink *path_str*, tolerating both missing files and permission errors.
+
+    Returns True if a file was actually removed. Missing files are a no-op
+    and return False. Permission or filesystem errors emit a stderr warning
+    (tagged with *context* so the reader can tell which cleanup site logged
+    it) and return False — they never propagate, so a doomed unlink can't
+    crash a command that has otherwise succeeded or mask an unrelated
+    exception that's already in flight.
+    """
+    path = Path(path_str)
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        click.echo(
+            f"Warning: failed to remove {path_str} ({context}): {e}",
+            err=True,
+        )
+        return False
+
+
 def _clean_stale_staging(staging_db: str) -> None:
     """Remove staging DB artifacts left by an interrupted prior ``index`` run.
 
@@ -165,21 +189,12 @@ def _clean_stale_staging(staging_db: str) -> None:
     """
     removed: list[str] = []
     for path_str in (staging_db, staging_db + ".wal"):
-        path = Path(path_str)
-        if not path.exists():
-            continue
-        try:
-            path.unlink()
+        if _safe_unlink(path_str, context="stale staging"):
             removed.append(path_str)
-        except OSError as e:
-            click.echo(
-                f"Warning: failed to remove stale staging file {path_str}: {e}",
-                err=True,
-            )
     if removed:
         click.echo(
-            f"Cleaned stale staging file(s) from a prior interrupted run: "
-            f"{', '.join(removed)}"
+            "Cleaned stale staging file(s) from a prior interrupted run:\n  "
+            + "\n  ".join(removed)
         )
 
 
@@ -254,9 +269,11 @@ def index(
             store.flush()
     except BaseException:
         # Clean up staging artifacts on failure so the next run isn't
-        # blocked by this attempt's leftovers.
-        Path(staging_db).unlink(missing_ok=True)
-        Path(staging_db + ".wal").unlink(missing_ok=True)
+        # blocked by this attempt's leftovers. _safe_unlink swallows
+        # both missing files and OS errors so cleanup can never shadow
+        # the original exception that's about to re-raise.
+        _safe_unlink(staging_db, context="failed-index cleanup")
+        _safe_unlink(staging_db + ".wal", context="failed-index cleanup")
         raise
 
     # Atomically replace the live database.  Readers holding the old
@@ -265,8 +282,9 @@ def index(
     os.replace(staging_db, resolved_db)
 
     # The rename moves <staging>.staging to <db>, but <staging>.wal (if
-    # any) is left behind. Clean it so it doesn't linger as orphaned.
-    Path(staging_db + ".wal").unlink(missing_ok=True)
+    # any) is left behind. Clean it so it doesn't linger as orphaned —
+    # but never fail the command here: we've already committed the index.
+    _safe_unlink(staging_db + ".wal", context="post-rename cleanup")
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
@@ -1203,19 +1221,31 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
     - ``"10"``    → ``(10, 10)`` — single line
 
     Returns ``(None, None)`` for an empty spec. Raises ``click.BadParameter``
-    if the spec is not parseable.
+    on unparseable input, negative or zero line numbers, or reversed
+    ranges (``end < start``): source files are 1-indexed and ranges are
+    non-decreasing, so any other input is almost certainly a mistake the
+    caller wants reported, not silently coerced into an empty slice.
     """
     if not spec:
         return None, None
+
+    def _bad(detail: str) -> click.BadParameter:
+        return click.BadParameter(
+            f"invalid --lines value: {spec!r} ({detail}; "
+            f"expected 'N', 'N-M', or 'N-' with N >= 1 and M >= N)"
+        )
+
     parts = spec.split("-", 1)
     try:
         start = int(parts[0])
     except ValueError as e:
-        raise click.BadParameter(
-            f"invalid --lines value: {spec!r} (expected 'N', 'N-M', or 'N-')"
-        ) from e
+        raise _bad("start is not an integer") from e
+    if start < 1:
+        raise _bad("start must be >= 1")
+
     if len(parts) == 1:
         return start, start
+
     tail = parts[1]
     if not tail:
         # "10-" → open-ended; caller lets _print_file_slice default to EOF.
@@ -1223,9 +1253,11 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
     try:
         end = int(tail)
     except ValueError as e:
-        raise click.BadParameter(
-            f"invalid --lines value: {spec!r} (expected 'N', 'N-M', or 'N-')"
-        ) from e
+        raise _bad("end is not an integer") from e
+    if end < 1:
+        raise _bad("end must be >= 1")
+    if end < start:
+        raise _bad(f"end ({end}) must be >= start ({start})")
     return start, end
 
 

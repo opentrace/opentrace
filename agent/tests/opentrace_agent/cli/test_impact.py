@@ -272,26 +272,39 @@ class TestResolveFileNode:
         assert _resolve_file_node(store, "Button.tsx") is real
 
     def test_ambiguous_exact_match_raises(self) -> None:
-        a = self._file("src/api.py", id_="a")
-        b = self._file("src/api.py", id_="b")
+        # Same relative path indexed in two different repos: the path
+        # alone can't disambiguate them, so the error must surface the
+        # node IDs (which include the repo prefix) so users can tell
+        # the duplicates apart.
+        a = self._file("src/api.py", id_="repo-a/src/api.py")
+        b = self._file("src/api.py", id_="repo-b/src/api.py")
         store = MagicMock()
         store.list_nodes.return_value = [a, b]
         with pytest.raises(click.ClickException) as excinfo:
             _resolve_file_node(store, "src/api.py")
-        # Message must surface the ambiguity and the candidate paths.
-        assert "Ambiguous" in str(excinfo.value.message)
-        assert "src/api.py" in str(excinfo.value.message)
+        msg = str(excinfo.value.message)
+        assert "Ambiguous" in msg
+        # Node IDs must appear in the message — otherwise two identical
+        # paths would render indistinguishably.
+        assert "repo-a/src/api.py" in msg
+        assert "repo-b/src/api.py" in msg
+        # No graph-internal jargon in the user-facing message.
+        assert "File nodes" not in msg
 
     def test_ambiguous_basename_raises(self) -> None:
-        a = self._file("pkg/a/utils.py", id_="a")
-        b = self._file("pkg/b/utils.py", id_="b")
+        a = self._file("pkg/a/utils.py", id_="proj/pkg/a/utils.py")
+        b = self._file("pkg/b/utils.py", id_="proj/pkg/b/utils.py")
         store = MagicMock()
         store.list_nodes.return_value = []
         store.search_nodes.return_value = [a, b]
         with pytest.raises(click.ClickException) as excinfo:
             _resolve_file_node(store, "utils.py")
-        assert "Ambiguous" in str(excinfo.value.message)
-        assert "utils.py" in str(excinfo.value.message)
+        msg = str(excinfo.value.message)
+        assert "Ambiguous" in msg
+        assert "utils.py" in msg
+        assert "proj/pkg/a/utils.py" in msg
+        assert "proj/pkg/b/utils.py" in msg
+        assert "File nodes" not in msg
 
     def test_no_match_returns_none(self) -> None:
         store = MagicMock()

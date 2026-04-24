@@ -57,6 +57,34 @@ class TestParseLineSpec:
         # Useful error hint for the caller.
         assert "N-M" in str(excinfo.value)
 
+    def test_zero_start_rejected(self) -> None:
+        # Lines are 1-indexed; zero is never valid.
+        with pytest.raises(click.BadParameter) as excinfo:
+            _parse_source_read_line_spec("0")
+        assert "start must be >= 1" in str(excinfo.value)
+
+    def test_negative_start_rejected(self) -> None:
+        # "-5" splits to ["", "5"]; start is "" → non-integer.
+        with pytest.raises(click.BadParameter) as excinfo:
+            _parse_source_read_line_spec("-5")
+        assert "start is not an integer" in str(excinfo.value)
+
+    def test_negative_end_rejected(self) -> None:
+        # "10--5" splits to ["10", "-5"]; int parses, value then rejected.
+        with pytest.raises(click.BadParameter) as excinfo:
+            _parse_source_read_line_spec("10--5")
+        assert "end must be >= 1" in str(excinfo.value)
+
+    def test_reversed_range_rejected(self) -> None:
+        # end < start is almost certainly a caller mistake, not intent.
+        with pytest.raises(click.BadParameter) as excinfo:
+            _parse_source_read_line_spec("10-5")
+        assert "end (5) must be >= start (10)" in str(excinfo.value)
+
+    def test_start_equals_end_accepted(self) -> None:
+        # Boundary: a single-line closed range should pass.
+        assert _parse_source_read_line_spec("10-10") == (10, 10)
+
 
 class TestSourceReadLinesFlag:
     """Integration smoke tests via Click's CliRunner over a scratch file.

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from opentrace_agent.cli.main import _clean_stale_staging
+from opentrace_agent.cli.main import _clean_stale_staging, _safe_unlink
 
 
 def _make_file(path: Path, content: bytes = b"x") -> None:
@@ -112,7 +112,62 @@ def test_warns_on_permission_error(tmp_path: Path, capsys: pytest.CaptureFixture
         staging_dir.chmod(stat.S_IRWXU)
 
     captured = capsys.readouterr()
-    assert "Warning: failed to remove stale staging file" in captured.err
+    # Warning must land on stderr, include the problem path, and tag the
+    # cleanup site ("stale staging" vs. the two other contexts in index)
+    # so readers can tell which cleanup logged it.
+    assert "Warning" in captured.err
+    assert "failed to remove" in captured.err
     assert str(staging) in captured.err
+    assert "stale staging" in captured.err
     # Helper should not raise, even though the file is still there.
     assert staging.exists()
+
+
+# -- _safe_unlink (the shared helper used by both cleanup sites in index) ----
+
+
+class TestSafeUnlink:
+    def test_missing_file_is_noop(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        removed = _safe_unlink(str(tmp_path / "does-not-exist"), context="whatever")
+        assert removed is False
+        captured = capsys.readouterr()
+        # Missing files must not generate warnings — they're the common case.
+        assert captured.err == ""
+
+    def test_existing_file_removed_quietly(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        target = tmp_path / "victim"
+        target.write_bytes(b"x")
+        removed = _safe_unlink(str(target), context="any")
+        assert removed is True
+        assert not target.exists()
+        # The helper itself is silent on success — callers decide whether
+        # to log; this keeps it safe to call from hot paths.
+        assert capsys.readouterr().err == ""
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0 if hasattr(os, "geteuid") else False,
+        reason="root can always unlink, permission test is irrelevant",
+    )
+    def test_permission_error_does_not_raise(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """This is the M1 regression test: post-rename cleanup must not
+        crash the command when unlink is refused (e.g. read-only FS).
+        """
+        locked_dir = tmp_path / "locked"
+        locked_dir.mkdir()
+        target = locked_dir / "stuck.wal"
+        target.write_bytes(b"x")
+        locked_dir.chmod(stat.S_IREAD | stat.S_IEXEC)
+        try:
+            # Must return False, must not raise, must log with the context.
+            removed = _safe_unlink(str(target), context="post-rename cleanup")
+        finally:
+            locked_dir.chmod(stat.S_IRWXU)
+        assert removed is False
+        captured = capsys.readouterr()
+        assert "post-rename cleanup" in captured.err
+        assert str(target) in captured.err
+        # The file is still there; the calling command should have
+        # completed regardless.
+        assert target.exists()
