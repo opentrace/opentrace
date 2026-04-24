@@ -151,6 +151,38 @@ def app(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+def _clean_stale_staging(staging_db: str) -> None:
+    """Remove staging DB artifacts left by an interrupted prior ``index`` run.
+
+    ``opentrace index`` writes to ``<db>.staging`` and atomically renames
+    over ``<db>`` on success. If the writer is killed mid-run (SIGKILL,
+    OOM, power loss), the staging file and its WAL are left on disk and
+    cause the native DB layer to crash when the next run tries to reopen
+    them. This helper runs at the top of the ``index`` write path; any
+    pre-existing staging files are by definition orphaned and safe to
+    remove under the single-writer assumption (only ``opentrace index``
+    creates these files, and this process is about to become the writer).
+    """
+    removed: list[str] = []
+    for path_str in (staging_db, staging_db + ".wal"):
+        path = Path(path_str)
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+            removed.append(path_str)
+        except OSError as e:
+            click.echo(
+                f"Warning: failed to remove stale staging file {path_str}: {e}",
+                err=True,
+            )
+    if removed:
+        click.echo(
+            f"Cleaned stale staging file(s) from a prior interrupted run: "
+            f"{', '.join(removed)}"
+        )
+
+
 @app.command()
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option(
@@ -190,6 +222,11 @@ def index(
     # that hold an exclusive lock on the live database.
     staging_db = resolved_db + ".staging"
 
+    # Self-heal from any prior interrupted run. Under the single-writer
+    # assumption (only `opentrace index` touches these files), anything
+    # pre-existing here is orphaned.
+    _clean_stale_staging(staging_db)
+
     click.echo(f"Opening staging database at {staging_db} ...")
     try:
         with GraphStore(staging_db) as graph_store:
@@ -216,14 +253,20 @@ def index(
             # context manager on exit.
             store.flush()
     except BaseException:
-        # Clean up the staging file on failure.
+        # Clean up staging artifacts on failure so the next run isn't
+        # blocked by this attempt's leftovers.
         Path(staging_db).unlink(missing_ok=True)
+        Path(staging_db + ".wal").unlink(missing_ok=True)
         raise
 
     # Atomically replace the live database.  Readers holding the old
     # file descriptor continue to see the previous data until they
     # detect the inode change and reopen.
     os.replace(staging_db, resolved_db)
+
+    # The rename moves <staging>.staging to <db>, but <staging>.wal (if
+    # any) is left behind. Clean it so it doesn't linger as orphaned.
+    Path(staging_db + ".wal").unlink(missing_ok=True)
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
