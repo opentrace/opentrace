@@ -87,6 +87,8 @@ interface Props {
   onGraphChange?: (focusNodeId?: string) => Promise<void>;
   /** Called with accumulated highlight set and the new IDs to ping */
   onChatHighlight?: (allNodeIds: Set<string>, newNodeIds: string[]) => void;
+  /** Fired once per accepted question submission so the graph can re-frame. */
+  onQuestionSubmit?: () => void;
   repoUrl?: string;
   onWidthChange?: (width: number) => void;
   /** Optional content rendered at the bottom of the settings view (e.g. managed provider UI). */
@@ -99,6 +101,7 @@ export default function ChatPanel({
   onNodeSelect,
   onGraphChange,
   onChatHighlight,
+  onQuestionSubmit,
   repoUrl,
   onWidthChange,
   settingsFooter,
@@ -366,6 +369,11 @@ export default function ChatPanel({
       streamingRef.current
     )
       return;
+
+    onQuestionSubmit?.();
+    // Ensure graph highlights are on for this turn — we auto-disable them at
+    // stream end, so each new submit needs to turn them back on.
+    setHighlightEnabled(true);
 
     // Abort any previous request
     abortRef.current?.abort();
@@ -731,6 +739,11 @@ export default function ChatPanel({
           modelId,
           Array.from(chatFoundNodesRef.current),
         );
+        // Turn off graph highlights now that the full answer has arrived —
+        // the sync effect on `highlightEnabled` clears chatHighlightNodes in
+        // App, so the whole graph becomes visible again. Skipped on abort so
+        // a partial response doesn't dim-and-clear unexpectedly.
+        setHighlightEnabled(false);
       }
     }
   };

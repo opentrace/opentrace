@@ -360,6 +360,7 @@ export interface GraphViewerHandle {
   reload: (query?: string, hops?: number) => Promise<void>;
   triggerPing: (nodeIds: Iterable<string>) => void;
   resetCamera: () => void;
+  zoomToFit: (duration?: number) => void;
 }
 
 export interface GraphViewerProps {
@@ -954,6 +955,9 @@ const GraphViewer = memo(
           },
           resetCamera: () => {
             canvasRef.current?.resetCamera();
+          },
+          zoomToFit: (duration?: number) => {
+            canvasRef.current?.zoomToFit(duration);
           },
         }),
         [graphData, loadGraph, onNodeClick],
