@@ -74,6 +74,25 @@ describe('AddRepoModal', () => {
     expect(getByText('Podinfo')).toBeDefined();
   });
 
+  it('disables example repo chips whose URL onValidate rejects', () => {
+    const onValidate = (url: string) =>
+      url === 'https://github.com/stefanprodan/podinfo'
+        ? 'Podinfo is already indexed'
+        : null;
+    const { getByTestId } = render(
+      React.createElement(AddRepoModal, { ...defaultProps, onValidate }),
+    );
+    const podinfo = getByTestId(
+      'example-repo-chip-Podinfo',
+    ) as HTMLButtonElement;
+    const express = getByTestId(
+      'example-repo-chip-Express.js',
+    ) as HTMLButtonElement;
+    expect(podinfo.disabled).toBe(true);
+    expect(podinfo.title).toBe('Podinfo is already indexed');
+    expect(express.disabled).toBe(false);
+  });
+
   it('submits index-repo message with URL', () => {
     const onSubmit = vi.fn();
     const { getByTestId, getByText } = render(

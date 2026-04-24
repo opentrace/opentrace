@@ -332,10 +332,15 @@
   transition: all 0.15s;
 }
 
-.example-repo-chip:hover {
+.example-repo-chip:hover:not(:disabled) {
   color: var(--primary);
   border-color: color-mix(in oklch, var(--primary) 40%, transparent);
   background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+
+.example-repo-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .example-repo-size {
