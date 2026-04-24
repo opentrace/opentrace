@@ -219,6 +219,13 @@ export class PixiRenderer {
   private width = 0;
   private height = 0;
 
+  // Auto-fit state — keep the graph framed during indexing until user takes
+  // control. Flipped to true by wheel/pan/rotate/zoomToNodes, reset by
+  // setData() (new graph session) and resetCamera() (explicit "Reset View").
+  private hasUserMovedCamera = false;
+  private autoFitThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly AUTO_FIT_THROTTLE_MS = 180;
+
   // Interaction state
   private _quadtree: Quadtree<PixiNode> | null = null;
   private lastQuadtreeRebuild = 0;
@@ -433,6 +440,10 @@ export class PixiRenderer {
       clearTimeout(this.labelCullDebounceTimer);
       this.labelCullDebounceTimer = null;
     }
+    if (this.autoFitThrottleTimer !== null) {
+      clearTimeout(this.autoFitThrottleTimer);
+      this.autoFitThrottleTimer = null;
+    }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     clearTextureCache(this.textureCache);
@@ -491,6 +502,9 @@ export class PixiRenderer {
     this.nodeIdToIndex.clear();
     this.edges = [];
     this.edgeIndex.clear();
+
+    // A fresh graph starts a new auto-fit session — forget any prior pan/zoom.
+    this.hasUserMovedCamera = false;
 
     // Build nodes
     for (const gn of graphNodes) {
@@ -1635,6 +1649,27 @@ export class PixiRenderer {
     );
   }
 
+  /**
+   * Throttled auto-fit — re-frames the graph at most ~5×/sec while the user
+   * has not taken manual control of the camera. Trailing-edge throttle: the
+   * first call schedules a fit; subsequent calls while a fit is pending are
+   * ignored (not reset), so bursty producers like the d3-force worker
+   * streaming positions every ~66 ms still get periodic re-fits. Resetting
+   * the timer on every call (classic debounce) would starve the fit
+   * indefinitely because sim ticks arrive faster than the throttle window.
+   */
+  scheduleAutoFit(duration = 200): void {
+    if (this.hasUserMovedCamera) return;
+    if (this.nodes.size === 0) return;
+    // A fit is already queued — keep it, don't reset.
+    if (this.autoFitThrottleTimer !== null) return;
+    this.autoFitThrottleTimer = setTimeout(() => {
+      this.autoFitThrottleTimer = null;
+      if (this.destroyed || this.hasUserMovedCamera) return;
+      this.zoomToFit(duration);
+    }, this.AUTO_FIT_THROTTLE_MS);
+  }
+
   zoomToNodes(nodeIds: Iterable<string>, duration = 300): void {
     const positions: { x: number; y: number }[] = [];
     for (const id of nodeIds) {
@@ -1653,6 +1688,9 @@ export class PixiRenderer {
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
     const target = fitBounds(bounds, this.width, this.height, 120);
+
+    // Focusing on specific nodes is a deliberate user action — stop auto-fit.
+    this.hasUserMovedCamera = true;
 
     this.cancelAnimation?.();
     this.cancelAnimation = animateViewport(
@@ -1712,6 +1750,8 @@ export class PixiRenderer {
   }
 
   resetCamera(duration = 300): void {
+    // Explicit "Reset View" re-enables auto-fit for subsequent data changes.
+    this.hasUserMovedCamera = false;
     this.zoomToFit(duration);
   }
 
@@ -1741,6 +1781,9 @@ export class PixiRenderer {
         this.vp.x = mouseX - (mouseX - this.vp.x) * (newScale / this.vp.scale);
         this.vp.y = mouseY - (mouseY - this.vp.y) * (newScale / this.vp.scale);
         this.vp.scale = newScale;
+
+        // User took manual control — stop auto-fitting during indexing.
+        this.hasUserMovedCamera = true;
 
         // Hide edges during zoom for instant response (Grafana pattern).
         // Sprite transforms are instant; edges redraw after 1300ms settle.
@@ -1868,6 +1911,8 @@ export class PixiRenderer {
               this.mode3dAutoRotate = false;
               this.callbacks.on3DAutoRotateChange?.(false);
             }
+            // User took manual control — stop auto-fitting during indexing.
+            this.hasUserMovedCamera = true;
             this.debouncedLabelCull();
           } else {
             // Pan — compute delta from last pointer position (not movementX/Y)
@@ -1876,6 +1921,8 @@ export class PixiRenderer {
             const panDy = e.clientY - lastPointerY;
             this.vp.x += panDx;
             this.vp.y += panDy;
+            // User took manual control — stop auto-fitting during indexing.
+            this.hasUserMovedCamera = true;
             // Hide edges during pan for instant response
             this.hideEdgesForInteraction();
             this.debouncedLabelCull();
