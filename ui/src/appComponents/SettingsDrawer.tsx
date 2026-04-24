@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
@@ -58,12 +58,14 @@ export default function SettingsDrawer({
   onAnimationSettingsChanged,
 }: SettingsDrawerProps) {
   const { store } = useStore();
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: 'ot_settings_drawer_width',
     defaultWidth: 420,
     minWidth: 360,
     maxWidth: 700,
     side: 'left',
+    panelRef,
   });
   const [clearing, setClearing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -145,6 +147,7 @@ export default function SettingsDrawer({
 
   return (
     <div
+      ref={panelRef}
       className="settings-drawer"
       style={
         { '--settings-drawer-width': `${panelWidth}px` } as React.CSSProperties

@@ -14,7 +14,20 @@
  * limitations under the License.
  */
 
+import type { RefObject } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+
+/**
+ * Signature for the drag-start handler returned by the resize hooks. The
+ * second argument is an optional cursor override — used by corner handles to
+ * force `nwse-resize` / `nesw-resize` on the body so the cursor reads
+ * diagonal while the drag is in flight, instead of defaulting to the
+ * hook's primary-axis cursor.
+ */
+export type PanelResizeMouseDown = (
+  e: React.MouseEvent,
+  cursorOverride?: string,
+) => void;
 
 interface UseResizablePanelOptions {
   /** localStorage key for persisting width */
@@ -27,15 +40,18 @@ interface UseResizablePanelOptions {
   maxWidth: number;
   /** Which side of the panel the handle is on — determines drag direction */
   side: 'left' | 'right';
+  /** Ref to the panel element being resized (so mousemove can mutate its
+   * `style.width` directly without walking the DOM). */
+  panelRef: RefObject<HTMLElement | null>;
 }
 
 /**
- * Horizontal resize. During a drag, the panel's inline `style.width` is
- * updated directly on the DOM node (via the handle's parent element) so
- * mousemove doesn't trigger a React re-render of the panel's subtree — this
- * matters a lot on panels with heavy children (Discover's virtualized tree,
- * filter lists). The final width is committed back to React state on
- * mouseup so it persists across re-renders and makes it into localStorage.
+ * Horizontal resize. During a drag, the panel's `style.width` is updated
+ * directly via the supplied ref so mousemove doesn't trigger a React
+ * re-render of the panel's subtree — matters a lot on panels with heavy
+ * children (Discover's virtualized tree, filter lists). The final width is
+ * committed back to React state on mouseup so it persists across re-renders
+ * and makes it into localStorage.
  */
 export function useResizablePanel({
   storageKey,
@@ -43,7 +59,11 @@ export function useResizablePanel({
   minWidth,
   maxWidth,
   side,
-}: UseResizablePanelOptions) {
+  panelRef,
+}: UseResizablePanelOptions): {
+  width: number;
+  handleMouseDown: PanelResizeMouseDown;
+} {
   const [width, setWidth] = useState(() => {
     const stored = localStorage.getItem(storageKey);
     if (stored) {
@@ -57,16 +77,14 @@ export function useResizablePanel({
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
-  const panelEl = useRef<HTMLElement | null>(null);
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback<PanelResizeMouseDown>(
+    (e, cursorOverride) => {
       e.preventDefault();
       isDragging.current = true;
       startX.current = e.clientX;
       startWidth.current = width;
-      panelEl.current = (e.currentTarget as HTMLElement).parentElement;
-      document.body.style.cursor = 'col-resize';
+      document.body.style.cursor = cursorOverride ?? 'col-resize';
       document.body.style.userSelect = 'none';
     },
     [width],
@@ -78,8 +96,8 @@ export function useResizablePanel({
 
     const flush = () => {
       rafId = null;
-      if (pending != null && panelEl.current) {
-        panelEl.current.style.width = `${pending}px`;
+      if (pending != null && panelRef.current) {
+        panelRef.current.style.width = `${pending}px`;
       }
     };
 
@@ -107,7 +125,6 @@ export function useResizablePanel({
         setWidth(pending);
         pending = null;
       }
-      panelEl.current = null;
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -117,7 +134,7 @@ export function useResizablePanel({
       window.removeEventListener('mouseup', handleMouseUp);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [minWidth, maxWidth, side]);
+  }, [minWidth, maxWidth, side, panelRef]);
 
   // Persist to localStorage on change (only fires on mouseup commit)
   useEffect(() => {
@@ -136,22 +153,28 @@ interface UseResizablePanelHeightOptions {
   maxHeight: number;
   /** Which edge of the panel the handle sits on — determines drag direction */
   side: 'top' | 'bottom';
+  /** Ref to the panel element being resized. */
+  panelRef: RefObject<HTMLElement | null>;
 }
 
 /**
- * Vertical companion to `useResizablePanel`. Returns `null` until the user has
- * dragged at least once, so callers can keep whatever height CSS gives them
- * by default (e.g. full-height or content-based) and only switch to an
+ * Vertical companion to `useResizablePanel`. Returns `null` until the user
+ * has dragged at least once, so callers can keep whatever height CSS gives
+ * them by default (e.g. full-height or content-based) and only switch to an
  * explicit pixel height once the user opts in. Like the horizontal hook, the
- * drag applies `style.height` directly to the panel element so mousemove
- * never triggers a React re-render — only mouseup commits to React state.
+ * drag applies `style.height` directly to the panel element via the supplied
+ * ref so mousemove never triggers a React re-render — only mouseup commits.
  */
 export function useResizablePanelHeight({
   storageKey,
   minHeight,
   maxHeight,
   side,
-}: UseResizablePanelHeightOptions) {
+  panelRef,
+}: UseResizablePanelHeightOptions): {
+  height: number | null;
+  handleMouseDown: PanelResizeMouseDown;
+} {
   const [height, setHeight] = useState<number | null>(() => {
     const stored = localStorage.getItem(storageKey);
     if (stored) {
@@ -165,23 +188,20 @@ export function useResizablePanelHeight({
   const isDragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
-  const panelEl = useRef<HTMLElement | null>(null);
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback<PanelResizeMouseDown>(
+    (e, cursorOverride) => {
       e.preventDefault();
       isDragging.current = true;
       startY.current = e.clientY;
       // Anchor the drag to whatever height the panel is ACTUALLY rendering —
       // this matters most before first drag when `height` is still null.
-      const panel = (e.currentTarget as HTMLElement).parentElement;
-      panelEl.current = panel;
-      const rendered = panel?.getBoundingClientRect().height ?? 0;
+      const rendered = panelRef.current?.getBoundingClientRect().height ?? 0;
       startHeight.current = height ?? Math.round(rendered);
-      document.body.style.cursor = 'row-resize';
+      document.body.style.cursor = cursorOverride ?? 'row-resize';
       document.body.style.userSelect = 'none';
     },
-    [height],
+    [height, panelRef],
   );
 
   useEffect(() => {
@@ -190,8 +210,8 @@ export function useResizablePanelHeight({
 
     const flush = () => {
       rafId = null;
-      if (pending != null && panelEl.current) {
-        panelEl.current.style.height = `${pending}px`;
+      if (pending != null && panelRef.current) {
+        panelRef.current.style.height = `${pending}px`;
       }
     };
 
@@ -219,7 +239,6 @@ export function useResizablePanelHeight({
         setHeight(pending);
         pending = null;
       }
-      panelEl.current = null;
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -229,7 +248,7 @@ export function useResizablePanelHeight({
       window.removeEventListener('mouseup', handleMouseUp);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [minHeight, maxHeight, side]);
+  }, [minHeight, maxHeight, side, panelRef]);
 
   useEffect(() => {
     if (height != null) localStorage.setItem(storageKey, String(height));

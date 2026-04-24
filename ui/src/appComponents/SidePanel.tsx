@@ -125,12 +125,14 @@ export default function SidePanel({
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: 'ot_side_panel_width',
     defaultWidth: 360,
     minWidth: 220,
     maxWidth: 900,
     side: 'right',
+    panelRef,
   });
   const { height: panelHeight, handleMouseDown: onHeightDrag } =
     useResizablePanelHeight({
@@ -138,6 +140,7 @@ export default function SidePanel({
       minHeight: 320,
       maxHeight: 1400,
       side: 'bottom',
+      panelRef,
     });
 
   // Auto-switch to details when node or edge is selected
@@ -172,6 +175,7 @@ export default function SidePanel({
 
   return (
     <div
+      ref={panelRef}
       className={`side-panel${isMobileOpen ? ' side-panel--mobile-open' : ''}`}
       style={
         {
@@ -283,8 +287,8 @@ export default function SidePanel({
       <PanelResizeHandle
         side="bottom-right"
         onMouseDown={(e) => {
-          handleMouseDown(e);
-          onHeightDrag(e);
+          handleMouseDown(e, 'nwse-resize');
+          onHeightDrag(e, 'nwse-resize');
         }}
       />
     </div>

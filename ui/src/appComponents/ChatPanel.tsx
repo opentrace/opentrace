@@ -106,12 +106,14 @@ export default function ChatPanel({
 }: Props) {
   const { store } = useStore();
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: 'ot_chat_panel_width',
     defaultWidth: 480,
     minWidth: 320,
     maxWidth: 800,
     side: 'left',
+    panelRef,
   });
 
   // Notify parent of width changes so graph canvas can adjust
@@ -894,6 +896,7 @@ export default function ChatPanel({
 
   return (
     <div
+      ref={panelRef}
       className="chat-panel"
       style={{ width: panelWidth }}
       onDragOver={handleDragOver}

@@ -113,12 +113,14 @@ export default function PhysicsPanel({
   mode3dTilt = 35,
   onMode3dTiltChange,
 }: PhysicsPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: 'ot_physics_panel_width',
     defaultWidth: 240,
     minWidth: 220,
     maxWidth: 420,
     side: 'left',
+    panelRef,
   });
   const { height: panelHeight, handleMouseDown: onHeightDrag } =
     useResizablePanelHeight({
@@ -126,6 +128,7 @@ export default function PhysicsPanel({
       minHeight: 240,
       maxHeight: 900,
       side: 'top',
+      panelRef,
     });
 
   // Debounce repulsion slider changes (200ms)
@@ -161,6 +164,7 @@ export default function PhysicsPanel({
 
   return (
     <div
+      ref={panelRef}
       className="physics-panel"
       style={
         {
@@ -176,8 +180,8 @@ export default function PhysicsPanel({
       <PanelResizeHandle
         side="top-left"
         onMouseDown={(e) => {
-          handleMouseDown(e);
-          onHeightDrag(e);
+          handleMouseDown(e, 'nwse-resize');
+          onHeightDrag(e, 'nwse-resize');
         }}
       />
       <h4 className="physics-panel-title">Display</h4>
