@@ -593,10 +593,12 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     type=click.Path(),
     help="OpenTrace database path (auto-detected if omitted).",
 )
-def augment(pattern: str, db_path: str | None) -> None:
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON instead of text.")
+def augment(pattern: str, db_path: str | None, output_json: bool) -> None:
     """Query the graph for context about a search pattern.
 
     Prints a short human-readable context block (< 50 lines) to stdout.
+    With --json, emits structured JSON for machine consumption.
     Exits 0 with no output when the pattern matches nothing or no index is found.
     """
     from opentrace_agent.cli.augment import run_augment
@@ -605,7 +607,7 @@ def augment(pattern: str, db_path: str | None) -> None:
         resolved = _resolve_db(db_path, must_exist=True)
     except click.UsageError:
         resolved = None
-    run_augment(pattern, resolved)
+    run_augment(pattern, resolved, output_json=output_json)
 
 
 @app.command("export")
@@ -1053,11 +1055,13 @@ def _print_table(columns: list[str], rows: list[list]) -> None:
     default=None,
     help="Comma-separated line ranges, e.g. '10-25,40-60'.",
 )
-def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON instead of text.")
+def impact(file_path: str, db_path: str | None, line_spec: str | None, output_json: bool) -> None:
     """Analyze the blast radius of changes to a file.
 
     Finds functions/classes defined in FILE_PATH, then walks incoming
     relationships (CALLS, IMPORTS, DEPENDS_ON) to show what depends on them.
+    With --json, emits structured JSON for machine consumption.
     Exits 0 with no output when the file is not indexed or no index is found.
     """
     from opentrace_agent.cli.impact import run_impact
@@ -1084,7 +1088,368 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
             except ValueError:
                 continue
 
-    run_impact(file_path, resolved, line_ranges)
+    run_impact(file_path, resolved, line_ranges, output_json=output_json)
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def repos(db_path: str | None) -> None:
+    """List all indexed repositories in the graph database.
+
+    Outputs JSON array of repository metadata including name, path, branch,
+    commit SHA, and source URI.
+    """
+    import json
+
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        result = store._conn.execute(
+            "MATCH (n:Node {type: 'Repository'}) RETURN n.id, n.name, n.properties"
+        )
+        repos_list = []
+        while result.has_next():
+            row = result.get_next()
+            node_id, name, props_str = row[0], row[1], row[2]
+            props = {}
+            if props_str:
+                try:
+                    props = __import__("json").loads(props_str)
+                except Exception:
+                    pass
+            repos_list.append({
+                "id": node_id,
+                "name": name,
+                "sourceUri": props.get("sourceUri"),
+                "branch": props.get("branch"),
+                "commitSha": props.get("commitSha"),
+                "repoPath": props.get("repoPath"),
+            })
+
+        metadata = store.get_metadata()
+        for entry in metadata:
+            repo_id = entry.get("repoId")
+            for repo in repos_list:
+                if repo["name"] == repo_id:
+                    repo["indexedAt"] = entry.get("indexedAt")
+                    repo["durationSeconds"] = entry.get("durationSeconds")
+                    repo["nodesCreated"] = entry.get("nodesCreated")
+                    break
+
+        click.echo(json.dumps(repos_list, indent=2, default=str))
+    finally:
+        store.close()
+
+
+@app.command("source-read")
+@click.option("--node-id", default=None, help="Graph node ID to read source for.")
+@click.option("--path", "file_path", default=None, help="File path relative to repo root.")
+@click.option("--lines", "line_spec", default=None, help="Line range, e.g. '10-25'.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_read(node_id: str | None, file_path: str | None, line_spec: str | None, db_path: str | None) -> None:
+    """Read source code for a graph node or file path.
+
+    Given a node ID, resolves the file path and line range from the graph,
+    then reads the source from the local filesystem. Given a file path,
+    searches for the file in known repo paths.
+    """
+    from opentrace_agent.store import GraphStore
+
+    if not node_id and not file_path:
+        raise click.UsageError("Provide --node-id or --path.")
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        if node_id:
+            _read_source_by_node(store, node_id)
+        elif file_path:
+            start_line, end_line = None, None
+            if line_spec:
+                parts = line_spec.split("-", 1)
+                start_line = int(parts[0])
+                end_line = int(parts[1]) if len(parts) > 1 else start_line
+            _read_source_by_path(store, file_path, start_line, end_line)
+    finally:
+        store.close()
+
+
+def _read_source_by_node(store: "GraphStore", node_id: str) -> None:  # noqa: F821
+    """Read source code for a specific graph node."""
+    node = store.get_node(node_id)
+    if not node:
+        raise click.ClickException(f"Node {node_id} not found.")
+
+    props = node.get("properties") or {}
+    if isinstance(props, str):
+        try:
+            props = __import__("json").loads(props)
+        except Exception:
+            props = {}
+
+    file_path = props.get("path")
+    start_line = props.get("start_line") or props.get("startLine")
+    end_line = props.get("end_line") or props.get("endLine")
+
+    # If node has no direct path, try to find it via DEFINES relationship
+    # (Function/Class nodes are DEFINED_IN a File node which has the path)
+    if not file_path:
+        try:
+            neighbors = store._get_neighbors(node_id, "outgoing")
+            for nb_node, nb_rel in neighbors:
+                if nb_node["type"] == "File":
+                    nb_props = nb_node.get("properties") or {}
+                    if isinstance(nb_props, str):
+                        nb_props = __import__("json").loads(nb_props)
+                    file_path = nb_props.get("path")
+                    if file_path:
+                        break
+        except Exception:
+            pass
+
+    if not file_path:
+        # Last resort: extract from the node ID (format: repo/path/to/file.py::SymbolName)
+        if "::" in node_id:
+            candidate = node_id.split("::", 1)[0]
+            # Strip repo prefix (first segment before /)
+            parts = candidate.split("/", 1)
+            if len(parts) > 1:
+                file_path = parts[1]
+
+    if not file_path:
+        raise click.ClickException(f"Node {node_id} has no file path.")
+
+    _read_source_by_path(store, file_path, start_line, end_line)
+
+
+def _read_source_by_path(
+    store: "GraphStore",  # noqa: F821
+    file_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> None:
+    """Read source code from a file, searching repo paths."""
+    from pathlib import Path as P
+
+    # Try absolute path first
+    if P(file_path).is_absolute() and P(file_path).exists():
+        _print_file_slice(file_path, start_line, end_line)
+        return
+
+    # Search repo paths from metadata
+    metadata = store.get_metadata()
+    for entry in metadata:
+        repo_path = entry.get("repoPath")
+        if repo_path:
+            candidate = P(repo_path) / file_path
+            if candidate.exists():
+                _print_file_slice(str(candidate), start_line, end_line)
+                return
+
+    # Try CWD as fallback
+    cwd_candidate = P.cwd() / file_path
+    if cwd_candidate.exists():
+        _print_file_slice(str(cwd_candidate), start_line, end_line)
+        return
+
+    raise click.ClickException(f"Source file not found: {file_path}")
+
+
+def _print_file_slice(
+    abs_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> None:
+    """Read and print a file or a slice of it."""
+    from pathlib import Path as P
+
+    content = P(abs_path).read_text()
+    lines = content.split("\n")
+
+    if start_line is not None:
+        start = max(0, start_line - 1)
+        end = end_line if end_line is not None else len(lines)
+        selected = lines[start:end]
+        click.echo(f"// {abs_path}:{start_line}-{end}")
+        for i, line in enumerate(selected):
+            click.echo(f"{start + i + 1}\t{line}")
+    else:
+        click.echo(content)
+
+
+def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None) -> Path:
+    """Clone a repo into *clone_dir*, returning the local path."""
+    click.echo(f"Cloning {repo_url} ...")
+    try:
+        from opentrace_agent.sources.code.git_cloner import GitCloner
+
+        cloner = GitCloner()
+        kwargs: dict[str, object] = {"dest": clone_dir}
+        if ref:
+            kwargs["ref"] = ref
+        if token:
+            kwargs["token"] = token
+        return cloner.clone(repo_url, **kwargs)
+    except ImportError:
+        pass
+    except Exception as e:
+        raise click.ClickException(f"Clone failed: {e}")
+
+    # Fallback to git CLI
+    import os
+    import subprocess
+
+    clone_url = repo_url
+    if token and clone_url.startswith("https://"):
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(clone_url)
+        netloc = f"oauth2:{token}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        clone_url = urlunparse(parsed._replace(netloc=netloc))
+
+    cmd = ["git", "clone", "--depth", "1"]
+    if ref:
+        cmd.extend(["--branch", ref])
+    cmd.extend([clone_url, str(clone_dir)])
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"git clone failed: {result.stderr}")
+    return clone_dir
+
+
+@app.command("fetch-and-index")
+@click.argument("repo_url")
+@click.option("--repo-id", default=None, help="Custom repository ID (defaults to repo name).")
+@click.option("--token", default=None, envvar="OPENTRACE_GIT_TOKEN", help="Personal access token (PAT) for private repos. Also reads OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env vars.")
+@click.option("--ref", default=None, help="Branch or tag to clone (defaults to repo default branch).")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help=f"Database path (default: ./{OPENTRACE_DIR}/{DB_NAME}).",
+)
+@click.option("--batch-size", default=200, show_default=True, help="Items per batch.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def fetch_and_index(
+    repo_url: str,
+    repo_id: str | None,
+    token: str | None,
+    ref: str | None,
+    db_path: str | None,
+    batch_size: int,
+    verbose: bool,
+) -> None:
+    """Clone a remote git repository and index it into the graph.
+
+    Performs a shallow clone of REPO_URL into ~/.opentrace/repos/, then
+    runs the full indexing pipeline on the cloned repository. The clone
+    is kept permanently so source-read can access the files later.
+
+    For private repos, pass --token with a GitHub/GitLab personal access
+    token (PAT), or set the OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env var.
+    """
+    _configure_logging(verbose)
+
+    # Try GITHUB_TOKEN as fallback
+    if not token:
+        import os
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITLAB_TOKEN")
+
+    from opentrace_agent.pipeline import PipelineInput, run_pipeline
+    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
+    from opentrace_agent.store import GraphStore
+
+    # Determine repo name from URL
+    url_parts = repo_url.rstrip("/").split("/")
+    inferred_name = url_parts[-1].removesuffix(".git") if url_parts else "repo"
+    effective_repo_id = repo_id or inferred_name
+
+    # Infer org/repo from URL for directory structure
+    org = url_parts[-2] if len(url_parts) >= 2 else "unknown"
+
+    # Clone into a persistent directory under ~/.opentrace/repos/
+    repos_dir = Path.home() / ".opentrace" / "repos" / org
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    clone_dir = repos_dir / inferred_name
+
+    if clone_dir.exists() and (clone_dir / ".git").exists():
+        click.echo(f"Repository already cloned at {clone_dir}, pulling latest...")
+        try:
+            import subprocess
+            subprocess.run(
+                ["git", "-C", str(clone_dir), "pull", "--ff-only"],
+                capture_output=True,
+                timeout=60,
+            )
+        except Exception:
+            pass
+        local_path = clone_dir
+    elif clone_dir.exists():
+        # Directory exists but no .git — remove and re-clone
+        import shutil
+        shutil.rmtree(clone_dir)
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref, token)
+    else:
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref, token)
+
+    click.echo(f"Cloned to {local_path}")
+
+    # Index the cloned repo
+    resolved_db = _resolve_db(db_path)
+    db_dir = Path(resolved_db).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    click.echo(f"Opening database at {resolved_db} ...")
+    graph_store = GraphStore(resolved_db)
+    store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+
+    click.echo(f"Indexing {local_path} as '{effective_repo_id}' ...")
+    t0 = time.monotonic()
+
+    inp = PipelineInput(path=str(local_path), repo_id=effective_repo_id)
+
+    last_result = None
+    for event in run_pipeline(inp, store=store):
+        _print_event(event, verbose)
+        if getattr(event, "result", None) is not None:
+            last_result = event.result
+
+    elapsed = time.monotonic() - t0
+
+    metadata = _collect_metadata(local_path, effective_repo_id, elapsed, last_result)
+    metadata["sourceUri"] = repo_url
+    graph_store.save_metadata(metadata)
+
+    store.close()
+
+    click.echo(f"Done in {elapsed:.1f}s. Repository '{effective_repo_id}' is now indexed.")
 
 
 def _configure_logging(verbose: bool) -> None:

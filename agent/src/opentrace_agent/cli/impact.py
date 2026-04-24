@@ -78,12 +78,15 @@ def run_impact(
     file_path: str,
     db_path: str | None,
     line_ranges: list[tuple[int, int]] | None = None,
+    *,
+    output_json: bool = False,
 ) -> None:
     """Entry point for the impact subcommand.
 
     *file_path* is the repo-relative or absolute path of the edited file.
     *line_ranges* optionally narrows which symbols to analyze.
     *db_path* should already be resolved by the caller.
+    When *output_json* is True, emit structured JSON instead of human-readable text.
     """
     if not db_path:
         return
@@ -99,7 +102,10 @@ def run_impact(
         return
 
     try:
-        _run(store, file_path, line_ranges)
+        if output_json:
+            _run_json(store, file_path, line_ranges)
+        else:
+            _run(store, file_path, line_ranges)
     except Exception:
         pass
     finally:
@@ -205,6 +211,92 @@ def _run(
     output = "\n".join(lines).rstrip()
     if output:
         print(output)
+
+
+def _run_json(
+    store: Any,
+    file_path: str,
+    line_ranges: list[tuple[int, int]] | None,
+) -> None:
+    """Emit structured JSON output for machine consumption."""
+    import json as json_mod
+
+    # --- 1. Find the file node ------------------------------------------------
+    file_nodes = store.search_nodes(file_path, node_types=["File"], limit=5)
+    if not file_nodes:
+        bn = os.path.basename(file_path)
+        if bn:
+            file_nodes = store.search_nodes(bn, node_types=["File"], limit=5)
+    if not file_nodes:
+        print(json_mod.dumps({"file": file_path, "symbols": [], "total_dependents": 0}))
+        return
+
+    file_node = file_nodes[0]
+    for fn in file_nodes:
+        props = fn.get("properties") or {}
+        node_path = props.get("path", "")
+        if node_path.endswith(file_path) or file_path.endswith(node_path):
+            file_node = fn
+            break
+
+    # --- 2. Find symbols defined in this file ---------------------------------
+    neighbors = store._get_neighbors(file_node["id"], "incoming")
+    symbols: list[dict[str, Any]] = []
+    for nb_node, nb_rel in neighbors:
+        if nb_node["type"] not in ("Function", "Class", "Module"):
+            continue
+        if not _in_line_range(nb_node, line_ranges):
+            continue
+        symbols.append(nb_node)
+        if len(symbols) >= _MAX_SYMBOLS:
+            break
+
+    # --- 3. For each symbol, find dependents ----------------------------------
+    result_symbols: list[dict[str, Any]] = []
+    total_dependents = 0
+
+    for sym in symbols:
+        props = sym.get("properties") or {}
+        sym_data: dict[str, Any] = {
+            "id": sym["id"],
+            "name": sym["name"],
+            "type": sym["type"],
+            "start_line": props.get("start_line"),
+            "end_line": props.get("end_line"),
+            "dependents": [],
+        }
+
+        try:
+            dependents = store.traverse(
+                sym["id"],
+                direction="incoming",
+                max_depth=_MAX_TRAVERSE_DEPTH,
+            )
+        except Exception:
+            dependents = []
+
+        for dep in dependents:
+            if dep["relationship"]["type"] in _IMPACT_RELS:
+                dep_props = dep["node"].get("properties") or {}
+                sym_data["dependents"].append({
+                    "id": dep["node"]["id"],
+                    "name": dep["node"]["name"],
+                    "type": dep["node"]["type"],
+                    "relationship": dep["relationship"]["type"],
+                    "depth": dep["depth"],
+                    "path": dep_props.get("path"),
+                })
+                total_dependents += 1
+
+        result_symbols.append(sym_data)
+
+    file_props = file_node.get("properties") or {}
+    output = {
+        "file": file_props.get("path", file_path),
+        "symbols": result_symbols,
+        "total_dependents": total_dependents,
+    }
+    print(json_mod.dumps(output, default=str))
 
 
 def _print_file_only_impact(store: Any, file_node: dict[str, Any]) -> None:
