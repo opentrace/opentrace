@@ -1,0 +1,155 @@
+# Copyright 2026 OpenTrace Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for ``opentrace source-read`` CLI surface."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import click
+import pytest
+from click.testing import CliRunner
+
+from opentrace_agent.cli.main import _parse_source_read_line_spec, app
+
+
+class TestParseLineSpec:
+    def test_empty_returns_none_pair(self) -> None:
+        assert _parse_source_read_line_spec("") == (None, None)
+
+    def test_single_number_is_single_line(self) -> None:
+        assert _parse_source_read_line_spec("10") == (10, 10)
+
+    def test_closed_range(self) -> None:
+        assert _parse_source_read_line_spec("10-25") == (10, 25)
+
+    def test_open_ended_range(self) -> None:
+        # The key new case: "10-" means "from 10 to end of file".
+        # Downstream _print_file_slice treats end_line=None as EOF.
+        assert _parse_source_read_line_spec("10-") == (10, None)
+
+    def test_open_ended_boundary_line_one(self) -> None:
+        assert _parse_source_read_line_spec("1-") == (1, None)
+
+    def test_non_numeric_start_raises(self) -> None:
+        with pytest.raises(click.BadParameter):
+            _parse_source_read_line_spec("abc")
+
+    def test_non_numeric_end_raises(self) -> None:
+        with pytest.raises(click.BadParameter):
+            _parse_source_read_line_spec("10-xyz")
+
+    def test_invalid_format_in_message(self) -> None:
+        with pytest.raises(click.BadParameter) as excinfo:
+            _parse_source_read_line_spec("not-a-range")
+        # Useful error hint for the caller.
+        assert "N-M" in str(excinfo.value)
+
+
+class TestSourceReadLinesFlag:
+    """Integration smoke tests via Click's CliRunner over a scratch file.
+
+    These exercise the command end-to-end for --path + --lines combinations
+    without needing a real indexed DB — `_resolve_db(must_exist=True)` is
+    mocked by pointing at an existing (empty but real) DB file.
+    """
+
+    def _write_sample(self, path: Path) -> None:
+        path.write_text("\n".join(f"line {i}" for i in range(1, 11)))
+
+    def test_closed_range_slices_correctly(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        sample = tmp_path / "sample.py"
+        self._write_sample(sample)
+
+        # Bypass the DB resolution step by stubbing _read_source_by_path
+        # to read directly from the absolute path we pass.
+        from opentrace_agent.cli import main as cli_main
+
+        captured: dict[str, object] = {}
+
+        def fake_resolve_db(*_args, **_kwargs):
+            return str(tmp_path / "fake.db")
+
+        def fake_graphstore(*_args, **_kwargs):
+            class _S:
+                def close(self_inner): ...
+            return _S()
+
+        def fake_read_source_by_path(_store, file_path, start_line, end_line):
+            captured["file_path"] = file_path
+            captured["start_line"] = start_line
+            captured["end_line"] = end_line
+
+        monkeypatch.setattr(cli_main, "_resolve_db", fake_resolve_db)
+        monkeypatch.setattr(cli_main, "_read_source_by_path", fake_read_source_by_path)
+        # GraphStore gets imported inside source_read; patch the module-level
+        # symbol on the store package.
+        import opentrace_agent.store as store_mod
+        monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["source-read", "--path", str(sample), "--lines", "3-5"])
+        assert result.exit_code == 0, result.output
+        assert captured == {"file_path": str(sample), "start_line": 3, "end_line": 5}
+
+    def test_open_ended_range_passes_none_end(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        sample = tmp_path / "sample.py"
+        self._write_sample(sample)
+
+        from opentrace_agent.cli import main as cli_main
+
+        captured: dict[str, object] = {}
+
+        def fake_resolve_db(*_args, **_kwargs):
+            return str(tmp_path / "fake.db")
+
+        def fake_graphstore(*_args, **_kwargs):
+            class _S:
+                def close(self_inner): ...
+            return _S()
+
+        def fake_read_source_by_path(_store, file_path, start_line, end_line):
+            captured["start_line"] = start_line
+            captured["end_line"] = end_line
+
+        monkeypatch.setattr(cli_main, "_resolve_db", fake_resolve_db)
+        monkeypatch.setattr(cli_main, "_read_source_by_path", fake_read_source_by_path)
+        import opentrace_agent.store as store_mod
+        monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["source-read", "--path", str(sample), "--lines", "5-"])
+        assert result.exit_code == 0, result.output
+        assert captured == {"start_line": 5, "end_line": None}
+
+    def test_bad_lines_spec_reports_clearly(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opentrace_agent.cli import main as cli_main
+
+        def fake_resolve_db(*_args, **_kwargs):
+            return str(tmp_path / "fake.db")
+
+        def fake_graphstore(*_args, **_kwargs):
+            class _S:
+                def close(self_inner): ...
+            return _S()
+
+        monkeypatch.setattr(cli_main, "_resolve_db", fake_resolve_db)
+        import opentrace_agent.store as store_mod
+        monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["source-read", "--path", "whatever.py", "--lines", "garbage"])
+        assert result.exit_code != 0
+        assert "invalid --lines value" in result.output or "invalid --lines value" in (result.stderr or "")

@@ -1193,10 +1193,51 @@ def repos(db_path: str | None) -> None:
         store.close()
 
 
+def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
+    """Parse a ``--lines`` value for ``source-read``.
+
+    Accepts three forms:
+
+    - ``"10-25"`` → ``(10, 25)`` — closed range
+    - ``"10-"``   → ``(10, None)`` — open-ended, from 10 to end of file
+    - ``"10"``    → ``(10, 10)`` — single line
+
+    Returns ``(None, None)`` for an empty spec. Raises ``click.BadParameter``
+    if the spec is not parseable.
+    """
+    if not spec:
+        return None, None
+    parts = spec.split("-", 1)
+    try:
+        start = int(parts[0])
+    except ValueError as e:
+        raise click.BadParameter(
+            f"invalid --lines value: {spec!r} (expected 'N', 'N-M', or 'N-')"
+        ) from e
+    if len(parts) == 1:
+        return start, start
+    tail = parts[1]
+    if not tail:
+        # "10-" → open-ended; caller lets _print_file_slice default to EOF.
+        return start, None
+    try:
+        end = int(tail)
+    except ValueError as e:
+        raise click.BadParameter(
+            f"invalid --lines value: {spec!r} (expected 'N', 'N-M', or 'N-')"
+        ) from e
+    return start, end
+
+
 @app.command("source-read")
 @click.option("--node-id", default=None, help="Graph node ID to read source for.")
 @click.option("--path", "file_path", default=None, help="File path relative to repo root.")
-@click.option("--lines", "line_spec", default=None, help="Line range, e.g. '10-25'.")
+@click.option(
+    "--lines",
+    "line_spec",
+    default=None,
+    help="Line range: '10-25' for a closed range, '10-' for line 10 to end of file, or '10' for a single line.",
+)
 @click.option(
     "--db",
     "db_path",
@@ -1223,11 +1264,7 @@ def source_read(node_id: str | None, file_path: str | None, line_spec: str | Non
         if node_id:
             _read_source_by_node(store, node_id)
         elif file_path:
-            start_line, end_line = None, None
-            if line_spec:
-                parts = line_spec.split("-", 1)
-                start_line = int(parts[0])
-                end_line = int(parts[1]) if len(parts) > 1 else start_line
+            start_line, end_line = _parse_source_read_line_spec(line_spec or "")
             _read_source_by_path(store, file_path, start_line, end_line)
     finally:
         store.close()
