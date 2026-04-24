@@ -220,8 +220,9 @@ export class PixiRenderer {
   private height = 0;
 
   // Auto-fit state — keep the graph framed during indexing until user takes
-  // control. Flipped to true by wheel/pan/rotate/zoomToNodes, reset by
-  // setData() (new graph session) and resetCamera() (explicit "Reset View").
+  // control. Flipped to true by any gesture past CLICK_THRESHOLD (wheel,
+  // pan, 3D rotate, node drag) and by zoomToNodes; reset by setData() (new
+  // graph session) and resetCamera() (explicit "Reset View").
   private hasUserMovedCamera = false;
   private autoFitThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly AUTO_FIT_THROTTLE_MS = 180;
@@ -1872,6 +1873,11 @@ export class PixiRenderer {
         movedDistance = Math.sqrt(dx * dx + dy * dy);
 
         if (movedDistance > CLICK_THRESHOLD) {
+          // Any gesture past the click threshold (node drag, pan, 3D rotate)
+          // counts as manual control — stop auto-fitting during indexing so
+          // the view doesn't fight the user.
+          this.hasUserMovedCamera = true;
+
           if (this.pendingDragNode && !this.dragNode) {
             // Start node drag
             this.dragNode = this.pendingDragNode;
@@ -1911,8 +1917,6 @@ export class PixiRenderer {
               this.mode3dAutoRotate = false;
               this.callbacks.on3DAutoRotateChange?.(false);
             }
-            // User took manual control — stop auto-fitting during indexing.
-            this.hasUserMovedCamera = true;
             this.debouncedLabelCull();
           } else {
             // Pan — compute delta from last pointer position (not movementX/Y)
@@ -1921,8 +1925,6 @@ export class PixiRenderer {
             const panDy = e.clientY - lastPointerY;
             this.vp.x += panDx;
             this.vp.y += panDy;
-            // User took manual control — stop auto-fitting during indexing.
-            this.hasUserMovedCamera = true;
             // Hide edges during pan for instant response
             this.hideEdgesForInteraction();
             this.debouncedLabelCull();
