@@ -15,14 +15,19 @@
 """``opentraceai impact`` — find graph nodes affected by changes to a file.
 
 Given a file path (and optional line ranges), discovers which symbols
-(functions, classes) are defined in that file and then walks incoming
-relationships (CALLS, IMPORTS, DEPENDS_ON) to surface the blast radius.
+(functions, classes) are defined in that file by walking ``File
+-DEFINES-> Symbol`` edges, then follows incoming ``CALLS``/``IMPORTS``/
+``DEPENDS_ON``/``EXTENDS``/``IMPLEMENTS`` relationships from each symbol
+to surface the blast radius.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
+
+import click
 
 # Relationship types that indicate something *depends on* the changed symbol.
 _IMPACT_RELS = frozenset({"CALLS", "IMPORTS", "DEPENDS_ON", "EXTENDS", "IMPLEMENTS"})
@@ -32,10 +37,138 @@ _MAX_SYMBOLS = 15
 _MAX_CALLERS_PER_SYMBOL = 8
 _MAX_TRAVERSE_DEPTH = 2
 
+# Cap on how many sibling candidates we name when an ambiguous match is raised.
+_MAX_AMBIGUOUS_CANDIDATES = 10
+
+
+def _props(node: dict[str, Any]) -> dict[str, Any]:
+    """Safely extract a node's properties dict, handling JSON-string storage.
+
+    GraphStore stores ``properties`` as a JSON string on disk but returns a
+    dict via most read paths. This helper normalizes both shapes so callers
+    can consume a dict unconditionally.
+    """
+    p = node.get("properties") or {}
+    if isinstance(p, str):
+        try:
+            return json.loads(p)
+        except Exception:
+            return {}
+    return p
+
+
+def _candidate_relative_paths(store: Any, file_path: str) -> list[str]:
+    """Return relative-path variants of *file_path* to try for exact match.
+
+    Stored ``properties.path`` values are repo-relative. When a caller passes
+    an absolute path (typical for a plugin hook responding to an edit-tool
+    event), we strip any matching repo root from metadata to produce a
+    relative candidate. Callers get the raw input last as a last-ditch
+    option — it rarely matches but costs nothing to try.
+    """
+    candidates: list[str] = []
+    if os.path.isabs(file_path):
+        try:
+            metadata = store.get_metadata()
+        except Exception:
+            metadata = []
+        for entry in metadata:
+            repo_path = entry.get("repoPath")
+            if not repo_path:
+                continue
+            rp = str(repo_path).rstrip(os.sep)
+            if file_path == rp or file_path.startswith(rp + os.sep):
+                rel = os.path.relpath(file_path, rp)
+                if rel and rel not in candidates:
+                    candidates.append(rel)
+    if file_path not in candidates:
+        candidates.append(file_path)
+    return candidates
+
+
+def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
+    """Find the File node whose stored relative path matches *file_path*.
+
+    Matching strategies, tried in order:
+
+    1. Exact match against ``properties.path`` for the input, and for any
+       relative variant derived by stripping a known repo root (when the
+       input is absolute).
+    2. Unique-basename match: if exactly one File in the graph ends in
+       ``/<basename>``, accept it. Multiple matches raise.
+
+    Returns the matched node, or ``None`` if nothing matches. Raises
+    ``click.ClickException`` with the candidate paths listed when the input
+    resolves to more than one File — better to surface the ambiguity than
+    to silently pick one and attribute dependents to the wrong file.
+    """
+    for candidate in _candidate_relative_paths(store, file_path):
+        matches = store.list_nodes("File", filters={"path": candidate}, limit=2)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            paths = sorted({_props(n).get("path", "<unknown>") for n in matches})
+            raise click.ClickException(
+                f"Ambiguous match for {file_path!r}: multiple File nodes share "
+                f"path={candidate!r}: {paths}"
+            )
+
+    basename = os.path.basename(file_path)
+    if basename:
+        # Basename fallback runs even when basename == file_path (bare
+        # filename input). The exact-match phase above tested
+        # properties.path == <input>, which only matches files at a
+        # repo root. This phase widens to any file *ending* in the
+        # basename, and requires uniqueness.
+        fts_candidates = store.search_nodes(basename, node_types=["File"], limit=20)
+        basename_matches = [
+            n
+            for n in fts_candidates
+            if _props(n).get("path", "").endswith("/" + basename)
+            or _props(n).get("path") == basename
+        ]
+        if len(basename_matches) == 1:
+            return basename_matches[0]
+        if len(basename_matches) > 1:
+            paths = sorted({_props(n).get("path", "<unknown>") for n in basename_matches})
+            raise click.ClickException(
+                f"Ambiguous match for {file_path!r}: multiple files named "
+                f"{basename!r}: {paths[:_MAX_AMBIGUOUS_CANDIDATES]}. "
+                f"Pass a repo-relative path to disambiguate."
+            )
+
+    return None
+
+
+def _find_defined_symbols(
+    store: Any,
+    file_node: dict[str, Any],
+    line_ranges: list[tuple[int, int]] | None,
+) -> list[dict[str, Any]]:
+    """Return Function/Class/Module nodes defined in *file_node*.
+
+    The indexer emits ``File -DEFINES-> Symbol`` edges. From the File's
+    perspective those are *outgoing*. (An earlier version of this code
+    walked ``incoming`` on the misconception that the schema was
+    ``Symbol -DEFINED_IN-> File``; that schema has never existed in the
+    graph, which is why impact used to always return zero symbols.)
+    """
+    neighbors = store._get_neighbors(file_node["id"], "outgoing")
+    symbols: list[dict[str, Any]] = []
+    for nb_node, _nb_rel in neighbors:
+        if nb_node["type"] not in ("Function", "Class", "Module"):
+            continue
+        if not _in_line_range(nb_node, line_ranges):
+            continue
+        symbols.append(nb_node)
+        if len(symbols) >= _MAX_SYMBOLS:
+            break
+    return symbols
+
 
 def _symbol_label(node: dict[str, Any]) -> str:
     """Short label: Type Name (line range)."""
-    props = node.get("properties") or {}
+    props = _props(node)
     start = props.get("start_line")
     end = props.get("end_line")
     if not start:
@@ -47,7 +180,7 @@ def _symbol_label(node: dict[str, Any]) -> str:
 
 def _caller_label(node: dict[str, Any], rel: dict[str, Any], depth: int) -> str:
     """One-line caller: <--CALLS-- Name (Type) [depth N]."""
-    props = node.get("properties") or {}
+    props = _props(node)
     path = props.get("path", "")
     loc = f"  {path}" if path else ""
     indent = "  " * depth
@@ -61,7 +194,7 @@ def _in_line_range(
     """Check if a symbol's line range overlaps any of the changed ranges."""
     if not line_ranges:
         return True  # no filter → include all symbols
-    props = node.get("properties") or {}
+    props = _props(node)
     start = props.get("start_line")
     end = props.get("end_line")
     if start is None:
@@ -106,7 +239,13 @@ def run_impact(
             _run_json(store, file_path, line_ranges)
         else:
             _run(store, file_path, line_ranges)
+    except click.ClickException:
+        # User-input errors (e.g., ambiguous match) must surface to the
+        # caller; don't swallow them with the generic handler below.
+        raise
     except Exception:
+        # Best-effort: impact is called from hooks where an unexpected
+        # internal error should not crash the consumer.
         pass
     finally:
         try:
@@ -121,52 +260,22 @@ def _run(
     line_ranges: list[tuple[int, int]] | None,
 ) -> None:
     """Core logic: find file → find symbols → traverse callers."""
-
-    # --- 1. Find the file node ------------------------------------------------
-    # Try searching by path fragment (use the last components for matching)
-    file_nodes = store.search_nodes(file_path, node_types=["File"], limit=5)
-    if not file_nodes:
-        # Fallback: try just the basename
-        bn = os.path.basename(file_path)
-        if bn:
-            file_nodes = store.search_nodes(bn, node_types=["File"], limit=5)
-    if not file_nodes:
+    file_node = _resolve_file_node(store, file_path)
+    if file_node is None:
         return
 
-    # Pick the best match (prefer exact path suffix match)
-    file_node = file_nodes[0]
-    for fn in file_nodes:
-        props = fn.get("properties") or {}
-        node_path = props.get("path", "")
-        if node_path.endswith(file_path) or file_path.endswith(node_path):
-            file_node = fn
-            break
-
-    # --- 2. Find symbols defined in this file ---------------------------------
-    # Traverse outgoing from file to find DEFINED_IN relationships
-    # (symbols point DEFINED_IN → file, so from the file's perspective it's incoming)
-    neighbors = store._get_neighbors(file_node["id"], "incoming")
-
-    symbols: list[dict[str, Any]] = []
-    for nb_node, nb_rel in neighbors:
-        if nb_node["type"] not in ("Function", "Class", "Module"):
-            continue
-        if not _in_line_range(nb_node, line_ranges):
-            continue
-        symbols.append(nb_node)
-        if len(symbols) >= _MAX_SYMBOLS:
-            break
+    symbols = _find_defined_symbols(store, file_node, line_ranges)
 
     if not symbols:
-        # No indexed symbols found — still report the file itself
         _print_file_only_impact(store, file_node)
         return
 
-    # --- 3. For each symbol, find what depends on it --------------------------
     lines: list[str] = []
-    file_props = file_node.get("properties") or {}
+    file_props = _props(file_node)
     file_display = file_props.get("path", file_node["name"])
     lines.append(f"[OpenTrace] Impact analysis for {file_display}:")
+    if file_display != file_path:
+        lines.append(f"  (resolved from {file_path!r})")
     lines.append(f"  {len(symbols)} symbol(s) affected in the graph")
     lines.append("")
 
@@ -174,7 +283,6 @@ def _run(
     for sym in symbols:
         lines.append(f"  {_symbol_label(sym)}")
 
-        # Walk incoming relationships (things that call/import/depend on this)
         try:
             dependents = store.traverse(
                 sym["id"],
@@ -184,7 +292,6 @@ def _run(
         except Exception:
             dependents = []
 
-        # Filter to impact-relevant relationships
         relevant = [d for d in dependents if d["relationship"]["type"] in _IMPACT_RELS]
 
         if not relevant:
@@ -218,51 +325,53 @@ def _run_json(
     file_path: str,
     line_ranges: list[tuple[int, int]] | None,
 ) -> None:
-    """Emit structured JSON output for machine consumption."""
-    import json as json_mod
+    """Emit structured JSON output for machine consumption.
 
-    # --- 1. Find the file node ------------------------------------------------
-    file_nodes = store.search_nodes(file_path, node_types=["File"], limit=5)
-    if not file_nodes:
-        bn = os.path.basename(file_path)
-        if bn:
-            file_nodes = store.search_nodes(bn, node_types=["File"], limit=5)
-    if not file_nodes:
-        print(json_mod.dumps({"file": file_path, "symbols": [], "total_dependents": 0}))
+    Shape::
+
+        {
+          "requestedFile": "<input path as passed by caller>",
+          "file":          "<resolved path in graph, or null if no match>",
+          "symbols": [
+            {
+              "id": "...", "name": "...", "type": "Function",
+              "start_line": N, "end_line": M,
+              "dependents": [
+                {"id": "...", "name": "...", "type": "...",
+                 "relationship": "CALLS", "depth": 1, "path": "..."}
+              ]
+            }
+          ],
+          "total_dependents": <sum across all symbols>
+        }
+
+    ``requestedFile`` always echoes the caller's input so consumers can
+    detect when the graph resolved to a different file (e.g. an absolute
+    path stripped to a repo-relative form, or a basename-only match).
+    """
+    file_node = _resolve_file_node(store, file_path)
+    if file_node is None:
+        print(json.dumps({
+            "requestedFile": file_path,
+            "file": None,
+            "symbols": [],
+            "total_dependents": 0,
+        }))
         return
 
-    file_node = file_nodes[0]
-    for fn in file_nodes:
-        props = fn.get("properties") or {}
-        node_path = props.get("path", "")
-        if node_path.endswith(file_path) or file_path.endswith(node_path):
-            file_node = fn
-            break
+    symbols = _find_defined_symbols(store, file_node, line_ranges)
 
-    # --- 2. Find symbols defined in this file ---------------------------------
-    neighbors = store._get_neighbors(file_node["id"], "incoming")
-    symbols: list[dict[str, Any]] = []
-    for nb_node, nb_rel in neighbors:
-        if nb_node["type"] not in ("Function", "Class", "Module"):
-            continue
-        if not _in_line_range(nb_node, line_ranges):
-            continue
-        symbols.append(nb_node)
-        if len(symbols) >= _MAX_SYMBOLS:
-            break
-
-    # --- 3. For each symbol, find dependents ----------------------------------
     result_symbols: list[dict[str, Any]] = []
     total_dependents = 0
 
     for sym in symbols:
-        props = sym.get("properties") or {}
+        sym_props = _props(sym)
         sym_data: dict[str, Any] = {
             "id": sym["id"],
             "name": sym["name"],
             "type": sym["type"],
-            "start_line": props.get("start_line"),
-            "end_line": props.get("end_line"),
+            "start_line": sym_props.get("start_line"),
+            "end_line": sym_props.get("end_line"),
             "dependents": [],
         }
 
@@ -277,7 +386,7 @@ def _run_json(
 
         for dep in dependents:
             if dep["relationship"]["type"] in _IMPACT_RELS:
-                dep_props = dep["node"].get("properties") or {}
+                dep_props = _props(dep["node"])
                 sym_data["dependents"].append({
                     "id": dep["node"]["id"],
                     "name": dep["node"]["name"],
@@ -290,13 +399,13 @@ def _run_json(
 
         result_symbols.append(sym_data)
 
-    file_props = file_node.get("properties") or {}
-    output = {
-        "file": file_props.get("path", file_path),
+    file_props = _props(file_node)
+    print(json.dumps({
+        "requestedFile": file_path,
+        "file": file_props.get("path") or file_node.get("name"),
         "symbols": result_symbols,
         "total_dependents": total_dependents,
-    }
-    print(json_mod.dumps(output, default=str))
+    }, default=str))
 
 
 def _print_file_only_impact(store: Any, file_node: dict[str, Any]) -> None:
@@ -304,7 +413,7 @@ def _print_file_only_impact(store: Any, file_node: dict[str, Any]) -> None:
     neighbors = store._get_neighbors(file_node["id"], "both")
 
     lines: list[str] = []
-    file_props = file_node.get("properties") or {}
+    file_props = _props(file_node)
     file_display = file_props.get("path", file_node["name"])
     lines.append(f"[OpenTrace] Impact analysis for {file_display}:")
     lines.append("  (no indexed symbols — showing file-level relationships)")
