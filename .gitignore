@@ -23,6 +23,10 @@ components/node_modules/
 *.iml
 .vscode/
 
+# Local OpenCode plugin configs (contain absolute machine-specific paths)
+.opencode/
+agent/.opencode/
+
 # OS
 .DS_Store
 .entire/
