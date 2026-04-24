@@ -1152,6 +1152,23 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None, output_js
     run_impact(file_path, resolved, line_ranges, output_json=output_json)
 
 
+_REPOS_METADATA_FIELDS: tuple[str, ...] = (
+    "sourceUri",
+    "branch",
+    "commitSha",
+    "commitMessage",
+    "repoPath",
+    "indexedAt",
+    "durationSeconds",
+    "nodesCreated",
+    "relationshipsCreated",
+    "filesProcessed",
+    "classesExtracted",
+    "functionsExtracted",
+    "opentraceaiVersion",
+)
+
+
 @app.command()
 @click.option(
     "--db",
@@ -1163,8 +1180,18 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None, output_js
 def repos(db_path: str | None) -> None:
     """List all indexed repositories in the graph database.
 
-    Outputs JSON array of repository metadata including name, path, branch,
-    commit SHA, and source URI.
+    Emits a JSON array, one entry per ``Repository`` node, with the
+    full set of per-repo metadata. Every entry carries the same keys
+    (all nullable except ``id`` and ``name``) so that consumers can
+    rely on a stable shape. The fields are sourced from
+    ``store.get_metadata()`` — the same place ``stats --output json``
+    already surfaces them — with graph-node ``properties`` used as a
+    fallback for the three fields an indexer could plausibly write
+    there (``sourceUri``/``branch``/``commitSha``/``repoPath``).
+
+    Metadata entries whose ``repoId`` doesn't match any graph node
+    are excluded: this command reports what's in the graph, not what
+    has ever been indexed.
     """
     import json
 
@@ -1174,37 +1201,39 @@ def repos(db_path: str | None) -> None:
     store = GraphStore(resolved_db, read_only=True)
 
     try:
+        # Index the metadata up-front so the per-node merge is O(1).
+        metadata_by_id: dict[str, dict[str, object]] = {}
+        for entry in store.get_metadata():
+            repo_id = entry.get("repoId")
+            if isinstance(repo_id, str) and repo_id:
+                metadata_by_id[repo_id] = entry
+
         result = store._conn.execute(
             "MATCH (n:Node {type: 'Repository'}) RETURN n.id, n.name, n.properties"
         )
-        repos_list = []
+        repos_list: list[dict[str, object]] = []
         while result.has_next():
             row = result.get_next()
             node_id, name, props_str = row[0], row[1], row[2]
-            props = {}
+
+            graph_props: dict[str, object] = {}
             if props_str:
                 try:
-                    props = __import__("json").loads(props_str)
+                    graph_props = json.loads(props_str)
                 except Exception:
                     pass
-            repos_list.append({
-                "id": node_id,
-                "name": name,
-                "sourceUri": props.get("sourceUri"),
-                "branch": props.get("branch"),
-                "commitSha": props.get("commitSha"),
-                "repoPath": props.get("repoPath"),
-            })
 
-        metadata = store.get_metadata()
-        for entry in metadata:
-            repo_id = entry.get("repoId")
-            for repo in repos_list:
-                if repo["name"] == repo_id:
-                    repo["indexedAt"] = entry.get("indexedAt")
-                    repo["durationSeconds"] = entry.get("durationSeconds")
-                    repo["nodesCreated"] = entry.get("nodesCreated")
-                    break
+            # Match by node id, not by name. Name/repoId divergence
+                # silently dropped metadata under the previous design.
+            md = metadata_by_id.get(node_id, {})
+
+            record: dict[str, object] = {"id": node_id, "name": name}
+            for field in _REPOS_METADATA_FIELDS:
+                # Metadata is authoritative when present. Graph-node
+                # properties cover the same three pre-existing keys as
+                # a fallback for indexers that populate them there.
+                record[field] = md.get(field) if md.get(field) is not None else graph_props.get(field)
+            repos_list.append(record)
 
         click.echo(json.dumps(repos_list, indent=2, default=str))
     finally:
