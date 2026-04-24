@@ -314,6 +314,9 @@ function App({
                   graphViewerRef.current?.triggerPing(newIds);
                 }
               }}
+              onQuestionSubmit={() => {
+                graphViewerRef.current?.zoomToFit();
+              }}
               onGraphChange={async (focusNodeId) => {
                 // Reload scoped to the PR node — 2 hops shows PR → Files → their neighbors
                 await graphViewerRef.current?.reload(focusNodeId, 2);
