@@ -582,7 +582,15 @@ export class EmbedStage implements INodeStage {
     onProgress?: (embedded: number, total: number) => void,
   ): Promise<void> {
     const embedder = await this.ensureModel();
-    if (!embedder || this.queue.length === 0) return;
+    if (!embedder) {
+      // Init failed — drop queued nodes so the (potentially long-lived)
+      // EmbedStage instance does not retain File-node references and their
+      // attached source/summary properties. For large repos the queue can
+      // hold thousands of entries.
+      this.queue = [];
+      return;
+    }
+    if (this.queue.length === 0) return;
 
     const BATCH = 8;
     for (let off = 0; off < this.queue.length; off += BATCH) {
