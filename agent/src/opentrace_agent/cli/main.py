@@ -1290,6 +1290,36 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
     return start, end
 
 
+@app.command("get-node")
+@click.argument("node_id")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def get_node_cmd(node_id: str, output_json: bool, db_path: str | None) -> None:
+    """Fetch a single node and its 1-hop neighbors.
+
+    Returns the node's full details plus every immediate neighbor (in
+    either direction) along with the connecting relationship. Same
+    envelope the MCP server's ``get_node`` tool returns; this is the
+    one-shot CLI surface for plugins that don't embed an MCP client.
+
+    Each neighbor's relationship carries a derived ``direction`` field
+    (``"outgoing"`` when the requested node is the source, ``"incoming"``
+    when it is the target) so callers don't reinvent the comparison.
+
+    Exits 1 if the node id is not in the graph.
+    """
+    from opentrace_agent.cli.get_node import run_get_node
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_get_node(node_id, resolved_db, output_json=output_json)
+
+
 @app.command("source-grep")
 @click.argument("pattern")
 @click.option(
