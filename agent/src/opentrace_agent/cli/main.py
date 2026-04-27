@@ -1648,49 +1648,19 @@ def _print_file_slice(
 
 def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None) -> Path:
     """Clone a repo into *clone_dir*, returning the local path."""
-    click.echo(f"Cloning {repo_url} ...")
-    try:
-        from opentrace_agent.sources.code.git_cloner import GitCloner
+    from opentrace_agent.sources.code.git_cloner import GitCloner
 
-        cloner = GitCloner()
-        kwargs: dict[str, object] = {"dest": clone_dir}
-        if ref:
-            kwargs["ref"] = ref
-        if token:
-            kwargs["token"] = token
+    click.echo(f"Cloning {repo_url} ...")
+    cloner = GitCloner()
+    kwargs: dict[str, object] = {"dest": clone_dir}
+    if ref:
+        kwargs["ref"] = ref
+    if token:
+        kwargs["token"] = token
+    try:
         return cloner.clone(repo_url, **kwargs)
-    except ImportError:
-        pass
     except Exception as e:
         raise click.ClickException(f"Clone failed: {e}")
-
-    # Fallback to git CLI
-    import os
-    import subprocess
-
-    clone_url = repo_url
-    if token and clone_url.startswith("https://"):
-        from urllib.parse import urlparse, urlunparse
-        parsed = urlparse(clone_url)
-        netloc = f"oauth2:{token}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        clone_url = urlunparse(parsed._replace(netloc=netloc))
-
-    cmd = ["git", "clone", "--depth", "1"]
-    if ref:
-        cmd.extend(["--branch", ref])
-    cmd.extend([clone_url, str(clone_dir)])
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"git clone failed: {result.stderr}")
-    return clone_dir
 
 
 @app.command("fetch-and-index")
