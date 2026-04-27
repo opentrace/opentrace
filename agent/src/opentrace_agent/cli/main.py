@@ -1290,6 +1290,65 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
     return start, end
 
 
+@app.command("source-search")
+@click.argument("query")
+@click.option(
+    "--repo",
+    default=None,
+    help="Filter to a specific repo by id (use the 'id' field from `opentrace repos`).",
+)
+@click.option(
+    "--types",
+    "node_types",
+    default=None,
+    help="Comma-separated node types to filter by (e.g. 'Function,Class').",
+)
+@click.option("--limit", default=20, type=int, show_default=True, help="Max results to return.")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_search_cmd(
+    query: str,
+    repo: str | None,
+    node_types: str | None,
+    limit: int,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """Full-text search across the indexed graph.
+
+    Searches each node's name, type, summary, and path via Kuzu's BM25
+    FTS index. Because ``type`` is part of the indexed text, a query
+    like ``Function`` matches every Function node — use ``--types`` for
+    node-kind filtering rather than putting the type in the query.
+    Optionally restricts to a single repository (``--repo <id>``).
+    Pass ``--json`` for a structured response with ``totalResults`` /
+    ``truncated`` flags.
+    """
+    from opentrace_agent.cli.source_search import run_source_search
+
+    types_list: list[str] | None = None
+    if node_types:
+        types_list = [t.strip() for t in node_types.split(",") if t.strip()]
+        if not types_list:
+            types_list = None
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_source_search(
+        query,
+        resolved_db,
+        repo=repo,
+        node_types=types_list,
+        limit=limit,
+        output_json=output_json,
+    )
+
+
 @app.command("source-read")
 @click.option("--node-id", default=None, help="Graph node ID to read source for.")
 @click.option("--path", "file_path", default=None, help="File path relative to repo root.")
