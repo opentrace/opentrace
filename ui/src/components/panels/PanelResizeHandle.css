@@ -23,7 +23,16 @@
 .ot-panel-resize-handle {
   position: absolute;
   z-index: 20;
-  --ot-panel-resize-inset: 10px;
+  /* Inset from each end so the bar tucks inside rounded panels and never
+   * overshoots their corner curve. Override per-panel if your radius is
+   * unusually large. */
+  --ot-panel-resize-inset: 12px;
+  /* `--ot-panel-corner-radius` is intentionally NOT defined here — it
+   * cascades down from the parent panel (each panel sets it to its own
+   * border-radius). Defining it here would override the cascade for
+   * every handle and freeze the arc at one value. The `var()` calls
+   * below carry their own fallback so corner panels still render if a
+   * consumer forgot to set the var. */
 }
 
 /* ── Edges ───────────────────────────────────────────────────────────── */
@@ -172,52 +181,107 @@
  *    avoided a `:has()`-only rule here because some stacking contexts
  *    suppress it for sibling combinations during pointer drag. */
 
-/* Right edge — brightens + extends when right-side corner is active */
+/* Right edge — brightens + extends when right-side corner is active.
+ * Bars stop at the panel's corner radius so they meet the corner arc
+ * (rendered by the corner handle's `::after`) cleanly along the curve. */
 .ot-panel--corner-active-tr > .ot-panel-resize-handle--right::after {
   background: var(--primary);
   width: 3px;
-  top: 0;
+  top: var(--ot-panel-corner-radius, 10px);
 }
 .ot-panel--corner-active-br > .ot-panel-resize-handle--right::after {
   background: var(--primary);
   width: 3px;
-  bottom: 0;
+  bottom: var(--ot-panel-corner-radius, 10px);
 }
 
 /* Left edge — left-side corner */
 .ot-panel--corner-active-tl > .ot-panel-resize-handle--left::after {
   background: var(--primary);
   width: 3px;
-  top: 0;
+  top: var(--ot-panel-corner-radius, 10px);
 }
 .ot-panel--corner-active-bl > .ot-panel-resize-handle--left::after {
   background: var(--primary);
   width: 3px;
-  bottom: 0;
+  bottom: var(--ot-panel-corner-radius, 10px);
 }
 
 /* Top edge — top-side corner */
 .ot-panel--corner-active-tl > .ot-panel-resize-handle--top::after {
   background: var(--primary);
   height: 3px;
-  left: 0;
+  left: var(--ot-panel-corner-radius, 10px);
 }
 .ot-panel--corner-active-tr > .ot-panel-resize-handle--top::after {
   background: var(--primary);
   height: 3px;
-  right: 0;
+  right: var(--ot-panel-corner-radius, 10px);
 }
 
 /* Bottom edge — bottom-side corner */
 .ot-panel--corner-active-bl > .ot-panel-resize-handle--bottom::after {
   background: var(--primary);
   height: 3px;
-  left: 0;
+  left: var(--ot-panel-corner-radius, 10px);
 }
 .ot-panel--corner-active-br > .ot-panel-resize-handle--bottom::after {
   background: var(--primary);
   height: 3px;
-  right: 0;
+  right: var(--ot-panel-corner-radius, 10px);
+}
+
+/* ── Cascade outline drawn ON THE PANEL ITSELF ──────────────────────── */
+/*    A pseudo-element on the panel inherits the panel's border-radius
+ *    and traces the rounded edge directly — no offset math, no per-
+ *    handle arc, the curve is always exactly the panel's curve.
+ *    Activated by the corner-active class added by the JS handler. */
+
+.ot-panel--corner-active-tl::after,
+.ot-panel--corner-active-tr::after,
+.ot-panel--corner-active-bl::after,
+.ot-panel--corner-active-br::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid transparent;
+  border-radius: inherit;
+  box-sizing: border-box;
+  pointer-events: none;
+  /* Sit above the edge handles so the cascade reads as a single
+   * continuous outline. */
+  z-index: 22;
+}
+
+.ot-panel--corner-active-tl::after {
+  border-top-color: var(--primary);
+  border-left-color: var(--primary);
+}
+.ot-panel--corner-active-tr::after {
+  border-top-color: var(--primary);
+  border-right-color: var(--primary);
+}
+.ot-panel--corner-active-bl::after {
+  border-bottom-color: var(--primary);
+  border-left-color: var(--primary);
+}
+.ot-panel--corner-active-br::after {
+  border-bottom-color: var(--primary);
+  border-right-color: var(--primary);
+}
+
+/* While a corner is active, hide the edge-handle bars on the two
+ * adjacent edges — the panel outline above replaces them so we don't
+ * paint two parallel primary lines. */
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--top::after,
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--left::after,
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--top::after,
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--right::after,
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--bottom::after,
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--left::after,
+.ot-panel--corner-active-br > .ot-panel-resize-handle--bottom::after,
+.ot-panel--corner-active-br > .ot-panel-resize-handle--right::after {
+  display: none;
 }
 
 /* ── Touch-first layouts: hide handles ───────────────────────────────── */

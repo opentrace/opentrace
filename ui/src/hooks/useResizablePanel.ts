@@ -101,9 +101,19 @@ export function useResizablePanel({
 
     const flush = () => {
       rafId = null;
-      if (pending != null && panelRef.current) {
-        panelRef.current.style.width = `${pending}px`;
+      const panel = panelRef.current;
+      if (pending == null || !panel) return;
+      // Clamp pending to whatever the parent currently allows so the
+      // drag stops cleanly at the available limit (and doesn't fight the
+      // ResizeObserver's clamp on every frame).
+      const parent = panel.parentElement;
+      if (parent) {
+        const panelRect = panel.getBoundingClientRect();
+        const parentRect = parent.getBoundingClientRect();
+        const available = parentRect.right - panelRect.left - 4;
+        if (available > 0 && pending > available) pending = available;
       }
+      panel.style.width = `${pending}px`;
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -146,27 +156,45 @@ export function useResizablePanel({
     localStorage.setItem(storageKey, String(width));
   }, [storageKey, width]);
 
-  // Belt-and-braces auto-shrink: when the parent's width changes, force the
-  // panel's inline `style.width` down to whatever the parent can actually
-  // accommodate. CSS `max-width: 100%` should already do this, but
-  // consumers (e.g. insight-ui) sometimes wrap the panel in a containing
-  // block that doesn't propagate, so this guarantees the right edge handle
-  // is always reachable.
+  // Belt-and-braces auto-shrink: when the parent's width changes — OR the
+  // panel itself becomes visible at a stored width that exceeds the
+  // parent — force the panel's inline `style.width` down to whatever the
+  // parent can actually accommodate. CSS `max-width: 100%` should already
+  // do this, but consumers (e.g. insight-ui) sometimes wrap the panel in
+  // a containing block that doesn't propagate cleanly, and observing just
+  // the parent misses the hidden-to-visible transition (display:none →
+  // display:flex). So we observe both.
   useEffect(() => {
     const panel = panelRef.current;
     const parent = panel?.parentElement;
     if (!panel || !parent || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      const available = parent.clientWidth;
+    const clamp = () => {
+      // Skip while the user is dragging — the drag's own `flush` handles
+      // clamping and running this in parallel creates a feedback loop.
+      if (isDragging.current) return;
+      // Compute the actual available width FROM the panel's rendered
+      // left edge TO the parent's right inner edge. This adapts to any
+      // top/left inset the consumer applied (e.g. insight-ui's `!left-3`
+      // floating offset) instead of assuming the panel starts at parent
+      // origin. 4 px buffer keeps the right-edge handle (which extrudes
+      // 3 px outside) inside an overflow:hidden parent.
+      const panelRect = panel.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      const available = parentRect.right - panelRect.left - 4;
       if (available > 0 && panel.offsetWidth > available) {
-        panel.style.width = `${available}px`;
-      } else if (!isDragging.current) {
-        // Restore React state width if there's room again (drag also writes
-        // to inline style, so don't clobber it mid-drag).
-        panel.style.width = `${width}px`;
+        const next = `${available}px`;
+        if (panel.style.width !== next) panel.style.width = next;
+      } else if (width <= available) {
+        // Only restore to state width when it actually fits — otherwise
+        // the clamp would oscillate (set to state → too big → clamp →
+        // set to state again).
+        const next = `${width}px`;
+        if (panel.style.width !== next) panel.style.width = next;
       }
-    });
+    };
+    const observer = new ResizeObserver(clamp);
     observer.observe(parent);
+    observer.observe(panel);
     return () => observer.disconnect();
   }, [panelRef, width]);
 
@@ -239,9 +267,20 @@ export function useResizablePanelHeight({
 
     const flush = () => {
       rafId = null;
-      if (pending != null && panelRef.current) {
-        panelRef.current.style.height = `${pending}px`;
+      const panel = panelRef.current;
+      if (pending == null || !panel) return;
+      // Clamp pending to whatever the parent currently allows so the drag
+      // stops cleanly at the available limit instead of fighting the
+      // ResizeObserver below (which would otherwise observe-and-clamp on
+      // every frame, causing twitch).
+      const parent = panel.parentElement;
+      if (parent) {
+        const panelRect = panel.getBoundingClientRect();
+        const parentRect = parent.getBoundingClientRect();
+        const available = parentRect.bottom - panelRect.top - 4;
+        if (available > 0 && pending > available) pending = available;
       }
+      panel.style.height = `${pending}px`;
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -285,22 +324,43 @@ export function useResizablePanelHeight({
 
   // Belt-and-braces auto-shrink: clamp the panel's inline `style.height`
   // down whenever the parent shrinks below it, so the bottom edge handle
-  // never falls off-screen. CSS `max-height: 100%` should already do this
-  // but we've seen consumers wrap the panel in containing blocks that
-  // don't propagate the height correctly.
+  // never falls off-screen. We observe both the panel AND the parent so
+  // we also catch the hidden-to-visible transition (display:none →
+  // display:flex when a toolbar tab opens the panel) — that doesn't
+  // change the parent's size, but it does change the panel's.
   useEffect(() => {
     const panel = panelRef.current;
     const parent = panel?.parentElement;
     if (!panel || !parent || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      const available = parent.clientHeight;
+    const clamp = () => {
+      // Skip while the user is dragging — the drag's own `flush` does the
+      // clamp, and running it here too creates a feedback loop (drag sets
+      // height → ResizeObserver fires → clamps to a slightly different
+      // value → twitch).
+      if (isDragging.current) return;
+      // Compute available height FROM the panel's rendered top edge TO
+      // the parent's bottom inner edge — adapts to any top inset the
+      // consumer applies (e.g. insight-ui's `!top-3` floating offset).
+      // 4 px buffer keeps the bottom-edge handle (extrudes 3 px outside)
+      // inside an overflow:hidden parent.
+      const panelRect = panel.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      const available = parentRect.bottom - panelRect.top - 4;
       if (available > 0 && panel.offsetHeight > available) {
-        panel.style.height = `${available}px`;
-      } else if (!isDragging.current && height != null) {
-        panel.style.height = `${height}px`;
+        const next = `${available}px`;
+        if (panel.style.height !== next) panel.style.height = next;
+      } else if (height != null && height <= available) {
+        // Only restore to state height when it actually fits — otherwise
+        // we'd write `state.height (bigger) → clamp branch shrinks it →
+        // we restore again` ad infinitum and the panel flickers after the
+        // window stops resizing.
+        const next = `${height}px`;
+        if (panel.style.height !== next) panel.style.height = next;
       }
-    });
+    };
+    const observer = new ResizeObserver(clamp);
     observer.observe(parent);
+    observer.observe(panel);
     return () => observer.disconnect();
   }, [panelRef, height]);
 

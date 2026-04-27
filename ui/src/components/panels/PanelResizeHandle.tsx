@@ -65,6 +65,22 @@ export default function PanelResizeHandle({
     if (!panel) return;
     const cls = CORNER_CLASS[side as CornerSide];
     panel.classList.add(cls);
+    // Pull the actual panel's border-radius so the arc curve matches
+    // the panel's outer rounded edge, regardless of theme/consumer.
+    const cs = window.getComputedStyle(panel);
+    const radius =
+      side === 'top-left'
+        ? cs.borderTopLeftRadius
+        : side === 'top-right'
+          ? cs.borderTopRightRadius
+          : side === 'bottom-left'
+            ? cs.borderBottomLeftRadius
+            : cs.borderBottomRightRadius;
+    if (radius && radius !== '0px') {
+      // Set on the panel so both the corner handle's arc AND the adjacent
+      // edge bars (siblings) pick up the same radius value.
+      panel.style.setProperty('--ot-panel-corner-radius', radius);
+    }
   }, [corner, side]);
 
   const untagPanel = useCallback(() => {

@@ -20,6 +20,9 @@
   bottom: 20px;
   right: 68px;
   z-index: 10;
+  /* Keep the corner-arc radius in sync with the panel's own border
+   * radius so the cascade L curves along the panel edge. */
+  --ot-panel-corner-radius: calc(var(--radius) + 4px);
   width: var(--physics-panel-width, 240px);
   /* Height: auto until the user drags the top edge, then an explicit pixel
    * height. Cap at 80vh so the default content-height never overflows the
@@ -31,7 +34,12 @@
    * off-screen. */
   max-width: calc(100vw - 76px);
   max-height: min(80vh, calc(100vh - 28px));
-  overflow-y: auto;
+  /* Overflow stays VISIBLE on the panel root so the resize handles
+   * (which sit at top:-3 / left:-3 / right:-3 / bottom:-3, outside the
+   * box) aren't clipped — clipping handles also clips their pointer-event
+   * target, which silently kills hover/drag. Scrolling lives on the inner
+   * `.physics-panel-scroll` div instead. */
+  overflow: visible;
   background: color-mix(in oklch, var(--background) 85%, transparent);
   backdrop-filter: blur(12px);
   border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
@@ -39,8 +47,18 @@
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
   animation: physicsPanelIn 0.15s ease-out;
+}
+
+/* Inner scrollable container — owns the overflow so the panel root can
+ * keep its handles unclipped. Inherits the flex stack from the panel. */
+.physics-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 @keyframes physicsPanelIn {
