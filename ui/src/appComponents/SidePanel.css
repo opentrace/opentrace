@@ -21,27 +21,17 @@
   top: 0;
   left: 0;
   bottom: 0;
-  /* Default corner-arc radius (overridden at runtime by JS that reads
-   * the panel's actual computed border-radius — covers consumers that
-   * inject their own radius via Tailwind, e.g. insight-ui's
-   * `rounded-lg` floating-mode override). */
-  --ot-panel-corner-radius: 8px;
   /* Height: auto by default so `top` + `bottom` anchors compute the height
    * (lets consumers like insight-ui inset the panel via `!top-3 !bottom-3`).
    * Once the user drags the bottom edge, this var is set and `height` wins
    * over `bottom` per CSS abs-positioning rules. */
   height: var(--side-panel-height, auto);
   width: 220px;
-  /* Clamp to the containing block so a stored width/height bigger than the
-   * current viewport can't push the panel (and its bottom/right resize
-   * handles) off-screen. Leave 4 px breathing room on each axis so the
-   * handle's outer 3 px (it sits at `bottom: -3px` / `right: -3px`) stays
-   * inside the parent — otherwise overflow:hidden on the parent
-   * (insight-ui's graph-viewport) clips half the hit-area. The stored
-   * value survives — CSS just renders the clamped size until there's
-   * room again. */
-  max-width: calc(100% - 4px);
-  max-height: calc(100% - 4px);
+  /* Hard cap at the parent's size — the precise clamp (which accounts
+   * for handle bleed and consumer-applied insets) lives in
+   * useResizablePanel's ResizeObserver. */
+  max-width: 100%;
+  max-height: 100%;
   z-index: 5;
   background: color-mix(in oklch, var(--background) 60%, transparent);
   backdrop-filter: blur(16px);

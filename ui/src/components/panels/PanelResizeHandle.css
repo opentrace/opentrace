@@ -27,12 +27,6 @@
    * overshoots their corner curve. Override per-panel if your radius is
    * unusually large. */
   --ot-panel-resize-inset: 12px;
-  /* `--ot-panel-corner-radius` is intentionally NOT defined here — it
-   * cascades down from the parent panel (each panel sets it to its own
-   * border-radius). Defining it here would override the cascade for
-   * every handle and freeze the arc at one value. The `var()` calls
-   * below carry their own fallback so corner panels still render if a
-   * consumer forgot to set the var. */
 }
 
 /* ── Edges ───────────────────────────────────────────────────────────── */
@@ -172,63 +166,6 @@
 .ot-panel-resize-handle--bottom:hover::after,
 .ot-panel-resize-handle--bottom:active::after {
   height: 3px;
-}
-
-/* ── Corner hover/drag cascades to its two adjacent edge bars ────────── */
-/*    The cascade is class-driven: the PanelResizeHandle component tags the
- *    parent panel with a marker class while a corner is hovered/pressed, so
- *    the bars brighten and shed their corner-inset on the shared end. We
- *    avoided a `:has()`-only rule here because some stacking contexts
- *    suppress it for sibling combinations during pointer drag. */
-
-/* Right edge — brightens + extends when right-side corner is active.
- * Bars stop at the panel's corner radius so they meet the corner arc
- * (rendered by the corner handle's `::after`) cleanly along the curve. */
-.ot-panel--corner-active-tr > .ot-panel-resize-handle--right::after {
-  background: var(--primary);
-  width: 3px;
-  top: var(--ot-panel-corner-radius, 10px);
-}
-.ot-panel--corner-active-br > .ot-panel-resize-handle--right::after {
-  background: var(--primary);
-  width: 3px;
-  bottom: var(--ot-panel-corner-radius, 10px);
-}
-
-/* Left edge — left-side corner */
-.ot-panel--corner-active-tl > .ot-panel-resize-handle--left::after {
-  background: var(--primary);
-  width: 3px;
-  top: var(--ot-panel-corner-radius, 10px);
-}
-.ot-panel--corner-active-bl > .ot-panel-resize-handle--left::after {
-  background: var(--primary);
-  width: 3px;
-  bottom: var(--ot-panel-corner-radius, 10px);
-}
-
-/* Top edge — top-side corner */
-.ot-panel--corner-active-tl > .ot-panel-resize-handle--top::after {
-  background: var(--primary);
-  height: 3px;
-  left: var(--ot-panel-corner-radius, 10px);
-}
-.ot-panel--corner-active-tr > .ot-panel-resize-handle--top::after {
-  background: var(--primary);
-  height: 3px;
-  right: var(--ot-panel-corner-radius, 10px);
-}
-
-/* Bottom edge — bottom-side corner */
-.ot-panel--corner-active-bl > .ot-panel-resize-handle--bottom::after {
-  background: var(--primary);
-  height: 3px;
-  left: var(--ot-panel-corner-radius, 10px);
-}
-.ot-panel--corner-active-br > .ot-panel-resize-handle--bottom::after {
-  background: var(--primary);
-  height: 3px;
-  right: var(--ot-panel-corner-radius, 10px);
 }
 
 /* ── Cascade outline drawn ON THE PANEL ITSELF ──────────────────────── */

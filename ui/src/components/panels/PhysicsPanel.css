@@ -20,9 +20,6 @@
   bottom: 20px;
   right: 68px;
   z-index: 10;
-  /* Keep the corner-arc radius in sync with the panel's own border
-   * radius so the cascade L curves along the panel edge. */
-  --ot-panel-corner-radius: calc(var(--radius) + 4px);
   width: var(--physics-panel-width, 240px);
   /* Height: auto until the user drags the top edge, then an explicit pixel
    * height. Cap at 80vh so the default content-height never overflows the
