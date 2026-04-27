@@ -1320,6 +1320,70 @@ def get_node_cmd(node_id: str, output_json: bool, db_path: str | None) -> None:
     run_get_node(node_id, resolved_db, output_json=output_json)
 
 
+@app.command("traverse")
+@click.argument("node_id")
+@click.option(
+    "--direction",
+    type=click.Choice(["outgoing", "incoming", "both"]),
+    default="outgoing",
+    show_default=True,
+    help="Direction to walk relative to the start node.",
+)
+@click.option(
+    "--depth",
+    default=2,
+    type=int,
+    show_default=True,
+    help="Maximum BFS depth (clamped to 10 to match the MCP traverse_graph cap).",
+)
+@click.option(
+    "--rel-type",
+    "rel_type",
+    default=None,
+    help="Restrict to one relationship type (e.g. CALLS, IMPORTS, DEFINES).",
+)
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def traverse_cmd(
+    node_id: str,
+    direction: str,
+    depth: int,
+    rel_type: str | None,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """BFS walk relationships from a starting node.
+
+    Walks up to ``--depth`` hops in the chosen direction, optionally
+    restricted to one relationship type. Each result preserves its
+    real per-hop depth so callers can distinguish a direct neighbor
+    from a transitive one.
+
+    For "node + immediate neighbors both directions", prefer
+    ``opentrace get-node`` — it adds direction classification and a
+    cleaner envelope for that specific shape.
+
+    Exits 1 if the start node id is not in the graph.
+    """
+    from opentrace_agent.cli.traverse import run_traverse
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_traverse(
+        node_id,
+        resolved_db,
+        direction=direction,
+        depth=depth,
+        rel_type=rel_type,
+        output_json=output_json,
+    )
+
+
 @app.command("source-grep")
 @click.argument("pattern")
 @click.option(
