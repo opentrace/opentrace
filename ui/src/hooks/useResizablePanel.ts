@@ -83,11 +83,16 @@ export function useResizablePanel({
       e.preventDefault();
       isDragging.current = true;
       startX.current = e.clientX;
-      startWidth.current = width;
+      // Anchor the drag to whatever width the panel is ACTUALLY rendering —
+      // if a `max-width` CSS clamp has pinned the panel smaller than the
+      // stored React state (e.g. the viewport shrank since last drag), this
+      // keeps the drag feeling continuous with what's on screen.
+      const rendered = panelRef.current?.getBoundingClientRect().width;
+      startWidth.current = rendered ? Math.round(rendered) : width;
       document.body.style.cursor = cursorOverride ?? 'col-resize';
       document.body.style.userSelect = 'none';
     },
-    [width],
+    [width, panelRef],
   );
 
   useEffect(() => {
@@ -140,6 +145,30 @@ export function useResizablePanel({
   useEffect(() => {
     localStorage.setItem(storageKey, String(width));
   }, [storageKey, width]);
+
+  // Belt-and-braces auto-shrink: when the parent's width changes, force the
+  // panel's inline `style.width` down to whatever the parent can actually
+  // accommodate. CSS `max-width: 100%` should already do this, but
+  // consumers (e.g. insight-ui) sometimes wrap the panel in a containing
+  // block that doesn't propagate, so this guarantees the right edge handle
+  // is always reachable.
+  useEffect(() => {
+    const panel = panelRef.current;
+    const parent = panel?.parentElement;
+    if (!panel || !parent || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const available = parent.clientWidth;
+      if (available > 0 && panel.offsetWidth > available) {
+        panel.style.width = `${available}px`;
+      } else if (!isDragging.current) {
+        // Restore React state width if there's room again (drag also writes
+        // to inline style, so don't clobber it mid-drag).
+        panel.style.width = `${width}px`;
+      }
+    });
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [panelRef, width]);
 
   return { width, handleMouseDown };
 }
@@ -253,6 +282,27 @@ export function useResizablePanelHeight({
   useEffect(() => {
     if (height != null) localStorage.setItem(storageKey, String(height));
   }, [storageKey, height]);
+
+  // Belt-and-braces auto-shrink: clamp the panel's inline `style.height`
+  // down whenever the parent shrinks below it, so the bottom edge handle
+  // never falls off-screen. CSS `max-height: 100%` should already do this
+  // but we've seen consumers wrap the panel in containing blocks that
+  // don't propagate the height correctly.
+  useEffect(() => {
+    const panel = panelRef.current;
+    const parent = panel?.parentElement;
+    if (!panel || !parent || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const available = parent.clientHeight;
+      if (available > 0 && panel.offsetHeight > available) {
+        panel.style.height = `${available}px`;
+      } else if (!isDragging.current && height != null) {
+        panel.style.height = `${height}px`;
+      }
+    });
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [panelRef, height]);
 
   return { height, handleMouseDown };
 }

@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
-/* Shared drag handle for every resizable panel. A faint bar is always visible
- * so users can discover the handle without hovering first.
- *
- * The bar is inset 10px from each end so it tucks inside panels with rounded
- * corners (≤ 10px radius) and doesn't overshoot. Panels that want a different
- * inset can set `--ot-panel-resize-inset` on the panel root. */
+/* Shared drag handle for every resizable panel. A faint bar is always
+ * visible on edges so users can discover them without hovering first.
+ * Corners are hit-only zones — on hover/drag the two adjacent edge bars
+ * thicken and extend all the way to the corner so the two bars meet
+ * seamlessly into an L (no separate "corner button"). */
 
 .ot-panel-resize-handle {
   position: absolute;
@@ -29,7 +28,6 @@
 
 /* ── Edges ───────────────────────────────────────────────────────────── */
 
-/* Vertical edges — horizontal drag */
 .ot-panel-resize-handle--left,
 .ot-panel-resize-handle--right {
   top: 0;
@@ -46,7 +44,6 @@
   right: -3px;
 }
 
-/* Horizontal edges — vertical drag */
 .ot-panel-resize-handle--top,
 .ot-panel-resize-handle--bottom {
   left: 0;
@@ -63,7 +60,7 @@
   bottom: -3px;
 }
 
-/* ── Corners ─────────────────────────────────────────────────────────── */
+/* ── Corners (hit zones only, no own visual) ─────────────────────────── */
 
 .ot-panel-resize-handle--top-left,
 .ot-panel-resize-handle--top-right,
@@ -98,7 +95,7 @@
   cursor: nwse-resize;
 }
 
-/* ── Edge indicator bars ─────────────────────────────────────────────── */
+/* ── Edge indicator bar (only the four edge variants render one) ─────── */
 
 .ot-panel-resize-handle--left::after,
 .ot-panel-resize-handle--right::after,
@@ -110,7 +107,11 @@
   transition:
     background 0.15s,
     width 0.15s,
-    height 0.15s;
+    height 0.15s,
+    top 0.15s,
+    right 0.15s,
+    bottom 0.15s,
+    left 0.15s;
 }
 
 .ot-panel-resize-handle--left::after,
@@ -143,42 +144,7 @@
   top: 2px;
 }
 
-/* ── Corner indicator dots ───────────────────────────────────────────── */
-
-.ot-panel-resize-handle--top-left::after,
-.ot-panel-resize-handle--top-right::after,
-.ot-panel-resize-handle--bottom-left::after,
-.ot-panel-resize-handle--bottom-right::after {
-  content: '';
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 1px;
-  background: color-mix(in oklch, var(--border) 60%, transparent);
-  transition: background 0.15s;
-}
-
-.ot-panel-resize-handle--top-left::after {
-  top: 4px;
-  left: 4px;
-}
-
-.ot-panel-resize-handle--top-right::after {
-  top: 4px;
-  right: 4px;
-}
-
-.ot-panel-resize-handle--bottom-left::after {
-  bottom: 4px;
-  left: 4px;
-}
-
-.ot-panel-resize-handle--bottom-right::after {
-  bottom: 4px;
-  right: 4px;
-}
-
-/* ── Hover / active state ────────────────────────────────────────────── */
+/* ── Hover / active on edges ─────────────────────────────────────────── */
 
 .ot-panel-resize-handle:hover::after,
 .ot-panel-resize-handle:active::after {
@@ -200,41 +166,58 @@
 }
 
 /* ── Corner hover/drag cascades to its two adjacent edge bars ────────── */
+/*    The cascade is class-driven: the PanelResizeHandle component tags the
+ *    parent panel with a marker class while a corner is hovered/pressed, so
+ *    the bars brighten and shed their corner-inset on the shared end. We
+ *    avoided a `:has()`-only rule here because some stacking contexts
+ *    suppress it for sibling combinations during pointer drag. */
 
-/* Right edge brightens when a right-side corner is hovered/active */
-:has(> .ot-panel-resize-handle--top-right:is(:hover, :active))
-  > .ot-panel-resize-handle--right::after,
-:has(> .ot-panel-resize-handle--bottom-right:is(:hover, :active))
-  > .ot-panel-resize-handle--right::after {
+/* Right edge — brightens + extends when right-side corner is active */
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--right::after {
   background: var(--primary);
   width: 3px;
+  top: 0;
 }
-
-/* Left edge brightens when a left-side corner is hovered/active */
-:has(> .ot-panel-resize-handle--top-left:is(:hover, :active))
-  > .ot-panel-resize-handle--left::after,
-:has(> .ot-panel-resize-handle--bottom-left:is(:hover, :active))
-  > .ot-panel-resize-handle--left::after {
+.ot-panel--corner-active-br > .ot-panel-resize-handle--right::after {
   background: var(--primary);
   width: 3px;
+  bottom: 0;
 }
 
-/* Top edge brightens when a top-side corner is hovered/active */
-:has(> .ot-panel-resize-handle--top-left:is(:hover, :active))
-  > .ot-panel-resize-handle--top::after,
-:has(> .ot-panel-resize-handle--top-right:is(:hover, :active))
-  > .ot-panel-resize-handle--top::after {
+/* Left edge — left-side corner */
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--left::after {
   background: var(--primary);
-  height: 3px;
+  width: 3px;
+  top: 0;
+}
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--left::after {
+  background: var(--primary);
+  width: 3px;
+  bottom: 0;
 }
 
-/* Bottom edge brightens when a bottom-side corner is hovered/active */
-:has(> .ot-panel-resize-handle--bottom-left:is(:hover, :active))
-  > .ot-panel-resize-handle--bottom::after,
-:has(> .ot-panel-resize-handle--bottom-right:is(:hover, :active))
-  > .ot-panel-resize-handle--bottom::after {
+/* Top edge — top-side corner */
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--top::after {
   background: var(--primary);
   height: 3px;
+  left: 0;
+}
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--top::after {
+  background: var(--primary);
+  height: 3px;
+  right: 0;
+}
+
+/* Bottom edge — bottom-side corner */
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--bottom::after {
+  background: var(--primary);
+  height: 3px;
+  left: 0;
+}
+.ot-panel--corner-active-br > .ot-panel-resize-handle--bottom::after {
+  background: var(--primary);
+  height: 3px;
+  right: 0;
 }
 
 /* ── Touch-first layouts: hide handles ───────────────────────────────── */

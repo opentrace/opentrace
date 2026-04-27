@@ -531,6 +531,10 @@
   z-index: 10;
   position: relative;
   padding-top: 64px;
+  /* Clamp so a stored width wider than the current viewport can't hide the
+   * left-edge resize handle. The stored value persists — CSS renders the
+   * clamped size until there's room again. */
+  max-width: 100%;
 }
 
 @keyframes slideInRight {

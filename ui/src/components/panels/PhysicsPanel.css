@@ -25,7 +25,12 @@
    * height. Cap at 80vh so the default content-height never overflows the
    * viewport on short screens. */
   height: var(--physics-panel-height, auto);
-  max-height: 80vh;
+  /* Clamp against the viewport, accounting for the `right: 68px` and
+   * `bottom: 20px` anchors — so a stored width/height bigger than what
+   * currently fits can't push the panel (and its top/left handles)
+   * off-screen. */
+  max-width: calc(100vw - 76px);
+  max-height: min(80vh, calc(100vh - 28px));
   overflow-y: auto;
   background: color-mix(in oklch, var(--background) 85%, transparent);
   backdrop-filter: blur(12px);

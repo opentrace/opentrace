@@ -17,6 +17,7 @@
 .help-drawer {
   flex-shrink: 0;
   width: var(--help-drawer-width, 380px);
+  max-width: 100%;
   background: var(--background);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
