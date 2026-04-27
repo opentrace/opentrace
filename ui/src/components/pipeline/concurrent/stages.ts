@@ -547,7 +547,14 @@ export class EmbedStage implements INodeStage {
           await embedder.init();
           this.store.setEmbedder?.(embedder);
           return embedder;
-        } catch {
+        } catch (err) {
+          // Returning null keeps the rest of the pipeline working — the user
+          // gets an indexed graph without embeddings rather than a hard crash.
+          // But the failure must be visible: silent zero-embedding states are
+          // indistinguishable from "embedding disabled" and have cost real
+          // hours of debugging when chunk URLs go stale or model fetches are
+          // blocked by CSP/COEP.
+          console.error('[EmbedStage] embedder init failed:', err);
           return null;
         }
       })();
@@ -600,8 +607,14 @@ export class EmbedStage implements INodeStage {
           await this.store.importVectors(pending);
           this.embedded += pending.length;
         }
-      } catch {
-        // Skip failed batch
+      } catch (err) {
+        // Skip the bad batch but keep going — one toxic input shouldn't
+        // abort the whole indexing run. Log so the failure is debuggable
+        // instead of silently dropping vectors.
+        console.error(
+          `[EmbedStage] batch failed (offset ${off}, size ${batch.length}):`,
+          err,
+        );
       }
 
       onProgress?.(this.embedded, this.queue.length);
