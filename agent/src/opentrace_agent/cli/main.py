@@ -1290,6 +1290,65 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
     return start, end
 
 
+@app.command("source-grep")
+@click.argument("pattern")
+@click.option(
+    "--repo",
+    default=None,
+    help="Filter to a specific repo by id (use the 'id' field from `opentrace repos`).",
+)
+@click.option(
+    "--include",
+    default=None,
+    help="File glob filter passed to ripgrep (e.g. '*.py', '*.{ts,tsx}').",
+)
+@click.option("--limit", default=50, type=int, show_default=True, help="Max matches per repo.")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_grep_cmd(
+    pattern: str,
+    repo: str | None,
+    include: str | None,
+    limit: int,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """Regex search across the file contents of indexed repositories.
+
+    Where ``source-search`` queries the knowledge graph, this walks the
+    actual files on disk with ripgrep. Useful for matches inside
+    function bodies, hits in non-code files (READMEs, configs), or any
+    pattern the indexer didn't model. Results are prefixed with the
+    repo id and use repo-relative paths — the indexing host's absolute
+    paths are never echoed to the caller.
+
+    For repos cloned via ``fetch-and-index``, the clone is looked up
+    under the current ``$HOME/.opentrace/repos/<org>/<name>/``; if the
+    DB was indexed on a different machine, this re-homing handles the
+    portable case automatically. Repos indexed in place via
+    ``opentrace index <path>`` are looked up at their stored absolute
+    path. Repos whose clone is missing locally surface a per-repo
+    error rather than silently returning no matches.
+    """
+    from opentrace_agent.cli.source_grep import run_source_grep
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_source_grep(
+        pattern,
+        resolved_db,
+        repo=repo,
+        include=include,
+        limit=limit,
+        output_json=output_json,
+    )
+
+
 @app.command("source-search")
 @click.argument("query")
 @click.option(
