@@ -75,7 +75,7 @@ walkthrough. Quick version:
 
 ```bash
 # 1. Register the marketplace (from an OpenTrace checkout)
-codex plugin marketplace add ./codex-plugin
+codex plugin marketplace add ./plugins/codex
 
 # 2. Launch Codex and enable the plugin from the in-session UI
 codex

@@ -10,6 +10,8 @@ was going to run; we just enrich the context.
 """
 from __future__ import annotations
 
+import os
+
 from common import (
     build_read_message,
     build_search_message,
@@ -24,7 +26,8 @@ from common import (
 
 def main() -> None:
     event = read_event()
-    workspace_root = find_workspace_root(event.get("cwd"))
+    cwd = event.get("cwd") or "."
+    workspace_root = find_workspace_root(cwd)
     if not opentrace_healthy(workspace_root):
         return
 
@@ -39,7 +42,12 @@ def main() -> None:
     else:
         path = extract_read_path(command)
         if path:
-            message = build_read_message(path, workspace_root)
+            # Shell paths are relative to the command's cwd, not to
+            # workspace_root. Resolve them here so build_read_message
+            # gets an absolute path that points at the file the user
+            # actually meant.
+            abs_path = os.path.abspath(os.path.join(cwd, path)) if not os.path.isabs(path) else path
+            message = build_read_message(abs_path, workspace_root)
 
     if not message:
         return

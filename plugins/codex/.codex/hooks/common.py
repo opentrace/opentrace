@@ -23,7 +23,11 @@ from pathlib import Path
 from typing import Optional
 
 
-CACHE_DIR = Path(os.environ.get("TMPDIR", "/tmp")) / "opentrace-codex-hooks"
+# Per-UID directory so multi-user systems don't collide on the briefing TTL
+# cache or hit ownership / permission errors. ``getuid`` is unix-only; on
+# Windows we fall back to a shared name (Codex CLI is unix-first today).
+_UID = getattr(os, "getuid", lambda: "shared")()
+CACHE_DIR = Path(os.environ.get("TMPDIR", "/tmp")) / f"opentrace-codex-hooks-{_UID}"
 BRIEFING_CACHE_PATH = CACHE_DIR / "briefing.json"
 
 BRIEFING_TTL_SECONDS = 600  # 10 minutes between auto-briefings
