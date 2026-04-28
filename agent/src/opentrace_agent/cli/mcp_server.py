@@ -621,15 +621,29 @@ def create_mcp_server(
 
             repos = _repo_paths(store)
             candidates: list[str] = []
+
+            # Resolve file_path under each repo root and reject any result
+            # that escapes the root (absolute file_path discards the root,
+            # and `..` segments traverse out of it).  Resolving both sides
+            # also makes the comparison symlink-safe.
+            def _safe_join(abs_path: str) -> str | None:
+                root = Path(abs_path).resolve()
+                joined = (root / file_path).resolve()
+                if joined.is_relative_to(root):
+                    return str(joined)
+                return None
+
             if repo_hint:
                 for rid, abs_path in repos:
                     if rid == repo_hint:
-                        candidates.append(os.path.join(abs_path, file_path))
+                        safe = _safe_join(abs_path)
+                        if safe and safe not in candidates:
+                            candidates.append(safe)
                         break
             for _, abs_path in repos:
-                joined = os.path.join(abs_path, file_path)
-                if joined not in candidates:
-                    candidates.append(joined)
+                safe = _safe_join(abs_path)
+                if safe and safe not in candidates:
+                    candidates.append(safe)
 
             for candidate in candidates:
                 if os.path.exists(candidate):
@@ -676,7 +690,9 @@ def create_mcp_server(
                 cmd = [rg, "--no-heading", "--line-number", "--max-count", str(limit)]
                 if include:
                     cmd.extend(["--glob", include])
-                cmd.extend([pattern, abs_path])
+                # `--` prevents pattern or abs_path being interpreted as
+                # flags if they start with a hyphen.
+                cmd.extend(["--", pattern, abs_path])
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
                 except subprocess.TimeoutExpired:
