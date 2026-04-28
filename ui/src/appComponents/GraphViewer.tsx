@@ -954,13 +954,18 @@ const GraphViewer = memo(
             canvasRef.current?.triggerPing?.(nodeIds);
           },
           resetCamera: () => {
-            canvasRef.current?.resetCamera();
+            const sel = selectedNode?.id;
+            if (sel) {
+              canvasRef.current?.zoomToNodes([sel], 300);
+            } else {
+              canvasRef.current?.resetCamera();
+            }
           },
           zoomToFit: (duration?: number) => {
             canvasRef.current?.zoomToFit(duration);
           },
         }),
-        [graphData, loadGraph, onNodeClick],
+        [graphData, loadGraph, onNodeClick, selectedNode],
       );
 
       const onLinkClick = useCallback((edge: SelectedEdge) => {

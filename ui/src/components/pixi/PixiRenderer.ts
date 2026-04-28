@@ -1688,7 +1688,9 @@ export class PixiRenderer {
     }
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
-    const target = fitBounds(bounds, this.width, this.height, 120);
+    // Use proportional padding (15% of smallest dimension, min 40, max 120)
+    const padding = Math.max(40, Math.min(120, Math.min(this.width, this.height) * 0.15));
+    const target = fitBounds(bounds, this.width, this.height, padding);
 
     // Focusing on specific nodes is a deliberate user action — stop auto-fit.
     this.hasUserMovedCamera = true;
