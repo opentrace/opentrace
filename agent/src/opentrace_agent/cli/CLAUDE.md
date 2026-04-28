@@ -37,7 +37,7 @@ This is a **security boundary** — don't loosen the symlink check casually. If 
 
 REST endpoints: `/api/health`, `/api/stats`, `/api/graph`, `/api/nodes/{id}`, `/api/traverse`, `/api/source/{id}`, `/api/nodes/search`, `/api/nodes/list`, `/api/metadata`. The UI is the contract holder — see `ui/src/store/CLAUDE.md` for the client side.
 
-MCP tools mirror the same operations but with names matching the plugin agents' expectations: `get_stats`, `search_graph`, `list_nodes`, `get_node`, `traverse_graph`. Tool list lives in `claude-code-plugin/CLAUDE.md`.
+MCP tools mirror the same operations but with names matching the plugin agents' expectations: `get_stats`, `search_graph`, `list_nodes`, `get_node`, `traverse_graph`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
 
 ## Adding a Subcommand
 

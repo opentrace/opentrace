@@ -47,4 +47,4 @@ The plugin exposes these MCP tools to Claude:
 
 ## Configuration
 
-The plugin source lives in `claude-code-plugin/` in the repository root. See the `CLAUDE.md` file in that directory for details on plugin structure, versioning, and agent development.
+The plugin source lives in `plugins/claude-code/` in the repository root. See the `CLAUDE.md` file in that directory for details on plugin structure, versioning, and agent development.
