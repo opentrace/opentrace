@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FilterPanel,
   PanelResizeHandle,
+  getLinkColor,
+  getNodeColor,
+  type FilterItem,
   type FilterPanelProps,
 } from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
@@ -27,54 +29,23 @@ import {
   useResizablePanel,
   useResizablePanelHeight,
 } from '../hooks/useResizablePanel';
+import { useGraph } from '../providers/GraphDataProvider';
+import { useGraphInteraction } from '../providers/GraphInteractionProvider';
+import { linkId } from '../providers/graphFilterUtils';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import HistoryPanel from './HistoryPanel';
 import IndexMetadataPanel from './IndexMetadataPanel';
-import type { HistoryEntry } from './historyTypes';
 import './SidePanel.css';
 
 export type SidePanelTab = 'filters' | 'discover' | 'history' | 'details';
 
+/** Node types whose source code can be fetched and displayed. */
+const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
+
 interface SidePanelProps {
-  /** Filter sections to render in the Filters tab. */
-  filterSections: FilterPanelProps[];
-
-  /* Node details props */
-  selectedNode: SelectedNode | null;
-  nodeSource: NodeSourceResponse | null;
-  sourceLoading: boolean;
-  sourceError: string | null;
-  onCloseDetails: () => void;
-  /** Community name for the selected node */
-  communityName?: string;
-  /** Community color for the selected node */
-  communityColor?: string;
-
-  /** Edges connected to the selected node */
-  selectedNodeEdges?: NodeEdge[];
-
-  /** Callback to select an edge from the node edges list */
-  onSelectEdge?: (edge: NodeEdge) => void;
-
-  /* Edge details props */
-  selectedLink: SelectedEdge | null;
-  onSelectNode?: (nodeId: string) => void;
-
-  /** Session history of selected nodes */
-  nodeHistory?: HistoryEntry[];
-  /** Callback to clear session history */
-  onClearHistory?: () => void;
-
-  /** Bumps when the graph store changes (new indexing, PR import, etc.) */
-  graphVersion?: number;
-  /** IDs of nodes currently in the graph view */
-  graphNodeIds?: string[];
-  /** Map of node ID → hop distance from selected node (0 = selected) */
-  hopMap?: Map<string, number>;
-
   /** Mobile: externally controlled active tab */
   mobileActiveTab?: SidePanelTab | null;
   /** Mobile: callback to switch tabs while the panel is open */
@@ -84,28 +55,118 @@ interface SidePanelProps {
 }
 
 export default function SidePanel({
-  filterSections,
-  selectedNode,
-  nodeSource,
-  communityName,
-  communityColor,
-  sourceLoading,
-  sourceError,
-  onCloseDetails,
-  selectedNodeEdges,
-  onSelectEdge,
-  selectedLink,
-  onSelectNode,
-  nodeHistory = [],
-  onClearHistory,
-  graphVersion,
-  graphNodeIds,
-  hopMap,
   mobileActiveTab,
   onMobileTabChange,
   onMobileClose,
 }: SidePanelProps) {
   const { store } = useStore();
+
+  // Selection, filters, history, color mode, and derived data come from the
+  // GraphInteractionProvider so SidePanel can live as a sibling of GraphViewer.
+  const {
+    selectedNode,
+    selectedLink,
+    selectNode,
+    selectLink,
+    clearSelection,
+    nodeHistory,
+    setNodeHistory,
+    hiddenNodeTypes,
+    setHiddenNodeTypes,
+    hiddenLinkTypes,
+    setHiddenLinkTypes,
+    hiddenSubTypes,
+    setHiddenSubTypes,
+    hiddenCommunities,
+    setHiddenCommunities,
+    colorMode,
+    availableNodeTypes,
+    availableLinkTypes,
+    availableSubTypes,
+    availableCommunities,
+    communityData,
+    filteredGraphData,
+    focusCommunity,
+    hopMap,
+    graphNodeIds,
+  } = useGraphInteraction();
+  const { graphVersion, graphData } = useGraph();
+
+  // ─── Source code fetch for the selected node ─────────────────────────
+  const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
+  useEffect(() => {
+    if (!selectedNode || !SOURCE_TYPES.has(selectedNode.type)) {
+      setNodeSource(null);
+      setSourceError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSourceLoading(true);
+    setSourceError(null);
+    setNodeSource(null);
+
+    const startLine = selectedNode.properties?.startLine as number | undefined;
+    const endLine = selectedNode.properties?.endLine as number | undefined;
+
+    store
+      .fetchSource(selectedNode.id, startLine, endLine)
+      .then((src) => {
+        if (cancelled) return;
+        if (src) setNodeSource(src);
+        else setSourceError('Source not available');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err?.name === 'AbortError') return;
+        setSourceError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setSourceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ─── Selection callbacks (from context, plus light wrappers) ─────────
+  const onCommunityFocus = useCallback(
+    (key: string) => focusCommunity(Number(key)),
+    [focusCommunity],
+  );
+  const handleSelectNodeId = useCallback(
+    (nodeId: string) => {
+      const node = graphData.nodes.find((n) => n.id === nodeId);
+      if (node) selectNode(node);
+    },
+    [graphData.nodes, selectNode],
+  );
+  const handleSelectEdgeFromNode = useCallback(
+    (edge: NodeEdge) => {
+      if (!selectedNode) return;
+      const sourceId =
+        edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
+      const targetId =
+        edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
+      const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
+      selectLink({
+        source: sourceId,
+        target: targetId,
+        label: edge.label,
+        properties: edge.properties,
+        sourceNode: nodeMap.get(sourceId),
+        targetNode: nodeMap.get(targetId),
+      });
+    },
+    [selectedNode, filteredGraphData.nodes, selectLink],
+  );
+
   const discoverDataProvider = useMemo(
     () => createStoreDataProvider(store),
     [store],
@@ -161,10 +222,204 @@ export default function SidePanel({
     }
   }, [selectedNode, selectedLink]);
 
+  // ─── Derived: community label for selected node ───────────────────────
+  const selectedCommunityId =
+    selectedNode !== null
+      ? communityData.assignments[selectedNode.id]
+      : undefined;
+  const communityName =
+    selectedCommunityId !== undefined
+      ? communityData.names.get(selectedCommunityId)
+      : undefined;
+  const communityColor =
+    selectedCommunityId !== undefined
+      ? communityData.colorMap.get(selectedCommunityId)
+      : undefined;
+
+  // ─── Derived: edges connected to the selected node ────────────────────
+  const selectedNodeEdges = useMemo<NodeEdge[]>(() => {
+    if (!selectedNode) return [];
+    const nodeId = selectedNode.id;
+    const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
+    return filteredGraphData.links
+      .filter((l) => linkId(l.source) === nodeId || linkId(l.target) === nodeId)
+      .map((l) => {
+        const sourceId = linkId(l.source);
+        const targetId = linkId(l.target);
+        const isOutgoing = sourceId === nodeId;
+        const otherId = isOutgoing ? targetId : sourceId;
+        const otherNode = nodeMap.get(otherId);
+        return {
+          direction: isOutgoing ? ('outgoing' as const) : ('incoming' as const),
+          label: l.label || 'unknown',
+          properties: l.properties,
+          otherNodeId: otherId,
+          otherNodeName: otherNode?.name ?? otherId,
+          otherNodeType: otherNode?.type,
+        };
+      });
+  }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
+
+  // ─── Derived: filter sections for the FilterPanel UI ──────────────────
+  const filterSections = useMemo<FilterPanelProps[]>(() => {
+    const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
+      ({ type, count }) => {
+        const subs = availableSubTypes.get(type);
+        const children = subs?.map((s) => ({
+          key: `${type}:${s.subType}`,
+          label: s.subType,
+          count: s.count,
+          color: getNodeColor(type),
+          hidden: hiddenSubTypes.has(`${type}:${s.subType}`),
+        }));
+        return {
+          key: type,
+          label: type,
+          count,
+          color: getNodeColor(type),
+          hidden: hiddenNodeTypes.has(type),
+          children,
+        };
+      },
+    );
+
+    const toggleNodeFilter = (key: string) => {
+      if (key.includes(':')) {
+        // Sub-type key like "Class:Controller"
+        setHiddenSubTypes((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+      } else {
+        const subs = availableSubTypes.get(key);
+        if (subs && subs.length > 0) {
+          setHiddenSubTypes((prev) => {
+            const keys = subs.map((s) => `${key}:${s.subType}`);
+            const allHidden = keys.every((k) => prev.has(k));
+            const next = new Set(prev);
+            if (allHidden) {
+              keys.forEach((k) => next.delete(k));
+            } else {
+              keys.forEach((k) => next.add(k));
+            }
+            return next;
+          });
+        } else {
+          setHiddenNodeTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+        }
+      }
+    };
+
+    const linkFilterItems: FilterItem[] = availableLinkTypes.map(
+      ({ type, count }) => ({
+        key: type,
+        label: type.toUpperCase(),
+        count,
+        color: getLinkColor(type),
+        hidden: hiddenLinkTypes.has(type),
+      }),
+    );
+
+    const communityFilterItems: FilterItem[] = availableCommunities.map(
+      ({ communityId, label, count, color }) => ({
+        key: String(communityId),
+        label,
+        count,
+        color,
+        hidden: hiddenCommunities.has(communityId),
+      }),
+    );
+
+    const sections: FilterPanelProps[] = [];
+
+    if (colorMode === 'community' && communityFilterItems.length > 0) {
+      sections.push({
+        title: 'Communities',
+        items: communityFilterItems,
+        onToggle: (key) => {
+          const cid = Number(key);
+          setHiddenCommunities((prev) => {
+            const next = new Set(prev);
+            if (next.has(cid)) next.delete(cid);
+            else next.add(cid);
+            return next;
+          });
+        },
+        onShowAll: () => setHiddenCommunities(new Set()),
+        onHideAll: () =>
+          setHiddenCommunities(
+            new Set(availableCommunities.map((c) => c.communityId)),
+          ),
+        onFocus: onCommunityFocus,
+      });
+    }
+
+    sections.push({
+      title: 'Node Types',
+      items: nodeFilterItems,
+      onToggle: toggleNodeFilter,
+      onShowAll: () => {
+        setHiddenNodeTypes(new Set());
+        setHiddenSubTypes(new Set());
+      },
+      onHideAll: () => {
+        setHiddenNodeTypes(new Set(availableNodeTypes.map((t) => t.type)));
+        const allSubKeys = new Set<string>();
+        availableSubTypes.forEach((subs, type) => {
+          subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
+        });
+        setHiddenSubTypes(allSubKeys);
+      },
+    });
+
+    sections.push({
+      title: 'Edges',
+      items: linkFilterItems,
+      indicator: 'line',
+      emptyMessage: 'No edges',
+      onToggle: (key) =>
+        setHiddenLinkTypes((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        }),
+      onShowAll: () => setHiddenLinkTypes(new Set()),
+      onHideAll: () =>
+        setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type))),
+    });
+
+    return sections;
+  }, [
+    availableNodeTypes,
+    availableLinkTypes,
+    availableSubTypes,
+    availableCommunities,
+    hiddenNodeTypes,
+    hiddenLinkTypes,
+    hiddenSubTypes,
+    hiddenCommunities,
+    colorMode,
+    onCommunityFocus,
+    setHiddenNodeTypes,
+    setHiddenLinkTypes,
+    setHiddenSubTypes,
+    setHiddenCommunities,
+  ]);
+
   const handleCloseDetails = () => {
-    onCloseDetails();
+    clearSelection();
     setActiveTab(previousTab.current);
   };
+
+  const handleClearHistory = () => setNodeHistory([]);
 
   const isMobileOpen = !!mobileActiveTab;
 
@@ -244,7 +499,7 @@ export default function SidePanel({
         style={{ display: effectiveTab === 'discover' ? undefined : 'none' }}
       >
         <DiscoverPanelContainer
-          onSelectNode={onSelectNode ?? (() => {})}
+          onSelectNode={handleSelectNodeId}
           dataProvider={discoverDataProvider}
           graphVersion={graphVersion}
           selectedNodeId={selectedNode?.id as string | undefined}
@@ -259,8 +514,8 @@ export default function SidePanel({
       >
         <HistoryPanel
           entries={nodeHistory}
-          onSelectNode={onSelectNode ?? (() => {})}
-          onClear={onClearHistory ?? (() => {})}
+          onSelectNode={handleSelectNodeId}
+          onClear={handleClearHistory}
         />
       </div>
       {effectiveTab === 'details' && (
@@ -274,11 +529,14 @@ export default function SidePanel({
               communityColor={communityColor}
               sourceError={sourceError}
               edges={selectedNodeEdges}
-              onSelectNode={onSelectNode}
-              onSelectEdge={onSelectEdge}
+              onSelectNode={handleSelectNodeId}
+              onSelectEdge={handleSelectEdgeFromNode}
             />
           ) : selectedLink ? (
-            <EdgeDetailsPanel link={selectedLink} onSelectNode={onSelectNode} />
+            <EdgeDetailsPanel
+              link={selectedLink}
+              onSelectNode={handleSelectNodeId}
+            />
           ) : null}
         </div>
       )}

@@ -23,3 +23,18 @@ export { default as SettingsDrawer } from './SettingsDrawer';
 export { default as SidePanel } from './SidePanel';
 export type { SidePanelTab } from './SidePanel';
 export { useGraphData } from '../hooks/useGraphData';
+export type { GraphDataState } from '../hooks/useGraphData';
+export { GraphDataProvider, useGraph } from '../providers/GraphDataProvider';
+export {
+  GraphInteractionProvider,
+  useGraphInteraction,
+} from '../providers/GraphInteractionProvider';
+export type {
+  AvailableType,
+  AvailableSubType,
+  AvailableCommunity,
+  CommunityData,
+  GraphInteractionState,
+  HighlightsResult,
+} from '../providers/GraphInteractionProvider';
+export { getSubType, linkId } from '../providers/graphFilterUtils';
