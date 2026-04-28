@@ -1,0 +1,24 @@
+{
+  "name": "opentrace",
+  "version": "0.11.0",
+  "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies.",
+  "author": {
+    "name": "OpenTrace",
+    "url": "https://opentrace.github.io/opentrace/"
+  },
+  "homepage": "https://opentrace.github.io/opentrace/",
+  "repository": "https://github.com/opentrace/opentrace",
+  "license": "Apache-2.0",
+  "keywords": ["architecture", "graph", "dependencies", "codebase", "observability"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OpenTrace",
+    "shortDescription": "Knowledge graph for system architecture and code structure.",
+    "longDescription": "OpenTrace indexes your codebase into a queryable knowledge graph — classes, functions, files, services, and their relationships — then exposes that graph through MCP so Codex can answer questions about system topology, dependencies, and impact without having to search and read files manually.",
+    "developerName": "OpenTrace",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "websiteURL": "https://opentrace.github.io/opentrace/"
+  }
+}

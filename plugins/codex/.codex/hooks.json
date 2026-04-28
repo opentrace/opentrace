@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -lc 'd=\"$PWD\"; while [ \"$d\" != \"/\" ]; do if [ -f \"$d/.codex/hooks/session_start.py\" ]; then exec python3 \"$d/.codex/hooks/session_start.py\"; fi; d=$(dirname \"$d\"); done; if [ -f \"$HOME/.codex/hooks/session_start.py\" ]; then exec python3 \"$HOME/.codex/hooks/session_start.py\"; fi; exit 0'",
+            "statusMessage": "Loading OpenTrace guidance"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -lc 'd=\"$PWD\"; while [ \"$d\" != \"/\" ]; do if [ -f \"$d/.codex/hooks/user_prompt_submit.py\" ]; then exec python3 \"$d/.codex/hooks/user_prompt_submit.py\"; fi; d=$(dirname \"$d\"); done; if [ -f \"$HOME/.codex/hooks/user_prompt_submit.py\" ]; then exec python3 \"$HOME/.codex/hooks/user_prompt_submit.py\"; fi; exit 0'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh -lc 'd=\"$PWD\"; while [ \"$d\" != \"/\" ]; do if [ -f \"$d/.codex/hooks/pre_tool_use.py\" ]; then exec python3 \"$d/.codex/hooks/pre_tool_use.py\"; fi; d=$(dirname \"$d\"); done; if [ -f \"$HOME/.codex/hooks/pre_tool_use.py\" ]; then exec python3 \"$HOME/.codex/hooks/pre_tool_use.py\"; fi; exit 0'",
+            "statusMessage": "Augmenting Bash with OpenTrace"
+          }
+        ]
+      }
+    ]
+  }
+}

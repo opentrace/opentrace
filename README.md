@@ -117,7 +117,9 @@ Full language matrix: [Supported Languages](https://opentrace.github.io/opentrac
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
 agent/                — Python agent (CLI + MCP server for Claude Code)
 proto/                — Protobuf definitions (shared schema)
-claude-code-plugin/   — Claude Code plugin (agents, commands, skills, hooks)
+plugins/              — Agent plugins
+  claude-code/        — Claude Code plugin (agents, commands, skills, hooks)
+  codex/              — Codex CLI plugin (skills, MCP, hooks)
 docs/                 — Documentation site (mkdocs-material)
 tests/                — Cross-validation test fixtures
 benchmark/            — Accuracy benchmarks

@@ -1,0 +1,9 @@
+# OpenTrace Codex hooks — feature flag template.
+#
+# The installer copies this into either ~/.codex/config.toml (--home) or
+# <repo>/.codex/config.toml (--repo) and ensures the codex_hooks feature
+# is enabled.  If a config.toml already exists at the destination, the
+# installer merges the [features] block instead of overwriting.
+
+[features]
+codex_hooks = true

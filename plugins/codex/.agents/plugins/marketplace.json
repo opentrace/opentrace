@@ -1,0 +1,20 @@
+{
+  "name": "opentrace-oss",
+  "interface": {
+    "displayName": "OpenTrace"
+  },
+  "plugins": [
+    {
+      "name": "opentrace",
+      "source": {
+        "source": "local",
+        "path": "./plugins/opentrace"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
