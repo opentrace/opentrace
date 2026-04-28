@@ -154,7 +154,10 @@ export default function SidePanel({
         edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
       const targetId =
         edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
-      const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
+      // Use the unfiltered graph so endpoint metadata is still available
+      // when one side of the edge has been hidden by the active filters —
+      // EdgeDetailsPanel needs the full node objects to render names/types.
+      const nodeMap = new Map(graphData.nodes.map((n) => [n.id, n]));
       selectLink({
         source: sourceId,
         target: targetId,
@@ -164,7 +167,7 @@ export default function SidePanel({
         targetNode: nodeMap.get(targetId),
       });
     },
-    [selectedNode, filteredGraphData.nodes, selectLink],
+    [selectedNode, graphData.nodes, selectLink],
   );
 
   const discoverDataProvider = useMemo(

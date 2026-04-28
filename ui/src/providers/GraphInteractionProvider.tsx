@@ -18,7 +18,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -168,7 +170,7 @@ function InternalGraphInteractionProvider({
 }: {
   children: ReactNode;
 }) {
-  const { graphData } = useGraph();
+  const { graphData, graphVersion } = useGraph();
 
   // Selection
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -236,6 +238,26 @@ function InternalGraphInteractionProvider({
     });
     return result;
   }, [graphData.nodes]);
+
+  // ─── First-load defaults: hide Dependency sub-types ──────────────────
+  // Runs once per successful graph load (graphVersion bump). Tracks the
+  // last applied version so re-loads (e.g. switching repositories or
+  // re-indexing) re-apply the defaults — the original ref-only flag was
+  // session-scoped, which broke for the second repo a user opened.
+  const lastDefaultsVersion = useRef(0);
+  useEffect(() => {
+    if (graphVersion === 0) return;
+    if (lastDefaultsVersion.current === graphVersion) return;
+    const depSubs = availableSubTypes.get('Dependency');
+    if (!depSubs || depSubs.length === 0) return;
+    lastDefaultsVersion.current = graphVersion;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
+    setHiddenSubTypes((prev) => {
+      const next = new Set(prev);
+      depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
+      return next;
+    });
+  }, [graphVersion, availableSubTypes]);
 
   // ─── Derived: communities (Louvain) ──────────────────────────────────
   const communityData = useCommunities(

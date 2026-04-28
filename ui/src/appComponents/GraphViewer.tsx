@@ -508,7 +508,6 @@ const GraphViewer = memo(
         setHiddenNodeTypes,
         hiddenLinkTypes,
         hiddenSubTypes,
-        setHiddenSubTypes,
         hiddenCommunities,
         setHiddenCommunities,
         colorMode,
@@ -528,8 +527,6 @@ const GraphViewer = memo(
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
       const [exporting, setExporting] = useState(false);
-      // Track whether we've applied the default Dependency hiding
-      const defaultsApplied = useRef(false);
 
       // Append chat-highlighted nodes to session history
       useEffect(() => {
@@ -728,21 +725,6 @@ const GraphViewer = memo(
         [repulsion],
       );
 
-      // On first data load, hide all Dependency sub-types by default
-      useEffect(() => {
-        if (defaultsApplied.current) return;
-        const depSubs = availableSubTypes.get('Dependency');
-        if (depSubs && depSubs.length > 0) {
-          defaultsApplied.current = true;
-          // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
-          setHiddenSubTypes((prev) => {
-            const next = new Set(prev);
-            depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
-            return next;
-          });
-        }
-      }, [availableSubTypes, setHiddenSubTypes]);
-
       const onNodeClick = useCallback(
         (node: GraphNode) => {
           setSelectedNode(node);
@@ -809,17 +791,27 @@ const GraphViewer = memo(
         (edge: SelectedEdge) => {
           setSelectedLink(edge);
           setSelectedNode(null);
-          // Highlight the two endpoints and the clicked link
-          const sourceId = edge.source;
-          const targetId = edge.target;
-          setEdgeHighlightNodes(new Set([sourceId, targetId]));
-          setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
-          setEdgeLabelNodes(new Set([sourceId, targetId]));
-          // Zoom to fit the two endpoints
-          canvasRef.current?.zoomToNodes([sourceId, targetId], 600);
         },
         [setSelectedLink, setSelectedNode],
       );
+
+      // Sync canvas-side edge highlights + zoom to whichever edge is selected
+      // — works for both the canvas-click path (onLinkClick) and the
+      // SidePanel "select edge from node details" path (which writes to
+      // context's selectedLink directly via the provider's selectLink helper).
+      useEffect(() => {
+        if (!selectedLink) {
+          setEdgeHighlightNodes(EMPTY_SET);
+          setEdgeHighlightLinks(EMPTY_SET);
+          setEdgeLabelNodes(EMPTY_SET);
+          return;
+        }
+        const { source: sourceId, target: targetId } = selectedLink;
+        setEdgeHighlightNodes(new Set([sourceId, targetId]));
+        setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
+        setEdgeLabelNodes(new Set([sourceId, targetId]));
+        canvasRef.current?.zoomToNodes([sourceId, targetId], 600);
+      }, [selectedLink]);
 
       // Zoom to highlighted neighborhood when a node is selected,
       // or zoom to fit all nodes when deselected.
