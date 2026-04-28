@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import {
   PROVIDERS,
@@ -718,26 +719,41 @@ export default function ChatPanel({
       streamingRef.current = false;
       setStreaming(false);
       progress.setListener(null);
-      // Attach accumulated token usage to the assistant message
+      // Attach accumulated token usage to the assistant message, then persist.
+      //
+      // Why flushSync: this whole block used to read `messagesRef.current`
+      // (which lags React state by one render) and pass a raw value to
+      // `setMessages(...)`. Under React 18 automatic batching, per-chunk
+      // functional setters enqueued late in the stream often hadn't flushed
+      // yet — a raw-value write from here would queue AFTER them and
+      // overwrite their results, silently truncating the visible response.
+      //
+      // A functional `setMessages` fixes the truncation, but persisting
+      // from inside the updater would be a side effect on a function React
+      // may invoke multiple times (StrictMode, concurrent rendering), and
+      // `persistMessages` itself calls `setConversationId`. `flushSync`
+      // forces React to commit all pending updates (the backlog of chunk
+      // setters + our usage merge) and run effects synchronously, so by
+      // the time it returns `messagesRef.current` reflects the final
+      // rendered state and persistence can happen outside any updater.
       const hasUsage =
         usageAccum.inputTokens > 0 || usageAccum.outputTokens > 0;
-      let updatedMessages = messagesRef.current;
-      if (hasUsage) {
-        const updated = [...updatedMessages];
-        const last = updated[updated.length - 1];
-        if (last?.role === 'assistant') {
+      flushSync(() => {
+        setMessages((prev) => {
+          if (!hasUsage) return prev;
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role !== 'assistant') return prev;
           updated[updated.length - 1] = {
             ...(last as AssistantMessage),
             usage: usageAccum,
           };
-        }
-        updatedMessages = updated;
-        setMessages(updated);
-      }
-      // Persist conversation after each completed turn (skip if user aborted)
+          return updated;
+        });
+      });
       if (!controller.signal.aborted) {
         persistMessages(
-          updatedMessages,
+          messagesRef.current,
           providerId,
           modelId,
           Array.from(chatFoundNodesRef.current),
