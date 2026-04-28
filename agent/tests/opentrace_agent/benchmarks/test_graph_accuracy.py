@@ -119,7 +119,7 @@ class TestAssertionEngine:
         result = bench.run_task(
             {
                 "id": "test_exact_count",
-                "tool": "search_graph",
+                "tool": "keyword_search",
                 "tool_args": {"query": "zzz_nonexistent_zzz"},
                 "assertions": [{"type": "exact_count", "value": 0}],
             }
@@ -131,7 +131,7 @@ class TestAssertionEngine:
         result = bench.run_task(
             {
                 "id": "test_contains_name",
-                "tool": "search_graph",
+                "tool": "keyword_search",
                 "tool_args": {"query": "Calculator", "nodeTypes": "Class"},
                 "assertions": [{"type": "result_contains_name", "value": "Calculator"}],
             }
@@ -143,7 +143,7 @@ class TestAssertionEngine:
         result = bench.run_task(
             {
                 "id": "test_all_have_type",
-                "tool": "search_graph",
+                "tool": "keyword_search",
                 "tool_args": {"query": "app", "nodeTypes": "File"},
                 "assertions": [{"type": "all_have_type", "value": "File"}],
             }

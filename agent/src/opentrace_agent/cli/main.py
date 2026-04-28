@@ -523,7 +523,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        server = create_mcp_server(reloadable)
+        server = create_mcp_server(reloadable, db_path=resolved_db)
         log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:
@@ -1085,6 +1085,153 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
                 continue
 
     run_impact(file_path, resolved, line_ranges)
+
+
+def _do_clone(
+    repo_url: str,
+    clone_dir: Path,
+    ref: str | None,
+) -> Path:
+    """Clone ``repo_url`` into ``clone_dir`` and return the final path.
+
+    Tries ``GitCloner`` first (used by the rest of the indexing pipeline)
+    then falls back to ``git clone`` if the helper is unavailable.  Only
+    public repositories are supported in the open-source build.
+    """
+    click.echo(f"Cloning {repo_url} ...")
+    try:
+        from opentrace_agent.sources.code.git_cloner import GitCloner
+
+        cloner = GitCloner()
+        kwargs: dict[str, object] = {"dest": clone_dir}
+        if ref:
+            kwargs["ref"] = ref
+        return cloner.clone(repo_url, **kwargs)
+    except ImportError:
+        pass
+    except Exception as e:
+        raise click.ClickException(f"Clone failed: {e}")
+
+    import subprocess
+
+    cmd = ["git", "clone", "--depth", "1"]
+    if ref:
+        cmd.extend(["--branch", ref])
+    cmd.extend([repo_url, str(clone_dir)])
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"git clone failed: {result.stderr}")
+    return clone_dir
+
+
+@app.command("fetch-and-index")
+@click.argument("repo_url")
+@click.option(
+    "--repo-id",
+    default=None,
+    help="Custom repository ID (defaults to the repo name from the URL).",
+)
+@click.option("--ref", default=None, help="Branch or tag to clone (defaults to repo HEAD).")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help=f"Database path (default: ./{OPENTRACE_DIR}/{DB_NAME}).",
+)
+@click.option("--batch-size", default=200, show_default=True, help="Items per batch.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def fetch_and_index(
+    repo_url: str,
+    repo_id: str | None,
+    ref: str | None,
+    db_path: str | None,
+    batch_size: int,
+    verbose: bool,
+) -> None:
+    """Clone REPO_URL and index it into the graph.
+
+    Performs a shallow clone into ``~/.opentrace/repos/{org}/{name}/``,
+    then runs the full indexing pipeline.  The clone is kept so
+    ``source_read`` can serve files from it later.
+
+    Only public repositories are supported in the open-source build.
+    """
+    _configure_logging(verbose)
+
+    from opentrace_agent.pipeline import PipelineInput, run_pipeline
+    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
+    from opentrace_agent.store import GraphStore
+
+    url_parts = repo_url.rstrip("/").split("/")
+    inferred_name = url_parts[-1].removesuffix(".git") if url_parts else "repo"
+    effective_repo_id = repo_id or inferred_name
+    org = url_parts[-2] if len(url_parts) >= 2 else "unknown"
+
+    repos_dir = Path.home() / ".opentrace" / "repos" / org
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    clone_dir = repos_dir / inferred_name
+
+    if clone_dir.exists() and (clone_dir / ".git").exists():
+        click.echo(f"Repository already cloned at {clone_dir}, pulling latest ...")
+        try:
+            import subprocess
+
+            subprocess.run(
+                ["git", "-C", str(clone_dir), "pull", "--ff-only"],
+                capture_output=True,
+                timeout=60,
+            )
+        except Exception:
+            pass
+        local_path = clone_dir
+    elif clone_dir.exists():
+        import shutil
+
+        shutil.rmtree(clone_dir)
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref)
+    else:
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref)
+
+    click.echo(f"Cloned to {local_path}")
+
+    resolved_db = _resolve_db(db_path)
+    db_dir = Path(resolved_db).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    click.echo(f"Opening database at {resolved_db} ...")
+    with GraphStore(resolved_db) as graph_store:
+        store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+
+        click.echo(f"Indexing {local_path} as '{effective_repo_id}' ...")
+        t0 = time.monotonic()
+
+        inp = PipelineInput(path=str(local_path), repo_id=effective_repo_id)
+
+        last_result = None
+        for event in run_pipeline(inp, store=store):
+            _print_event(event, verbose)
+            if getattr(event, "result", None) is not None:
+                last_result = event.result
+
+        elapsed = time.monotonic() - t0
+
+        metadata = _collect_metadata(local_path, effective_repo_id, elapsed, last_result)
+        metadata["sourceUri"] = repo_url
+        graph_store.save_metadata(metadata)
+
+        store.flush()
+
+    click.echo(f"Done in {elapsed:.1f}s. Repository '{effective_repo_id}' is now indexed.")
 
 
 def _configure_logging(verbose: bool) -> None:
