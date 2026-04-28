@@ -816,11 +816,33 @@ def create_mcp_server(
             if not file_nodes:
                 return json.dumps({"error": f"File not found in index: {target}"})
 
-            # Prefer an exact path-suffix match over the FTS top result.
-            file_node = file_nodes[0]
-            for fn in file_nodes:
+            # search_nodes matches on name / search_text / docs, not just
+            # the path — so a query that hits an unrelated File's
+            # docstring would otherwise misroute. Require the chosen
+            # node's path to actually correspond to the target.
+            target_bn = os.path.basename(target)
+
+            def _path_matches(fn: dict[str, Any]) -> bool:
+                node_path = (fn.get("properties") or {}).get("path") or ""
+                if not node_path:
+                    return False
+                if node_path == target or node_path.endswith(target) or target.endswith(node_path):
+                    return True
+                if target_bn:
+                    node_bn = os.path.basename(node_path)
+                    if node_bn == target_bn or node_path.endswith("/" + target_bn):
+                        return True
+                return False
+
+            matched = [fn for fn in file_nodes if _path_matches(fn)]
+            if not matched:
+                return json.dumps({"error": f"File not found in index: {target}"})
+
+            # Prefer an exact path or path-suffix match over a basename-only match.
+            file_node = matched[0]
+            for fn in matched:
                 node_path = (fn.get("properties") or {}).get("path", "")
-                if node_path.endswith(target) or target.endswith(node_path):
+                if node_path == target or node_path.endswith(target) or target.endswith(node_path):
                     file_node = fn
                     break
 
