@@ -1,0 +1,230 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Shared drag handle for every resizable panel. A faint bar is always
+ * visible on edges so users can discover them without hovering first.
+ * Corners are hit-only zones — on hover/drag the two adjacent edge bars
+ * thicken and extend all the way to the corner so the two bars meet
+ * seamlessly into an L (no separate "corner button"). */
+
+.ot-panel-resize-handle {
+  position: absolute;
+  z-index: 20;
+  /* Inset from each end so the bar tucks inside rounded panels and never
+   * overshoots their corner curve. Override per-panel if your radius is
+   * unusually large. */
+  --ot-panel-resize-inset: 12px;
+}
+
+/* ── Edges ───────────────────────────────────────────────────────────── */
+
+.ot-panel-resize-handle--left,
+.ot-panel-resize-handle--right {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.ot-panel-resize-handle--left {
+  left: -3px;
+}
+
+.ot-panel-resize-handle--right {
+  right: -3px;
+}
+
+.ot-panel-resize-handle--top,
+.ot-panel-resize-handle--bottom {
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.ot-panel-resize-handle--top {
+  top: -3px;
+}
+
+.ot-panel-resize-handle--bottom {
+  bottom: -3px;
+}
+
+/* ── Corners (hit zones only, no own visual) ─────────────────────────── */
+
+.ot-panel-resize-handle--top-left,
+.ot-panel-resize-handle--top-right,
+.ot-panel-resize-handle--bottom-left,
+.ot-panel-resize-handle--bottom-right {
+  width: 14px;
+  height: 14px;
+  z-index: 21;
+}
+
+.ot-panel-resize-handle--top-left {
+  top: -3px;
+  left: -3px;
+  cursor: nwse-resize;
+}
+
+.ot-panel-resize-handle--top-right {
+  top: -3px;
+  right: -3px;
+  cursor: nesw-resize;
+}
+
+.ot-panel-resize-handle--bottom-left {
+  bottom: -3px;
+  left: -3px;
+  cursor: nesw-resize;
+}
+
+.ot-panel-resize-handle--bottom-right {
+  bottom: -3px;
+  right: -3px;
+  cursor: nwse-resize;
+}
+
+/* ── Edge indicator bar (only the four edge variants render one) ─────── */
+
+.ot-panel-resize-handle--left::after,
+.ot-panel-resize-handle--right::after,
+.ot-panel-resize-handle--top::after,
+.ot-panel-resize-handle--bottom::after {
+  content: '';
+  position: absolute;
+  background: color-mix(in oklch, var(--border) 60%, transparent);
+  transition:
+    background 0.15s,
+    width 0.15s,
+    height 0.15s,
+    top 0.15s,
+    right 0.15s,
+    bottom 0.15s,
+    left 0.15s;
+}
+
+.ot-panel-resize-handle--left::after,
+.ot-panel-resize-handle--right::after {
+  top: var(--ot-panel-resize-inset);
+  bottom: var(--ot-panel-resize-inset);
+  width: 2px;
+}
+
+.ot-panel-resize-handle--left::after {
+  right: 2px;
+}
+
+.ot-panel-resize-handle--right::after {
+  left: 2px;
+}
+
+.ot-panel-resize-handle--top::after,
+.ot-panel-resize-handle--bottom::after {
+  left: var(--ot-panel-resize-inset);
+  right: var(--ot-panel-resize-inset);
+  height: 2px;
+}
+
+.ot-panel-resize-handle--top::after {
+  bottom: 2px;
+}
+
+.ot-panel-resize-handle--bottom::after {
+  top: 2px;
+}
+
+/* ── Hover / active on edges ─────────────────────────────────────────── */
+
+.ot-panel-resize-handle:hover::after,
+.ot-panel-resize-handle:active::after {
+  background: var(--primary);
+}
+
+.ot-panel-resize-handle--left:hover::after,
+.ot-panel-resize-handle--left:active::after,
+.ot-panel-resize-handle--right:hover::after,
+.ot-panel-resize-handle--right:active::after {
+  width: 3px;
+}
+
+.ot-panel-resize-handle--top:hover::after,
+.ot-panel-resize-handle--top:active::after,
+.ot-panel-resize-handle--bottom:hover::after,
+.ot-panel-resize-handle--bottom:active::after {
+  height: 3px;
+}
+
+/* ── Cascade outline drawn ON THE PANEL ITSELF ──────────────────────── */
+/*    A pseudo-element on the panel inherits the panel's border-radius
+ *    and traces the rounded edge directly — no offset math, no per-
+ *    handle arc, the curve is always exactly the panel's curve.
+ *    Activated by the corner-active class added by the JS handler. */
+
+.ot-panel--corner-active-tl::after,
+.ot-panel--corner-active-tr::after,
+.ot-panel--corner-active-bl::after,
+.ot-panel--corner-active-br::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 3px solid transparent;
+  border-radius: inherit;
+  box-sizing: border-box;
+  pointer-events: none;
+  /* Sit above the edge handles so the cascade reads as a single
+   * continuous outline. */
+  z-index: 22;
+}
+
+.ot-panel--corner-active-tl::after {
+  border-top-color: var(--primary);
+  border-left-color: var(--primary);
+}
+.ot-panel--corner-active-tr::after {
+  border-top-color: var(--primary);
+  border-right-color: var(--primary);
+}
+.ot-panel--corner-active-bl::after {
+  border-bottom-color: var(--primary);
+  border-left-color: var(--primary);
+}
+.ot-panel--corner-active-br::after {
+  border-bottom-color: var(--primary);
+  border-right-color: var(--primary);
+}
+
+/* While a corner is active, hide the edge-handle bars on the two
+ * adjacent edges — the panel outline above replaces them so we don't
+ * paint two parallel primary lines. */
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--top::after,
+.ot-panel--corner-active-tl > .ot-panel-resize-handle--left::after,
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--top::after,
+.ot-panel--corner-active-tr > .ot-panel-resize-handle--right::after,
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--bottom::after,
+.ot-panel--corner-active-bl > .ot-panel-resize-handle--left::after,
+.ot-panel--corner-active-br > .ot-panel-resize-handle--bottom::after,
+.ot-panel--corner-active-br > .ot-panel-resize-handle--right::after {
+  display: none;
+}
+
+/* ── Touch-first layouts: hide handles ───────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .ot-panel-resize-handle {
+    display: none;
+  }
+}

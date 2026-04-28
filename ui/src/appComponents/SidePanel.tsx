@@ -16,10 +16,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SelectedNode, SelectedEdge } from '@opentrace/components/utils';
-import { FilterPanel, type FilterPanelProps } from '@opentrace/components';
+import {
+  FilterPanel,
+  PanelResizeHandle,
+  type FilterPanelProps,
+} from '@opentrace/components';
 import type { NodeSourceResponse } from '../store/types';
 import { useStore } from '../store/context';
-import { useResizablePanel } from '../hooks/useResizablePanel';
+import {
+  useResizablePanel,
+  useResizablePanelHeight,
+} from '../hooks/useResizablePanel';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
@@ -117,18 +124,24 @@ export default function SidePanel({
   const effectiveTab = mobileActiveTab ?? activeTab;
 
   const hasSelection = selectedNode !== null || selectedLink !== null;
-  const expanded =
-    hasSelection || effectiveTab === 'discover' || effectiveTab === 'history';
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
-    storageKey: expanded
-      ? 'ot_side_panel_expanded_width'
-      : 'ot_side_panel_width',
-    defaultWidth: expanded ? 480 : 220,
-    minWidth: 180,
-    maxWidth: 700,
+    storageKey: 'ot_side_panel_width',
+    defaultWidth: 360,
+    minWidth: 220,
+    maxWidth: 900,
     side: 'right',
+    panelRef,
   });
+  const { height: panelHeight, handleMouseDown: onHeightDrag } =
+    useResizablePanelHeight({
+      storageKey: 'ot_side_panel_height',
+      minHeight: 320,
+      maxHeight: 1400,
+      side: 'bottom',
+      panelRef,
+    });
 
   // Auto-switch to details when node or edge is selected
   useEffect(() => {
@@ -162,8 +175,16 @@ export default function SidePanel({
 
   return (
     <div
+      ref={panelRef}
       className={`side-panel${isMobileOpen ? ' side-panel--mobile-open' : ''}`}
-      style={{ width: isMobileOpen ? undefined : panelWidth }}
+      style={
+        {
+          width: panelWidth,
+          ...(panelHeight != null
+            ? { '--side-panel-height': `${panelHeight}px` }
+            : {}),
+        } as React.CSSProperties
+      }
     >
       <div className="side-panel-tabs">
         <button
@@ -261,9 +282,15 @@ export default function SidePanel({
           ) : null}
         </div>
       )}
-      {!isMobileOpen && (
-        <div className="side-panel-drag-handle" onMouseDown={handleMouseDown} />
-      )}
+      <PanelResizeHandle side="right" onMouseDown={handleMouseDown} />
+      <PanelResizeHandle side="bottom" onMouseDown={onHeightDrag} />
+      <PanelResizeHandle
+        side="bottom-right"
+        onMouseDown={(e) => {
+          handleMouseDown(e, 'nwse-resize');
+          onHeightDrag(e, 'nwse-resize');
+        }}
+      />
     </div>
   );
 }

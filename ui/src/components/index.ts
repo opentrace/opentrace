@@ -143,6 +143,7 @@ export {
   GraphToolbar,
   DiscoverPanel,
   PhysicsPanel,
+  PanelResizeHandle,
   useDiscoverTree,
 } from './panels';
 export type {
