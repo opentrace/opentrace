@@ -137,6 +137,39 @@ class TestConventionSuffix:
         # The marker exists but nothing follows.
         assert _convention_suffix("/Users/anys/.opentrace/repos") is None
 
+    def test_returns_none_for_dotdot_in_suffix(self) -> None:
+        # A crafted repoPath with traversal segments must not produce
+        # a suffix; otherwise joining it under the current $HOME
+        # could direct ripgrep at e.g. /etc.
+        assert (
+            _convention_suffix("/Users/anys/.opentrace/repos/../../../etc")
+            is None
+        )
+
+    def test_resolve_clone_path_rejects_traversal_via_convention(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # End-to-end: a malicious repoPath with traversal segments
+        # must not resolve to anything under $HOME via the convention
+        # branch. The literal-path fallback may still succeed for the
+        # raw path on disk, but the rehome step must not synthesize a
+        # path under $HOME from untrusted suffix components.
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        # Pre-create what the unsafe rehome *would have* pointed at,
+        # so the test fails loudly if the guard regresses.
+        escaped = tmp_path / "home" / ".opentrace" / "etc"
+        escaped.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        result = _resolve_clone_path(
+            "/Users/anys/.opentrace/repos/../etc"
+        )
+        # The literal `/Users/anys/.opentrace/repos/../etc` doesn't
+        # exist on the test machine, and the convention branch is now
+        # blocked, so we should get None — not the traversal target.
+        assert result is None
+
 
 class TestResolveClonePath:
     """Unit tests for the rehoming + literal-fallback strategy."""

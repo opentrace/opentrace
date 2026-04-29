@@ -242,7 +242,11 @@ class TestResolveFileNode:
         store = MagicMock()
         store.list_nodes.return_value = [target]
         assert _resolve_file_node(store, "src/api.py") is target
-        store.list_nodes.assert_called_with("File", filters={"path": "src/api.py"}, limit=2)
+        # Fetch one row beyond the message cap so we can detect when
+        # there are more conflicts than we'll display.
+        store.list_nodes.assert_called_with(
+            "File", filters={"path": "src/api.py"}, limit=11
+        )
 
     def test_absolute_path_stripped_via_metadata(self) -> None:
         target = self._file("src/api.py")
@@ -290,6 +294,32 @@ class TestResolveFileNode:
         assert "repo-b/src/api.py" in msg
         # No graph-internal jargon in the user-facing message.
         assert "File nodes" not in msg
+
+    def test_ambiguous_exact_match_truncates_long_conflict_list(self) -> None:
+        # When more files share the same relative path than the message
+        # is willing to print, the IDs in the message must be capped at
+        # _MAX_AMBIGUOUS_CANDIDATES (= 10) — same shape as the basename
+        # branch — so a 50-repo monorepo doesn't dump a useless wall of
+        # text into the user's terminal.
+        from opentrace_agent.cli.impact import _MAX_AMBIGUOUS_CANDIDATES
+
+        conflicts = [
+            self._file("src/api.py", id_=f"repo-{i:02d}/src/api.py")
+            for i in range(_MAX_AMBIGUOUS_CANDIDATES + 5)
+        ]
+        store = MagicMock()
+        store.list_nodes.return_value = conflicts
+
+        with pytest.raises(click.ClickException) as excinfo:
+            _resolve_file_node(store, "src/api.py")
+        msg = str(excinfo.value.message)
+
+        # Only the first _MAX_AMBIGUOUS_CANDIDATES IDs (sorted) appear.
+        assert "repo-00/src/api.py" in msg
+        assert f"repo-{_MAX_AMBIGUOUS_CANDIDATES - 1:02d}/src/api.py" in msg
+        # IDs beyond the cap must not be in the message.
+        assert f"repo-{_MAX_AMBIGUOUS_CANDIDATES:02d}/src/api.py" not in msg
+        assert f"repo-{_MAX_AMBIGUOUS_CANDIDATES + 4:02d}/src/api.py" not in msg
 
     def test_ambiguous_basename_raises(self) -> None:
         a = self._file("pkg/a/utils.py", id_="proj/pkg/a/utils.py")

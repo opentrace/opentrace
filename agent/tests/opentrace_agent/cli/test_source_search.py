@@ -341,6 +341,37 @@ class TestLimitAndTruncation:
         assert len(data["results"]) < 10
         assert data["truncated"] is False
 
+    def test_truncated_false_when_results_exactly_match_limit(
+        self, search_store
+    ) -> None:
+        """If there are exactly *N* matches in the graph and the user
+        asks for ``--limit N``, ``truncated`` must be ``False``. The
+        previous ``len(results) >= limit`` check fired ``True`` here
+        and told the caller to raise their --limit when there was
+        nothing more to find.
+        """
+        db_path = search_store
+        # Restrict to one repo + Class-only so the candidate set is
+        # tightly known: repo-alpha has exactly one Class
+        # (ParserService) matching "Parser".
+        result = _invoke(
+            db_path,
+            "Parser",
+            "--repo",
+            "repo-alpha",
+            "--types",
+            "Class",
+            "--limit",
+            "1",
+            "--json",
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert len(data["results"]) == 1
+        assert data["totalResults"] == 1
+        assert data["truncated"] is False
+
 
 class TestCombinedFilters:
     def test_repo_and_types_apply_together(self, search_store) -> None:

@@ -600,6 +600,50 @@ class GraphStore:
                 entries.append(props)
         return entries
 
+    # -- Repository discovery -------------------------------------------
+
+    def list_repository_ids(self) -> list[str]:
+        """Return every Repository node id, ordered by id."""
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id"
+        )
+        ids: list[str] = []
+        while result.has_next():
+            ids.append(str(result.get_next()[0]))
+        return ids
+
+    def repository_exists(self, repo_id: str) -> bool:
+        """True if a Repository node with id *repo_id* is in the graph."""
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = 'Repository' AND n.id = $id "
+            "RETURN 1 LIMIT 1",
+            parameters={"id": repo_id},
+        )
+        return result.has_next()
+
+    def list_repositories(self) -> list[dict[str, Any]]:
+        """Return ``{id, name, properties}`` for every Repository node, ordered by id.
+
+        ``properties`` is always a dict; an unparseable stored value
+        is coerced to ``{}`` so callers can do ``.get(...)`` without
+        type-checking first.
+        """
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = 'Repository' "
+            "RETURN n.id, n.name, n.properties ORDER BY n.id"
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            row = result.get_next()
+            rows.append(
+                {
+                    "id": str(row[0]),
+                    "name": str(row[1]),
+                    "properties": _parse_props(row[2]) or {},
+                }
+            )
+        return rows
+
     # -- lifecycle -------------------------------------------------------
 
     def close(self) -> None:

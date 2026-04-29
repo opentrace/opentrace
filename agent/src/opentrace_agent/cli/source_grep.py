@@ -71,13 +71,20 @@ def _convention_suffix(repo_path: str) -> tuple[str, ...] | None:
 
     Used to rehome an indexed-host path under the current ``$HOME``.
     Returns ``None`` for repos indexed in place (path doesn't pass
-    through the convention directory).
+    through the convention directory) and for paths whose suffix
+    contains ``..`` segments — those would let a crafted ``repoPath``
+    direct the rehome target outside ``$HOME/.opentrace/repos/`` once
+    joined.
     """
     parts = Path(repo_path).parts
     for i in range(len(parts) - 1):
         if parts[i : i + 2] == _REPOS_DIR_MARKER:
             tail = parts[i + 2 :]
-            return tail if tail else None
+            if not tail:
+                return None
+            if any(p == ".." for p in tail):
+                return None
+            return tail
     return None
 
 
@@ -134,11 +141,7 @@ def _load_repo_paths(
         pairs.append((only_repo, metadata_by_id.get(only_repo)))
         return pairs
 
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id"
-    )
-    while result.has_next():
-        rid = str(result.get_next()[0])
+    for rid in store.list_repository_ids():
         pairs.append((rid, metadata_by_id.get(rid)))
     return pairs
 
@@ -154,20 +157,10 @@ def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
     if not repo_id:
         return None
 
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' AND n.id = $id RETURN n.id LIMIT 1",
-        parameters={"id": repo_id},
-    )
-    if result.has_next():
+    if store.repository_exists(repo_id):
         return repo_id
 
-    candidates_result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id"
-    )
-    candidates: list[str] = []
-    while candidates_result.has_next():
-        candidates.append(str(candidates_result.get_next()[0]))
-
+    candidates = store.list_repository_ids()
     if candidates:
         raise click.ClickException(
             f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}"

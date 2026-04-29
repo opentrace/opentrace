@@ -74,14 +74,7 @@ def _load_repo_ids(store: Any) -> list[str]:
     contain ``/`` (e.g. ``owner/repo``). Sorting longest-first lets
     the prefix scan pick the most specific match.
     """
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id"
-    )
-    ids: list[str] = []
-    while result.has_next():
-        ids.append(str(result.get_next()[0]))
-    ids.sort(key=len, reverse=True)
-    return ids
+    return sorted(store.list_repository_ids(), key=len, reverse=True)
 
 
 def _attribute_repo(node_id: str, repo_ids: list[str]) -> str:
@@ -114,20 +107,10 @@ def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
     if not repo_id:
         return None
 
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' AND n.id = $id RETURN n.id LIMIT 1",
-        parameters={"id": repo_id},
-    )
-    if result.has_next():
+    if store.repository_exists(repo_id):
         return repo_id
 
-    candidates_result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id"
-    )
-    candidates: list[str] = []
-    while candidates_result.has_next():
-        candidates.append(str(candidates_result.get_next()[0]))
-
+    candidates = store.list_repository_ids()
     if candidates:
         raise click.ClickException(
             f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}"
@@ -206,14 +189,15 @@ def run_source_search(
     store = GraphStore(db_path, read_only=True)
     try:
         resolved_repo = _resolve_repo(store, repo)
+        # Over-fetch one row beyond `limit` so we can distinguish
+        # "exactly `limit` matches in the graph" from "more existed,
+        # truncated here". The +1 row is then trimmed before output.
         results = _run_fts_search(
-            store, query, resolved_repo, node_types, limit
+            store, query, resolved_repo, node_types, limit + 1
         )
-        # Filling `limit` is the strongest available signal that more
-        # matches existed — there might be exactly `limit` matches in
-        # the graph, but we'd need a second count query to tell, and
-        # over-reporting is preferable to silently truncating.
-        truncated = len(results) >= limit
+        truncated = len(results) > limit
+        if truncated:
+            results = results[:limit]
 
         repo_ids = [resolved_repo] if resolved_repo else _load_repo_ids(store)
 

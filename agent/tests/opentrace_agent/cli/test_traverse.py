@@ -147,20 +147,38 @@ class TestTraverseJson:
         )
 
     def test_depth_clamped_to_maximum(self, tmp_path) -> None:
-        """Depth is clamped to match the MCP ``traverse_graph`` cap."""
+        """Depth is clamped to match the MCP ``traverse_graph`` cap, and
+        the user is warned on stderr so they don't think they got the
+        depth they asked for."""
         store = MagicMock()
         store.traverse.return_value = []
 
         result = _invoke(store, tmp_path, "a", "--depth", "999", "--json")
         assert result.exit_code == 0, result.output
 
-        payload = json.loads(result.output)
-        # Envelope reflects the clamped depth, not the requested one.
+        # Warning lands on stderr, mentions both the requested and
+        # effective depth.
+        assert "999" in result.stderr
+        assert "10" in result.stderr
+        assert "Warning" in result.stderr
+
+        # JSON envelope reflects the clamped depth, not the requested one.
+        # Parse stdout only — stderr is captured separately by CliRunner.
+        payload = json.loads(result.stdout)
         assert payload["depth"] == 10
 
         store.traverse.assert_called_once_with(
             "a", direction="outgoing", max_depth=10, relationship_type=None
         )
+
+    def test_depth_at_cap_does_not_warn(self, tmp_path) -> None:
+        """``--depth 10`` (the cap exactly) is fine; no warning."""
+        store = MagicMock()
+        store.traverse.return_value = []
+
+        result = _invoke(store, tmp_path, "a", "--depth", "10")
+        assert result.exit_code == 0, result.output
+        assert "Warning" not in (result.stderr or "")
 
     def test_invalid_direction_rejected_by_click(self, tmp_path) -> None:
         store = MagicMock()

@@ -103,7 +103,11 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
     to silently pick one and attribute dependents to the wrong file.
     """
     for candidate in _candidate_relative_paths(store, file_path):
-        matches = store.list_nodes("File", filters={"path": candidate}, limit=2)
+        matches = store.list_nodes(
+            "File",
+            filters={"path": candidate},
+            limit=_MAX_AMBIGUOUS_CANDIDATES + 1,
+        )
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
@@ -113,7 +117,8 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
             ids = sorted(n["id"] for n in matches)
             raise click.ClickException(
                 f"Ambiguous match for {file_path!r}: multiple files in the "
-                f"graph share the relative path {candidate!r}: {ids}. "
+                f"graph share the relative path {candidate!r}: "
+                f"{ids[:_MAX_AMBIGUOUS_CANDIDATES]}. "
                 f"Pass a fully-qualified node id to disambiguate."
             )
 

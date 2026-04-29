@@ -26,28 +26,22 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from opentrace_agent.cli.main import _REPOS_METADATA_FIELDS, app
 
 
-def _mock_conn_result(rows: list[tuple[str, str, str]]) -> MagicMock:
-    """Return a MagicMock shaped like store._conn.execute(...)'s result."""
-    idx = [0]
-    m = MagicMock()
-    m.has_next.side_effect = lambda: idx[0] < len(rows)
+def _repo(id_: str, name: str | None = None, **properties) -> dict:
+    """Build a fake ``store.list_repositories()`` row.
 
-    def _next():
-        row = rows[idx[0]]
-        idx[0] += 1
-        return row
-
-    m.get_next.side_effect = _next
-    return m
+    Mirrors the GraphStore helper's contract: ``properties`` is always
+    a dict (never ``None`` or a raw JSON string), so the command never
+    has to think about parsing.
+    """
+    return {"id": id_, "name": name or id_, "properties": dict(properties)}
 
 
-def _run_repos(store: MagicMock, tmp_path) -> dict:
+def _run_repos(store: MagicMock, tmp_path) -> list:
     """Invoke the `repos` command with a patched GraphStore and parse output."""
     with patch("opentrace_agent.store.GraphStore", return_value=store), patch(
         "opentrace_agent.cli.main._resolve_db",
@@ -62,9 +56,7 @@ class TestReposFullMerge:
     def test_metadata_populates_all_fields(self, tmp_path) -> None:
         """A node with a matching metadata entry surfaces every metadata field."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            ("click", "click", "{}"),
-        ])
+        store.list_repositories.return_value = [_repo("click")]
         store.get_metadata.return_value = [
             {
                 "repoId": "click",
@@ -107,9 +99,7 @@ class TestReposFullMerge:
     def test_all_metadata_fields_keyed_even_when_missing(self, tmp_path) -> None:
         """Shape must be stable: every metadata field key present, nullable."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            ("solo", "solo", "{}"),
-        ])
+        store.list_repositories.return_value = [_repo("solo")]
         store.get_metadata.return_value = []  # no metadata at all
 
         output = _run_repos(store, tmp_path)
@@ -128,9 +118,7 @@ class TestReposMatchByIdNotName:
         """Match uses the node id, not the name — previously fragile on divergence."""
         store = MagicMock()
         # Node id is 'opentrace-agent', but name is 'agent' (sub-path index).
-        store._conn.execute.return_value = _mock_conn_result([
-            ("opentrace-agent", "agent", "{}"),
-        ])
+        store.list_repositories.return_value = [_repo("opentrace-agent", name="agent")]
         store.get_metadata.return_value = [
             {
                 "repoId": "opentrace-agent",
@@ -147,9 +135,7 @@ class TestReposMatchByIdNotName:
     def test_metadata_with_mismatched_id_is_orphan(self, tmp_path) -> None:
         """Metadata whose repoId doesn't match any node is excluded entirely."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            ("existing", "existing", "{}"),
-        ])
+        store.list_repositories.return_value = [_repo("existing")]
         store.get_metadata.return_value = [
             {"repoId": "never-indexed-here", "sourceUri": "https://x"},
         ]
@@ -168,18 +154,15 @@ class TestReposGraphPropsFallback:
         """If a future indexer writes sourceUri/etc. to the node instead of
         metadata, those values must still reach the output."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            (
+        store.list_repositories.return_value = [
+            _repo(
                 "legacy-repo",
-                "legacy-repo",
-                json.dumps({
-                    "sourceUri": "https://legacy.git/repo",
-                    "branch": "trunk",
-                    "commitSha": "abcdef01",
-                    "repoPath": "/var/src/legacy-repo",
-                }),
+                sourceUri="https://legacy.git/repo",
+                branch="trunk",
+                commitSha="abcdef01",
+                repoPath="/var/src/legacy-repo",
             ),
-        ])
+        ]
         store.get_metadata.return_value = []
 
         output = _run_repos(store, tmp_path)
@@ -193,13 +176,9 @@ class TestReposGraphPropsFallback:
     def test_metadata_wins_over_graph_properties(self, tmp_path) -> None:
         """When both sources carry a value, metadata takes precedence."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            (
-                "dual-source",
-                "dual-source",
-                json.dumps({"branch": "stale-from-graph"}),
-            ),
-        ])
+        store.list_repositories.return_value = [
+            _repo("dual-source", branch="stale-from-graph")
+        ]
         store.get_metadata.return_value = [
             {"repoId": "dual-source", "branch": "fresh-from-metadata"}
         ]
@@ -213,25 +192,40 @@ class TestReposEmpty:
     def test_no_repositories_in_graph(self, tmp_path) -> None:
         """Empty graph → empty JSON array, exit 0."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([])
+        store.list_repositories.return_value = []
         store.get_metadata.return_value = []
 
         output = _run_repos(store, tmp_path)
 
         assert output == []
 
-    def test_malformed_properties_json_does_not_crash(self, tmp_path) -> None:
-        """A node with un-parseable properties should be surfaced without its
-        graph-props fallbacks — not raise."""
+    def test_malformed_properties_default_to_empty_dict(self, tmp_path) -> None:
+        """``store.list_repositories`` is contractually responsible for
+        coercing un-parseable properties into ``{}`` (see
+        graph_store.list_repositories docstring), so the command sees a
+        clean dict and surfaces the row without its graph-props
+        fallbacks."""
         store = MagicMock()
-        store._conn.execute.return_value = _mock_conn_result([
-            ("broken", "broken", "{not valid json"),
-        ])
+        store.list_repositories.return_value = [_repo("broken")]  # properties={}
         store.get_metadata.return_value = []
 
         output = _run_repos(store, tmp_path)
 
         assert output[0]["id"] == "broken"
-        # All metadata fields null because properties unparseable + no metadata.
+        # All metadata fields null because properties empty + no metadata.
         for field in _REPOS_METADATA_FIELDS:
             assert output[0][field] is None
+
+
+class TestReposDbResolution:
+    def test_missing_db_path_exits_nonzero_with_message(self, tmp_path) -> None:
+        """An explicit ``--db`` pointing at a non-existent file must
+        surface ``_resolve_db``'s usage error rather than crashing
+        deeper inside the store layer."""
+        bogus_db = tmp_path / "does-not-exist" / "index.db"
+
+        result = CliRunner().invoke(app, ["repos", "--db", str(bogus_db)])
+
+        assert result.exit_code != 0
+        assert "Database not found" in result.output
+        assert str(bogus_db) in result.output

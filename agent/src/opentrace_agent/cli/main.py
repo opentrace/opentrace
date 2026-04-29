@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -198,6 +200,95 @@ def _clean_stale_staging(staging_db: str) -> None:
         )
 
 
+def _run_indexing_pipeline(
+    *,
+    source_path: Path,
+    repo_id: str,
+    db_path: str,
+    batch_size: int,
+    verbose: bool,
+    extra_metadata: dict[str, object] | None = None,
+) -> float:
+    """Run the four-stage pipeline with atomic-write staging.
+
+    Writes to ``<db_path>.staging`` and atomically renames over
+    ``<db_path>`` on success, so a SIGKILL/OOM/power-loss mid-index
+    never leaves the live DB half-written. Self-heals any orphaned
+    staging artifacts from a prior interrupted run before starting.
+
+    *extra_metadata* is merged on top of the auto-collected metadata
+    before persistence — ``fetch-and-index`` uses this to attach the
+    original remote ``sourceUri`` (which the local-path indexer can't
+    discover).
+
+    Returns elapsed seconds. Raises on pipeline error after cleaning
+    up the staging artifacts.
+    """
+    from opentrace_agent.pipeline import PipelineInput, run_pipeline
+    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
+    from opentrace_agent.store import GraphStore
+
+    db_dir = Path(db_path).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    # Write to a staging file so we don't contend with readers (MCP)
+    # that hold an exclusive lock on the live database.
+    staging_db = db_path + ".staging"
+
+    # Self-heal from any prior interrupted run. Under the single-writer
+    # assumption (only this helper touches these files), anything
+    # pre-existing here is orphaned.
+    _clean_stale_staging(staging_db)
+
+    click.echo(f"Opening staging database at {staging_db} ...")
+    try:
+        with GraphStore(staging_db) as graph_store:
+            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+
+            click.echo(f"Indexing {source_path} ...")
+            t0 = time.monotonic()
+
+            inp = PipelineInput(path=str(source_path), repo_id=repo_id)
+
+            last_result = None
+            for event in run_pipeline(inp, store=store):
+                _print_event(event, verbose)
+                if getattr(event, "result", None) is not None:
+                    last_result = event.result
+
+            elapsed = time.monotonic() - t0
+
+            metadata = _collect_metadata(source_path, repo_id, elapsed, last_result)
+            if extra_metadata:
+                metadata.update(extra_metadata)
+            graph_store.save_metadata(metadata)
+
+            # Flush pending batches; the GraphStore is closed by the
+            # context manager on exit.
+            store.flush()
+    except BaseException:
+        # Clean up staging artifacts on failure so the next run isn't
+        # blocked by this attempt's leftovers. _safe_unlink swallows
+        # both missing files and OS errors so cleanup can never shadow
+        # the original exception that's about to re-raise.
+        _safe_unlink(staging_db, context="failed-index cleanup")
+        _safe_unlink(staging_db + ".wal", context="failed-index cleanup")
+        raise
+
+    # Atomically replace the live database.  Readers holding the old
+    # file descriptor continue to see the previous data until they
+    # detect the inode change and reopen.
+    os.replace(staging_db, db_path)
+
+    # The rename moves <staging>.staging to <db>, but <staging>.wal (if
+    # any) is left behind. Clean it so it doesn't linger as orphaned —
+    # but never fail here: we've already committed the index.
+    _safe_unlink(staging_db + ".wal", context="post-rename cleanup")
+
+    return elapsed
+
+
 @app.command()
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option(
@@ -220,71 +311,18 @@ def index(
     """Index a local codebase into a LadybugDB knowledge graph."""
     _configure_logging(verbose)
 
-    from opentrace_agent.pipeline import PipelineInput, run_pipeline
-    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
-    from opentrace_agent.store import GraphStore
-
     root = Path(path)
     if repo_id is None:
         repo_id = root.name
 
     resolved_db = _resolve_db(db_path)
-    db_dir = Path(resolved_db).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_gitignore(db_dir)
-
-    # Write to a staging file so we don't contend with readers (MCP)
-    # that hold an exclusive lock on the live database.
-    staging_db = resolved_db + ".staging"
-
-    # Self-heal from any prior interrupted run. Under the single-writer
-    # assumption (only `opentrace index` touches these files), anything
-    # pre-existing here is orphaned.
-    _clean_stale_staging(staging_db)
-
-    click.echo(f"Opening staging database at {staging_db} ...")
-    try:
-        with GraphStore(staging_db) as graph_store:
-            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
-
-            click.echo(f"Indexing {root} ...")
-            t0 = time.monotonic()
-
-            inp = PipelineInput(path=str(root), repo_id=repo_id)
-
-            last_result = None
-            for event in run_pipeline(inp, store=store):
-                _print_event(event, verbose)
-                if getattr(event, "result", None) is not None:
-                    last_result = event.result
-
-            elapsed = time.monotonic() - t0
-
-            # Save index metadata.
-            metadata = _collect_metadata(root, repo_id, elapsed, last_result)
-            graph_store.save_metadata(metadata)
-
-            # Flush pending batches; the GraphStore is closed by the
-            # context manager on exit.
-            store.flush()
-    except BaseException:
-        # Clean up staging artifacts on failure so the next run isn't
-        # blocked by this attempt's leftovers. _safe_unlink swallows
-        # both missing files and OS errors so cleanup can never shadow
-        # the original exception that's about to re-raise.
-        _safe_unlink(staging_db, context="failed-index cleanup")
-        _safe_unlink(staging_db + ".wal", context="failed-index cleanup")
-        raise
-
-    # Atomically replace the live database.  Readers holding the old
-    # file descriptor continue to see the previous data until they
-    # detect the inode change and reopen.
-    os.replace(staging_db, resolved_db)
-
-    # The rename moves <staging>.staging to <db>, but <staging>.wal (if
-    # any) is left behind. Clean it so it doesn't linger as orphaned —
-    # but never fail the command here: we've already committed the index.
-    _safe_unlink(staging_db + ".wal", context="post-rename cleanup")
+    elapsed = _run_indexing_pipeline(
+        source_path=root,
+        repo_id=repo_id,
+        db_path=resolved_db,
+        batch_size=batch_size,
+        verbose=verbose,
+    )
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
@@ -1208,26 +1246,15 @@ def repos(db_path: str | None) -> None:
             if isinstance(repo_id, str) and repo_id:
                 metadata_by_id[repo_id] = entry
 
-        result = store._conn.execute(
-            "MATCH (n:Node {type: 'Repository'}) RETURN n.id, n.name, n.properties"
-        )
         repos_list: list[dict[str, object]] = []
-        while result.has_next():
-            row = result.get_next()
-            node_id, name, props_str = row[0], row[1], row[2]
+        for repo in store.list_repositories():
+            node_id = repo["id"]
+            graph_props = repo["properties"]
 
-            graph_props: dict[str, object] = {}
-            if props_str:
-                try:
-                    graph_props = json.loads(props_str)
-                except Exception:
-                    pass
-
-            # Match by node id, not by name. Name/repoId divergence
-                # silently dropped metadata under the previous design.
+            # Match by node id, not by name — they can diverge.
             md = metadata_by_id.get(node_id, {})
 
-            record: dict[str, object] = {"id": node_id, "name": name}
+            record: dict[str, object] = {"id": node_id, "name": repo["name"]}
             for field in _REPOS_METADATA_FIELDS:
                 # Metadata is authoritative when present. Graph-node
                 # properties cover the same three pre-existing keys as
@@ -1629,11 +1656,18 @@ def _print_file_slice(
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> None:
-    """Read and print a file or a slice of it."""
+    """Read and print a file or a slice of it.
+
+    Uses ``splitlines()`` rather than ``split("\\n")`` so a trailing
+    newline doesn't yield a phantom empty line at the end — that would
+    inflate ``len(lines)`` by one and make open-ended ranges (``5-``)
+    print a header and blank line that don't correspond to file
+    content.
+    """
     from pathlib import Path as P
 
     content = P(abs_path).read_text()
-    lines = content.split("\n")
+    lines = content.splitlines()
 
     if start_line is not None:
         start = max(0, start_line - 1)
@@ -1661,6 +1695,99 @@ def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None
         return cloner.clone(repo_url, **kwargs)
     except Exception as e:
         raise click.ClickException(f"Clone failed: {e}")
+
+
+# Matches the userinfo segment of a URL (``scheme://user:pass@host``).
+# We scrub this before echoing any git output because the persisted
+# origin URL — written by GitCloner._inject_token during the initial
+# clone — contains an oauth2:<token>@ prefix that git happily echoes
+# back in error messages on a failed fetch.
+_URL_USERINFO_RE = re.compile(r"://[^@/\s]+@")
+
+
+def _scrub_token(message: str) -> str:
+    """Redact userinfo (``user:password@``) from any URLs in *message*.
+
+    Defensive: even if no token is in play right now, an older clone in
+    ``~/.opentrace/repos`` may still carry one in its origin URL, and
+    we don't want to assume what the caller's token looked like.
+    """
+    return _URL_USERINFO_RE.sub("://[REDACTED]@", message)
+
+
+def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
+    """Best-effort fast-forward of an already-cloned repo.
+
+    Auth is reused from the persisted origin URL (the initial clone
+    embeds the token there if one was supplied). We never re-inject
+    the token here, so it can't appear in our process args; the only
+    leak vector is git echoing its origin URL on error, which we scrub
+    before logging.
+
+    Honors *ref* by fetching the named ref and forcing the local branch
+    to its FETCH_HEAD. This makes the re-fetch path match the
+    fresh-clone path: ``--ref main`` ends up on ``main`` whether or not
+    the directory already existed.
+
+    On failure we warn (with the scrubbed message) and return; the
+    caller proceeds with whatever's currently checked out, which may
+    be stale. Never raises.
+    """
+    # Refuse refs that look like flags. Git ref names can't legitimately
+    # start with '-' (git check-ref-format rejects them), and passing
+    # one as a positional to `git fetch ... <ref>` or `git checkout -B
+    # <ref> ...` would let it be reinterpreted as an option.
+    if ref and ref.startswith("-"):
+        click.echo(
+            f"Warning: refusing ref {ref!r} (starts with '-'); "
+            f"continuing with current checkout, which may be stale.",
+            err=True,
+        )
+        return
+
+    from opentrace_agent.sources.code.git_cloner import _clean_env
+
+    def _run(args: list[str]) -> tuple[int, str]:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(clone_dir), *args],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_clean_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return 124, "git command timed out after 60s"
+        except Exception as e:
+            return 1, _scrub_token(str(e))
+        msg = (proc.stderr or proc.stdout or "").strip()
+        return proc.returncode, _scrub_token(msg)
+
+    if ref:
+        rc, msg = _run(["fetch", "--depth=1", "origin", ref])
+        if rc != 0:
+            click.echo(
+                f"Warning: 'git fetch origin {ref}' failed (continuing with current "
+                f"checkout, which may be stale): {msg}",
+                err=True,
+            )
+            return
+        rc, msg = _run(["checkout", "-B", ref, "FETCH_HEAD"])
+        if rc != 0:
+            click.echo(
+                f"Warning: 'git checkout {ref}' failed (continuing with current "
+                f"checkout, which may be stale): {msg}",
+                err=True,
+            )
+        return
+
+    rc, msg = _run(["pull", "--ff-only"])
+    if rc != 0:
+        click.echo(
+            f"Warning: 'git pull --ff-only' failed (continuing with current "
+            f"checkout, which may be stale): {msg}",
+            err=True,
+        )
 
 
 @app.command("fetch-and-index")
@@ -1699,12 +1826,7 @@ def fetch_and_index(
 
     # Try GITHUB_TOKEN as fallback
     if not token:
-        import os
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITLAB_TOKEN")
-
-    from opentrace_agent.pipeline import PipelineInput, run_pipeline
-    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
-    from opentrace_agent.store import GraphStore
 
     # Determine repo name from URL
     url_parts = repo_url.rstrip("/").split("/")
@@ -1720,16 +1842,8 @@ def fetch_and_index(
     clone_dir = repos_dir / inferred_name
 
     if clone_dir.exists() and (clone_dir / ".git").exists():
-        click.echo(f"Repository already cloned at {clone_dir}, pulling latest...")
-        try:
-            import subprocess
-            subprocess.run(
-                ["git", "-C", str(clone_dir), "pull", "--ff-only"],
-                capture_output=True,
-                timeout=60,
-            )
-        except Exception:
-            pass
+        click.echo(f"Repository already cloned at {clone_dir}, updating...")
+        _update_existing_clone(clone_dir, ref)
         local_path = clone_dir
     elif clone_dir.exists():
         # Directory exists but no .git — remove and re-clone
@@ -1743,34 +1857,19 @@ def fetch_and_index(
 
     click.echo(f"Cloned to {local_path}")
 
-    # Index the cloned repo
     resolved_db = _resolve_db(db_path)
-    db_dir = Path(resolved_db).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_gitignore(db_dir)
-
-    click.echo(f"Opening database at {resolved_db} ...")
-    graph_store = GraphStore(resolved_db)
-    store = GraphStoreAdapter(graph_store, batch_size=batch_size)
-
-    click.echo(f"Indexing {local_path} as '{effective_repo_id}' ...")
-    t0 = time.monotonic()
-
-    inp = PipelineInput(path=str(local_path), repo_id=effective_repo_id)
-
-    last_result = None
-    for event in run_pipeline(inp, store=store):
-        _print_event(event, verbose)
-        if getattr(event, "result", None) is not None:
-            last_result = event.result
-
-    elapsed = time.monotonic() - t0
-
-    metadata = _collect_metadata(local_path, effective_repo_id, elapsed, last_result)
-    metadata["sourceUri"] = repo_url
-    graph_store.save_metadata(metadata)
-
-    store.close()
+    elapsed = _run_indexing_pipeline(
+        source_path=local_path,
+        repo_id=effective_repo_id,
+        db_path=resolved_db,
+        batch_size=batch_size,
+        verbose=verbose,
+        # `_collect_metadata` reads sourceUri from the local clone's
+        # `git remote origin` URL, which would echo back our token-
+        # bearing URL. Override with the user-supplied repo_url so the
+        # persisted sourceUri is the clean form.
+        extra_metadata={"sourceUri": repo_url},
+    )
 
     click.echo(f"Done in {elapsed:.1f}s. Repository '{effective_repo_id}' is now indexed.")
 

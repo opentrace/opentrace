@@ -90,7 +90,13 @@ def run_traverse(
             f"Invalid direction {direction!r}. Must be one of: {', '.join(_VALID_DIRECTIONS)}."
         )
 
-    depth = min(depth, _MAX_DEPTH)
+    if depth > _MAX_DEPTH:
+        click.echo(
+            f"Warning: --depth {depth} exceeds the cap of {_MAX_DEPTH}; "
+            f"clamping to {_MAX_DEPTH}.",
+            err=True,
+        )
+        depth = _MAX_DEPTH
 
     from opentrace_agent.store import GraphStore
 

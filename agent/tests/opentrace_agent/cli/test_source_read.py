@@ -162,6 +162,39 @@ class TestSourceReadLinesFlag:
         assert result.exit_code == 0, result.output
         assert captured == {"start_line": 5, "end_line": None}
 
+    def test_open_ended_range_against_trailing_newline_file(
+        self, tmp_path: Path
+    ) -> None:
+        """An open-ended range against a file that ends in ``\\n`` must
+        not emit a phantom trailing blank line, and the header must
+        reflect the real last line number rather than ``len(lines)``."""
+        from opentrace_agent.cli.main import _print_file_slice
+
+        sample = tmp_path / "with_trailing_nl.py"
+        # 10 real lines, written with a trailing newline.
+        sample.write_text("\n".join(f"line {i}" for i in range(1, 11)) + "\n")
+
+        runner = CliRunner()
+
+        @click.command()
+        def _drive():
+            _print_file_slice(str(sample), start_line=5, end_line=None)
+
+        result = runner.invoke(_drive)
+        assert result.exit_code == 0, result.output
+
+        # Header reports 5-10 (the real last line), not 5-11.
+        assert f"// {sample}:5-10" in result.output
+
+        # Body covers exactly 6 lines (5..10 inclusive). No phantom
+        # trailing blank "11\t" row.
+        body_lines = [
+            line for line in result.output.splitlines()
+            if line and line[0].isdigit()
+        ]
+        numbers = [int(line.split("\t", 1)[0]) for line in body_lines]
+        assert numbers == [5, 6, 7, 8, 9, 10]
+
     def test_bad_lines_spec_reports_clearly(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from opentrace_agent.cli import main as cli_main
 

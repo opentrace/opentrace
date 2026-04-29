@@ -20,6 +20,7 @@ relationships, and prints a compact human-readable block to stdout.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 # Relationship types we surface in the context block.
@@ -77,7 +78,6 @@ def run_augment(pattern: str, db_path: str | None, *, output_json: bool = False)
         nodes = store.search_nodes(pattern, limit=_MAX_NODES)
         if not nodes:
             if output_json:
-                import json
                 print(json.dumps({"pattern": pattern, "nodes": []}))
             return
 
@@ -96,8 +96,6 @@ def run_augment(pattern: str, db_path: str | None, *, output_json: bool = False)
 
 def _emit_json(store: Any, pattern: str, nodes: list[dict[str, Any]]) -> None:
     """Emit structured JSON output for machine consumption."""
-    import json
-
     result_nodes: list[dict[str, Any]] = []
     for node in nodes:
         node_data: dict[str, Any] = {
