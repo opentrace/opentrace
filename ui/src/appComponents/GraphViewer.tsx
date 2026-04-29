@@ -15,6 +15,26 @@
  */
 
 import {
+  AddRepoModal,
+  DEFAULT_LAYOUT_CONFIG,
+  GraphLegend,
+  GraphToolbar,
+  IndexingProgress,
+  PhysicsPanel,
+  PixiGraphCanvas,
+  detectProvider,
+  normalizeRepoUrl,
+  type GraphCanvasHandle,
+  type IndexingState,
+  type SearchSuggestion,
+} from '@opentrace/components';
+import type {
+  GraphLink,
+  GraphNode,
+  SelectedEdge,
+} from '@opentrace/components/utils';
+import { getLinkColor, getNodeColor } from '@opentrace/components/utils';
+import {
   forwardRef,
   memo,
   useCallback,
@@ -24,53 +44,20 @@ import {
   useRef,
   useState,
 } from 'react';
-import type {
-  GraphNode,
-  GraphLink,
-  SelectedNode,
-  SelectedEdge,
-  FilterState,
-} from '@opentrace/components/utils';
-import {
-  getNodeColor,
-  getLinkColor,
-  useCommunities,
-  useHighlights,
-} from '@opentrace/components/utils';
-import {
-  PixiGraphCanvas,
-  GraphLegend,
-  GraphToolbar,
-  PhysicsPanel,
-  type GraphCanvasHandle,
-  type FilterItem,
-  type FilterPanelProps,
-  type SearchSuggestion,
-  DEFAULT_LAYOUT_CONFIG,
-} from '@opentrace/components';
-import type { NodeSourceResponse } from '../store/types';
-import { useStore } from '../store';
-import { useGraphData } from '../hooks/useGraphData';
-import type { JobState } from '../job';
-import type { JobMessage } from '../job';
+import { useGraph } from '../providers/GraphDataProvider';
+import { useGraphInteraction } from '../providers/GraphInteractionProvider';
+import { getSubType } from '../providers/graphFilterUtils';
+import type { JobMessage, JobState } from '../job';
 import { JobPhase } from '../job';
-import {
-  AddRepoModal,
-  IndexingProgress,
-  detectProvider,
-  normalizeRepoUrl,
-  type IndexingState,
-} from '@opentrace/components';
-import { GitHubIcon, GitLabIcon } from './providerIcons';
-import JobMinimizedBar from './JobMinimizedBar';
-import SidePanel from './SidePanel';
-import type { SidePanelTab } from './SidePanel';
-import type { HistoryEntry } from './historyTypes';
-import type { NodeEdge } from './NodeDetailsPanel';
-import ThemeSelector from './ThemeSelector';
-import { OpenTraceLogo } from './OpenTraceLogo';
-import ResetConfirmModal from './ResetConfirmModal';
+import { useStore } from '../store';
 import ExportModal from './ExportModal';
+import type { HistoryEntry } from './historyTypes';
+import JobMinimizedBar from './JobMinimizedBar';
+import { OpenTraceLogo } from './OpenTraceLogo';
+import { GitHubIcon, GitLabIcon } from './providerIcons';
+import ResetConfirmModal from './ResetConfirmModal';
+import type { SidePanelTab } from './SidePanel';
+import ThemeSelector from './ThemeSelector';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -117,47 +104,9 @@ function toIndexingProps(job: JobState, repoUrl: string) {
   return { state, title, message, icon };
 }
 
-/** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
 // WARNING: Module-level singleton — do NOT mutate (add/delete). Used as a
 // stable empty default for highlight props to avoid unnecessary re-renders.
 const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
-
-/**
- * Extract a sub-type value from a node based on its type.
- * Returns null if no meaningful sub-type can be derived.
- */
-function getSubType(node: GraphNode): string | null {
-  if (node.type === 'File') {
-    const name = node.name || node.id;
-    const lastDot = name.lastIndexOf('.');
-    if (lastDot > 0) return name.slice(lastDot); // e.g. ".ts", ".go"
-    return null;
-  }
-  if (node.type === 'Function' || node.type === 'Class') {
-    const lang = node.properties?.language as string | undefined;
-    return lang || null;
-  }
-  if (node.type === 'Dependency') {
-    const registry = node.properties?.registry as string | undefined;
-    return registry || null;
-  }
-  if (node.type === 'Variable') {
-    const kind = node.properties?.kind as string | undefined;
-    return kind || null;
-  }
-  return null;
-}
-
-/**
- * Extract the string ID from a link endpoint.
- * GraphLink endpoints are always strings in our data model,
- * but we keep this helper for safety.
- */
-function linkId(endpoint: string | number | GraphNode | undefined): string {
-  if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
-  return String(endpoint);
-}
 
 // GraphLegend is now imported from @opentrace/components
 
@@ -355,9 +304,7 @@ function HelpMenuButton({
 }
 
 export interface GraphViewerHandle {
-  graphData: { nodes: GraphNode[]; links: GraphLink[] };
   selectNode: (nodeId: string, hops?: number) => void;
-  reload: (query?: string, hops?: number) => Promise<void>;
   triggerPing: (nodeIds: Iterable<string>) => void;
   resetCamera: () => void;
   zoomToFit: (duration?: number) => void;
@@ -387,11 +334,6 @@ export interface GraphViewerProps {
   onToggleSettings: () => void;
   showHelp: boolean;
   onToggleHelp: () => void;
-  /** Called when graphData changes so parent can pass it reactively to siblings */
-  onGraphDataChange?: (data: {
-    nodes: GraphNode[];
-    links: GraphLink[];
-  }) => void;
   /** Node IDs found by chat tool results — highlighted when no other selection is active */
   chatHighlightNodes?: Set<string>;
   /** Animation settings from SettingsDrawer */
@@ -403,6 +345,8 @@ export interface GraphViewerProps {
   graphFullscreen?: boolean;
   /** Mobile: toggle graph fullscreen */
   onToggleGraphFullscreen?: () => void;
+  /** Mobile: open SidePanel on a given tab (state lives in App). */
+  onMobilePanelTabChange?: (tab: SidePanelTab) => void;
 }
 
 const GraphViewer = memo(
@@ -429,12 +373,12 @@ const GraphViewer = memo(
         onToggleSettings,
         showHelp,
         onToggleHelp,
-        onGraphDataChange,
         chatHighlightNodes,
         animationSettings,
         toolbarActions,
         graphFullscreen,
         onToggleGraphFullscreen,
+        onMobilePanelTabChange,
       } = props;
 
       const { store } = useStore();
@@ -486,20 +430,11 @@ const GraphViewer = memo(
       //
       // Known limitation: if the `persisted` loadGraph is still in-flight
       // when `done` fires (tiny repos with near-instant embedding + slow
-      // fetchGraph), the wrong callback may consume the flag. The window
+      // fetchGraph), the wrong increment may consume the flag. The window
       // is small in practice — embedding typically dominates `fetchGraph`
       // by orders of magnitude — so we accept the race rather than thread
-      // per-promise suppression tokens through useGraphData.
+      // per-promise suppression tokens through useGraph.
       const suppressNextFitRef = useRef(false);
-      const onGraphLoaded = useCallback(() => {
-        if (suppressNextFitRef.current) {
-          suppressNextFitRef.current = false;
-          return;
-        }
-        // scheduleAutoFit is throttled and gated by the user's pan/zoom state,
-        // so this is a no-op if the user has already moved the camera.
-        canvasRef.current?.scheduleAutoFit?.(400);
-      }, []);
 
       const {
         graphData,
@@ -510,18 +445,40 @@ const GraphViewer = memo(
         graphVersion,
         loadGraph,
         setError,
-      } = useGraphData(onGraphLoaded);
+      } = useGraph();
 
-      // Keep a ref to latest graphData so imperative selectNode always reads fresh data
+      // Pointer to the same graphData object the provider holds — not a copy.
+      // useRef stores the reference (`ref.current === graphData`); the nodes
+      // and links arrays exist on the heap exactly once.
+      //
+      // Why we don't just read `graphData` from useGraph() at each call site:
+      // useImperativeHandle, the narrow-dep chat-highlight effect, and
+      // handleSelectEdgeFromNode all need *stable identity* but must see the
+      // *latest* data. Reading `graphData` directly inside those closures
+      // would force it into their dependency arrays, re-creating the
+      // handle/callback on every load and re-firing effects (which would
+      // duplicate history entries, churn the imperative handle, etc.).
+      // The ref lets stale closures dereference the current pointer without
+      // subscribing.
       const graphDataRef = useRef(graphData);
       useEffect(() => {
         graphDataRef.current = graphData;
       }, [graphData]);
 
-      // Notify parent when graphData changes (for reactive sibling props like ChatPanel)
+      // Auto-fit after each successful graph load (graphVersion bumps on success).
+      // The post-embedding reload (which only attaches vector properties without
+      // changing graph structure) sets `suppressNextFitRef` to skip the next
+      // auto-fit so the user's existing camera position isn't disturbed.
       useEffect(() => {
-        onGraphDataChange?.(graphData);
-      }, [graphData, onGraphDataChange]);
+        if (graphVersion === 0) return;
+        if (suppressNextFitRef.current) {
+          suppressNextFitRef.current = false;
+          return;
+        }
+        // scheduleAutoFit is throttled and gated by the user's pan/zoom state,
+        // so this is a no-op if the user has already moved the camera.
+        canvasRef.current?.scheduleAutoFit?.(400);
+      }, [graphVersion]);
 
       // Compute edges between chat-highlighted nodes
       const chatHighlightLinks = useMemo(() => {
@@ -539,35 +496,37 @@ const GraphViewer = memo(
         return links;
       }, [graphData.links, chatHighlightNodes]);
 
-      const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(
-        null,
-      );
-      const [selectedLink, setSelectedLink] = useState<SelectedEdge | null>(
-        null,
-      );
-      const [searchQuery, setSearchQuery] = useState('');
+      // Selection, filter state, history, search/hops, and derived data all
+      // live in GraphInteractionProvider so SidePanel can sit as a sibling.
+      const {
+        selectedNode,
+        setSelectedNode,
+        selectedLink,
+        setSelectedLink,
+        setNodeHistory,
+        hiddenNodeTypes,
+        setHiddenNodeTypes,
+        hiddenLinkTypes,
+        hiddenSubTypes,
+        hiddenCommunities,
+        setHiddenCommunities,
+        colorMode,
+        setColorMode,
+        searchQuery,
+        setSearchQuery,
+        hops,
+        setHops,
+        focusedCommunityNodes,
+        setFocusedCommunityNodes,
+        availableSubTypes,
+        communityData,
+        filteredGraphData,
+        highlights,
+      } = useGraphInteraction();
+
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
-      const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
-        null,
-      );
-      const [hops, setHops] = useState(2);
       const [exporting, setExporting] = useState(false);
-      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
-      const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
-      const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
-      const [hiddenCommunities, setHiddenCommunities] = useState(
-        new Set<number>(),
-      );
-      // Track whether we've applied the default Dependency hiding
-      const defaultsApplied = useRef(false);
-      const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
-        null,
-      );
-      const [sourceLoading, setSourceLoading] = useState(false);
-      const [sourceError, setSourceError] = useState<string | null>(null);
-
-      const [nodeHistory, setNodeHistory] = useState<HistoryEntry[]>([]);
 
       // Append chat-highlighted nodes to session history
       useEffect(() => {
@@ -591,7 +550,7 @@ const GraphViewer = memo(
           if (newEntries.length === 0) return prev;
           return [...newEntries, ...prev].slice(0, 500);
         });
-      }, [chatHighlightNodes]);
+      }, [chatHighlightNodes, setNodeHistory]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -608,10 +567,6 @@ const GraphViewer = memo(
       const [edgeLabelNodes, setEdgeLabelNodes] = useState<Set<string>>(
         new Set(),
       );
-
-      // Community-focus highlight override state
-      const [focusedCommunityNodes, setFocusedCommunityNodes] =
-        useState<Set<string>>(EMPTY_SET);
 
       // Active search filter — stored as data so we can re-apply it
       const [activeFilter, setActiveFilter] = useState<{
@@ -770,164 +725,35 @@ const GraphViewer = memo(
         [repulsion],
       );
 
-      // Compute Louvain communities on the full graph (before filtering, so
-      // community assignments are available for the community filter).
-      const communityData = useCommunities(
-        graphData.nodes,
-        graphData.links,
-        layoutConfig,
-      );
-
-      // Derive available types from raw graph data (for filter panel)
-      const availableNodeTypes = useMemo(() => {
-        const counts: Record<string, number> = {};
-        graphData.nodes.forEach((n) => {
-          counts[n.type] = (counts[n.type] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count);
-      }, [graphData.nodes]);
-
-      const availableLinkTypes = useMemo(() => {
-        const counts: Record<string, number> = {};
-        graphData.links.forEach((l) => {
-          const label = (l as unknown as GraphLink).label || 'unknown';
-          counts[label] = (counts[label] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count);
-      }, [graphData.links]);
-
-      // Derive sub-type counts grouped by node type (for filter panel)
-      const availableSubTypes = useMemo(() => {
-        const map = new Map<string, Record<string, number>>();
-        graphData.nodes.forEach((n) => {
-          const sub = getSubType(n);
-          if (!sub) return;
-          if (!map.has(n.type)) map.set(n.type, {});
-          const counts = map.get(n.type)!;
-          counts[sub] = (counts[sub] || 0) + 1;
-        });
-        const result = new Map<string, { subType: string; count: number }[]>();
-        map.forEach((counts, type) => {
-          result.set(
-            type,
-            Object.entries(counts)
-              .map(([subType, count]) => ({ subType, count }))
-              .sort((a, b) => b.count - a.count),
-          );
-        });
-        return result;
-      }, [graphData.nodes]);
-
-      // On first data load, hide all Dependency sub-types by default
-      useEffect(() => {
-        if (defaultsApplied.current) return;
-        const depSubs = availableSubTypes.get('Dependency');
-        if (depSubs && depSubs.length > 0) {
-          defaultsApplied.current = true;
-          // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
-          setHiddenSubTypes((prev) => {
-            const next = new Set(prev);
-            depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
-            return next;
+      const onNodeClick = useCallback(
+        (node: GraphNode) => {
+          setSelectedNode(node);
+          setSelectedLink(null);
+          // Clear edge-click and community-focus highlights (use stable empty sets)
+          setEdgeHighlightNodes(EMPTY_SET);
+          setEdgeHighlightLinks(EMPTY_SET);
+          setEdgeLabelNodes(EMPTY_SET);
+          setFocusedCommunityNodes(EMPTY_SET);
+          // Record in session history (skip consecutive duplicates)
+          setNodeHistory((prev) => {
+            if (prev.length > 0 && prev[0].id === node.id) return prev;
+            const entry: HistoryEntry = {
+              id: node.id,
+              name: node.name,
+              type: node.type,
+              timestamp: Date.now(),
+              source: 'user',
+            };
+            return [entry, ...prev].slice(0, 500);
           });
-        }
-      }, [availableSubTypes]);
-
-      // Apply type + sub-type + community filters to produce the rendered graph.
-      const filteredGraphData = useMemo(() => {
-        const nodes = graphData.nodes.filter((n) => {
-          // Community filter (when any communities are hidden)
-          if (hiddenCommunities.size > 0) {
-            const cid = communityData.assignments[n.id];
-            if (cid !== undefined && hiddenCommunities.has(cid)) return false;
-          }
-          const hasSubTypeFilters = availableSubTypes.has(n.type);
-          if (hasSubTypeFilters) {
-            const sub = getSubType(n);
-            if (sub) {
-              return !hiddenSubTypes.has(`${n.type}:${sub}`);
-            }
-            const subs = availableSubTypes.get(n.type)!;
-            const allHidden = subs.every((s) =>
-              hiddenSubTypes.has(`${n.type}:${s.subType}`),
-            );
-            return !allHidden;
-          }
-          return !hiddenNodeTypes.has(n.type);
-        });
-        const visibleNodeIds = new Set(nodes.map((n) => n.id));
-        const links = graphData.links.filter((l) => {
-          const sourceId = linkId(l.source);
-          const targetId = linkId(l.target);
-          const label = (l as unknown as GraphLink).label || 'unknown';
-          return (
-            visibleNodeIds.has(sourceId) &&
-            visibleNodeIds.has(targetId) &&
-            !hiddenLinkTypes.has(label)
-          );
-        });
-        return { nodes, links };
-      }, [
-        graphData,
-        hiddenNodeTypes,
-        hiddenLinkTypes,
-        hiddenSubTypes,
-        hiddenCommunities,
-        communityData.assignments,
-        availableSubTypes,
-      ]);
-
-      // Build filterState for the new hooks
-      const filterState: FilterState = useMemo(
-        () => ({
-          hiddenNodeTypes,
-          hiddenLinkTypes,
-          hiddenSubTypes,
-          hiddenCommunities,
-        }),
-        [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities],
-      );
-
-      const onNodeClick = useCallback((node: GraphNode) => {
-        setSelectedNode(node);
-        setSelectedLink(null);
-        // Clear edge-click and community-focus highlights (use stable empty sets)
-        setEdgeHighlightNodes(EMPTY_SET);
-        setEdgeHighlightLinks(EMPTY_SET);
-        setEdgeLabelNodes(EMPTY_SET);
-        setFocusedCommunityNodes(EMPTY_SET);
-        // Record in session history (skip consecutive duplicates)
-        setNodeHistory((prev) => {
-          if (prev.length > 0 && prev[0].id === node.id) return prev;
-          const entry: HistoryEntry = {
-            id: node.id,
-            name: node.name,
-            type: node.type,
-            timestamp: Date.now(),
-            source: 'user',
-          };
-          return [entry, ...prev].slice(0, 500);
-        });
-        // Zoom is handled by the effect below after highlights are computed
-      }, []);
-
-      const onCommunityFocus = useCallback(
-        (key: string) => {
-          const cid = Number(key);
-          const nodeIds = Object.entries(communityData.assignments)
-            .filter(([, id]) => id === cid)
-            .map(([nodeId]) => nodeId);
-          if (nodeIds.length > 0) {
-            setFocusedCommunityNodes(new Set(nodeIds));
-            setSelectedNode(null);
-            setSelectedLink(null);
-          }
+          // Zoom is handled by the effect below after highlights are computed
         },
-        [communityData.assignments],
+        [
+          setSelectedNode,
+          setSelectedLink,
+          setFocusedCommunityNodes,
+          setNodeHistory,
+        ],
       );
 
       // Zoom camera to focused community nodes when they change
@@ -941,7 +767,6 @@ const GraphViewer = memo(
       useImperativeHandle(
         ref,
         () => ({
-          graphData,
           selectNode: (nodeId: string, nodeHops?: number) => {
             if (nodeHops !== undefined) setHops(nodeHops);
             const node = graphDataRef.current.nodes.find(
@@ -949,7 +774,6 @@ const GraphViewer = memo(
             );
             if (node) onNodeClick(node);
           },
-          reload: (query?: string, hops?: number) => loadGraph(query, hops),
           triggerPing: (nodeIds: Iterable<string>) => {
             canvasRef.current?.triggerPing?.(nodeIds);
           },
@@ -960,136 +784,34 @@ const GraphViewer = memo(
             canvasRef.current?.zoomToFit(duration);
           },
         }),
-        [graphData, loadGraph, onNodeClick],
+        [onNodeClick, setHops],
       );
 
-      const onLinkClick = useCallback((edge: SelectedEdge) => {
-        setSelectedLink(edge);
-        setSelectedNode(null);
-        // Highlight the two endpoints and the clicked link
-        const sourceId = edge.source;
-        const targetId = edge.target;
+      const onLinkClick = useCallback(
+        (edge: SelectedEdge) => {
+          setSelectedLink(edge);
+          setSelectedNode(null);
+        },
+        [setSelectedLink, setSelectedNode],
+      );
+
+      // Sync canvas-side edge highlights + zoom to whichever edge is selected
+      // — works for both the canvas-click path (onLinkClick) and the
+      // SidePanel "select edge from node details" path (which writes to
+      // context's selectedLink directly via the provider's selectLink helper).
+      useEffect(() => {
+        if (!selectedLink) {
+          setEdgeHighlightNodes(EMPTY_SET);
+          setEdgeHighlightLinks(EMPTY_SET);
+          setEdgeLabelNodes(EMPTY_SET);
+          return;
+        }
+        const { source: sourceId, target: targetId } = selectedLink;
         setEdgeHighlightNodes(new Set([sourceId, targetId]));
         setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
         setEdgeLabelNodes(new Set([sourceId, targetId]));
-        // Zoom to fit the two endpoints
         canvasRef.current?.zoomToNodes([sourceId, targetId], 600);
-      }, []);
-
-      // Fetch source code when a source-bearing node is selected.
-      /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
-      useEffect(() => {
-        if (!selectedNode || !SOURCE_TYPES.has(selectedNode.type)) {
-          setNodeSource(null);
-          setSourceError(null);
-          return;
-        }
-
-        let cancelled = false;
-        setSourceLoading(true);
-        setSourceError(null);
-        setNodeSource(null);
-
-        const startLine = selectedNode.properties?.startLine as
-          | number
-          | undefined;
-        const endLine = selectedNode.properties?.endLine as number | undefined;
-
-        store
-          .fetchSource(selectedNode.id, startLine, endLine)
-          .then((src) => {
-            if (!cancelled) {
-              if (src) setNodeSource(src);
-              else setSourceError('Source not available');
-            }
-          })
-          .catch((err) => {
-            if (cancelled) return;
-            // Swallow AbortError — clearGraph fired mid-fetch, expected.
-            if (err?.name === 'AbortError') return;
-            setSourceError(err.message);
-          })
-          .finally(() => {
-            if (!cancelled) setSourceLoading(false);
-          });
-
-        return () => {
-          cancelled = true;
-        };
-      }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
-      /* eslint-enable react-hooks/set-state-in-effect */
-
-      // Compute edges connected to the selected node for the details panel
-      const selectedNodeEdges = useMemo(() => {
-        if (!selectedNode) return [];
-        const nodeId = selectedNode.id;
-        const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
-        return filteredGraphData.links
-          .filter(
-            (l) => linkId(l.source) === nodeId || linkId(l.target) === nodeId,
-          )
-          .map((l) => {
-            const sourceId = linkId(l.source);
-            const targetId = linkId(l.target);
-            const isOutgoing = sourceId === nodeId;
-            const otherId = isOutgoing ? targetId : sourceId;
-            const otherNode = nodeMap.get(otherId);
-            return {
-              label: l.label,
-              direction: isOutgoing
-                ? ('outgoing' as const)
-                : ('incoming' as const),
-              otherNodeId: otherId,
-              otherNodeName: otherNode?.name ?? otherId,
-              otherNodeType: otherNode?.type,
-              properties: l.properties,
-            };
-          });
-      }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
-
-      // Convert a NodeEdge back to a SelectedEdge and trigger edge selection
-      const handleSelectEdgeFromNode = useCallback(
-        (edge: NodeEdge) => {
-          if (!selectedNode) return;
-          const nodeMap = new Map(
-            graphDataRef.current.nodes.map((n) => [n.id, n]),
-          );
-          const sourceId =
-            edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
-          const targetId =
-            edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
-          onLinkClick({
-            source: sourceId,
-            target: targetId,
-            label: edge.label,
-            properties: edge.properties,
-            sourceNode: nodeMap.get(sourceId),
-            targetNode: nodeMap.get(targetId),
-          });
-        },
-        [selectedNode, onLinkClick],
-      );
-
-      // Compute degree (connection count) per node for size scaling
-      const graphNodeIds = useMemo(
-        () => graphData.nodes.map((n) => n.id as string),
-        [graphData.nodes],
-      );
-
-      const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
-
-      // ─── Highlights (computed from arrays) ────────────────────────────
-
-      const highlights = useHighlights(
-        null as never, // _graph — unused
-        false, // _layoutReady — unused
-        graphData.nodes,
-        graphData.links,
-        searchQuery,
-        selectedNode?.id ?? null,
-        hops,
-        filterState,
-      );
+      }, [selectedLink]);
 
       // Zoom to highlighted neighborhood when a node is selected,
       // or zoom to fit all nodes when deselected.
@@ -1112,11 +834,6 @@ const GraphViewer = memo(
         focusedCommunityNodes.size,
       ]);
 
-      const hopMap = useMemo(() => {
-        if (selectedLink) return new Map<string, number>();
-        return highlights.hopMap;
-      }, [selectedLink, highlights.hopMap]);
-
       const legendNodeItems = useMemo(() => {
         const counts: Record<string, number> = {};
         filteredGraphData.nodes.forEach((n) => {
@@ -1130,25 +847,6 @@ const GraphViewer = memo(
           }))
           .sort((a, b) => b.count - a.count);
       }, [filteredGraphData.nodes]);
-
-      // Derive available communities from raw graph data (for filter panel)
-      const availableCommunities = useMemo(() => {
-        const counts = new Map<number, number>();
-        for (const n of graphData.nodes) {
-          const cid = communityData.assignments[n.id];
-          if (cid !== undefined) {
-            counts.set(cid, (counts.get(cid) || 0) + 1);
-          }
-        }
-        return [...counts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([cid, count]) => ({
-            communityId: cid,
-            label: communityData.names.get(cid) ?? `Community ${cid}`,
-            count,
-            color: communityData.colorMap.get(cid) ?? '#64748b',
-          }));
-      }, [graphData.nodes, communityData]);
 
       const legendCommunityItems = useMemo(() => {
         if (colorMode !== 'community') return [];
@@ -1237,7 +935,7 @@ const GraphViewer = memo(
             }
           }
         },
-        [communityData.assignments],
+        [communityData.assignments, setFocusedCommunityNodes],
       );
 
       const handleSuggestionSelect = useCallback(
@@ -1276,7 +974,14 @@ const GraphViewer = memo(
             }
           }
         },
-        [applyFilter, hops, loadGraph, onNodeClick],
+        [
+          applyFilter,
+          hops,
+          loadGraph,
+          onNodeClick,
+          setSelectedLink,
+          setSelectedNode,
+        ],
       );
 
       const legendLinkItems = useMemo(() => {
@@ -1348,7 +1053,7 @@ const GraphViewer = memo(
         setEdgeLabelNodes(EMPTY_SET);
         // Re-apply the active search filter (e.g. community focus)
         applyFilter(activeFilterRef.current);
-      }, [applyFilter]);
+      }, [applyFilter, setSelectedLink, setSelectedNode]);
 
       // --- Early returns for loading/error/empty states ---
 
@@ -1489,187 +1194,8 @@ const GraphViewer = memo(
 
       // --- Main graph viewport ---
 
-      const selectedCommunityId = selectedNode
-        ? communityData.assignments[selectedNode.id]
-        : undefined;
-      const selectedCommunityName =
-        selectedCommunityId !== undefined
-          ? communityData.names.get(selectedCommunityId)
-          : undefined;
-      const selectedCommunityColor =
-        selectedCommunityId !== undefined
-          ? communityData.colorMap.get(selectedCommunityId)
-          : undefined;
-
-      // ─── Build filter sections for SidePanel ──────────────────────────
-
-      const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
-        ({ type, count }) => {
-          const subs = availableSubTypes.get(type);
-          const children = subs?.map((s) => ({
-            key: `${type}:${s.subType}`,
-            label: s.subType,
-            count: s.count,
-            color: getNodeColor(type),
-            hidden: hiddenSubTypes.has(`${type}:${s.subType}`),
-          }));
-          return {
-            key: type,
-            label: type,
-            count,
-            color: getNodeColor(type),
-            hidden: hiddenNodeTypes.has(type),
-            children,
-          };
-        },
-      );
-
-      const toggleNodeFilter = (key: string) => {
-        if (key.includes(':')) {
-          // Sub-type key like "Class:Controller"
-          setHiddenSubTypes((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          });
-        } else {
-          // Parent type key — toggle all sub-types if any, else toggle type
-          const subs = availableSubTypes.get(key);
-          if (subs && subs.length > 0) {
-            setHiddenSubTypes((prev) => {
-              const keys = subs.map((s) => `${key}:${s.subType}`);
-              const allHidden = keys.every((k) => prev.has(k));
-              const next = new Set(prev);
-              if (allHidden) {
-                keys.forEach((k) => next.delete(k));
-              } else {
-                keys.forEach((k) => next.add(k));
-              }
-              return next;
-            });
-          } else {
-            setHiddenNodeTypes((prev) => {
-              const next = new Set(prev);
-              if (next.has(key)) next.delete(key);
-              else next.add(key);
-              return next;
-            });
-          }
-        }
-      };
-
-      const linkFilterItems: FilterItem[] = availableLinkTypes.map(
-        ({ type, count }) => ({
-          key: type,
-          label: type.toUpperCase(),
-          count,
-          color: getLinkColor(type),
-          hidden: hiddenLinkTypes.has(type),
-        }),
-      );
-
-      const communityFilterItems: FilterItem[] = availableCommunities.map(
-        ({ communityId, label, count, color }) => ({
-          key: String(communityId),
-          label,
-          count,
-          color,
-          hidden: hiddenCommunities.has(communityId),
-        }),
-      );
-
-      const filterSections: FilterPanelProps[] = [];
-
-      if (colorMode === 'community' && communityFilterItems.length > 0) {
-        filterSections.push({
-          title: 'Communities',
-          items: communityFilterItems,
-          onToggle: (key) => {
-            const cid = Number(key);
-            setHiddenCommunities((prev) => {
-              const next = new Set(prev);
-              if (next.has(cid)) next.delete(cid);
-              else next.add(cid);
-              return next;
-            });
-          },
-          onShowAll: () => setHiddenCommunities(new Set()),
-          onHideAll: () =>
-            setHiddenCommunities(
-              new Set(availableCommunities.map((c) => c.communityId)),
-            ),
-          onFocus: onCommunityFocus,
-        });
-      }
-
-      filterSections.push({
-        title: 'Node Types',
-        items: nodeFilterItems,
-        onToggle: toggleNodeFilter,
-        onShowAll: () => {
-          setHiddenNodeTypes(new Set());
-          setHiddenSubTypes(new Set());
-        },
-        onHideAll: () => {
-          setHiddenNodeTypes(new Set(availableNodeTypes.map((t) => t.type)));
-          const allSubKeys = new Set<string>();
-          availableSubTypes.forEach((subs, type) => {
-            subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
-          });
-          setHiddenSubTypes(allSubKeys);
-        },
-      });
-
-      filterSections.push({
-        title: 'Edges',
-        items: linkFilterItems,
-        indicator: 'line',
-        emptyMessage: 'No edges',
-        onToggle: (key) =>
-          setHiddenLinkTypes((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          }),
-        onShowAll: () => setHiddenLinkTypes(new Set()),
-        onHideAll: () =>
-          setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type))),
-      });
-
       return (
         <div className="graph-viewport">
-          <SidePanel
-            filterSections={filterSections}
-            selectedNode={selectedNode}
-            nodeSource={nodeSource}
-            sourceLoading={sourceLoading}
-            sourceError={sourceError}
-            communityName={selectedCommunityName}
-            communityColor={selectedCommunityColor}
-            selectedNodeEdges={selectedNodeEdges}
-            onSelectEdge={handleSelectEdgeFromNode}
-            selectedLink={selectedLink}
-            onSelectNode={(nodeId) => {
-              const node = graphDataRef.current.nodes.find(
-                (n) => n.id === nodeId,
-              );
-              if (node) onNodeClick(node);
-            }}
-            onCloseDetails={() => {
-              setSelectedNode(null);
-              setSelectedLink(null);
-            }}
-            graphVersion={graphVersion}
-            graphNodeIds={graphNodeIds}
-            hopMap={hopMap}
-            nodeHistory={nodeHistory}
-            onClearHistory={() => setNodeHistory([])}
-            mobileActiveTab={mobilePanelTab}
-            onMobileTabChange={setMobilePanelTab}
-            onMobileClose={() => setMobilePanelTab(null)}
-          />
           <GraphToolbar
             logo={
               <button
@@ -1757,7 +1283,9 @@ const GraphViewer = memo(
                 ),
               },
             ]}
-            onMobilePanelTab={(key) => setMobilePanelTab(key as SidePanelTab)}
+            onMobilePanelTab={(key) =>
+              onMobilePanelTabChange?.(key as SidePanelTab)
+            }
             persistentActions={
               <a
                 className="github-star-btn"
@@ -1999,6 +1527,7 @@ const GraphViewer = memo(
             }
             return null;
           })()}
+
           <PixiGraphCanvas
             ref={canvasRef}
             nodes={graphData.nodes}
@@ -2220,6 +1749,7 @@ const GraphViewer = memo(
                 <circle cx="12" cy="19" r="1" />
               </svg>
             </button>
+
             <div
               className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
             >
@@ -2252,6 +1782,7 @@ const GraphViewer = memo(
                   )}
                 </svg>
               </button>
+
               <button
                 className="graph-control-btn"
                 onClick={() => canvasRef.current?.zoomIn()}
@@ -2271,6 +1802,7 @@ const GraphViewer = memo(
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
               </button>
+
               <button
                 className="graph-control-btn"
                 onClick={() => canvasRef.current?.zoomOut()}
@@ -2289,6 +1821,7 @@ const GraphViewer = memo(
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
               </button>
+
               <button
                 className="graph-control-btn"
                 onClick={() => canvasRef.current?.resetCamera()}
@@ -2310,6 +1843,7 @@ const GraphViewer = memo(
                   <line x1="3" y1="21" x2="10" y2="14" />
                 </svg>
               </button>
+
               <button
                 className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
                 onClick={() => setShowPhysicsPanel((v) => !v)}
@@ -2336,6 +1870,7 @@ const GraphViewer = memo(
                   <line x1="17" y1="16" x2="23" y2="16" />
                 </svg>
               </button>
+
               <button
                 className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
                 onClick={() => {
@@ -2370,6 +1905,7 @@ const GraphViewer = memo(
                   )}
                 </svg>
               </button>
+
               <button
                 className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
                 onClick={() => {
