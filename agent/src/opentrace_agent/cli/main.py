@@ -27,6 +27,12 @@ from pathlib import Path
 
 import click
 
+from opentrace_agent.cli.workspace import (
+    EXIT_DB_MISSING,
+    EXIT_WORKSPACE_UNRESOLVABLE,
+    resolve_workspace_db,
+)
+
 # ---------------------------------------------------------------------------
 # Database discovery
 # ---------------------------------------------------------------------------
@@ -107,10 +113,31 @@ def find_db(start: Path | None = None) -> Path | None:
 
 
 def _resolve_db(db_path: str | None, *, must_exist: bool = False) -> str:
-    """Return a database path from an explicit flag or auto-discovery.
+    """Return a database path from an explicit flag, ``--workspace``, or auto-discovery.
 
-    Raises ``click.UsageError`` if *must_exist* and no database is found.
+    Resolution order:
+    1. Top-level ``--workspace``, threaded via ``ctx.obj["workspace_db"]``.
+       Mutually exclusive with ``--db`` — passing both is a usage error
+       (exit 2). Under ``--workspace`` mode with ``must_exist``, a missing
+       ``index.db`` exits with code 3 and a fact-stating stderr message;
+       consumers map the code to whatever recovery prompt they surface.
+    2. Explicit ``--db`` flag.
+    3. Walk-up auto-discovery via ``find_db``.
+
+    Raises ``click.UsageError`` (exit 2) for cases 2 and 3 when no DB is
+    found and ``must_exist`` is set.
     """
+    ctx = click.get_current_context(silent=True)
+    workspace_db = (ctx.obj or {}).get("workspace_db") if ctx and ctx.obj else None
+
+    if workspace_db is not None:
+        if db_path is not None:
+            raise click.UsageError("--workspace and --db are mutually exclusive.")
+        if must_exist and not Path(workspace_db).exists():
+            click.echo(f"No OpenTrace index found at {workspace_db}", err=True)
+            ctx.exit(EXIT_DB_MISSING)
+        return workspace_db
+
     if db_path is not None:
         p = Path(db_path)
         if must_exist and not p.exists():
@@ -146,9 +173,30 @@ def _ensure_gitignore(directory: Path) -> None:
 
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="opentraceai")
+@click.option(
+    "--workspace",
+    "workspace_dir",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Resolve a workspace-scoped DB under ~/.opentrace/workspaces/, keyed "
+        "by the resolved path of <dir>. Mutually exclusive with --db."
+    ),
+)
 @click.pass_context
-def app(ctx: click.Context) -> None:
+def app(ctx: click.Context, workspace_dir: str | None) -> None:
     """OpenTrace — map codebases into a knowledge graph."""
+    ctx.ensure_object(dict)
+    if workspace_dir is not None:
+        try:
+            db_path = resolve_workspace_db(workspace_dir)
+        except (FileNotFoundError, OSError):
+            click.echo(
+                f"Workspace directory does not exist or is not accessible: {workspace_dir}",
+                err=True,
+            )
+            ctx.exit(EXIT_WORKSPACE_UNRESOLVABLE)
+        ctx.obj["workspace_db"] = str(db_path)
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
