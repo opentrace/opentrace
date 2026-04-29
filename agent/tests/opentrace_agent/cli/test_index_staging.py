@@ -151,8 +151,8 @@ class TestSafeUnlink:
     def test_permission_error_does_not_raise(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """This is the M1 regression test: post-rename cleanup must not
-        crash the command when unlink is refused (e.g. read-only FS).
+        """Post-rename cleanup must not crash the command when unlink
+        is refused (e.g. read-only FS).
         """
         locked_dir = tmp_path / "locked"
         locked_dir.mkdir()

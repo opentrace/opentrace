@@ -72,7 +72,7 @@ class TestTraverseJson:
         assert payload["relType"] is None
         assert payload["totalResults"] == 2
 
-        # Real depth is preserved (no "depth=1 lie").
+        # Per-row depth is preserved (1 and 2, not collapsed to 1).
         depths = [r["depth"] for r in payload["results"]]
         assert depths == [1, 2]
 
@@ -237,9 +237,9 @@ class TestTraverseText:
         out = result.output
         assert "Traversal incoming from a" in out
         assert "[Function] caller (caller_id) --CALLS--> (a)" in out
-        # The old "always --TYPE--> after the arrow" rendering would have
-        # suggested an outgoing edge from the start node — guard against
-        # that regression.
+        # Negative assertion: when traversing incoming, the discovered
+        # node must never appear *after* the arrow — that orientation
+        # would suggest an outgoing edge from the start node.
         assert "--CALLS--> [Function] caller" not in out
 
     def test_empty_results(self, tmp_path) -> None:

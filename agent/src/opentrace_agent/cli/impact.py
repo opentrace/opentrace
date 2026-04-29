@@ -158,16 +158,13 @@ def _find_defined_symbols(
     """Return Function/Class/Module nodes defined in *file_node*.
 
     The indexer emits ``File -DEFINES-> Symbol`` edges. From the File's
-    perspective those are *outgoing*. (An earlier version of this code
-    walked ``incoming`` on the misconception that the schema was
-    ``Symbol -DEFINED_IN-> File``; that schema has never existed in the
-    graph, which is why impact used to always return zero symbols.)
+    perspective those are *outgoing*.
 
-    File nodes also emit ``IMPORTS`` edges to File/Dependency nodes —
-    those happen to be filtered out today by the node-type check below
-    (Dependency/File aren't in the symbol set), but we additionally
-    gate on ``rel.type == "DEFINES"`` so a future schema addition
-    like ``File -REFERENCES-> Function`` can't silently inflate the
+    File nodes also emit ``IMPORTS`` edges to File/Dependency nodes.
+    Those are filtered out today by the node-type check below
+    (Dependency/File aren't in the symbol set), but the explicit
+    ``rel.type == "DEFINES"`` gate prevents a future schema addition
+    like ``File -REFERENCES-> Function`` from silently inflating the
     impact-affected symbol set.
     """
     neighbors = store._get_neighbors(file_node["id"], "outgoing")

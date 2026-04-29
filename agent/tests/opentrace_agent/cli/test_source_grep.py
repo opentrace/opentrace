@@ -387,9 +387,9 @@ class TestPerRepoLimit:
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
         # 3 files × 4 matches each = 12 total. With --limit 5, the
-        # output must contain exactly 5 match lines, plus a
-        # truncation indicator. Without the per-repo cap, you'd see
-        # all 12 (rg's --max-count is per file).
+        # output must contain exactly 5 match lines plus a truncation
+        # indicator. Without the per-repo cap the output would carry
+        # all 12, since rg's --max-count is per-file.
         clone = fake_home / ".opentrace" / "repos" / "acme" / "wide"
         clone.mkdir(parents=True)
         for i in range(3):
@@ -426,11 +426,11 @@ class TestPatternFlagInjection:
 
     def test_leading_dash_pattern_is_treated_as_regex(self, grep_env) -> None:
         # Patterns like "-version" must reach rg as a regex, not as a
-        # flag. We pass it via click's `--` separator (so click treats
-        # it as the positional pattern) and expect our `--` separator
-        # before pattern to keep rg from interpreting it as a flag.
-        # The pattern doesn't match anything in alpha, so success
-        # looks like exit-0 + "No matches", not "ripgrep failed".
+        # flag. The click `--` separator forwards it as the positional
+        # pattern, and the implementation inserts a `--` before the
+        # pattern in the rg argv so rg can't reinterpret it as a flag.
+        # The pattern matches nothing in alpha, so success here is
+        # exit-0 + "No matches", not "ripgrep failed".
         runner = CliRunner()
         result = runner.invoke(
             app,

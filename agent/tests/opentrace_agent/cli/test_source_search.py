@@ -168,7 +168,8 @@ class TestNoRepoSearch:
         assert "Node ID: repo-alpha/src/parser.py::ParserService" in result.output
 
     def test_text_omits_relevance_score(self, search_store) -> None:
-        # We dropped BM25 scores from text mode — they're noise to LLMs.
+        # BM25 scores are deliberately omitted from text mode — they're
+        # noise for LLM consumers and add no signal a human can act on.
         db_path = search_store
         result = _invoke(db_path, "ParserService", "--limit", "5")
 
@@ -345,10 +346,7 @@ class TestLimitAndTruncation:
         self, search_store
     ) -> None:
         """If there are exactly *N* matches in the graph and the user
-        asks for ``--limit N``, ``truncated`` must be ``False``. The
-        previous ``len(results) >= limit`` check fired ``True`` here
-        and told the caller to raise their --limit when there was
-        nothing more to find.
+        asks for ``--limit N``, ``truncated`` must be ``False``.
         """
         db_path = search_store
         # Restrict to one repo + Class-only so the candidate set is
@@ -417,8 +415,9 @@ class TestRepoIdWithSlash:
         assert "repo-beta" not in result.output
 
     def test_text_repo_column_shows_full_owner_repo_id(self, search_store) -> None:
-        # Without the fix, splitting on the first '/' would attribute
-        # acme/widget/src/parser.py::parse_widget to repo "acme".
+        # A naive split on the first '/' would attribute
+        # acme/widget/src/parser.py::parse_widget to repo "acme";
+        # the assertion below pins the full owner/repo prefix.
         db_path = search_store
         result = _invoke(db_path, "parse_widget", "--limit", "10")
 

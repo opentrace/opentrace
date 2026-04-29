@@ -18,8 +18,7 @@ Runs Kuzu's FTS over the unified ``Node`` table and, when ``--repo`` is
 set, applies a post-FTS Cypher predicate (``node.id STARTS WITH
 '<repo_id>/'``) to scope results to one repository. Filtering pre-FTS is
 not possible — Kuzu's ``QUERY_FTS_INDEX`` accepts a table name string,
-not a node variable, and produces a globally-ranked top-K. The proposed
-node-variable form (issue kuzudb/kuzu#4269) was never shipped.
+not a node variable, and produces a globally-ranked top-K.
 
 Because FTS ranks across all indexed repos, the global top-N can have
 few or no entries from any one repo. With ``--repo`` we therefore
@@ -99,10 +98,8 @@ def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
     input doesn't match — surfacing the typo to the caller is more
     helpful than silently returning zero results.
 
-    Matches by canonical id only (the ``id`` field surfaced by the
-    ``repos`` command). The ``repos`` migration was explicit about
-    matching by id rather than name, so the same key is the contract
-    for ``--repo``.
+    Matches by canonical id only — the ``id`` field surfaced by the
+    ``repos`` command, never the node ``name``.
     """
     if not repo_id:
         return None

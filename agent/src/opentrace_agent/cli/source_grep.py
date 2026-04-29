@@ -149,10 +149,7 @@ def _load_repo_paths(
 def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
     """Verify *repo_id* exists as a Repository node id; raise on miss.
 
-    Same contract as ``source-search``'s ``--repo`` resolution — match
-    by canonical id, list candidates on miss. Kept as a separate copy
-    rather than importing from ``source_search`` to avoid making the
-    two modules co-evolve.
+    Match by canonical id; raise with a candidate list on miss.
     """
     if not repo_id:
         return None

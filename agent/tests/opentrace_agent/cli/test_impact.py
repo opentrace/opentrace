@@ -230,7 +230,7 @@ def test_run_impact_with_line_filter(tmp_path, capsys):
     mock_store.close.assert_called_once()
 
 
-# -- _resolve_file_node (C2) -------------------------------------------------
+# -- _resolve_file_node ------------------------------------------------------
 
 
 class TestResolveFileNode:
@@ -343,12 +343,12 @@ class TestResolveFileNode:
         assert _resolve_file_node(store, "does/not/exist.py") is None
 
 
-# -- _find_defined_symbols direction (C1) ------------------------------------
+# -- _find_defined_symbols direction -----------------------------------------
 
 
 class TestFindDefinedSymbols:
     def test_walks_outgoing_from_file(self) -> None:
-        """C1 regression: must walk outgoing (File -DEFINES-> Symbol), not incoming."""
+        """Must walk outgoing (File -DEFINES-> Symbol), not incoming."""
         file_node = {"id": "f1", "type": "File", "name": "x.py", "properties": {"path": "src/x.py"}}
         func = {"id": "fn1", "type": "Function", "name": "f", "properties": {}}
         defines = {"id": "r", "type": "DEFINES", "source_id": "f1", "target_id": "fn1", "properties": {}}
@@ -392,7 +392,7 @@ class TestFindDefinedSymbols:
         assert symbols == [defined_func]
 
 
-# -- JSON output (C2: requestedFile) -----------------------------------------
+# -- JSON output: requestedFile ----------------------------------------------
 
 
 class TestJsonOutput:
