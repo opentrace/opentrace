@@ -133,8 +133,7 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
         basename_matches = [
             n
             for n in fts_candidates
-            if _props(n).get("path", "").endswith("/" + basename)
-            or _props(n).get("path") == basename
+            if _props(n).get("path", "").endswith("/" + basename) or _props(n).get("path") == basename
         ]
         if len(basename_matches) == 1:
             return basename_matches[0]
@@ -367,12 +366,16 @@ def _run_json(
     """
     file_node = _resolve_file_node(store, file_path)
     if file_node is None:
-        print(json.dumps({
-            "requestedFile": file_path,
-            "file": None,
-            "symbols": [],
-            "total_dependents": 0,
-        }))
+        print(
+            json.dumps(
+                {
+                    "requestedFile": file_path,
+                    "file": None,
+                    "symbols": [],
+                    "total_dependents": 0,
+                }
+            )
+        )
         return
 
     symbols = _find_defined_symbols(store, file_node, line_ranges)
@@ -403,25 +406,32 @@ def _run_json(
         for dep in dependents:
             if dep["relationship"]["type"] in _IMPACT_RELS:
                 dep_props = _props(dep["node"])
-                sym_data["dependents"].append({
-                    "id": dep["node"]["id"],
-                    "name": dep["node"]["name"],
-                    "type": dep["node"]["type"],
-                    "relationship": dep["relationship"]["type"],
-                    "depth": dep["depth"],
-                    "path": dep_props.get("path"),
-                })
+                sym_data["dependents"].append(
+                    {
+                        "id": dep["node"]["id"],
+                        "name": dep["node"]["name"],
+                        "type": dep["node"]["type"],
+                        "relationship": dep["relationship"]["type"],
+                        "depth": dep["depth"],
+                        "path": dep_props.get("path"),
+                    }
+                )
                 total_dependents += 1
 
         result_symbols.append(sym_data)
 
     file_props = _props(file_node)
-    print(json.dumps({
-        "requestedFile": file_path,
-        "file": file_props.get("path") or file_node.get("name"),
-        "symbols": result_symbols,
-        "total_dependents": total_dependents,
-    }, default=str))
+    print(
+        json.dumps(
+            {
+                "requestedFile": file_path,
+                "file": file_props.get("path") or file_node.get("name"),
+                "symbols": result_symbols,
+                "total_dependents": total_dependents,
+            },
+            default=str,
+        )
+    )
 
 
 def _print_file_only_impact(store: Any, file_node: dict[str, Any]) -> None:

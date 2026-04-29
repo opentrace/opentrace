@@ -25,9 +25,12 @@ from opentrace_agent.cli.main import app
 
 
 def _invoke(store: MagicMock, tmp_path, *args: str):
-    with patch("opentrace_agent.store.GraphStore", return_value=store), patch(
-        "opentrace_agent.cli.main._resolve_db",
-        return_value=str(tmp_path / "fake.db"),
+    with (
+        patch("opentrace_agent.store.GraphStore", return_value=store),
+        patch(
+            "opentrace_agent.cli.main._resolve_db",
+            return_value=str(tmp_path / "fake.db"),
+        ),
     ):
         return CliRunner().invoke(app, ["traverse", *args])
 
@@ -84,9 +87,7 @@ class TestTraverseJson:
         assert rel["target_id"] == "c"
         assert "direction" not in rel
 
-        store.traverse.assert_called_once_with(
-            "a", direction="outgoing", max_depth=2, relationship_type=None
-        )
+        store.traverse.assert_called_once_with("a", direction="outgoing", max_depth=2, relationship_type=None)
 
     def test_custom_direction_depth_and_rel_type(self, tmp_path) -> None:
         store = MagicMock()
@@ -111,9 +112,7 @@ class TestTraverseJson:
         assert payload["depth"] == 5
         assert payload["relType"] == "CALLS"
 
-        store.traverse.assert_called_once_with(
-            "a", direction="incoming", max_depth=5, relationship_type="CALLS"
-        )
+        store.traverse.assert_called_once_with("a", direction="incoming", max_depth=5, relationship_type="CALLS")
 
     def test_rel_type_filter_returned_results(self, tmp_path) -> None:
         """``--rel-type`` is forwarded to the store and the filtered rows
@@ -142,9 +141,7 @@ class TestTraverseJson:
         assert payload["totalResults"] == 1
         assert payload["results"][0]["relationship"]["type"] == "CALLS"
 
-        store.traverse.assert_called_once_with(
-            "a", direction="outgoing", max_depth=2, relationship_type="CALLS"
-        )
+        store.traverse.assert_called_once_with("a", direction="outgoing", max_depth=2, relationship_type="CALLS")
 
     def test_depth_clamped_to_maximum(self, tmp_path) -> None:
         """Depth is clamped to match the MCP ``traverse_graph`` cap, and
@@ -167,9 +164,7 @@ class TestTraverseJson:
         payload = json.loads(result.stdout)
         assert payload["depth"] == 10
 
-        store.traverse.assert_called_once_with(
-            "a", direction="outgoing", max_depth=10, relationship_type=None
-        )
+        store.traverse.assert_called_once_with("a", direction="outgoing", max_depth=10, relationship_type=None)
 
     def test_depth_at_cap_does_not_warn(self, tmp_path) -> None:
         """``--depth 10`` (the cap exactly) is fine; no warning."""

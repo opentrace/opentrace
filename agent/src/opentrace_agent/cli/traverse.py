@@ -31,7 +31,6 @@ from typing import Any
 
 import click
 
-
 _VALID_DIRECTIONS = ("outgoing", "incoming", "both")
 
 # Match the MCP ``traverse_graph`` tool's clamp — guards against
@@ -86,14 +85,11 @@ def run_traverse(
     envelope and text header reflect the clamped value.
     """
     if direction not in _VALID_DIRECTIONS:
-        raise click.ClickException(
-            f"Invalid direction {direction!r}. Must be one of: {', '.join(_VALID_DIRECTIONS)}."
-        )
+        raise click.ClickException(f"Invalid direction {direction!r}. Must be one of: {', '.join(_VALID_DIRECTIONS)}.")
 
     if depth > _MAX_DEPTH:
         click.echo(
-            f"Warning: --depth {depth} exceeds the cap of {_MAX_DEPTH}; "
-            f"clamping to {_MAX_DEPTH}.",
+            f"Warning: --depth {depth} exceeds the cap of {_MAX_DEPTH}; clamping to {_MAX_DEPTH}.",
             err=True,
         )
         depth = _MAX_DEPTH
@@ -154,10 +150,7 @@ def _emit_text(
 ) -> None:
     """Render a grouped-by-depth text view (default mode)."""
     rel_part = f" along {rel_type}" if rel_type else ""
-    header = (
-        f"Traversal {direction}{rel_part} from {node_id} (max depth {depth}): "
-        f"{len(results)} result(s)"
-    )
+    header = f"Traversal {direction}{rel_part} from {node_id} (max depth {depth}): {len(results)} result(s)"
 
     if not results:
         click.echo(header + "\n(no neighbors reached)")

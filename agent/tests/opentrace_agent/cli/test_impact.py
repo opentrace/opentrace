@@ -244,9 +244,7 @@ class TestResolveFileNode:
         assert _resolve_file_node(store, "src/api.py") is target
         # Fetch one row beyond the message cap so we can detect when
         # there are more conflicts than we'll display.
-        store.list_nodes.assert_called_with(
-            "File", filters={"path": "src/api.py"}, limit=11
-        )
+        store.list_nodes.assert_called_with("File", filters={"path": "src/api.py"}, limit=11)
 
     def test_absolute_path_stripped_via_metadata(self) -> None:
         target = self._file("src/api.py")
@@ -268,7 +266,12 @@ class TestResolveFileNode:
 
     def test_basename_fallback_filters_to_endswith(self) -> None:
         real = self._file("packages/ui/src/Button.tsx", id_="real")
-        noise = {"id": "noise", "type": "File", "name": "Button.tsx", "properties": {"path": "irrelevant/Buttonish.tsx"}}
+        noise = {
+            "id": "noise",
+            "type": "File",
+            "name": "Button.tsx",
+            "properties": {"path": "irrelevant/Buttonish.tsx"},
+        }
         store = MagicMock()
         store.list_nodes.return_value = []
         store.search_nodes.return_value = [noise, real]
@@ -304,8 +307,7 @@ class TestResolveFileNode:
         from opentrace_agent.cli.impact import _MAX_AMBIGUOUS_CANDIDATES
 
         conflicts = [
-            self._file("src/api.py", id_=f"repo-{i:02d}/src/api.py")
-            for i in range(_MAX_AMBIGUOUS_CANDIDATES + 5)
+            self._file("src/api.py", id_=f"repo-{i:02d}/src/api.py") for i in range(_MAX_AMBIGUOUS_CANDIDATES + 5)
         ]
         store = MagicMock()
         store.list_nodes.return_value = conflicts
@@ -438,9 +440,7 @@ class TestJsonOutput:
             "total_dependents": 0,
         }
 
-    def test_json_requested_file_differs_from_resolved_on_absolute_input(
-        self, tmp_path, capsys
-    ) -> None:
+    def test_json_requested_file_differs_from_resolved_on_absolute_input(self, tmp_path, capsys) -> None:
         """Absolute input resolves to a repo-relative stored path; both surfaced."""
         file_node = {"id": "f1", "type": "File", "name": "a.py", "properties": {"path": "src/a.py"}}
         store = MagicMock()

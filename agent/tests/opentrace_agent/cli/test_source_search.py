@@ -116,9 +116,7 @@ def search_store(tmp_path):
 
     # A Repository whose id and name diverge — exercises the contract
     # that --repo matches by id, not by name.
-    store.add_node(
-        "rep-divergent-id", "Repository", "human-friendly-name", {}
-    )
+    store.add_node("rep-divergent-id", "Repository", "human-friendly-name", {})
     store.add_node(
         "rep-divergent-id/src/foo.py::parse_thing",
         "Function",
@@ -312,9 +310,7 @@ class TestEmptyResults:
 
     def test_text_message_includes_repo_filter(self, search_store) -> None:
         db_path = search_store
-        result = _invoke(
-            db_path, "zzznosuchsymbolzzz", "--repo", "repo-alpha"
-        )
+        result = _invoke(db_path, "zzznosuchsymbolzzz", "--repo", "repo-alpha")
 
         assert result.exit_code == 0, result.output
         assert "in repo 'repo-alpha'" in result.output
@@ -342,9 +338,7 @@ class TestLimitAndTruncation:
         assert len(data["results"]) < 10
         assert data["truncated"] is False
 
-    def test_truncated_false_when_results_exactly_match_limit(
-        self, search_store
-    ) -> None:
+    def test_truncated_false_when_results_exactly_match_limit(self, search_store) -> None:
         """If there are exactly *N* matches in the graph and the user
         asks for ``--limit N``, ``truncated`` must be ``False``.
         """
@@ -403,9 +397,7 @@ class TestRepoIdWithSlash:
 
     def test_filter_matches_owner_repo_style_id(self, search_store) -> None:
         db_path = search_store
-        result = _invoke(
-            db_path, "parse", "--repo", "acme/widget", "--limit", "10"
-        )
+        result = _invoke(db_path, "parse", "--repo", "acme/widget", "--limit", "10")
 
         assert result.exit_code == 0, result.output
         assert "acme/widget/src/parser.py::parse_widget" in result.output

@@ -113,6 +113,7 @@ class TestSourceReadLinesFlag:
         def fake_graphstore(*_args, **_kwargs):
             class _S:
                 def close(self_inner): ...
+
             return _S()
 
         def fake_read_source_by_path(_store, file_path, start_line, end_line):
@@ -125,6 +126,7 @@ class TestSourceReadLinesFlag:
         # GraphStore gets imported inside source_read; patch the module-level
         # symbol on the store package.
         import opentrace_agent.store as store_mod
+
         monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
 
         runner = CliRunner()
@@ -146,6 +148,7 @@ class TestSourceReadLinesFlag:
         def fake_graphstore(*_args, **_kwargs):
             class _S:
                 def close(self_inner): ...
+
             return _S()
 
         def fake_read_source_by_path(_store, file_path, start_line, end_line):
@@ -155,6 +158,7 @@ class TestSourceReadLinesFlag:
         monkeypatch.setattr(cli_main, "_resolve_db", fake_resolve_db)
         monkeypatch.setattr(cli_main, "_read_source_by_path", fake_read_source_by_path)
         import opentrace_agent.store as store_mod
+
         monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
 
         runner = CliRunner()
@@ -162,9 +166,7 @@ class TestSourceReadLinesFlag:
         assert result.exit_code == 0, result.output
         assert captured == {"start_line": 5, "end_line": None}
 
-    def test_open_ended_range_against_trailing_newline_file(
-        self, tmp_path: Path
-    ) -> None:
+    def test_open_ended_range_against_trailing_newline_file(self, tmp_path: Path) -> None:
         """An open-ended range against a file that ends in ``\\n`` must
         not emit a phantom trailing blank line, and the header must
         reflect the real last line number rather than ``len(lines)``."""
@@ -188,10 +190,7 @@ class TestSourceReadLinesFlag:
 
         # Body covers exactly 6 lines (5..10 inclusive). No phantom
         # trailing blank "11\t" row.
-        body_lines = [
-            line for line in result.output.splitlines()
-            if line and line[0].isdigit()
-        ]
+        body_lines = [line for line in result.output.splitlines() if line and line[0].isdigit()]
         numbers = [int(line.split("\t", 1)[0]) for line in body_lines]
         assert numbers == [5, 6, 7, 8, 9, 10]
 
@@ -204,10 +203,12 @@ class TestSourceReadLinesFlag:
         def fake_graphstore(*_args, **_kwargs):
             class _S:
                 def close(self_inner): ...
+
             return _S()
 
         monkeypatch.setattr(cli_main, "_resolve_db", fake_resolve_db)
         import opentrace_agent.store as store_mod
+
         monkeypatch.setattr(store_mod, "GraphStore", fake_graphstore)
 
         runner = CliRunner()

@@ -85,9 +85,11 @@ class TestUpdateExistingClone:
         clone_dir = tmp_path / "clone"
         clone_dir.mkdir()
 
-        fake_run, _ = self._fake_run_factory([
-            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
-        ])
+        fake_run, _ = self._fake_run_factory(
+            [
+                subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            ]
+        )
         with patch("opentrace_agent.cli.main.subprocess.run", side_effect=fake_run):
             _update_existing_clone(clone_dir, ref=None)
 
@@ -101,14 +103,16 @@ class TestUpdateExistingClone:
         clone_dir = tmp_path / "clone"
         clone_dir.mkdir()
 
-        fake_run, _ = self._fake_run_factory([
-            subprocess.CompletedProcess(
-                args=[],
-                returncode=1,
-                stdout="",
-                stderr="fatal: Authentication failed",
-            ),
-        ])
+        fake_run, _ = self._fake_run_factory(
+            [
+                subprocess.CompletedProcess(
+                    args=[],
+                    returncode=1,
+                    stdout="",
+                    stderr="fatal: Authentication failed",
+                ),
+            ]
+        )
         with patch("opentrace_agent.cli.main.subprocess.run", side_effect=fake_run):
             _update_existing_clone(clone_dir, ref=None)
 
@@ -124,18 +128,20 @@ class TestUpdateExistingClone:
         clone_dir = tmp_path / "clone"
         clone_dir.mkdir()
 
-        fake_run, _ = self._fake_run_factory([
-            subprocess.CompletedProcess(
-                args=[],
-                returncode=128,
-                stdout="",
-                stderr=(
-                    "fatal: unable to access "
-                    "'https://oauth2:ghp_supersecret123@github.com/o/r/': "
-                    "Could not resolve host"
+        fake_run, _ = self._fake_run_factory(
+            [
+                subprocess.CompletedProcess(
+                    args=[],
+                    returncode=128,
+                    stdout="",
+                    stderr=(
+                        "fatal: unable to access "
+                        "'https://oauth2:ghp_supersecret123@github.com/o/r/': "
+                        "Could not resolve host"
+                    ),
                 ),
-            ),
-        ])
+            ]
+        )
         with patch("opentrace_agent.cli.main.subprocess.run", side_effect=fake_run):
             _update_existing_clone(clone_dir, ref=None)
 
@@ -147,10 +153,12 @@ class TestUpdateExistingClone:
         clone_dir = tmp_path / "clone"
         clone_dir.mkdir()
 
-        fake_run, calls = self._fake_run_factory([
-            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
-            subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
-        ])
+        fake_run, calls = self._fake_run_factory(
+            [
+                subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+                subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            ]
+        )
         with patch("opentrace_agent.cli.main.subprocess.run", side_effect=fake_run):
             _update_existing_clone(clone_dir, ref="release-1.2")
 
@@ -159,9 +167,7 @@ class TestUpdateExistingClone:
         assert calls[1][3:] == ["checkout", "-B", "release-1.2", "FETCH_HEAD"]
         assert capsys.readouterr().err == ""
 
-    def test_flag_like_ref_is_refused_without_running_git(
-        self, tmp_path, capsys
-    ) -> None:
+    def test_flag_like_ref_is_refused_without_running_git(self, tmp_path, capsys) -> None:
         """A ref starting with '-' must not reach git: passed as a trailing
         positional to ``git fetch ... <ref>`` or ``git checkout -B <ref>
         ...`` it could be reinterpreted as an option (e.g.
@@ -189,11 +195,11 @@ class TestUpdateExistingClone:
         clone_dir = tmp_path / "clone"
         clone_dir.mkdir()
 
-        fake_run, calls = self._fake_run_factory([
-            subprocess.CompletedProcess(
-                args=[], returncode=1, stdout="", stderr="fatal: bad ref"
-            ),
-        ])
+        fake_run, calls = self._fake_run_factory(
+            [
+                subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="fatal: bad ref"),
+            ]
+        )
         with patch("opentrace_agent.cli.main.subprocess.run", side_effect=fake_run):
             _update_existing_clone(clone_dir, ref="missing-branch")
 
@@ -274,9 +280,7 @@ def _stub_collaborators(monkeypatch):
     }
 
     def fake_do_clone(repo_url, clone_dir, ref, token):
-        calls["do_clone"].append(
-            {"repo_url": repo_url, "clone_dir": clone_dir, "ref": ref, "token": token}
-        )
+        calls["do_clone"].append({"repo_url": repo_url, "clone_dir": clone_dir, "ref": ref, "token": token})
         return clone_dir
 
     def fake_update(clone_dir, ref):
@@ -323,9 +327,7 @@ class TestUrlParsing:
         assert result.exit_code == 0, result.output
         assert calls["do_clone"][0]["clone_dir"].name == "repo"
 
-    def test_trailing_slash_does_not_break_inference(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_trailing_slash_does_not_break_inference(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         calls = _stub_collaborators(monkeypatch)
 
@@ -334,9 +336,7 @@ class TestUrlParsing:
         # Trailing slash stripped before split, so name is still 'repo'.
         assert calls["do_clone"][0]["clone_dir"].name == "repo"
 
-    def test_single_segment_url_falls_back_to_unknown_org(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_single_segment_url_falls_back_to_unknown_org(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         calls = _stub_collaborators(monkeypatch)
 
@@ -347,15 +347,11 @@ class TestUrlParsing:
         clone_dir = calls["do_clone"][0]["clone_dir"]
         assert clone_dir == tmp_path / ".opentrace" / "repos" / "unknown" / "bare-name"
 
-    def test_repo_id_override_takes_precedence_over_inferred(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_repo_id_override_takes_precedence_over_inferred(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         calls = _stub_collaborators(monkeypatch)
 
-        result = _run(
-            ["https://github.com/owner/repo.git", "--repo-id", "custom-id"]
-        )
+        result = _run(["https://github.com/owner/repo.git", "--repo-id", "custom-id"])
         assert result.exit_code == 0, result.output
         # The clone directory still uses the *inferred* name (so two
         # `fetch-and-index` calls with different --repo-id but the same
@@ -378,9 +374,7 @@ class TestExistingDirBranches:
         assert len(calls["do_clone"]) == 1
         assert len(calls["update"]) == 0
 
-    def test_existing_dot_git_dir_calls_update_only(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_existing_dot_git_dir_calls_update_only(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         # Pre-create a clone with a .git directory so the existing-clone
         # branch fires.
@@ -422,9 +416,7 @@ class TestExistingDirBranches:
         # stale marker should be gone.
         assert not marker.exists()
 
-    def test_recovery_rmtree_only_targets_the_clone_dir(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_recovery_rmtree_only_targets_the_clone_dir(self, tmp_path, monkeypatch) -> None:
         """Defense: the rmtree must only touch the clone dir, never any
         sibling under ~/.opentrace/repos/<org>/."""
         _patch_home(monkeypatch, tmp_path)
@@ -459,9 +451,7 @@ class TestTokenPrecedence:
         assert result.exit_code == 0, result.output
         assert calls["do_clone"][0]["token"] == "explicit"
 
-    def test_opentrace_envvar_used_when_flag_missing(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_opentrace_envvar_used_when_flag_missing(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         calls = _stub_collaborators(monkeypatch)
 
@@ -498,9 +488,7 @@ class TestTokenPrecedence:
         # GITHUB_TOKEN is checked first in the fallback chain.
         assert calls["do_clone"][0]["token"] == "gh"
 
-    def test_gitlab_token_when_github_token_absent(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_gitlab_token_when_github_token_absent(self, tmp_path, monkeypatch) -> None:
         _patch_home(monkeypatch, tmp_path)
         calls = _stub_collaborators(monkeypatch)
 
@@ -515,9 +503,7 @@ class TestTokenPrecedence:
 class TestPipelineHandoff:
     """The handoff from clone result to ``_run_indexing_pipeline``."""
 
-    def test_source_uri_extra_metadata_carries_user_supplied_url(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_source_uri_extra_metadata_carries_user_supplied_url(self, tmp_path, monkeypatch) -> None:
         """The pipeline gets the *user-supplied* URL as sourceUri, not
         whatever ``_collect_metadata`` would pull from the clone's
         origin (which may carry the token)."""
@@ -528,9 +514,7 @@ class TestPipelineHandoff:
         assert result.exit_code == 0, result.output
 
         pipeline_kwargs = calls["pipeline"][0]
-        assert pipeline_kwargs["extra_metadata"] == {
-            "sourceUri": "https://github.com/owner/repo.git"
-        }
+        assert pipeline_kwargs["extra_metadata"] == {"sourceUri": "https://github.com/owner/repo.git"}
         assert pipeline_kwargs["repo_id"] == "repo"
         assert pipeline_kwargs["source_path"] == calls["do_clone"][0]["clone_dir"]
 

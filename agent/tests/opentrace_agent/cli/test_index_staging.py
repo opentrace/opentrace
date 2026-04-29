@@ -148,9 +148,7 @@ class TestSafeUnlink:
         os.geteuid() == 0 if hasattr(os, "geteuid") else False,
         reason="root can always unlink, permission test is irrelevant",
     )
-    def test_permission_error_does_not_raise(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_permission_error_does_not_raise(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Post-rename cleanup must not crash the command when unlink
         is refused (e.g. read-only FS).
         """

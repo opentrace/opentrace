@@ -43,9 +43,12 @@ def _repo(id_: str, name: str | None = None, **properties) -> dict:
 
 def _run_repos(store: MagicMock, tmp_path) -> list:
     """Invoke the `repos` command with a patched GraphStore and parse output."""
-    with patch("opentrace_agent.store.GraphStore", return_value=store), patch(
-        "opentrace_agent.cli.main._resolve_db",
-        return_value=str(tmp_path / "fake.db"),
+    with (
+        patch("opentrace_agent.store.GraphStore", return_value=store),
+        patch(
+            "opentrace_agent.cli.main._resolve_db",
+            return_value=str(tmp_path / "fake.db"),
+        ),
     ):
         result = CliRunner().invoke(app, ["repos"])
     assert result.exit_code == 0, result.output
@@ -176,12 +179,8 @@ class TestReposGraphPropsFallback:
     def test_metadata_wins_over_graph_properties(self, tmp_path) -> None:
         """When both sources carry a value, metadata takes precedence."""
         store = MagicMock()
-        store.list_repositories.return_value = [
-            _repo("dual-source", branch="stale-from-graph")
-        ]
-        store.get_metadata.return_value = [
-            {"repoId": "dual-source", "branch": "fresh-from-metadata"}
-        ]
+        store.list_repositories.return_value = [_repo("dual-source", branch="stale-from-graph")]
+        store.get_metadata.return_value = [{"repoId": "dual-source", "branch": "fresh-from-metadata"}]
 
         output = _run_repos(store, tmp_path)
 

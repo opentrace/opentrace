@@ -242,10 +242,7 @@ def _clean_stale_staging(staging_db: str) -> None:
         if _safe_unlink(path_str, context="stale staging"):
             removed.append(path_str)
     if removed:
-        click.echo(
-            "Cleaned stale staging file(s) from a prior interrupted run:\n  "
-            + "\n  ".join(removed)
-        )
+        click.echo("Cleaned stale staging file(s) from a prior interrupted run:\n  " + "\n  ".join(removed))
 
 
 def _run_indexing_pipeline(
@@ -1335,8 +1332,7 @@ def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
 
     def _bad(detail: str) -> click.BadParameter:
         return click.BadParameter(
-            f"invalid --lines value: {spec!r} ({detail}; "
-            f"expected 'N', 'N-M', or 'N-' with N >= 1 and M >= N)"
+            f"invalid --lines value: {spec!r} ({detail}; expected 'N', 'N-M', or 'N-' with N >= 1 and M >= N)"
         )
 
     parts = spec.split("-", 1)
@@ -1787,8 +1783,7 @@ def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
     # <ref> ...` would let it be reinterpreted as an option.
     if ref and ref.startswith("-"):
         click.echo(
-            f"Warning: refusing ref {ref!r} (starts with '-'); "
-            f"continuing with current checkout, which may be stale.",
+            f"Warning: refusing ref {ref!r} (starts with '-'); continuing with current checkout, which may be stale.",
             err=True,
         )
         return
@@ -1823,8 +1818,7 @@ def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
         rc, msg = _run(["checkout", "-B", ref, "FETCH_HEAD"])
         if rc != 0:
             click.echo(
-                f"Warning: 'git checkout {ref}' failed (continuing with current "
-                f"checkout, which may be stale): {msg}",
+                f"Warning: 'git checkout {ref}' failed (continuing with current checkout, which may be stale): {msg}",
                 err=True,
             )
         return
@@ -1832,8 +1826,7 @@ def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
     rc, msg = _run(["pull", "--ff-only"])
     if rc != 0:
         click.echo(
-            f"Warning: 'git pull --ff-only' failed (continuing with current "
-            f"checkout, which may be stale): {msg}",
+            f"Warning: 'git pull --ff-only' failed (continuing with current checkout, which may be stale): {msg}",
             err=True,
         )
 
@@ -1841,7 +1834,12 @@ def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
 @app.command("fetch-and-index")
 @click.argument("repo_url")
 @click.option("--repo-id", default=None, help="Custom repository ID (defaults to repo name).")
-@click.option("--token", default=None, envvar="OPENTRACE_GIT_TOKEN", help="Personal access token (PAT) for private repos. Also reads OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env vars.")
+@click.option(
+    "--token",
+    default=None,
+    envvar="OPENTRACE_GIT_TOKEN",
+    help=("Personal access token (PAT) for private repos. Also reads OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env vars."),
+)
 @click.option("--ref", default=None, help="Branch or tag to clone (defaults to repo default branch).")
 @click.option(
     "--db",
@@ -1896,6 +1894,7 @@ def fetch_and_index(
     elif clone_dir.exists():
         # Directory exists but no .git — remove and re-clone
         import shutil
+
         shutil.rmtree(clone_dir)
         clone_dir.mkdir(parents=True, exist_ok=True)
         local_path = _do_clone(repo_url, clone_dir, ref, token)

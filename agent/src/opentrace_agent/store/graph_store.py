@@ -604,9 +604,7 @@ class GraphStore:
 
     def list_repository_ids(self) -> list[str]:
         """Return every Repository node id, ordered by id."""
-        result = self._conn.execute(
-            "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id"
-        )
+        result = self._conn.execute("MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id ORDER BY n.id")
         ids: list[str] = []
         while result.has_next():
             ids.append(str(result.get_next()[0]))
@@ -615,8 +613,7 @@ class GraphStore:
     def repository_exists(self, repo_id: str) -> bool:
         """True if a Repository node with id *repo_id* is in the graph."""
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE n.type = 'Repository' AND n.id = $id "
-            "RETURN 1 LIMIT 1",
+            "MATCH (n:Node) WHERE n.type = 'Repository' AND n.id = $id RETURN 1 LIMIT 1",
             parameters={"id": repo_id},
         )
         return result.has_next()
@@ -629,8 +626,7 @@ class GraphStore:
         type-checking first.
         """
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE n.type = 'Repository' "
-            "RETURN n.id, n.name, n.properties ORDER BY n.id"
+            "MATCH (n:Node) WHERE n.type = 'Repository' RETURN n.id, n.name, n.properties ORDER BY n.id"
         )
         rows: list[dict[str, Any]] = []
         while result.has_next():

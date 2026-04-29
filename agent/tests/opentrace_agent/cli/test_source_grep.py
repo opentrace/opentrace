@@ -79,7 +79,7 @@ def grep_env(tmp_path, monkeypatch):
     # beta: clone at an arbitrary path that does exist locally.
     beta_clone = tmp_path / "workspace" / "beta-project"
     beta_clone.mkdir(parents=True)
-    (beta_clone / "main.go").write_text("package beta\nfunc Parse() string { return \"beta\" }\n")
+    (beta_clone / "main.go").write_text('package beta\nfunc Parse() string { return "beta" }\n')
 
     # gamma: stored path is the convention shape but the clone isn't
     # present under fake_home, AND the literal path doesn't exist.
@@ -119,14 +119,10 @@ class TestConventionSuffix:
     """Unit tests for the path-shape detector that drives rehoming."""
 
     def test_extracts_suffix_under_dot_opentrace_repos(self) -> None:
-        assert _convention_suffix(
-            "/Users/dapywell/.opentrace/repos/pallets/click"
-        ) == ("pallets", "click")
+        assert _convention_suffix("/Users/dapywell/.opentrace/repos/pallets/click") == ("pallets", "click")
 
     def test_handles_org_repo_with_extra_segments(self) -> None:
-        assert _convention_suffix(
-            "/home/anys/.opentrace/repos/acme/widgets/v2"
-        ) == ("acme", "widgets", "v2")
+        assert _convention_suffix("/home/anys/.opentrace/repos/acme/widgets/v2") == ("acme", "widgets", "v2")
 
     def test_returns_none_for_non_convention_path(self) -> None:
         # opentrace index <local-path> stores the user's workspace; this
@@ -141,14 +137,9 @@ class TestConventionSuffix:
         # A crafted repoPath with traversal segments must not produce
         # a suffix; otherwise joining it under the current $HOME
         # could direct ripgrep at e.g. /etc.
-        assert (
-            _convention_suffix("/Users/anys/.opentrace/repos/../../../etc")
-            is None
-        )
+        assert _convention_suffix("/Users/anys/.opentrace/repos/../../../etc") is None
 
-    def test_resolve_clone_path_rejects_traversal_via_convention(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_resolve_clone_path_rejects_traversal_via_convention(self, tmp_path, monkeypatch) -> None:
         # End-to-end: a malicious repoPath with traversal segments
         # must not resolve to anything under $HOME via the convention
         # branch. The literal-path fallback may still succeed for the
@@ -162,9 +153,7 @@ class TestConventionSuffix:
         escaped.mkdir(parents=True)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
-        result = _resolve_clone_path(
-            "/Users/anys/.opentrace/repos/../etc"
-        )
+        result = _resolve_clone_path("/Users/anys/.opentrace/repos/../etc")
         # The literal `/Users/anys/.opentrace/repos/../etc` doesn't
         # exist on the test machine, and the convention branch is now
         # blocked, so we should get None — not the traversal target.
@@ -363,9 +352,7 @@ class TestJsonOutput:
         db_path = str(tmp_path / "wide.db")
         store = GraphStore(db_path)
         store.add_node("wide", "Repository", "wide", {})
-        store.save_metadata(
-            {"repoId": "wide", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/wide"}
-        )
+        store.save_metadata({"repoId": "wide", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/wide"})
         store.close()
 
         result = _invoke(db_path, "HIT", "--repo", "wide", "--limit", "5", "--json")
@@ -398,18 +385,13 @@ class TestPerRepoLimit:
         db_path = str(tmp_path / "wide.db")
         store = GraphStore(db_path)
         store.add_node("wide", "Repository", "wide", {})
-        store.save_metadata(
-            {"repoId": "wide", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/wide"}
-        )
+        store.save_metadata({"repoId": "wide", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/wide"})
         store.close()
 
         result = _invoke(db_path, "HIT", "--repo", "wide", "--limit", "5")
         assert result.exit_code == 0, result.output
 
-        match_lines = [
-            line for line in result.output.splitlines()
-            if line.startswith("[wide] ")
-        ]
+        match_lines = [line for line in result.output.splitlines() if line.startswith("[wide] ")]
         assert len(match_lines) == 5, result.output
         assert "truncated at 5 matches per repo" in result.output
 

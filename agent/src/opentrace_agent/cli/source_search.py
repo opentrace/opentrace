@@ -40,7 +40,6 @@ import click
 
 from opentrace_agent.store.graph_store import _unmarshal_props
 
-
 # Cap on the FTS scan window when --repo is set. Compensates for the
 # global FTS ranking dropping results from other repos before the
 # WHERE filter applies. 10× the user's limit, capped to keep the scan
@@ -109,12 +108,8 @@ def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
 
     candidates = store.list_repository_ids()
     if candidates:
-        raise click.ClickException(
-            f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}"
-        )
-    raise click.ClickException(
-        f"No repo with id {repo_id!r} (no Repository nodes are indexed)."
-    )
+        raise click.ClickException(f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}")
+    raise click.ClickException(f"No repo with id {repo_id!r} (no Repository nodes are indexed).")
 
 
 def _run_fts_search(
@@ -136,16 +131,10 @@ def _run_fts_search(
         where_clauses.append("node.type IN $node_types")
         params["node_types"] = list(node_types)
 
-    cypher = (
-        "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $top) "
-        "WITH node, score "
-    )
+    cypher = "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $top) WITH node, score "
     if where_clauses:
         cypher += "WHERE " + " AND ".join(where_clauses) + " "
-    cypher += (
-        "RETURN node.id, node.name, node.type, node.properties, score "
-        "ORDER BY score DESC LIMIT $limit"
-    )
+    cypher += "RETURN node.id, node.name, node.type, node.properties, score ORDER BY score DESC LIMIT $limit"
 
     result = store._conn.execute(cypher, parameters=params)
     rows: list[dict[str, Any]] = []
@@ -189,9 +178,7 @@ def run_source_search(
         # Over-fetch one row beyond `limit` so we can distinguish
         # "exactly `limit` matches in the graph" from "more existed,
         # truncated here". The +1 row is then trimmed before output.
-        results = _run_fts_search(
-            store, query, resolved_repo, node_types, limit + 1
-        )
+        results = _run_fts_search(store, query, resolved_repo, node_types, limit + 1)
         truncated = len(results) > limit
         if truncated:
             results = results[:limit]

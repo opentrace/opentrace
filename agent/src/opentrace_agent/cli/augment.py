@@ -113,15 +113,17 @@ def _emit_json(store: Any, pattern: str, nodes: list[dict[str, Any]]) -> None:
                 if nb_rel["type"] not in _INTERESTING_RELS:
                     continue
                 direction = "outgoing" if nb_rel["source_id"] == node["id"] else "incoming"
-                rels.append({
-                    "type": nb_rel["type"],
-                    "direction": direction,
-                    "target": {
-                        "id": nb_node.get("id", ""),
-                        "name": nb_node.get("name", ""),
-                        "type": nb_node.get("type", ""),
-                    },
-                })
+                rels.append(
+                    {
+                        "type": nb_rel["type"],
+                        "direction": direction,
+                        "target": {
+                            "id": nb_node.get("id", ""),
+                            "name": nb_node.get("name", ""),
+                            "type": nb_node.get("type", ""),
+                        },
+                    }
+                )
         except Exception:
             pass
 

@@ -31,7 +31,6 @@ from typing import Any
 
 import click
 
-
 _NEIGHBOR_TEXT_LIMIT = 20
 
 

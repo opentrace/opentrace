@@ -126,9 +126,7 @@ def test_workspace_missing_db_exits_3(workspaces_root, tmp_path) -> None:
     """A read subcommand under --workspace mode exits 3 when index.db is absent."""
     src = tmp_path / "fresh"
     src.mkdir()
-    result = CliRunner().invoke(
-        app, ["--workspace", str(src), "stats"]
-    )
+    result = CliRunner().invoke(app, ["--workspace", str(src), "stats"])
     assert result.exit_code == EXIT_DB_MISSING, result.output + result.stderr
     assert "No OpenTrace index found at" in result.stderr
 
@@ -136,9 +134,7 @@ def test_workspace_missing_db_exits_3(workspaces_root, tmp_path) -> None:
 def test_workspace_unresolvable_exits_4(workspaces_root, tmp_path) -> None:
     """A missing workspace dir exits 4 before any subcommand runs."""
     missing = tmp_path / "does_not_exist"
-    result = CliRunner().invoke(
-        app, ["--workspace", str(missing), "stats"]
-    )
+    result = CliRunner().invoke(app, ["--workspace", str(missing), "stats"])
     assert result.exit_code == EXIT_WORKSPACE_UNRESOLVABLE, result.output + result.stderr
     assert "Workspace directory does not exist or is not accessible" in result.stderr
     assert str(missing) in result.stderr
@@ -149,29 +145,21 @@ def test_workspace_and_db_mutually_exclusive(workspaces_root, tmp_path) -> None:
     src = tmp_path / "proj"
     src.mkdir()
     db = tmp_path / "explicit.db"
-    result = CliRunner().invoke(
-        app, ["--workspace", str(src), "stats", "--db", str(db)]
-    )
+    result = CliRunner().invoke(app, ["--workspace", str(src), "stats", "--db", str(db)])
     assert result.exit_code == EXIT_USAGE, result.output + result.stderr
     assert "mutually exclusive" in result.stderr.lower()
 
 
-def test_workspace_unresolvable_applies_to_every_subcommand(
-    workspaces_root, tmp_path
-) -> None:
+def test_workspace_unresolvable_applies_to_every_subcommand(workspaces_root, tmp_path) -> None:
     """Exit 4 fires at the top-level callback, before subcommand parsing."""
     missing = tmp_path / "missing"
     # ``index`` is a write subcommand and would normally accept a missing DB,
     # but the workspace dir itself must exist.
-    result = CliRunner().invoke(
-        app, ["--workspace", str(missing), "index", str(tmp_path)]
-    )
+    result = CliRunner().invoke(app, ["--workspace", str(missing), "index", str(tmp_path)])
     assert result.exit_code == EXIT_WORKSPACE_UNRESOLVABLE
 
 
-def test_no_workspace_flag_preserves_existing_resolution(
-    workspaces_root, tmp_path, monkeypatch
-) -> None:
+def test_no_workspace_flag_preserves_existing_resolution(workspaces_root, tmp_path, monkeypatch) -> None:
     """Without --workspace, walk-up auto-discovery is unchanged (sanity).
 
     A fresh cwd with no ``.opentrace/`` directory and no ``--workspace``
@@ -184,9 +172,7 @@ def test_no_workspace_flag_preserves_existing_resolution(
     assert "No .opentrace/index.db found" in result.stderr
 
 
-def test_workspace_index_routes_to_workspace_db(
-    workspaces_root, tmp_path, monkeypatch
-) -> None:
+def test_workspace_index_routes_to_workspace_db(workspaces_root, tmp_path, monkeypatch) -> None:
     """End-to-end happy path: ``index`` under ``--workspace`` writes to the workspace DB.
 
     Stubs the indexing pipeline so the test doesn't need a real codebase

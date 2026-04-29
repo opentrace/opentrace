@@ -34,9 +34,12 @@ from opentrace_agent.cli.main import app
 
 def _invoke(store: MagicMock, tmp_path, *args: str):
     """Invoke ``opentrace get-node`` with a patched GraphStore."""
-    with patch("opentrace_agent.store.GraphStore", return_value=store), patch(
-        "opentrace_agent.cli.main._resolve_db",
-        return_value=str(tmp_path / "fake.db"),
+    with (
+        patch("opentrace_agent.store.GraphStore", return_value=store),
+        patch(
+            "opentrace_agent.cli.main._resolve_db",
+            return_value=str(tmp_path / "fake.db"),
+        ),
     ):
         return CliRunner().invoke(app, ["get-node", *args])
 
@@ -60,9 +63,7 @@ class TestGetNodeJson:
         """JSON output bundles node + classified neighbors."""
         store = MagicMock()
         target_id = "repo/foo.py::bar"
-        store.get_node.return_value = _node(
-            target_id, name="bar", path="foo.py", start_line=10, end_line=20
-        )
+        store.get_node.return_value = _node(target_id, name="bar", path="foo.py", start_line=10, end_line=20)
         store.traverse.return_value = [
             {
                 "node": _node("repo/foo.py::baz", name="baz"),
@@ -88,9 +89,7 @@ class TestGetNodeJson:
         assert directions == ["outgoing", "incoming"]
 
         # store.traverse called with the documented arguments.
-        store.traverse.assert_called_once_with(
-            target_id, direction="both", max_depth=1
-        )
+        store.traverse.assert_called_once_with(target_id, direction="both", max_depth=1)
 
     def test_properties_always_dict_even_when_store_returns_none(self, tmp_path) -> None:
         """Consumers should be able to .get(...) on properties unconditionally."""

@@ -119,9 +119,7 @@ def _resolve_clone_path(repo_path: str | None) -> Path | None:
     return None
 
 
-def _load_repo_paths(
-    store: Any, only_repo: str | None
-) -> list[tuple[str, str | None]]:
+def _load_repo_paths(store: Any, only_repo: str | None) -> list[tuple[str, str | None]]:
     """Return ``[(repo_id, stored_repoPath_or_None), ...]`` for indexed repos.
 
     When *only_repo* is set, the list is filtered to that single id (a
@@ -159,12 +157,8 @@ def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
 
     candidates = store.list_repository_ids()
     if candidates:
-        raise click.ClickException(
-            f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}"
-        )
-    raise click.ClickException(
-        f"No repo with id {repo_id!r} (no Repository nodes are indexed)."
-    )
+        raise click.ClickException(f"No repo with id {repo_id!r}. Available: {', '.join(candidates)}")
+    raise click.ClickException(f"No repo with id {repo_id!r} (no Repository nodes are indexed).")
 
 
 def _run_rg(
@@ -234,7 +228,7 @@ def _run_rg(
             # outside the repo (symlink leak). Drop it: the contract
             # is no absolute paths in output.
             continue
-        scrubbed.append(f"[{repo_id}] {line[len(abs_prefix):]}")
+        scrubbed.append(f"[{repo_id}] {line[len(abs_prefix) :]}")
 
     truncated = len(scrubbed) > max_count
     if truncated:
@@ -261,8 +255,7 @@ def run_source_grep(
     """
     if shutil.which("rg") is None:
         raise click.ClickException(
-            "ripgrep ('rg') is not installed or not on PATH. "
-            "Install it (e.g. `brew install ripgrep`) and retry."
+            "ripgrep ('rg') is not installed or not on PATH. Install it (e.g. `brew install ripgrep`) and retry."
         )
 
     from opentrace_agent.store import GraphStore
@@ -308,8 +301,7 @@ def run_source_grep(
             errors.append(
                 (
                     repo_id,
-                    "no clone found locally"
-                    + (f" (tried: {', '.join(tried)})" if tried else " (no repoPath stored)"),
+                    "no clone found locally" + (f" (tried: {', '.join(tried)})" if tried else " (no repoPath stored)"),
                 )
             )
             continue
@@ -344,10 +336,7 @@ def _emit_text(
         for rid, matches, truncated in repo_outputs:
             lines.extend(matches)
             if truncated:
-                lines.append(
-                    f"  ... [{rid}] truncated at {limit} matches per repo "
-                    "(rerun with --limit to see more)."
-                )
+                lines.append(f"  ... [{rid}] truncated at {limit} matches per repo (rerun with --limit to see more).")
         lines.append("")
         lines.append("Use `opentrace source-read --path <file>` to read a matched file.")
     else:
