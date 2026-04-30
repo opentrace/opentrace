@@ -395,8 +395,56 @@ class TestPerRepoLimit:
         assert len(match_lines) == 5, result.output
         assert "truncated at 5 matches per repo" in result.output
 
+    def test_no_truncation_at_exact_limit_in_single_file(self, tmp_path, monkeypatch) -> None:
+        """Boundary: exactly ``--limit`` matches in one file → ``truncated=False``."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        clone = fake_home / ".opentrace" / "repos" / "acme" / "exact"
+        clone.mkdir(parents=True)
+        (clone / "f.txt").write_text("HIT\n" * 5)
+
+        db_path = str(tmp_path / "exact.db")
+        store = GraphStore(db_path)
+        store.add_node("exact", "Repository", "exact", {})
+        store.save_metadata({"repoId": "exact", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/exact"})
+        store.close()
+
+        result = _invoke(db_path, "HIT", "--repo", "exact", "--limit", "5", "--json")
+        assert result.exit_code == 0, result.output
+
+        data = json.loads(result.output)
+        assert len(data["results"]) == 1
+        assert data["results"][0]["truncated"] is False
+        assert len(data["results"][0]["matches"]) == 5
+
+    def test_truncates_at_one_over_limit_in_single_file(self, tmp_path, monkeypatch) -> None:
+        """Boundary: ``--limit + 1`` matches in one file → ``truncated=True``."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        clone = fake_home / ".opentrace" / "repos" / "acme" / "over"
+        clone.mkdir(parents=True)
+        (clone / "f.txt").write_text("HIT\n" * 6)
+
+        db_path = str(tmp_path / "over.db")
+        store = GraphStore(db_path)
+        store.add_node("over", "Repository", "over", {})
+        store.save_metadata({"repoId": "over", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/over"})
+        store.close()
+
+        result = _invoke(db_path, "HIT", "--repo", "over", "--limit", "5", "--json")
+        assert result.exit_code == 0, result.output
+
+        data = json.loads(result.output)
+        assert len(data["results"]) == 1
+        assert data["results"][0]["truncated"] is True
+        assert len(data["results"][0]["matches"]) == 5
+
     def test_truncates_within_single_file(self, tmp_path, monkeypatch) -> None:
-        """A single file with more matches than ``--limit`` must trip the truncation flag.
+        """A single file with many more matches than ``--limit`` trips the truncation flag.
 
         Setup: 200 matches in one file, ``--limit 50``.
         Expected: exactly 50 rows in the result, ``truncated=True``.

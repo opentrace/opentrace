@@ -215,3 +215,91 @@ class TestSourceReadLinesFlag:
         result = runner.invoke(app, ["source-read", "--path", "whatever.py", "--lines", "garbage"])
         assert result.exit_code != 0
         assert "invalid --lines value" in result.output or "invalid --lines value" in (result.stderr or "")
+
+
+class TestReadSourceByNodeRepoStripping:
+    """Path extraction in ``_read_source_by_node`` must respect multi-segment repo IDs.
+
+    The fallback "extract from node ID" branch fires when neither
+    ``properties.path`` nor any outgoing DEFINES File neighbor yields
+    a path. The node ID format is ``<repo>/<rel>::<symbol>`` and
+    ``<repo>`` itself can contain ``/`` (``owner/repo`` style), so the
+    repo portion is matched against the indexed repo IDs rather than
+    truncated at the first slash.
+    """
+
+    def test_owner_repo_id_strips_full_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opentrace_agent.cli.main import _read_source_by_node
+
+        captured: dict[str, object] = {}
+
+        class FakeStore:
+            def get_node(self_inner, node_id):
+                # No direct path on the symbol node; force the fallback branch.
+                return {"id": node_id, "type": "Function", "name": "parse_widget", "properties": {}}
+
+            def _get_neighbors(self_inner, _id, _direction):
+                # No outgoing File neighbor either, so the branch must
+                # derive the path from the node ID itself.
+                return []
+
+            def list_repository_ids(self_inner):
+                return ["acme/widget"]
+
+        def fake_read_source_by_path(_store, file_path, start_line, end_line):
+            captured["file_path"] = file_path
+            captured["start_line"] = start_line
+            captured["end_line"] = end_line
+
+        from opentrace_agent.cli import main as cli_main
+
+        monkeypatch.setattr(cli_main, "_read_source_by_path", fake_read_source_by_path)
+
+        _read_source_by_node(FakeStore(), "acme/widget/src/parser.py::parse_widget")
+
+        assert captured["file_path"] == "src/parser.py"
+
+    def test_single_segment_repo_id_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Single-segment repo IDs (``repo/...``) keep producing the same remainder."""
+        from opentrace_agent.cli.main import _read_source_by_node
+
+        captured: dict[str, object] = {}
+
+        class FakeStore:
+            def get_node(self_inner, node_id):
+                return {"id": node_id, "type": "Function", "name": "f", "properties": {}}
+
+            def _get_neighbors(self_inner, _id, _direction):
+                return []
+
+            def list_repository_ids(self_inner):
+                return ["repo"]
+
+        def fake_read_source_by_path(_store, file_path, start_line, end_line):
+            captured["file_path"] = file_path
+
+        from opentrace_agent.cli import main as cli_main
+
+        monkeypatch.setattr(cli_main, "_read_source_by_path", fake_read_source_by_path)
+
+        _read_source_by_node(FakeStore(), "repo/src/x.py::f")
+
+        assert captured["file_path"] == "src/x.py"
+
+    def test_unknown_repo_raises_no_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A node ID under no indexed repo and with no slash → ClickException."""
+        from opentrace_agent.cli.main import _read_source_by_node
+
+        class FakeStore:
+            def get_node(self_inner, node_id):
+                return {"id": node_id, "type": "Function", "name": "f", "properties": {}}
+
+            def _get_neighbors(self_inner, _id, _direction):
+                return []
+
+            def list_repository_ids(self_inner):
+                return ["other"]
+
+        with pytest.raises(click.ClickException) as excinfo:
+            _read_source_by_node(FakeStore(), "bare::Symbol")
+        assert "no file path" in str(excinfo.value.message).lower()

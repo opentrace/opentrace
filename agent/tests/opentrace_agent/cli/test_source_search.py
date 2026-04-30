@@ -29,10 +29,40 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from opentrace_agent.cli.source_search import strip_repo_prefix  # noqa: E402
+
 real_ladybug = pytest.importorskip("real_ladybug")
 
 from opentrace_agent.cli.main import app  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
+
+
+class TestStripRepoPrefix:
+    """Pure-Python tests for the longest-prefix repo-id stripper."""
+
+    def test_strips_multi_segment_repo_id(self) -> None:
+        assert strip_repo_prefix("acme/widget/src/parser.py", ["acme/widget"]) == "src/parser.py"
+
+    def test_exact_repo_id_match_returns_empty(self) -> None:
+        """When path_like *is* the repo id (no remainder), result is empty."""
+        assert strip_repo_prefix("acme/widget", ["acme/widget"]) == ""
+
+    def test_longest_match_wins_when_repo_ids_nest(self) -> None:
+        """A multi-segment id must be preferred over its single-segment prefix."""
+        # Caller's contract: pass repo_ids sorted longest-first.
+        repo_ids = ["acme/widget", "acme"]
+        assert strip_repo_prefix("acme/widget/src/foo.py", repo_ids) == "src/foo.py"
+
+    def test_orphan_falls_back_to_first_slash_split(self) -> None:
+        """No matching repo id, but a slash present: drop the leading segment."""
+        assert strip_repo_prefix("orphan/src/x.py", ["other-repo"]) == "src/x.py"
+
+    def test_orphan_no_slash_returns_empty(self) -> None:
+        """No matching repo id and no slash: nothing to strip."""
+        assert strip_repo_prefix("foo.py", ["other-repo"]) == ""
+
+    def test_empty_repo_ids_falls_back_to_split(self) -> None:
+        assert strip_repo_prefix("a/b/c", []) == "b/c"
 
 
 @pytest.fixture()
