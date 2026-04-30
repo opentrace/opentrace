@@ -28,7 +28,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from opentrace_agent.store import GraphStore
@@ -47,8 +47,14 @@ async def _read_json(request: Request) -> Any:
         return None
 
 
-def create_app(store: GraphStore) -> Starlette:
-    """Create a Starlette ASGI app exposing *store* as a REST API."""
+def create_app(store: GraphStore | None) -> Starlette:
+    """Create a Starlette ASGI app exposing *store* as a REST API.
+
+    When *store* is ``None``, the graph routes (``/api/stats``,
+    ``/api/graph``, etc.) are omitted; only ``/api/health`` and the vault
+    routes are mounted. This is the vault-only mode used when no
+    ``.opentrace/index.db`` is available.
+    """
 
     async def get_stats(request: Request) -> JSONResponse:
         """GET /api/stats"""
@@ -172,16 +178,20 @@ def create_app(store: GraphStore) -> Starlette:
         """GET /api/health"""
         return JSONResponse({"status": "ok"})
 
-    routes = [
-        Route("/api/health", health, methods=["GET"]),
-        Route("/api/stats", get_stats, methods=["GET"]),
-        Route("/api/metadata", get_metadata, methods=["GET"]),
-        Route("/api/graph", fetch_graph, methods=["GET"]),
-        Route("/api/nodes/search", search_nodes, methods=["GET"]),
-        Route("/api/nodes/list", list_nodes, methods=["GET"]),
-        Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
-        Route("/api/traverse", traverse, methods=["POST"]),
-    ]
+    routes: list[Route] = [Route("/api/health", health, methods=["GET"])]
+    if store is not None:
+        routes.extend(
+            [
+                Route("/api/stats", get_stats, methods=["GET"]),
+                Route("/api/metadata", get_metadata, methods=["GET"]),
+                Route("/api/graph", fetch_graph, methods=["GET"]),
+                Route("/api/nodes/search", search_nodes, methods=["GET"]),
+                Route("/api/nodes/list", list_nodes, methods=["GET"]),
+                Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
+                Route("/api/traverse", traverse, methods=["POST"]),
+            ]
+        )
+    routes.extend(_vault_routes())
 
     middleware = [
         Middleware(
@@ -193,3 +203,159 @@ def create_app(store: GraphStore) -> Starlette:
     ]
 
     return Starlette(routes=routes, middleware=middleware)
+
+
+# ---------------------------------------------------------------------------
+# Vault routes (knowledge compilation v1, OT-1733)
+# ---------------------------------------------------------------------------
+
+
+def _vault_routes() -> list[Route]:
+    async def list_vaults_route(request: Request) -> JSONResponse:
+        from opentrace_agent.wiki.paths import list_vaults
+
+        return JSONResponse({"vaults": list_vaults()})
+
+    async def list_pages_route(request: Request) -> JSONResponse:
+        from opentrace_agent.wiki.paths import metadata_path
+        from opentrace_agent.wiki.paths import InvalidVaultName
+        from opentrace_agent.wiki.vault import load_metadata
+
+        name = request.path_params["vault"]
+        try:
+            mp = metadata_path(name)
+        except InvalidVaultName as e:
+            return _error(400, str(e))
+        if not mp.exists():
+            return _error(404, f"Vault not found: {name}")
+        meta = load_metadata(mp, name=name)
+        pages = [
+            {
+                "slug": p.slug,
+                "title": p.title,
+                "one_line_summary": p.one_line_summary,
+                "revision": p.revision,
+                "last_updated": p.last_updated,
+                "kind": p.kind,
+            }
+            for p in meta.pages.values()
+        ]
+        pages.sort(key=lambda p: (p["title"].lower(), p["slug"]))
+        return JSONResponse(
+            {
+                "name": meta.name,
+                "last_compiled_at": meta.last_compiled_at,
+                "pages": pages,
+            }
+        )
+
+    async def get_page_route(request: Request) -> JSONResponse:
+        from starlette.responses import PlainTextResponse
+
+        from opentrace_agent.wiki.paths import InvalidVaultName, pages_dir
+
+        name = request.path_params["vault"]
+        slug = request.path_params["slug"]
+        # Slug must look like a slug — no separators.
+        if "/" in slug or ".." in slug or slug.startswith("."):
+            return _error(400, f"invalid slug: {slug}")
+        try:
+            pd = pages_dir(name)
+        except InvalidVaultName as e:
+            return _error(400, str(e))
+        page_path = pd / f"{slug}.md"
+        if not page_path.exists():
+            return _error(404, f"Page not found: {slug}")
+        return PlainTextResponse(page_path.read_text(), media_type="text/markdown")
+
+    async def compile_route(request: Request) -> "StreamingResponse | JSONResponse":
+        from opentrace_agent.wiki import SourceInput, run_compile
+        from opentrace_agent.wiki.ingest.types import WikiEventKind
+        from opentrace_agent.wiki.paths import InvalidVaultName, validate_vault_name
+
+        name = request.path_params["vault"]
+        try:
+            validate_vault_name(name)
+        except InvalidVaultName as e:
+            return _error(400, str(e))
+
+        form = await request.form()
+        api_key = (form.get("api_key") or "").strip() or None
+        provider = (form.get("provider") or "anthropic").strip() or "anthropic"
+        model = (form.get("model") or "").strip() or None
+        files = (
+            form.getlist("files") if hasattr(form, "getlist") else [v for k, v in form.multi_items() if k == "files"]
+        )
+        if not files:
+            return _error(400, "no files uploaded")
+
+        inputs: list[SourceInput] = []
+        for f in files:
+            if hasattr(f, "read"):
+                data = await f.read()
+                fname = getattr(f, "filename", "uploaded") or "uploaded"
+                inputs.append(SourceInput(name=fname, data=data))
+
+        async def event_stream():
+            # Wrap the entire pipeline so any exception (LLM failures, OS
+            # errors, validation) becomes a final NDJSON line instead of a
+            # silently-truncated stream. Without this, an unhandled raise
+            # tears the chunked transfer down with ERR_INCOMPLETE_CHUNKED_ENCODING.
+            try:
+                for event in run_compile(
+                    name,
+                    inputs,
+                    provider=provider,
+                    api_key=api_key,
+                    model=model,
+                ):
+                    payload = {
+                        "kind": event.kind.value,
+                        "phase": event.phase.value,
+                        "message": event.message,
+                        "current": event.current,
+                        "total": event.total,
+                        "file_name": event.file_name,
+                        "detail": event.detail,
+                        "errors": event.errors,
+                    }
+                    yield json.dumps(payload) + "\n"
+                    if event.kind == WikiEventKind.DONE:
+                        return
+            except Exception as e:
+                logger.exception("compile pipeline failed")
+                yield (
+                    json.dumps(
+                        {
+                            "kind": "error",
+                            "phase": "executing",
+                            "message": f"{type(e).__name__}: {e}",
+                        }
+                    )
+                    + "\n"
+                )
+
+        return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+
+    async def delete_vault_route(request: Request) -> JSONResponse:
+        from opentrace_agent.wiki.paths import (
+            InvalidVaultName,
+            delete_vault as _delete_vault,
+        )
+
+        name = request.path_params["vault"]
+        try:
+            existed = _delete_vault(name)
+        except InvalidVaultName as e:
+            return _error(400, str(e))
+        if not existed:
+            return _error(404, f"Vault not found: {name}")
+        return JSONResponse({"deleted": name})
+
+    return [
+        Route("/api/vaults", list_vaults_route, methods=["GET"]),
+        Route("/api/vaults/{vault}/pages", list_pages_route, methods=["GET"]),
+        Route("/api/vaults/{vault}/pages/{slug}", get_page_route, methods=["GET"]),
+        Route("/api/vaults/{vault}/compile", compile_route, methods=["POST"]),
+        Route("/api/vaults/{vault}", delete_vault_route, methods=["DELETE"]),
+    ]

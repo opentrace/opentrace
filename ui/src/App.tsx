@@ -22,6 +22,7 @@ import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
+import { VaultBrowser } from './components/wiki/VaultBrowser';
 import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
@@ -77,6 +78,7 @@ function App({
     loadAnimationSettings,
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
+  const [showVaults, setShowVaults] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   const [jobExpanded, setJobExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -363,6 +365,32 @@ function App({
           onAnimationSettingsChanged={setAnimationSettings}
         />
       )}
+
+      <button
+        type="button"
+        onClick={() => setShowVaults((v) => !v)}
+        title={showVaults ? 'Close vaults' : 'Open knowledge vaults'}
+        style={{
+          position: 'fixed',
+          bottom: 72,
+          left: 24,
+          zIndex: 30,
+          background: 'rgba(48, 96, 192, 0.9)',
+          color: 'white',
+          border: 'none',
+          borderRadius: 18,
+          height: 36,
+          padding: '0 14px',
+          cursor: 'pointer',
+          fontSize: 12,
+          fontWeight: 500,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+        }}
+      >
+        Vaults
+      </button>
+
+      {showVaults && <VaultBrowser onClose={() => setShowVaults(false)} />}
 
       {(version || typeof __APP_VERSION__ !== 'undefined') && (
         <footer className="version-footer">

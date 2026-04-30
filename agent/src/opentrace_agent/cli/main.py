@@ -151,6 +151,13 @@ def app(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+# Register the wiki subgroup. Imported here (after `app` is defined) so the
+# subgroup module can stay independent of the rest of the CLI.
+from opentrace_agent.cli.wiki_cmd import wiki as _wiki_group  # noqa: E402
+
+app.add_command(_wiki_group)
+
+
 @app.command()
 @click.argument("path", default=".", type=click.Path(exists=True, file_okay=False, resolve_path=True))
 @click.option(
@@ -548,10 +555,13 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
 @click.option("--port", default=8787, show_default=True, help="Bind port.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
-    """Start an HTTP server exposing the graph database.
+    """Start an HTTP server exposing the graph database and/or vault routes.
 
     Provides a REST API that replaces the in-browser WASM LadybugDB engine,
-    allowing the UI to query a server-backed graph store instead.
+    allowing the UI to query a server-backed graph store. The vault
+    endpoints (``/api/vaults*``) work without an index — when no
+    ``.opentrace/index.db`` is found, the graph routes are skipped and only
+    the vault + health endpoints are mounted.
     """
     import uvicorn
 
@@ -561,17 +571,21 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     from opentrace_agent.cli.serve import create_app
     from opentrace_agent.store import GraphStore
 
+    store: GraphStore | None = None
     try:
         resolved_db = _resolve_db(db_path, must_exist=True)
-    except click.UsageError as e:
-        raise SystemExit(str(e))
+    except click.UsageError:
+        resolved_db = None
 
-    log.debug("Opening database: %s", resolved_db)
-    store = GraphStore(resolved_db)
+    if resolved_db is not None:
+        log.debug("Opening database: %s", resolved_db)
+        store = GraphStore(resolved_db)
+        stats = store.get_stats()
+        click.echo(f"Database: {resolved_db}")
+        click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
+    else:
+        click.echo("No index found — graph routes disabled, vault routes only.")
 
-    stats = store.get_stats()
-    click.echo(f"Database: {resolved_db}")
-    click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
     click.echo(f"Listening on http://{host}:{port}")
 
     app = create_app(store)
@@ -581,7 +595,8 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 @app.command()

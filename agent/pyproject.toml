@@ -31,6 +31,9 @@ dependencies = [
     "pyarrow>=15.0",
     "pyyaml>=6.0",
     "cryptography>=42.0",
+    "anthropic>=0.40",
+    "markitdown[all]>=0.1.5",
+    "google-genai>=1.0",
 ]
 
 [project.optional-dependencies]

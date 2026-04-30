@@ -107,6 +107,21 @@ You have these tools — use them directly (no delegation):
 
 PullRequest node IDs follow the pattern: \`owner/repo/pr/NUMBER\`.
 
+### Vault (Knowledge) Tools
+
+The user can compile uploaded documents (PDFs, design docs, meeting notes, etc.)
+into "vaults" — sets of LLM-summarised markdown pages with \`[[Title]]\`
+wiki-links between related concepts. When a question is about uploaded knowledge
+rather than code, prefer these tools over the graph tools.
+
+- **list_vaults** — Discover what vaults exist. Use this first.
+- **list_vault_pages** — Get \`{slug, title, summary}\` for every page in a vault. Read summaries to pick what to dive into.
+- **read_vault_page** — Fetch the full markdown body of one page. Pages contain \`[[Other Page Title]]\` links you can follow by converting the title to a slug (lowercase, dashes for spaces/punctuation) and calling read_vault_page again.
+
+When citing facts from a vault page, name the page (and vault) so the user
+can find it. Vaults are LLM summaries, so when accuracy matters, prefer the
+phrasing actually present in the page.
+
 ## Efficiency
 
 - **Start with search_graph** — it searches names, properties, AND file content, and returns 1-hop connections for top results. One search often gives you enough to answer.
