@@ -375,12 +375,13 @@ export async function getStoredToken(hostname: string | null): Promise<string | 
     }
   }
 
-  // 2. Host-specific env var.
+  // 2. Host-specific env var. Strict match only — a substring check
+  //    would forward the token to lookalikes like `attacker-gitlab.com`.
   if (hostname) {
     if (hostname === "github.com" || hostname.endsWith(".github.com")) {
       if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN
     }
-    if (hostname === "gitlab.com" || hostname.endsWith(".gitlab.com") || hostname.includes("gitlab")) {
+    if (hostname === "gitlab.com" || hostname.endsWith(".gitlab.com")) {
       if (process.env.GITLAB_TOKEN) return process.env.GITLAB_TOKEN
     }
   }

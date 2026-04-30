@@ -104,7 +104,7 @@ src/
   graph-client.ts         — opentraceai CLI wrapper (spawn + JSON parse)
   auth.ts                 — Auth hook + token storage
   tools/                  — One file per tool, each exporting createXxxTool(client)
-  hooks/                  — system-prompt, tool-augment, tool-impact, shell-env
+  hooks/                  — system-prompt, tool-augment, tool-impact
   util/                   — db-discovery, debug, cli-install, node-id
 package.json              — npm package manifest
 tsconfig.json             — TS config (Bun types, ESM)

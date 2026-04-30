@@ -135,38 +135,20 @@ export async function findExecutable(): Promise<{ cmd: string; args: string[] } 
   }
 
   // 2. Direct binary on PATH (including ~/.local/bin where `uv tool install`
-  //    and `pipx install` drop their shims).
-  try {
-    const proc = Bun.spawn(["which", "opentraceai"], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, PATH: searchPath },
-    })
-    // Bound `which` for the same reason `probeVersion` is bounded: it runs on
-    // the ensureCli path that gates every tool call, so an unkilled hang
-    // (networked filesystem, FUSE mount) would wedge the plugin indefinitely.
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      proc.kill()
-    }, PROBE_TIMEOUT_MS)
-    const exitCode = await proc.exited
-    clearTimeout(timer)
-    if (timedOut) {
-      debug("db", "findExecutable: `which opentraceai` timed out")
-    } else if (exitCode === 0) {
-      const found = (await new Response(proc.stdout).text()).trim()
-      const cand = { cmd: found, args: [] }
-      // `which` confirms the path resolves; --version confirms it's actually
-      // a working opentraceai (and not a stale shim or unrelated binary).
-      if (await probeVersion(cand, searchPath)) {
-        debug("db", "findExecutable: found on PATH at", found)
-        return cand
-      }
-      debug("db", "findExecutable: which returned a path but --version failed", found)
+  //    and `pipx install` drop their shims). `Bun.which` does the lookup in
+  //    the runtime — no shelling out to `which` (which doesn't exist on
+  //    Windows by default), and on Windows it honors PATHEXT so an
+  //    `opentraceai.exe` shim resolves the same way.
+  const found = Bun.which("opentraceai", { PATH: searchPath })
+  if (found) {
+    const cand = { cmd: found, args: [] }
+    // Bun.which confirms the path resolves; --version confirms it's actually
+    // a working opentraceai (and not a stale shim or unrelated binary).
+    if (await probeVersion(cand, searchPath)) {
+      debug("db", "findExecutable: found on PATH at", found)
+      return cand
     }
-  } catch (e) {
-    debug("db", "findExecutable: `which opentraceai` failed", e)
+    debug("db", "findExecutable: Bun.which returned a path but --version failed", found)
   }
 
   debug("db", "findExecutable: no opentraceai binary found")

@@ -39,9 +39,14 @@ Indexing time scales with repo size and usually finishes in a few minutes; large
 
       // Check if already indexed. Skip the dedup probe when we know the
       // workspace has no DB yet — the listRepos call would just hit exit 3.
+      // `id` is the canonical key (matches `--repo` filters); `name` is the
+      // display label and only equals `id` when the user didn't pass
+      // `--repo-id` at index time. We accept either since the LLM can
+      // reasonably pass either form.
       if (client.dbReadyHint() !== false) {
         const repos = await client.listRepos()
         const existing = repos.find((r) =>
+          r.id === args.repo_id ||
           r.name === args.repo_id ||
           r.properties?.sourceUri === args.path_or_url,
         )
@@ -55,10 +60,9 @@ Indexing time scales with repo size and usually finishes in a few minutes; large
         }
       }
 
-      // Re-gate before claiming success: the dedup listRepos call may have
-      // surfaced an unresolvable workspace, in which case the indexRepo
-      // wrapper below would otherwise stitch the contract message into a
-      // "Indexing result: ... should now be searchable" success template.
+      // Re-gate before spawning: the dedup listRepos call may have surfaced
+      // an unresolvable workspace, in which case the contract message is
+      // a cleaner thing to return than letting indexRepo also fail.
       const reblocked = await client.requireCliAvailable()
       if (reblocked) return reblocked
 
@@ -74,9 +78,13 @@ Indexing time scales with repo size and usually finishes in a few minutes; large
         ref: args.ref,
       })
 
-      ctx.metadata({ title: `Indexed ${name}` })
+      if (!result.ok) {
+        ctx.metadata({ title: `Indexing ${name} failed` })
+        return `Indexing failed:\n${result.message}`
+      }
 
-      return `Indexing result:\n${result}\n\nThe repository should now be searchable via opentrace_source_search and readable via opentrace_source_read.`
+      ctx.metadata({ title: `Indexed ${name}` })
+      return `Indexing result:\n${result.message}\n\nThe repository should now be searchable via opentrace_source_search and readable via opentrace_source_read.`
     },
   })
 }

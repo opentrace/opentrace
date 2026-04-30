@@ -27,7 +27,7 @@ Use this to understand how a library API is consumed across projects.`,
     args: {
       symbol: tool.schema.string().describe("Name of the function, class, or module to find usages of"),
       type: tool.schema.string().optional().describe("Node type filter: Function, Class, Module, File"),
-      depth: tool.schema.number().optional().describe("How many hops to traverse (default 2, max 5)"),
+      depth: tool.schema.number().int().min(1).max(5).default(2).describe("How many hops to traverse (1-5, default 2)"),
     },
     async execute(args) {
       const blocked = await client.requireDbAvailable()
@@ -43,15 +43,14 @@ Use this to understand how a library API is consumed across projects.`,
         return `Symbol "${args.symbol}" not found in the knowledge graph. Try opentrace_source_search for a broader search.`
       }
 
-      // For the best match, traverse incoming relationships.
-      // Keep depth in the schema-advertised range (1..5).
+      // For the best match, traverse incoming relationships. Schema
+      // already constrained depth to 1..5 with a default of 2.
       const target = nodes[0]
       const targetRepo = repoFromNodeId(target.id)
-      const depth = Math.max(1, Math.min(args.depth ?? 2, 5))
       const usages = await client.traverse(
         target.id,
         "incoming",
-        depth,
+        args.depth,
       )
 
       const header = `Usages of [${target.type}] ${target.name} (${targetRepo}):`

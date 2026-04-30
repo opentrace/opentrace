@@ -441,18 +441,11 @@ export class GraphClient {
     try {
       return JSON.parse(raw) as T
     } catch (e) {
-      // Try to extract JSON from mixed output (e.g., if there's a log line before/after)
-      const match = raw.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
-      if (match) {
-        try {
-          debug("graph", "runJson: fell back to regex extraction for", subArgs[0])
-          return JSON.parse(match[0]) as T
-        } catch (e2) {
-          debug("graph", "runJson: regex extraction also failed", subArgs[0], e2)
-        }
-      } else {
-        debug("graph", "runJson: not valid JSON, no JSON-ish substring found", subArgs[0], e)
-      }
+      // The CLI is under our control and the `--output json` /  `--json`
+      // subcommands are contracted to emit one JSON document on stdout.
+      // If parse fails here it's a CLI bug — surface as null and log so
+      // we notice rather than papering over with a regex extraction.
+      debug("graph", "runJson: not valid JSON", subArgs[0], e)
       return null
     }
   }
@@ -706,23 +699,41 @@ export class GraphClient {
   }
 
   /**
-   * Public repo list for LLM-visible contexts. Wraps each record's
-   * remaining fields in a `properties` bag (the shape callers like the
-   * system-prompt hook, graph-stats tool, and repo-index tool expect)
-   * and drops the local filesystem path. The LLM would otherwise try
-   * to `read`/`grep` that path directly, which either fails outside
-   * the sandbox or leaks the indexing host's directory layout.
+   * Public repo list for LLM-visible contexts. Allowlists the fields
+   * worth giving the model — branch and sourceUri shape what tools
+   * apply, commitSha lets it reason about staleness. Indexer telemetry
+   * (indexedAt, durationSeconds, *Created, *Extracted, opentraceaiVersion)
+   * and the local repoPath are intentionally dropped: they give the LLM
+   * no reasoning hook and either duplicate signals it already has from
+   * graph-stats or risk misuse (the repoPath outside the sandbox, the
+   * commitMessage as a privacy surface). Tools needing the full record
+   * should call `repos()` directly.
    */
   async listRepos(): Promise<Array<{ id: string; name: string; properties: Record<string, any> }>> {
     const records = await this.repos()
-    return records.map(({ id, name, repoPath: _repoPath, ...safeProps }) => ({
-      id,
-      name,
-      properties: safeProps,
+    return records.map((r) => ({
+      id: r.id,
+      name: r.name,
+      properties: {
+        branch: r.branch,
+        sourceUri: r.sourceUri,
+        commitSha: r.commitSha,
+      },
     }))
   }
 
-  async indexRepo(pathOrUrl: string, repoId?: string, opts?: { token?: string; ref?: string }): Promise<string> {
+  /**
+   * Result of {@link GraphClient.indexRepo}. `ok` reflects the CLI's exit
+   * status — only exit 0 is success. Callers should gate user-facing
+   * "should now be searchable" assertions on `ok`; on failure, `message`
+   * is the CLI's stderr/stdout (or a contract message for exit 3 / 4),
+   * suitable to surface verbatim.
+   */
+  async indexRepo(
+    pathOrUrl: string,
+    repoId?: string,
+    opts?: { token?: string; ref?: string },
+  ): Promise<{ ok: boolean; message: string }> {
     const isUrl = /^https?:\/\//.test(pathOrUrl) || /^git@/.test(pathOrUrl)
 
     const args: string[] = isUrl ? ["fetch-and-index", pathOrUrl] : ["index", pathOrUrl]
@@ -733,13 +744,29 @@ export class GraphClient {
     }
 
     const result = await this.runWithTimeout(args, this.indexTimeout)
-    return result ?? (isUrl ? "Fetch-and-index failed or no output" : "Indexing failed or no output")
+    if (result.ok) {
+      return {
+        ok: true,
+        message: result.output || (isUrl ? "Fetch-and-index completed" : "Indexing completed"),
+      }
+    }
+    return {
+      ok: false,
+      message: result.output || (isUrl ? "Fetch-and-index failed or no output" : "Indexing failed or no output"),
+    }
   }
 
+  /**
+   * Result of {@link GraphClient.runWithTimeout}. `ok` is true only on
+   * CLI exit 0; CLI-missing, budget-exhausted, non-zero exit, timeout,
+   * and spawn errors all map to `ok: false`. `output` is the text the
+   * caller should surface (stdout on success; stderr/stdout/contract
+   * message on failure).
+   */
   private async runWithTimeout(
     subArgs: string[],
     timeoutMs: number,
-  ): Promise<string | null> {
+  ): Promise<{ ok: boolean; output: string }> {
     // Deadline spans probe + spawn so probe latency doesn't silently extend
     // the caller's budget. timeoutMs <= 0 means "no timeout" (used for
     // monorepo indexing) and skips the deadline entirely.
@@ -747,14 +774,14 @@ export class GraphClient {
     await this.ensureCli()
     if (!this.exe) {
       debug("graph", "runWithTimeout: no executable, skipping", redactArgs(subArgs).join(" "))
-      return null
+      return { ok: false, output: getCliMissingMessage() }
     }
     let remaining: number | null = null
     if (deadline !== null) {
       remaining = deadline - Date.now()
       if (remaining <= 0) {
         debug("graph", "runWithTimeout: probe consumed full budget, skipping", subArgs[0])
-        return null
+        return { ok: false, output: "CLI probe consumed the full timeout budget; nothing was run." }
       }
     }
     // `--workspace` is a top-level flag, so it precedes the subcommand.
@@ -794,14 +821,17 @@ export class GraphClient {
           subArgs[0],
           tail,
         )
-        if (semanticMessage) return semanticMessage
-        return stderr.trim() || stdout.trim() || `Exit code ${exitCode}`
+        if (semanticMessage) return { ok: false, output: semanticMessage }
+        if (timedOut) {
+          return { ok: false, output: stderr.trim() || stdout.trim() || `Timed out after ${remaining}ms` }
+        }
+        return { ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${exitCode}` }
       }
       debug("graph", "runWithTimeout: completed ok", subArgs[0])
-      return stdout.trim() || null
+      return { ok: true, output: stdout.trim() }
     } catch (e: any) {
       debug("graph", "runWithTimeout: spawn error", subArgs[0], e)
-      return `Error: ${e.message ?? e}`
+      return { ok: false, output: `Error: ${e.message ?? e}` }
     }
   }
 }
