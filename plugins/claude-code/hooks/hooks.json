@@ -6,7 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh"
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_start.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/user_prompt_submit.py"
           }
         ]
       }
@@ -17,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/opentrace-hook.py"
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pre_tool_use.py"
           }
         ]
       }
@@ -28,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/edit-hook.py"
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/post_tool_use.py"
           }
         ]
       }
