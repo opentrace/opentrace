@@ -120,7 +120,8 @@ See [Architecture Overview](https://opentrace.github.io/opentrace/architecture/o
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
 agent/                — Python agent (CLI + MCP server for Claude Code)
 proto/                — Protobuf definitions (shared schema)
-claude-code-plugin/   — Claude Code plugin (agents, commands, skills, hooks)
+plugins/              — Editor / AI integrations
+  claude-code/        — Claude Code plugin (agents, commands, skills, hooks)
 docs/                 — Documentation site (mkdocs-material)
 tests/                — Cross-validation test fixtures
 benchmark/            — Accuracy benchmarks

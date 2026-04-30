@@ -69,7 +69,8 @@ ui/                   — React/TypeScript frontend
   src/components/     — React components
   src/chat/           — Chat agent and graph tools
 proto/                — Protobuf definitions
-claude-code-plugin/   — Claude Code plugin configuration
+plugins/              — Editor / AI integrations
+  claude-code/        — Claude Code plugin configuration
 ```
 
 See `ui/src/pipeline/CLAUDE.md` for detailed pipeline architecture documentation.

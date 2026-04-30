@@ -21,8 +21,8 @@ Three files must stay in sync when bumping versions:
 | File | Field |
 |---|---|
 | `.claude-plugin/plugin.json` | `version` |
-| `../.claude-plugin/marketplace.json` | `plugins[0].version` |
-| `../agent/pyproject.toml` | `version` (agent package, bump independently for agent-only changes) |
+| `../../.claude-plugin/marketplace.json` | `plugins[0].version` |
+| `../../agent/pyproject.toml` | `version` (agent package, bump independently for agent-only changes) |
 
 Plugin and marketplace versions must always match. Agent version is bumped independently but should be bumped alongside plugin changes that affect the CLI (e.g. new subcommands).
 
