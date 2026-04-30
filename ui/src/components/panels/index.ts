@@ -20,6 +20,7 @@ export { default as GraphLegend } from './GraphLegend';
 export { default as GraphToolbar } from './GraphToolbar';
 export { default as DiscoverPanel } from './DiscoverPanel';
 export { default as PhysicsPanel } from './PhysicsPanel';
+export { default as PanelResizeHandle } from './PanelResizeHandle';
 export { useDiscoverTree } from './useDiscoverTree';
 
 export type {

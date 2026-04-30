@@ -15,7 +15,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphNode, GraphLink } from '@opentrace/components/utils';
 import {
   PROVIDERS,
   PROVIDER_IDS,
@@ -54,8 +53,10 @@ import {
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import type { AIMessageChunk } from '@langchain/core/messages';
 import { useStore } from '../store';
+import { useGraph } from '../providers/GraphDataProvider';
 import { PRClient, parseRepoUrl } from '../pr/client';
 import { useResizablePanel } from '../hooks/useResizablePanel';
+import { PanelResizeHandle } from '@opentrace/components';
 import { useConversation } from '../chat/useConversation';
 import PRListPanel from './PRListPanel';
 import './ChatPanel.css';
@@ -81,7 +82,6 @@ function TokenUsageFooter({ usage }: { usage: TokenUsage }) {
 type TabId = 'chat' | 'prs';
 
 interface Props {
-  graphData: { nodes: GraphNode[]; links: GraphLink[] };
   onClose: () => void;
   onNodeSelect?: (nodeId: string) => void;
   onGraphChange?: (focusNodeId?: string) => Promise<void>;
@@ -96,7 +96,6 @@ interface Props {
 }
 
 export default function ChatPanel({
-  graphData,
   onClose,
   onNodeSelect,
   onGraphChange,
@@ -107,13 +106,16 @@ export default function ChatPanel({
   settingsFooter,
 }: Props) {
   const { store } = useStore();
+  const { graphData } = useGraph();
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const { width: panelWidth, handleMouseDown } = useResizablePanel({
     storageKey: 'ot_chat_panel_width',
     defaultWidth: 480,
     minWidth: 320,
     maxWidth: 800,
     side: 'left',
+    panelRef,
   });
 
   // Notify parent of width changes so graph canvas can adjust
@@ -321,10 +323,7 @@ export default function ChatPanel({
   const getAgentHandle = (): AgentHandle => {
     const key = `${providerId}:${modelId}:${apiKey}:${localUrl}:${repoUrl ?? ''}`;
     if (agentKeyRef.current !== key || !agentRef.current) {
-      const systemPrompt = buildGraphContext(
-        graphData.nodes as GraphNode[],
-        graphData.links as GraphLink[],
-      );
+      const systemPrompt = buildGraphContext(graphData.nodes, graphData.links);
       agentRef.current = createChatAgent(
         providerId,
         modelId,
@@ -906,13 +905,14 @@ export default function ChatPanel({
 
   return (
     <div
+      ref={panelRef}
       className="chat-panel"
       style={{ width: panelWidth }}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="chat-panel-drag-handle" onMouseDown={handleMouseDown} />
+      <PanelResizeHandle side="left" onMouseDown={handleMouseDown} />
       {dragOver && (
         <div className="image-drop-overlay">
           <div className="image-drop-overlay-content">

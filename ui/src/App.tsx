@@ -23,17 +23,14 @@ import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
 import { VaultBrowser } from './components/wiki/VaultBrowser';
-import type { GraphNode, GraphLink } from '@opentrace/components/utils';
+import SidePanel, { type SidePanelTab } from './appComponents/SidePanel';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
 import { useStore } from './store';
+import { GraphDataProvider, useGraph } from './providers/GraphDataProvider';
+import { GraphInteractionProvider } from './providers/GraphInteractionProvider';
 import './App.css';
-
-const EMPTY_GRAPH: { nodes: GraphNode[]; links: GraphLink[] } = {
-  nodes: [],
-  links: [],
-};
 
 interface AppProps {
   version?: string;
@@ -43,13 +40,24 @@ interface AppProps {
   onConnectServer?: (serverUrl: string) => void;
 }
 
-function App({
+function App(props: AppProps = {}) {
+  return (
+    <GraphDataProvider>
+      <GraphInteractionProvider>
+        <AppInner {...props} />
+      </GraphInteractionProvider>
+    </GraphDataProvider>
+  );
+}
+
+function AppInner({
   version,
   buildTime,
   initialRepoUrl,
   onConnectServer,
-}: AppProps = {}) {
+}: AppProps) {
   const { store } = useStore();
+  const { loadGraph } = useGraph();
   const jobService = useJobService();
   const {
     state: jobState,
@@ -60,7 +68,6 @@ function App({
   } = useJobStream(jobService);
 
   const graphViewerRef = useRef<GraphViewerHandle>(null);
-  const [chatGraphData, setChatGraphData] = useState(EMPTY_GRAPH);
   const [chatHighlightNodes, setChatHighlightNodes] = useState<Set<string>>(
     () => new Set(),
   );
@@ -81,6 +88,9 @@ function App({
   const [showVaults, setShowVaults] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   const [jobExpanded, setJobExpanded] = useState(false);
+  const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
+    null,
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
@@ -133,7 +143,7 @@ function App({
 
       if (existing) {
         setActiveRepoUrl(repoUrl);
-        await graphViewerRef.current?.reload(existing.id, 2);
+        await loadGraph(existing.id, 2);
         setTimeout(() => graphViewerRef.current?.selectNode(existing.id), 100);
       } else {
         const provider = detectProvider(repoUrl);
@@ -147,7 +157,7 @@ function App({
         });
       }
     },
-    [store, handleJobSubmit],
+    [store, handleJobSubmit, loadGraph],
   );
 
   // Handle initial repository on load (from prop or ?repo= param)
@@ -289,13 +299,19 @@ function App({
           onToggleSettings={handleToggleSettings}
           showHelp={showHelp}
           onToggleHelp={handleToggleHelp}
-          onGraphDataChange={setChatGraphData}
           chatHighlightNodes={chatHighlightNodes}
           animationSettings={animationSettings}
           graphFullscreen={isMobile ? graphFullscreen : undefined}
           onToggleGraphFullscreen={
             isMobile ? handleToggleGraphFullscreen : undefined
           }
+          onMobilePanelTabChange={setMobilePanelTab}
+        />
+
+        <SidePanel
+          mobileActiveTab={mobilePanelTab}
+          onMobileTabChange={setMobilePanelTab}
+          onMobileClose={() => setMobilePanelTab(null)}
         />
 
         {showChat && (
@@ -305,7 +321,6 @@ function App({
             }
           >
             <ChatPanel
-              graphData={chatGraphData}
               onClose={() => setShowChat(false)}
               onNodeSelect={(nodeId) => {
                 graphViewerRef.current?.selectNode(nodeId);
@@ -321,7 +336,7 @@ function App({
               }}
               onGraphChange={async (focusNodeId) => {
                 // Reload scoped to the PR node — 2 hops shows PR → Files → their neighbors
-                await graphViewerRef.current?.reload(focusNodeId, 2);
+                await loadGraph(focusNodeId, 2);
                 if (focusNodeId) {
                   // Wait for React to commit the re-render with new graph data
                   setTimeout(() => {
@@ -359,9 +374,9 @@ function App({
           onClose={() => setShowSettings(false)}
           onGraphCleared={() => {
             setShowSettings(false);
-            graphViewerRef.current?.reload();
+            loadGraph();
           }}
-          onLimitsChanged={() => graphViewerRef.current?.reload()}
+          onLimitsChanged={() => loadGraph()}
           onAnimationSettingsChanged={setAnimationSettings}
         />
       )}
