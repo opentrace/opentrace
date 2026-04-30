@@ -90,6 +90,8 @@ interface Props {
   /** Fired once per accepted question submission so the graph can re-frame. */
   onQuestionSubmit?: () => void;
   repoUrl?: string;
+  /** Identifier used to scope persisted conversations. Defaults to `repoUrl`. */
+  projectKey?: string;
   onWidthChange?: (width: number) => void;
   /** Optional content rendered at the bottom of the settings view (e.g. managed provider UI). */
   settingsFooter?: React.ReactNode;
@@ -102,6 +104,7 @@ export default function ChatPanel({
   onChatHighlight,
   onQuestionSubmit,
   repoUrl,
+  projectKey,
   onWidthChange,
   settingsFooter,
 }: Props) {
@@ -144,7 +147,7 @@ export default function ChatPanel({
     persistMessages,
     loadingConversation,
     foundNodeIds: restoredFoundNodeIds,
-  } = useConversation(repoUrl, historyEnabled);
+  } = useConversation(projectKey ?? repoUrl, historyEnabled);
 
   const [showSettings, setShowSettings] = useState(false);
   const [input, setInput] = useState('');
