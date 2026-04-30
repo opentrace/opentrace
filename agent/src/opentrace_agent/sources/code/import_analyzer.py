@@ -96,15 +96,10 @@ def _parse_python_import(
     for child in node.children:
         if child.type == "dotted_name":
             module_name = child.text.decode()
-            # Try to resolve module.submodule → module/submodule.py or module/submodule/__init__.py
-            candidates = _module_to_paths(module_name)
-            resolved = False
-            for candidate in candidates:
-                if candidate in known_files:
-                    result[module_name.split(".")[-1]] = candidate
-                    resolved = True
-                    break
-            if not resolved:
+            resolved = _resolve_against_known(_module_to_paths(module_name), known_files)
+            if resolved:
+                result[module_name.split(".")[-1]] = resolved
+            else:
                 top_level = module_name.split(".")[0]
                 external[top_level] = package_id("pypi", top_level)
         elif child.type == "aliased_import":
@@ -113,14 +108,10 @@ def _parse_python_import(
             if name_node and alias_node:
                 module_name = name_node.text.decode()
                 alias = alias_node.text.decode()
-                candidates = _module_to_paths(module_name)
-                resolved = False
-                for candidate in candidates:
-                    if candidate in known_files:
-                        result[alias] = candidate
-                        resolved = True
-                        break
-                if not resolved:
+                resolved = _resolve_against_known(_module_to_paths(module_name), known_files)
+                if resolved:
+                    result[alias] = resolved
+                else:
                     top_level = module_name.split(".")[0]
                     external[top_level] = package_id("pypi", top_level)
 
@@ -169,15 +160,12 @@ def _parse_python_from_import(
         candidates = _module_to_paths(module_text)
 
     # Map the imported module alias
-    resolved_path: str | None = None
-    for candidate in candidates:
-        if candidate in known_files:
-            # The alias is the last part of the module name or the explicit alias
-            alias = module_text.split(".")[-1] if module_text else ""
-            if alias:
-                result[alias] = candidate
-            resolved_path = candidate
-            break
+    resolved_path = _resolve_against_known(candidates, known_files)
+    if resolved_path is not None:
+        # The alias is the last part of the module name or the explicit alias
+        alias = module_text.split(".")[-1] if module_text else ""
+        if alias:
+            result[alias] = resolved_path
 
     # Store individual imported symbol names from `from X import Y, Z`
     if resolved_path is not None:
@@ -450,6 +438,35 @@ def _module_to_paths(module_name: str) -> list[str]:
     """Convert a dotted module name to candidate file paths."""
     path = module_name.replace(".", "/")
     return [f"{path}.py", f"{path}/__init__.py"]
+
+
+def _resolve_against_known(candidates: list[str], known_files: set[str]) -> str | None:
+    """Resolve a list of candidate paths against ``known_files``.
+
+    Tries exact match first (fast path; matches simple flat layouts like
+    ``utils.py``).  Falls back to suffix match so absolute Python imports
+    like ``from opentrace_agent.cli.main import _resolve_db`` resolve
+    correctly when the actual source lives under a src-layout prefix
+    (``agent/src/opentrace_agent/cli/main.py``).
+
+    Match anchored on a ``/`` boundary so ``utils`` doesn't collide with
+    ``my_utils.py``.  When multiple paths match (e.g. a vendored copy in
+    a monorepo), the shortest path wins — that's typically the canonical
+    install location, not a nested duplicate.
+    """
+    for candidate in candidates:
+        if candidate in known_files:
+            return candidate
+
+    matches: list[str] = []
+    for candidate in candidates:
+        suffix = "/" + candidate
+        for kf in known_files:
+            if kf.endswith(suffix):
+                matches.append(kf)
+    if matches:
+        return min(matches, key=len)
+    return None
 
 
 def _resolve_relative_path(base_dir: str, relative: str) -> str:

@@ -137,12 +137,15 @@ def _run(
             break
 
     # --- 2. Find symbols defined in this file ---------------------------------
-    # Traverse outgoing from file to find DEFINED_IN relationships
-    # (symbols point DEFINED_IN → file, so from the file's perspective it's incoming)
-    neighbors = store._get_neighbors(file_node["id"], "incoming")
+    # File --DEFINES--> Function/Class/Module is *outgoing* from the file.
+    # Filter by the DEFINES rel type so unrelated outgoing edges (e.g. a
+    # File --IMPORTS--> Module hop) don't sneak in.
+    neighbors = store._get_neighbors(file_node["id"], "outgoing")
 
     symbols: list[dict[str, Any]] = []
     for nb_node, nb_rel in neighbors:
+        if nb_rel["type"] != "DEFINES":
+            continue
         if nb_node["type"] not in ("Function", "Class", "Module"):
             continue
         if not _in_line_range(nb_node, line_ranges):
@@ -151,12 +154,29 @@ def _run(
         if len(symbols) >= _MAX_SYMBOLS:
             break
 
-    if not symbols:
-        # No indexed symbols found — still report the file itself
+    # --- 3. File-level importers (cross-file IMPORTS edges) -------------------
+    # Cross-file imports are modeled at File granularity in the graph
+    # (``other.py --IMPORTS--> this.py``), so they don't show up in the
+    # per-symbol traversal below. Collect them here and report
+    # separately so callers see "N other files import this file".
+    file_importers: list[dict[str, Any]] = []
+    try:
+        for nb_node, nb_rel in store._get_neighbors(file_node["id"], "incoming"):
+            if nb_rel["type"] != "IMPORTS":
+                continue
+            if nb_node["type"] != "File":
+                continue
+            file_importers.append(nb_node)
+    except Exception:
+        file_importers = []
+
+    if not symbols and not file_importers:
+        # No indexed symbols and no file-level importers — fall back to
+        # the generic file-level relationship dump.
         _print_file_only_impact(store, file_node)
         return
 
-    # --- 3. For each symbol, find what depends on it --------------------------
+    # --- 4. For each symbol, find what depends on it --------------------------
     lines: list[str] = []
     file_props = file_node.get("properties") or {}
     file_display = file_props.get("path", file_node["name"])
@@ -196,8 +216,18 @@ def _run(
 
         lines.append("")
 
-    if total_callers > 0:
-        lines.append(f"  ⚠ {total_callers} dependent(s) may be affected by changes to this file.")
+    if file_importers:
+        lines.append(f"  Files importing this file ({len(file_importers)}):")
+        for importer in file_importers[:_MAX_CALLERS_PER_SYMBOL]:
+            importer_path = (importer.get("properties") or {}).get("path", importer.get("name", "?"))
+            lines.append(f"    --IMPORTS-- {importer_path}")
+        if len(file_importers) > _MAX_CALLERS_PER_SYMBOL:
+            lines.append(f"    ... and {len(file_importers) - _MAX_CALLERS_PER_SYMBOL} more")
+        lines.append("")
+
+    total_dependents = total_callers + len(file_importers)
+    if total_dependents > 0:
+        lines.append(f"  ⚠ {total_dependents} dependent(s) may be affected by changes to this file.")
         lines.append("  Consider reviewing these callers for compatibility.")
     else:
         lines.append("  No known dependents found in the graph.")

@@ -170,6 +170,25 @@ _QUERY_STOPWORDS = frozenset(
 )
 
 
+# Priority of `_match_field` values for tie-breaking. Lower = higher
+# confidence. ``name`` and ``signature`` matches are authoritative
+# (the symbol literally has that token). ``docs`` is the riskiest —
+# the comment claims something but the body may have drifted. A docs
+# match should never beat a name match in candidate ranking.
+_MATCH_FIELD_PRIORITY = {
+    "name": 0,
+    "signature": 1,
+    "path": 2,
+    "summary": 3,
+    "docs": 4,
+    "unknown": 5,
+}
+
+
+def _match_field_priority(node: dict[str, Any]) -> int:
+    return _MATCH_FIELD_PRIORITY.get(node.get("_match_field", "unknown"), 5)
+
+
 def _tag_match_field(node: dict[str, Any], keywords: list[str]) -> dict[str, Any]:
     """Annotate ``node`` with which field carried the keyword match.
 
@@ -546,12 +565,16 @@ def create_mcp_server(
             if not scored:
                 return _json_response([])
 
+            # Tag every candidate first so the field-priority tiebreaker
+            # is available to the sort key. Without this, an FTS hit on
+            # a docstring can outrank a real name match when both share
+            # the same _match_count.
+            tagged = [_tag_match_field(n, n["_matched"]) for n in scored.values()]
             ranked = sorted(
-                scored.values(),
-                key=lambda n: (-n["_match_count"], n.get("name", "")),
+                tagged,
+                key=lambda n: (-n["_match_count"], _match_field_priority(n), n.get("name", "")),
             )
-            tagged = [_tag_match_field(n, n["_matched"]) for n in ranked[:limit]]
-            return _json_response(tagged)
+            return _json_response(ranked[:limit])
         except Exception as e:
             return _error_response("keyword_search", e)
 
@@ -749,7 +772,16 @@ def create_mcp_server(
             if not matches:
                 return json.dumps({"error": f"No node matching {symbol!r}" + (f" of type {type}" if type else "")})
 
-            target = matches[0]
+            # Re-rank by match-field priority so a literal symbol-name
+            # query doesn't pick a function whose docstring merely
+            # mentions the symbol. Preserve the original FTS order
+            # within each field bucket via the enumerated index.
+            keywords = [symbol]
+            tagged = [(_tag_match_field(m, keywords), i) for i, m in enumerate(matches)]
+            tagged.sort(key=lambda pair: (_match_field_priority(pair[0]), pair[1]))
+            ordered = [pair[0] for pair in tagged]
+
+            target = ordered[0]
             deps = store.traverse(target["id"], direction="incoming", max_depth=depth)
             relevant = [d for d in deps if d["relationship"]["type"] in _DEPENDENCY_RELS]
 
@@ -758,7 +790,7 @@ def create_mcp_server(
                     "target": target,
                     "dependents": relevant,
                     "count": len(relevant),
-                    "candidates": [{"id": m["id"], "name": m["name"], "type": m["type"]} for m in matches],
+                    "candidates": [{"id": m["id"], "name": m["name"], "type": m["type"]} for m in ordered],
                 }
             )
         except ValueError as e:
@@ -847,7 +879,12 @@ def create_mcp_server(
                     break
 
             symbols_with_deps: list[dict[str, Any]] = []
-            for nb_node, _rel in store._get_neighbors(file_node["id"], "incoming"):
+            # File --DEFINES--> Function/Class/Module is *outgoing* from the
+            # file. Filter by DEFINES so unrelated outgoing edges (e.g.
+            # File --IMPORTS--> Module) don't sneak in.
+            for nb_node, nb_rel in store._get_neighbors(file_node["id"], "outgoing"):
+                if nb_rel["type"] != "DEFINES":
+                    continue
                 if nb_node["type"] not in ("Function", "Class", "Module"):
                     continue
                 if line_ranges:
@@ -866,11 +903,27 @@ def create_mcp_server(
                 relevant = [d for d in deps if d["relationship"]["type"] in _DEPENDENCY_RELS]
                 symbols_with_deps.append({"symbol": nb_node, "dependents": relevant, "count": len(relevant)})
 
-            total = sum(s["count"] for s in symbols_with_deps)
+            # File-level importers — incoming IMPORTS edges pointing at the
+            # target file. The graph models cross-file imports at File
+            # granularity (File --IMPORTS--> File), so these don't show up
+            # in the per-symbol traversal above. Surface them separately
+            # so callers see "bench.py / auth.py import this file" even
+            # when no specific symbol from the file is dynamically
+            # invoked.
+            file_importers: list[dict[str, Any]] = []
+            for nb_node, nb_rel in store._get_neighbors(file_node["id"], "incoming"):
+                if nb_rel["type"] != "IMPORTS":
+                    continue
+                if nb_node["type"] != "File":
+                    continue
+                file_importers.append(nb_node)
+
+            total = sum(s["count"] for s in symbols_with_deps) + len(file_importers)
             return _json_response(
                 {
                     "file": file_node,
                     "symbols": symbols_with_deps,
+                    "file_importers": file_importers,
                     "total_dependents": total,
                 }
             )

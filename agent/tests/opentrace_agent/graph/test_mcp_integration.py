@@ -710,6 +710,10 @@ class TestMCPFindUsages:
         assert "target" in result
         assert "dependents" in result
         assert isinstance(result["dependents"], list)
+        # The picked target should actually be the Database class — not
+        # some other node whose docstring mentions "Database".
+        assert result["target"]["name"] == "Database"
+        assert result["target"]["type"] == "Class"
 
     def test_unknown_symbol(self, indexed_python_store):
         result = _call_tool(indexed_python_store, "find_usages", symbol="zzz_no_such_symbol_zzz")
@@ -719,6 +723,47 @@ class TestMCPFindUsages:
         result = _call_tool(indexed_go_store, "find_usages", symbol="main", depth=99)
         # depth is capped at 5; tool should still succeed (no crash)
         assert "target" in result or "error" in result
+
+    def test_prefers_name_match_over_docs_match(self):
+        """A symbol-name query must not pick a docstring-mention as the
+        target. Regression for impact_analysis ranking bug where
+        ``find_usages('_resolve_db')`` returned a function whose
+        docstring referenced ``_resolve_db`` instead of ``_resolve_db``
+        itself.
+        """
+        from unittest.mock import MagicMock
+
+        from opentrace_agent.cli.mcp_server import create_mcp_server
+
+        # Two candidates, FTS-ranked with the docstring-mention winner first.
+        decoy = {
+            "id": "repo/decoy.py::run_thing(str)",
+            "type": "Function",
+            "name": "run_thing(str)",
+            "properties": {
+                "docs": "calls _resolve_db internally — see _resolve_db",
+                "signature": "(arg: str)",
+            },
+        }
+        target = {
+            "id": "repo/main.py::_resolve_db(str)",
+            "type": "Function",
+            "name": "_resolve_db(str)",
+            "properties": {"signature": "(path: str)"},
+        }
+
+        store = MagicMock()
+        store.search_nodes.return_value = [decoy, target]
+        store.traverse.return_value = []
+
+        server = create_mcp_server(store)
+        result = json.loads(server._tool_manager._tools["find_usages"].fn(symbol="_resolve_db"))
+
+        assert "target" in result, result
+        assert result["target"]["id"] == target["id"], (
+            "find_usages picked the docstring-mention over the actual symbol — "
+            f"got {result['target']['name']!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +777,16 @@ class TestMCPImpactAnalysis:
         assert "file" in result
         assert "symbols" in result
         assert "total_dependents" in result
+        # db.py defines the Database class plus its methods. If symbols
+        # is empty, the tool walked the wrong edge direction.
+        assert len(result["symbols"]) > 0, (
+            "impact_analysis returned zero symbols for db.py — likely "
+            "walking incoming edges from the file instead of outgoing DEFINES"
+        )
+        symbol_names = {s["symbol"]["name"] for s in result["symbols"]}
+        assert "Database" in symbol_names, (
+            f"Expected 'Database' in symbols, got {symbol_names!r}"
+        )
 
     def test_unknown_file(self, indexed_python_store):
         result = _call_tool(indexed_python_store, "impact_analysis", target="ghost_file.xyz")
@@ -741,6 +796,31 @@ class TestMCPImpactAnalysis:
         # Wide range — should still return file/symbols structure
         result = _call_tool(indexed_python_store, "impact_analysis", target="db.py", lines="1-9999")
         assert "file" in result
+        # Same non-empty assertion: a 1-9999 range covers every symbol,
+        # so we must surface them all.
+        assert len(result["symbols"]) > 0
+
+    def test_surfaces_file_level_importers(self, indexed_python_store):
+        """``main.py`` does ``from db import Database`` — after the
+        import-resolver fix that should land as a real File--IMPORTS-->File
+        edge in the graph, and impact_analysis on db.py should report
+        main.py as a file-level importer.
+
+        Regression for the cross-file blast-radius gap: previously every
+        Python absolute import fell into the external ``pkg:pypi:*``
+        bucket because ``_module_to_paths`` only checked exact matches.
+        """
+        result = _call_tool(indexed_python_store, "impact_analysis", target="db.py")
+        assert "file_importers" in result, (
+            "impact_analysis response is missing the file_importers field — "
+            "regression in the file-level importer surfacing"
+        )
+        importer_paths = {
+            (n.get("properties") or {}).get("path", "") for n in result["file_importers"]
+        }
+        assert any(p.endswith("/main.py") or p == "main.py" for p in importer_paths), (
+            f"Expected main.py in file_importers for db.py, got {importer_paths!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
