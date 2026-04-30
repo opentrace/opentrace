@@ -189,8 +189,12 @@ def _run_rg(
         "rg",
         "--no-heading",
         "--line-number",
+        # rg's ``--max-count`` is a per-file cap. The +1 ensures a
+        # single file with > max_count matches yields enough rows to
+        # trip the post-slice's ``len(scrubbed) > max_count`` overflow
+        # check, which then slices the joined output back to max_count.
         "--max-count",
-        str(max_count),
+        str(max_count + 1),
     ]
     if include:
         cmd.extend(["--glob", include])

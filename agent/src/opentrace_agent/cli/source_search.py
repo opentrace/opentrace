@@ -89,6 +89,29 @@ def _attribute_repo(node_id: str, repo_ids: list[str]) -> str:
     return node_id.split("/", 1)[0] if "/" in node_id else node_id
 
 
+def strip_repo_prefix(path_like: str, repo_ids: list[str]) -> str:
+    """Strip the longest matching repo id from *path_like*; return the trailing remainder.
+
+    Mirrors :func:`_attribute_repo` but returns the slash-separated
+    remainder. For ``"acme/widget/src/foo.py"`` against
+    ``["acme/widget"]`` returns ``"src/foo.py"``. When *path_like*
+    equals a repo id (no remainder), returns ``""``. When no repo
+    id matches, falls back to splitting on the first ``"/"`` —
+    same orphan-node shape as :func:`_attribute_repo`.
+
+    *repo_ids* must be sorted longest-first so a multi-segment id
+    like ``"acme/widget"`` wins over a single-segment match like
+    ``"acme"`` when both are indexed; :func:`_load_repo_ids`
+    produces the right ordering.
+    """
+    for r in repo_ids:
+        if path_like == r:
+            return ""
+        if path_like.startswith(r + "/"):
+            return path_like[len(r) + 1 :]
+    return path_like.split("/", 1)[1] if "/" in path_like else ""
+
+
 def _resolve_repo(store: Any, repo_id: str | None) -> str | None:
     """Verify *repo_id* exists as a Repository node id; raise on miss.
 

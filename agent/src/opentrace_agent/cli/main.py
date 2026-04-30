@@ -1648,13 +1648,18 @@ def _read_source_by_node(store: "GraphStore", node_id: str) -> None:  # noqa: F8
             pass
 
     if not file_path:
-        # Last resort: extract from the node ID (format: repo/path/to/file.py::SymbolName)
+        # Last resort: extract from the node ID (format: repo/path/to/file.py::SymbolName).
+        # Repo ids may contain "/" (e.g. "owner/repo"), so the prefix is
+        # matched against the indexed repo ids longest-first rather than
+        # by splitting on the first "/".
         if "::" in node_id:
+            from opentrace_agent.cli.source_search import strip_repo_prefix
+
             candidate = node_id.split("::", 1)[0]
-            # Strip repo prefix (first segment before /)
-            parts = candidate.split("/", 1)
-            if len(parts) > 1:
-                file_path = parts[1]
+            repo_ids = sorted(store.list_repository_ids(), key=len, reverse=True)
+            stripped = strip_repo_prefix(candidate, repo_ids)
+            if stripped:
+                file_path = stripped
 
     if not file_path:
         raise click.ClickException(f"Node {node_id} has no file path.")

@@ -408,6 +408,37 @@ class GraphStore:
             nodes.append(n)
         return nodes
 
+    def find_files_by_basename(
+        self,
+        basename: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return File nodes whose ``properties.path`` ends in ``/<basename>``
+        or equals ``<basename>`` (root-of-repo files).
+
+        ``properties`` is stored as a JSON string, so Cypher predicates
+        can't reach into ``properties.path``; this method streams File
+        nodes and filters the suffix in Python, stopping once *limit*
+        matches accumulate.
+        """
+        suffix = "/" + basename
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = 'File' RETURN n.id, n.type, n.name, n.properties",
+        )
+        matches: list[dict[str, Any]] = []
+        while result.has_next() and len(matches) < limit:
+            n = _row_to_node(result.get_next())
+            props = n.get("properties") or {}
+            if isinstance(props, str):
+                try:
+                    props = json.loads(props)
+                except Exception:
+                    props = {}
+            path = props.get("path") or ""
+            if path == basename or path.endswith(suffix):
+                matches.append(n)
+        return matches
+
     def search_nodes(
         self,
         query: str,

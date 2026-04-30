@@ -395,6 +395,36 @@ class TestPerRepoLimit:
         assert len(match_lines) == 5, result.output
         assert "truncated at 5 matches per repo" in result.output
 
+    def test_truncates_within_single_file(self, tmp_path, monkeypatch) -> None:
+        """A single file with more matches than ``--limit`` must trip the truncation flag.
+
+        Setup: 200 matches in one file, ``--limit 50``.
+        Expected: exactly 50 rows in the result, ``truncated=True``.
+        """
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        # One file, 200 matches. With --limit 50 the user must see
+        # exactly 50 rows AND the truncation indicator.
+        clone = fake_home / ".opentrace" / "repos" / "acme" / "tall"
+        clone.mkdir(parents=True)
+        (clone / "huge.txt").write_text("HIT\n" * 200)
+
+        db_path = str(tmp_path / "tall.db")
+        store = GraphStore(db_path)
+        store.add_node("tall", "Repository", "tall", {})
+        store.save_metadata({"repoId": "tall", "repoPath": "/Users/elsewhere/.opentrace/repos/acme/tall"})
+        store.close()
+
+        result = _invoke(db_path, "HIT", "--repo", "tall", "--limit", "50", "--json")
+        assert result.exit_code == 0, result.output
+
+        data = json.loads(result.output)
+        assert len(data["results"]) == 1
+        assert data["results"][0]["truncated"] is True
+        assert len(data["results"][0]["matches"]) == 50
+
     def test_no_truncation_indicator_when_under_limit(self, grep_env) -> None:
         # alpha has exactly one match for parse_alpha; --limit 50 is
         # comfortably above it. No truncation message should appear.

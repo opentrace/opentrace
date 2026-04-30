@@ -128,13 +128,14 @@ def _resolve_file_node(store: Any, file_path: str) -> dict[str, Any] | None:
         # filename input). The exact-match phase above tested
         # properties.path == <input>, which only matches files at a
         # repo root. This phase widens to any file *ending* in the
-        # basename, and requires uniqueness.
-        fts_candidates = store.search_nodes(basename, node_types=["File"], limit=20)
-        basename_matches = [
-            n
-            for n in fts_candidates
-            if _props(n).get("path", "").endswith("/" + basename) or _props(n).get("path") == basename
-        ]
+        # basename via a direct path-suffix match, and requires
+        # uniqueness. The cap is _MAX_AMBIGUOUS_CANDIDATES + 1 — one
+        # over the number the ambiguity message lists, so we can
+        # detect "more than N" without scanning further.
+        basename_matches = store.find_files_by_basename(
+            basename,
+            limit=_MAX_AMBIGUOUS_CANDIDATES + 1,
+        )
         if len(basename_matches) == 1:
             return basename_matches[0]
         if len(basename_matches) > 1:

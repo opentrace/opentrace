@@ -86,7 +86,7 @@ def test_run_impact_no_file_match(tmp_path, capsys):
     """Should produce no output when file is not in the graph."""
     mock_store = MagicMock()
     mock_store.list_nodes.return_value = []
-    mock_store.search_nodes.return_value = []
+    mock_store.find_files_by_basename.return_value = []
     mock_store.get_metadata.return_value = []
 
     with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
@@ -261,22 +261,27 @@ class TestResolveFileNode:
         target = self._file("packages/ui/src/Button.tsx")
         store = MagicMock()
         store.list_nodes.return_value = []  # no exact match
-        store.search_nodes.return_value = [target]
+        store.find_files_by_basename.return_value = [target]
         assert _resolve_file_node(store, "Button.tsx") is target
 
-    def test_basename_fallback_filters_to_endswith(self) -> None:
-        real = self._file("packages/ui/src/Button.tsx", id_="real")
-        noise = {
-            "id": "noise",
-            "type": "File",
-            "name": "Button.tsx",
-            "properties": {"path": "irrelevant/Buttonish.tsx"},
-        }
+    def test_basename_fallback_uses_store_helper_not_fts(self) -> None:
+        """Basename resolution routes through ``find_files_by_basename``, not BM25.
+
+        Asserts the call shape: the store's path-suffix helper is invoked
+        and ``search_nodes`` (BM25/FTS) is not. Path-suffix matching gives
+        a deterministic "all files ending in /X" view; BM25 ranking can
+        omit the target when many indexed files share a basename.
+        """
+        target = self._file("packages/auth/src/index.ts", id_="proj/packages/auth/src/index.ts")
         store = MagicMock()
         store.list_nodes.return_value = []
-        store.search_nodes.return_value = [noise, real]
-        # Only `real` ends in "/Button.tsx"; noise is filtered out.
-        assert _resolve_file_node(store, "Button.tsx") is real
+        store.find_files_by_basename.return_value = [target]
+
+        result = _resolve_file_node(store, "index.ts")
+
+        assert result is target
+        store.find_files_by_basename.assert_called_once()
+        store.search_nodes.assert_not_called()
 
     def test_ambiguous_exact_match_raises(self) -> None:
         # Same relative path indexed in two different repos: the path
@@ -328,7 +333,7 @@ class TestResolveFileNode:
         b = self._file("pkg/b/utils.py", id_="proj/pkg/b/utils.py")
         store = MagicMock()
         store.list_nodes.return_value = []
-        store.search_nodes.return_value = [a, b]
+        store.find_files_by_basename.return_value = [a, b]
         with pytest.raises(click.ClickException) as excinfo:
             _resolve_file_node(store, "utils.py")
         msg = str(excinfo.value.message)
@@ -341,7 +346,7 @@ class TestResolveFileNode:
     def test_no_match_returns_none(self) -> None:
         store = MagicMock()
         store.list_nodes.return_value = []
-        store.search_nodes.return_value = []
+        store.find_files_by_basename.return_value = []
         assert _resolve_file_node(store, "does/not/exist.py") is None
 
 
@@ -426,7 +431,7 @@ class TestJsonOutput:
         """When the file can't be resolved, still echo the input as requestedFile."""
         store = MagicMock()
         store.list_nodes.return_value = []
-        store.search_nodes.return_value = []
+        store.find_files_by_basename.return_value = []
         store.get_metadata.return_value = []
 
         with patch("opentrace_agent.store.GraphStore", return_value=store):
@@ -466,7 +471,7 @@ def test_ambiguity_click_exception_propagates(tmp_path) -> None:
     b = {"id": "b", "type": "File", "name": "utils.py", "properties": {"path": "pkg/b/utils.py"}}
     store = MagicMock()
     store.list_nodes.return_value = []
-    store.search_nodes.return_value = [a, b]
+    store.find_files_by_basename.return_value = [a, b]
     store.get_metadata.return_value = []
 
     with patch("opentrace_agent.store.GraphStore", return_value=store):
