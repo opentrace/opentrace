@@ -18,12 +18,20 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import signal
+import subprocess
 import threading
 import time
 from pathlib import Path
 
 import click
+
+from opentrace_agent.cli.workspace import (
+    EXIT_DB_MISSING,
+    EXIT_WORKSPACE_UNRESOLVABLE,
+    resolve_workspace_db,
+)
 
 # ---------------------------------------------------------------------------
 # Database discovery
@@ -105,10 +113,31 @@ def find_db(start: Path | None = None) -> Path | None:
 
 
 def _resolve_db(db_path: str | None, *, must_exist: bool = False) -> str:
-    """Return a database path from an explicit flag or auto-discovery.
+    """Return a database path from an explicit flag, ``--workspace``, or auto-discovery.
 
-    Raises ``click.UsageError`` if *must_exist* and no database is found.
+    Resolution order:
+    1. Top-level ``--workspace``, threaded via ``ctx.obj["workspace_db"]``.
+       Mutually exclusive with ``--db`` — passing both is a usage error
+       (exit 2). Under ``--workspace`` mode with ``must_exist``, a missing
+       ``index.db`` exits with code 3 and a fact-stating stderr message;
+       consumers map the code to whatever recovery prompt they surface.
+    2. Explicit ``--db`` flag.
+    3. Walk-up auto-discovery via ``find_db``.
+
+    Raises ``click.UsageError`` (exit 2) for cases 2 and 3 when no DB is
+    found and ``must_exist`` is set.
     """
+    ctx = click.get_current_context(silent=True)
+    workspace_db = (ctx.obj or {}).get("workspace_db") if ctx and ctx.obj else None
+
+    if workspace_db is not None:
+        if db_path is not None:
+            raise click.UsageError("--workspace and --db are mutually exclusive.")
+        if must_exist and not Path(workspace_db).exists():
+            click.echo(f"No OpenTrace index found at {workspace_db}", err=True)
+            ctx.exit(EXIT_DB_MISSING)
+        return workspace_db
+
     if db_path is not None:
         p = Path(db_path)
         if must_exist and not p.exists():
@@ -144,11 +173,165 @@ def _ensure_gitignore(directory: Path) -> None:
 
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="opentraceai")
+@click.option(
+    "--workspace",
+    "workspace_dir",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Resolve a workspace-scoped DB under ~/.opentrace/workspaces/, keyed "
+        "by the resolved path of <dir>. Mutually exclusive with --db."
+    ),
+)
 @click.pass_context
-def app(ctx: click.Context) -> None:
+def app(ctx: click.Context, workspace_dir: str | None) -> None:
     """OpenTrace — map codebases into a knowledge graph."""
+    ctx.ensure_object(dict)
+    if workspace_dir is not None:
+        try:
+            db_path = resolve_workspace_db(workspace_dir)
+        except (FileNotFoundError, OSError):
+            click.echo(
+                f"Workspace directory does not exist or is not accessible: {workspace_dir}",
+                err=True,
+            )
+            ctx.exit(EXIT_WORKSPACE_UNRESOLVABLE)
+        ctx.obj["workspace_db"] = str(db_path)
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
+
+
+def _safe_unlink(path_str: str, *, context: str) -> bool:
+    """Unlink *path_str*, tolerating both missing files and permission errors.
+
+    Returns True if a file was actually removed. Missing files are a no-op
+    and return False. Permission or filesystem errors emit a stderr warning
+    (tagged with *context* so the reader can tell which cleanup site logged
+    it) and return False — they never propagate, so a doomed unlink can't
+    crash a command that has otherwise succeeded or mask an unrelated
+    exception that's already in flight.
+    """
+    path = Path(path_str)
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        click.echo(
+            f"Warning: failed to remove {path_str} ({context}): {e}",
+            err=True,
+        )
+        return False
+
+
+def _clean_stale_staging(staging_db: str) -> None:
+    """Remove staging DB artifacts left by an interrupted prior ``index`` run.
+
+    ``opentrace index`` writes to ``<db>.staging`` and atomically renames
+    over ``<db>`` on success. If the writer is killed mid-run (SIGKILL,
+    OOM, power loss), the staging file and its WAL are left on disk and
+    cause the native DB layer to crash when the next run tries to reopen
+    them. This helper runs at the top of the ``index`` write path; any
+    pre-existing staging files are by definition orphaned and safe to
+    remove under the single-writer assumption (only ``opentrace index``
+    creates these files, and this process is about to become the writer).
+    """
+    removed: list[str] = []
+    for path_str in (staging_db, staging_db + ".wal"):
+        if _safe_unlink(path_str, context="stale staging"):
+            removed.append(path_str)
+    if removed:
+        click.echo("Cleaned stale staging file(s) from a prior interrupted run:\n  " + "\n  ".join(removed))
+
+
+def _run_indexing_pipeline(
+    *,
+    source_path: Path,
+    repo_id: str,
+    db_path: str,
+    batch_size: int,
+    verbose: bool,
+    extra_metadata: dict[str, object] | None = None,
+) -> float:
+    """Run the four-stage pipeline with atomic-write staging.
+
+    Writes to ``<db_path>.staging`` and atomically renames over
+    ``<db_path>`` on success, so a SIGKILL/OOM/power-loss mid-index
+    never leaves the live DB half-written. Self-heals any orphaned
+    staging artifacts from a prior interrupted run before starting.
+
+    *extra_metadata* is merged on top of the auto-collected metadata
+    before persistence — ``fetch-and-index`` uses this to attach the
+    original remote ``sourceUri`` (which the local-path indexer can't
+    discover).
+
+    Returns elapsed seconds. Raises on pipeline error after cleaning
+    up the staging artifacts.
+    """
+    from opentrace_agent.pipeline import PipelineInput, run_pipeline
+    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
+    from opentrace_agent.store import GraphStore
+
+    db_dir = Path(db_path).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    # Write to a staging file so we don't contend with readers (MCP)
+    # that hold an exclusive lock on the live database.
+    staging_db = db_path + ".staging"
+
+    # Self-heal from any prior interrupted run. Under the single-writer
+    # assumption (only this helper touches these files), anything
+    # pre-existing here is orphaned.
+    _clean_stale_staging(staging_db)
+
+    click.echo(f"Opening staging database at {staging_db} ...")
+    try:
+        with GraphStore(staging_db) as graph_store:
+            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+
+            click.echo(f"Indexing {source_path} ...")
+            t0 = time.monotonic()
+
+            inp = PipelineInput(path=str(source_path), repo_id=repo_id)
+
+            last_result = None
+            for event in run_pipeline(inp, store=store):
+                _print_event(event, verbose)
+                if getattr(event, "result", None) is not None:
+                    last_result = event.result
+
+            elapsed = time.monotonic() - t0
+
+            metadata = _collect_metadata(source_path, repo_id, elapsed, last_result)
+            if extra_metadata:
+                metadata.update(extra_metadata)
+            graph_store.save_metadata(metadata)
+
+            # Flush pending batches; the GraphStore is closed by the
+            # context manager on exit.
+            store.flush()
+    except BaseException:
+        # Clean up staging artifacts on failure so the next run isn't
+        # blocked by this attempt's leftovers. _safe_unlink swallows
+        # both missing files and OS errors so cleanup can never shadow
+        # the original exception that's about to re-raise.
+        _safe_unlink(staging_db, context="failed-index cleanup")
+        _safe_unlink(staging_db + ".wal", context="failed-index cleanup")
+        raise
+
+    # Atomically replace the live database.  Readers holding the old
+    # file descriptor continue to see the previous data until they
+    # detect the inode change and reopen.
+    os.replace(staging_db, db_path)
+
+    # The rename moves <staging>.staging to <db>, but <staging>.wal (if
+    # any) is left behind. Clean it so it doesn't linger as orphaned —
+    # but never fail here: we've already committed the index.
+    _safe_unlink(staging_db + ".wal", context="post-rename cleanup")
+
+    return elapsed
 
 
 @app.command()
@@ -173,57 +356,18 @@ def index(
     """Index a local codebase into a LadybugDB knowledge graph."""
     _configure_logging(verbose)
 
-    from opentrace_agent.pipeline import PipelineInput, run_pipeline
-    from opentrace_agent.pipeline.adapters import GraphStoreAdapter
-    from opentrace_agent.store import GraphStore
-
     root = Path(path)
     if repo_id is None:
         repo_id = root.name
 
     resolved_db = _resolve_db(db_path)
-    db_dir = Path(resolved_db).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_gitignore(db_dir)
-
-    # Write to a staging file so we don't contend with readers (MCP)
-    # that hold an exclusive lock on the live database.
-    staging_db = resolved_db + ".staging"
-
-    click.echo(f"Opening staging database at {staging_db} ...")
-    try:
-        with GraphStore(staging_db) as graph_store:
-            store = GraphStoreAdapter(graph_store, batch_size=batch_size)
-
-            click.echo(f"Indexing {root} ...")
-            t0 = time.monotonic()
-
-            inp = PipelineInput(path=str(root), repo_id=repo_id)
-
-            last_result = None
-            for event in run_pipeline(inp, store=store):
-                _print_event(event, verbose)
-                if getattr(event, "result", None) is not None:
-                    last_result = event.result
-
-            elapsed = time.monotonic() - t0
-
-            # Save index metadata.
-            metadata = _collect_metadata(root, repo_id, elapsed, last_result)
-            graph_store.save_metadata(metadata)
-
-            # Flush pending batches; the GraphStore is closed by the
-            # context manager on exit.
-            store.flush()
-    except BaseException:
-        # Clean up the staging file on failure.
-        Path(staging_db).unlink(missing_ok=True)
-        raise
-
-    # Atomically replace the live database.  Readers holding the old
-    # file descriptor continue to see the previous data until they
-    # detect the inode change and reopen.
-    os.replace(staging_db, resolved_db)
+    elapsed = _run_indexing_pipeline(
+        source_path=root,
+        repo_id=repo_id,
+        db_path=resolved_db,
+        batch_size=batch_size,
+        verbose=verbose,
+    )
 
     click.echo(f"Done in {elapsed:.1f}s.")
 
@@ -593,10 +737,12 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     type=click.Path(),
     help="OpenTrace database path (auto-detected if omitted).",
 )
-def augment(pattern: str, db_path: str | None) -> None:
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON instead of text.")
+def augment(pattern: str, db_path: str | None, output_json: bool) -> None:
     """Query the graph for context about a search pattern.
 
     Prints a short human-readable context block (< 50 lines) to stdout.
+    With --json, emits structured JSON for machine consumption.
     Exits 0 with no output when the pattern matches nothing or no index is found.
     """
     from opentrace_agent.cli.augment import run_augment
@@ -605,7 +751,7 @@ def augment(pattern: str, db_path: str | None) -> None:
         resolved = _resolve_db(db_path, must_exist=True)
     except click.UsageError:
         resolved = None
-    run_augment(pattern, resolved)
+    run_augment(pattern, resolved, output_json=output_json)
 
 
 @app.command("export")
@@ -1053,11 +1199,13 @@ def _print_table(columns: list[str], rows: list[list]) -> None:
     default=None,
     help="Comma-separated line ranges, e.g. '10-25,40-60'.",
 )
-def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON instead of text.")
+def impact(file_path: str, db_path: str | None, line_spec: str | None, output_json: bool) -> None:
     """Analyze the blast radius of changes to a file.
 
     Finds functions/classes defined in FILE_PATH, then walks incoming
     relationships (CALLS, IMPORTS, DEPENDS_ON) to show what depends on them.
+    With --json, emits structured JSON for machine consumption.
     Exits 0 with no output when the file is not indexed or no index is found.
     """
     from opentrace_agent.cli.impact import run_impact
@@ -1084,7 +1232,725 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
             except ValueError:
                 continue
 
-    run_impact(file_path, resolved, line_ranges)
+    run_impact(file_path, resolved, line_ranges, output_json=output_json)
+
+
+_REPOS_METADATA_FIELDS: tuple[str, ...] = (
+    "sourceUri",
+    "branch",
+    "commitSha",
+    "commitMessage",
+    "repoPath",
+    "indexedAt",
+    "durationSeconds",
+    "nodesCreated",
+    "relationshipsCreated",
+    "filesProcessed",
+    "classesExtracted",
+    "functionsExtracted",
+    "opentraceaiVersion",
+)
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def repos(db_path: str | None) -> None:
+    """List all indexed repositories in the graph database.
+
+    Emits a JSON array, one entry per ``Repository`` node, with the
+    full set of per-repo metadata. Every entry carries the same keys
+    (all nullable except ``id`` and ``name``) so that consumers can
+    rely on a stable shape. The fields are sourced from
+    ``store.get_metadata()`` — the same place ``stats --output json``
+    already surfaces them — with graph-node ``properties`` used as a
+    fallback for the three fields an indexer could plausibly write
+    there (``sourceUri``/``branch``/``commitSha``/``repoPath``).
+
+    Metadata entries whose ``repoId`` doesn't match any graph node
+    are excluded: this command reports what's in the graph, not what
+    has ever been indexed.
+    """
+    import json
+
+    from opentrace_agent.store import GraphStore
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        # Index the metadata up-front so the per-node merge is O(1).
+        metadata_by_id: dict[str, dict[str, object]] = {}
+        for entry in store.get_metadata():
+            repo_id = entry.get("repoId")
+            if isinstance(repo_id, str) and repo_id:
+                metadata_by_id[repo_id] = entry
+
+        repos_list: list[dict[str, object]] = []
+        for repo in store.list_repositories():
+            node_id = repo["id"]
+            graph_props = repo["properties"]
+
+            # Match by node id, not by name — they can diverge.
+            md = metadata_by_id.get(node_id, {})
+
+            record: dict[str, object] = {"id": node_id, "name": repo["name"]}
+            for field in _REPOS_METADATA_FIELDS:
+                # Metadata is authoritative when present. Graph-node
+                # properties cover the same three pre-existing keys as
+                # a fallback for indexers that populate them there.
+                record[field] = md.get(field) if md.get(field) is not None else graph_props.get(field)
+            repos_list.append(record)
+
+        click.echo(json.dumps(repos_list, indent=2, default=str))
+    finally:
+        store.close()
+
+
+def _parse_source_read_line_spec(spec: str) -> tuple[int | None, int | None]:
+    """Parse a ``--lines`` value for ``source-read``.
+
+    Accepts three forms:
+
+    - ``"10-25"`` → ``(10, 25)`` — closed range
+    - ``"10-"``   → ``(10, None)`` — open-ended, from 10 to end of file
+    - ``"10"``    → ``(10, 10)`` — single line
+
+    Returns ``(None, None)`` for an empty spec. Raises ``click.BadParameter``
+    on unparseable input, negative or zero line numbers, or reversed
+    ranges (``end < start``): source files are 1-indexed and ranges are
+    non-decreasing, so any other input is almost certainly a mistake the
+    caller wants reported, not silently coerced into an empty slice.
+    """
+    if not spec:
+        return None, None
+
+    def _bad(detail: str) -> click.BadParameter:
+        return click.BadParameter(
+            f"invalid --lines value: {spec!r} ({detail}; expected 'N', 'N-M', or 'N-' with N >= 1 and M >= N)"
+        )
+
+    parts = spec.split("-", 1)
+    try:
+        start = int(parts[0])
+    except ValueError as e:
+        raise _bad("start is not an integer") from e
+    if start < 1:
+        raise _bad("start must be >= 1")
+
+    if len(parts) == 1:
+        return start, start
+
+    tail = parts[1]
+    if not tail:
+        # "10-" → open-ended; caller lets _print_file_slice default to EOF.
+        return start, None
+    try:
+        end = int(tail)
+    except ValueError as e:
+        raise _bad("end is not an integer") from e
+    if end < 1:
+        raise _bad("end must be >= 1")
+    if end < start:
+        raise _bad(f"end ({end}) must be >= start ({start})")
+    return start, end
+
+
+@app.command("get-node")
+@click.argument("node_id")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def get_node_cmd(node_id: str, output_json: bool, db_path: str | None) -> None:
+    """Fetch a single node and its 1-hop neighbors.
+
+    Returns the node's full details plus every immediate neighbor (in
+    either direction) along with the connecting relationship. Same
+    envelope the MCP server's ``get_node`` tool returns; this is the
+    one-shot CLI surface for plugins that don't embed an MCP client.
+
+    Each neighbor's relationship carries a derived ``direction`` field
+    (``"outgoing"`` when the requested node is the source, ``"incoming"``
+    when it is the target) so callers don't reinvent the comparison.
+
+    Exits 1 if the node id is not in the graph.
+    """
+    from opentrace_agent.cli.get_node import run_get_node
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_get_node(node_id, resolved_db, output_json=output_json)
+
+
+@app.command("traverse")
+@click.argument("node_id")
+@click.option(
+    "--direction",
+    type=click.Choice(["outgoing", "incoming", "both"]),
+    default="outgoing",
+    show_default=True,
+    help="Direction to walk relative to the start node.",
+)
+@click.option(
+    "--depth",
+    default=2,
+    type=int,
+    show_default=True,
+    help="Maximum BFS depth (clamped to 10 to match the MCP traverse_graph cap).",
+)
+@click.option(
+    "--rel-type",
+    "rel_type",
+    default=None,
+    help="Restrict to one relationship type (e.g. CALLS, IMPORTS, DEFINES).",
+)
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def traverse_cmd(
+    node_id: str,
+    direction: str,
+    depth: int,
+    rel_type: str | None,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """BFS walk relationships from a starting node.
+
+    Walks up to ``--depth`` hops in the chosen direction, optionally
+    restricted to one relationship type. Each result preserves its
+    real per-hop depth so callers can distinguish a direct neighbor
+    from a transitive one.
+
+    For "node + immediate neighbors both directions", prefer
+    ``opentrace get-node`` — it adds direction classification and a
+    cleaner envelope for that specific shape.
+
+    Exits 1 if the start node id is not in the graph.
+    """
+    from opentrace_agent.cli.traverse import run_traverse
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_traverse(
+        node_id,
+        resolved_db,
+        direction=direction,
+        depth=depth,
+        rel_type=rel_type,
+        output_json=output_json,
+    )
+
+
+@app.command("source-grep")
+@click.argument("pattern")
+@click.option(
+    "--repo",
+    default=None,
+    help="Filter to a specific repo by id (use the 'id' field from `opentrace repos`).",
+)
+@click.option(
+    "--include",
+    default=None,
+    help="File glob filter passed to ripgrep (e.g. '*.py', '*.{ts,tsx}').",
+)
+@click.option("--limit", default=50, type=int, show_default=True, help="Max matches per repo.")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_grep_cmd(
+    pattern: str,
+    repo: str | None,
+    include: str | None,
+    limit: int,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """Regex search across the file contents of indexed repositories.
+
+    Where ``source-search`` queries the knowledge graph, this walks the
+    actual files on disk with ripgrep. Useful for matches inside
+    function bodies, hits in non-code files (READMEs, configs), or any
+    pattern the indexer didn't model. Results are prefixed with the
+    repo id and use repo-relative paths — the indexing host's absolute
+    paths are never echoed to the caller.
+
+    For repos cloned via ``fetch-and-index``, the clone is looked up
+    under the current ``$HOME/.opentrace/repos/<org>/<name>/``; if the
+    DB was indexed on a different machine, this re-homing handles the
+    portable case automatically. Repos indexed in place via
+    ``opentrace index <path>`` are looked up at their stored absolute
+    path. Repos whose clone is missing locally surface a per-repo
+    error rather than silently returning no matches.
+    """
+    from opentrace_agent.cli.source_grep import run_source_grep
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_source_grep(
+        pattern,
+        resolved_db,
+        repo=repo,
+        include=include,
+        limit=limit,
+        output_json=output_json,
+    )
+
+
+@app.command("source-search")
+@click.argument("query")
+@click.option(
+    "--repo",
+    default=None,
+    help="Filter to a specific repo by id (use the 'id' field from `opentrace repos`).",
+)
+@click.option(
+    "--types",
+    "node_types",
+    default=None,
+    help="Comma-separated node types to filter by (e.g. 'Function,Class').",
+)
+@click.option("--limit", default=20, type=int, show_default=True, help="Max results to return.")
+@click.option("--json", "output_json", is_flag=True, help="Emit structured JSON instead of text.")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_search_cmd(
+    query: str,
+    repo: str | None,
+    node_types: str | None,
+    limit: int,
+    output_json: bool,
+    db_path: str | None,
+) -> None:
+    """Full-text search across the indexed graph.
+
+    Searches each node's name, type, summary, and path via Kuzu's BM25
+    FTS index. Because ``type`` is part of the indexed text, a query
+    like ``Function`` matches every Function node — use ``--types`` for
+    node-kind filtering rather than putting the type in the query.
+    Optionally restricts to a single repository (``--repo <id>``).
+    Pass ``--json`` for a structured response with ``totalResults`` /
+    ``truncated`` flags.
+    """
+    from opentrace_agent.cli.source_search import run_source_search
+
+    types_list: list[str] | None = None
+    if node_types:
+        types_list = [t.strip() for t in node_types.split(",") if t.strip()]
+        if not types_list:
+            types_list = None
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    run_source_search(
+        query,
+        resolved_db,
+        repo=repo,
+        node_types=types_list,
+        limit=limit,
+        output_json=output_json,
+    )
+
+
+@app.command("source-read")
+@click.option("--node-id", default=None, help="Graph node ID to read source for.")
+@click.option("--path", "file_path", default=None, help="File path relative to repo root.")
+@click.option(
+    "--lines",
+    "line_spec",
+    default=None,
+    help="Line range: '10-25' for a closed range, '10-' for line 10 to end of file, or '10' for a single line.",
+)
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Database path (auto-discovered if omitted).",
+)
+def source_read(node_id: str | None, file_path: str | None, line_spec: str | None, db_path: str | None) -> None:
+    """Read source code for a graph node or file path.
+
+    Given a node ID, resolves the file path and line range from the graph,
+    then reads the source from the local filesystem. Given a file path,
+    searches for the file in known repo paths.
+    """
+    from opentrace_agent.store import GraphStore
+
+    if not node_id and not file_path:
+        raise click.UsageError("Provide --node-id or --path.")
+
+    resolved_db = _resolve_db(db_path, must_exist=True)
+    store = GraphStore(resolved_db, read_only=True)
+
+    try:
+        if node_id:
+            _read_source_by_node(store, node_id)
+        elif file_path:
+            start_line, end_line = _parse_source_read_line_spec(line_spec or "")
+            _read_source_by_path(store, file_path, start_line, end_line)
+    finally:
+        store.close()
+
+
+def _read_source_by_node(store: "GraphStore", node_id: str) -> None:  # noqa: F821
+    """Read source code for a specific graph node."""
+    node = store.get_node(node_id)
+    if not node:
+        raise click.ClickException(f"Node {node_id} not found.")
+
+    props = node.get("properties") or {}
+    if isinstance(props, str):
+        try:
+            props = __import__("json").loads(props)
+        except Exception:
+            props = {}
+
+    file_path = props.get("path")
+    start_line = props.get("start_line") or props.get("startLine")
+    end_line = props.get("end_line") or props.get("endLine")
+
+    # If node has no direct path, try to find it via DEFINES relationship
+    # (Function/Class nodes are DEFINED_IN a File node which has the path)
+    if not file_path:
+        try:
+            neighbors = store._get_neighbors(node_id, "outgoing")
+            for nb_node, nb_rel in neighbors:
+                if nb_node["type"] == "File":
+                    nb_props = nb_node.get("properties") or {}
+                    if isinstance(nb_props, str):
+                        nb_props = __import__("json").loads(nb_props)
+                    file_path = nb_props.get("path")
+                    if file_path:
+                        break
+        except Exception:
+            pass
+
+    if not file_path:
+        # Last resort: extract from the node ID (format: repo/path/to/file.py::SymbolName).
+        # Repo ids may contain "/" (e.g. "owner/repo"), so the prefix is
+        # matched against the indexed repo ids longest-first rather than
+        # by splitting on the first "/".
+        if "::" in node_id:
+            from opentrace_agent.cli.source_search import strip_repo_prefix
+
+            candidate = node_id.split("::", 1)[0]
+            repo_ids = sorted(store.list_repository_ids(), key=len, reverse=True)
+            stripped = strip_repo_prefix(candidate, repo_ids)
+            if stripped:
+                file_path = stripped
+
+    if not file_path:
+        raise click.ClickException(f"Node {node_id} has no file path.")
+
+    _read_source_by_path(store, file_path, start_line, end_line)
+
+
+def _read_source_by_path(
+    store: "GraphStore",  # noqa: F821
+    file_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> None:
+    """Read source code from a file, searching repo paths."""
+    from pathlib import Path as P
+
+    # Try absolute path first
+    if P(file_path).is_absolute() and P(file_path).exists():
+        _print_file_slice(file_path, start_line, end_line)
+        return
+
+    # Search repo paths from metadata
+    metadata = store.get_metadata()
+    for entry in metadata:
+        repo_path = entry.get("repoPath")
+        if repo_path:
+            candidate = P(repo_path) / file_path
+            if candidate.exists():
+                _print_file_slice(str(candidate), start_line, end_line)
+                return
+
+    # Try CWD as fallback
+    cwd_candidate = P.cwd() / file_path
+    if cwd_candidate.exists():
+        _print_file_slice(str(cwd_candidate), start_line, end_line)
+        return
+
+    raise click.ClickException(f"Source file not found: {file_path}")
+
+
+def _print_file_slice(
+    abs_path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> None:
+    """Print a file or a slice of it, streaming line-by-line.
+
+    Reads only as much of the file as the requested slice needs: a
+    closed range stops at ``end_line``; an open-ended range reads to
+    EOF but only buffers the selected region. This avoids
+    materializing a multi-MB source file in memory just to print
+    twenty lines from the middle of it.
+
+    Iterating the file in text mode handles the trailing-newline case
+    naturally — Python yields exactly one element per real line, so an
+    open-ended range against a file ending in ``\\n`` produces no
+    phantom trailing blank line.
+    """
+    from pathlib import Path as P
+
+    path = P(abs_path)
+
+    if start_line is None:
+        # Whole-file dump: stream in 64KiB chunks rather than reading
+        # the file into a single string. Trailing ``click.echo()``
+        # preserves the prior behaviour of always emitting a final
+        # newline regardless of whether the file ends in one.
+        with path.open() as f:
+            for chunk in iter(lambda: f.read(65536), ""):
+                click.echo(chunk, nl=False)
+        click.echo()
+        return
+
+    start_idx = max(1, start_line)
+    end_idx = end_line  # None == open-ended, read to EOF
+
+    selected: list[str] = []
+    total_lines = 0
+    with path.open() as f:
+        for lineno, raw in enumerate(f, start=1):
+            total_lines = lineno
+            if lineno < start_idx:
+                continue
+            if end_idx is not None and lineno > end_idx:
+                break
+            selected.append(raw.rstrip("\n"))
+
+    # Closed ranges echo the requested end (preserves prior behaviour
+    # even when the request runs past EOF); open-ended ranges report
+    # the real last line we read so the header doesn't lie.
+    resolved_end = end_idx if end_idx is not None else total_lines
+    click.echo(f"// {abs_path}:{start_line}-{resolved_end}")
+    for i, line in enumerate(selected):
+        click.echo(f"{start_idx + i}\t{line}")
+
+
+def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None) -> Path:
+    """Clone a repo into *clone_dir*, returning the local path."""
+    from opentrace_agent.sources.code.git_cloner import GitCloner
+
+    click.echo(f"Cloning {repo_url} ...")
+    cloner = GitCloner()
+    kwargs: dict[str, object] = {"dest": clone_dir}
+    if ref:
+        kwargs["ref"] = ref
+    if token:
+        kwargs["token"] = token
+    try:
+        return cloner.clone(repo_url, **kwargs)
+    except Exception as e:
+        raise click.ClickException(f"Clone failed: {e}")
+
+
+# Matches the userinfo segment of a URL (``scheme://user:pass@host``).
+# We scrub this before echoing any git output because the persisted
+# origin URL — written by GitCloner._inject_token during the initial
+# clone — contains an oauth2:<token>@ prefix that git happily echoes
+# back in error messages on a failed fetch.
+_URL_USERINFO_RE = re.compile(r"://[^@/\s]+@")
+
+
+def _scrub_token(message: str) -> str:
+    """Redact userinfo (``user:password@``) from any URLs in *message*.
+
+    Defensive: even if no token is in play right now, an older clone in
+    ``~/.opentrace/repos`` may still carry one in its origin URL, and
+    we don't want to assume what the caller's token looked like.
+    """
+    return _URL_USERINFO_RE.sub("://[REDACTED]@", message)
+
+
+def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
+    """Best-effort fast-forward of an already-cloned repo.
+
+    Auth is reused from the persisted origin URL (the initial clone
+    embeds the token there if one was supplied). We never re-inject
+    the token here, so it can't appear in our process args; the only
+    leak vector is git echoing its origin URL on error, which we scrub
+    before logging.
+
+    Honors *ref* by fetching the named ref and forcing the local branch
+    to its FETCH_HEAD. This makes the re-fetch path match the
+    fresh-clone path: ``--ref main`` ends up on ``main`` whether or not
+    the directory already existed.
+
+    On failure we warn (with the scrubbed message) and return; the
+    caller proceeds with whatever's currently checked out, which may
+    be stale. Never raises.
+    """
+    # Refuse refs that look like flags. Git ref names can't legitimately
+    # start with '-' (git check-ref-format rejects them), and passing
+    # one as a positional to `git fetch ... <ref>` or `git checkout -B
+    # <ref> ...` would let it be reinterpreted as an option.
+    if ref and ref.startswith("-"):
+        click.echo(
+            f"Warning: refusing ref {ref!r} (starts with '-'); continuing with current checkout, which may be stale.",
+            err=True,
+        )
+        return
+
+    from opentrace_agent.sources.code.git_cloner import _clean_env
+
+    def _run(args: list[str]) -> tuple[int, str]:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(clone_dir), *args],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=_clean_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return 124, "git command timed out after 60s"
+        except Exception as e:
+            return 1, _scrub_token(str(e))
+        msg = (proc.stderr or proc.stdout or "").strip()
+        return proc.returncode, _scrub_token(msg)
+
+    if ref:
+        rc, msg = _run(["fetch", "--depth=1", "origin", ref])
+        if rc != 0:
+            click.echo(
+                f"Warning: 'git fetch origin {ref}' failed (continuing with current "
+                f"checkout, which may be stale): {msg}",
+                err=True,
+            )
+            return
+        rc, msg = _run(["checkout", "-B", ref, "FETCH_HEAD"])
+        if rc != 0:
+            click.echo(
+                f"Warning: 'git checkout {ref}' failed (continuing with current checkout, which may be stale): {msg}",
+                err=True,
+            )
+        return
+
+    rc, msg = _run(["pull", "--ff-only"])
+    if rc != 0:
+        click.echo(
+            f"Warning: 'git pull --ff-only' failed (continuing with current checkout, which may be stale): {msg}",
+            err=True,
+        )
+
+
+@app.command("fetch-and-index")
+@click.argument("repo_url")
+@click.option("--repo-id", default=None, help="Custom repository ID (defaults to repo name).")
+@click.option(
+    "--token",
+    default=None,
+    envvar=("OPENTRACE_GIT_TOKEN", "GITHUB_TOKEN", "GITLAB_TOKEN"),
+    help=(
+        "Personal access token (PAT) for private repos. Falls back to "
+        "OPENTRACE_GIT_TOKEN, GITHUB_TOKEN, or GITLAB_TOKEN env vars (in that order)."
+    ),
+)
+@click.option("--ref", default=None, help="Branch or tag to clone (defaults to repo default branch).")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help=f"Database path (default: ./{OPENTRACE_DIR}/{DB_NAME}).",
+)
+@click.option("--batch-size", default=200, show_default=True, help="Items per batch.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def fetch_and_index(
+    repo_url: str,
+    repo_id: str | None,
+    token: str | None,
+    ref: str | None,
+    db_path: str | None,
+    batch_size: int,
+    verbose: bool,
+) -> None:
+    """Clone a remote git repository and index it into the graph.
+
+    Performs a shallow clone of REPO_URL into ~/.opentrace/repos/, then
+    runs the full indexing pipeline on the cloned repository. The clone
+    is kept permanently so source-read can access the files later.
+
+    For private repos, pass --token with a GitHub/GitLab personal access
+    token (PAT), or set OPENTRACE_GIT_TOKEN, GITHUB_TOKEN, or GITLAB_TOKEN
+    (resolved in that order by Click via the --token envvar binding).
+    """
+    _configure_logging(verbose)
+
+    # Determine repo name from URL
+    url_parts = repo_url.rstrip("/").split("/")
+    inferred_name = url_parts[-1].removesuffix(".git") if url_parts else "repo"
+    effective_repo_id = repo_id or inferred_name
+
+    # Infer org/repo from URL for directory structure
+    org = url_parts[-2] if len(url_parts) >= 2 else "unknown"
+
+    # Clone into a persistent directory under ~/.opentrace/repos/
+    repos_dir = Path.home() / ".opentrace" / "repos" / org
+    repos_dir.mkdir(parents=True, exist_ok=True)
+    clone_dir = repos_dir / inferred_name
+
+    if clone_dir.exists() and (clone_dir / ".git").exists():
+        click.echo(f"Repository already cloned at {clone_dir}, updating...")
+        _update_existing_clone(clone_dir, ref)
+        local_path = clone_dir
+    elif clone_dir.exists():
+        # Directory exists but no .git — remove and re-clone
+        import shutil
+
+        shutil.rmtree(clone_dir)
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref, token)
+    else:
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        local_path = _do_clone(repo_url, clone_dir, ref, token)
+
+    click.echo(f"Cloned to {local_path}")
+
+    resolved_db = _resolve_db(db_path)
+    elapsed = _run_indexing_pipeline(
+        source_path=local_path,
+        repo_id=effective_repo_id,
+        db_path=resolved_db,
+        batch_size=batch_size,
+        verbose=verbose,
+        # `_collect_metadata` reads sourceUri from the local clone's
+        # `git remote origin` URL, which would echo back our token-
+        # bearing URL. Override with the user-supplied repo_url so the
+        # persisted sourceUri is the clean form.
+        extra_metadata={"sourceUri": repo_url},
+    )
+
+    click.echo(f"Done in {elapsed:.1f}s. Repository '{effective_repo_id}' is now indexed.")
 
 
 def _configure_logging(verbose: bool) -> None:
