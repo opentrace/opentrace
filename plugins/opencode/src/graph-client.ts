@@ -158,6 +158,9 @@ const ENSURE_CLI_PROBE_THROTTLE_MS = 5_000
 // Keeps logs readable without losing the key of a Python traceback or native
 // error message (typically 300–700 chars of meaningful content).
 const STDERR_TAIL_CHARS = 800
+// Headroom for JS-side node-type post-filtering: the CLI's `query` has no
+// node-type flag, so we over-fetch and filter here.
+const FTS_FILTER_LIMIT_MULTIPLIER = 5
 
 export class GraphClient {
   /** Workspace directory passed verbatim to the CLI's `--workspace` flag. */
@@ -354,7 +357,7 @@ export class GraphClient {
   private _recordExit(exitCode: number): string | null {
     if (exitCode === EXIT_OK) {
       this._dbReady = true
-      this._workspaceUnresolvable = false
+      // _workspaceUnresolvable is sticky for the session — never clear here.
       return null
     }
     if (exitCode === EXIT_DB_MISSING) {
@@ -467,10 +470,22 @@ export class GraphClient {
     opts?: { nodeTypes?: string[]; limit?: number },
   ): Promise<GraphNode[]> {
     const args = ["query", query, "--type", "fts", "--output", "json"]
-    if (opts?.limit) args.push("--limit", String(opts.limit))
+    // CLI has no node-type flag; over-fetch and filter below.
+    const limit = opts?.limit
+    const filtering = !!opts?.nodeTypes && opts.nodeTypes.length > 0
+    if (limit) {
+      const cliLimit = filtering ? limit * FTS_FILTER_LIMIT_MULTIPLIER : limit
+      args.push("--limit", String(cliLimit))
+    }
     const raw = await this.runJson<any[]>(args)
     if (!raw) return []
-    return raw.map(normalizeNode)
+    let nodes = raw.map(normalizeNode)
+    if (filtering) {
+      const allowed = new Set(opts!.nodeTypes)
+      nodes = nodes.filter((n) => allowed.has(n.type))
+      if (limit) nodes = nodes.slice(0, limit)
+    }
+    return nodes
   }
 
   /**
@@ -734,7 +749,10 @@ export class GraphClient {
     repoId?: string,
     opts?: { token?: string; ref?: string },
   ): Promise<{ ok: boolean; message: string }> {
-    const isUrl = /^https?:\/\//.test(pathOrUrl) || /^git@/.test(pathOrUrl)
+    // Standard git remote schemes plus the SCP-like `git@host:org/repo` form.
+    const isUrl =
+      /^(?:https?|git\+ssh|ssh|git):\/\//.test(pathOrUrl) ||
+      /^git@/.test(pathOrUrl)
 
     const args: string[] = isUrl ? ["fetch-and-index", pathOrUrl] : ["index", pathOrUrl]
     if (repoId) args.push("--repo-id", repoId)

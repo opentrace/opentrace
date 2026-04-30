@@ -26,7 +26,7 @@ import { createFindUsagesTool } from "./tools/find-usages.js"
 import { createImpactAnalysisTool } from "./tools/impact-analysis.js"
 import { createGraphExploreTool } from "./tools/graph-explore.js"
 import { createGraphStatsTool } from "./tools/graph-stats.js"
-import { buildSystemPrompt } from "./hooks/system-prompt.js"
+import { buildSystemPrompt, STATIC_CORE_TEXT } from "./hooks/system-prompt.js"
 import { createToolAugmentHook } from "./hooks/tool-augment.js"
 import { createToolImpactHook } from "./hooks/tool-impact.js"
 import { createAuthHook, getStoredToken } from "./auth.js"
@@ -164,7 +164,9 @@ const server: Plugin = async (
         ])
 
         if (result === TIMEOUT) {
-          debug("hook.system", "buildSystemPrompt timed out (3s)")
+          // Dynamic appendix overran; static core still goes out.
+          debug("hook.system", "buildSystemPrompt timed out (3s); pushing static core fallback")
+          output.system.push(STATIC_CORE_TEXT)
           return
         }
 

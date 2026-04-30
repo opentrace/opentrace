@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build": "bun build ./src/index.ts --outfile ./dist/index.js --target bun --format esm --external @opencode-ai/plugin",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json",
+    "test": "bun test",
     "clean": "rm -rf node_modules dist"
   },
   "repository": {

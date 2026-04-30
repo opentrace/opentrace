@@ -28,6 +28,31 @@ export interface SystemPromptResult {
   hasAppendix: boolean
 }
 
+const STATIC_CORE_LINES: readonly string[] = [
+  "# OpenTrace Knowledge Graph - USE THESE TOOLS FIRST",
+  "",
+  "IMPORTANT: You have OpenTrace tools available for code intelligence. When answering questions about code structure, finding symbols, understanding dependencies, or reading source from indexed repositories - use the opentrace_ tools first before falling back to grep/glob/read.",
+  "",
+  "## How to use opentrace tools",
+  "Use opentrace tools to search and read code stored in the OpenTrace knowledge graph.",
+  "When opentrace tools return results (search hits, node IDs, file paths), follow up with opentrace_source_read to read the code - it can access all indexed repos directly.",
+  "Use your regular tools (read, grep, glob) for files in the current project directory as normal.",
+  "Opentrace tools are available to all agents including explore and general subagents.",
+  "",
+  "## Tool selection guide",
+  "- Find code by keyword across indexed repos → opentrace_source_search",
+  "- Find code by meaning/description → opentrace_semantic_search",
+  "- Read source code from an indexed repo → opentrace_source_read (pass a node_id or file path)",
+  "- Regex pattern search across indexed repos → opentrace_source_grep",
+  "- Find callers/usages of a symbol → opentrace_find_usages",
+  "- Blast radius analysis → opentrace_impact_analysis",
+  "- Explore node relationships → opentrace_graph_explore",
+  "- Index a new repo → opentrace_repo_index",
+  "- Overview of what's indexed → opentrace_graph_stats",
+]
+
+export const STATIC_CORE_TEXT = STATIC_CORE_LINES.join("\n")
+
 /**
  * Builds the system prompt injection that tells the LLM about OpenTrace
  * capabilities.
@@ -54,28 +79,7 @@ export async function buildSystemPrompt(client: GraphClient): Promise<SystemProm
   // so unconditional call is cheap.
   await client.ensureCli()
 
-  const lines: string[] = [
-    "# OpenTrace Knowledge Graph - USE THESE TOOLS FIRST",
-    "",
-    "IMPORTANT: You have OpenTrace tools available for code intelligence. When answering questions about code structure, finding symbols, understanding dependencies, or reading source from indexed repositories - use the opentrace_ tools first before falling back to grep/glob/read.",
-    "",
-    "## How to use opentrace tools",
-    "Use opentrace tools to search and read code stored in the OpenTrace knowledge graph.",
-    "When opentrace tools return results (search hits, node IDs, file paths), follow up with opentrace_source_read to read the code - it can access all indexed repos directly.",
-    "Use your regular tools (read, grep, glob) for files in the current project directory as normal.",
-    "Opentrace tools are available to all agents including explore and general subagents.",
-    "",
-    "## Tool selection guide",
-    "- Find code by keyword across indexed repos → opentrace_source_search",
-    "- Find code by meaning/description → opentrace_semantic_search",
-    "- Read source code from an indexed repo → opentrace_source_read (pass a node_id or file path)",
-    "- Regex pattern search across indexed repos → opentrace_source_grep",
-    "- Find callers/usages of a symbol → opentrace_find_usages",
-    "- Blast radius analysis → opentrace_impact_analysis",
-    "- Explore node relationships → opentrace_graph_explore",
-    "- Index a new repo → opentrace_repo_index",
-    "- Overview of what's indexed → opentrace_graph_stats",
-  ]
+  const lines: string[] = [...STATIC_CORE_LINES]
 
   // Dynamic appendix: only meaningful when CLI + DB + stats all resolve.
   // On any failure the static core stands alone — the tool gates surface

@@ -66,8 +66,8 @@ Indexing time scales with repo size and usually finishes in a few minutes; large
       const reblocked = await client.requireCliAvailable()
       if (reblocked) return reblocked
 
-      // Update title to show progress
-      const name = args.path_or_url.split("/").pop()?.replace(".git", "") ?? "repo"
+      // Strip trailing slashes so "/path/to/repo/" yields "repo".
+      const name = args.path_or_url.replace(/\/+$/, "").split("/").pop()?.replace(".git", "") || "repo"
       ctx.metadata({ title: `Indexing ${name}...` })
 
       // Resolve token internally — picks the right token for the host

@@ -34,7 +34,7 @@ Falls back to FTS if semantic search is not available.`,
       if (blocked) return blocked
 
       const results = await client.ftsSearch(args.query, {
-        nodeTypes: args.node_types?.split(",").map((t) => t.trim()),
+        nodeTypes: args.node_types?.split(",").map((t) => t.trim()).filter(Boolean),
         limit: args.limit ?? 10,
       })
 

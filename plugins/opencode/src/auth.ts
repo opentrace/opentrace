@@ -107,20 +107,14 @@ interface DeviceCodeResponse {
   interval: number
 }
 
-/**
- * Shared OAuth error mapping — provider-agnostic. GitHub and GitLab use
- * the same RFC 8628 error codes, so one translator fits both.
- */
+// Maps RFC 8628 terminal errors. `authorization_pending` and `slow_down`
+// are handled by the polling loop and never reach here.
 function deviceFlowError(code: string, description?: string): Error {
   switch (code) {
     case "expired_token":
       return new Error("Device code expired before authorization completed. Please try again.")
     case "access_denied":
       return new Error("Authorization was denied.")
-    case "authorization_pending":
-    case "slow_down":
-      // Caller handles these via the polling loop — not real errors.
-      return new Error(code)
     default:
       return new Error(`OAuth error: ${code}${description ? ` — ${description}` : ""}`)
   }
