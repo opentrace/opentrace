@@ -1903,6 +1903,69 @@ export class LadybugGraphStore implements GraphStore {
       }
     }
 
+    // Import NodeVectors from Parquet (if present in archive)
+    const vectorsData = entries['node_vectors.parquet'];
+    if (vectorsData) {
+      onProgress?.('Importing node vectors');
+      try {
+        const arrowTable = await parquetToArrow(vectorsData);
+        const idCol = arrowTable.getChild('id');
+        const vecCol = arrowTable.getChild('vec');
+
+        if (idCol && vecCol) {
+          const vectors: { id: string; vec: number[] }[] = [];
+
+          for (let i = 0; i < arrowTable.numRows; i++) {
+            const id = String(idCol.get(i) ?? '');
+            if (!id) continue;
+
+            // vec column may be an Arrow List<Float32>, typed array, or JSON string
+            const rawVec = vecCol.get(i);
+            if (!rawVec) continue;
+
+            let vec: number[];
+            if (
+              rawVec instanceof Float32Array ||
+              rawVec instanceof Float64Array
+            ) {
+              vec = Array.from(rawVec);
+            } else if (Array.isArray(rawVec)) {
+              vec = rawVec;
+            } else if (typeof rawVec === 'string') {
+              try {
+                vec = JSON.parse(rawVec);
+              } catch {
+                continue;
+              }
+            } else if (
+              rawVec &&
+              typeof rawVec === 'object' &&
+              'toArray' in rawVec
+            ) {
+              vec = Array.from(
+                (rawVec as { toArray: () => ArrayLike<number> }).toArray(),
+              );
+            } else {
+              continue;
+            }
+
+            if (vec.length > 0) {
+              vectors.push({ id, vec });
+            }
+          }
+
+          if (vectors.length > 0) {
+            await this.importVectors(vectors);
+            console.log(
+              `[LadybugStore] imported NodeVectors: ${vectors.length} vectors`,
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('[LadybugStore] failed to import node vectors:', e);
+      }
+    }
+
     // Rebuild FTS index on SourceText (whether from import or empty)
     onProgress?.('Rebuilding search indexes');
     await this.rebuildSourceFTS();
@@ -2030,6 +2093,26 @@ export class LadybugGraphStore implements GraphStore {
           `[LadybugStore] exported source: ${sourceRows.length} files, ${data.byteLength} bytes`,
         );
       }
+    }
+
+    // Export node vectors (if any exist in the NodeVector table)
+    try {
+      const vecWhere = repoPrefix
+        ? `WHERE n.id STARTS WITH '${esc(repoPrefix)}'`
+        : '';
+      const vecRows = (await this.query(
+        `MATCH (n:NodeVector) ${vecWhere} RETURN n.id AS id, CAST(n.vec AS STRING) AS vec`,
+      )) as Record<string, string>[];
+
+      if (vecRows.length > 0) {
+        const data = await rowsToParquet(vecRows, ['id', 'vec']);
+        files['node_vectors.parquet'] = data;
+        console.log(
+          `[LadybugStore] exported vectors: ${vecRows.length} embeddings, ${data.byteLength} bytes`,
+        );
+      }
+    } catch {
+      // NodeVector table may not exist or VECTOR extension not loaded — skip silently
     }
 
     // Export relationships — post-filter in JS to edges where both endpoints are exported
