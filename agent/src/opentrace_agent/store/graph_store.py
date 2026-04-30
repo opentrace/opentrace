@@ -36,12 +36,22 @@ logger = logging.getLogger(__name__)
 
 
 def build_search_text(name: str, node_type: str, properties: dict[str, Any]) -> str:
-    """Combine name, type, summary, and path into searchable text."""
+    """Combine name, type, summary, path, and docs into searchable text.
+
+    Docstrings (``docs``) are included so keyword search can hit nodes
+    whose names are technical abbreviations but whose docstrings spell
+    things out (``"authentication"``, ``"encrypt"``, ``"rate limit"``).
+    Backwards compatible: the column is free-form text, so older
+    indexes still work — they just carry less search content per row
+    until re-indexed.
+    """
     parts = [name, node_type]
     if summary := properties.get("summary"):
         parts.append(str(summary))
     if path := properties.get("path"):
         parts.append(str(path))
+    if docs := properties.get("docs"):
+        parts.append(str(docs))
     return " ".join(parts)
 
 
@@ -165,12 +175,34 @@ class GraphStore:
     # -- schema ----------------------------------------------------------
 
     def _load_extensions(self) -> None:
-        """Install and load the FTS extension (required for full-text search)."""
+        """Install and load the FTS extension (required for full-text search).
+
+        ``INSTALL`` and ``LOAD`` are kept in separate try blocks: in
+        read-only mode ``INSTALL`` raises because it can't write the
+        extension binary, but the extension may already be installed
+        from a previous run — ``LOAD`` must still be attempted, otherwise
+        every FTS query silently falls through to substring matching.
+
+        When LOAD itself fails (e.g. LadybugDB's CDN doesn't ship the
+        extension for the current version + platform), log a single
+        warning so callers know they are degraded to substring search.
+        """
         try:
             self._conn.execute("INSTALL FTS")
+        except RuntimeError as e:
+            logger.debug("INSTALL FTS skipped: %s", e)
+        try:
             self._conn.execute("LOAD EXTENSION FTS")
-        except RuntimeError:
-            pass  # already installed/loaded
+            self._fts_loaded = True
+        except RuntimeError as e:
+            self._fts_loaded = False
+            logger.warning(
+                "FTS extension unavailable (%s) — keyword search will use "
+                "substring matching against name + search_text. To enable "
+                "full-text search, ensure the FTS extension is installed "
+                "for this LadybugDB version + platform.",
+                e,
+            )
 
     def _ensure_schema(self) -> None:
         stmts = [
@@ -225,11 +257,25 @@ class GraphStore:
         target_id: str,
         properties: dict[str, Any] | None = None,
     ) -> None:
-        """Create a directed relationship between two existing nodes."""
+        """Create a directed relationship between two existing nodes.
+
+        Raises ``RuntimeError`` if either endpoint isn't already in the
+        DB.  This is critical: without the check, a MATCH that finds no
+        rows would cause CREATE to silently do nothing, the caller
+        would treat the call as successful, and the relationship would
+        be lost without any error signal.  See
+        ``GraphStoreAdapter._flush_rels`` for the upstream invariant
+        that prevents this in the first place.
+        """
         props_json = _marshal_props(properties)
-        self._conn.execute(
+        # Append RETURN so we can observe whether MATCH+CREATE yielded
+        # any rows.  In Cypher, MATCH-then-CREATE only fires CREATE for
+        # each row that MATCH produced — if MATCH finds nothing,
+        # CREATE never runs, and RETURN comes back empty.
+        result = self._conn.execute(
             "MATCH (a:Node {id: $src}), (b:Node {id: $tgt}) "
-            "CREATE (a)-[:RELATES {id: $id, type: $type, properties: $props}]->(b)",
+            "CREATE (a)-[r:RELATES {id: $id, type: $type, properties: $props}]->(b) "
+            "RETURN r.id",
             parameters={
                 "src": source_id,
                 "tgt": target_id,
@@ -238,6 +284,14 @@ class GraphStore:
                 "props": props_json,
             },
         )
+        if not result.has_next():
+            raise RuntimeError(
+                f"Relationship {id!r} (type={rel_type!r}) not created: "
+                f"missing endpoint(s) — source={source_id!r}, target={target_id!r}. "
+                f"This usually means the relationship was flushed before "
+                f"its endpoint nodes were written. Check that "
+                f"GraphStoreAdapter._flush_rels() flushes nodes first."
+            )
 
     def merge_relationship(
         self,
@@ -441,10 +495,17 @@ class GraphStore:
         except Exception:
             logger.debug("FTS search failed, using substring fallback", exc_info=True)
 
-        # Substring fallback
+        # Substring fallback — match either the symbol name or its
+        # ``search_text`` (which already includes summary/path/docs).
+        # This keeps queries like "auth" useful when FTS is unavailable
+        # (e.g. the Ladybug FTS extension binary isn't installed for the
+        # current platform).
         q = query.lower()
         result = self._conn.execute(
-            "MATCH (n:Node) WHERE lower(n.name) CONTAINS $query AND n.type <> $meta "
+            "MATCH (n:Node) "
+            "WHERE (lower(n.name) CONTAINS $query "
+            "       OR lower(n.search_text) CONTAINS $query) "
+            "AND n.type <> $meta "
             "RETURN n.id, n.type, n.name, n.properties",
             parameters={"query": q, "meta": self._METADATA_TYPE},
         )
