@@ -16,9 +16,19 @@
 
 export { default as ChatPanel } from './ChatPanel';
 export { default as EdgeDetailsPanel } from './EdgeDetailsPanel';
+export { GraphControlsBar } from './GraphControlsBar';
+export {
+  CopyrightFooter,
+  EmptyStateHeader,
+  GraphErrorState,
+  GraphLoadingState,
+  GraphSearchEmpty,
+  VersionFooter,
+} from './GraphEmptyStates';
 export { default as GraphViewer } from './GraphViewer';
 export type { GraphViewerHandle } from './GraphViewer';
 export { default as NodeDetailsPanel } from './NodeDetailsPanel';
+export { PhysicsPanelContainer } from './PhysicsPanelContainer';
 export { default as SettingsDrawer } from './SettingsDrawer';
 export { default as SidePanel } from './SidePanel';
 export type { SidePanelTab } from './SidePanel';

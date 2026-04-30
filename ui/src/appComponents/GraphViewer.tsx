@@ -20,7 +20,6 @@ import {
   GraphLegend,
   GraphToolbar,
   IndexingProgress,
-  PhysicsPanel,
   PixiGraphCanvas,
   detectProvider,
   normalizeRepoUrl,
@@ -51,13 +50,24 @@ import type { JobMessage, JobState } from '../job';
 import { JobPhase } from '../job';
 import { useStore } from '../store';
 import ExportModal from './ExportModal';
+import {
+  EmptyStateHeader,
+  GraphErrorState,
+  GraphInitialEmpty,
+  GraphLoadingState,
+  GraphSearchEmpty,
+} from './GraphEmptyStates';
+import { GraphControlsBar } from './GraphControlsBar';
+import {
+  GitHubStarButton,
+  GraphToolbarActionButtons,
+  buildMobilePanelTabs,
+} from './GraphToolbarActions';
 import type { HistoryEntry } from './historyTypes';
-import JobMinimizedBar from './JobMinimizedBar';
-import { OpenTraceLogo } from './OpenTraceLogo';
+import { PhysicsPanelContainer } from './PhysicsPanelContainer';
 import { GitHubIcon, GitLabIcon } from './providerIcons';
 import ResetConfirmModal from './ResetConfirmModal';
 import type { SidePanelTab } from './SidePanel';
-import ThemeSelector from './ThemeSelector';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -107,201 +117,6 @@ function toIndexingProps(job: JobState, repoUrl: string) {
 // WARNING: Module-level singleton — do NOT mutate (add/delete). Used as a
 // stable empty default for highlight props to avoid unnecessary re-renders.
 const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
-
-// GraphLegend is now imported from @opentrace/components
-
-/** Dropdown help menu that appears on the toolbar. */
-function HelpMenuButton({
-  showHelp,
-  onToggleHelp,
-}: {
-  showHelp: boolean;
-  onToggleHelp: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current?.contains(e.target as Node)) return;
-      setOpen(false);
-    };
-    const onEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onClickOutside);
-    document.addEventListener('keydown', onEscape);
-    return () => {
-      document.removeEventListener('mousedown', onClickOutside);
-      document.removeEventListener('keydown', onEscape);
-    };
-  }, [open]);
-
-  return (
-    <div className="help-menu-container" ref={ref}>
-      <button
-        className={`help-toggle-btn ot-submenu-toggle ${showHelp ? 'active' : ''}`}
-        onClick={() => setOpen((v) => !v)}
-        title="Help"
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        <span className="ot-menu-label">Help</span>
-      </button>
-      {open && (
-        <div className="help-dropdown">
-          <button
-            className="help-dropdown-item"
-            onClick={() => {
-              setOpen(false);
-              onToggleHelp();
-            }}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-            Getting Started
-          </button>
-          <a
-            className="help-dropdown-item"
-            href="https://opentrace.github.io/opentrace/"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-            </svg>
-            Documentation
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-          <a
-            className="help-dropdown-item"
-            href="https://github.com/opentrace/opentrace"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
-            </svg>
-            GitHub
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-          <div className="help-dropdown-divider" />
-          <a
-            className="help-dropdown-item"
-            href="https://github.com/opentrace/opentrace/issues"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            Report an Issue
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export interface GraphViewerHandle {
   selectNode: (nodeId: string, hops?: number) => void;
@@ -576,8 +391,6 @@ const GraphViewer = memo(
 
       // Physics panel state
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
-      // Mobile: collapsed graph controls menu
-      const [showGraphMenu, setShowGraphMenu] = useState(false);
       // Persisted graph settings — restored from localStorage on mount
       const stored = useMemo(() => {
         try {
@@ -1058,137 +871,47 @@ const GraphViewer = memo(
       // --- Early returns for loading/error/empty states ---
 
       if (loading && isEmpty && !showAddRepo && !showFullModal) {
-        return (
-          <div className="graph-viewport">
-            <div className="loading">
-              <OpenTraceLogo size={64} />
-              <span>Loading graph...</span>
-              <footer className="version-footer">
-                v{__APP_VERSION__} &middot;{' '}
-                {new Date(__BUILD_TIME__).toLocaleString()}
-              </footer>
-            </div>
-          </div>
-        );
+        return <GraphLoadingState />;
       }
 
       if (error) {
         return (
-          <div className="graph-viewport">
-            <div className="loading">
-              <p>Failed to load graph: {error}</p>
-              <button
-                onClick={() => {
-                  setError(null);
-                  loadGraph();
-                }}
-              >
-                Retry
-              </button>
-              <footer className="version-footer">
-                v{__APP_VERSION__} &middot;{' '}
-                {new Date(__BUILD_TIME__).toLocaleString()}
-              </footer>
-            </div>
-          </div>
+          <GraphErrorState
+            error={error}
+            onRetry={() => {
+              setError(null);
+              loadGraph();
+            }}
+          />
         );
       }
 
       if (isSearchEmpty && !showFullModal) {
         return (
-          <div className="graph-viewport">
-            <div className="empty-state-overlay">
-              <div className="empty-state-content">
-                <img
-                  src="/opentrace-logo.svg"
-                  alt="OpenTrace"
-                  className="empty-state-logo"
-                />
-                <h1>No results</h1>
-                <p>
-                  No nodes matched <strong>{lastSearchQuery}</strong>. Try a
-                  different search or clear to see the full graph.
-                </p>
-                <button className="empty-state-add-btn" onClick={handleReset}>
-                  Clear Search
-                </button>
-              </div>
-            </div>
-            <footer className="copyright-footer">
-              &copy; {new Date().getFullYear()} OpenTrace
-            </footer>
-            <footer className="version-footer">
-              v{__APP_VERSION__} &middot;{' '}
-              {new Date(__BUILD_TIME__).toLocaleString()}
-            </footer>
-          </div>
+          <GraphSearchEmpty
+            searchQuery={lastSearchQuery}
+            onClearSearch={handleReset}
+          />
         );
       }
 
       if (isEmpty && !showFullModal) {
         return (
-          <div className="graph-viewport">
-            <div className="empty-state-header">
-              <img
-                src="/opentrace-logo.svg"
-                alt="OpenTrace"
-                className="empty-state-header-logo"
-              />
-              <span className="empty-state-header-title">OpenTrace</span>
-            </div>
-
-            {showAddRepo && (
-              <AddRepoModal
-                onClose={onAddRepoClose}
-                onSubmit={onJobSubmit}
-                dismissable={false}
-                onValidate={validateRepo}
-              />
-            )}
-
-            {!showAddRepo && (
-              <div className="empty-state-overlay">
-                <div className="empty-state-content">
-                  <p>No data in the graph yet.</p>
-                  <button
-                    className="empty-state-add-btn"
-                    onClick={onAddRepoOpen}
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="12" y1="5" x2="12" y2="19"></line>
-                      <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    Add Repository
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {showFullModal && (
+          <GraphInitialEmpty
+            showAddRepo={showAddRepo}
+            showFullModal={showFullModal}
+            onAddRepoOpen={onAddRepoOpen}
+            onAddRepoClose={onAddRepoClose}
+            onJobSubmit={onJobSubmit}
+            onValidateRepo={validateRepo}
+            indexingProgress={
               <IndexingProgress
                 {...toIndexingProps(jobState, activeRepoUrl)}
                 stages={INDEXING_STAGES}
                 onClose={onJobClose}
               />
-            )}
-
-            <footer className="copyright-footer">
-              &copy; {new Date().getFullYear()} OpenTrace
-            </footer>
-            <footer className="version-footer">
-              v{__APP_VERSION__} &middot;{' '}
-              {new Date(__BUILD_TIME__).toLocaleString()}
-            </footer>
-          </div>
+            }
+          />
         );
       }
 
@@ -1223,225 +946,35 @@ const GraphViewer = memo(
             edgeCount={filteredGraphData.links.length}
             totalNodes={stats?.total_nodes}
             totalEdges={stats?.total_edges}
-            mobilePanelTabs={[
-              {
-                key: 'filters',
-                label: 'Filters',
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                  </svg>
-                ),
-              },
-              {
-                key: 'discover',
-                label: 'Discover',
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                  </svg>
-                ),
-              },
-              {
-                key: 'details',
-                label: 'Details',
-                visible: !!(selectedNode || selectedLink),
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="16" x2="12" y2="12" />
-                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                  </svg>
-                ),
-              },
-            ]}
+            mobilePanelTabs={buildMobilePanelTabs({
+              showDetails: !!(selectedNode || selectedLink),
+            })}
             onMobilePanelTab={(key) =>
               onMobilePanelTabChange?.(key as SidePanelTab)
             }
-            persistentActions={
-              <a
-                className="github-star-btn"
-                href="https://github.com/opentrace/opentrace"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Star on GitHub"
-              >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-                </svg>
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  stroke="currentColor"
-                  strokeWidth="1"
-                >
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                </svg>
-                <span className="star-label">Star</span>
-              </a>
-            }
+            persistentActions={<GitHubStarButton />}
             actions={
-              <>
-                {toolbarActions}
-                {(jobState.status === 'enriching' ||
-                  jobState.status === 'done') &&
-                !jobExpanded ? (
-                  <JobMinimizedBar
-                    state={jobState}
-                    onClick={onJobExpand}
-                    onCancel={onJobCancel}
-                  />
-                ) : (
-                  <button
-                    className="add-repo-btn"
-                    onClick={onAddRepoOpen}
-                    title="Add Repository"
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    <span className="ot-menu-label">Add Repository</span>
-                  </button>
-                )}
-                {graphData.nodes.length > 0 && store.exportDatabase && (
-                  <button
-                    className="export-db-btn"
-                    title="Export database"
-                    disabled={exporting}
-                    onClick={() => {
-                      if (!store.exportDatabase || exporting) return;
-                      setShowExportModal(true);
-                    }}
-                  >
-                    {exporting ? (
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        style={{ animation: 'spin 0.8s linear infinite' }}
-                      >
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                      </svg>
-                    ) : (
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                    )}
-                    <span className="ot-menu-label">
-                      {exporting ? 'Exporting…' : 'Export'}
-                    </span>
-                  </button>
-                )}
-                <ThemeSelector />
-                <button
-                  className={`chat-toggle-btn ${showChat ? 'active' : ''}`}
-                  onClick={onToggleChat}
-                  title="Toggle AI Chat"
-                  data-testid="chat-toggle-btn"
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-                    <path d="M20 3v4" />
-                    <path d="M22 5h-4" />
-                    <path d="M4 17v2" />
-                    <path d="M5 18H3" />
-                  </svg>
-                  <span className="ot-menu-label">AI Chat</span>
-                </button>
-                <HelpMenuButton
-                  showHelp={showHelp}
-                  onToggleHelp={onToggleHelp}
-                />
-                <button
-                  className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
-                  onClick={onToggleSettings}
-                  title="Settings"
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                  <span className="ot-menu-label">Settings</span>
-                </button>
-              </>
+              <GraphToolbarActionButtons
+                toolbarActions={toolbarActions}
+                jobState={jobState}
+                jobExpanded={jobExpanded}
+                onJobExpand={onJobExpand}
+                onJobCancel={onJobCancel}
+                onAddRepoOpen={onAddRepoOpen}
+                hasGraphData={graphData.nodes.length > 0}
+                canExport={!!store.exportDatabase}
+                exporting={exporting}
+                onExportOpen={() => {
+                  if (!store.exportDatabase || exporting) return;
+                  setShowExportModal(true);
+                }}
+                showChat={showChat}
+                onToggleChat={onToggleChat}
+                showHelp={showHelp}
+                onToggleHelp={onToggleHelp}
+                showSettings={showSettings}
+                onToggleSettings={onToggleSettings}
+              />
             }
           />
 
@@ -1491,16 +1024,7 @@ const GraphViewer = memo(
             />
           )}
 
-          {isEmpty && showFullModal && (
-            <div className="empty-state-header">
-              <img
-                src="/opentrace-logo.svg"
-                alt="OpenTrace"
-                className="empty-state-header-logo"
-              />
-              <span className="empty-state-header-title">OpenTrace</span>
-            </div>
-          )}
+          {isEmpty && showFullModal && <EmptyStateHeader />}
 
           {showFullModal && (
             <IndexingProgress
@@ -1511,22 +1035,6 @@ const GraphViewer = memo(
           )}
 
           <GraphLegend items={legendItems} linkItems={legendLinkItems} />
-
-          {(() => {
-            if (chatHighlightNodes && chatHighlightNodes.size > 0) {
-              console.log('[GraphViewer] chatHighlightNodes', {
-                size: chatHighlightNodes.size,
-                selectedLink: !!selectedLink,
-                focusedCommunity: focusedCommunityNodes.size,
-                bfsHighlights: highlights.highlightNodes.size,
-                willApply:
-                  !selectedLink &&
-                  focusedCommunityNodes.size === 0 &&
-                  highlights.highlightNodes.size === 0,
-              });
-            }
-            return null;
-          })()}
 
           <PixiGraphCanvas
             ref={canvasRef}
@@ -1592,350 +1100,58 @@ const GraphViewer = memo(
           />
 
           {showPhysicsPanel && (
-            <PhysicsPanel
+            <PhysicsPanelContainer
+              canvasRef={canvasRef}
               repulsion={repulsion}
-              onRepulsionChange={(v) => {
-                setRepulsion(v);
-                canvasRef.current?.setChargeStrength?.(-v);
-              }}
+              setRepulsion={setRepulsion}
               labelsVisible={labelsVisible}
-              onLabelsVisibleChange={(v) => {
-                setLabelsVisible(v);
-                canvasRef.current?.setShowLabels?.(v);
-              }}
+              setLabelsVisible={setLabelsVisible}
               colorMode={colorMode}
-              onColorModeChange={setColorMode}
-              isPhysicsRunning={physicsRunning}
-              onStopPhysics={() => {
-                canvasRef.current?.stopPhysics();
-                setPhysicsRunning(false);
-              }}
-              onStartPhysics={() => {
-                canvasRef.current?.startPhysics();
-                setPhysicsRunning(true);
-              }}
-              // Pixi-specific props
-              pixiMode={true}
-              linkDistance={pixiLinkDist}
-              onLinkDistanceChange={(v) => {
-                setPixiLinkDist(v);
-                canvasRef.current?.setLinkDistance?.(v);
-              }}
-              centerStrength={pixiCenter}
-              onCenterStrengthChange={(v) => {
-                setPixiCenter(v);
-                canvasRef.current?.setCenterStrength?.(v);
-              }}
+              setColorMode={setColorMode}
+              physicsRunning={physicsRunning}
+              setPhysicsRunning={setPhysicsRunning}
+              pixiLinkDist={pixiLinkDist}
+              setPixiLinkDist={setPixiLinkDist}
+              pixiCenter={pixiCenter}
+              setPixiCenter={setPixiCenter}
+              pixiZoomExponent={pixiZoomExponent}
+              setPixiZoomExponent={setPixiZoomExponent}
               layoutMode={layoutMode}
-              onLayoutModeChange={(mode) => {
-                setLayoutMode(mode);
-                canvasRef.current?.setLayoutMode?.(mode);
-              }}
-              radialStrength={compactRadial}
-              onRadialStrengthChange={(v) => {
-                setCompactRadial(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  radialStrength: v / 100,
-                });
-              }}
-              communityPull={compactCommunity}
-              onCommunityPullChange={(v) => {
-                setCompactCommunity(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  communityPull: v / 100,
-                });
-              }}
-              centeringStrength={compactCentering}
-              onCenteringStrengthChange={(v) => {
-                setCompactCentering(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  centeringStrength: v / 100,
-                });
-              }}
-              circleRadius={compactRadius}
-              onCircleRadiusChange={(v) => {
-                setCompactRadius(v);
-                canvasRef.current?.updateCompactConfig?.({ radiusScale: v });
-              }}
-              zoomSizeExponent={pixiZoomExponent}
-              onZoomSizeExponentChange={(v) => {
-                setPixiZoomExponent(v);
-                canvasRef.current?.setZoomSizeExponent?.(v);
-              }}
-              onReheat={() => canvasRef.current?.reheat?.()}
-              onFitToScreen={() => canvasRef.current?.fitToScreen?.()}
+              setLayoutMode={setLayoutMode}
+              compactRadial={compactRadial}
+              setCompactRadial={setCompactRadial}
+              compactCommunity={compactCommunity}
+              setCompactCommunity={setCompactCommunity}
+              compactCentering={compactCentering}
+              setCompactCentering={setCompactCentering}
+              compactRadius={compactRadius}
+              setCompactRadius={setCompactRadius}
               mode3d={mode3d}
-              onMode3dChange={(v) => {
-                setMode3d(v);
-                canvasRef.current?.set3DMode?.(v);
-              }}
-              mode3dAutoRotate={mode3d ? (rendererAutoRotate ?? true) : true}
-              onMode3dAutoRotateChange={(v) => {
-                canvasRef.current?.set3DAutoRotate?.(v);
-                setRendererAutoRotate(v);
-              }}
+              setMode3d={setMode3d}
               mode3dSpeed={mode3dSpeed}
-              onMode3dSpeedChange={(v) => {
-                setMode3dSpeed(v);
-                canvasRef.current?.set3DSpeed?.(v / 10000);
-              }}
+              setMode3dSpeed={setMode3dSpeed}
               mode3dTilt={mode3dTilt}
-              onMode3dTiltChange={(v) => {
-                setMode3dTilt(v);
-                canvasRef.current?.set3DTilt?.(v / 100);
-              }}
+              setMode3dTilt={setMode3dTilt}
+              rendererAutoRotate={rendererAutoRotate}
+              setRendererAutoRotate={setRendererAutoRotate}
               labelScale={labelScale}
-              onLabelScaleChange={(v) => {
-                setLabelScale(v);
-                canvasRef.current?.setLabelScale?.(v / 100);
-              }}
+              setLabelScale={setLabelScale}
             />
           )}
 
-          <div className="graph-controls">
-            {/* Mobile: fullscreen toggle (visible alongside trigger) */}
-            {onToggleGraphFullscreen && (
-              <button
-                className={`graph-control-btn graph-controls-fullscreen${graphFullscreen ? ' graph-control-btn--active' : ''}`}
-                onClick={onToggleGraphFullscreen}
-                title={graphFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {graphFullscreen ? (
-                    /* Exit fullscreen: corners pointing inward */
-                    <>
-                      <polyline points="4 14 4 20 10 20" />
-                      <polyline points="20 10 20 4 14 4" />
-                    </>
-                  ) : (
-                    /* Enter fullscreen: corners pointing outward */
-                    <>
-                      <polyline points="3 8 3 3 8 3" />
-                      <polyline points="16 3 21 3 21 8" />
-                      <polyline points="21 16 21 21 16 21" />
-                      <polyline points="8 21 3 21 3 16" />
-                    </>
-                  )}
-                </svg>
-              </button>
-            )}
-            {/* Mobile: single trigger button that opens a popup */}
-            <button
-              className={`graph-control-btn graph-controls-trigger${showGraphMenu ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setShowGraphMenu((v) => !v)}
-              title="Graph controls"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="5" r="1" />
-                <circle cx="12" cy="12" r="1" />
-                <circle cx="12" cy="19" r="1" />
-              </svg>
-            </button>
-
-            <div
-              className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
-            >
-              <button
-                className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
-                onClick={() => setZoomOnSelect((z) => !z)}
-                title={
-                  zoomOnSelect
-                    ? 'Zoom to node on click (on)'
-                    : 'Zoom to node on click (off)'
-                }
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  {zoomOnSelect && (
-                    <>
-                      <line x1="11" y1="8" x2="11" y2="14" />
-                      <line x1="8" y1="11" x2="14" y2="11" />
-                    </>
-                  )}
-                </svg>
-              </button>
-
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.zoomIn()}
-                title="Zoom in"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.zoomOut()}
-                title="Zoom out"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.resetCamera()}
-                title="Zoom to fit"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="15 3 21 3 21 9" />
-                  <polyline points="9 21 3 21 3 15" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-              </button>
-
-              <button
-                className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
-                onClick={() => setShowPhysicsPanel((v) => !v)}
-                title="Physics tuner"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="4" y1="21" x2="4" y2="14" />
-                  <line x1="4" y1="10" x2="4" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12" y2="3" />
-                  <line x1="20" y1="21" x2="20" y2="16" />
-                  <line x1="20" y1="12" x2="20" y2="3" />
-                  <line x1="1" y1="14" x2="7" y2="14" />
-                  <line x1="9" y1="8" x2="15" y2="8" />
-                  <line x1="17" y1="16" x2="23" y2="16" />
-                </svg>
-              </button>
-
-              <button
-                className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
-                onClick={() => {
-                  const next = layoutMode === 'spread' ? 'compact' : 'spread';
-                  setLayoutMode(next);
-                  canvasRef.current?.setLayoutMode?.(next);
-                }}
-                title={
-                  layoutMode === 'compact'
-                    ? 'Switch to spread layout'
-                    : 'Switch to compact layout'
-                }
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {layoutMode === 'compact' ? (
-                    /* Expand/spread icon */
-                    <>
-                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                    </>
-                  ) : (
-                    /* Compact/circle icon */
-                    <circle cx="12" cy="12" r="9" />
-                  )}
-                </svg>
-              </button>
-
-              <button
-                className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
-                onClick={() => {
-                  const next = !mode3d;
-                  setMode3d(next);
-                  canvasRef.current?.set3DMode?.(next);
-                }}
-                title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {mode3d ? (
-                    /* 2D grid icon */
-                    <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
-                  ) : (
-                    /* 3D cube icon */
-                    <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
-                  )}
-                </svg>
-              </button>
-            </div>
-          </div>
+          <GraphControlsBar
+            canvasRef={canvasRef}
+            graphFullscreen={graphFullscreen}
+            onToggleGraphFullscreen={onToggleGraphFullscreen}
+            zoomOnSelect={zoomOnSelect}
+            setZoomOnSelect={setZoomOnSelect}
+            showPhysicsPanel={showPhysicsPanel}
+            setShowPhysicsPanel={setShowPhysicsPanel}
+            layoutMode={layoutMode}
+            setLayoutMode={setLayoutMode}
+            mode3d={mode3d}
+            setMode3d={setMode3d}
+          />
         </div>
       );
     },
