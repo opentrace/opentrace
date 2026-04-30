@@ -17,8 +17,10 @@
 install:
 	bun install
 
+# @opencode-ai/plugin is externalized in package.json's build script —
+# it's provided by OpenCode's runtime, not bundled.
 build:
-	@echo "opencode plugin loads source directly; no build step"
+	bun run build
 
 test:
 	bun test
@@ -27,7 +29,7 @@ fmt:
 	@echo "no formatter configured for opencode plugin"
 
 lint:
-	bun tsc --noEmit
+	bun run lint
 
 clean:
 	rm -rf node_modules dist

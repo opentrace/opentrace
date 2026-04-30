@@ -13,21 +13,34 @@ The plugin runs inside OpenCode's own Bun runtime and shells out to the [`opentr
 
 ### Register the plugin
 
-Add the plugin to your OpenCode config (`~/.config/opencode/opencode.json` for global, or `.opencode/opencode.json` for per-project):
+Add the plugin to your OpenCode config (`~/.config/opencode/opencode.json` for global, or `.opencode/opencode.json` for per-project).
+
+**Recommended — npm package name:**
 
 ```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    "opentrace-opencode"
+    "@opentrace/opencode"
   ]
 }
 ```
 
-If you have the source checked out locally and want to run against it directly:
+OpenCode resolves the package and loads the bundled artifact. Append `@<version>` to pin a specific release.
+
+**Curl into the plugin directory** — for setups where editing `opencode.json` is awkward:
+
+```sh
+mkdir -p ~/.config/opencode/plugins
+curl -fsSL https://cdn.jsdelivr.net/npm/@opentrace/opencode/dist/index.js \
+  -o ~/.config/opencode/plugins/opentrace.js
+```
+
+**Local source** — for developing the plugin itself; `bun` runs the TypeScript directly:
 
 ```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": [
     ["file:///absolute/path/to/plugins/opencode/src/index.ts", { "autoIndex": false }]
   ]
@@ -64,12 +77,12 @@ The graph database is auto-discovered at `.opentrace/index.db` — walk up from 
 
 ## Configuration
 
-Plugin options (second element of the plugin tuple in `opencode.json`):
+Plugin options pass as the second element of the plugin tuple in `opencode.json`:
 
 ```jsonc
 {
   "plugin": [
-    ["opentrace-opencode", {
+    ["@opentrace/opencode", {
       "timeout": 10000,
       "indexTimeout": 1800000,
       "debug": false,

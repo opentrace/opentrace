@@ -44,7 +44,7 @@ Plugin options pass as the second tuple element in `opencode.json`:
 ```jsonc
 {
   "plugin": [
-    ["opentrace-opencode", {
+    ["@opentrace/opencode", {
       "timeout": 10000,
       "indexTimeout": 1800000,
       "debug": false,
@@ -71,6 +71,6 @@ For private-repo indexing the plugin resolves a token in this order:
 
 CI-style `fetch-and-index` runs without any stored auth still work for public repos — the CLI just doesn't receive a `--token` flag.
 
-## Configuration
+## Source
 
 The plugin source lives in `plugins/opencode/` in the repository root. See the README in that directory for plugin structure, hooks, and development notes.

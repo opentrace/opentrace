@@ -44,7 +44,7 @@ Add to `~/.config/opencode/opencode.json`:
 ~~~jsonc
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opentrace-opencode"]
+  "plugin": ["@opentrace/opencode"]
 }
 ~~~
 

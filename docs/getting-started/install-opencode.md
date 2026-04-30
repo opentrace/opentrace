@@ -14,18 +14,32 @@ The OpenTrace plugin gives [OpenCode](https://opencode.ai) real codebase awarene
 
 Add the plugin to your OpenCode config — globally at `~/.config/opencode/opencode.json` or per-project at `.opencode/opencode.json`:
 
-=== "Published package"
+=== "npm"
+
+    OpenCode resolves the package and runs the bundled artifact. No build step on your side.
 
     ```jsonc
     {
       "$schema": "https://opencode.ai/config.json",
       "plugin": [
-        "opentrace-opencode"
+        "@opentrace/opencode"
       ]
     }
     ```
 
-=== "Local checkout"
+=== "Curl into plugin dir"
+
+    Drop the bundled file straight into OpenCode's auto-loaded plugin directory. Useful when you can't or don't want to edit `opencode.json`:
+
+    ```sh
+    mkdir -p ~/.config/opencode/plugins
+    curl -fsSL https://cdn.jsdelivr.net/npm/@opentrace/opencode/dist/index.js \
+      -o ~/.config/opencode/plugins/opentrace.js
+    ```
+
+=== "Local source (dev)"
+
+    For developing the plugin itself — `bun` reloads the source each session, no rebuild required.
 
     ```jsonc
     {
@@ -37,6 +51,8 @@ Add the plugin to your OpenCode config — globally at `~/.config/opencode/openc
     ```
 
 Restart OpenCode (or start a new session) and the plugin is active.
+
+To pin a specific version, append `@<version>`: `"@opentrace/opencode@<version>"` for npm, or `https://cdn.jsdelivr.net/npm/@opentrace/opencode@<version>/dist/index.js` for the curl path.
 
 ## First Session
 
@@ -52,12 +68,6 @@ If the repo isn't indexed yet, ask OpenCode to run the `opentrace_repo_index` to
 - **Auth hook** — stores GitHub/GitLab PATs via OpenCode's keychain for private-repo indexing
 
 For the full reference, see [OpenCode Plugin reference](../reference/opencode-plugin.md).
-
-## Where the Graph Lives
-
-The plugin stores the graph at `.opentrace/index.db` in your repo. It's auto-discovered by walking up from your current directory to the git root, so any subdirectory works.
-
-You can safely `.gitignore` the `.opentrace/` directory — it's rebuildable from source.
 
 ## What Next
 
