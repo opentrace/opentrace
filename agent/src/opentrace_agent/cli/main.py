@@ -1700,28 +1700,55 @@ def _print_file_slice(
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> None:
-    """Read and print a file or a slice of it.
+    """Print a file or a slice of it, streaming line-by-line.
 
-    Uses ``splitlines()`` rather than ``split("\\n")`` so a trailing
-    newline doesn't yield a phantom empty line at the end — that would
-    inflate ``len(lines)`` by one and make open-ended ranges (``5-``)
-    print a header and blank line that don't correspond to file
-    content.
+    Reads only as much of the file as the requested slice needs: a
+    closed range stops at ``end_line``; an open-ended range reads to
+    EOF but only buffers the selected region. This avoids
+    materializing a multi-MB source file in memory just to print
+    twenty lines from the middle of it.
+
+    Iterating the file in text mode handles the trailing-newline case
+    naturally — Python yields exactly one element per real line, so an
+    open-ended range against a file ending in ``\\n`` produces no
+    phantom trailing blank line.
     """
     from pathlib import Path as P
 
-    content = P(abs_path).read_text()
-    lines = content.splitlines()
+    path = P(abs_path)
 
-    if start_line is not None:
-        start = max(0, start_line - 1)
-        end = end_line if end_line is not None else len(lines)
-        selected = lines[start:end]
-        click.echo(f"// {abs_path}:{start_line}-{end}")
-        for i, line in enumerate(selected):
-            click.echo(f"{start + i + 1}\t{line}")
-    else:
-        click.echo(content)
+    if start_line is None:
+        # Whole-file dump: stream in 64KiB chunks rather than reading
+        # the file into a single string. Trailing ``click.echo()``
+        # preserves the prior behaviour of always emitting a final
+        # newline regardless of whether the file ends in one.
+        with path.open() as f:
+            for chunk in iter(lambda: f.read(65536), ""):
+                click.echo(chunk, nl=False)
+        click.echo()
+        return
+
+    start_idx = max(1, start_line)
+    end_idx = end_line  # None == open-ended, read to EOF
+
+    selected: list[str] = []
+    total_lines = 0
+    with path.open() as f:
+        for lineno, raw in enumerate(f, start=1):
+            total_lines = lineno
+            if lineno < start_idx:
+                continue
+            if end_idx is not None and lineno > end_idx:
+                break
+            selected.append(raw.rstrip("\n"))
+
+    # Closed ranges echo the requested end (preserves prior behaviour
+    # even when the request runs past EOF); open-ended ranges report
+    # the real last line we read so the header doesn't lie.
+    resolved_end = end_idx if end_idx is not None else total_lines
+    click.echo(f"// {abs_path}:{start_line}-{resolved_end}")
+    for i, line in enumerate(selected):
+        click.echo(f"{start_idx + i}\t{line}")
 
 
 def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None) -> Path:
@@ -1837,8 +1864,11 @@ def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
 @click.option(
     "--token",
     default=None,
-    envvar="OPENTRACE_GIT_TOKEN",
-    help=("Personal access token (PAT) for private repos. Also reads OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env vars."),
+    envvar=("OPENTRACE_GIT_TOKEN", "GITHUB_TOKEN", "GITLAB_TOKEN"),
+    help=(
+        "Personal access token (PAT) for private repos. Falls back to "
+        "OPENTRACE_GIT_TOKEN, GITHUB_TOKEN, or GITLAB_TOKEN env vars (in that order)."
+    ),
 )
 @click.option("--ref", default=None, help="Branch or tag to clone (defaults to repo default branch).")
 @click.option(
@@ -1866,13 +1896,10 @@ def fetch_and_index(
     is kept permanently so source-read can access the files later.
 
     For private repos, pass --token with a GitHub/GitLab personal access
-    token (PAT), or set the OPENTRACE_GIT_TOKEN or GITHUB_TOKEN env var.
+    token (PAT), or set OPENTRACE_GIT_TOKEN, GITHUB_TOKEN, or GITLAB_TOKEN
+    (resolved in that order by Click via the --token envvar binding).
     """
     _configure_logging(verbose)
-
-    # Try GITHUB_TOKEN as fallback
-    if not token:
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITLAB_TOKEN")
 
     # Determine repo name from URL
     url_parts = repo_url.rstrip("/").split("/")
