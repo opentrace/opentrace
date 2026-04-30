@@ -26,6 +26,7 @@ proto:
 install:
 	$(MAKE) -C agent install
 	$(MAKE) -C ui install
+	$(MAKE) -C plugins/opencode install
 
 ## Build all components
 build:
@@ -35,21 +36,25 @@ build:
 test:
 	$(MAKE) -C agent test
 	$(MAKE) -C ui test
+	$(MAKE) -C plugins/opencode test
 
 ## Clean all build artifacts
 clean:
 	$(MAKE) -C agent clean
 	$(MAKE) -C ui clean
+	$(MAKE) -C plugins/opencode clean
 
 ## Format all code
 fmt:
 	$(MAKE) -C agent fmt
 	$(MAKE) -C ui fmt
+	$(MAKE) -C plugins/opencode fmt
 
 ## Lint all code
 lint:
 	$(MAKE) -C agent lint
 	$(MAKE) -C ui lint
+	$(MAKE) -C plugins/opencode lint
 
 agent:
 	$(MAKE) -C agent run

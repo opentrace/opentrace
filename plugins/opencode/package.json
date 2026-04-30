@@ -1,0 +1,34 @@
+{
+  "name": "opentrace-opencode",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenTrace integration plugin for OpenCode — brings codebase intelligence and multi-repo knowledge graph to AI coding agents",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opentrace/opentrace",
+    "directory": "plugins/opencode"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.4.3",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "bun": ">=1.0.0"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "opencode",
+    "opentrace",
+    "code-intelligence",
+    "knowledge-graph",
+    "ai-coding"
+  ]
+}

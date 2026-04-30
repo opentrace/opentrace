@@ -65,4 +65,4 @@ You can safely `.gitignore` the `.opentrace/` directory — it's rebuildable fro
 
 ---
 
-*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)*
+*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [OpenCode Plugin](install-opencode.md) · [Source](../development/setup.md)*

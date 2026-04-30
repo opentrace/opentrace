@@ -43,5 +43,6 @@ agent/                — Python agent (loads data into the graph)
 proto/                — Protobuf definitions (shared API contracts)
 plugins/              — Editor / AI integrations
   claude-code/        — Claude Code plugin (MCP server config)
+  opencode/           — OpenCode plugin (native TS, Bun runtime)
 benchmark/            — Performance benchmarks
 ```
