@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -58,6 +58,17 @@ export class FakeCli {
         process.env[`FAKE_STDOUT_BY_${sub.replace(/-/g, "_").toUpperCase()}`] = val
       }
     }
+  }
+
+  /** Delete the binary at its cached path — simulates a mid-session uninstall. */
+  removeBinary(): void {
+    rmSync(this.bin, { force: true })
+  }
+
+  /** Re-create the binary at the same path — simulates a reinstall mid-session. */
+  restoreBinary(): void {
+    writeFileSync(this.bin, FAKE_SCRIPT.replace("__ARGV_LOG__", this.argvLog))
+    chmodSync(this.bin, 0o755)
   }
 
   /** Read every recorded argv as a list of arrays. */
