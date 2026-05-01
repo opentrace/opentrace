@@ -28,20 +28,12 @@
     "directory": "plugins/opencode"
   },
   "dependencies": {
+    "@opencode-ai/plugin": "^1.4.3",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.4.3",
     "@types/bun": "latest",
     "typescript": "^5.5.0"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "^1"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
   },
   "engines": {
     "bun": ">=1.0.0"
