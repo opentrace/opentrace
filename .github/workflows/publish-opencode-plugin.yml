@@ -89,7 +89,7 @@ jobs:
       - name: Set version
         working-directory: plugins/opencode
         run: |
-          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version
+          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
           echo "Publishing @opentrace/opencode@${{ needs.version.outputs.version }} with tag ${{ needs.version.outputs.tag }}"
 
       - name: Install dependencies
