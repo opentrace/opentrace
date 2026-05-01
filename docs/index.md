@@ -2,16 +2,16 @@
 
 A knowledge graph that maps your codebase structure, service architecture, and system relationships — then exposes it all through MCP so AI tools can understand your systems.
 
-**[Try it now at oss.opentrace.ai](https://oss.opentrace.ai)** — no install required, runs entirely in your browser.
+**[Try it now at app.opentrace.ai](https://app.opentrace.ai)** — no install required, runs entirely in your browser.
 
 ## Where to Start
 
-| Goal                                  | Start here |
-|---------------------------------------|------------|
-| See what OpenTrace is                 | [Browser (no install)](getting-started/install-browser.md) |
-| Give Claude Code codebase awareness   | [Claude Code Plugin](getting-started/install-plugin.md) |
-| Index repos from a terminal           | [CLI](getting-started/install-cli.md) |
-| Hack on OpenTrace itself              | [Development Setup](development/setup.md) |
+| Goal                                | Start here                                                 |
+| ----------------------------------- | ---------------------------------------------------------- |
+| See what OpenTrace is               | [Browser (no install)](getting-started/install-browser.md) |
+| Give Claude Code codebase awareness | [Claude Code Plugin](getting-started/install-plugin.md)    |
+| Index repos from a terminal         | [CLI](getting-started/install-cli.md)                      |
+| Hack on OpenTrace itself            | [Development Setup](development/setup.md)                  |
 
 Not sure? → [Pick Your Path](getting-started/quickstart.md)
 
