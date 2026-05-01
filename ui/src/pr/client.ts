@@ -50,7 +50,7 @@ import { parseBitbucketUrl } from '../runner/browser/loader/bitbucket';
 import { parseAzureDevOpsUrl } from '../runner/browser/loader/azuredevops';
 
 const ATTRIBUTION_FOOTER =
-  '\n\n---\n*Generated via [OpenTrace](https://oss.opentrace.ai)*';
+  '\n\n---\n*Generated via [OpenTrace](https://app.opentrace.ai)*';
 
 export class PRClient {
   readonly meta: RepoMeta;

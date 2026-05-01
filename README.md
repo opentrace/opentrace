@@ -24,27 +24,30 @@ OpenTrace indexes source code and builds a queryable knowledge graph. Point it a
 ## Get Started
 
 ### Linux/MacOS
-~~~sh
+
+```sh
 uvx opentraceai index .   # Index a local project for use with MCP etc
-~~~
+```
 
 ### Claude Plugin
-~~~
+
+```
 /plugin marketplace add https://github.com/opentrace/opentrace
 /plugin install opentrace-oss@opentrace-oss
 /reload-plugins
-~~~
+```
 
 More info: https://opentrace.github.io/opentrace/getting-started/install-plugin/
 
 ### Gemini CLI
-~~~sh
+
+```sh
 gemini mcp add opentraceai uvx opentraceai mcp
-~~~
+```
 
 ### Run Completely in the Browser
 
-**No install:** **[oss.opentrace.ai](https://oss.opentrace.ai)**
+**No install:** **[app.opentrace.ai](https://app.opentrace.ai)**
 
 ### Run UI Locally
 
@@ -57,28 +60,26 @@ make install && make ui  # Runs on http://localhost:5173/
 
 **Full documentation:** **[opentrace.github.io/opentrace](https://opentrace.github.io/opentrace/)** — install guides, architecture, and reference.
 
-
 **Prerequisites:** plugin and CLI need [`uv`](https://docs.astral.sh/uv/). Source build also needs Node 22+ and Python 3.12+. See [Troubleshooting](https://opentrace.github.io/opentrace/getting-started/troubleshooting/) if anything fails.
-
 
 ## Claude Code Plugin
 
 The plugin gives Claude Code 5 agents, 4 slash commands, and MCP graph tools.
 
-| Agent                  | Description                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------------ |
-| `@opentrace`           | Default catch-all — any codebase question routed to the knowledge graph              |
-| `@code-explorer`       | Explore indexed code structure — find classes, functions, files, and relationships   |
-| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                               |
-| `@find-usages`         | Find all callers, references, and usages of a component                              |
-| `@explain-service`     | Top-down walkthrough of how a service or module works                                |
+| Agent                  | Description                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `@opentrace`           | Default catch-all — any codebase question routed to the knowledge graph            |
+| `@code-explorer`       | Explore indexed code structure — find classes, functions, files, and relationships |
+| `@dependency-analyzer` | Analyze dependencies and blast radius for code changes                             |
+| `@find-usages`         | Find all callers, references, and usages of a component                            |
+| `@explain-service`     | Top-down walkthrough of how a service or module works                              |
 
-| Command             | Description                                                      |
-| ------------------- | ---------------------------------------------------------------- |
-| `/index`            | Index (or re-index) the current project into the knowledge graph |
-| `/graph-status`     | Show overview of indexed nodes by type                           |
-| `/explore <name>`   | Quick exploration of a named component in the graph              |
-| `/interrogate`      | Answer a question about the codebase without making changes     |
+| Command           | Description                                                      |
+| ----------------- | ---------------------------------------------------------------- |
+| `/index`          | Index (or re-index) the current project into the knowledge graph |
+| `/graph-status`   | Show overview of indexed nodes by type                           |
+| `/explore <name>` | Quick exploration of a named component in the graph              |
+| `/interrogate`    | Answer a question about the codebase without making changes      |
 
 Full details: [Claude Code Plugin reference](https://opentrace.github.io/opentrace/reference/claude-code-plugin/).
 
@@ -96,7 +97,7 @@ Full language matrix: [Supported Languages](https://opentrace.github.io/opentrac
 ┌───────────────────────────────────────────────────────────┐
 │                      UI (React/TS)                        │
 │            Browser-based indexer + graph explorer         │
-│               localhost:5173 / oss.opentrace.ai           │
+│               localhost:5173 / app.opentrace.ai           │
 │                                                           │
 │  ┌───────────────┐  ┌─────────────────┐  ┌──────────────┐ │
 │  │  Web Worker   │  │  LadybugDB WASM │  │  Chat Agent  │ │
