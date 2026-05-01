@@ -24,10 +24,17 @@
 export const EXIT_OK = 0
 export const EXIT_DB_MISSING = 3
 export const EXIT_WORKSPACE_UNRESOLVABLE = 4
+export const EXIT_INDEX_IN_PROGRESS = 5
 
-/** Message surfaced when the resolved workspace DB doesn't exist yet. */
 export const DB_MISSING_MESSAGE =
   "No OpenTrace index found. Use opentrace_repo_index to index a repository first."
+
+// Strips the CLI's human-only "remove the lock file" hint so an LLM
+// can't race the live writer by deleting it.
+export const INDEX_IN_PROGRESS_MESSAGE =
+  "Another opentrace_repo_index is currently running in this workspace. " +
+  "Wait a few minutes and try again, or use the existing graph via the " +
+  "other opentrace_ tools in the meantime."
 
 /**
  * Fact-stating message for an unresolvable workspace directory. Includes the

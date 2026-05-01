@@ -79,6 +79,10 @@ Indexing time scales with repo size and usually finishes in a few minutes; large
       })
 
       if (!result.ok) {
+        if (result.inProgress) {
+          ctx.metadata({ title: "Waiting on another index..." })
+          return result.message
+        }
         ctx.metadata({ title: `Indexing ${name} failed` })
         return `Indexing failed:\n${result.message}`
       }

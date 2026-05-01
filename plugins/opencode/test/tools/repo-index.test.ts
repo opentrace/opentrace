@@ -236,4 +236,24 @@ describe("opentrace_repo_index", () => {
     expect(result).toContain("Clone failed: 404")
     expect(titles).toContain("Indexing missing failed")
   })
+
+  test("inProgress lock failure: distinct title, message returned verbatim (no 'Indexing failed' prefix)", async () => {
+    const lockMsg =
+      "Another opentrace_repo_index is currently running in this workspace. " +
+      "Wait a few minutes and try again, or use the existing graph via the " +
+      "other opentrace_ tools in the meantime."
+    const client = makeGraphClientStub({
+      indexRepo: async () => ({ ok: false, message: lockMsg, inProgress: true }),
+    })
+    const tool = createRepoIndexTool(client, async () => null)
+    const { ctx, titles } = makeCtx()
+    const result = await tool.execute(
+      { path_or_url: "/path/to/myrepo" } as any,
+      ctx,
+    )
+    expect(result).toBe(lockMsg)
+    expect(result).not.toContain("Indexing failed")
+    expect(titles).toContain("Waiting on another index...")
+    expect(titles).not.toContain("Indexing myrepo failed")
+  })
 })

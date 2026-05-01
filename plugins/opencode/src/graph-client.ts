@@ -20,8 +20,10 @@ import { debug } from "./util/debug.js"
 import {
   DB_MISSING_MESSAGE,
   EXIT_DB_MISSING,
+  EXIT_INDEX_IN_PROGRESS,
   EXIT_OK,
   EXIT_WORKSPACE_UNRESOLVABLE,
+  INDEX_IN_PROGRESS_MESSAGE,
   workspaceUnresolvableMessage,
 } from "./util/exit-codes.js"
 
@@ -367,6 +369,11 @@ export class GraphClient {
     if (exitCode === EXIT_WORKSPACE_UNRESOLVABLE) {
       this._workspaceUnresolvable = true
       return workspaceUnresolvableMessage(this.directory)
+    }
+    if (exitCode === EXIT_INDEX_IN_PROGRESS) {
+      // Don't touch _dbReady — an in-progress index says nothing about
+      // whether the live DB exists.
+      return INDEX_IN_PROGRESS_MESSAGE
     }
     return null
   }
@@ -738,17 +745,16 @@ export class GraphClient {
   }
 
   /**
-   * Result of {@link GraphClient.indexRepo}. `ok` reflects the CLI's exit
-   * status — only exit 0 is success. Callers should gate user-facing
-   * "should now be searchable" assertions on `ok`; on failure, `message`
-   * is the CLI's stderr/stdout (or a contract message for exit 3 / 4),
-   * suitable to surface verbatim.
+   * `ok` reflects the CLI's exit status (only exit 0 is success). On failure,
+   * `message` is the curated/CLI text, suitable to surface verbatim.
+   * `inProgress` flags {@link EXIT_INDEX_IN_PROGRESS} as retryable rather
+   * than a hard error.
    */
   async indexRepo(
     pathOrUrl: string,
     repoId?: string,
     opts?: { token?: string; ref?: string },
-  ): Promise<{ ok: boolean; message: string }> {
+  ): Promise<{ ok: boolean; message: string; inProgress?: boolean }> {
     // Standard git remote schemes plus the SCP-like `git@host:org/repo` form.
     const isUrl =
       /^(?:https?|git\+ssh|ssh|git):\/\//.test(pathOrUrl) ||
@@ -771,20 +777,21 @@ export class GraphClient {
     return {
       ok: false,
       message: result.output || (isUrl ? "Fetch-and-index failed or no output" : "Indexing failed or no output"),
+      inProgress: result.exitCode === EXIT_INDEX_IN_PROGRESS,
     }
   }
 
   /**
-   * Result of {@link GraphClient.runWithTimeout}. `ok` is true only on
-   * CLI exit 0; CLI-missing, budget-exhausted, non-zero exit, timeout,
-   * and spawn errors all map to `ok: false`. `output` is the text the
-   * caller should surface (stdout on success; stderr/stdout/contract
-   * message on failure).
+   * `ok` is true only on CLI exit 0. `output` is the text to surface
+   * (stdout on success, stderr/stdout/contract message on failure).
+   * `exitCode` is the raw CLI exit when the subprocess actually ran
+   * — undefined for pre-spawn failures (CLI missing, probe exhausted,
+   * spawn error) so callers can distinguish those from a real exit-N.
    */
   private async runWithTimeout(
     subArgs: string[],
     timeoutMs: number,
-  ): Promise<{ ok: boolean; output: string }> {
+  ): Promise<{ ok: boolean; output: string; exitCode?: number }> {
     // Deadline spans probe + spawn so probe latency doesn't silently extend
     // the caller's budget. timeoutMs <= 0 means "no timeout" (used for
     // monorepo indexing) and skips the deadline entirely.
@@ -839,14 +846,14 @@ export class GraphClient {
           subArgs[0],
           tail,
         )
-        if (semanticMessage) return { ok: false, output: semanticMessage }
+        if (semanticMessage) return { ok: false, output: semanticMessage, exitCode }
         if (timedOut) {
-          return { ok: false, output: stderr.trim() || stdout.trim() || `Timed out after ${remaining}ms` }
+          return { ok: false, output: stderr.trim() || stdout.trim() || `Timed out after ${remaining}ms`, exitCode }
         }
-        return { ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${exitCode}` }
+        return { ok: false, output: stderr.trim() || stdout.trim() || `Exit code ${exitCode}`, exitCode }
       }
       debug("graph", "runWithTimeout: completed ok", subArgs[0])
-      return { ok: true, output: stdout.trim() }
+      return { ok: true, output: stdout.trim(), exitCode }
     } catch (e: any) {
       debug("graph", "runWithTimeout: spawn error", subArgs[0], e)
       return { ok: false, output: `Error: ${e.message ?? e}` }

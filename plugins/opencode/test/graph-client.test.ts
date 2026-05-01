@@ -232,6 +232,18 @@ describe("exit-code state machine", () => {
     expect(client.dbReadyHint()).toBe(true)
   })
 
+  test("exit 5 (index in progress) leaves dbReadyHint untouched", async () => {
+    fake.configure({ exitCode: 0, stdout: '{"total_nodes":1,"total_edges":0,"nodes_by_type":{}}' })
+    const client = await makeClient()
+    await client.stats()
+    expect(client.dbReadyHint()).toBe(true)
+
+    fake.configure({ exitCode: 5, stderr: "Error: Another index is in progress against /w/.opentrace/index.db" })
+    const result = await client.indexRepo("/local/repo")
+    expect(result.inProgress).toBe(true)
+    expect(client.dbReadyHint()).toBe(true)
+  })
+
   test("requireDbAvailable cold-cache path probes once and caches the result", async () => {
     fake.configure({ exitCode: 0, stdout: '{"total_nodes":0,"total_edges":0,"nodes_by_type":{}}' })
     const client = await makeClient()
@@ -531,6 +543,44 @@ describe("indexRepo result shape", () => {
     const result = await client.indexRepo("/local/repo")
     expect(result.ok).toBe(false)
     expect(result.message).toContain("opentrace_repo_index")
+  })
+
+  test("exit 5 (single-writer lock held) flags inProgress and uses the LLM-safe message", async () => {
+    fake.configure({
+      exitCode: 5,
+      stderr:
+        "Error: Another index is in progress against /w/.opentrace/index.db " +
+        "(lock held at /w/.opentrace/index.db.indexlock). Wait for it to finish, " +
+        "or remove the lock file if no index is actually running.",
+    })
+    const client = await makeClient()
+    const result = await client.indexRepo("/local/repo")
+    expect(result.ok).toBe(false)
+    expect(result.inProgress).toBe(true)
+    expect(result.message).toContain("Another opentrace_repo_index is currently running")
+    // Human-only "remove the lock file" hint must not reach the LLM.
+    expect(result.message).not.toContain("remove the lock file")
+    expect(result.message).not.toContain("indexlock")
+  })
+
+  test("non-lock failures do not set inProgress", async () => {
+    fake.configure({ exitCode: 1, stderr: "Clone failed: 404" })
+    const client = await makeClient()
+    const result = await client.indexRepo("https://github.com/foo/bar")
+    expect(result.ok).toBe(false)
+    expect(result.inProgress).toBeFalsy()
+  })
+
+  test("inProgress flows through the URL (fetch-and-index) variant too", async () => {
+    fake.configure({
+      exitCode: 5,
+      stderr: "Error: Another index is in progress against /w/.opentrace/index.db",
+    })
+    const client = await makeClient()
+    const result = await client.indexRepo("https://github.com/foo/bar")
+    expect(result.ok).toBe(false)
+    expect(result.inProgress).toBe(true)
+    expect(result.message).toContain("Another opentrace_repo_index")
   })
 
   test("falls back to a synthetic success message when stdout is empty", async () => {
