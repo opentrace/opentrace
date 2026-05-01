@@ -71,6 +71,7 @@ ui/                   — React/TypeScript frontend
 proto/                — Protobuf definitions
 plugins/              — Editor / AI integrations
   claude-code/        — Claude Code plugin configuration
+  opencode/           — OpenCode plugin (native TS, Bun runtime)
 ```
 
 See `ui/src/pipeline/CLAUDE.md` for detailed pipeline architecture documentation.

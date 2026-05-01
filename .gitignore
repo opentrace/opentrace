@@ -17,6 +17,8 @@ ui/dist/
 functions/node_modules/
 functions/lib/
 components/node_modules/
+plugins/opencode/node_modules/
+plugins/opencode/dist/
 
 # IDE
 .idea/

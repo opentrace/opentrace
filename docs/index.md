@@ -32,6 +32,7 @@ See [Architecture Overview](architecture/overview.md) for how the pieces fit tog
 - **[Graph Tools](reference/graph-tools.md)** — the MCP tools exposed to AI agents
 - **[Supported Languages](reference/languages.md)** — full vs. structural extraction
 - **[Claude Code Plugin](reference/claude-code-plugin.md)** — agents, commands, and tools
+- **[OpenCode Plugin](reference/opencode-plugin.md)** — native TS plugin, 9 tools, hooks
 - **[Browser Requirements](reference/browser-requirements.md)** — why Safari doesn't work
 - **[Contributing](development/contributing.md)** — help improve OpenTrace
 

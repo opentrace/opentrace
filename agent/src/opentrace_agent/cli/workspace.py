@@ -38,6 +38,7 @@ EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_DB_MISSING = 3
 EXIT_WORKSPACE_UNRESOLVABLE = 4
+EXIT_INDEX_IN_PROGRESS = 5
 
 WORKSPACES_ROOT = Path.home() / ".opentrace" / "workspaces"
 DB_NAME = "index.db"
