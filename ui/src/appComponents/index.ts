@@ -48,3 +48,13 @@ export type {
   HighlightsResult,
 } from '../providers/GraphInteractionProvider';
 export { getSubType, linkId } from '../providers/graphFilterUtils';
+export { useGraphViewer } from '../hooks/useGraphViewer';
+export type {
+  ExtraHighlightSource,
+  GraphViewerImperativeHandle,
+  LegendItem,
+  PersistedSettings,
+  ToolbarState,
+  UseGraphViewerOptions,
+  UseGraphViewerResult,
+} from '../hooks/useGraphViewer';
