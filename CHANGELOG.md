@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-01
+
+### Bug Fixes
+
+- **ci:** Resolve preview-publish PR by head ref instead of commit assoc (#327) ([#327](https://github.com/opentrace/opentrace/pull/327))
+- **ci:** Correct artifact paths after upload LCA stripping (#328) ([#328](https://github.com/opentrace/opentrace/pull/328))
+- **ui:** Make graph canvas reactive to theme and light/dark mode chan… (#330) ([#330](https://github.com/opentrace/opentrace/pull/330))
+- **agent:** Allow concurrent index while MCP server is running (#323) ([#323](https://github.com/opentrace/opentrace/pull/323))
+- **ui:** Reset buffered write counters in clearGraph (#341) ([#341](https://github.com/opentrace/opentrace/pull/341))
+- **queue:** Clear graph abort pending queries (#345) ([#345](https://github.com/opentrace/opentrace/pull/345))
+- **pixi:** Stabilize 3D rendering under spread-layout drift (OT-1691) (#342) ([#342](https://github.com/opentrace/opentrace/pull/342))
+- **ui:** Left-drag pans in 3D mode, right-drag rotates (#346) ([#346](https://github.com/opentrace/opentrace/pull/346))
+- **ui:** Flip 3D mouse controls — left-drag rotates, right-drag pans (#348) ([#348](https://github.com/opentrace/opentrace/pull/348))
+- **ui:** Finish wiring PHP end-to-end in the browser runner (#350) ([#350](https://github.com/opentrace/opentrace/pull/350))
+- **ui:** Disable already-indexed example repos in AddRepoModal (OT-1699) (#352) ([#352](https://github.com/opentrace/opentrace/pull/352))
+- **ui:** Keep graph framed during indexing, not only after embeddings (OT-1712) (#353) ([#353](https://github.com/opentrace/opentrace/pull/353))
+- **oss domain:** Text change in docs and code to app.opentrace.ai (#381) ([#381](https://github.com/opentrace/opentrace/pull/381))
+- **plugins/opencode:** Declare @opencode-ai/plugin as runtime dep (#384) ([#384](https://github.com/opentrace/opentrace/pull/384))
+
+### CI/CD
+
+- Use pull_request_target for preview publish to fix fork OIDC (#324) ([#324](https://github.com/opentrace/opentrace/pull/324))
+- Split preview publish into build + workflow_run publish (#326) ([#326](https://github.com/opentrace/opentrace/pull/326))
+- Rename preview-publish label to preview-pypi (#334) ([#334](https://github.com/opentrace/opentrace/pull/334))
+- Allow same-version npm bumps in release workflows (#385) ([#385](https://github.com/opentrace/opentrace/pull/385))
+
+### Documentation
+
+- Update README install command to uv tool install (#321) ([#321](https://github.com/opentrace/opentrace/pull/321))
+- Restructure install paths into per-audience guides (#322) ([#322](https://github.com/opentrace/opentrace/pull/322))
+- Add CLAUDE.md files throughout repo for agent context (#332) ([#332](https://github.com/opentrace/opentrace/pull/332))
+- Readme updates (#331) ([#331](https://github.com/opentrace/opentrace/pull/331))
+
+### Features
+
+- **ui:** Add stop button and edit-and-resend to chat (#325) ([#325](https://github.com/opentrace/opentrace/pull/325))
+- **auth:** Add user-scoped tokens and per-org token resolution (#296) ([#296](https://github.com/opentrace/opentrace/pull/296))
+- **plugin:** Add debug mode via OPENTRACE_DEBUG (#333) ([#333](https://github.com/opentrace/opentrace/pull/333))
+- **ui:** Add reindex-repo job to rebuild a single repo's graph (#347) ([#347](https://github.com/opentrace/opentrace/pull/347))
+- **ui:** Add PHP support to browser tree-sitter pipeline (#349) ([#349](https://github.com/opentrace/opentrace/pull/349))
+- **ui:** Fit graph on chat submit, clear highlights on done (OT-1717) (#355) ([#355](https://github.com/opentrace/opentrace/pull/355))
+- **ui:** Resizable graph panels — horizontal, vertical, corner (OT-1716) (#354) ([#354](https://github.com/opentrace/opentrace/pull/354))
+- **cli:** Headless cli (#377) ([#377](https://github.com/opentrace/opentrace/pull/377))
+- **plugin:** Opencode plugin (#382) ([#382](https://github.com/opentrace/opentrace/pull/382))
+- **app-components:** Extract useGraphViewer orchestration hook (#383) ([#383](https://github.com/opentrace/opentrace/pull/383))
+
+### Refactoring
+
+- **ui:** Lift graph state into context providers (#376) ([#376](https://github.com/opentrace/opentrace/pull/376))
+- **ui:** Extract GraphViewer JSX into reusable components (#379) ([#379](https://github.com/opentrace/opentrace/pull/379))
+- Move claude-code-plugin to plugins/claude-code (#380) ([#380](https://github.com/opentrace/opentrace/pull/380))
 ## [0.3.0] - 2026-04-10
 
 ### Bug Fixes
