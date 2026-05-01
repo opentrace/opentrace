@@ -786,3 +786,51 @@ describe("ftsSearch — nodeTypes without an explicit limit", () => {
     expect(argv).not.toContain("--limit")
   })
 })
+
+describe("binary vanishes after a successful create() probe", () => {
+  test("indexRepo surfaces install guidance instead of a raw posix_spawn ENOENT", async () => {
+    const client = await makeClient("/w")
+    expect(client.isCliAvailable()).toBe(true)
+
+    fake.removeBinary()
+    const result = await client.indexRepo("/local/repo")
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain("uv tool install opentraceai")
+    expect(result.message).toContain("pipx install opentraceai")
+    expect(result.message).not.toMatch(/ENOENT|posix_spawn/)
+  })
+
+  test("the cache is cleared so a reinstall is picked up without restart", async () => {
+    const client = await makeClient("/w")
+    fake.removeBinary()
+
+    const failed = await client.indexRepo("/local/repo")
+    expect(failed.ok).toBe(false)
+    expect(client.isCliAvailable()).toBe(false)
+
+    fake.restoreBinary()
+    fake.configure({ exitCode: 0, stdout: "Indexed" })
+    const recovered = await client.indexRepo("/local/repo")
+    expect(recovered).toEqual({ ok: true, message: "Indexed" })
+    expect(client.isCliAvailable()).toBe(true)
+  })
+
+  test("sourceSearchText (surfaceErrors path) returns install guidance", async () => {
+    const client = await makeClient("/w")
+    fake.removeBinary()
+
+    const out = await client.sourceSearchText("foo")
+    expect(out).toContain("uv tool install opentraceai")
+    expect(out).not.toMatch(/ENOENT|posix_spawn/)
+  })
+
+  test("stats() (non-surfacing path) returns null but still clears the cache", async () => {
+    const client = await makeClient("/w")
+    fake.removeBinary()
+
+    const stats = await client.stats()
+    expect(stats).toBeNull()
+    expect(client.isCliAvailable()).toBe(false)
+  })
+})

@@ -441,6 +441,10 @@ export class GraphClient {
       return stdout.trim() || null
     } catch (e) {
       debug("graph", "run: spawn error", subArgs[0], e)
+      if (isMissingBinaryError(e)) {
+        this.exe = null
+        if (opts?.surfaceErrors) return getCliMissingMessage()
+      }
       return null
     }
   }
@@ -856,6 +860,10 @@ export class GraphClient {
       return { ok: true, output: stdout.trim(), exitCode }
     } catch (e: any) {
       debug("graph", "runWithTimeout: spawn error", subArgs[0], e)
+      if (isMissingBinaryError(e)) {
+        this.exe = null
+        return { ok: false, output: getCliMissingMessage() }
+      }
       return { ok: false, output: `Error: ${e.message ?? e}` }
     }
   }
@@ -884,6 +892,14 @@ function tryParseJson(s: string): Record<string, any> | undefined {
   } catch {
     return undefined
   }
+}
+
+// Spawn-level errors that mean the cached binary path is no longer usable
+// — typically a uv-tool / pipx shim whose target was removed mid-session.
+function isMissingBinaryError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code
+  if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES") return true
+  return /ENOENT|ENOTDIR|EACCES/.test(String((e as { message?: unknown })?.message ?? e))
 }
 
 // Flags whose following argument is a secret and must not appear in debug logs.
