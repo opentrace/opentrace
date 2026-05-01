@@ -32,11 +32,7 @@ import {
   type LayoutConfig,
   type SearchSuggestion,
 } from '../components';
-import type {
-  GraphLink,
-  GraphNode,
-  SelectedEdge,
-} from '../components/utils';
+import type { GraphLink, GraphNode, SelectedEdge } from '../components/utils';
 import type { HistoryEntry } from '../appComponents/historyTypes';
 import { useGraph } from '../providers/GraphDataProvider';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
@@ -248,13 +244,8 @@ export function useGraphViewer(
 
   const canvasRef = useRef<GraphCanvasHandle>(null);
 
-  const {
-    graphData,
-    stats,
-    lastSearchQuery,
-    graphVersion,
-    loadGraph,
-  } = useGraph();
+  const { graphData, stats, lastSearchQuery, graphVersion, loadGraph } =
+    useGraph();
 
   const {
     selectedNode,
@@ -359,7 +350,7 @@ export function useGraphViewer(
 
   // ─── Persisted physics / layout / 3D settings ──────────────────────────
   const stored = useMemo(readPersistedSettings, []);
-  const ps = <T,>(key: string, def: T): T => (stored[key] as T) ?? def;
+  const ps = <T>(key: string, def: T): T => (stored[key] as T) ?? def;
 
   const [zoomOnSelect, setZoomOnSelect] = useState(() =>
     ps('zoomOnSelect', true),
@@ -740,9 +731,12 @@ export function useGraphViewer(
   // consumers) rely on this precedence for visual correctness.
   const highlightProps = useMemo(() => {
     const hasChat = !!chatHighlightNodes && chatHighlightNodes.size > 0;
-    const hasExtraNodes = !!extraHighlightSource && extraHighlightSource.nodes.size > 0;
-    const hasExtraLinks = !!extraHighlightSource && extraHighlightSource.links.size > 0;
-    const hasExtraLabels = !!extraHighlightSource && extraHighlightSource.labels.size > 0;
+    const hasExtraNodes =
+      !!extraHighlightSource && extraHighlightSource.nodes.size > 0;
+    const hasExtraLinks =
+      !!extraHighlightSource && extraHighlightSource.links.size > 0;
+    const hasExtraLabels =
+      !!extraHighlightSource && extraHighlightSource.labels.size > 0;
 
     const highlightNodes = selectedLink
       ? edgeHighlightNodes
