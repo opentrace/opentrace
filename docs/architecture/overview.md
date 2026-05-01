@@ -41,4 +41,4 @@ MCP server configuration that connects Claude Code to OpenTrace. See the [Claude
 
 ### OpenCode Plugin (`plugins/opencode/`)
 
-Native TypeScript plugin that runs inside OpenCode's Bun runtime. Registers 9 graph tools and three hooks (system-prompt injection, tool-execute interception, auth) — calls the `opentraceai` CLI directly rather than going through MCP. See the [OpenCode Plugin reference](../reference/opencode-plugin.md) for details.
+Native TypeScript plugin that runs inside OpenCode's Bun runtime — calls the `opentraceai` CLI directly rather than going through MCP. See the [OpenCode Plugin reference](../reference/opencode-plugin.md) for details.
