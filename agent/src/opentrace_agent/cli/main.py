@@ -1087,6 +1087,38 @@ def impact(file_path: str, db_path: str | None, line_spec: str | None) -> None:
     run_impact(file_path, resolved, line_ranges)
 
 
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option(
+    "--staged",
+    "staged_only",
+    is_flag=True,
+    default=False,
+    help="Only analyze changes staged in the index, ignoring unstaged work.",
+)
+def diff(db_path: str | None, staged_only: bool) -> None:
+    """Run impact analysis on every uncommitted code file.
+
+    Discovers files changed in the working tree (or the index, with
+    ``--staged``) via ``git diff --name-only`` and prints the blast radius
+    for each. Exits 0 with no output when there are no changes or no index.
+    """
+    from opentrace_agent.cli.diff import run_diff
+
+    try:
+        resolved = _resolve_db(db_path, must_exist=True)
+    except click.UsageError:
+        resolved = None
+
+    run_diff(os.getcwd(), resolved, staged_only=staged_only)
+
+
 def _do_clone(
     repo_url: str,
     clone_dir: Path,
