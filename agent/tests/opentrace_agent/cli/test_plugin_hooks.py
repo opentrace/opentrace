@@ -56,6 +56,8 @@ def _load(name: str):
 _common = _load("_common")
 _pre = _load("pre_tool_use")
 _post = _load("post_tool_use")
+_session_start = _load("session_start")
+_user_prompt_submit = _load("user_prompt_submit")
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +576,181 @@ class TestPostToolUseMain:
         monkeypatch.setattr("sys.stdin", StringIO(""))
         _post.main()
         assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# session_start.main() — end-to-end via stdin/stdout
+# ---------------------------------------------------------------------------
+
+
+class TestSessionStartMain:
+    def test_emits_install_guidance_when_cli_missing(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """When opentraceai is not on PATH, the hook must surface install
+        guidance instead of silently degrading. This branch must precede the
+        no-index branch — without the CLI, indexing won't run anyway.
+        """
+        with patch.object(_session_start, "_installed_version", return_value=None):
+            data = _run_hook(
+                _session_start,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        assert data is not None
+        assert "opentraceai" in data["systemMessage"]
+        assert "uv tool install" in data["systemMessage"]
+        assert "pipx" in data["systemMessage"]
+
+    def test_starts_background_index_when_no_db(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """No `.opentrace/index.db` → kick off background indexing and
+        emit a 'background indexing started' message. The CLI must be
+        installed for this branch — the install-guidance branch fires first
+        otherwise.
+        """
+        # Make tmp_path look like a git repo so the indexer can target it.
+        (tmp_path / ".git").mkdir()
+
+        with patch.object(_session_start, "_installed_version", return_value="0.4.0"), patch.object(
+            _session_start, "_start_background_index", return_value=12345
+        ) as mock_idx:
+            data = _run_hook(
+                _session_start,
+                {"cwd": str(tmp_path)},
+                monkeypatch,
+                capsys,
+            )
+        mock_idx.assert_called_once()
+        assert data is not None
+        assert "background indexing started" in data["systemMessage"]
+
+    def test_emits_directive_when_healthy(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """Healthy workspace → SessionStart hook output with the routing
+        directive plus current stats appended as additionalContext.
+        """
+        fake_stats = "1234 nodes, 5678 edges: 200 Function"
+        with patch.object(_session_start, "_installed_version", return_value="0.4.0"), patch.object(
+            _session_start, "run_opentraceai", return_value=fake_stats
+        ), patch.object(_session_start, "_update_notice", return_value=None):
+            data = _run_hook(
+                _session_start,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        assert data is not None
+        ctx = data["hookSpecificOutput"]["additionalContext"]
+        assert "OpenTrace is active" in ctx
+        assert fake_stats in ctx
+        assert "OpenTrace is active" in data["systemMessage"]
+        # No update notice appended when versions match.
+        assert "Update available" not in data["systemMessage"]
+
+    def test_appends_update_notice_when_available(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """When _update_notice returns a string, it should be folded into
+        the systemMessage so the user sees the upgrade hint without it
+        crowding out the routing directive.
+        """
+        with patch.object(_session_start, "_installed_version", return_value="0.4.0"), patch.object(
+            _session_start, "run_opentraceai", return_value="1 node"
+        ), patch.object(
+            _session_start,
+            "_update_notice",
+            return_value="Update available: opentraceai 0.4.0 → 0.5.0. Run /update.",
+        ):
+            data = _run_hook(
+                _session_start,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        assert "Update available" in data["systemMessage"]
+        assert "0.5.0" in data["systemMessage"]
+
+
+# ---------------------------------------------------------------------------
+# user_prompt_submit.main() — end-to-end via stdin/stdout
+# ---------------------------------------------------------------------------
+
+
+class TestUserPromptSubmitMain:
+    def test_skips_when_unhealthy(self, tmp_path, monkeypatch, capsys):
+        """No index → silent no-op so we don't pollute every prompt with
+        an error message in repos that aren't OpenTrace projects.
+        """
+        data = _run_hook(
+            _user_prompt_submit,
+            {"cwd": str(tmp_path)},
+            monkeypatch,
+            capsys,
+        )
+        assert data is None
+
+    def test_skips_when_briefing_not_due(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """The 10-min TTL must throttle re-injection — a healthy workspace
+        with a recent briefing should produce no output.
+        """
+        with patch.object(_user_prompt_submit, "briefing_due", return_value=False), patch.object(
+            _user_prompt_submit, "run_opentraceai"
+        ) as mock_run:
+            data = _run_hook(
+                _user_prompt_submit,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        mock_run.assert_not_called()
+        assert data is None
+
+    def test_emits_briefing_and_marks_sent(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """When healthy and the TTL has elapsed, the hook injects a fresh
+        reminder + stats and marks the briefing as sent so the next prompt
+        in the same window stays quiet.
+        """
+        with patch.object(_user_prompt_submit, "briefing_due", return_value=True), patch.object(
+            _user_prompt_submit, "run_opentraceai", return_value="42 nodes, 99 edges"
+        ), patch.object(
+            _user_prompt_submit, "mark_briefing_sent"
+        ) as mock_mark:
+            data = _run_hook(
+                _user_prompt_submit,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        mock_mark.assert_called_once()
+        assert data is not None
+        ctx = data["hookSpecificOutput"]["additionalContext"]
+        assert "[OpenTrace] reminder" in ctx
+        assert "42 nodes, 99 edges" in ctx
+
+    def test_skips_when_stats_empty(
+        self, healthy_workspace, monkeypatch, capsys
+    ):
+        """If the stats command returns nothing (e.g. CLI hiccup), don't
+        emit a partial briefing — better silent than misleading.
+        """
+        with patch.object(_user_prompt_submit, "briefing_due", return_value=True), patch.object(
+            _user_prompt_submit, "run_opentraceai", return_value=""
+        ), patch.object(
+            _user_prompt_submit, "mark_briefing_sent"
+        ) as mock_mark:
+            data = _run_hook(
+                _user_prompt_submit,
+                {"cwd": str(healthy_workspace)},
+                monkeypatch,
+                capsys,
+            )
+        mock_mark.assert_not_called()
+        assert data is None

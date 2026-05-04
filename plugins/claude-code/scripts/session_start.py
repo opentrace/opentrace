@@ -173,6 +173,34 @@ def _update_notice() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# CLI install guidance — when `opentraceai` is not on PATH
+# ---------------------------------------------------------------------------
+
+# Mirrors the wording of the opencode plugin's getCliMissingMessage so a
+# user encountering both plugins gets a consistent install nudge.
+_CLI_MISSING_MESSAGE = (
+    "OpenTrace tools are unavailable: no working `opentraceai` CLI was found.\n"
+    "\n"
+    "Install with one of:\n"
+    "  uv tool install opentraceai      # if uv is available\n"
+    "  pipx install opentraceai         # alternative\n"
+    "\n"
+    "Once installed, the tools become available on the next session — no\n"
+    "restart of this process required. Ask the user before running an install\n"
+    "command on their behalf."
+)
+
+
+def _cli_installed() -> bool:
+    """Best-effort probe for `opentraceai` (or `uvx opentraceai`) on PATH.
+
+    Treats any successful ``--version`` invocation as installed; treats any
+    failure (CLI missing, uvx missing, network probe error) as not installed.
+    """
+    return _installed_version() is not None
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -188,6 +216,14 @@ def main() -> None:
     _debug(f"start cwd={cwd}")
 
     workspace_root = find_workspace_root(cwd)
+
+    # CLI not installed → guide the user instead of silently failing later.
+    # Without `opentraceai` on PATH neither indexing nor any tool call works,
+    # so this branch must precede the no-index check.
+    if not _cli_installed():
+        _debug("skip — opentraceai CLI not installed")
+        emit_json({"systemMessage": _CLI_MISSING_MESSAGE})
+        return
 
     # No index → emit a system message and start indexing in the background.
     if not opentrace_healthy(workspace_root):
