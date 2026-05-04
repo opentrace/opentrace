@@ -29,7 +29,7 @@
       "id": "find_app_py",
       "category": "symbol_discovery",
       "description": "Search should find app.py",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "app.py", "nodeTypes": "File"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -40,7 +40,7 @@
       "id": "find_calculator_class",
       "category": "symbol_discovery",
       "description": "Search should find the Calculator class",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "Calculator", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -71,7 +71,7 @@
       "id": "search_no_results",
       "category": "search_quality",
       "description": "Searching for nonsense should return empty",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "zzz_nonexistent_zzz"},
       "assertions": [
         {"type": "exact_count", "value": 0}
@@ -81,7 +81,7 @@
       "id": "search_type_filter",
       "category": "search_quality",
       "description": "Searching for 'app' with File filter should only return Files",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "app", "nodeTypes": "File"},
       "assertions": [
         {"type": "min_count", "value": 1},
