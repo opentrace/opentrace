@@ -169,23 +169,44 @@ def _is_compound(command: str) -> bool:
     return any(op in command for op in SHELL_OPERATORS)
 
 
-def extract_search_pattern(command: str) -> Optional[str]:
-    """Parse a shell command and return a search pattern if it's an
-    rg / grep / ack / ag invocation. Returns None for compound commands or
-    when no plausible pattern is found.
+# Operator tokens that shlex.split surfaces as standalone tokens when the
+# input contains them unquoted. Used to slice a token list into stages.
+_STAGE_BREAK_TOKENS = frozenset({"|", "||", "&&", ";"})
+
+
+def _split_stages(command: str) -> list[list[str]]:
+    """Split a shell command into stages by top-level operators
+    (``|``, ``||``, ``&&``, ``;``).
+
+    Quoted operators are preserved as part of their token because
+    ``shlex.split`` honors quoting. Returns one token list per stage,
+    or an empty list when the input can't be parsed.
     """
-    if not command or _is_compound(command):
-        return None
     try:
-        tokens = shlex.split(command)
+        tokens = shlex.split(command, posix=True)
     except ValueError:
-        return None
+        return []
+    stages: list[list[str]] = []
+    current: list[str] = []
+    for tok in tokens:
+        if tok in _STAGE_BREAK_TOKENS:
+            if current:
+                stages.append(current)
+                current = []
+        else:
+            current.append(tok)
+    if current:
+        stages.append(current)
+    return stages
+
+
+def _pattern_from_search_tokens(tokens: list[str]) -> Optional[str]:
+    """Extract the search pattern from a single rg/grep/ack/ag stage."""
     if not tokens:
         return None
     base = os.path.basename(tokens[0])
     if base not in SEARCH_COMMANDS:
         return None
-
     skip_next = False
     for tok in tokens[1:]:
         if skip_next:
@@ -201,28 +222,47 @@ def extract_search_pattern(command: str) -> Optional[str]:
     return None
 
 
-def extract_read_path(command: str) -> Optional[str]:
-    """Parse a shell command and return a file path if it's a
-    cat / head / tail / sed / awk on a single code file.
-    """
-    if not command or _is_compound(command):
-        return None
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return None
+def _path_from_read_tokens(tokens: list[str]) -> Optional[str]:
+    """Extract the code file path from a single cat/head/tail/sed/awk stage."""
     if not tokens:
         return None
     base = os.path.basename(tokens[0])
     if base not in READ_COMMANDS:
         return None
-
     for tok in tokens[1:]:
         if tok.startswith("-"):
             continue
         ext = os.path.splitext(tok)[1].lower()
         if ext in CODE_EXTENSIONS:
             return tok
+    return None
+
+
+def extract_search_pattern(command: str) -> Optional[str]:
+    """Return the search pattern of the first rg/grep/ack/ag stage in
+    *command*. Handles pipelines and ``&&`` / ``||`` / ``;`` chains so
+    real-world commands like ``grep foo | head`` still get augmented.
+    """
+    if not command:
+        return None
+    for stage in _split_stages(command):
+        pat = _pattern_from_search_tokens(stage)
+        if pat:
+            return pat
+    return None
+
+
+def extract_read_path(command: str) -> Optional[str]:
+    """Return the file path of the first cat/head/tail/sed/awk stage on
+    a code file. Handles pipelines and chains the same way as
+    ``extract_search_pattern``.
+    """
+    if not command:
+        return None
+    for stage in _split_stages(command):
+        path = _path_from_read_tokens(stage)
+        if path:
+            return path
     return None
 
 

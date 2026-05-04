@@ -95,9 +95,28 @@ class TestExtractSearchPattern:
     def test_ignores_non_search_command(self):
         assert _common.extract_search_pattern("ls -la") is None
 
-    def test_ignores_compound_command(self):
-        # Pipes and command chains are too risky to extract from.
-        assert _common.extract_search_pattern("rg foo | head") is None
+    def test_extracts_through_pipe(self):
+        # Real-world commands almost always pipe to head/less/wc; the
+        # pattern from the leftmost grep/rg stage should still be found.
+        assert _common.extract_search_pattern("rg findme src/ | head -3") == "findme"
+
+    def test_extracts_through_and_chain(self):
+        assert _common.extract_search_pattern("cd repo && grep findme src/") == "findme"
+
+    def test_extracts_through_semicolon(self):
+        assert _common.extract_search_pattern("echo go ; rg findme src/") == "findme"
+
+    def test_extracts_grep_after_redirect(self):
+        # Redirects (2>/dev/null) shouldn't fool the extractor — they're
+        # not stage breaks, just a token in the same stage.
+        assert (
+            _common.extract_search_pattern('grep -rn findme src/ 2>/dev/null | head')
+            == "findme"
+        )
+
+    def test_quoted_pipe_does_not_split(self):
+        # A pipe inside quotes is part of the search pattern, not an operator.
+        assert _common.extract_search_pattern("rg 'a|b' src/") == "a|b"
 
     def test_empty_command(self):
         assert _common.extract_search_pattern("") is None
@@ -105,6 +124,10 @@ class TestExtractSearchPattern:
     def test_unparseable_quotes(self):
         # shlex raises ValueError on unclosed quotes — must not crash.
         assert _common.extract_search_pattern("rg 'unterminated") is None
+
+    def test_no_search_command_in_any_stage(self):
+        # All stages are non-search → no augmentation.
+        assert _common.extract_search_pattern("ls -la | wc -l") is None
 
 
 class TestExtractReadPath:
@@ -124,8 +147,13 @@ class TestExtractReadPath:
     def test_ignores_non_read_command(self):
         assert _common.extract_read_path("rg foo bar.py") is None
 
-    def test_ignores_compound(self):
-        assert _common.extract_read_path("cat a.py | head") is None
+    def test_extracts_through_pipe(self):
+        # Same fix as extract_search_pattern: piping cat into head shouldn't
+        # disable augmentation.
+        assert _common.extract_read_path("cat src/api.py | head -50") == "src/api.py"
+
+    def test_extracts_through_and_chain(self):
+        assert _common.extract_read_path("cd repo && cat src/api.py") == "src/api.py"
 
 
 class TestIsCodeFile:
