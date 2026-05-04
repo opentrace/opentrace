@@ -765,6 +765,42 @@ class TestMCPFindUsages:
             f"got {result['target']['name']!r}"
         )
 
+    def test_prefers_function_over_file_with_same_name(self):
+        """When a symbol query matches both a File (e.g. ``test_find_db.py``)
+        and a Function (``find_db``) by name, the Function must win — a File
+        node has no callers, so picking it returns an empty dependents list
+        and silently misleads the caller.
+        """
+        from unittest.mock import MagicMock
+
+        from opentrace_agent.cli.mcp_server import create_mcp_server
+
+        file_node = {
+            "id": "repo/tests/test_find_db.py",
+            "type": "File",
+            "name": "test_find_db.py",
+            "properties": {"path": "tests/test_find_db.py"},
+        }
+        function_node = {
+            "id": "repo/main.py::find_db(Path | None)",
+            "type": "Function",
+            "name": "find_db(Path | None)",
+            "properties": {"signature": "(start: Path | None = None)"},
+        }
+
+        store = MagicMock()
+        # File node ranked first by FTS — same as the real-world bug.
+        store.search_nodes.return_value = [file_node, function_node]
+        store.traverse.return_value = []
+
+        server = create_mcp_server(store)
+        result = json.loads(server._tool_manager._tools["find_usages"].fn(symbol="find_db"))
+
+        assert result["target"]["id"] == function_node["id"], (
+            "find_usages picked the File node over the Function — "
+            f"got {result['target']['type']} {result['target']['name']!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # MCP tool: impact_analysis

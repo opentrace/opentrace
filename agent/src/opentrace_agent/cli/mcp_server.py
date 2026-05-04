@@ -189,6 +189,24 @@ def _match_field_priority(node: dict[str, Any]) -> int:
     return _MATCH_FIELD_PRIORITY.get(node.get("_match_field", "unknown"), 5)
 
 
+# Tie-breaker for symbol-style queries (find_usages). When _match_field is
+# the same across candidates (e.g. both match by name), prefer the actual
+# code symbol over the file/directory whose basename also matches —
+# `find_usages("find_db")` should return the function, not test_find_db.py.
+_SYMBOL_TYPE_PRIORITY = {
+    "Function": 0,
+    "Class": 0,
+    "Variable": 1,
+    "File": 2,
+    "Module": 3,
+    "Directory": 4,
+}
+
+
+def _symbol_type_priority(node: dict[str, Any]) -> int:
+    return _SYMBOL_TYPE_PRIORITY.get(node.get("type", ""), 5)
+
+
 def _tag_match_field(node: dict[str, Any], keywords: list[str]) -> dict[str, Any]:
     """Annotate ``node`` with which field carried the keyword match.
 
@@ -572,7 +590,12 @@ def create_mcp_server(
             tagged = [_tag_match_field(n, n["_matched"]) for n in scored.values()]
             ranked = sorted(
                 tagged,
-                key=lambda n: (-n["_match_count"], _match_field_priority(n), n.get("name", "")),
+                key=lambda n: (
+                    -n["_match_count"],
+                    _match_field_priority(n),
+                    _symbol_type_priority(n),
+                    n.get("name", ""),
+                ),
             )
             return _json_response(ranked[:limit])
         except Exception as e:
@@ -778,7 +801,13 @@ def create_mcp_server(
             # within each field bucket via the enumerated index.
             keywords = [symbol]
             tagged = [(_tag_match_field(m, keywords), i) for i, m in enumerate(matches)]
-            tagged.sort(key=lambda pair: (_match_field_priority(pair[0]), pair[1]))
+            tagged.sort(
+                key=lambda pair: (
+                    _match_field_priority(pair[0]),
+                    _symbol_type_priority(pair[0]),
+                    pair[1],
+                )
+            )
             ordered = [pair[0] for pair in tagged]
 
             target = ordered[0]
