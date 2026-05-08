@@ -49,6 +49,7 @@ nav:
       - Claude Code Plugin: getting-started/install-plugin.md
       - OpenCode Plugin: getting-started/install-opencode.md
       - Configuration: getting-started/configuration.md
+      - Wiki & Vaults: getting-started/wiki.md
       - Troubleshooting: getting-started/troubleshooting.md
   - Architecture:
       - Overview: architecture/overview.md
@@ -58,6 +59,7 @@ nav:
   - Reference:
       - Browser Requirements: reference/browser-requirements.md
       - Chat Providers: reference/chat-providers.md
+      - Wiki Providers: reference/wiki-providers.md
       - Claude Code Plugin: reference/claude-code-plugin.md
       - OpenCode Plugin: reference/opencode-plugin.md
       - Graph Tools: reference/graph-tools.md

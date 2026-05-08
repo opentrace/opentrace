@@ -249,10 +249,30 @@ class GraphAccuracyBenchmark:
     # Assertion checks
     # ------------------------------------------------------------------
 
+    # Tool responses that wrap a result list under a known key (e.g. the
+    # OT-1732 Search returns ``{hits, count, query}``). For list-shaped
+    # assertions, we transparently unwrap so existing task suites keep
+    # working as new tools join the surface.
+    _LIST_RESULT_KEYS = ("hits", "results", "nodes", "orphans", "pairs", "path")
+
     def _check_assertion(self, result: Any, assertion: dict[str, Any]) -> str | None:
         """Check a single assertion against tool output. Returns failure message or None."""
         atype = assertion["type"]
         value = assertion.get("value")
+
+        # Unwrap {hits/results/...: [...]} → [...] for list-shaped assertions.
+        if isinstance(result, dict) and atype in (
+            "min_count",
+            "max_count",
+            "exact_count",
+            "result_contains_name",
+            "result_contains_type",
+            "all_have_type",
+        ):
+            for k in self._LIST_RESULT_KEYS:
+                if isinstance(result.get(k), list):
+                    result = result[k]
+                    break
 
         if atype == "min_count":
             if not isinstance(result, list) or len(result) < value:

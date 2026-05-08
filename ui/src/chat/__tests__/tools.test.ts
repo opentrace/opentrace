@@ -19,10 +19,10 @@ import { makeGraphTools } from '../tools';
 import { createMockStore } from '../../__tests__/mockStore';
 
 describe('makeGraphTools', () => {
-  it('returns 6 tools', () => {
+  it('returns 13 tools', () => {
     const store = createMockStore();
     const tools = makeGraphTools(store);
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(13);
     const names = tools.map((t) => t.name);
     expect(names).toEqual([
       'search_graph',
@@ -31,11 +31,18 @@ describe('makeGraphTools', () => {
       'traverse_graph',
       'load_source',
       'explore_node',
+      'overview',
+      'provenance',
+      'find_path',
+      'find_orphans',
+      'find_via_relationship_to_type',
+      'count_by',
+      'grep',
     ]);
   });
 
   describe('search_graph', () => {
-    it('splits comma-separated nodeTypes', async () => {
+    it('splits comma-separated nodeTypes and forwards to store.search', async () => {
       const store = createMockStore();
       const tools = makeGraphTools(store);
       const searchTool = tools.find((t) => t.name === 'search_graph')!;
@@ -43,10 +50,10 @@ describe('makeGraphTools', () => {
         query: 'auth',
         nodeTypes: 'Repository, Class',
       });
-      expect(store.searchNodes).toHaveBeenCalledWith('auth', undefined, [
-        'Repository',
-        'Class',
-      ]);
+      expect(store.search).toHaveBeenCalledWith('auth', {
+        limit: undefined,
+        nodeTypes: ['Repository', 'Class'],
+      });
     });
   });
 
@@ -112,20 +119,27 @@ describe('makeGraphTools', () => {
 
   describe('truncation', () => {
     it('truncates results exceeding MAX_RESULT_CHARS (4000)', async () => {
-      const bigResults = Array.from({ length: 200 }, (_, i) => ({
+      const bigHits = Array.from({ length: 200 }, (_, i) => ({
         id: `n${i}`,
         type: 'Repository',
         name: `LongRepoName${i}${'x'.repeat(20)}`,
+        snippet: 'a'.repeat(80),
+        score: 0.5,
+        vault: null,
+        recency: null,
+        confidence: null,
       }));
       const store = createMockStore({
-        searchNodes: vi.fn().mockResolvedValue(bigResults),
+        search: vi
+          .fn()
+          .mockResolvedValue({ hits: bigHits, count: 200, query: 'x' }),
       });
       const tools = makeGraphTools(store);
       const searchTool = tools.find((t) => t.name === 'search_graph')!;
       const result = (await searchTool.invoke({ query: 'x' })) as string;
       const parsed = JSON.parse(result);
       expect(parsed.truncated).toBe(true);
-      expect(parsed.results.length).toBeLessThan(200);
+      expect(result.length).toBeLessThanOrEqual(4100);
     });
   });
 });

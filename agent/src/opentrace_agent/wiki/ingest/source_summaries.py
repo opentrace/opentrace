@@ -15,11 +15,12 @@
 """SummariseSources stage — one source-summary page per newly-ingested source.
 
 Runs after Normalize, before Plan. Each new source becomes a page titled
-``Source Summary: <Display Name>`` that's a faithful summary of just that
-document. Concept pages produced by the later Execute stage cite source
-summaries by ``[[Source Summary: …]]`` wiki-link, giving inline provenance
-for any factual claim. The original source files (PDFs, etc.) are NOT
-retained — these summaries are the only on-disk record of source content.
+after the source filename (e.g. ``Midwest Beef Rfp Response``) that's a
+faithful summary of just that document. Concept pages produced by the
+later Execute stage cite source summaries by ``[[Title]]`` wiki-link,
+giving inline provenance for any factual claim. The original source files
+(PDFs, etc.) are NOT retained — these summaries are the only on-disk
+record of source content.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 
+from opentrace_agent.wiki.ingest.execute import force_h1
 from opentrace_agent.wiki.ingest.types import (
     PAGE_KIND_SOURCE_SUMMARY,
     CompiledPage,
@@ -38,7 +40,6 @@ from opentrace_agent.wiki.ingest.types import (
 from opentrace_agent.wiki.llm import WikiLLM
 from opentrace_agent.wiki.slugify import unique_slug
 from opentrace_agent.wiki.vault import VaultMetadata
-
 
 SOURCE_SUMMARY_SCHEMA = {
     "description": "Emit the markdown body and one-line summary for a source-summary page.",
@@ -67,7 +68,8 @@ This page sits alongside concept pages in a knowledge vault. Concept pages
 will cite this page as their citation target, so be FAITHFUL to the source:
 
 Hard rules:
-- The first line MUST be an H1 equal to the supplied page_title.
+- The first line MUST be an H1 equal to the supplied page_title (no leading
+  prefix, no bracket annotations — the title verbatim).
 - Preserve every meaningful fact, every named entity, and every numeric figure
   (dates, dollar amounts, specifications, IDs) verbatim.
 - Preserve the document's heading structure where possible.
@@ -80,11 +82,17 @@ Hard rules:
 
 
 def _title_from_filename(name: str) -> str:
-    """Turn ``midwest-beef-rfp-response.pdf`` into ``Source Summary: Midwest Beef Rfp Response``."""
-    stem, _ = os.path.splitext(name)
+    """Turn ``some-folder/midwest-beef-rfp-response.pdf`` into ``Midwest Beef Rfp Response``.
+
+    Drops any directory components (users sometimes upload nested folders
+    where the parent name is repeated across every file and would only add
+    noise) and the file extension, then converts dashes/underscores to
+    spaces and Title-Cases the result.
+    """
+    base = os.path.basename(name)
+    stem, _ = os.path.splitext(base)
     cleaned = stem.replace("_", " ").replace("-", " ").strip() or "Untitled"
-    titled = " ".join(part.capitalize() for part in cleaned.split())
-    return f"Source Summary: {titled}"
+    return " ".join(part.capitalize() for part in cleaned.split())
 
 
 def summarise_sources(
@@ -117,13 +125,21 @@ def summarise_sources(
             tool_schema=SOURCE_SUMMARY_SCHEMA,
             max_tokens=8192,
         )
-        slug = unique_slug(title, existing=seen_slugs, tombstones=meta.tombstones)
+        # Slugs keep the ``source-summary-`` prefix even though the title no
+        # longer carries one — it keeps on-disk filenames easy to tell apart
+        # from concept pages and avoids surprise collisions when a concept
+        # page happens to share its name with an uploaded file.
+        slug = unique_slug(
+            f"source-summary-{title}",
+            existing=seen_slugs,
+            tombstones=meta.tombstones,
+        )
         seen_slugs.add(slug)
         out.append(
             CompiledPage(
                 slug=slug,
                 title=title,
-                markdown_body=str(result.get("markdown_body", "")),
+                markdown_body=force_h1(str(result.get("markdown_body", "")), title),
                 one_line_summary=str(result.get("one_line_summary", "")),
                 source_shas=[src.sha256],
                 revision=1,

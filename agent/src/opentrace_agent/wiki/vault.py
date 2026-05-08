@@ -80,6 +80,17 @@ class VaultMetadata:
             # for what we now call source-summary pages. Treat it as the new value.
             if v.get("kind") == "source":
                 v = {**v, "kind": "source_summary"}
+            # Legacy title prefix: source-summary pages used to be titled
+            # "Source Summary: <Name>" — the prefix is now redundant because
+            # the sidebar groups them under their own section and the planner
+            # identifies them by kind. Strip it on load so existing vaults
+            # show the same clean title as freshly-compiled ones.
+            if v.get("kind") == "source_summary":
+                title = v.get("title") or ""
+                if title.startswith("Source Summary: "):
+                    v = {**v, "title": title[len("Source Summary: ") :]}
+                elif title.startswith("Source: "):
+                    v = {**v, "title": title[len("Source: ") :]}
             pages[slug] = PageMeta(**v)
         return cls(
             name=data["name"],

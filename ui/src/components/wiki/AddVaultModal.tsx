@@ -17,12 +17,16 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { compileVault } from '../../wiki/client';
 import type { WikiCompileEvent } from '../../wiki/types';
-import { loadApiKey, loadProviderChoice } from '../../chat/storage';
+import {
+  loadApiKey,
+  loadLocalUrl,
+  loadProviderChoice,
+} from '../../chat/storage';
 import { PROVIDERS } from '../../chat/providers';
 
-type WikiProvider = 'anthropic' | 'gemini';
+type WikiProvider = 'anthropic' | 'gemini' | 'openai' | 'local';
 
-const SUPPORTED: WikiProvider[] = ['anthropic', 'gemini'];
+const SUPPORTED: WikiProvider[] = ['anthropic', 'gemini', 'openai', 'local'];
 
 function pickInitialProvider(): WikiProvider {
   const saved = loadProviderChoice();
@@ -53,8 +57,17 @@ export function AddVaultModal({ existingVaults, onClose, onCompiled }: Props) {
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const apiKey = useMemo(() => loadApiKey(provider), [provider]);
+  const baseUrl = useMemo(
+    () => (provider === 'local' ? loadLocalUrl() : ''),
+    [provider],
+  );
+  // Local endpoints don't validate API keys, so the modal only requires
+  // a key for the hosted providers.
+  const keyOk = provider === 'local' || !!apiKey;
+  const baseUrlOk = provider !== 'local' || !!baseUrl;
   const targetName = (vaultMode === 'new' ? newVaultName : vaultName).trim();
-  const submittable = !!apiKey && !!targetName && files.length > 0 && !running;
+  const submittable =
+    keyOk && baseUrlOk && !!targetName && files.length > 0 && !running;
   // True once an attempt has finished without a clean compile — flips the
   // primary button label from "Compile" to "Retry".
   const [hasAttempted, setHasAttempted] = useState(false);
@@ -90,6 +103,7 @@ export function AddVaultModal({ existingVaults, onClose, onCompiled }: Props) {
     try {
       for await (const ev of compileVault(targetName, files, apiKey, {
         provider,
+        baseUrl: provider === 'local' ? baseUrl : undefined,
       })) {
         setProgress((p) => [...p, formatEvent(ev)]);
         if (ev.kind === 'error') {
@@ -112,7 +126,7 @@ export function AddVaultModal({ existingVaults, onClose, onCompiled }: Props) {
     } finally {
       setRunning(false);
     }
-  }, [submittable, targetName, files, apiKey, provider, onCompiled]);
+  }, [submittable, targetName, files, apiKey, provider, baseUrl, onCompiled]);
 
   const providerName = PROVIDERS[provider]?.name ?? provider;
 
@@ -126,9 +140,15 @@ export function AddVaultModal({ existingVaults, onClose, onCompiled }: Props) {
       <div className="add-vault-modal__panel">
         <h3>Compile files into a vault</h3>
 
-        {!apiKey && (
+        {!keyOk && (
           <div className="add-vault-modal__byok-warning">
             No {providerName} API key found. Set one in Chat settings before
+            compiling.
+          </div>
+        )}
+        {provider === 'local' && !baseUrlOk && (
+          <div className="add-vault-modal__byok-warning">
+            No local LLM URL configured. Set one in Chat settings before
             compiling.
           </div>
         )}

@@ -46,12 +46,25 @@ def build_search_text(name: str, node_type: str, properties: dict[str, Any]) -> 
 
 
 def matches_filters(properties: dict[str, Any], filters: dict[str, Any]) -> bool:
-    """Check if a node's properties match all filter conditions."""
+    """Check if a node's properties match all filter conditions.
+
+    Filter values containing ``*`` are treated as wildcard patterns
+    (``*foo*`` substring, ``foo*`` prefix, ``*foo`` suffix). All other
+    values match by ``str()`` equality.
+    """
+    import re
+
     for k, v in filters.items():
         prop = properties.get(k)
         if prop is None:
             return False
-        if str(prop) != str(v):
+        v_str = str(v)
+        if "*" in v_str:
+            # Convert wildcard to regex: escape, then unescape stars to .*
+            pattern = "^" + re.escape(v_str).replace(r"\*", ".*") + "$"
+            if not re.match(pattern, str(prop)):
+                return False
+        elif str(prop) != v_str:
             return False
     return True
 
@@ -262,6 +275,36 @@ class GraphStore:
         except Exception:
             pass  # relationship didn't exist
         self.add_relationship(id, rel_type, source_id, target_id, properties)
+
+    def delete_node(self, node_id: str) -> bool:
+        """Delete a node and any edges touching it (DETACH DELETE).
+
+        Returns ``True`` when a node existed and was removed, ``False`` when
+        no such node was present.
+        """
+        if self.get_node(node_id) is None:
+            return False
+        # Detach incoming and outgoing edges first — LadybugDB DETACH DELETE
+        # support varies, so we delete edges by RELATES match then the node.
+        try:
+            self._conn.execute(
+                "MATCH (a:Node {id: $id})-[r:RELATES]->(:Node) DELETE r",
+                parameters={"id": node_id},
+            )
+        except Exception:
+            pass
+        try:
+            self._conn.execute(
+                "MATCH (:Node)-[r:RELATES]->(b:Node {id: $id}) DELETE r",
+                parameters={"id": node_id},
+            )
+        except Exception:
+            pass
+        self._conn.execute(
+            "MATCH (n:Node {id: $id}) DELETE n",
+            parameters={"id": node_id},
+        )
+        return True
 
     def import_batch(
         self,
@@ -528,14 +571,39 @@ class GraphStore:
         direction: str = "outgoing",
         max_depth: int = 3,
         relationship_type: str | None = None,
+        relationship_types: list[str] | None = None,
+        vault_scope: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
         """BFS traversal from a starting node.
+
+        Parameters
+        ----------
+        relationship_type
+            Single rel-type filter (legacy single-string form).
+        relationship_types
+            Allowlist of rel types — when set, only these rel types traverse.
+            Supersedes ``relationship_type`` if both are passed.
+        vault_scope
+            Reserved for Phase 4: restrict traversal to nodes whose vault
+            ancestor matches this name. Currently a no-op.
+        confidence_threshold
+            Reserved for Phase 5: skip relationships with
+            ``properties.confidence`` below this value. Currently a no-op.
 
         Returns a list of ``{node, relationship, depth}`` dicts.
         """
         # Verify start node exists
         if self.get_node(node_id) is None:
             raise ValueError(f"node not found: {node_id}")
+
+        rel_filter: set[str] | None
+        if relationship_types:
+            rel_filter = set(relationship_types)
+        elif relationship_type:
+            rel_filter = {relationship_type}
+        else:
+            rel_filter = None
 
         visited: set[str] = {node_id}
         results: list[dict[str, Any]] = []
@@ -548,8 +616,21 @@ class GraphStore:
 
             neighbors = self._get_neighbors(curr_id, direction)
             for nb_node, nb_rel in neighbors:
-                if relationship_type and nb_rel["type"] != relationship_type:
+                if rel_filter is not None and nb_rel["type"] not in rel_filter:
                     continue
+                if vault_scope is not None:
+                    nb_props = nb_node.get("properties") or {}
+                    if nb_props.get("vault") != vault_scope:
+                        continue
+                if confidence_threshold is not None and confidence_threshold > 0:
+                    rel_props = nb_rel.get("properties") or {}
+                    rel_conf = rel_props.get("confidence")
+                    if rel_conf is not None:
+                        try:
+                            if float(rel_conf) < confidence_threshold:
+                                continue
+                        except (TypeError, ValueError):
+                            pass
                 if nb_node["id"] in visited:
                     continue
                 visited.add(nb_node["id"])

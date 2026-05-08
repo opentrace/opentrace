@@ -54,15 +54,16 @@ EMIT_PAGE_SCHEMA = {
 CREATE_SYSTEM = """You write a single page of a markdown wiki.
 
 This is a CONCEPT page that synthesises across multiple sources. The vault
-also contains SOURCE-SUMMARY pages — one-per-uploaded-document summaries
-with titles that start with "Source Summary: ". When you state a fact drawn
-from a particular source, cite it inline with [[Source Summary: <Title>]]
+also contains SOURCE-SUMMARY pages — one-per-uploaded-document summaries.
+The neighbour list marks each entry's kind. When you state a fact drawn
+from a particular source, cite it inline with [[<Source-summary Title>]]
 after the relevant sentence so readers can audit your claims.
 
 Rules:
 - The first line of markdown_body MUST be an H1 equal to the supplied page_title (no leading frontmatter).
-- Use [[Page Title]] to reference any concept that appears in the supplied neighbour pages — match the title verbatim.
-- For factual claims, cite the source-summary page with [[Source Summary: <Title>]] using the verbatim title from the neighbour list.
+- Use [[Page Title]] to reference any neighbour page — match the title verbatim.
+- For factual claims, cite the relevant kind=source_summary neighbour with [[<Title>]]
+  using its verbatim title from the neighbour list.
 - Do NOT invent links to titles that aren't in the neighbour list.
 - Keep prose factual and grounded in the supplied source documents.
 - one_line_summary should be a single declarative sentence, < 200 chars.
@@ -71,17 +72,16 @@ Rules:
 
 EXTEND_SYSTEM = """You revise a single page of a markdown wiki.
 
-This is a CONCEPT page. Source-summary pages (titles starting with
-"Source Summary: ") in the neighbour list are citation targets — when you
-add a fact from a specific source, cite it inline with
-[[Source Summary: <Title>]].
+This is a CONCEPT page. Neighbours marked kind=source_summary are
+one-per-document citation targets — when you add a fact from a specific
+source, cite it inline with [[<Source-summary Title>]].
 
 Rules:
 - Preserve the existing factual content unless the new sources directly contradict it.
 - Merge the new sources' contributions into the existing structure.
 - Keep the H1 from the existing page.
 - Update or add [[Page Title]] links as needed; only link to titles in the supplied neighbour list.
-- For factual claims drawn from a specific source, cite the source-summary page with [[Source Summary: <Title>]].
+- For factual claims drawn from a specific source, cite the kind=source_summary neighbour with [[<Title>]].
 - Do not duplicate facts — integrate, don't append.
 - one_line_summary should reflect the post-merge state.
 - Return the FULL replacement page via the emit_page tool — markdown_body must be a complete page, not a diff.
@@ -102,18 +102,23 @@ def _neighbour_block(
     persisted yet. Without the pending entries, a fresh-vault compile that
     creates several pages at once produces zero wiki-links because every
     Execute call sees an empty neighbour list.
+
+    Each line carries the page kind so the LLM can pick out source_summary
+    neighbours as citation targets without relying on a title prefix.
     """
     lines: list[str] = []
     for p in meta.pages.values():
         if p.slug == exclude_slug:
             continue
-        lines.append(f"- {p.title}: {p.one_line_summary}")
+        lines.append(f"- [{p.kind}] {p.title}: {p.one_line_summary}")
     if pending_creates:
         for c in pending_creates:
             if c.title == exclude_title:
                 continue
             summary = c.rationale or "(being created in this batch)"
-            lines.append(f"- {c.title}: {summary}")
+            # Pending creates are concept pages by construction — Plan never
+            # proposes new source-summary creates.
+            lines.append(f"- [concept] {c.title}: {summary}")
     if not lines:
         return "(no neighbour pages)"
     return "Neighbour pages (link as [[Title]]):\n" + "\n".join(lines)
@@ -128,6 +133,31 @@ def _sources_block(sources: list[NormalizedSource], shas: list[str]) -> str:
             continue
         blocks.append(f"--- {s.original_name} ---\n{s.markdown}")
     return "\n\n".join(blocks)
+
+
+def force_h1(body: str, title: str) -> str:
+    """Rewrite the body's leading H1 to ``# {title}``.
+
+    The system prompts tell the LLM to emit ``# {page_title}`` as the first
+    line, but Claude doesn't always comply — it sometimes picks a more
+    natural-sounding heading, which leaves the sidebar's title (planner's
+    choice) and the rendered H1 (executor's choice) out of sync. We're the
+    authority on the title, so we rewrite the first H1 unconditionally
+    after the LLM responds.
+
+    If the body's first non-blank line is already an H1, it's replaced.
+    Otherwise an H1 + blank line is prepended so the body still starts with
+    the canonical title. Leading blank lines are preserved-then-discarded
+    so the output always begins with the H1.
+    """
+    h1 = f"# {title}"
+    stripped = body.lstrip("\n")
+    if not stripped:
+        return f"{h1}\n"
+    first_line, sep, rest = stripped.partition("\n")
+    if first_line.startswith("# "):
+        return f"{h1}{sep}{rest}" if sep else h1
+    return f"{h1}\n\n{stripped}"
 
 
 def _execute_create(
@@ -158,7 +188,7 @@ def _execute_create(
     return CompiledPage(
         slug=slug,
         title=item.title,
-        markdown_body=str(result.get("markdown_body", "")),
+        markdown_body=force_h1(str(result.get("markdown_body", "")), item.title),
         one_line_summary=str(result.get("one_line_summary", "")),
         source_shas=list(item.source_shas),
         revision=1,
@@ -199,7 +229,7 @@ def _execute_extend(
     return CompiledPage(
         slug=page_meta.slug,
         title=page_meta.title,
-        markdown_body=str(result.get("markdown_body", "")),
+        markdown_body=force_h1(str(result.get("markdown_body", "")), page_meta.title),
         one_line_summary=str(result.get("one_line_summary", page_meta.one_line_summary)),
         source_shas=new_shas,
         revision=page_meta.revision + 1,

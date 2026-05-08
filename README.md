@@ -69,6 +69,17 @@ git clone https://github.com/opentrace/opentrace.git && cd opentrace
 make install && make ui  # Runs on http://localhost:5173/
 ```
 
+To enable **knowledge vaults** (LLM-compiled markdown wikis), also run the
+agent's REST server in a second terminal and open the UI with a `?server=`
+query param so it reads from the backend:
+
+```sh
+uv --project agent run opentraceai serve   # listens on http://localhost:8787
+# then open: http://localhost:5173/?server=http://localhost:8787
+```
+
+See [Wiki & Vaults](https://opentrace.github.io/opentrace/getting-started/wiki/) for the compile flow and [Wiki Providers](https://opentrace.github.io/opentrace/reference/wiki-providers/) for the supported LLM providers (Anthropic, Gemini, OpenAI, local).
+
 ### More Information
 
 **Full documentation:** **[opentrace.github.io/opentrace](https://opentrace.github.io/opentrace/)** — install guides, architecture, and reference.

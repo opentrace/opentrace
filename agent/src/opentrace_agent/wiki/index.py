@@ -26,11 +26,20 @@ class IndexEntry:
     slug: str
     title: str
     one_line_summary: str
+    kind: str = "concept"
 
 
 def build_index(meta: VaultMetadata) -> list[IndexEntry]:
     """Return a stable-ordered index for the vault."""
-    entries = [IndexEntry(slug=p.slug, title=p.title, one_line_summary=p.one_line_summary) for p in meta.pages.values()]
+    entries = [
+        IndexEntry(
+            slug=p.slug,
+            title=p.title,
+            one_line_summary=p.one_line_summary,
+            kind=p.kind,
+        )
+        for p in meta.pages.values()
+    ]
     entries.sort(key=lambda e: (e.title.lower(), e.slug))
     return entries
 
@@ -39,5 +48,5 @@ def estimate_tokens(entries: list[IndexEntry]) -> int:
     """Rough token estimate (characters / 4) for the rendered index."""
     chars = 0
     for e in entries:
-        chars += len(e.slug) + len(e.title) + len(e.one_line_summary) + 16
+        chars += len(e.slug) + len(e.title) + len(e.one_line_summary) + len(e.kind) + 16
     return chars // 4

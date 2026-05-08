@@ -29,7 +29,6 @@ from opentrace_agent.wiki.ingest.types import (
     WikiPipelineEvent,
 )
 
-
 _PASSTHROUGH_EXTS = {".md", ".markdown", ".txt"}
 
 

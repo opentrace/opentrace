@@ -34,6 +34,7 @@ dependencies = [
     "anthropic>=0.40",
     "markitdown[all]>=0.1.5",
     "google-genai>=1.0",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +57,7 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-anyio", "ruff", "grpcio-tools"]
+dev = ["pytest", "pytest-anyio", "ruff"]
 
 [build-system]
 requires = ["hatchling"]

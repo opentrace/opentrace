@@ -37,6 +37,36 @@ export function createMockStore(
     listNodes: vi.fn().mockResolvedValue([]),
     getNode: vi.fn().mockResolvedValue(null),
     traverse: vi.fn().mockResolvedValue([]),
+    fetchMetadata: vi.fn().mockResolvedValue([]),
+    findPath: vi.fn().mockResolvedValue({ path: null, length: null }),
+    findOrphans: vi.fn().mockResolvedValue({ orphans: [], count: 0 }),
+    findViaRelationshipToType: vi
+      .fn()
+      .mockResolvedValue({ pairs: [], count: 0 }),
+    countBy: vi
+      .fn()
+      .mockResolvedValue({ count: 0, node_type: 'Function', scope: 'global' }),
+    overview: vi.fn().mockResolvedValue({
+      counts_by_type: {},
+      top_concepts: [],
+      recently_updated: [],
+      vault_scope: null,
+    }),
+    search: vi.fn().mockResolvedValue({ hits: [], count: 0, query: '' }),
+    provenance: vi.fn().mockResolvedValue({
+      node_id: '',
+      node_type: null,
+      kind: 'unknown',
+      code: null,
+      wiki: null,
+    }),
+    grep: vi.fn().mockResolvedValue({
+      matches: [],
+      count: 0,
+      scope: '',
+      mode: 'error',
+      error: 'mock',
+    }),
     ...overrides,
   } as GraphStore;
 }

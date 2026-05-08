@@ -31,6 +31,16 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
+from opentrace_agent.retrieval import (
+    count_by,
+    find_orphans,
+    find_path,
+    find_via_relationship_to_type,
+    grep,
+    overview,
+    provenance,
+    search,
+)
 from opentrace_agent.store import GraphStore
 
 logger = logging.getLogger(__name__)
@@ -162,10 +172,27 @@ def create_app(store: GraphStore | None) -> Starlette:
         except (ValueError, TypeError):
             return _error(400, "Invalid field: maxDepth must be an integer")
         rel_type = body.get("relType") or None
+        rel_types = body.get("relTypes") or None
+        if rel_types is not None and not isinstance(rel_types, list):
+            return _error(400, "relTypes must be a list of strings")
+        vault_scope = body.get("vaultScope") or None
+        conf_raw = body.get("confidenceThreshold")
+        try:
+            conf = float(conf_raw) if conf_raw is not None else None
+        except (ValueError, TypeError):
+            return _error(400, "confidenceThreshold must be a number")
         if direction not in ("outgoing", "incoming", "both"):
             return _error(400, f"Invalid direction: {direction}")
         try:
-            results = store.traverse(node_id, direction=direction, max_depth=max_depth, relationship_type=rel_type)
+            results = store.traverse(
+                node_id,
+                direction=direction,
+                max_depth=max_depth,
+                relationship_type=rel_type,
+                relationship_types=rel_types,
+                vault_scope=vault_scope,
+                confidence_threshold=conf,
+            )
         except ValueError as e:
             return _error(404, str(e))
         return JSONResponse(results)
@@ -178,6 +205,143 @@ def create_app(store: GraphStore | None) -> Starlette:
         """GET /api/health"""
         return JSONResponse({"status": "ok"})
 
+    # --- OT-1732 retrieval primitives ---
+
+    async def find_path_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/find_path"""
+        body = await _read_json(request) or {}
+        start_id = body.get("startId")
+        end_id = body.get("endId")
+        if not start_id or not end_id:
+            return _error(400, "missing required fields: startId, endId")
+        try:
+            max_hops = int(body.get("maxHops", 5))
+        except (ValueError, TypeError):
+            return _error(400, "maxHops must be an integer")
+        edge_types = body.get("edgeTypes") or None
+        if edge_types is not None and not isinstance(edge_types, list):
+            return _error(400, "edgeTypes must be a list of strings")
+        return JSONResponse(find_path(store, start_id, end_id, max_hops=max_hops, edge_types=edge_types))
+
+    async def find_orphans_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/find_orphans"""
+        body = await _read_json(request) or {}
+        node_type = body.get("nodeType")
+        edge_type = body.get("edgeType")
+        if not node_type or not edge_type:
+            return _error(400, "missing required fields: nodeType, edgeType")
+        direction = body.get("direction", "incoming")
+        try:
+            limit = int(body.get("limit", 1000))
+        except (ValueError, TypeError):
+            return _error(400, "limit must be an integer")
+        try:
+            return JSONResponse(find_orphans(store, node_type, edge_type, direction=direction, limit=limit))
+        except ValueError as e:
+            return _error(400, str(e))
+
+    async def find_via_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/find_via_relationship_to_type"""
+        body = await _read_json(request) or {}
+        start_type = body.get("startType")
+        edge_type = body.get("edgeType")
+        target_type = body.get("targetType")
+        if not start_type or not edge_type or not target_type:
+            return _error(400, "missing required fields: startType, edgeType, targetType")
+        try:
+            limit = int(body.get("limit", 100))
+        except (ValueError, TypeError):
+            return _error(400, "limit must be an integer")
+        return JSONResponse(find_via_relationship_to_type(store, start_type, edge_type, target_type, limit=limit))
+
+    async def grep_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/grep"""
+        body = await _read_json(request) or {}
+        pattern = body.get("pattern")
+        scope_id = body.get("scopeId")
+        if not pattern or not scope_id:
+            return _error(400, "missing required fields: pattern, scopeId")
+        file_filter = body.get("fileFilter") or None
+        case_sensitive = bool(body.get("caseSensitive", False))
+        try:
+            max_results = int(body.get("maxResults", 200))
+        except (ValueError, TypeError):
+            return _error(400, "maxResults must be an integer")
+        return JSONResponse(
+            grep(
+                store,
+                pattern,
+                scope_id=scope_id,
+                file_filter=file_filter,
+                case_sensitive=case_sensitive,
+                max_results=max_results,
+            )
+        )
+
+    async def provenance_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/provenance"""
+        body = await _read_json(request) or {}
+        node_id = body.get("nodeId")
+        if not node_id:
+            return _error(400, "missing required field: nodeId")
+        return JSONResponse(provenance(store, node_id))
+
+    async def search_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/search"""
+        body = await _read_json(request) or {}
+        query = body.get("query")
+        if not query:
+            return _error(400, "missing required field: query")
+        try:
+            limit = int(body.get("limit", 25))
+        except (ValueError, TypeError):
+            return _error(400, "limit must be an integer")
+        node_types = body.get("nodeTypes") or None
+        if node_types is not None and not isinstance(node_types, list):
+            return _error(400, "nodeTypes must be a list of strings")
+        vault_scope = body.get("vaultScope") or None
+        return JSONResponse(
+            search(
+                store,
+                query,
+                limit=limit,
+                node_types=node_types,
+                vault_scope=vault_scope,
+            )
+        )
+
+    async def overview_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/overview"""
+        body = await _read_json(request) or {}
+        try:
+            top_n = int(body.get("topN", 5))
+        except (ValueError, TypeError):
+            return _error(400, "topN must be an integer")
+        vault_scope = body.get("vaultScope") or None
+        return JSONResponse(overview(store, top_n=top_n, vault_scope=vault_scope))
+
+    async def count_by_route(request: Request) -> JSONResponse:
+        """POST /api/retrieval/count_by"""
+        body = await _read_json(request) or {}
+        node_type = body.get("nodeType")
+        if not node_type:
+            return _error(400, "missing required field: nodeType")
+        parent_id = body.get("parentId") or None
+        parent_edge = body.get("parentEdge", "CONTAINS")
+        try:
+            max_hops = int(body.get("maxHops", 3))
+        except (ValueError, TypeError):
+            return _error(400, "maxHops must be an integer")
+        return JSONResponse(
+            count_by(
+                store,
+                node_type,
+                parent_id=parent_id,
+                parent_edge=parent_edge,
+                max_hops=max_hops,
+            )
+        )
+
     routes: list[Route] = [Route("/api/health", health, methods=["GET"])]
     if store is not None:
         routes.extend(
@@ -189,9 +353,21 @@ def create_app(store: GraphStore | None) -> Starlette:
                 Route("/api/nodes/list", list_nodes, methods=["GET"]),
                 Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
                 Route("/api/traverse", traverse, methods=["POST"]),
+                Route("/api/retrieval/find_path", find_path_route, methods=["POST"]),
+                Route("/api/retrieval/find_orphans", find_orphans_route, methods=["POST"]),
+                Route(
+                    "/api/retrieval/find_via_relationship_to_type",
+                    find_via_route,
+                    methods=["POST"],
+                ),
+                Route("/api/retrieval/count_by", count_by_route, methods=["POST"]),
+                Route("/api/retrieval/overview", overview_route, methods=["POST"]),
+                Route("/api/retrieval/search", search_route, methods=["POST"]),
+                Route("/api/retrieval/provenance", provenance_route, methods=["POST"]),
+                Route("/api/retrieval/grep", grep_route, methods=["POST"]),
             ]
         )
-    routes.extend(_vault_routes())
+    routes.extend(_vault_routes(store))
 
     middleware = [
         Middleware(
@@ -210,15 +386,14 @@ def create_app(store: GraphStore | None) -> Starlette:
 # ---------------------------------------------------------------------------
 
 
-def _vault_routes() -> list[Route]:
+def _vault_routes(store: GraphStore | None) -> list[Route]:
     async def list_vaults_route(request: Request) -> JSONResponse:
         from opentrace_agent.wiki.paths import list_vaults
 
         return JSONResponse({"vaults": list_vaults()})
 
     async def list_pages_route(request: Request) -> JSONResponse:
-        from opentrace_agent.wiki.paths import metadata_path
-        from opentrace_agent.wiki.paths import InvalidVaultName
+        from opentrace_agent.wiki.paths import InvalidVaultName, metadata_path
         from opentrace_agent.wiki.vault import load_metadata
 
         name = request.path_params["vault"]
@@ -283,6 +458,7 @@ def _vault_routes() -> list[Route]:
         api_key = (form.get("api_key") or "").strip() or None
         provider = (form.get("provider") or "anthropic").strip() or "anthropic"
         model = (form.get("model") or "").strip() or None
+        base_url = (form.get("base_url") or "").strip() or None
         files = (
             form.getlist("files") if hasattr(form, "getlist") else [v for k, v in form.multi_items() if k == "files"]
         )
@@ -308,6 +484,8 @@ def _vault_routes() -> list[Route]:
                     provider=provider,
                     api_key=api_key,
                     model=model,
+                    base_url=base_url,
+                    graph_store=store,
                 ):
                     payload = {
                         "kind": event.kind.value,
@@ -338,8 +516,11 @@ def _vault_routes() -> list[Route]:
         return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
     async def delete_vault_route(request: Request) -> JSONResponse:
+        from opentrace_agent.wiki.ingest.graph_writer import delete_vault_from_graph
         from opentrace_agent.wiki.paths import (
             InvalidVaultName,
+        )
+        from opentrace_agent.wiki.paths import (
             delete_vault as _delete_vault,
         )
 
@@ -350,7 +531,24 @@ def _vault_routes() -> list[Route]:
             return _error(400, str(e))
         if not existed:
             return _error(404, f"Vault not found: {name}")
-        return JSONResponse({"deleted": name})
+
+        # Mirror the disk delete to the graph. Best-effort: if the graph
+        # write fails the disk vault is already gone, so we surface the
+        # failure but don't reverse the disk delete.
+        graph_stats = {"nodes_deleted": 0}
+        if store is not None:
+            try:
+                graph_stats = delete_vault_from_graph(store, name)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("graph delete failed for vault %s: %s", name, e)
+                return JSONResponse(
+                    {
+                        "deleted": name,
+                        "graph_warning": f"{type(e).__name__}: {e}",
+                    }
+                )
+
+        return JSONResponse({"deleted": name, **graph_stats})
 
     return [
         Route("/api/vaults", list_vaults_route, methods=["GET"]),

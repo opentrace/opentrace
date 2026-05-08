@@ -80,6 +80,22 @@ class TestMatchesFilters:
     def test_empty_filters(self):
         assert matches_filters({"any": "val"}, {})
 
+    def test_wildcard_substring(self):
+        assert matches_filters({"name": "userService"}, {"name": "*Service"})
+        assert matches_filters({"name": "userService"}, {"name": "user*"})
+        assert matches_filters({"name": "userService"}, {"name": "*erSer*"})
+
+    def test_wildcard_no_match(self):
+        assert not matches_filters({"name": "userService"}, {"name": "*foo*"})
+
+    def test_wildcard_anchors(self):
+        # 'user*' is anchored — does not match a string starting with something else
+        assert not matches_filters({"name": "MyUserService"}, {"name": "user*"})
+
+    def test_wildcard_only_when_star_present(self):
+        # No `*` → exact match still applies; `Service` does NOT match `userService`.
+        assert not matches_filters({"name": "userService"}, {"name": "Service"})
+
 
 class TestMarshalProps:
     def test_none_returns_empty_object(self):

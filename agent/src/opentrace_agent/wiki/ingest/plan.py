@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-
-logger = logging.getLogger(__name__)
+from typing import Any
 
 from opentrace_agent.wiki.index import IndexEntry, build_index, estimate_tokens
 from opentrace_agent.wiki.ingest.extract import extract_salient_terms
@@ -34,10 +33,18 @@ from opentrace_agent.wiki.ingest.types import (
     WikiPhase,
     WikiPipelineEvent,
 )
-from opentrace_agent.wiki.llm import WikiLLM
+from opentrace_agent.wiki.llm import WikiLLM, WikiLLMError
 from opentrace_agent.wiki.vault import VaultMetadata
 
+logger = logging.getLogger(__name__)
+
 MAX_PLAN_INDEX_TOKENS = 150_000
+
+# Number of attempts before we give up on a malformed planner response.
+# Bare strings inside ``creates``/``extends`` are a known stochastic
+# schema-violation — re-rolling the dice usually fixes it. After three
+# failures we surface the error so the user can see it and retry.
+MAX_PLAN_SHAPE_ATTEMPTS = 3
 
 PLAN_TOOL_SCHEMA = {
     "description": "Propose a plan: which new pages to create and which existing pages to extend.",
@@ -88,10 +95,10 @@ PLAN_TOOL_SCHEMA = {
 PLAN_SYSTEM = """You are the planner for a markdown knowledge wiki.
 
 You receive:
-1. The current vault index — slug, title, one-line summary per existing page.
-   Pages whose title starts with "Source Summary: " are SOURCE-SUMMARY PAGES —
-   one-per-uploaded-document summaries that already exist. The remaining pages are
-   CONCEPT PAGES — synthesis pages that draw across multiple sources.
+1. The current vault index — kind, slug, title, one-line summary per existing
+   page. Pages with kind=source_summary are one-per-uploaded-document summaries
+   that already exist. Pages with kind=concept are synthesis pages that draw
+   across multiple sources.
 2. A batch of new source content. Each source is shown via its freshly-created
    source-summary body plus a flat list of "Salient terms from raw text"
    (regex-extracted entities/headings from the original document, kept so a planner
@@ -105,8 +112,9 @@ Decide for each recurring concept across the new sources whether it belongs in:
 - an EXTEND of an existing concept page (extends), if the concept overlaps.
 
 Hard rules:
-- Prefer EXTEND when an existing CONCEPT page already covers the concept.
-- For EXTEND, page_slug MUST match a slug in the supplied index. Never invent slugs.
+- Prefer EXTEND when an existing kind=concept page already covers the concept.
+- For EXTEND, page_slug MUST match a slug in the supplied index AND that page
+  MUST have kind=concept. Never extend a source_summary page; never invent slugs.
 - Do NOT propose creates for source-summary pages — they're auto-generated.
 - For CREATE, titles must not semantically duplicate each other or existing index titles.
 - Concept pages must SYNTHESISE across sources — if only one source contributes,
@@ -119,9 +127,9 @@ Hard rules:
 def _format_index(entries: list[IndexEntry]) -> str:
     if not entries:
         return "(empty vault — no existing pages)"
-    lines = ["Existing pages (slug | title | summary):"]
+    lines = ["Existing pages (kind | slug | title | summary):"]
     for e in entries:
-        lines.append(f"- {e.slug} | {e.title} | {e.one_line_summary}")
+        lines.append(f"- {e.kind} | {e.slug} | {e.title} | {e.one_line_summary}")
     return "\n".join(lines)
 
 
@@ -148,7 +156,10 @@ def _format_sources(
             if terms
             else "Salient terms from raw text: (none extracted)"
         )
-        blocks.append(f"--- source summary: {ss.title} (sha={s.sha256}) ---\n{ss.markdown_body}\n\n{terms_block}")
+        blocks.append(
+            f"--- source summary page: {ss.title} (kind=source_summary, sha={s.sha256}) ---\n"
+            f"{ss.markdown_body}\n\n{terms_block}"
+        )
     return "\n\n".join(blocks)
 
 
@@ -182,19 +193,47 @@ def plan(
         "Call propose_plan with your decisions."
     )
 
-    result = llm.call_tool(
-        system=PLAN_SYSTEM,
-        user=user_msg,
-        tool_name="propose_plan",
-        tool_schema=PLAN_TOOL_SCHEMA,
-        max_tokens=4096,
-    )
-
     new_shas = {s.sha256 for s in sources}
     existing_slugs = {e.slug for e in index_entries}
+    concept_slugs = {e.slug for e in index_entries if e.kind == "concept"}
 
-    raw_creates = result.get("creates", []) or []
-    raw_extends = result.get("extends", []) or []
+    # Re-call the planner up to MAX_PLAN_SHAPE_ATTEMPTS times if the response
+    # contains items that don't match the schema (e.g. bare strings inside
+    # ``creates``/``extends``). Same prompt each retry — the violation is
+    # stochastic, so a fresh sample usually conforms. On the final failure
+    # we propagate so the user sees a clear error and can retry manually.
+    result: dict[str, Any] = {}
+    raw_creates: list[Any] = []
+    raw_extends: list[Any] = []
+    for attempt in range(1, MAX_PLAN_SHAPE_ATTEMPTS + 1):
+        result = llm.call_tool(
+            system=PLAN_SYSTEM,
+            user=user_msg,
+            tool_name="propose_plan",
+            tool_schema=PLAN_TOOL_SCHEMA,
+            max_tokens=4096,
+        )
+        # Diagnostic: capture the raw planner payload so schema-violation
+        # surprises can be inspected without re-running the compile.
+        # Verbose-only — `opentraceai -v serve`.
+        logger.debug("plan: raw response (attempt %d) = %r", attempt, result)
+
+        raw_creates = result.get("creates", []) or []
+        raw_extends = result.get("extends", []) or []
+        bad = [c for c in raw_creates if not isinstance(c, dict)] + [x for x in raw_extends if not isinstance(x, dict)]
+        if not bad:
+            break
+        if attempt == MAX_PLAN_SHAPE_ATTEMPTS:
+            raise WikiLLMError(
+                f"plan: LLM returned schema-violating items after {attempt} attempts — "
+                f"expected objects, got {bad!r}. Run with -v to see the full payload."
+            )
+        logger.warning(
+            "plan: schema-violating items %r on attempt %d/%d — retrying",
+            bad,
+            attempt,
+            MAX_PLAN_SHAPE_ATTEMPTS,
+        )
 
     creates: list[PlanCreate] = []
     for c in raw_creates:
@@ -215,14 +254,15 @@ def plan(
     for x in raw_extends:
         slug = (x.get("page_slug") or "").strip()
         shas = [sha for sha in (x.get("source_shas") or []) if sha in new_shas]
-        if slug in existing_slugs and shas:
+        if slug in concept_slugs and shas:
             extends.append(PlanExtend(page_slug=slug, source_shas=shas, rationale=x.get("rationale", "")))
         else:
             logger.warning(
-                "plan: dropping extend %r — slug=%r in_index=%s, returned_shas=%s, valid_shas=%s",
+                "plan: dropping extend %r — slug=%r in_index=%s is_concept=%s, returned_shas=%s, valid_shas=%s",
                 x,
                 slug,
                 slug in existing_slugs,
+                slug in concept_slugs,
                 x.get("source_shas"),
                 shas,
             )

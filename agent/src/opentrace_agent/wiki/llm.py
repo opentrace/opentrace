@@ -14,17 +14,20 @@
 
 """LLM client wrappers + BYOK key resolver for the wiki pipeline.
 
-Two providers are supported in v1: Anthropic and Google Gemini. Both use
-forced tool-calling for structured output, so callers see the same
-``WikiLLM.call_tool`` shape regardless of provider.
+Four providers are supported, mirroring the chat surface: Anthropic,
+Google Gemini, OpenAI, and any OpenAI-compatible local endpoint
+(Ollama, llama.cpp, vLLM, …). All four use forced tool-calling for
+structured output, so callers see the same ``WikiLLM.call_tool`` shape
+regardless of provider.
 
-Both wrappers retry transient upstream failures (429 rate-limit and 5xx
+All wrappers retry transient upstream failures (429 rate-limit and 5xx
 server errors) with exponential backoff before surfacing them to the
 caller. Permanent failures (auth, schema) propagate immediately.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -121,8 +124,12 @@ def _gemini_is_long_window_quota(e: BaseException) -> bool:
     return bool(_GEMINI_LONG_QUOTA_RE.search(str(e)))
 
 
-def _parse_anthropic_retry_after(e: BaseException) -> float:
-    """Pull ``Retry-After`` (seconds) out of an Anthropic APIStatusError."""
+def _parse_retry_after_header(e: BaseException) -> float:
+    """Pull ``Retry-After`` (seconds) out of an SDK status error.
+
+    Both Anthropic and OpenAI surface their rate-limit response with a
+    standard ``Retry-After`` header on ``response.headers``.
+    """
     response = getattr(e, "response", None)
     headers = getattr(response, "headers", None)
     if headers is None:
@@ -138,7 +145,9 @@ def _parse_anthropic_retry_after(e: BaseException) -> float:
 
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GEMINI = "gemini"
-SUPPORTED_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_GEMINI)
+PROVIDER_OPENAI = "openai"
+PROVIDER_LOCAL = "local"
+SUPPORTED_PROVIDERS = (PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_LOCAL)
 
 
 class WikiLLMError(RuntimeError):
@@ -168,6 +177,8 @@ def _resolve_key(explicit: str | None, env_var: str, label: str) -> str:
 
 _DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+_DEFAULT_LOCAL_MODEL = "llama3.2"
 
 
 class AnthropicLLM:
@@ -196,12 +207,12 @@ class AnthropicLLM:
             if isinstance(e, anthropic.APIConnectionError):
                 return 0.0
             if isinstance(e, anthropic.RateLimitError):
-                return _parse_anthropic_retry_after(e)
+                return _parse_retry_after_header(e)
             if isinstance(e, anthropic.InternalServerError):
                 return 0.0
             if isinstance(e, anthropic.APIStatusError):
                 if e.status_code >= 500 or e.status_code == 429:
-                    return _parse_anthropic_retry_after(e)
+                    return _parse_retry_after_header(e)
             return None
 
         def _do() -> Any:
@@ -318,19 +329,148 @@ class GeminiLLM:
         raise WikiLLMError(f"Gemini did not return a function_call for {tool_name!r}")
 
 
+class _OpenAICompatibleLLM:
+    """Shared implementation for OpenAI and OpenAI-compatible local endpoints.
+
+    Tool-calling shape is identical (``tools=[{type: function, ...}]`` plus a
+    forced ``tool_choice``); the only differences across the two are which
+    env var holds the key and whether ``base_url`` points to a local
+    server. Subclasses pick those.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str | None, model: str, label: str):
+        try:
+            import openai
+        except ImportError as e:
+            raise WikiLLMError("the 'openai' package is required — install with: uv add openai") from e
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**kwargs)
+        self._model = model
+        self._label = label
+
+    def call_tool(
+        self,
+        *,
+        system: str,
+        user: str,
+        tool_name: str,
+        tool_schema: dict[str, Any],
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        import openai
+
+        def _classify(e: BaseException) -> float | None:
+            if isinstance(e, openai.APIConnectionError):
+                return 0.0
+            if isinstance(e, openai.RateLimitError):
+                return _parse_retry_after_header(e)
+            if isinstance(e, openai.InternalServerError):
+                return 0.0
+            if isinstance(e, openai.APIStatusError):
+                if e.status_code >= 500 or e.status_code == 429:
+                    return _parse_retry_after_header(e)
+            return None
+
+        def _do() -> Any:
+            return self._client.chat.completions.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "description": tool_schema.get("description", ""),
+                            "parameters": tool_schema["input_schema"],
+                        },
+                    }
+                ],
+                tool_choice={"type": "function", "function": {"name": tool_name}},
+            )
+
+        response = _retry_call(_do, classify=_classify, label=self._label)
+        choices = getattr(response, "choices", None) or []
+        for choice in choices:
+            tool_calls = getattr(choice.message, "tool_calls", None) or []
+            for tc in tool_calls:
+                if tc.function.name != tool_name:
+                    continue
+                try:
+                    return json.loads(tc.function.arguments)
+                except json.JSONDecodeError as e:
+                    raise WikiLLMError(f"{self._label} returned malformed tool arguments for {tool_name!r}: {e}") from e
+        raise WikiLLMError(f"{self._label} did not return a tool_call for {tool_name!r}")
+
+
+class OpenAILLM(_OpenAICompatibleLLM):
+    """Thin OpenAI wrapper that forces a single tool call for structured output."""
+
+    def __init__(self, api_key: str | None = None, *, model: str = _DEFAULT_OPENAI_MODEL):
+        super().__init__(
+            api_key=_resolve_key(api_key, "OPENAI_API_KEY", "OpenAI"),
+            base_url=None,
+            model=model,
+            label="openai",
+        )
+
+
+class LocalLLM(_OpenAICompatibleLLM):
+    """OpenAI-compatible local endpoint (Ollama, llama.cpp, vLLM, …).
+
+    Local servers typically don't validate ``api_key`` — we default to the
+    literal string ``"local"`` when none is provided. ``base_url`` should be
+    the bare server URL (e.g. ``http://localhost:11434``); we append ``/v1``
+    if it isn't already present so the OpenAI client hits the right path.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        model: str = _DEFAULT_LOCAL_MODEL,
+        base_url: str | None = None,
+    ):
+        url = base_url or os.environ.get("OT_LOCAL_LLM_URL")
+        if not url:
+            raise WikiLLMError(
+                "Local LLM base URL missing — pass base_url= or set $OT_LOCAL_LLM_URL (e.g. http://localhost:11434)."
+            )
+        url = url.rstrip("/")
+        if not url.endswith("/v1"):
+            url = url + "/v1"
+        super().__init__(
+            api_key=api_key or "local",
+            base_url=url,
+            model=model,
+            label="local",
+        )
+
+
 def make_llm(
     provider: str,
     *,
     api_key: str | None = None,
     model: str | None = None,
+    base_url: str | None = None,
 ) -> WikiLLM:
     """Construct a :class:`WikiLLM` for the requested provider.
 
     Provider must be one of :data:`SUPPORTED_PROVIDERS`. ``model`` overrides
-    the per-provider default.
+    the per-provider default. ``base_url`` is only meaningful for the
+    ``"local"`` provider.
     """
     if provider == PROVIDER_ANTHROPIC:
         return AnthropicLLM(api_key=api_key, model=model or _DEFAULT_ANTHROPIC_MODEL)
     if provider == PROVIDER_GEMINI:
         return GeminiLLM(api_key=api_key, model=model or _DEFAULT_GEMINI_MODEL)
+    if provider == PROVIDER_OPENAI:
+        return OpenAILLM(api_key=api_key, model=model or _DEFAULT_OPENAI_MODEL)
+    if provider == PROVIDER_LOCAL:
+        return LocalLLM(api_key=api_key, model=model or _DEFAULT_LOCAL_MODEL, base_url=base_url)
     raise WikiLLMError(f"unsupported provider {provider!r} — choose one of {SUPPORTED_PROVIDERS}")

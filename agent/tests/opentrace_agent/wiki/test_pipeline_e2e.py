@@ -39,6 +39,71 @@ def _source_summary_response(filename: str, body: str = "summary body") -> tuple
     )
 
 
+def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path: Path, fake_llm):
+    """OT-1732 Phase 4: when graph_store is provided, run_compile mirrors the
+    post-compile vault state into the graph alongside the disk write."""
+    import pytest
+
+    pytest.importorskip("real_ladybug")
+    from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki.ingest.graph_writer import (
+        NODE_TYPE_WIKI_PAGE,
+        NODE_TYPE_WIKI_VAULT,
+        page_node_id,
+        vault_node_id,
+    )
+
+    src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl.")
+    source_summary = _source_summary_response("Ducks")
+    plan_response = (
+        "propose_plan",
+        {
+            "creates": [{"title": "Ducks", "source_shas": [_sha(src.data)], "rationale": "x"}],
+            "extends": [],
+        },
+    )
+    concept_response = (
+        "emit_page",
+        {
+            "markdown_body": "# Ducks\n\nSee [[Source Summary: Ducks]].\n",
+            "one_line_summary": "Ducks are waterfowl.",
+        },
+    )
+    llm = fake_llm([source_summary, plan_response, concept_response])
+
+    db_path = str(tmp_path / "graph.db")
+    graph_store = GraphStore(db_path)
+    try:
+        events = list(
+            run_compile(
+                "testvault",
+                [src],
+                vault_root=tmp_path,
+                llm=llm,
+                graph_store=graph_store,
+            )
+        )
+
+        # Disk vault still written.
+        assert (tmp_path / "testvault" / "pages" / "ducks.md").exists()
+
+        # Graph mirror landed: vault, source-summary page, concept page all present.
+        vault_node = graph_store.get_node(vault_node_id("testvault"))
+        assert vault_node is not None
+        assert vault_node["type"] == NODE_TYPE_WIKI_VAULT
+
+        ducks_node = graph_store.get_node(page_node_id("testvault", "ducks"))
+        assert ducks_node is not None
+        assert ducks_node["type"] == NODE_TYPE_WIKI_PAGE
+        assert ducks_node["properties"]["kind"] == "concept"
+
+        # Mirror-completion telemetry event should have been emitted.
+        mirror_events = [e for e in events if "Mirrored vault to graph" in (e.message or "")]
+        assert mirror_events, "expected a mirror-completion event"
+    finally:
+        graph_store.close()
+
+
 def test_first_compile_creates_pages(tmp_path: Path, fake_llm):
     src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl.")
 
@@ -198,14 +263,15 @@ def test_fresh_vault_execute_sees_sibling_creates_as_neighbours(tmp_path: Path, 
 
     # Calls: #1 source-summary, #2 plan, #3 Foo create, #4 Bar create.
     # Each Execute-create user message should mention the OTHER planned
-    # create as a neighbour, plus the just-created Source Summary page.
+    # create as a neighbour, plus the just-created source-summary page
+    # (titled "Bundle" with kind=source_summary).
     assert len(llm.calls) == 4
     _, foo_user_msg = llm.calls[2]
     _, bar_user_msg = llm.calls[3]
     assert "Bar" in foo_user_msg
     assert "Foo" in bar_user_msg
-    assert "Source Summary: Bundle" in foo_user_msg
-    assert "Source Summary: Bundle" in bar_user_msg
+    assert "[source_summary] Bundle" in foo_user_msg
+    assert "[source_summary] Bundle" in bar_user_msg
     assert "(no neighbour pages)" not in foo_user_msg
     assert "(no neighbour pages)" not in bar_user_msg
 

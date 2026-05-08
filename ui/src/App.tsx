@@ -38,6 +38,9 @@ interface AppProps {
   initialRepoUrl?: string;
   /** Called when the user connects to a remote server via the AddRepo modal. */
   onConnectServer?: (serverUrl: string) => void;
+  /** True when the graph store is talking to a backend `opentraceai serve`.
+   * Gates features that require the backend (e.g. vault compile + browse). */
+  isServerMode?: boolean;
 }
 
 function App(props: AppProps = {}) {
@@ -55,6 +58,7 @@ function AppInner({
   buildTime,
   initialRepoUrl,
   onConnectServer,
+  isServerMode = false,
 }: AppProps) {
   const { store } = useStore();
   const { loadGraph } = useGraph();
@@ -381,31 +385,35 @@ function AppInner({
         />
       )}
 
-      <button
-        type="button"
-        onClick={() => setShowVaults((v) => !v)}
-        title={showVaults ? 'Close vaults' : 'Open knowledge vaults'}
-        style={{
-          position: 'fixed',
-          bottom: 72,
-          left: 24,
-          zIndex: 30,
-          background: 'rgba(48, 96, 192, 0.9)',
-          color: 'white',
-          border: 'none',
-          borderRadius: 18,
-          height: 36,
-          padding: '0 14px',
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: 500,
-          boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
-        }}
-      >
-        Vaults
-      </button>
+      {isServerMode && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowVaults((v) => !v)}
+            title={showVaults ? 'Close vaults' : 'Open knowledge vaults'}
+            style={{
+              position: 'fixed',
+              bottom: 72,
+              left: 24,
+              zIndex: 30,
+              background: 'rgba(48, 96, 192, 0.9)',
+              color: 'white',
+              border: 'none',
+              borderRadius: 18,
+              height: 36,
+              padding: '0 14px',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: 500,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+            }}
+          >
+            Vaults
+          </button>
 
-      {showVaults && <VaultBrowser onClose={() => setShowVaults(false)} />}
+          {showVaults && <VaultBrowser onClose={() => setShowVaults(false)} />}
+        </>
+      )}
 
       {(version || typeof __APP_VERSION__ !== 'undefined') && (
         <footer className="version-footer">

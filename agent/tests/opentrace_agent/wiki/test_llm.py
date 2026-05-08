@@ -17,6 +17,8 @@ import pytest
 from opentrace_agent.wiki.llm import (
     AnthropicLLM,
     GeminiLLM,
+    LocalLLM,
+    OpenAILLM,
     WikiLLMError,
     make_llm,
 )
@@ -35,6 +37,18 @@ def test_make_llm_gemini_routes_to_gemini_class(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     llm = make_llm("gemini")
     assert isinstance(llm, GeminiLLM)
+
+
+def test_make_llm_openai_routes_to_openai_class(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
+    llm = make_llm("openai")
+    assert isinstance(llm, OpenAILLM)
+
+
+def test_make_llm_local_routes_to_local_class(monkeypatch):
+    monkeypatch.delenv("OT_LOCAL_LLM_URL", raising=False)
+    llm = make_llm("local", base_url="http://localhost:11434")
+    assert isinstance(llm, LocalLLM)
 
 
 def test_make_llm_unknown_provider_raises():
@@ -61,6 +75,39 @@ def test_gemini_llm_falls_back_to_google_api_key_env(monkeypatch):
     # Constructing the client is enough — the SDK accepts any string up front.
     llm = GeminiLLM(api_key=None)
     assert llm is not None
+
+
+def test_openai_llm_missing_key_raises(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(WikiLLMError, match="OpenAI"):
+        OpenAILLM(api_key=None)
+
+
+def test_local_llm_missing_base_url_raises(monkeypatch):
+    monkeypatch.delenv("OT_LOCAL_LLM_URL", raising=False)
+    with pytest.raises(WikiLLMError, match="Local LLM base URL missing"):
+        LocalLLM(api_key=None, base_url=None)
+
+
+def test_local_llm_appends_v1_when_missing():
+    """The OpenAI client expects ``/v1`` on the base URL — append if absent."""
+    llm = LocalLLM(api_key=None, base_url="http://localhost:11434")
+    # The openai client stores the resolved base URL; we just check the
+    # outward-facing wrapper landed on a URL ending in /v1.
+    assert str(llm._client.base_url).rstrip("/").endswith("/v1")
+
+
+def test_local_llm_keeps_v1_when_present():
+    llm = LocalLLM(api_key=None, base_url="http://localhost:11434/v1")
+    assert str(llm._client.base_url).rstrip("/").endswith("/v1")
+    # And we don't double it up.
+    assert "/v1/v1" not in str(llm._client.base_url)
+
+
+def test_local_llm_reads_url_from_env(monkeypatch):
+    monkeypatch.setenv("OT_LOCAL_LLM_URL", "http://example.local:8000")
+    llm = LocalLLM(api_key=None)
+    assert "example.local:8000" in str(llm._client.base_url)
 
 
 def test_retry_call_retries_transient_then_succeeds(monkeypatch):

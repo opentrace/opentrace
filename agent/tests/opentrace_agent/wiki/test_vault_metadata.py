@@ -100,3 +100,33 @@ def test_legacy_source_kind_loads_as_source_summary(tmp_path: Path):
     p.write_text(legacy)
     meta = load_metadata(p, name="legacy")
     assert meta.pages["source-ducks"].kind == "source_summary"
+    # Legacy "Source: " / "Source Summary: " title prefix is stripped on load
+    # — the prefix is now redundant because the sidebar groups source-summary
+    # pages under their own section.
+    assert meta.pages["source-ducks"].title == "Ducks"
+
+
+def test_legacy_source_summary_title_prefix_is_stripped(tmp_path: Path):
+    legacy = """{
+        "name": "legacy",
+        "schema_version": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "last_compiled_at": null,
+        "sources": {},
+        "tombstones": [],
+        "pages": {
+            "source-summary-quarterly": {
+                "slug": "source-summary-quarterly",
+                "title": "Source Summary: Quarterly Report",
+                "one_line_summary": "Q4 figures.",
+                "source_shas": [],
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "revision": 1,
+                "kind": "source_summary"
+            }
+        }
+    }"""
+    p = tmp_path / ".vault.json"
+    p.write_text(legacy)
+    meta = load_metadata(p, name="legacy")
+    assert meta.pages["source-summary-quarterly"].title == "Quarterly Report"

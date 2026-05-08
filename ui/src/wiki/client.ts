@@ -92,6 +92,7 @@ export async function* compileVault(
   options: {
     provider?: string;
     model?: string;
+    baseUrl?: string;
   } = {},
 ): AsyncGenerator<WikiCompileEvent> {
   const base = getVaultApiBase();
@@ -99,6 +100,7 @@ export async function* compileVault(
   fd.set('api_key', apiKey);
   fd.set('provider', options.provider ?? 'anthropic');
   if (options.model) fd.set('model', options.model);
+  if (options.baseUrl) fd.set('base_url', options.baseUrl);
   for (const f of files) fd.append('files', f);
 
   const res = await fetch(

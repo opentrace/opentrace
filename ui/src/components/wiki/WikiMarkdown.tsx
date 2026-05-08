@@ -20,24 +20,24 @@ import remarkGfm from 'remark-gfm';
 import wikiLinkPlugin from 'remark-wiki-link';
 import type { VaultPageMeta } from '../../wiki/types';
 
-function titleToSlug(title: string): string {
-  return title
-    .normalize('NFKD')
-    .replace(/[^\p{ASCII}]/gu, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-}
-
 interface Props {
   markdown: string;
   pages: VaultPageMeta[];
   onPageClick?: (slug: string) => void;
 }
 
+// Sentinel slug used when a [[Title]] doesn't match any known page. It must
+// be a value that can never be a real slug so the wiki-link plugin marks
+// the link as broken (real slugs are lowercase a-z0-9 plus dashes).
+const UNRESOLVED_SLUG = '__unresolved__';
+
 export function WikiMarkdown({ markdown, pages, onPageClick }: Props) {
   const slugSet = useMemo(() => new Set(pages.map((p) => p.slug)), [pages]);
+  const titleToSlugMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of pages) m.set(p.title, p.slug);
+    return m;
+  }, [pages]);
   const plugins = useMemo(
     () => [
       remarkGfm,
@@ -48,7 +48,14 @@ export function WikiMarkdown({ markdown, pages, onPageClick }: Props) {
           // to that syntax. The plugin's own default is `:`, which would
           // treat `Foo|bar` as one slug and break the link.
           aliasDivider: '|',
-          pageResolver: (name: string) => [titleToSlug(name)],
+          // Resolve [[Title]] only by title-exact match against the page
+          // list. Re-slugifying client-side breaks for source-summary pages
+          // (slug keeps a `source-summary-` prefix that the title doesn't),
+          // and silently masks genuinely-broken citations against bodies
+          // that reference titles which no longer exist.
+          pageResolver: (name: string) => [
+            titleToSlugMap.get(name) ?? UNRESOLVED_SLUG,
+          ],
           permalinks: Array.from(slugSet),
           hrefTemplate: (slug: string) => `#vault-page:${slug}`,
           wikiLinkClassName: 'wiki-link',
@@ -56,7 +63,7 @@ export function WikiMarkdown({ markdown, pages, onPageClick }: Props) {
         },
       ],
     ],
-    [slugSet],
+    [slugSet, titleToSlugMap],
   );
 
   return (

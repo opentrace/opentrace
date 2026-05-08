@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PanelResizeHandle } from '@opentrace/components';
 import {
   deleteVault,
   getPageMarkdown,
@@ -22,8 +23,10 @@ import {
   listVaults,
 } from '../../wiki/client';
 import type { VaultDetail, VaultPageMeta } from '../../wiki/types';
+import { useResizablePanel } from '../../hooks/useResizablePanel';
 import { WikiMarkdown } from './WikiMarkdown';
 import { AddVaultModal } from './AddVaultModal';
+import { useGraph } from '../../providers/GraphDataProvider';
 import './wiki.css';
 
 interface Props {
@@ -37,6 +40,17 @@ export function VaultBrowser({ onClose }: Props) {
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
   const [pageBody, setPageBody] = useState<string>('');
   const [showAdd, setShowAdd] = useState(false);
+  const { loadGraph } = useGraph();
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: 'ot_vault_drawer_width',
+    defaultWidth: 640,
+    minWidth: 320,
+    maxWidth: 1200,
+    side: 'right',
+    panelRef,
+  });
 
   const refreshVaults = useCallback(async () => {
     try {
@@ -121,14 +135,18 @@ export function VaultBrowser({ onClose }: Props) {
       const data = await getVault(name);
       setVaultData(data);
       if (data.pages.length > 0) setActiveSlug(data.pages[0].slug);
+      // Reload the graph so the newly-mirrored vault/page/source nodes
+      // appear without a hard refresh. Server-mode is read-through; in
+      // browser-mode this is a no-op against the in-browser store.
+      void loadGraph();
     },
-    [refreshVaults],
+    [refreshVaults, loadGraph],
   );
 
   const handleDeleteVault = useCallback(
     async (name: string) => {
       const ok = window.confirm(
-        `Delete vault "${name}"? This removes all of its pages from disk.`,
+        `Delete vault "${name}"? This removes all of its pages from disk and from the graph.`,
       );
       if (!ok) return;
       try {
@@ -144,12 +162,22 @@ export function VaultBrowser({ onClose }: Props) {
         setPageBody('');
       }
       await refreshVaults();
+      // Reload the graph so the deleted vault's nodes/edges disappear
+      // without a hard refresh.
+      void loadGraph();
     },
-    [activeVault, refreshVaults],
+    [activeVault, refreshVaults, loadGraph],
   );
 
   return (
-    <div className="vault-drawer">
+    <div
+      ref={panelRef}
+      className="vault-drawer"
+      style={
+        { '--vault-drawer-width': `${panelWidth}px` } as React.CSSProperties
+      }
+    >
+      <PanelResizeHandle side="right" onMouseDown={handleMouseDown} />
       <div className="panel-header">
         <h3>Vaults</h3>
         <div className="panel-header-actions">
@@ -324,25 +352,13 @@ function PageListItem({
   active: boolean;
   onSelect: (slug: string) => void;
 }) {
-  // Source-summary pages have "Source Summary: " (or legacy "Source: ") in
-  // the title; the section header already conveys that, so strip the prefix
-  // for a cleaner row.
-  const isSummary = page.kind === 'source_summary' || page.kind === 'source';
-  let display = page.title;
-  if (isSummary) {
-    if (page.title.startsWith('Source Summary: ')) {
-      display = page.title.slice('Source Summary: '.length);
-    } else if (page.title.startsWith('Source: ')) {
-      display = page.title.slice('Source: '.length);
-    }
-  }
   return (
     <button
       className={`vault-drawer__list-item${active ? ' vault-drawer__list-item--active' : ''}`}
       onClick={() => onSelect(page.slug)}
       title={page.one_line_summary}
     >
-      {display}
+      {page.title}
       {page.one_line_summary && (
         <span className="vault-drawer__list-item-summary">
           {page.one_line_summary}

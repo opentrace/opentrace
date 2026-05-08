@@ -190,36 +190,39 @@ class TestMCPGetStats:
 class TestMCPSearchGraph:
     def test_search_by_name(self, indexed_go_store):
         result = _call_tool(indexed_go_store, "search_graph", query="main")
-        assert isinstance(result, list)
-        assert len(result) > 0
-        # Each result should have id, type, name
-        for node in result:
-            assert "id" in node
-            assert "type" in node
-            assert "name" in node
+        assert isinstance(result, dict)
+        assert "hits" in result and isinstance(result["hits"], list)
+        assert result["count"] > 0
+        # Each hit should have id, type, name, snippet, score
+        for hit in result["hits"]:
+            assert "id" in hit
+            assert "type" in hit
+            assert "name" in hit
+            assert "snippet" in hit
+            assert "score" in hit
 
     def test_search_with_type_filter(self, indexed_go_store):
         result = _call_tool(indexed_go_store, "search_graph", query="main", nodeTypes="File")
-        assert isinstance(result, list)
-        for node in result:
-            assert node["type"] == "File"
+        for hit in result["hits"]:
+            assert hit["type"] == "File"
 
     def test_search_no_results(self, indexed_go_store):
         result = _call_tool(indexed_go_store, "search_graph", query="zzz_nonexistent_zzz")
-        assert isinstance(result, list)
-        assert len(result) == 0
+        assert result["hits"] == []
+        assert result["count"] == 0
 
     def test_search_respects_limit(self, indexed_go_store):
         result = _call_tool(indexed_go_store, "search_graph", query="e", limit=2)
-        assert len(result) <= 2
+        assert len(result["hits"]) <= 2
 
-    def test_search_properties_are_valid(self, indexed_go_store):
-        """Properties should be dicts or None, never unparsed strings."""
+    def test_search_returns_metadata_channels(self, indexed_go_store):
+        """OT-1732 spec: each hit carries vault/recency/confidence (null today)."""
         result = _call_tool(indexed_go_store, "search_graph", query="db")
-        for node in result:
-            props = node.get("properties")
-            if props is not None:
-                assert isinstance(props, dict), f"Properties should be dict, got {type(props)}: {props}"
+        for hit in result["hits"]:
+            # Phases 4/5 will populate these; today they're null on code nodes.
+            assert "vault" in hit
+            assert "recency" in hit
+            assert "confidence" in hit
 
 
 # ---------------------------------------------------------------------------
@@ -409,12 +412,12 @@ class TestMCPRoundTrip:
 
     def test_search_then_get_then_traverse(self, indexed_go_store):
         """Full round-trip: search for a node, get its details, traverse from it."""
-        # Search
-        search_results = _call_tool(indexed_go_store, "search_graph", query="handler")
-        assert len(search_results) > 0
+        # Search returns {hits, count, query} after OT-1732 Phase 3.
+        search_result = _call_tool(indexed_go_store, "search_graph", query="handler")
+        assert search_result["count"] > 0
 
-        # Get details of first result
-        node_id = search_results[0]["id"]
+        # Get details of first hit
+        node_id = search_result["hits"][0]["id"]
         details = _call_tool(indexed_go_store, "get_node", nodeId=node_id)
         assert details["node"]["id"] == node_id
 
@@ -430,11 +433,11 @@ class TestMCPRoundTrip:
 
     def test_python_class_methods_reachable(self, indexed_python_store):
         """Search for Database class, verify its methods are reachable via traversal."""
-        classes = _call_tool(indexed_python_store, "search_graph", query="Database", nodeTypes="Class")
-        if not classes:
+        classes_result = _call_tool(indexed_python_store, "search_graph", query="Database", nodeTypes="Class")
+        if classes_result["count"] == 0:
             pytest.skip("Database class not found")
 
-        db_id = classes[0]["id"]
+        db_id = classes_result["hits"][0]["id"]
         details = _call_tool(indexed_python_store, "get_node", nodeId=db_id)
         assert details["node"]["name"] == "Database"
 

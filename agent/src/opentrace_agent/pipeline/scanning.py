@@ -92,7 +92,11 @@ def scanning(
     nodes = walk.nodes
     rels = walk.relationships
 
-    # Enrich Repository node with ref/sourceUri/provider
+    # Enrich Repository node with ref/sourceUri/provider/local_path.
+    # local_path is set when this is a local-directory index — i.e. the path
+    # will still exist after this run completes. Cloned remote repos (which
+    # set repo_url) get a temp dir that's torn down post-index, so we leave
+    # local_path null in that case.
     for node in nodes:
         if node.type == "Repository":
             props = dict(node.properties or {})
@@ -103,6 +107,10 @@ def scanning(
                 props["sourceUri"] = repo_url
             if provider:
                 props["provider"] = provider
+            if not repo_url:
+                # Local index — record the resolved path so retrieval/grep
+                # can spawn ripgrep against it later.
+                props["local_path"] = str(root_path)
             nodes[nodes.index(node)] = GraphNode(
                 id=node.id,
                 type=node.type,

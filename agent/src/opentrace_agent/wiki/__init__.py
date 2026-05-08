@@ -17,8 +17,8 @@
 from opentrace_agent.wiki.ingest.pipeline import run_compile
 from opentrace_agent.wiki.ingest.types import (
     SourceInput,
-    WikiPipelineEvent,
     WikiPhase,
+    WikiPipelineEvent,
 )
 
 __all__ = ["run_compile", "SourceInput", "WikiPipelineEvent", "WikiPhase"]

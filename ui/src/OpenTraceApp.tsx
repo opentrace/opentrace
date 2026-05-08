@@ -93,6 +93,7 @@ export function OpenTraceApp({
           buildTime={buildTime}
           initialRepoUrl={repoUrl}
           onConnectServer={handleConnectServer}
+          isServerMode={mode.startsWith('server:')}
         />
       </JobServiceProvider>
     </StoreProvider>

@@ -41,6 +41,9 @@ message RepositoryNode {
   string provider       = 5;
   string default_branch = 6 [(ladybug.column) = "defaultBranch"];
   string summary        = 7;
+  // Filesystem path when the repo was indexed from a local directory.
+  // Empty for cloned remote repos (clone is not retained after indexing).
+  string local_path     = 8 [(ladybug.column) = "localPath"];
 }
 
 // DirectoryNode represents a directory in a repository.
@@ -129,6 +132,46 @@ message VariableNode {
   string docs            = 9;
 }
 
+// WikiVaultNode represents a knowledge vault — a named collection of compiled
+// wiki pages produced by the wiki ingest pipeline. One per vault directory.
+message WikiVaultNode {
+  string id                = 1;          // vault name (validated, no separators)
+  string name              = 2;          // display name (same as id today)
+  string last_compiled_at  = 3 [(ladybug.column) = "lastCompiledAt"];   // ISO-8601 UTC
+  string summary           = 4;
+}
+
+// WikiPageNode represents a single compiled markdown page within a vault.
+// One per .md file under <vault>/pages/. Pages are LLM-managed; provenance
+// fields are stamped at compile time.
+message WikiPageNode {
+  string id                = 1;          // "<vault>::<slug>"
+  string name              = 2;          // page title
+  string slug              = 3;
+  string kind              = 4;          // "source_summary" | "concept"
+  string one_line_summary  = 5 [(ladybug.column) = "oneLineSummary"];
+  int32  revision          = 6;
+  string last_updated      = 7 [(ladybug.column) = "lastUpdated"];      // ISO-8601 UTC
+  // Provenance fields (Phase 5 populates; Phase 1 reserves the columns).
+  string agent             = 8;          // e.g. "opentrace-wiki-compiler"
+  string model             = 9;          // e.g. "claude-opus-4-7"
+  string session           = 10;         // UUID per compile run
+  float  confidence        = 11;         // 0.0–1.0
+}
+
+// SourceNode represents a raw input artifact uploaded to a vault. Bytes are
+// not retained on disk after compilation — the sha256 + filename combo is
+// the only memory of past uploads, used for dedup and provenance.
+message SourceNode {
+  string id            = 1;          // sha256 hex (full)
+  string name          = 2;          // original filename
+  string sha256        = 3;
+  string filename      = 4;
+  string content_type  = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
+  int64  size_bytes    = 6 [(ladybug.column) = "sizeBytes"];
+  string acquired_at   = 7 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+}
+
 // IndexMetadataNode stores a single record of index provenance per database.
 // Written by the CLI after each `opentraceai index` run.
 message IndexMetadataNode {
@@ -198,6 +241,26 @@ message DerivedFromRel {
   string source_id = 2;
   string target_id = 3;
   string transform = 4;  // "identity", "call", "attribute"
+}
+
+// LinksToRel represents a wiki-style link between two WikiPage nodes.
+// Created by parsing [[wiki-link]] syntax in page bodies during compile.
+message LinksToRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// CitesRel represents a wiki provenance citation.
+//   WikiPage --Cites--> SourceNode               (source-summary page → its source)
+//   WikiPage --Cites--> WikiPage (source_summary) (concept page → source-summary it cites)
+//
+// Distinct from DerivedFromRel (variable data flow); kept separate to avoid
+// overloading edge semantics across the code-graph and wiki-graph domains.
+message CitesRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
 }
 
 // TargetsRepoRel links a PullRequest to its target Repository.
