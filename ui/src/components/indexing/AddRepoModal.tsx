@@ -297,12 +297,6 @@ const EXAMPLE_REPOS: {
     description: 'Open-source observability and monitoring platform',
     size: 'L',
   },
-  {
-    name: 'Linux',
-    url: 'https://github.com/torvalds/linux',
-    description: 'Linux kernel source tree',
-    size: 'L',
-  },
 ];
 
 // --- Main Component ---
