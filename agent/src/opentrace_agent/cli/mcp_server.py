@@ -218,8 +218,10 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         single type, e.g. 'CALLS') or ``edgeTypes`` (a comma-separated set,
         e.g. 'CALLS,IMPORTS'). When both are given, ``edgeTypes`` wins.
 
-        ``vaultScope`` and ``confidenceThreshold`` are reserved for Phases 4/5
-        of OT-1732 and currently no-op.
+        Optional ``vaultScope`` restricts traversal to nodes whose ``vault``
+        property matches the given vault name. ``confidenceThreshold`` (0.0-1.0)
+        skips relationships whose ``properties.confidence`` falls below the
+        threshold; values <= 0 disable the filter.
         """
         if not store:
             logger.info("traverse_graph called but no index exists")

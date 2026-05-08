@@ -585,11 +585,12 @@ class GraphStore:
             Allowlist of rel types — when set, only these rel types traverse.
             Supersedes ``relationship_type`` if both are passed.
         vault_scope
-            Reserved for Phase 4: restrict traversal to nodes whose vault
-            ancestor matches this name. Currently a no-op.
+            When set, only neighbours whose ``properties.vault`` matches this
+            value are traversed.
         confidence_threshold
-            Reserved for Phase 5: skip relationships with
-            ``properties.confidence`` below this value. Currently a no-op.
+            When > 0, relationships whose ``properties.confidence`` is below
+            this value are skipped. Edges without a ``confidence`` property
+            (or with a non-numeric one) are kept.
 
         Returns a list of ``{node, relationship, depth}`` dicts.
         """
