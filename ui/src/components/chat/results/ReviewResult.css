@@ -215,6 +215,57 @@
   cursor: not-allowed;
 }
 
+/* ── Inline token prompt (shown when submit fails with "Token required") ── */
+
+.review-token-prompt-header {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.review-token-prompt-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.review-token-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+.review-token-input:focus {
+  outline: none;
+  border-color: var(--primary, #3b82f6);
+}
+
+.review-token-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.review-token-prompt-hint {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.review-token-prompt-hint a {
+  color: var(--primary, #3b82f6);
+  text-decoration: none;
+}
+
+.review-token-prompt-hint a:hover {
+  text-decoration: underline;
+}
+
 .review-submitted-badge {
   display: flex;
   align-items: center;

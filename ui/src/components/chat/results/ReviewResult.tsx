@@ -107,11 +107,51 @@ function isOwnPRError(raw: string): boolean {
   return /approve your own/i.test(raw) || /Can not approve/i.test(raw);
 }
 
+/** Check if the error is a missing/invalid token error */
+function isTokenError(raw: string): boolean {
+  return (
+    /token required/i.test(raw) ||
+    /bad credentials/i.test(raw) ||
+    /401\b/.test(raw) ||
+    /requires authentication/i.test(raw)
+  );
+}
+
+type TokenProvider = 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
+
+const TOKEN_PROVIDER_LABEL: Record<TokenProvider, string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  bitbucket: 'Bitbucket',
+  azuredevops: 'Azure DevOps',
+};
+
+const TOKEN_PROVIDER_HELP: Record<TokenProvider, string> = {
+  github: 'https://github.com/settings/tokens',
+  gitlab: 'https://gitlab.com/-/user_settings/personal_access_tokens',
+  bitbucket: 'https://bitbucket.org/account/settings/app-passwords/',
+  azuredevops:
+    'https://learn.microsoft.com/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate',
+};
+
 interface Props {
   review: ReviewData;
   onSubmit?: (data: ReviewData) => Promise<void>;
   onPostAsComment?: (body: string) => Promise<void>;
   submitted?: boolean;
+  /** Provider for the repo this review targets — controls the "Get a token" help link. */
+  provider?: TokenProvider;
+  /**
+   * Called when the user enters a token via the inline prompt that appears after a
+   * "Token required" submit failure. Implementer should persist the token and update
+   * any in-memory client so the next submit retry succeeds.
+   */
+  onProvideToken?: (token: string) => Promise<void> | void;
+  /**
+   * If true, no auth token is configured for the target host — show the token entry
+   * form proactively (instead of waiting for the user to click Submit and fail).
+   */
+  tokenMissing?: boolean;
 }
 
 export default function ReviewResult({
@@ -119,12 +159,17 @@ export default function ReviewResult({
   onSubmit,
   onPostAsComment,
   submitted,
+  provider,
+  onProvideToken,
+  tokenMissing,
 }: Props) {
   const [verdict, setVerdict] = useState(review.verdict);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorRaw, setErrorRaw] = useState<string | null>(null);
   const [done, setDone] = useState(submitted ?? false);
+  const [tokenInput, setTokenInput] = useState('');
+  const [savingToken, setSavingToken] = useState(false);
 
   const handleSubmit = async () => {
     if (!onSubmit) return;
@@ -140,6 +185,21 @@ export default function ReviewResult({
       setError(friendlyError(raw));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSaveTokenAndRetry = async () => {
+    if (!onProvideToken || !tokenInput.trim()) return;
+    setSavingToken(true);
+    try {
+      await onProvideToken(tokenInput.trim());
+      setTokenInput('');
+      // Clear the error so the prompt collapses; then retry submit.
+      setError(null);
+      setErrorRaw(null);
+      await handleSubmit();
+    } finally {
+      setSavingToken(false);
     }
   };
 
@@ -178,6 +238,23 @@ export default function ReviewResult({
     (isOwnPRError(errorRaw) || errorRaw.includes('422')) &&
     onPostAsComment
   );
+
+  const errorIsTokenIssue = !!(
+    error &&
+    errorRaw &&
+    isTokenError(errorRaw) &&
+    onProvideToken
+  );
+
+  // Show the token form when (a) no token is configured for this host yet, or
+  // (b) the last submit failed because of an auth/token problem.
+  const showTokenForm =
+    !!onProvideToken && (errorIsTokenIssue || !!tokenMissing);
+
+  const providerLabel = provider ? TOKEN_PROVIDER_LABEL[provider] : 'Git host';
+  const providerHelpUrl = provider ? TOKEN_PROVIDER_HELP[provider] : null;
+  const tokenNoun =
+    provider === 'bitbucket' ? 'App Password' : 'Personal Access Token';
 
   return (
     <div className="review-result">
@@ -232,33 +309,88 @@ export default function ReviewResult({
               onChange={(e) =>
                 setVerdict(e.target.value as ReviewData['verdict'])
               }
-              disabled={submitting}
+              disabled={submitting || savingToken}
             >
               <option value="COMMENT">Comment</option>
               <option value="APPROVE">Approve</option>
               <option value="REQUEST_CHANGES">Request Changes</option>
             </select>
           </div>
-          <button
-            className="review-submit-btn"
-            onClick={handleSubmit}
-            disabled={submitting}
-          >
-            {submitting ? 'Submitting...' : 'Submit Review'}
-          </button>
-          {error && (
+
+          {showTokenForm ? (
             <div className="review-submit-error">
-              {error}
-              {showCommentFallback && (
+              <div className="review-token-prompt-header">
+                {errorIsTokenIssue
+                  ? `That ${providerLabel} ${tokenNoun} didn't work — try another.`
+                  : `Add a ${providerLabel} ${tokenNoun} to submit reviews.`}
+              </div>
+              <div className="review-token-prompt-row">
+                <input
+                  type="password"
+                  className="review-token-input"
+                  placeholder={`Paste ${providerLabel} ${tokenNoun}`}
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  disabled={savingToken || submitting}
+                  autoFocus={errorIsTokenIssue}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === 'Enter' &&
+                      tokenInput.trim() &&
+                      !savingToken
+                    ) {
+                      void handleSaveTokenAndRetry();
+                    }
+                  }}
+                />
                 <button
-                  className="review-fallback-btn"
-                  onClick={handlePostAsComment}
-                  disabled={submitting}
+                  type="button"
+                  className="review-submit-btn"
+                  onClick={() => void handleSaveTokenAndRetry()}
+                  disabled={!tokenInput.trim() || savingToken || submitting}
                 >
-                  Post as Comment Instead
+                  {savingToken || submitting
+                    ? 'Submitting...'
+                    : 'Save & Submit'}
                 </button>
+              </div>
+              {providerHelpUrl && (
+                <div className="review-token-prompt-hint">
+                  Token is stored locally in your browser.{' '}
+                  <a
+                    href={providerHelpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Create one &rarr;
+                  </a>
+                </div>
               )}
             </div>
+          ) : (
+            <>
+              <button
+                className="review-submit-btn"
+                onClick={handleSubmit}
+                disabled={submitting}
+              >
+                {submitting ? 'Submitting...' : 'Submit Review'}
+              </button>
+              {error && (
+                <div className="review-submit-error">
+                  {error}
+                  {showCommentFallback && (
+                    <button
+                      className="review-fallback-btn"
+                      onClick={handlePostAsComment}
+                      disabled={submitting}
+                    >
+                      Post as Comment Instead
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

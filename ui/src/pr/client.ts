@@ -66,6 +66,15 @@ export class PRClient {
     }
   }
 
+  /** Update the auth token in place (e.g. after the user enters one in a prompt). */
+  setToken(token: string | undefined): void {
+    this.token = token || undefined;
+  }
+
+  hasToken(): boolean {
+    return !!this.token;
+  }
+
   async listPRs(): Promise<PRSummary[]> {
     switch (this.meta.provider) {
       case 'gitlab':
