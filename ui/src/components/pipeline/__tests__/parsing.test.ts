@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { parseFile, initParsers } from '../stages/parsing';
 import { collectPipeline } from '../pipeline';
 import type { PipelineContext } from '../types';
-import { getPythonParser, makeRepoTree } from './helpers';
+import { getPhpParser, getPythonParser, makeRepoTree } from './helpers';
 
 function noopCtx(): PipelineContext {
   return { cancelled: false };
@@ -26,7 +26,13 @@ function noopCtx(): PipelineContext {
 
 beforeAll(async () => {
   const pyParser = await getPythonParser();
-  initParsers(new Map([['python', pyParser]]));
+  const phpParser = await getPhpParser();
+  initParsers(
+    new Map([
+      ['python', pyParser],
+      ['php', phpParser],
+    ]),
+  );
 });
 
 function runBoth(files: Array<{ path: string; content: string }>) {
@@ -191,5 +197,119 @@ def standalone():
     const result = parseFile('notes.txt', 'hello world', 'testorg/testrepo');
     expect(result.nodes).toHaveLength(0);
     expect(result.error).toBeUndefined();
+  });
+
+  describe('PHP', () => {
+    it('extracts a class with methods from a .php file', () => {
+      const src = `<?php
+class Greeter {
+    public function __construct(string $name) {
+    }
+
+    public function greet(): string {
+        return "Hello";
+    }
+}
+`;
+      const { nodes, relationships } = runBoth([
+        { path: 'src/Greeter.php', content: src },
+      ]);
+
+      const cls = nodes.find((n) => n.type === 'Class' && n.name === 'Greeter');
+      expect(cls).toBeDefined();
+      expect(cls!.id).toBe('testorg/testrepo/src/Greeter.php::Greeter');
+
+      // Class → File DEFINES relationship
+      const fileToClass = relationships.find((r) => r.target_id === cls!.id);
+      expect(fileToClass?.source_id).toBe('testorg/testrepo/src/Greeter.php');
+
+      // Both methods appear as Function children
+      const methodNames = nodes
+        .filter((n) => n.type === 'Function' && n.id.startsWith(`${cls!.id}::`))
+        .map((n) => n.name);
+      expect(methodNames).toContain('__construct(string $name)');
+      expect(methodNames).toContain('greet()');
+    });
+
+    it('extracts a top-level function', () => {
+      const src = `<?php
+function add(int $a, int $b): int {
+    return $a + $b;
+}
+`;
+      const { nodes } = runBoth([{ path: 'math.php', content: src }]);
+
+      const fn = nodes.find(
+        (n) => n.type === 'Function' && n.name === 'add(int $a, int $b)',
+      );
+      expect(fn).toBeDefined();
+      // PHP is typed:false in the generic config, so typeSignature is null
+      // and the node ID uses the bare name. The raw param text only surfaces
+      // in the display name.
+      expect(fn!.id).toBe('testorg/testrepo/math.php::add');
+      expect(fn!.properties?.signature).toBe('(int $a, int $b)');
+    });
+
+    it('records the trait subtype on PHP traits', () => {
+      const src = `<?php
+trait Loggable {
+    public function log(string $msg): void {
+    }
+}
+`;
+      const { nodes } = runBoth([{ path: 'traits.php', content: src }]);
+
+      const tr = nodes.find((n) => n.type === 'Class' && n.name === 'Loggable');
+      expect(tr).toBeDefined();
+      expect(tr!.properties?.kind).toBe('trait');
+    });
+
+    it('surfaces classes defined inside a namespace', () => {
+      const src = `<?php
+namespace App\\Services;
+
+class UserService {
+    public function find(int $id): ?object {
+        return null;
+    }
+}
+`;
+      const { nodes } = runBoth([
+        { path: 'src/Services/UserService.php', content: src },
+      ]);
+
+      const cls = nodes.find(
+        (n) => n.type === 'Class' && n.name === 'UserService',
+      );
+      expect(cls).toBeDefined();
+
+      // ID uses the bare method name (PHP is typed:false → typeSignature
+      // null); the raw params land in the display name instead.
+      const method = nodes.find(
+        (n) => n.type === 'Function' && n.id === `${cls!.id}::find`,
+      );
+      expect(method).toBeDefined();
+      expect(method!.name).toBe('find(int $id)');
+    });
+
+    it('stats count PHP classes and functions', () => {
+      const src = `<?php
+class A {
+    public function m1(): void {
+    }
+    public function m2(): void {
+    }
+}
+
+function top(): void {
+}
+`;
+      const { events } = runBoth([{ path: 'stats.php', content: src }]);
+
+      const done = events.find((e) => e.kind === 'done');
+      expect(done!.result?.classesExtracted).toBe(1);
+      // 2 methods inside A + 1 top-level function = 3
+      expect(done!.result?.functionsExtracted).toBe(3);
+    });
   });
 });

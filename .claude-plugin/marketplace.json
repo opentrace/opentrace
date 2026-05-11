@@ -13,7 +13,7 @@
       "author": {
         "name": "OpenTrace"
       },
-      "source": "./claude-code-plugin",
+      "source": "./plugins/claude-code",
       "category": "development"
     }
   ]

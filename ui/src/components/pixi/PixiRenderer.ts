@@ -219,6 +219,14 @@ export class PixiRenderer {
   private width = 0;
   private height = 0;
 
+  // Auto-fit state — keep the graph framed during indexing until user takes
+  // control. Flipped to true by any gesture past CLICK_THRESHOLD (wheel,
+  // pan, 3D rotate, node drag) and by zoomToNodes; reset by setData() (new
+  // graph session) and resetCamera() (explicit "Reset View").
+  private hasUserMovedCamera = false;
+  private autoFitThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly AUTO_FIT_THROTTLE_MS = 180;
+
   // Interaction state
   private _quadtree: Quadtree<PixiNode> | null = null;
   private lastQuadtreeRebuild = 0;
@@ -281,6 +289,7 @@ export class PixiRenderer {
   private mode3dPerspectiveD = 2000; // perspective distance
   private nodeDepthT: Map<string, number> = new Map(); // per-node depth [-1, 1]
   private mode3dRadius = 0; // computed from node positions at enable time
+  private mode3dFrameCounter = 0;
 
   // Animation cancel
   private cancelAnimation: (() => void) | null = null;
@@ -432,6 +441,10 @@ export class PixiRenderer {
       clearTimeout(this.labelCullDebounceTimer);
       this.labelCullDebounceTimer = null;
     }
+    if (this.autoFitThrottleTimer !== null) {
+      clearTimeout(this.autoFitThrottleTimer);
+      this.autoFitThrottleTimer = null;
+    }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     clearTextureCache(this.textureCache);
@@ -490,6 +503,9 @@ export class PixiRenderer {
     this.nodeIdToIndex.clear();
     this.edges = [];
     this.edgeIndex.clear();
+
+    // A fresh graph starts a new auto-fit session — forget any prior pan/zoom.
+    this.hasUserMovedCamera = false;
 
     // Build nodes
     for (const gn of graphNodes) {
@@ -1634,6 +1650,27 @@ export class PixiRenderer {
     );
   }
 
+  /**
+   * Throttled auto-fit — re-frames the graph at most ~5×/sec while the user
+   * has not taken manual control of the camera. Trailing-edge throttle: the
+   * first call schedules a fit; subsequent calls while a fit is pending are
+   * ignored (not reset), so bursty producers like the d3-force worker
+   * streaming positions every ~66 ms still get periodic re-fits. Resetting
+   * the timer on every call (classic debounce) would starve the fit
+   * indefinitely because sim ticks arrive faster than the throttle window.
+   */
+  scheduleAutoFit(duration = 200): void {
+    if (this.hasUserMovedCamera) return;
+    if (this.nodes.size === 0) return;
+    // A fit is already queued — keep it, don't reset.
+    if (this.autoFitThrottleTimer !== null) return;
+    this.autoFitThrottleTimer = setTimeout(() => {
+      this.autoFitThrottleTimer = null;
+      if (this.destroyed || this.hasUserMovedCamera) return;
+      this.zoomToFit(duration);
+    }, this.AUTO_FIT_THROTTLE_MS);
+  }
+
   zoomToNodes(nodeIds: Iterable<string>, duration = 300): void {
     const positions: { x: number; y: number }[] = [];
     for (const id of nodeIds) {
@@ -1652,6 +1689,9 @@ export class PixiRenderer {
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
     const target = fitBounds(bounds, this.width, this.height, 120);
+
+    // Focusing on specific nodes is a deliberate user action — stop auto-fit.
+    this.hasUserMovedCamera = true;
 
     this.cancelAnimation?.();
     this.cancelAnimation = animateViewport(
@@ -1711,6 +1751,8 @@ export class PixiRenderer {
   }
 
   resetCamera(duration = 300): void {
+    // Explicit "Reset View" re-enables auto-fit for subsequent data changes.
+    this.hasUserMovedCamera = false;
     this.zoomToFit(duration);
   }
 
@@ -1741,6 +1783,9 @@ export class PixiRenderer {
         this.vp.y = mouseY - (mouseY - this.vp.y) * (newScale / this.vp.scale);
         this.vp.scale = newScale;
 
+        // User took manual control — stop auto-fitting during indexing.
+        this.hasUserMovedCamera = true;
+
         // Hide edges during zoom for instant response (Grafana pattern).
         // Sprite transforms are instant; edges redraw after 1300ms settle.
         if (!this.dragNode) {
@@ -1754,6 +1799,7 @@ export class PixiRenderer {
 
     // Pointer events for pan / drag / click
     let pointerDown = false;
+    let pointerDownButton = 0;
     let movedDistance = 0;
     // Track last pointer position to compute pan deltas manually,
     // avoiding movementX/Y which includes the full distance since pointerdown
@@ -1761,24 +1807,33 @@ export class PixiRenderer {
     let lastPointerX = 0;
     let lastPointerY = 0;
 
+    // Suppress the browser's right-click menu so right-drag can pan in 3D mode.
+    canvas.addEventListener(
+      'contextmenu',
+      (e) => {
+        e.preventDefault();
+      },
+      { signal },
+    );
+
     canvas.addEventListener(
       'pointerdown',
       (e) => {
         pointerDown = true;
+        pointerDownButton = e.button;
         movedDistance = 0;
         lastPointerX = e.clientX;
         lastPointerY = e.clientY;
         this.pointerDownPos = { x: e.clientX, y: e.clientY };
 
-        // Hit test
-        const rect = canvas.getBoundingClientRect();
-        const screenX = e.clientX - rect.left;
-        const screenY = e.clientY - rect.top;
-        const world = screenToWorld(screenX, screenY, this.vp);
-        const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
-
-        if (hitNode) {
-          this.pendingDragNode = hitNode;
+        // Hit test — only left button drags nodes; left-drag on empty area rotates in 3D.
+        if (e.button === 0) {
+          const rect = canvas.getBoundingClientRect();
+          const screenX = e.clientX - rect.left;
+          const screenY = e.clientY - rect.top;
+          const world = screenToWorld(screenX, screenY, this.vp);
+          const hitNode = this.findNodeAt(world.x, world.y, 15 / this.vp.scale);
+          this.pendingDragNode = hitNode ?? null;
         } else {
           this.pendingDragNode = null;
         }
@@ -1818,6 +1873,11 @@ export class PixiRenderer {
         movedDistance = Math.sqrt(dx * dx + dy * dy);
 
         if (movedDistance > CLICK_THRESHOLD) {
+          // Any gesture past the click threshold (node drag, pan, 3D rotate)
+          // counts as manual control — stop auto-fitting during indexing so
+          // the view doesn't fight the user.
+          this.hasUserMovedCamera = true;
+
           if (this.pendingDragNode && !this.dragNode) {
             // Start node drag
             this.dragNode = this.pendingDragNode;
@@ -1841,8 +1901,8 @@ export class PixiRenderer {
             }
             this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
             this.redrawDragEdges(this.dragNode);
-          } else if (this.mode3d) {
-            // 3D mode: drag rotates the camera instead of panning
+          } else if (this.mode3d && pointerDownButton === 0) {
+            // 3D mode + left-drag on empty area: rotate the camera
             const rotateDx = e.clientX - lastPointerX;
             const rotateDy = e.clientY - lastPointerY;
             // Horizontal drag → Y-axis rotation
@@ -1886,7 +1946,7 @@ export class PixiRenderer {
         this.dragNode = null;
         canvas.style.cursor = 'default';
         this.redrawAllEdges();
-      } else if (movedDistance <= CLICK_THRESHOLD) {
+      } else if (pointerDownButton === 0 && movedDistance <= CLICK_THRESHOLD) {
         // Click
         const rect = canvas.getBoundingClientRect();
         const screenX = e.clientX - rect.left;
@@ -1971,6 +2031,7 @@ export class PixiRenderer {
     communityAssignments?: Record<string, number>,
   ): void {
     this.mode3d = enabled;
+    this.mode3dFrameCounter = 0;
     if (!enabled) {
       // Restore 2D positions from stored (x, y)
       for (const node of this.nodeArray) {
@@ -1985,13 +2046,11 @@ export class PixiRenderer {
       return;
     }
 
-    // Compute bounding radius from current positions
-    let maxDist = 0;
-    for (const node of this.nodeArray) {
-      const d = Math.sqrt(node.x * node.x + node.y * node.y);
-      if (d > maxDist) maxDist = d;
-    }
-    this.mode3dRadius = maxDist * 1.1 || 500;
+    // Compute initial bounding radius from current positions.
+    // Reset first so recomputeMode3DExtents() picks the real extent
+    // rather than a stale (possibly larger) previous radius.
+    this.mode3dRadius = 0;
+    this.recomputeMode3DExtents();
 
     // Assign Z depth per node: community-based + jitter
     this.nodeDepthT.clear();
@@ -2016,12 +2075,6 @@ export class PixiRenderer {
       }
     }
 
-    // Scale perspective distance to graph size so the 3D effect is proportional.
-    // PerspectiveD should be ~3-4x the radius for a natural look.
-    this.mode3dPerspectiveD = this.mode3dRadius * 3;
-    // Depth scale relative to radius — controls how "thick" the sphere is
-    this.mode3dDepthScale = this.mode3dRadius * 0.6;
-
     this.mode3dAngle = 0;
     this.mode3dAutoRotate = true;
 
@@ -2029,6 +2082,32 @@ export class PixiRenderer {
     this.update3D();
     this.lastLabelCull = 0;
     this.throttledLabelCull();
+  }
+
+  /**
+   * Recompute `mode3dRadius` (and derived perspective/depth scales) from the
+   * current node positions. Radius only grows: while the simulation is warm,
+   * nodes can drift outward and we must keep the sphere bounds in sync so
+   * `getNodeZ()` does not hard-clamp drifted nodes to Z=0 (which collapses the
+   * sphere into a disk). Called from `set3DMode()` and periodically from
+   * `update3D()`.
+   */
+  private recomputeMode3DExtents(): void {
+    let maxDist = 0;
+    for (const node of this.nodeArray) {
+      if (!node.visible) continue;
+      const d = Math.sqrt(node.x * node.x + node.y * node.y);
+      if (d > maxDist) maxDist = d;
+    }
+    const candidate = maxDist * 1.1 || 500;
+    const newRadius = Math.max(this.mode3dRadius, candidate);
+    if (newRadius !== this.mode3dRadius) {
+      this.mode3dRadius = newRadius;
+      // PerspectiveD ~3-4x the radius for a natural look.
+      this.mode3dPerspectiveD = newRadius * 3;
+      // Depth scale relative to radius — controls how "thick" the sphere is.
+      this.mode3dDepthScale = newRadius * 0.6;
+    }
   }
 
   /** Get Z coordinate for a node (filled sphere distribution). */
@@ -2072,6 +2151,14 @@ export class PixiRenderer {
       this.mode3dAngle += this.mode3dSpeed;
     }
 
+    // Keep sphere bounds in sync with drifting node positions (spread layout
+    // can push nodes beyond the initial radius over time). Throttled to every
+    // ~0.5s at 60fps — amortized cost is negligible even at thousands of nodes.
+    this.mode3dFrameCounter++;
+    if (this.mode3dFrameCounter % 30 === 0) {
+      this.recomputeMode3DExtents();
+    }
+
     const invScale = this.zoomInvScale();
     const lblInv = this.labelInvScale();
     for (const node of this.nodeArray) {
@@ -2081,7 +2168,10 @@ export class PixiRenderer {
       const z = this.getNodeZ(node);
       const p = this.project3d(node.x, node.y, z);
       node.sprite.position.set(p.px, p.py);
-      const depthScale = Math.max(p.scale, 0.3);
+      // Clamp both ends: the lower bound prevents far nodes from vanishing,
+      // the upper bound prevents near-singular perspective scale from exploding
+      // sprite/label sizes when rz approaches -mode3dPerspectiveD during rotation.
+      const depthScale = Math.max(0.3, Math.min(p.scale, 2));
       const depthAlpha = 0.3 + 0.6 * Math.max(Math.min(p.scale, 1), 0);
 
       // Depth sorting: closer nodes (lower rz) render on top (higher zIndex)

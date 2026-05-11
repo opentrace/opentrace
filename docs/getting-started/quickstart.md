@@ -2,12 +2,12 @@
 
 OpenTrace has four ways in. Pick the one that matches what you want to do.
 
-| You want to…                          | Use                              | Time       | Guide |
-|---------------------------------------|----------------------------------|------------|-------|
-| See what OpenTrace is                 | Browser                          | 30 seconds | [Browser](install-browser.md) |
-| Give Claude Code codebase awareness   | Claude Code plugin               | 2 minutes  | [Plugin](install-plugin.md) |
-| Index repos from a terminal           | CLI (`uvx` / `pip` / `pipx`)     | 2 minutes  | [CLI](install-cli.md) |
-| Hack on OpenTrace itself              | Source build                     | 5 minutes  | [Development Setup](../development/setup.md) |
+| You want to…                        | Use                          | Time       | Guide                                        |
+| ----------------------------------- | ---------------------------- | ---------- | -------------------------------------------- |
+| See what OpenTrace is               | Browser                      | 30 seconds | [Browser](install-browser.md)                |
+| Give Claude Code codebase awareness | Claude Code plugin           | 2 minutes  | [Plugin](install-plugin.md)                  |
+| Index repos from a terminal         | CLI (`uvx` / `pip` / `pipx`) | 2 minutes  | [CLI](install-cli.md)                        |
+| Hack on OpenTrace itself            | Source build                 | 5 minutes  | [Development Setup](../development/setup.md) |
 
 ## One-Liners
 
@@ -15,7 +15,7 @@ If you already know which path you want:
 
 === "Browser"
 
-    Open [**oss.opentrace.ai**](https://oss.opentrace.ai) and paste a repo URL. Done.
+    Open [**app.opentrace.ai**](https://app.opentrace.ai) and paste a repo URL. Done.
 
 === "Claude Code Plugin"
 

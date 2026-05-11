@@ -19,6 +19,8 @@ The OpenTrace plugin gives [Claude Code](https://docs.anthropic.com/en/docs/clau
     claude plugin install opentrace-oss@opentrace-oss
     ```
 
+    This activates the plugin everywhere.  You may optionally install with `--scope project`, which activates the plugin only in the directory where the install line was run.
+
 === "Inside Claude Code (`/plugin`)"
 
     ```text
@@ -63,4 +65,4 @@ You can safely `.gitignore` the `.opentrace/` directory — it's rebuildable fro
 
 ---
 
-*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)*
+*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [OpenCode Plugin](install-opencode.md) · [Source](../development/setup.md)*

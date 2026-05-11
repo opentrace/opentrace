@@ -199,7 +199,32 @@ describe('utility functions', () => {
     expect(detectLanguage('.js')).toBe('javascript');
     expect(detectLanguage('.ts')).toBe('typescript');
     expect(detectLanguage('.go')).toBe('go');
+    expect(detectLanguage('.php')).toBe('php');
     expect(detectLanguage('')).toBeNull();
     expect(detectLanguage('.xyz')).toBeNull();
+  });
+});
+
+describe('scanning stage — PHP', () => {
+  it('marks .php files as parseable', () => {
+    const repo = makeRepoTree([
+      { path: 'index.php' },
+      { path: 'src/App.php' },
+      { path: 'README.md' },
+    ]);
+    const { result } = runScanning({ repo }, noopCtx());
+    expect(result.parseableFiles.map((f) => f.path).sort()).toEqual([
+      'index.php',
+      'src/App.php',
+    ]);
+  });
+
+  it('records language=php on File node properties', () => {
+    const repo = makeRepoTree([{ path: 'app.php' }]);
+    const { result } = runScanning({ repo }, noopCtx());
+
+    const fileNode = result.fileNodes[0];
+    expect(fileNode.properties?.extension).toBe('.php');
+    expect(fileNode.properties?.language).toBe('php');
   });
 });

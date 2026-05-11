@@ -163,3 +163,43 @@ def test_pipeline_repo_id_defaults_to_dir_name(tmp_path: Path) -> None:
     repo_nodes = [n for n in nodes if n.type == "Repository"]
     assert len(repo_nodes) == 1
     assert repo_nodes[0].id == tmp_path.name
+
+
+def test_dependency_nodes_are_never_orphaned(tmp_path: Path) -> None:
+    """Invariant: every Dependency node has at least one incoming edge.
+
+    Both Dependency-creation paths — manifest parsing in `scanning.py`
+    (emits Repository -[DEPENDS_ON]-> Dependency) and external-import
+    analysis in `processing.py` (emits File -[IMPORTS]-> Dependency) —
+    must create the edge in the same step as the node. The UI-side
+    orphan sweep in `deleteRepo` relies on this: a Dependency with no
+    incoming edges after a repo's rels are removed must have been
+    exclusively referenced by that repo. If a third creation path ever
+    emits an orphan Dependency, the sweep would wrongly delete
+    legitimately-shared packages on repo removal.
+    """
+    # requirements.txt declares packages; one of them (requests) is
+    # also imported by code, the other two are manifest-only. The code
+    # also imports numpy, which is not declared in requirements.txt.
+    # This covers all three possible Dependency provenances in one
+    # fixture: manifest-only, import-only, and both.
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0\npyyaml==6.0\nclick==8.1.7\n")
+    (tmp_path / "app.py").write_text(
+        "import requests\nimport numpy\n\ndef fetch():\n    return requests.get('https://example.com')\n"
+    )
+
+    inp = PipelineInput(path=str(tmp_path), repo_id="test/deps")
+    _, nodes, rels = collect_pipeline(inp)
+
+    dep_nodes = [n for n in nodes if n.type == "Dependency"]
+    # Fixture sanity: make sure the pipeline actually produced Dependency
+    # nodes; otherwise the invariant check below is vacuous.
+    assert dep_nodes, "Expected Dependency nodes from fixture but got none"
+
+    rel_targets = {r.target_id for r in rels}
+    orphans = sorted(n.id for n in dep_nodes if n.id not in rel_targets)
+    assert orphans == [], (
+        f"Found orphan Dependency nodes with no incoming edges: {orphans}. "
+        "This breaks the UI-side deleteRepo orphan sweep — see "
+        "ui/src/store/ladybugStore.ts sweepOrphanedDependencies."
+    )

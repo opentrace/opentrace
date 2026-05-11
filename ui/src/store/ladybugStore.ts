@@ -282,6 +282,13 @@ function logQuery(cypher: string, rowCount: number, ms: number): void {
   );
 }
 
+/** Build an AbortError in the web-platform convention so callers can
+ *  pattern-match on err.name === 'AbortError' the same way they do
+ *  for fetch/AbortController. */
+function abortError(message: string): DOMException {
+  return new DOMException(message, 'AbortError');
+}
+
 // ---- Cypher helpers ----
 
 /** Escape a string for use inside a Cypher single-quoted literal. */
@@ -524,6 +531,12 @@ export class LadybugGraphStore implements GraphStore {
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
 
+  /** Monotonic counter bumped by clearGraph(). Each queued task captures the
+   *  current value at enqueue; when it runs, a mismatch means clearGraph fired
+   *  in the meantime and the task is aborted. Keeps clearGraph fast by letting
+   *  it skip work that's about to be invalidated anyway. */
+  private generation = 0;
+
   constructor() {
     // Don't init WASM here — the constructor runs at app startup.
     // WASM loads lazily on first DB operation via ensureReady().
@@ -660,12 +673,20 @@ export class LadybugGraphStore implements GraphStore {
    * Execute a Cypher query and return all result rows as objects.
    * Uses conn.query() + getAllObjects() for row extraction.
    * Serialized through a queue to prevent concurrent calls.
+   *
+   * If clearGraph() fires between the enqueue and the run, the task
+   * rejects with an AbortError (DOMException) instead of executing.
    */
   private async query(cypher: string): Promise<Record<string, unknown>[]> {
+    const enqueuedGeneration = this.generation;
     await this.ensureReady();
     return new Promise<Record<string, unknown>[]>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
+          if (this.generation !== enqueuedGeneration) {
+            reject(abortError('Query aborted: store was cleared'));
+            return;
+          }
           const qt0 = performance.now();
           const result = await this.conn.query(cypher);
           try {
@@ -684,8 +705,34 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher statement that doesn't return rows (DDL, COPY, etc.).
+   * Aborts with an AbortError if clearGraph() fires between enqueue and run.
    */
   private async exec(cypher: string): Promise<void> {
+    const enqueuedGeneration = this.generation;
+    await this.ensureReady();
+    return new Promise<void>((resolve, reject) => {
+      this.queue = this.queue
+        .then(async () => {
+          if (this.generation !== enqueuedGeneration) {
+            reject(abortError('Exec aborted: store was cleared'));
+            return;
+          }
+          const result = await this.conn.query(cypher);
+          await result.close();
+          resolve();
+        })
+        .catch((err) => {
+          reject(err);
+        });
+    });
+  }
+
+  /**
+   * Queue a DDL statement that bypasses the generation check. Used by
+   * clearGraph() for its own DROP/CREATE calls, since it's the thing
+   * bumping the generation.
+   */
+  private async execInternal(cypher: string): Promise<void> {
     await this.ensureReady();
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
@@ -1415,14 +1462,19 @@ export class LadybugGraphStore implements GraphStore {
   }
 
   async clearGraph(): Promise<void> {
+    // Bump the generation synchronously before any await, so every task
+    // already on the queue sees a mismatch and aborts instead of running
+    // against state that's about to be torn down. Must happen before we
+    // enqueue our own DDL below — execInternal bypasses the check.
+    this.generation++;
     // Drop REL TABLE GROUP first (references node tables)
     try {
-      await this.exec(`DROP TABLE IF EXISTS RELATES`);
+      await this.execInternal(`DROP TABLE IF EXISTS RELATES`);
     } catch {
       // If group drop fails, try dropping individual sub-tables
       for (const [from, to] of REL_PAIRS) {
         try {
-          await this.exec(`DROP TABLE IF EXISTS RELATES_${from}_${to}`);
+          await this.execInternal(`DROP TABLE IF EXISTS RELATES_${from}_${to}`);
         } catch {
           /* ignore */
         }
@@ -1430,12 +1482,12 @@ export class LadybugGraphStore implements GraphStore {
     }
     // Drop all typed node tables and SourceText
     for (const type of NODE_TYPES) {
-      await this.exec(`DROP TABLE IF EXISTS ${type}`);
+      await this.execInternal(`DROP TABLE IF EXISTS ${type}`);
     }
-    await this.exec(`DROP TABLE IF EXISTS SourceText`);
+    await this.execInternal(`DROP TABLE IF EXISTS SourceText`);
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
-      await this.exec(stmt);
+      await this.execInternal(stmt);
     }
     this.hasVectorIndex = false;
     this.bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
@@ -1449,6 +1501,158 @@ export class LadybugGraphStore implements GraphStore {
     this.pendingRels = [];
     this.totalNodesBuffered = 0;
     this.totalRelsBuffered = 0;
+  }
+
+  /** Remove all data scoped to a single repo: the Repository node itself,
+   *  every node whose ID starts with `${repoId}/` (Directory, File, Class,
+   *  Function, Variable, PullRequest, SourceText, NodeVector), the
+   *  IndexMetadata row, and every RELATES edge touching them. Only
+   *  Dependency nodes are truly global (`pkg:registry:name`) and survive.
+   *  Derived JS-side indexes are pruned in lockstep.
+   *
+   *  Unlike clearGraph() this does NOT bump the generation counter: other
+   *  repos' in-flight queries remain valid. The store's serialization queue
+   *  ensures our deletes run between neighboring queries. */
+  async deleteRepo(repoId: string): Promise<void> {
+    if (!repoId) return;
+    await this.ensureReady();
+
+    const prefix = `${repoId}/`;
+    const metaId = `_meta:index:${repoId}`;
+    const matches = (id: string): boolean =>
+      id === repoId || id.startsWith(prefix) || id === metaId;
+
+    // Drop any buffered writes that would re-create this repo's rows on the
+    // next flush — they'd collide with the deletions we're about to do.
+    if (this.pendingNodes.length) {
+      const before = this.pendingNodes.length;
+      this.pendingNodes = this.pendingNodes.filter((n) => !matches(n.id));
+      this.totalNodesBuffered -= before - this.pendingNodes.length;
+    }
+    if (this.pendingRels.length) {
+      const before = this.pendingRels.length;
+      this.pendingRels = this.pendingRels.filter(
+        (r) => !matches(r.source_id) && !matches(r.target_id),
+      );
+      this.totalRelsBuffered -= before - this.pendingRels.length;
+    }
+
+    // Build single-quoted Cypher literals using the shared `esc` helper
+    // (backslash + apostrophe escaping). Realistic repoIds are "owner/repo"
+    // and contain none of these characters, but we escape anyway so this
+    // path matches the rest of the file's Cypher-building call sites.
+    const repoIdLit = `'${esc(repoId)}'`;
+    const prefixLit = `'${esc(prefix)}'`;
+    const metaLit = `'${esc(metaId)}'`;
+    const matchClause = (alias: string) =>
+      `${alias}.id = ${repoIdLit} OR ${alias}.id STARTS WITH ${prefixLit} OR ${alias}.id = ${metaLit}`;
+
+    // Relationships first — Kuzu requires edges gone before their endpoint
+    // nodes can be dropped. The RELATES group holds every rel type.
+    await this.exec(
+      `MATCH (s)-[r:RELATES]->(t) WHERE ${matchClause('s')} OR ${matchClause('t')} DELETE r`,
+    );
+
+    // Repo-scoped node tables. Dependency is the only global table and is
+    // omitted. Variable IDs are `{scope_id}::{name}` where scope_id is a
+    // File/Class/Function — all repo-prefixed, so they match the predicate.
+    // SourceText is repo-scoped (file-id keyed). NodeVector shadows every
+    // node, so the same id predicate prunes it.
+    const REPO_SCOPED_TABLES: readonly string[] = [
+      'Repository',
+      'Directory',
+      'File',
+      'Class',
+      'Function',
+      'Variable',
+      'PullRequest',
+      'IndexMetadata',
+      'SourceText',
+    ];
+    for (const table of REPO_SCOPED_TABLES) {
+      await this.exec(`MATCH (n:${table}) WHERE ${matchClause('n')} DELETE n`);
+    }
+    try {
+      await this.exec(
+        `MATCH (n:NodeVector) WHERE ${matchClause('n')} DELETE n`,
+      );
+    } catch (err) {
+      // NodeVector table may be absent if the VECTOR extension failed to
+      // load. Log rather than silently swallow so an unrelated failure
+      // (OOM, query-shape regression) is diagnosable from the console
+      // instead of leaking orphan NodeVector rows invisibly.
+      console.warn(
+        '[LadybugStore.deleteRepo] NodeVector cleanup skipped:',
+        err,
+      );
+    }
+
+    // Prune derived in-memory state keyed by node id.
+    for (const id of [...this.nodeTypeMap.keys()]) {
+      if (matches(id)) {
+        this.nodeTypeMap.delete(id);
+        this.bm25Index.removeDocument(id);
+      }
+    }
+    for (const id of [...this.nodeCache.keys()]) {
+      if (matches(id)) this.nodeCache.delete(id);
+    }
+    for (const id of [...this.sourceCache.keys()]) {
+      if (matches(id)) this.sourceCache.delete(id);
+    }
+    for (const id of [...this.sourceSnippets.keys()]) {
+      if (matches(id)) this.sourceSnippets.delete(id);
+    }
+    for (const id of [...this.flushedSourceIds]) {
+      if (matches(id)) this.flushedSourceIds.delete(id);
+    }
+
+    await this.sweepOrphanedDependencies();
+    await this.rebuildPackageDedupIndex();
+  }
+
+  /** Delete Dependency nodes left with no incoming edges after
+   *  deleteRepo's RELATES sweep. Safe because Dependency nodes are only
+   *  ever created paired with an edge (DEPENDS_ON from Repository during
+   *  manifest parsing, IMPORTS from File during import analysis), so zero
+   *  incoming edges means the node was exclusively referenced by the
+   *  just-deleted repo. MUST run after the RELATES sweep, and before
+   *  rebuildPackageDedupIndex so flushedPackageIds resyncs from the
+   *  surviving rows. */
+  private async sweepOrphanedDependencies(): Promise<void> {
+    const orphans = (await this.query(
+      `MATCH (n:Dependency) ` +
+        `OPTIONAL MATCH ()-[r:RELATES]->(n) ` +
+        `WITH n, count(r) AS refs ` +
+        `WHERE refs = 0 ` +
+        `RETURN n.id AS id`,
+    )) as { id: string }[];
+    if (orphans.length === 0) return;
+    const idList = orphans.map((o) => `'${esc(o.id)}'`).join(', ');
+    await this.exec(`MATCH (n:Dependency) WHERE n.id IN [${idList}] DELETE n`);
+  }
+
+  /** Rebuild `flushedPackageIds` from the current Dependency rows.
+   *
+   *  The set is the store's in-memory guard against COPY FROM PK
+   *  violations: Dependency nodes are global (shared across repos), so
+   *  the same id can arrive from multiple pipeline runs and we skip
+   *  anything we've already written. That guard works as long as the
+   *  set reflects what's actually in the DB. Two code paths break that
+   *  invariant by mutating Dependency rows behind importBatch's back:
+   *    - `deleteRepo` keeps Dependency rows (they're global) but wipes
+   *      repo-scoped rows, and we may be called after a page reload
+   *      where the set is empty while the table persists.
+   *    - `importDatabase` COPYs Dependency rows directly from Parquet,
+   *      never touching the set.
+   *  Both call this afterwards to bring the set back in sync. Cheap —
+   *  one id column, bounded by package count, not repo count. */
+  private async rebuildPackageDedupIndex(): Promise<void> {
+    this.flushedPackageIds.clear();
+    const depRows = (await this.query(
+      `MATCH (n:Dependency) RETURN n.id AS id`,
+    )) as { id: string }[];
+    for (const row of depRows) this.flushedPackageIds.add(row.id);
   }
 
   async importDatabase(
@@ -1702,6 +1906,12 @@ export class LadybugGraphStore implements GraphStore {
     // Rebuild FTS index on SourceText (whether from import or empty)
     onProgress?.('Rebuilding search indexes');
     await this.rebuildSourceFTS();
+
+    // The import COPY'd Dependency rows directly into the DB without
+    // going through `importBatch`, so `flushedPackageIds` is still
+    // empty. Without this, the next pipeline run that emits any of the
+    // imported package ids would fail with a PK uniqueness error.
+    await this.rebuildPackageDedupIndex();
 
     console.log(
       `[LadybugStore] importDatabase complete: ${totalNodes} nodes, ${totalRels} rels`,

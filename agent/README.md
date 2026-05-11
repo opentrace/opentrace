@@ -67,19 +67,19 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `search_graph` | Full-text search across nodes by name or properties |
-| `list_nodes` | List nodes by type (Class, Function, File, etc.) |
-| `get_node` | Get a node's full details and immediate neighbors |
+| Tool             | Description                                                  |
+| ---------------- | ------------------------------------------------------------ |
+| `search_graph`   | Full-text search across nodes by name or properties          |
+| `list_nodes`     | List nodes by type (Class, Function, File, etc.)             |
+| `get_node`       | Get a node's full details and immediate neighbors            |
 | `traverse_graph` | Walk relationships from a node (outgoing, incoming, or both) |
-| `get_stats` | Graph statistics — node/edge counts broken down by type |
+| `get_stats`      | Graph statistics — node/edge counts broken down by type      |
 
 ## Supported Languages
 
-| Full extraction (symbols + calls + imports) | Structural extraction (symbols only) |
-|---------------------------------------------|--------------------------------------|
-| Python, TypeScript/JavaScript, Go | Rust, Java, Kotlin, C#, C/C++, Ruby, Swift |
+| Full extraction (symbols + calls + imports) | Structural extraction (symbols only)       |
+| ------------------------------------------- | ------------------------------------------ |
+| Python, TypeScript/JavaScript, Go           | Rust, Java, Kotlin, C#, C/C++, Ruby, Swift |
 
 Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are indexed as file nodes.
 
@@ -89,53 +89,53 @@ Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are index
 
 Index a local codebase into a LadybugDB knowledge graph.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `PATH` | `.` | Directory to index |
-| `--db` | `.opentrace/index.db` | Database path |
-| `--repo-id` | directory name | Repository identifier |
-| `--batch-size` | `200` | Items per write batch |
-| `-v, --verbose` | off | Debug logging |
+| Option          | Default               | Description           |
+| --------------- | --------------------- | --------------------- |
+| `PATH`          | `.`                   | Directory to index    |
+| `--db`          | `.opentrace/index.db` | Database path         |
+| `--repo-id`     | directory name        | Repository identifier |
+| `--batch-size`  | `200`                 | Items per write batch |
+| `-v, --verbose` | off                   | Debug logging         |
 
 ### `opentraceai mcp`
 
 Start a stdio MCP server exposing graph query tools.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | auto-discovered | Database path |
-| `-v, --verbose` | off | Debug logging |
+| Option          | Default         | Description   |
+| --------------- | --------------- | ------------- |
+| `--db`          | auto-discovered | Database path |
+| `-v, --verbose` | off             | Debug logging |
 
 ### `opentraceai stats`
 
 Display graph statistics (node/edge counts by type).
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | auto-discovered | Database path |
-| `--output` | `text` | Output format (`text` or `json`) |
+| Option     | Default         | Description                      |
+| ---------- | --------------- | -------------------------------- |
+| `--db`     | auto-discovered | Database path                    |
+| `--output` | `text`          | Output format (`text` or `json`) |
 
 ### `opentraceai serve`
 
 Start an HTTP server exposing the graph database as a REST API.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | auto-discovered | Database path |
-| `--host` | `127.0.0.1` | Bind address |
-| `--port` | `8787` | Bind port |
-| `-v, --verbose` | off | Debug logging |
+| Option          | Default         | Description   |
+| --------------- | --------------- | ------------- |
+| `--db`          | auto-discovered | Database path |
+| `--host`        | `127.0.0.1`     | Bind address  |
+| `--port`        | `8787`          | Bind port     |
+| `-v, --verbose` | off             | Debug logging |
 
 ### `opentraceai query QUERY_STRING`
 
 Run a Cypher or full-text search query against the graph database.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | auto-discovered | Database path |
-| `-t, --type` | `cypher` | Query language (`cypher` or `fts`) |
-| `--limit` | `100` | Max rows (FTS only) |
-| `--output` | `table` | Output format (`table`, `json`, or `jsonl`) |
+| Option       | Default         | Description                                 |
+| ------------ | --------------- | ------------------------------------------- |
+| `--db`       | auto-discovered | Database path                               |
+| `-t, --type` | `cypher`        | Query language (`cypher` or `fts`)          |
+| `--limit`    | `100`           | Max rows (FTS only)                         |
+| `--output`   | `table`         | Output format (`table`, `json`, or `jsonl`) |
 
 ### `opentraceai export [OUTPUT]`
 
@@ -168,7 +168,7 @@ uv run ruff format src/ tests/  # Format
 
 ## Part of OpenTrace
 
-This package is the CLI/MCP component of [OpenTrace](https://github.com/opentrace/opentrace), an open-source platform for mapping system architecture into knowledge graphs. The full project also includes a browser-based graph explorer at [oss.opentrace.ai](https://oss.opentrace.ai).
+This package is the CLI/MCP component of [OpenTrace](https://github.com/opentrace/opentrace), an open-source platform for mapping system architecture into knowledge graphs. The full project also includes a browser-based graph explorer at [app.opentrace.ai](https://app.opentrace.ai).
 
 ## License
 

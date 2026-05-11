@@ -15,6 +15,16 @@
  */
 
 import {
+  AddRepoModal,
+  GraphLegend,
+  GraphToolbar,
+  IndexingProgress,
+  PixiGraphCanvas,
+  detectProvider,
+  normalizeRepoUrl,
+  type IndexingState,
+} from '@opentrace/components';
+import {
   forwardRef,
   memo,
   useCallback,
@@ -24,53 +34,32 @@ import {
   useRef,
   useState,
 } from 'react';
-import type {
-  GraphNode,
-  GraphLink,
-  SelectedNode,
-  SelectedEdge,
-  FilterState,
-} from '@opentrace/components/utils';
-import {
-  getNodeColor,
-  getLinkColor,
-  useCommunities,
-  useHighlights,
-} from '@opentrace/components/utils';
-import {
-  PixiGraphCanvas,
-  GraphLegend,
-  GraphToolbar,
-  PhysicsPanel,
-  type GraphCanvasHandle,
-  type FilterItem,
-  type FilterPanelProps,
-  type SearchSuggestion,
-  DEFAULT_LAYOUT_CONFIG,
-} from '@opentrace/components';
-import type { NodeSourceResponse } from '../store/types';
-import { useStore } from '../store';
-import { useGraphData } from '../hooks/useGraphData';
-import type { JobState } from '../job';
-import type { JobMessage } from '../job';
+import { useGraph } from '../providers/GraphDataProvider';
+import { useGraphInteraction } from '../providers/GraphInteractionProvider';
+import { getSubType } from '../providers/graphFilterUtils';
+import type { JobMessage, JobState } from '../job';
 import { JobPhase } from '../job';
-import {
-  AddRepoModal,
-  IndexingProgress,
-  detectProvider,
-  normalizeRepoUrl,
-  type IndexingState,
-} from '@opentrace/components';
-import { GitHubIcon, GitLabIcon } from './providerIcons';
-import JobMinimizedBar from './JobMinimizedBar';
-import SidePanel from './SidePanel';
-import type { SidePanelTab } from './SidePanel';
-import type { HistoryEntry } from './historyTypes';
-import type { NodeEdge } from './NodeDetailsPanel';
-import ThemeSelector from './ThemeSelector';
-import { OpenTraceLogo } from './OpenTraceLogo';
-import ResetConfirmModal from './ResetConfirmModal';
+import { useStore } from '../store';
+import { useGraphViewer } from '../hooks/useGraphViewer';
+import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
 import ExportModal from './ExportModal';
+import {
+  EmptyStateHeader,
+  GraphErrorState,
+  GraphInitialEmpty,
+  GraphLoadingState,
+  GraphSearchEmpty,
+} from './GraphEmptyStates';
+import { GraphControlsBar } from './GraphControlsBar';
+import {
+  GitHubStarButton,
+  GraphToolbarActionButtons,
+  buildMobilePanelTabs,
+} from './GraphToolbarActions';
+import { PhysicsPanelContainer } from './PhysicsPanelContainer';
+import { GitHubIcon, GitLabIcon } from './providerIcons';
+import ResetConfirmModal from './ResetConfirmModal';
+import type { SidePanelTab } from './SidePanel';
 
 const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_INITIALIZING), label: 'Initializing' },
@@ -117,250 +106,7 @@ function toIndexingProps(job: JobState, repoUrl: string) {
   return { state, title, message, icon };
 }
 
-/** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
-// WARNING: Module-level singleton — do NOT mutate (add/delete). Used as a
-// stable empty default for highlight props to avoid unnecessary re-renders.
-const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
-
-/**
- * Extract a sub-type value from a node based on its type.
- * Returns null if no meaningful sub-type can be derived.
- */
-function getSubType(node: GraphNode): string | null {
-  if (node.type === 'File') {
-    const name = node.name || node.id;
-    const lastDot = name.lastIndexOf('.');
-    if (lastDot > 0) return name.slice(lastDot); // e.g. ".ts", ".go"
-    return null;
-  }
-  if (node.type === 'Function' || node.type === 'Class') {
-    const lang = node.properties?.language as string | undefined;
-    return lang || null;
-  }
-  if (node.type === 'Dependency') {
-    const registry = node.properties?.registry as string | undefined;
-    return registry || null;
-  }
-  if (node.type === 'Variable') {
-    const kind = node.properties?.kind as string | undefined;
-    return kind || null;
-  }
-  return null;
-}
-
-/**
- * Extract the string ID from a link endpoint.
- * GraphLink endpoints are always strings in our data model,
- * but we keep this helper for safety.
- */
-function linkId(endpoint: string | number | GraphNode | undefined): string {
-  if (typeof endpoint === 'object' && endpoint !== null) return endpoint.id;
-  return String(endpoint);
-}
-
-// GraphLegend is now imported from @opentrace/components
-
-/** Dropdown help menu that appears on the toolbar. */
-function HelpMenuButton({
-  showHelp,
-  onToggleHelp,
-}: {
-  showHelp: boolean;
-  onToggleHelp: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current?.contains(e.target as Node)) return;
-      setOpen(false);
-    };
-    const onEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('mousedown', onClickOutside);
-    document.addEventListener('keydown', onEscape);
-    return () => {
-      document.removeEventListener('mousedown', onClickOutside);
-      document.removeEventListener('keydown', onEscape);
-    };
-  }, [open]);
-
-  return (
-    <div className="help-menu-container" ref={ref}>
-      <button
-        className={`help-toggle-btn ot-submenu-toggle ${showHelp ? 'active' : ''}`}
-        onClick={() => setOpen((v) => !v)}
-        title="Help"
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        <span className="ot-menu-label">Help</span>
-      </button>
-      {open && (
-        <div className="help-dropdown">
-          <button
-            className="help-dropdown-item"
-            onClick={() => {
-              setOpen(false);
-              onToggleHelp();
-            }}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-            Getting Started
-          </button>
-          <a
-            className="help-dropdown-item"
-            href="https://opentrace.github.io/opentrace/"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-            </svg>
-            Documentation
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-          <a
-            className="help-dropdown-item"
-            href="https://github.com/opentrace/opentrace"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
-            </svg>
-            GitHub
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-          <div className="help-dropdown-divider" />
-          <a
-            className="help-dropdown-item"
-            href="https://github.com/opentrace/opentrace/issues"
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            Report an Issue
-            <svg
-              className="help-external-icon"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-              <polyline points="15 3 21 3 21 9" />
-              <line x1="10" y1="14" x2="21" y2="3" />
-            </svg>
-          </a>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export interface GraphViewerHandle {
-  graphData: { nodes: GraphNode[]; links: GraphLink[] };
-  selectNode: (nodeId: string, hops?: number) => void;
-  reload: (query?: string, hops?: number) => Promise<void>;
-  triggerPing: (nodeIds: Iterable<string>) => void;
-  resetCamera: () => void;
-}
+export type GraphViewerHandle = GraphViewerImperativeHandle;
 
 export interface GraphViewerProps {
   width: number;
@@ -386,11 +132,6 @@ export interface GraphViewerProps {
   onToggleSettings: () => void;
   showHelp: boolean;
   onToggleHelp: () => void;
-  /** Called when graphData changes so parent can pass it reactively to siblings */
-  onGraphDataChange?: (data: {
-    nodes: GraphNode[];
-    links: GraphLink[];
-  }) => void;
   /** Node IDs found by chat tool results — highlighted when no other selection is active */
   chatHighlightNodes?: Set<string>;
   /** Animation settings from SettingsDrawer */
@@ -402,6 +143,8 @@ export interface GraphViewerProps {
   graphFullscreen?: boolean;
   /** Mobile: toggle graph fullscreen */
   onToggleGraphFullscreen?: () => void;
+  /** Mobile: open SidePanel on a given tab (state lives in App). */
+  onMobilePanelTabChange?: (tab: SidePanelTab) => void;
 }
 
 const GraphViewer = memo(
@@ -428,16 +171,53 @@ const GraphViewer = memo(
         onToggleSettings,
         showHelp,
         onToggleHelp,
-        onGraphDataChange,
         chatHighlightNodes,
         animationSettings,
         toolbarActions,
         graphFullscreen,
         onToggleGraphFullscreen,
+        onMobilePanelTabChange,
       } = props;
 
       const { store } = useStore();
-      const canvasRef = useRef<GraphCanvasHandle>(null);
+
+      // Set by the post-embedding reload effect to suppress the redundant
+      // auto-fit it would otherwise trigger (embeddings only add vector
+      // properties to existing nodes — the structural graph is unchanged).
+      //
+      // Known limitation: if the `persisted` loadGraph is still in-flight
+      // when `done` fires (tiny repos with near-instant embedding + slow
+      // fetchGraph), the wrong increment may consume the flag. The window
+      // is small in practice — embedding typically dominates `fetchGraph`
+      // by orders of magnitude — so we accept the race rather than thread
+      // per-promise suppression tokens through useGraph.
+      const suppressNextFitRef = useRef(false);
+
+      const v = useGraphViewer({
+        chatHighlightNodes,
+        suppressNextAutoFitRef: suppressNextFitRef,
+      });
+
+      const {
+        graphData,
+        loading,
+        error,
+        lastSearchQuery,
+        loadGraph,
+        setError,
+      } = useGraph();
+
+      const {
+        selectedNode,
+        hiddenNodeTypes,
+        hiddenLinkTypes,
+        hiddenSubTypes,
+        hiddenCommunities,
+        colorMode,
+        setColorMode,
+        availableSubTypes,
+        communityData,
+      } = useGraphInteraction();
 
       // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
       interface IndexedRepo {
@@ -479,225 +259,15 @@ const GraphViewer = memo(
         [indexedRepos],
       );
 
-      const onGraphLoaded = useCallback(() => {
-        setTimeout(() => {
-          canvasRef.current?.zoomToFit(400);
-        }, 500);
-      }, []);
-
-      const {
-        graphData,
-        loading,
-        error,
-        stats,
-        lastSearchQuery,
-        graphVersion,
-        loadGraph,
-        setError,
-      } = useGraphData(onGraphLoaded);
-
-      // Keep a ref to latest graphData so imperative selectNode always reads fresh data
-      const graphDataRef = useRef(graphData);
-      useEffect(() => {
-        graphDataRef.current = graphData;
-      }, [graphData]);
-
-      // Notify parent when graphData changes (for reactive sibling props like ChatPanel)
-      useEffect(() => {
-        onGraphDataChange?.(graphData);
-      }, [graphData, onGraphDataChange]);
-
-      // Compute edges between chat-highlighted nodes
-      const chatHighlightLinks = useMemo(() => {
-        if (!chatHighlightNodes || chatHighlightNodes.size < 2)
-          return EMPTY_SET;
-        const links = new Set<string>();
-        for (const link of graphData.links) {
-          if (
-            chatHighlightNodes.has(link.source) &&
-            chatHighlightNodes.has(link.target)
-          ) {
-            links.add(`${link.source}-${link.target}`);
-          }
-        }
-        return links;
-      }, [graphData.links, chatHighlightNodes]);
-
-      const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(
-        null,
-      );
-      const [selectedLink, setSelectedLink] = useState<SelectedEdge | null>(
-        null,
-      );
-      const [searchQuery, setSearchQuery] = useState('');
       const [showResetConfirm, setShowResetConfirm] = useState(false);
       const [showExportModal, setShowExportModal] = useState(false);
-      const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
-        null,
-      );
-      const [hops, setHops] = useState(2);
       const [exporting, setExporting] = useState(false);
-      const [hiddenNodeTypes, setHiddenNodeTypes] = useState(new Set<string>());
-      const [hiddenLinkTypes, setHiddenLinkTypes] = useState(new Set<string>());
-      const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
-      const [hiddenCommunities, setHiddenCommunities] = useState(
-        new Set<number>(),
-      );
-      // Track whether we've applied the default Dependency hiding
-      const defaultsApplied = useRef(false);
-      const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(
-        null,
-      );
-      const [sourceLoading, setSourceLoading] = useState(false);
-      const [sourceError, setSourceError] = useState<string | null>(null);
-
-      const [nodeHistory, setNodeHistory] = useState<HistoryEntry[]>([]);
-
-      // Append chat-highlighted nodes to session history
-      useEffect(() => {
-        if (!chatHighlightNodes || chatHighlightNodes.size === 0) return;
-        const now = Date.now();
-        setNodeHistory((prev) => {
-          const existing = new Set(prev.map((e) => e.id));
-          const newEntries: HistoryEntry[] = [];
-          for (const id of chatHighlightNodes) {
-            if (existing.has(id)) continue;
-            const node = graphDataRef.current.nodes.find((n) => n.id === id);
-            if (!node) continue;
-            newEntries.push({
-              id: node.id,
-              name: node.name,
-              type: node.type,
-              timestamp: now,
-              source: 'chat',
-            });
-          }
-          if (newEntries.length === 0) return prev;
-          return [...newEntries, ...prev].slice(0, 500);
-        });
-      }, [chatHighlightNodes]);
+      const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
         null,
       );
-
-      // Edge-click highlight override state
-      const [edgeHighlightNodes, setEdgeHighlightNodes] = useState<Set<string>>(
-        new Set(),
-      );
-      const [edgeHighlightLinks, setEdgeHighlightLinks] = useState<Set<string>>(
-        new Set(),
-      );
-      const [edgeLabelNodes, setEdgeLabelNodes] = useState<Set<string>>(
-        new Set(),
-      );
-
-      // Community-focus highlight override state
-      const [focusedCommunityNodes, setFocusedCommunityNodes] =
-        useState<Set<string>>(EMPTY_SET);
-
-      // Active search filter — stored as data so we can re-apply it
-      const [activeFilter, setActiveFilter] = useState<{
-        type: 'community';
-        communityId: number;
-      } | null>(null);
-
-      // Physics panel state
-      const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
-      // Mobile: collapsed graph controls menu
-      const [showGraphMenu, setShowGraphMenu] = useState(false);
-      // Persisted graph settings — restored from localStorage on mount
-      const stored = useMemo(() => {
-        try {
-          return JSON.parse(
-            localStorage.getItem('graph-settings') ?? '{}',
-          ) as Record<string, unknown>;
-        } catch {
-          return {};
-        }
-      }, []);
-      const ps = <T,>(key: string, def: T): T => (stored[key] as T) ?? def;
-      const [zoomOnSelect, setZoomOnSelect] = useState(() =>
-        ps('zoomOnSelect', true),
-      );
-      const [repulsion, setRepulsion] = useState(() => ps('repulsion', 120));
-      const [labelsVisible, setLabelsVisible] = useState(() =>
-        ps('labelsVisible', true),
-      );
-      const [physicsRunning, setPhysicsRunning] = useState(false);
-      // Pixi-specific control state
-      const [pixiLinkDist, setPixiLinkDist] = useState(() =>
-        ps('pixiLinkDist', 200),
-      );
-      const [pixiCenter, setPixiCenter] = useState(() => ps('pixiCenter', 0.3));
-      const [pixiZoomExponent, setPixiZoomExponent] = useState(() =>
-        ps('pixiZoomExponent', 0.8),
-      );
-      // Layout mode + compact-specific config
-      const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>(() =>
-        ps('layoutMode', 'spread'),
-      );
-      const [compactRadial, setCompactRadial] = useState(() =>
-        ps('compactRadial', 8),
-      );
-      const [compactCommunity, setCompactCommunity] = useState(() =>
-        ps('compactCommunity', 10),
-      );
-      const [compactCentering, setCompactCentering] = useState(() =>
-        ps('compactCentering', 5),
-      );
-      const [compactRadius, setCompactRadius] = useState(() =>
-        ps('compactRadius', 32),
-      );
-      // 3D mode state
-      const [mode3d, setMode3d] = useState(() => ps('mode3d', true));
-      const [mode3dSpeed, setMode3dSpeed] = useState(() =>
-        ps('mode3dSpeed', 30),
-      );
-      const [mode3dTilt, setMode3dTilt] = useState(() => ps('mode3dTilt', 35));
-      const [labelScale, setLabelScale] = useState(() => ps('labelScale', 100));
-      const [rendererAutoRotate, setRendererAutoRotate] = useState<
-        boolean | null
-      >(null);
-
-      // Persist settings to localStorage when they change
-      useEffect(() => {
-        const settings = {
-          repulsion,
-          labelsVisible,
-          zoomOnSelect,
-          pixiLinkDist,
-          pixiCenter,
-          pixiZoomExponent,
-          layoutMode,
-          compactRadial,
-          compactCommunity,
-          compactCentering,
-          compactRadius,
-          mode3d,
-          mode3dSpeed,
-          mode3dTilt,
-          labelScale,
-        };
-        localStorage.setItem('graph-settings', JSON.stringify(settings));
-      }, [
-        repulsion,
-        labelsVisible,
-        zoomOnSelect,
-        pixiLinkDist,
-        pixiCenter,
-        pixiZoomExponent,
-        layoutMode,
-        compactRadial,
-        compactCommunity,
-        compactCentering,
-        compactRadius,
-        mode3d,
-        mode3dSpeed,
-        mode3dTilt,
-        labelScale,
-      ]);
 
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
@@ -712,561 +282,23 @@ const GraphViewer = memo(
         }
       }, [jobState.status, loadGraph]);
 
-      // React to done: final graph refresh with enriched data
+      // React to done: final graph refresh with enriched data. Suppress the
+      // auto-fit this reload would otherwise trigger — embeddings only add
+      // vector properties to existing nodes, so the view should not re-animate.
       useEffect(() => {
         if (jobState.status === 'done') {
-          loadGraph();
+          suppressNextFitRef.current = true;
+          loadGraph().finally(() => {
+            // Defensive reset: if loadGraph failed or was aborted, the
+            // graphVersion-driven auto-fit never fired and the flag would
+            // leak onto the next unrelated call.
+            suppressNextFitRef.current = false;
+          });
         }
       }, [jobState.status, loadGraph]);
 
-      const handleSearch = () => {
-        if (searchQuery.trim()) {
-          loadGraph(searchQuery.trim(), hops);
-        }
-      };
-
-      const handleReset = () => {
-        setSearchQuery('');
-        setHops(2);
-        setSelectedNode(null);
-        setSelectedLink(null);
-        setActiveFilter(null);
-        setFocusedCommunityNodes(EMPTY_SET);
-        setHiddenNodeTypes(new Set());
-        setHiddenCommunities(new Set());
-        if (lastSearchQuery) {
-          loadGraph();
-        }
-      };
-
-      const layoutConfig = useMemo(
-        () => ({
-          ...DEFAULT_LAYOUT_CONFIG,
-          fa2ScalingRatio: repulsion,
-        }),
-        [repulsion],
-      );
-
-      // Compute Louvain communities on the full graph (before filtering, so
-      // community assignments are available for the community filter).
-      const communityData = useCommunities(
-        graphData.nodes,
-        graphData.links,
-        layoutConfig,
-      );
-
-      // Derive available types from raw graph data (for filter panel)
-      const availableNodeTypes = useMemo(() => {
-        const counts: Record<string, number> = {};
-        graphData.nodes.forEach((n) => {
-          counts[n.type] = (counts[n.type] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count);
-      }, [graphData.nodes]);
-
-      const availableLinkTypes = useMemo(() => {
-        const counts: Record<string, number> = {};
-        graphData.links.forEach((l) => {
-          const label = (l as unknown as GraphLink).label || 'unknown';
-          counts[label] = (counts[label] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([type, count]) => ({ type, count }))
-          .sort((a, b) => b.count - a.count);
-      }, [graphData.links]);
-
-      // Derive sub-type counts grouped by node type (for filter panel)
-      const availableSubTypes = useMemo(() => {
-        const map = new Map<string, Record<string, number>>();
-        graphData.nodes.forEach((n) => {
-          const sub = getSubType(n);
-          if (!sub) return;
-          if (!map.has(n.type)) map.set(n.type, {});
-          const counts = map.get(n.type)!;
-          counts[sub] = (counts[sub] || 0) + 1;
-        });
-        const result = new Map<string, { subType: string; count: number }[]>();
-        map.forEach((counts, type) => {
-          result.set(
-            type,
-            Object.entries(counts)
-              .map(([subType, count]) => ({ subType, count }))
-              .sort((a, b) => b.count - a.count),
-          );
-        });
-        return result;
-      }, [graphData.nodes]);
-
-      // On first data load, hide all Dependency sub-types by default
-      useEffect(() => {
-        if (defaultsApplied.current) return;
-        const depSubs = availableSubTypes.get('Dependency');
-        if (depSubs && depSubs.length > 0) {
-          defaultsApplied.current = true;
-          // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time default init
-          setHiddenSubTypes((prev) => {
-            const next = new Set(prev);
-            depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
-            return next;
-          });
-        }
-      }, [availableSubTypes]);
-
-      // Apply type + sub-type + community filters to produce the rendered graph.
-      const filteredGraphData = useMemo(() => {
-        const nodes = graphData.nodes.filter((n) => {
-          // Community filter (when any communities are hidden)
-          if (hiddenCommunities.size > 0) {
-            const cid = communityData.assignments[n.id];
-            if (cid !== undefined && hiddenCommunities.has(cid)) return false;
-          }
-          const hasSubTypeFilters = availableSubTypes.has(n.type);
-          if (hasSubTypeFilters) {
-            const sub = getSubType(n);
-            if (sub) {
-              return !hiddenSubTypes.has(`${n.type}:${sub}`);
-            }
-            const subs = availableSubTypes.get(n.type)!;
-            const allHidden = subs.every((s) =>
-              hiddenSubTypes.has(`${n.type}:${s.subType}`),
-            );
-            return !allHidden;
-          }
-          return !hiddenNodeTypes.has(n.type);
-        });
-        const visibleNodeIds = new Set(nodes.map((n) => n.id));
-        const links = graphData.links.filter((l) => {
-          const sourceId = linkId(l.source);
-          const targetId = linkId(l.target);
-          const label = (l as unknown as GraphLink).label || 'unknown';
-          return (
-            visibleNodeIds.has(sourceId) &&
-            visibleNodeIds.has(targetId) &&
-            !hiddenLinkTypes.has(label)
-          );
-        });
-        return { nodes, links };
-      }, [
-        graphData,
-        hiddenNodeTypes,
-        hiddenLinkTypes,
-        hiddenSubTypes,
-        hiddenCommunities,
-        communityData.assignments,
-        availableSubTypes,
-      ]);
-
-      // Build filterState for the new hooks
-      const filterState: FilterState = useMemo(
-        () => ({
-          hiddenNodeTypes,
-          hiddenLinkTypes,
-          hiddenSubTypes,
-          hiddenCommunities,
-        }),
-        [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities],
-      );
-
-      const onNodeClick = useCallback((node: GraphNode) => {
-        setSelectedNode(node);
-        setSelectedLink(null);
-        // Clear edge-click and community-focus highlights (use stable empty sets)
-        setEdgeHighlightNodes(EMPTY_SET);
-        setEdgeHighlightLinks(EMPTY_SET);
-        setEdgeLabelNodes(EMPTY_SET);
-        setFocusedCommunityNodes(EMPTY_SET);
-        // Record in session history (skip consecutive duplicates)
-        setNodeHistory((prev) => {
-          if (prev.length > 0 && prev[0].id === node.id) return prev;
-          const entry: HistoryEntry = {
-            id: node.id,
-            name: node.name,
-            type: node.type,
-            timestamp: Date.now(),
-            source: 'user',
-          };
-          return [entry, ...prev].slice(0, 500);
-        });
-        // Zoom is handled by the effect below after highlights are computed
-      }, []);
-
-      const onCommunityFocus = useCallback(
-        (key: string) => {
-          const cid = Number(key);
-          const nodeIds = Object.entries(communityData.assignments)
-            .filter(([, id]) => id === cid)
-            .map(([nodeId]) => nodeId);
-          if (nodeIds.length > 0) {
-            setFocusedCommunityNodes(new Set(nodeIds));
-            setSelectedNode(null);
-            setSelectedLink(null);
-          }
-        },
-        [communityData.assignments],
-      );
-
-      // Zoom camera to focused community nodes when they change
-      useEffect(() => {
-        if (focusedCommunityNodes.size > 0) {
-          canvasRef.current?.zoomToNodes(focusedCommunityNodes, 600);
-        }
-      }, [focusedCommunityNodes]);
-
       // Expose imperative handle for parent/sibling access
-      useImperativeHandle(
-        ref,
-        () => ({
-          graphData,
-          selectNode: (nodeId: string, nodeHops?: number) => {
-            if (nodeHops !== undefined) setHops(nodeHops);
-            const node = graphDataRef.current.nodes.find(
-              (n) => n.id === nodeId,
-            );
-            if (node) onNodeClick(node);
-          },
-          reload: (query?: string, hops?: number) => loadGraph(query, hops),
-          triggerPing: (nodeIds: Iterable<string>) => {
-            canvasRef.current?.triggerPing?.(nodeIds);
-          },
-          resetCamera: () => {
-            canvasRef.current?.resetCamera();
-          },
-        }),
-        [graphData, loadGraph, onNodeClick],
-      );
-
-      const onLinkClick = useCallback((edge: SelectedEdge) => {
-        setSelectedLink(edge);
-        setSelectedNode(null);
-        // Highlight the two endpoints and the clicked link
-        const sourceId = edge.source;
-        const targetId = edge.target;
-        setEdgeHighlightNodes(new Set([sourceId, targetId]));
-        setEdgeHighlightLinks(new Set([`${sourceId}-${targetId}`]));
-        setEdgeLabelNodes(new Set([sourceId, targetId]));
-        // Zoom to fit the two endpoints
-        canvasRef.current?.zoomToNodes([sourceId, targetId], 600);
-      }, []);
-
-      // Fetch source code when a source-bearing node is selected.
-      /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
-      useEffect(() => {
-        if (!selectedNode || !SOURCE_TYPES.has(selectedNode.type)) {
-          setNodeSource(null);
-          setSourceError(null);
-          return;
-        }
-
-        let cancelled = false;
-        setSourceLoading(true);
-        setSourceError(null);
-        setNodeSource(null);
-
-        const startLine = selectedNode.properties?.startLine as
-          | number
-          | undefined;
-        const endLine = selectedNode.properties?.endLine as number | undefined;
-
-        store
-          .fetchSource(selectedNode.id, startLine, endLine)
-          .then((src) => {
-            if (!cancelled) {
-              if (src) setNodeSource(src);
-              else setSourceError('Source not available');
-            }
-          })
-          .catch((err) => {
-            if (!cancelled) setSourceError(err.message);
-          })
-          .finally(() => {
-            if (!cancelled) setSourceLoading(false);
-          });
-
-        return () => {
-          cancelled = true;
-        };
-      }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
-      /* eslint-enable react-hooks/set-state-in-effect */
-
-      // Compute edges connected to the selected node for the details panel
-      const selectedNodeEdges = useMemo(() => {
-        if (!selectedNode) return [];
-        const nodeId = selectedNode.id;
-        const nodeMap = new Map(filteredGraphData.nodes.map((n) => [n.id, n]));
-        return filteredGraphData.links
-          .filter(
-            (l) => linkId(l.source) === nodeId || linkId(l.target) === nodeId,
-          )
-          .map((l) => {
-            const sourceId = linkId(l.source);
-            const targetId = linkId(l.target);
-            const isOutgoing = sourceId === nodeId;
-            const otherId = isOutgoing ? targetId : sourceId;
-            const otherNode = nodeMap.get(otherId);
-            return {
-              label: l.label,
-              direction: isOutgoing
-                ? ('outgoing' as const)
-                : ('incoming' as const),
-              otherNodeId: otherId,
-              otherNodeName: otherNode?.name ?? otherId,
-              otherNodeType: otherNode?.type,
-              properties: l.properties,
-            };
-          });
-      }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
-
-      // Convert a NodeEdge back to a SelectedEdge and trigger edge selection
-      const handleSelectEdgeFromNode = useCallback(
-        (edge: NodeEdge) => {
-          if (!selectedNode) return;
-          const nodeMap = new Map(
-            graphDataRef.current.nodes.map((n) => [n.id, n]),
-          );
-          const sourceId =
-            edge.direction === 'outgoing' ? selectedNode.id : edge.otherNodeId;
-          const targetId =
-            edge.direction === 'outgoing' ? edge.otherNodeId : selectedNode.id;
-          onLinkClick({
-            source: sourceId,
-            target: targetId,
-            label: edge.label,
-            properties: edge.properties,
-            sourceNode: nodeMap.get(sourceId),
-            targetNode: nodeMap.get(targetId),
-          });
-        },
-        [selectedNode, onLinkClick],
-      );
-
-      // Compute degree (connection count) per node for size scaling
-      const graphNodeIds = useMemo(
-        () => graphData.nodes.map((n) => n.id as string),
-        [graphData.nodes],
-      );
-
-      const [colorMode, setColorMode] = useState<'type' | 'community'>('type');
-
-      // ─── Highlights (computed from arrays) ────────────────────────────
-
-      const highlights = useHighlights(
-        null as never, // _graph — unused
-        false, // _layoutReady — unused
-        graphData.nodes,
-        graphData.links,
-        searchQuery,
-        selectedNode?.id ?? null,
-        hops,
-        filterState,
-      );
-
-      // Zoom to highlighted neighborhood when a node is selected,
-      // or zoom to fit all nodes when deselected.
-      // Only trigger on selectedNode identity change, not on highlight recalculation
-      // (which fires on filter/search/hops changes and would cause unwanted re-zoom).
-      useEffect(() => {
-        if (!zoomOnSelect) return;
-        if (selectedNode) {
-          if (highlights.highlightNodes.size > 0) {
-            canvasRef.current?.zoomToNodes(highlights.highlightNodes, 600);
-          }
-        } else if (!selectedLink && focusedCommunityNodes.size === 0) {
-          canvasRef.current?.zoomToFit(600);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [
-        zoomOnSelect,
-        selectedNode?.id,
-        !!selectedLink,
-        focusedCommunityNodes.size,
-      ]);
-
-      const hopMap = useMemo(() => {
-        if (selectedLink) return new Map<string, number>();
-        return highlights.hopMap;
-      }, [selectedLink, highlights.hopMap]);
-
-      const legendNodeItems = useMemo(() => {
-        const counts: Record<string, number> = {};
-        filteredGraphData.nodes.forEach((n) => {
-          counts[n.type] = (counts[n.type] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([label, count]) => ({
-            label,
-            count,
-            color: getNodeColor(label),
-          }))
-          .sort((a, b) => b.count - a.count);
-      }, [filteredGraphData.nodes]);
-
-      // Derive available communities from raw graph data (for filter panel)
-      const availableCommunities = useMemo(() => {
-        const counts = new Map<number, number>();
-        for (const n of graphData.nodes) {
-          const cid = communityData.assignments[n.id];
-          if (cid !== undefined) {
-            counts.set(cid, (counts.get(cid) || 0) + 1);
-          }
-        }
-        return [...counts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([cid, count]) => ({
-            communityId: cid,
-            label: communityData.names.get(cid) ?? `Community ${cid}`,
-            count,
-            color: communityData.colorMap.get(cid) ?? '#64748b',
-          }));
-      }, [graphData.nodes, communityData]);
-
-      const legendCommunityItems = useMemo(() => {
-        if (colorMode !== 'community') return [];
-        // Group filtered nodes by community
-        const counts = new Map<number, number>();
-        for (const n of filteredGraphData.nodes) {
-          const cid = communityData.assignments[n.id];
-          if (cid !== undefined) {
-            counts.set(cid, (counts.get(cid) || 0) + 1);
-          }
-        }
-        return [...counts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([cid, count]) => ({
-            label: communityData.names.get(cid) ?? `Community ${cid}`,
-            count,
-            color: communityData.colorMap.get(cid) ?? '#64748b',
-          }));
-      }, [colorMode, filteredGraphData.nodes, communityData]);
-
-      const legendItems =
-        colorMode === 'community' ? legendCommunityItems : legendNodeItems;
-
-      // Build autocomplete suggestions for the toolbar search
-      const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
-        // Deduplicate names; pick first node's type/community/id for each name
-        const nameMap = new Map<
-          string,
-          { type: string; communityId?: number; nodeId: string }
-        >();
-        for (const n of graphData.nodes) {
-          if (!nameMap.has(n.name)) {
-            const cid = communityData.assignments[n.id];
-            nameMap.set(n.name, {
-              type: n.type,
-              communityId: cid,
-              nodeId: n.id,
-            });
-          }
-        }
-        const suggestions: SearchSuggestion[] = [];
-        for (const [name, info] of nameMap) {
-          const cLabel =
-            info.communityId !== undefined
-              ? communityData.names.get(info.communityId)
-              : undefined;
-          const cColor =
-            info.communityId !== undefined
-              ? communityData.colorMap.get(info.communityId)
-              : undefined;
-          suggestions.push({
-            label: name,
-            category: 'name',
-            color: getNodeColor(info.type),
-            communityLabel: cLabel,
-            communityColor: cColor,
-            nodeId: info.nodeId,
-          });
-        }
-        for (const [cid, name] of communityData.names) {
-          suggestions.push({
-            label: name,
-            category: 'community',
-            color: communityData.colorMap.get(cid),
-            communityId: cid,
-          });
-        }
-        return suggestions;
-      }, [graphData.nodes, communityData]);
-
-      // Apply the active filter — computes focused nodes from the stored filter
-      const applyFilter = useCallback(
-        (filter: typeof activeFilter) => {
-          if (!filter) {
-            setFocusedCommunityNodes(EMPTY_SET);
-            return;
-          }
-          if (filter.type === 'community') {
-            const nodeIds = Object.entries(communityData.assignments)
-              .filter(([, id]) => id === filter.communityId)
-              .map(([nodeId]) => nodeId);
-            if (nodeIds.length > 0) {
-              const nodeSet = new Set(nodeIds);
-              setFocusedCommunityNodes(nodeSet);
-              canvasRef.current?.zoomToNodes(nodeSet, 600);
-            }
-          }
-        },
-        [communityData.assignments],
-      );
-
-      const handleSuggestionSelect = useCallback(
-        (suggestion: SearchSuggestion) => {
-          switch (suggestion.category) {
-            case 'community': {
-              const cid = suggestion.communityId;
-              if (cid !== undefined) {
-                setActiveFilter({ type: 'community', communityId: cid });
-                applyFilter({ type: 'community', communityId: cid });
-                setSelectedNode(null);
-                setSelectedLink(null);
-              }
-              break;
-            }
-            default: {
-              // name — load graph centered on the search, then auto-select the node
-              setActiveFilter(null);
-              const targetId = suggestion.nodeId;
-              loadGraph(suggestion.label, hops).then(() => {
-                // After graph reloads, find and select the target node
-                if (targetId) {
-                  const node = graphDataRef.current.nodes.find(
-                    (n) => n.id === targetId,
-                  );
-                  if (node) {
-                    onNodeClick(node);
-                    // Zoom to the selected node after a short delay for layout settle
-                    setTimeout(() => {
-                      canvasRef.current?.zoomToNodes(new Set([targetId]), 600);
-                    }, 100);
-                  }
-                }
-              });
-              break;
-            }
-          }
-        },
-        [applyFilter, hops, loadGraph, onNodeClick],
-      );
-
-      const legendLinkItems = useMemo(() => {
-        const counts: Record<string, number> = {};
-        filteredGraphData.links.forEach((l) => {
-          const label = (l as unknown as GraphLink).label || 'unknown';
-          counts[label] = (counts[label] || 0) + 1;
-        });
-        return Object.entries(counts)
-          .map(([label, count]) => ({
-            label,
-            count,
-            color: getLinkColor(label),
-          }))
-          .sort((a, b) => b.count - a.count);
-      }, [filteredGraphData.links]);
-
-      const isEmpty = graphData.nodes.length === 0;
-      const isSearchEmpty = isEmpty && !!lastSearchQuery;
+      useImperativeHandle(ref, () => v.buildImperativeHandle(), [v]);
 
       // Determine whether to show the full indexing progress modal
       const showFullModal =
@@ -1274,14 +306,14 @@ const GraphViewer = memo(
         jobState.status === 'persisted' ||
         jobState.status === 'error' ||
         ((jobState.status === 'enriching' || jobState.status === 'done') &&
-          (jobExpanded || (loading && isEmpty)));
+          (jobExpanded || (loading && v.isEmpty)));
 
       const graphWidth = showChat || showHelp ? width - chatWidth : width;
 
       // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
       // to the "Computing layout" overlay without flashing "no data").
       useEffect(() => {
-        if (pendingMinimize.current && !isEmpty) {
+        if (pendingMinimize.current && !v.isEmpty) {
           pendingMinimize.current = false;
           minimizeTimeoutRef.current = setTimeout(() => {
             minimizeTimeoutRef.current = null;
@@ -1294,353 +326,73 @@ const GraphViewer = memo(
             minimizeTimeoutRef.current = null;
           }
         };
-      }, [isEmpty, onJobMinimize]);
+      }, [v.isEmpty, onJobMinimize]);
 
       // Auto-open the Add Repo modal when the graph is empty and idle
       useEffect(() => {
         if (
-          isEmpty &&
-          !isSearchEmpty &&
+          v.isEmpty &&
+          !v.isSearchEmpty &&
           !loading &&
           jobState.status === 'idle'
         ) {
           onAddRepoOpen();
         }
-      }, [isEmpty, isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
+      }, [v.isEmpty, v.isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
 
-      const activeFilterRef = useRef(activeFilter);
-      activeFilterRef.current = activeFilter;
-
-      const handleStageClick = useCallback(() => {
-        setSelectedNode(null);
-        setSelectedLink(null);
-        setEdgeHighlightNodes(EMPTY_SET);
-        setEdgeHighlightLinks(EMPTY_SET);
-        setEdgeLabelNodes(EMPTY_SET);
-        // Re-apply the active search filter (e.g. community focus)
-        applyFilter(activeFilterRef.current);
-      }, [applyFilter]);
+      const persistentActions = useMemo(() => <GitHubStarButton />, []);
 
       // --- Early returns for loading/error/empty states ---
 
-      if (loading && isEmpty && !showAddRepo && !showFullModal) {
-        return (
-          <div className="graph-viewport">
-            <div className="loading">
-              <OpenTraceLogo size={64} />
-              <span>Loading graph...</span>
-              <footer className="version-footer">
-                v{__APP_VERSION__} &middot;{' '}
-                {new Date(__BUILD_TIME__).toLocaleString()}
-              </footer>
-            </div>
-          </div>
-        );
+      if (loading && v.isEmpty && !showAddRepo && !showFullModal) {
+        return <GraphLoadingState />;
       }
 
       if (error) {
         return (
-          <div className="graph-viewport">
-            <div className="loading">
-              <p>Failed to load graph: {error}</p>
-              <button
-                onClick={() => {
-                  setError(null);
-                  loadGraph();
-                }}
-              >
-                Retry
-              </button>
-              <footer className="version-footer">
-                v{__APP_VERSION__} &middot;{' '}
-                {new Date(__BUILD_TIME__).toLocaleString()}
-              </footer>
-            </div>
-          </div>
+          <GraphErrorState
+            error={error}
+            onRetry={() => {
+              setError(null);
+              loadGraph();
+            }}
+          />
         );
       }
 
-      if (isSearchEmpty && !showFullModal) {
+      if (v.isSearchEmpty && !showFullModal) {
         return (
-          <div className="graph-viewport">
-            <div className="empty-state-overlay">
-              <div className="empty-state-content">
-                <img
-                  src="/opentrace-logo.svg"
-                  alt="OpenTrace"
-                  className="empty-state-logo"
-                />
-                <h1>No results</h1>
-                <p>
-                  No nodes matched <strong>{lastSearchQuery}</strong>. Try a
-                  different search or clear to see the full graph.
-                </p>
-                <button className="empty-state-add-btn" onClick={handleReset}>
-                  Clear Search
-                </button>
-              </div>
-            </div>
-            <footer className="copyright-footer">
-              &copy; {new Date().getFullYear()} OpenTrace
-            </footer>
-            <footer className="version-footer">
-              v{__APP_VERSION__} &middot;{' '}
-              {new Date(__BUILD_TIME__).toLocaleString()}
-            </footer>
-          </div>
+          <GraphSearchEmpty
+            searchQuery={lastSearchQuery}
+            onClearSearch={v.toolbar.onReset}
+          />
         );
       }
 
-      if (isEmpty && !showFullModal) {
+      if (v.isEmpty && !showFullModal) {
         return (
-          <div className="graph-viewport">
-            <div className="empty-state-header">
-              <img
-                src="/opentrace-logo.svg"
-                alt="OpenTrace"
-                className="empty-state-header-logo"
-              />
-              <span className="empty-state-header-title">OpenTrace</span>
-            </div>
-
-            {showAddRepo && (
-              <AddRepoModal
-                onClose={onAddRepoClose}
-                onSubmit={onJobSubmit}
-                dismissable={false}
-                onValidate={validateRepo}
-              />
-            )}
-
-            {!showAddRepo && (
-              <div className="empty-state-overlay">
-                <div className="empty-state-content">
-                  <p>No data in the graph yet.</p>
-                  <button
-                    className="empty-state-add-btn"
-                    onClick={onAddRepoOpen}
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="12" y1="5" x2="12" y2="19"></line>
-                      <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    Add Repository
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {showFullModal && (
+          <GraphInitialEmpty
+            showAddRepo={showAddRepo}
+            showFullModal={showFullModal}
+            onAddRepoOpen={onAddRepoOpen}
+            onAddRepoClose={onAddRepoClose}
+            onJobSubmit={onJobSubmit}
+            onValidateRepo={validateRepo}
+            indexingProgress={
               <IndexingProgress
                 {...toIndexingProps(jobState, activeRepoUrl)}
                 stages={INDEXING_STAGES}
                 onClose={onJobClose}
               />
-            )}
-
-            <footer className="copyright-footer">
-              &copy; {new Date().getFullYear()} OpenTrace
-            </footer>
-            <footer className="version-footer">
-              v{__APP_VERSION__} &middot;{' '}
-              {new Date(__BUILD_TIME__).toLocaleString()}
-            </footer>
-          </div>
+            }
+          />
         );
       }
 
       // --- Main graph viewport ---
 
-      const selectedCommunityId = selectedNode
-        ? communityData.assignments[selectedNode.id]
-        : undefined;
-      const selectedCommunityName =
-        selectedCommunityId !== undefined
-          ? communityData.names.get(selectedCommunityId)
-          : undefined;
-      const selectedCommunityColor =
-        selectedCommunityId !== undefined
-          ? communityData.colorMap.get(selectedCommunityId)
-          : undefined;
-
-      // ─── Build filter sections for SidePanel ──────────────────────────
-
-      const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
-        ({ type, count }) => {
-          const subs = availableSubTypes.get(type);
-          const children = subs?.map((s) => ({
-            key: `${type}:${s.subType}`,
-            label: s.subType,
-            count: s.count,
-            color: getNodeColor(type),
-            hidden: hiddenSubTypes.has(`${type}:${s.subType}`),
-          }));
-          return {
-            key: type,
-            label: type,
-            count,
-            color: getNodeColor(type),
-            hidden: hiddenNodeTypes.has(type),
-            children,
-          };
-        },
-      );
-
-      const toggleNodeFilter = (key: string) => {
-        if (key.includes(':')) {
-          // Sub-type key like "Class:Controller"
-          setHiddenSubTypes((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          });
-        } else {
-          // Parent type key — toggle all sub-types if any, else toggle type
-          const subs = availableSubTypes.get(key);
-          if (subs && subs.length > 0) {
-            setHiddenSubTypes((prev) => {
-              const keys = subs.map((s) => `${key}:${s.subType}`);
-              const allHidden = keys.every((k) => prev.has(k));
-              const next = new Set(prev);
-              if (allHidden) {
-                keys.forEach((k) => next.delete(k));
-              } else {
-                keys.forEach((k) => next.add(k));
-              }
-              return next;
-            });
-          } else {
-            setHiddenNodeTypes((prev) => {
-              const next = new Set(prev);
-              if (next.has(key)) next.delete(key);
-              else next.add(key);
-              return next;
-            });
-          }
-        }
-      };
-
-      const linkFilterItems: FilterItem[] = availableLinkTypes.map(
-        ({ type, count }) => ({
-          key: type,
-          label: type.toUpperCase(),
-          count,
-          color: getLinkColor(type),
-          hidden: hiddenLinkTypes.has(type),
-        }),
-      );
-
-      const communityFilterItems: FilterItem[] = availableCommunities.map(
-        ({ communityId, label, count, color }) => ({
-          key: String(communityId),
-          label,
-          count,
-          color,
-          hidden: hiddenCommunities.has(communityId),
-        }),
-      );
-
-      const filterSections: FilterPanelProps[] = [];
-
-      if (colorMode === 'community' && communityFilterItems.length > 0) {
-        filterSections.push({
-          title: 'Communities',
-          items: communityFilterItems,
-          onToggle: (key) => {
-            const cid = Number(key);
-            setHiddenCommunities((prev) => {
-              const next = new Set(prev);
-              if (next.has(cid)) next.delete(cid);
-              else next.add(cid);
-              return next;
-            });
-          },
-          onShowAll: () => setHiddenCommunities(new Set()),
-          onHideAll: () =>
-            setHiddenCommunities(
-              new Set(availableCommunities.map((c) => c.communityId)),
-            ),
-          onFocus: onCommunityFocus,
-        });
-      }
-
-      filterSections.push({
-        title: 'Node Types',
-        items: nodeFilterItems,
-        onToggle: toggleNodeFilter,
-        onShowAll: () => {
-          setHiddenNodeTypes(new Set());
-          setHiddenSubTypes(new Set());
-        },
-        onHideAll: () => {
-          setHiddenNodeTypes(new Set(availableNodeTypes.map((t) => t.type)));
-          const allSubKeys = new Set<string>();
-          availableSubTypes.forEach((subs, type) => {
-            subs.forEach((s) => allSubKeys.add(`${type}:${s.subType}`));
-          });
-          setHiddenSubTypes(allSubKeys);
-        },
-      });
-
-      filterSections.push({
-        title: 'Edges',
-        items: linkFilterItems,
-        indicator: 'line',
-        emptyMessage: 'No edges',
-        onToggle: (key) =>
-          setHiddenLinkTypes((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-          }),
-        onShowAll: () => setHiddenLinkTypes(new Set()),
-        onHideAll: () =>
-          setHiddenLinkTypes(new Set(availableLinkTypes.map((t) => t.type))),
-      });
-
       return (
         <div className="graph-viewport">
-          <SidePanel
-            filterSections={filterSections}
-            selectedNode={selectedNode}
-            nodeSource={nodeSource}
-            sourceLoading={sourceLoading}
-            sourceError={sourceError}
-            communityName={selectedCommunityName}
-            communityColor={selectedCommunityColor}
-            selectedNodeEdges={selectedNodeEdges}
-            onSelectEdge={handleSelectEdgeFromNode}
-            selectedLink={selectedLink}
-            onSelectNode={(nodeId) => {
-              const node = graphDataRef.current.nodes.find(
-                (n) => n.id === nodeId,
-              );
-              if (node) onNodeClick(node);
-            }}
-            onCloseDetails={() => {
-              setSelectedNode(null);
-              setSelectedLink(null);
-            }}
-            graphVersion={graphVersion}
-            graphNodeIds={graphNodeIds}
-            hopMap={hopMap}
-            nodeHistory={nodeHistory}
-            onClearHistory={() => setNodeHistory([])}
-            mobileActiveTab={mobilePanelTab}
-            onMobileTabChange={setMobilePanelTab}
-            onMobileClose={() => setMobilePanelTab(null)}
-          />
           <GraphToolbar
             logo={
               <button
@@ -1652,239 +404,49 @@ const GraphViewer = memo(
                 <h1>OpenTrace</h1>
               </button>
             }
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            onSearch={handleSearch}
-            onReset={handleReset}
-            searchDisabled={
-              !searchQuery.trim() || searchQuery === lastSearchQuery
+            searchQuery={v.toolbar.searchQuery}
+            onSearchQueryChange={v.toolbar.onSearchQueryChange}
+            onSearch={v.toolbar.onSearch}
+            onReset={v.toolbar.onReset}
+            searchDisabled={v.toolbar.searchDisabled}
+            showResetButton={v.toolbar.showResetButton}
+            searchSuggestions={v.toolbar.searchSuggestions}
+            onSuggestionSelect={v.toolbar.onSuggestionSelect}
+            hops={v.toolbar.hops}
+            onHopsChange={v.toolbar.onHopsChange}
+            nodeCount={v.toolbar.nodeCount}
+            edgeCount={v.toolbar.edgeCount}
+            totalNodes={v.toolbar.totalNodes}
+            totalEdges={v.toolbar.totalEdges}
+            mobilePanelTabs={buildMobilePanelTabs({
+              showDetails: v.toolbar.showDetailsTab,
+            })}
+            onMobilePanelTab={(key) =>
+              onMobilePanelTabChange?.(key as SidePanelTab)
             }
-            showResetButton={!!lastSearchQuery}
-            searchSuggestions={searchSuggestions}
-            onSuggestionSelect={handleSuggestionSelect}
-            hops={hops}
-            onHopsChange={setHops}
-            nodeCount={filteredGraphData.nodes.length}
-            edgeCount={filteredGraphData.links.length}
-            totalNodes={stats?.total_nodes}
-            totalEdges={stats?.total_edges}
-            mobilePanelTabs={[
-              {
-                key: 'filters',
-                label: 'Filters',
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                  </svg>
-                ),
-              },
-              {
-                key: 'discover',
-                label: 'Discover',
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                  </svg>
-                ),
-              },
-              {
-                key: 'details',
-                label: 'Details',
-                visible: !!(selectedNode || selectedLink),
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="16" x2="12" y2="12" />
-                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                  </svg>
-                ),
-              },
-            ]}
-            onMobilePanelTab={(key) => setMobilePanelTab(key as SidePanelTab)}
-            persistentActions={
-              <a
-                className="github-star-btn"
-                href="https://github.com/opentrace/opentrace"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Star on GitHub"
-              >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-                </svg>
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  stroke="currentColor"
-                  strokeWidth="1"
-                >
-                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                </svg>
-                <span className="star-label">Star</span>
-              </a>
-            }
+            persistentActions={persistentActions}
             actions={
-              <>
-                {toolbarActions}
-                {(jobState.status === 'enriching' ||
-                  jobState.status === 'done') &&
-                !jobExpanded ? (
-                  <JobMinimizedBar
-                    state={jobState}
-                    onClick={onJobExpand}
-                    onCancel={onJobCancel}
-                  />
-                ) : (
-                  <button
-                    className="add-repo-btn"
-                    onClick={onAddRepoOpen}
-                    title="Add Repository"
-                  >
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="12" y1="5" x2="12" y2="19" />
-                      <line x1="5" y1="12" x2="19" y2="12" />
-                    </svg>
-                    <span className="ot-menu-label">Add Repository</span>
-                  </button>
-                )}
-                {graphData.nodes.length > 0 && store.exportDatabase && (
-                  <button
-                    className="export-db-btn"
-                    title="Export database"
-                    disabled={exporting}
-                    onClick={() => {
-                      if (!store.exportDatabase || exporting) return;
-                      setShowExportModal(true);
-                    }}
-                  >
-                    {exporting ? (
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        style={{ animation: 'spin 0.8s linear infinite' }}
-                      >
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                      </svg>
-                    ) : (
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                    )}
-                    <span className="ot-menu-label">
-                      {exporting ? 'Exporting…' : 'Export'}
-                    </span>
-                  </button>
-                )}
-                <ThemeSelector />
-                <button
-                  className={`chat-toggle-btn ${showChat ? 'active' : ''}`}
-                  onClick={onToggleChat}
-                  title="Toggle AI Chat"
-                  data-testid="chat-toggle-btn"
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
-                    <path d="M20 3v4" />
-                    <path d="M22 5h-4" />
-                    <path d="M4 17v2" />
-                    <path d="M5 18H3" />
-                  </svg>
-                  <span className="ot-menu-label">AI Chat</span>
-                </button>
-                <HelpMenuButton
-                  showHelp={showHelp}
-                  onToggleHelp={onToggleHelp}
-                />
-                <button
-                  className={`settings-toggle-btn ${showSettings ? 'active' : ''}`}
-                  onClick={onToggleSettings}
-                  title="Settings"
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                  <span className="ot-menu-label">Settings</span>
-                </button>
-              </>
+              <GraphToolbarActionButtons
+                toolbarActions={toolbarActions}
+                jobState={jobState}
+                jobExpanded={jobExpanded}
+                onJobExpand={onJobExpand}
+                onJobCancel={onJobCancel}
+                onAddRepoOpen={onAddRepoOpen}
+                hasGraphData={graphData.nodes.length > 0}
+                canExport={!!store.exportDatabase}
+                exporting={exporting}
+                onExportOpen={() => {
+                  if (!store.exportDatabase || exporting) return;
+                  setShowExportModal(true);
+                }}
+                showChat={showChat}
+                onToggleChat={onToggleChat}
+                showHelp={showHelp}
+                onToggleHelp={onToggleHelp}
+                showSettings={showSettings}
+                onToggleSettings={onToggleSettings}
+              />
             }
           />
 
@@ -1934,16 +496,7 @@ const GraphViewer = memo(
             />
           )}
 
-          {isEmpty && showFullModal && (
-            <div className="empty-state-header">
-              <img
-                src="/opentrace-logo.svg"
-                alt="OpenTrace"
-                className="empty-state-header-logo"
-              />
-              <span className="empty-state-header-title">OpenTrace</span>
-            </div>
-          )}
+          {v.isEmpty && showFullModal && <EmptyStateHeader />}
 
           {showFullModal && (
             <IndexingProgress
@@ -1953,424 +506,94 @@ const GraphViewer = memo(
             />
           )}
 
-          <GraphLegend items={legendItems} linkItems={legendLinkItems} />
+          <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
 
-          {(() => {
-            if (chatHighlightNodes && chatHighlightNodes.size > 0) {
-              console.log('[GraphViewer] chatHighlightNodes', {
-                size: chatHighlightNodes.size,
-                selectedLink: !!selectedLink,
-                focusedCommunity: focusedCommunityNodes.size,
-                bfsHighlights: highlights.highlightNodes.size,
-                willApply:
-                  !selectedLink &&
-                  focusedCommunityNodes.size === 0 &&
-                  highlights.highlightNodes.size === 0,
-              });
-            }
-            return null;
-          })()}
           <PixiGraphCanvas
-            ref={canvasRef}
+            ref={v.canvasRef}
             nodes={graphData.nodes}
             links={graphData.links}
             width={graphWidth}
             height={height}
-            layoutConfig={layoutConfig}
+            layoutConfig={v.layoutConfig}
             colorMode={colorMode}
             hiddenNodeTypes={hiddenNodeTypes}
             hiddenLinkTypes={hiddenLinkTypes}
             hiddenSubTypes={hiddenSubTypes}
             hiddenCommunities={hiddenCommunities}
-            searchQuery={searchQuery}
+            searchQuery={v.toolbar.searchQuery}
             selectedNodeId={selectedNode?.id}
-            hops={hops}
+            hops={v.toolbar.hops}
             getSubType={getSubType}
-            highlightNodes={
-              selectedLink
-                ? edgeHighlightNodes
-                : focusedCommunityNodes.size > 0
-                  ? focusedCommunityNodes
-                  : highlights.highlightNodes.size > 0
-                    ? highlights.highlightNodes
-                    : chatHighlightNodes && chatHighlightNodes.size > 0
-                      ? chatHighlightNodes
-                      : highlights.highlightNodes
-            }
-            highlightLinks={
-              selectedLink
-                ? edgeHighlightLinks
-                : focusedCommunityNodes.size > 0
-                  ? EMPTY_SET
-                  : highlights.highlightLinks.size > 0
-                    ? highlights.highlightLinks
-                    : chatHighlightLinks.size > 0
-                      ? chatHighlightLinks
-                      : highlights.highlightLinks
-            }
-            labelNodes={
-              selectedLink
-                ? edgeLabelNodes
-                : focusedCommunityNodes.size > 0
-                  ? focusedCommunityNodes
-                  : highlights.labelNodes.size > 0
-                    ? highlights.labelNodes
-                    : chatHighlightNodes && chatHighlightNodes.size > 0
-                      ? chatHighlightNodes
-                      : highlights.labelNodes
-            }
+            highlightNodes={v.highlightProps.highlightNodes}
+            highlightLinks={v.highlightProps.highlightLinks}
+            labelNodes={v.highlightProps.labelNodes}
             availableSubTypes={availableSubTypes}
             zIndex
             communityData={communityData}
-            onNodeClick={onNodeClick}
-            onEdgeClick={onLinkClick}
-            onStageClick={handleStageClick}
-            labelsVisible={labelsVisible}
-            layoutMode={layoutMode}
-            mode3d={mode3d}
-            on3DAutoRotateChange={setRendererAutoRotate}
+            onNodeClick={v.onNodeClick}
+            onEdgeClick={v.onLinkClick}
+            onStageClick={v.onStageClick}
+            labelsVisible={v.settings.labelsVisible}
+            layoutMode={v.settings.layoutMode}
+            mode3d={v.settings.mode3d}
+            on3DAutoRotateChange={v.settings.setRendererAutoRotate}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
 
           {showPhysicsPanel && (
-            <PhysicsPanel
-              repulsion={repulsion}
-              onRepulsionChange={(v) => {
-                setRepulsion(v);
-                canvasRef.current?.setChargeStrength?.(-v);
-              }}
-              labelsVisible={labelsVisible}
-              onLabelsVisibleChange={(v) => {
-                setLabelsVisible(v);
-                canvasRef.current?.setShowLabels?.(v);
-              }}
+            <PhysicsPanelContainer
+              canvasRef={v.canvasRef}
+              repulsion={v.settings.repulsion}
+              setRepulsion={v.settings.setRepulsion}
+              labelsVisible={v.settings.labelsVisible}
+              setLabelsVisible={v.settings.setLabelsVisible}
               colorMode={colorMode}
-              onColorModeChange={setColorMode}
-              isPhysicsRunning={physicsRunning}
-              onStopPhysics={() => {
-                canvasRef.current?.stopPhysics();
-                setPhysicsRunning(false);
-              }}
-              onStartPhysics={() => {
-                canvasRef.current?.startPhysics();
-                setPhysicsRunning(true);
-              }}
-              // Pixi-specific props
-              pixiMode={true}
-              linkDistance={pixiLinkDist}
-              onLinkDistanceChange={(v) => {
-                setPixiLinkDist(v);
-                canvasRef.current?.setLinkDistance?.(v);
-              }}
-              centerStrength={pixiCenter}
-              onCenterStrengthChange={(v) => {
-                setPixiCenter(v);
-                canvasRef.current?.setCenterStrength?.(v);
-              }}
-              layoutMode={layoutMode}
-              onLayoutModeChange={(mode) => {
-                setLayoutMode(mode);
-                canvasRef.current?.setLayoutMode?.(mode);
-              }}
-              radialStrength={compactRadial}
-              onRadialStrengthChange={(v) => {
-                setCompactRadial(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  radialStrength: v / 100,
-                });
-              }}
-              communityPull={compactCommunity}
-              onCommunityPullChange={(v) => {
-                setCompactCommunity(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  communityPull: v / 100,
-                });
-              }}
-              centeringStrength={compactCentering}
-              onCenteringStrengthChange={(v) => {
-                setCompactCentering(v);
-                canvasRef.current?.updateCompactConfig?.({
-                  centeringStrength: v / 100,
-                });
-              }}
-              circleRadius={compactRadius}
-              onCircleRadiusChange={(v) => {
-                setCompactRadius(v);
-                canvasRef.current?.updateCompactConfig?.({ radiusScale: v });
-              }}
-              zoomSizeExponent={pixiZoomExponent}
-              onZoomSizeExponentChange={(v) => {
-                setPixiZoomExponent(v);
-                canvasRef.current?.setZoomSizeExponent?.(v);
-              }}
-              onReheat={() => canvasRef.current?.reheat?.()}
-              onFitToScreen={() => canvasRef.current?.fitToScreen?.()}
-              mode3d={mode3d}
-              onMode3dChange={(v) => {
-                setMode3d(v);
-                canvasRef.current?.set3DMode?.(v);
-              }}
-              mode3dAutoRotate={mode3d ? (rendererAutoRotate ?? true) : true}
-              onMode3dAutoRotateChange={(v) => {
-                canvasRef.current?.set3DAutoRotate?.(v);
-                setRendererAutoRotate(v);
-              }}
-              mode3dSpeed={mode3dSpeed}
-              onMode3dSpeedChange={(v) => {
-                setMode3dSpeed(v);
-                canvasRef.current?.set3DSpeed?.(v / 10000);
-              }}
-              mode3dTilt={mode3dTilt}
-              onMode3dTiltChange={(v) => {
-                setMode3dTilt(v);
-                canvasRef.current?.set3DTilt?.(v / 100);
-              }}
-              labelScale={labelScale}
-              onLabelScaleChange={(v) => {
-                setLabelScale(v);
-                canvasRef.current?.setLabelScale?.(v / 100);
-              }}
+              setColorMode={setColorMode}
+              physicsRunning={v.settings.physicsRunning}
+              setPhysicsRunning={v.settings.setPhysicsRunning}
+              pixiLinkDist={v.settings.pixiLinkDist}
+              setPixiLinkDist={v.settings.setPixiLinkDist}
+              pixiCenter={v.settings.pixiCenter}
+              setPixiCenter={v.settings.setPixiCenter}
+              pixiZoomExponent={v.settings.pixiZoomExponent}
+              setPixiZoomExponent={v.settings.setPixiZoomExponent}
+              layoutMode={v.settings.layoutMode}
+              setLayoutMode={v.settings.setLayoutMode}
+              compactRadial={v.settings.compactRadial}
+              setCompactRadial={v.settings.setCompactRadial}
+              compactCommunity={v.settings.compactCommunity}
+              setCompactCommunity={v.settings.setCompactCommunity}
+              compactCentering={v.settings.compactCentering}
+              setCompactCentering={v.settings.setCompactCentering}
+              compactRadius={v.settings.compactRadius}
+              setCompactRadius={v.settings.setCompactRadius}
+              mode3d={v.settings.mode3d}
+              setMode3d={v.settings.setMode3d}
+              mode3dSpeed={v.settings.mode3dSpeed}
+              setMode3dSpeed={v.settings.setMode3dSpeed}
+              mode3dTilt={v.settings.mode3dTilt}
+              setMode3dTilt={v.settings.setMode3dTilt}
+              rendererAutoRotate={v.settings.rendererAutoRotate}
+              setRendererAutoRotate={v.settings.setRendererAutoRotate}
+              labelScale={v.settings.labelScale}
+              setLabelScale={v.settings.setLabelScale}
             />
           )}
 
-          <div className="graph-controls">
-            {/* Mobile: fullscreen toggle (visible alongside trigger) */}
-            {onToggleGraphFullscreen && (
-              <button
-                className={`graph-control-btn graph-controls-fullscreen${graphFullscreen ? ' graph-control-btn--active' : ''}`}
-                onClick={onToggleGraphFullscreen}
-                title={graphFullscreen ? 'Exit fullscreen' : 'Fullscreen graph'}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {graphFullscreen ? (
-                    /* Exit fullscreen: corners pointing inward */
-                    <>
-                      <polyline points="4 14 4 20 10 20" />
-                      <polyline points="20 10 20 4 14 4" />
-                    </>
-                  ) : (
-                    /* Enter fullscreen: corners pointing outward */
-                    <>
-                      <polyline points="3 8 3 3 8 3" />
-                      <polyline points="16 3 21 3 21 8" />
-                      <polyline points="21 16 21 21 16 21" />
-                      <polyline points="8 21 3 21 3 16" />
-                    </>
-                  )}
-                </svg>
-              </button>
-            )}
-            {/* Mobile: single trigger button that opens a popup */}
-            <button
-              className={`graph-control-btn graph-controls-trigger${showGraphMenu ? ' graph-control-btn--active' : ''}`}
-              onClick={() => setShowGraphMenu((v) => !v)}
-              title="Graph controls"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="5" r="1" />
-                <circle cx="12" cy="12" r="1" />
-                <circle cx="12" cy="19" r="1" />
-              </svg>
-            </button>
-            <div
-              className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
-            >
-              <button
-                className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
-                onClick={() => setZoomOnSelect((z) => !z)}
-                title={
-                  zoomOnSelect
-                    ? 'Zoom to node on click (on)'
-                    : 'Zoom to node on click (off)'
-                }
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                  {zoomOnSelect && (
-                    <>
-                      <line x1="11" y1="8" x2="11" y2="14" />
-                      <line x1="8" y1="11" x2="14" y2="11" />
-                    </>
-                  )}
-                </svg>
-              </button>
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.zoomIn()}
-                title="Zoom in"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.zoomOut()}
-                title="Zoom out"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-              <button
-                className="graph-control-btn"
-                onClick={() => canvasRef.current?.resetCamera()}
-                title="Zoom to fit"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="15 3 21 3 21 9" />
-                  <polyline points="9 21 3 21 3 15" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-              </button>
-              <button
-                className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
-                onClick={() => setShowPhysicsPanel((v) => !v)}
-                title="Physics tuner"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="4" y1="21" x2="4" y2="14" />
-                  <line x1="4" y1="10" x2="4" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12" y2="3" />
-                  <line x1="20" y1="21" x2="20" y2="16" />
-                  <line x1="20" y1="12" x2="20" y2="3" />
-                  <line x1="1" y1="14" x2="7" y2="14" />
-                  <line x1="9" y1="8" x2="15" y2="8" />
-                  <line x1="17" y1="16" x2="23" y2="16" />
-                </svg>
-              </button>
-              <button
-                className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
-                onClick={() => {
-                  const next = layoutMode === 'spread' ? 'compact' : 'spread';
-                  setLayoutMode(next);
-                  canvasRef.current?.setLayoutMode?.(next);
-                }}
-                title={
-                  layoutMode === 'compact'
-                    ? 'Switch to spread layout'
-                    : 'Switch to compact layout'
-                }
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {layoutMode === 'compact' ? (
-                    /* Expand/spread icon */
-                    <>
-                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                    </>
-                  ) : (
-                    /* Compact/circle icon */
-                    <circle cx="12" cy="12" r="9" />
-                  )}
-                </svg>
-              </button>
-              <button
-                className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
-                onClick={() => {
-                  const next = !mode3d;
-                  setMode3d(next);
-                  canvasRef.current?.set3DMode?.(next);
-                }}
-                title={mode3d ? 'Switch to 2D' : 'Switch to 3D'}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  {mode3d ? (
-                    /* 2D grid icon */
-                    <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" />
-                  ) : (
-                    /* 3D cube icon */
-                    <path d="M12 2l9 5v10l-9 5-9-5V7z M12 12l9-5 M12 12v10 M12 12L3 7" />
-                  )}
-                </svg>
-              </button>
-            </div>
-          </div>
+          <GraphControlsBar
+            canvasRef={v.canvasRef}
+            graphFullscreen={graphFullscreen}
+            onToggleGraphFullscreen={onToggleGraphFullscreen}
+            zoomOnSelect={v.settings.zoomOnSelect}
+            setZoomOnSelect={v.settings.setZoomOnSelect}
+            showPhysicsPanel={showPhysicsPanel}
+            setShowPhysicsPanel={setShowPhysicsPanel}
+            layoutMode={v.settings.layoutMode}
+            setLayoutMode={v.settings.setLayoutMode}
+            mode3d={v.settings.mode3d}
+            setMode3d={v.settings.setMode3d}
+          />
         </div>
       );
     },

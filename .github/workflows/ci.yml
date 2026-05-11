@@ -11,6 +11,7 @@ jobs:
     outputs:
       agent: ${{ steps.filter.outputs.agent }}
       ui: ${{ steps.filter.outputs.ui }}
+      opencode: ${{ steps.filter.outputs.opencode }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
@@ -22,6 +23,8 @@ jobs:
               - 'agent/**'
             ui:
               - 'ui/**'
+            opencode:
+              - 'plugins/opencode/**'
 
   agent:
     name: Agent (Python)
@@ -90,6 +93,33 @@ jobs:
       - name: Validate build output
         working-directory: ui
         run: node scripts/validate-build.mjs
+
+  opencode:
+    name: OpenCode Plugin (TypeScript / Bun)
+    needs: changes
+    if: needs.changes.outputs.opencode == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/opencode
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
+        with:
+          bun-version-file: plugins/opencode/.bun-version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: bun run build
 
   e2e:
     name: Playwright Smoke

@@ -2,11 +2,11 @@
 
 The fastest way to try OpenTrace. Everything runs in your browser — no account, no download, no server.
 
-**[oss.opentrace.ai](https://oss.opentrace.ai)**
+**[app.opentrace.ai](https://app.opentrace.ai)**
 
 ## How It Works
 
-1. Open [oss.opentrace.ai](https://oss.opentrace.ai).
+1. Open [app.opentrace.ai](https://app.opentrace.ai).
 2. Paste a GitHub or GitLab repo URL (public repos work with no auth; private repos need a token).
 3. Watch it index — tree-sitter parses every file directly in a Web Worker, and the knowledge graph is stored in an embedded LadybugDB WASM instance.
 4. Explore the graph, or chat with the built-in agent.
@@ -29,4 +29,4 @@ OpenTrace needs **Cross-Origin Isolation** (for `SharedArrayBuffer`), so you nee
 
 ---
 
-*Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)*
+_Other install paths: [Browser](install-browser.md) · [CLI](install-cli.md) · [Plugin](install-plugin.md) · [Source](../development/setup.md)_

@@ -54,6 +54,7 @@ const PARSEABLE_LANGUAGES = new Set([
   'cpp',
   'ruby',
   'swift',
+  'php',
 ]);
 
 export function* execute(

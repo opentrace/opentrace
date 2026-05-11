@@ -60,7 +60,7 @@ class GitCloner:
     def clone(
         self,
         repo_url: str,
-        ref: str = "main",
+        ref: str | None = None,
         token: str | None = None,
         dest: Path | None = None,
     ) -> Path:
@@ -68,7 +68,7 @@ class GitCloner:
 
         Args:
             repo_url: HTTPS URL of the repository.
-            ref: Branch or tag to check out. Defaults to ``"main"``.
+            ref: Branch or tag to check out. If ``None``, uses the repo's default branch.
             token: Personal access token for authentication. Optional.
             dest: Destination directory. A temp directory is created if omitted.
 
@@ -78,15 +78,16 @@ class GitCloner:
         url = _inject_token(repo_url, token) if token else repo_url
         clone_dest = dest or Path(tempfile.mkdtemp(prefix="ot-clone-"))
 
-        logger.info("Cloning %s (ref=%s) → %s", repo_url, ref, clone_dest)
+        logger.info("Cloning %s (ref=%s) → %s", repo_url, ref or "default", clone_dest)
 
-        git.Repo.clone_from(
-            url,
-            str(clone_dest),
-            branch=ref,
-            depth=1,
-            env=_clean_env(),
-        )
+        kwargs: dict[str, object] = {
+            "depth": 1,
+            "env": _clean_env(),
+        }
+        if ref:
+            kwargs["branch"] = ref
+
+        git.Repo.clone_from(url, str(clone_dest), **kwargs)
 
         logger.info("Clone complete: %s", clone_dest)
         return clone_dest

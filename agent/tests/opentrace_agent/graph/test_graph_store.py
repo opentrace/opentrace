@@ -579,6 +579,66 @@ class TestGraphStoreMetadata:
         assert all(n["type"] != "IndexMetadata" for n in results)
 
 
+class TestGraphStoreFindFilesByBasename:
+    def _seed_files(self, store: GraphStore) -> None:
+        store.add_node(
+            "repo/packages/auth/src/index.ts",
+            "File",
+            "index.ts",
+            {"path": "packages/auth/src/index.ts"},
+        )
+        store.add_node(
+            "repo/packages/billing/src/index.ts",
+            "File",
+            "index.ts",
+            {"path": "packages/billing/src/index.ts"},
+        )
+        store.add_node("repo/index.ts", "File", "index.ts", {"path": "index.ts"})
+        store.add_node("repo/src/utils.ts", "File", "utils.ts", {"path": "src/utils.ts"})
+        # A non-File node sharing the basename must be ignored.
+        store.add_node("class-utils", "Class", "utils.ts", {"path": "src/utils.ts"})
+
+    def test_unique_match(self, store):
+        self._seed_files(store)
+        results = store.find_files_by_basename("utils.ts")
+        assert len(results) == 1
+        assert results[0]["id"] == "repo/src/utils.ts"
+
+    def test_multiple_matches_returned(self, store):
+        self._seed_files(store)
+        results = store.find_files_by_basename("index.ts")
+        ids = sorted(r["id"] for r in results)
+        assert ids == [
+            "repo/index.ts",
+            "repo/packages/auth/src/index.ts",
+            "repo/packages/billing/src/index.ts",
+        ]
+
+    def test_root_of_repo_match(self, store):
+        """A File with ``path == basename`` (no parent dir) is included."""
+        store.add_node("r/README.md", "File", "README.md", {"path": "README.md"})
+        results = store.find_files_by_basename("README.md")
+        assert len(results) == 1
+        assert results[0]["properties"]["path"] == "README.md"
+
+    def test_no_match_returns_empty(self, store):
+        self._seed_files(store)
+        assert store.find_files_by_basename("does_not_exist.py") == []
+
+    def test_limit_caps_result_count(self, store):
+        self._seed_files(store)
+        results = store.find_files_by_basename("index.ts", limit=2)
+        assert len(results) == 2
+
+    def test_does_not_match_substring_basename(self, store):
+        """``Buttonish.tsx`` must not match a search for ``Button.tsx``."""
+        store.add_node("r/Buttonish.tsx", "File", "Buttonish.tsx", {"path": "src/Buttonish.tsx"})
+        store.add_node("r/Button.tsx", "File", "Button.tsx", {"path": "src/Button.tsx"})
+        results = store.find_files_by_basename("Button.tsx")
+        assert len(results) == 1
+        assert results[0]["id"] == "r/Button.tsx"
+
+
 class TestGraphStoreContextManager:
     def test_context_manager(self, tmp_path):
         db_path = str(tmp_path / "ctxdb")

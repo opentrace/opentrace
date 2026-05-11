@@ -8,6 +8,9 @@ Monorepo for the OpenTrace platform — a knowledge graph that maps system archi
 ui/          — React/TypeScript frontend (includes graph visualization components)
 agent/       — Python agent (loads data into the graph)
 proto/       — Protobuf definitions
+plugins/     — Editor / AI integrations
+  claude-code/ — Claude Code plugin (MCP server config)
+  opencode/    — OpenCode plugin (native TS plugin, Bun runtime)
 ```
 
 ## Building & Running

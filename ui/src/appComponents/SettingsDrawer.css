@@ -19,7 +19,8 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: 420px;
+  width: var(--settings-drawer-width, 420px);
+  max-width: 100%;
   padding-top: 68px;
   background: var(--background);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);

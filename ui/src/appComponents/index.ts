@@ -16,10 +16,45 @@
 
 export { default as ChatPanel } from './ChatPanel';
 export { default as EdgeDetailsPanel } from './EdgeDetailsPanel';
+export { GraphControlsBar } from './GraphControlsBar';
+export {
+  CopyrightFooter,
+  EmptyStateHeader,
+  GraphErrorState,
+  GraphLoadingState,
+  GraphSearchEmpty,
+  VersionFooter,
+} from './GraphEmptyStates';
 export { default as GraphViewer } from './GraphViewer';
 export type { GraphViewerHandle } from './GraphViewer';
 export { default as NodeDetailsPanel } from './NodeDetailsPanel';
+export { PhysicsPanelContainer } from './PhysicsPanelContainer';
 export { default as SettingsDrawer } from './SettingsDrawer';
 export { default as SidePanel } from './SidePanel';
 export type { SidePanelTab } from './SidePanel';
 export { useGraphData } from '../hooks/useGraphData';
+export type { GraphDataState } from '../hooks/useGraphData';
+export { GraphDataProvider, useGraph } from '../providers/GraphDataProvider';
+export {
+  GraphInteractionProvider,
+  useGraphInteraction,
+} from '../providers/GraphInteractionProvider';
+export type {
+  AvailableType,
+  AvailableSubType,
+  AvailableCommunity,
+  CommunityData,
+  GraphInteractionState,
+  HighlightsResult,
+} from '../providers/GraphInteractionProvider';
+export { getSubType, linkId } from '../providers/graphFilterUtils';
+export { useGraphViewer } from '../hooks/useGraphViewer';
+export type {
+  ExtraHighlightSource,
+  GraphViewerImperativeHandle,
+  LegendItem,
+  PersistedSettings,
+  ToolbarState,
+  UseGraphViewerOptions,
+  UseGraphViewerResult,
+} from '../hooks/useGraphViewer';

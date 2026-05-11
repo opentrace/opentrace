@@ -35,6 +35,10 @@ Python agent that loads data into the knowledge graph. Managed with [uv](https:/
 
 Shared API contracts used across components.
 
-### Claude Code Plugin (`claude-code-plugin/`)
+### Claude Code Plugin (`plugins/claude-code/`)
 
 MCP server configuration that connects Claude Code to OpenTrace. See the [Claude Code Plugin reference](../reference/claude-code-plugin.md) for details.
+
+### OpenCode Plugin (`plugins/opencode/`)
+
+Native TypeScript plugin that runs inside OpenCode's Bun runtime — calls the `opentraceai` CLI directly rather than going through MCP. See the [OpenCode Plugin reference](../reference/opencode-plugin.md) for details.

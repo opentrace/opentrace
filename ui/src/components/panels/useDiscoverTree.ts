@@ -140,7 +140,13 @@ export function useDiscoverTree({
         if (!cancelled) setLoading(false);
       }
     }
-    init();
+    init().catch((err: unknown) => {
+      // AbortError fires when clearGraph races with in-flight expansions
+      // (e.g. project switch). Expected — swallow silently. Preserve
+      // existing unhandled-rejection behavior for anything else.
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      throw err;
+    });
     return () => {
       cancelled = true;
     };

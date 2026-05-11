@@ -41,6 +41,8 @@ npm run lint          # ESLint + Prettier check
 ui/                   — React/TypeScript frontend (graph explorer + browser indexer)
 agent/                — Python agent (loads data into the graph)
 proto/                — Protobuf definitions (shared API contracts)
-claude-code-plugin/   — Claude Code plugin (MCP server config)
+plugins/              — Editor / AI integrations
+  claude-code/        — Claude Code plugin (MCP server config)
+  opencode/           — OpenCode plugin (native TS, Bun runtime)
 benchmark/            — Performance benchmarks
 ```

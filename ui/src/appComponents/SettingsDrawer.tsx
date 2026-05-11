@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   loadSummarizerStrategy,
   saveSummarizerStrategy,
@@ -27,7 +27,9 @@ import {
   type AnimationSettings,
 } from '../config/animation';
 import type { SummarizationStrategyType } from '@opentrace/components/pipeline';
+import { PanelResizeHandle } from '@opentrace/components';
 import { useStore } from '../store';
+import { useResizablePanel } from '../hooks/useResizablePanel';
 import './SettingsDrawer.css';
 
 const DEFAULT_MAX_NODES = 20000;
@@ -56,6 +58,15 @@ export default function SettingsDrawer({
   onAnimationSettingsChanged,
 }: SettingsDrawerProps) {
   const { store } = useStore();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const { width: panelWidth, handleMouseDown } = useResizablePanel({
+    storageKey: 'ot_settings_drawer_width',
+    defaultWidth: 420,
+    minWidth: 360,
+    maxWidth: 700,
+    side: 'left',
+    panelRef,
+  });
   const [clearing, setClearing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +146,14 @@ export default function SettingsDrawer({
   };
 
   return (
-    <div className="settings-drawer">
+    <div
+      ref={panelRef}
+      className="settings-drawer"
+      style={
+        { '--settings-drawer-width': `${panelWidth}px` } as React.CSSProperties
+      }
+    >
+      <PanelResizeHandle side="left" onMouseDown={handleMouseDown} />
       <div className="panel-header">
         <h3>Settings</h3>
         <button className="close-btn" onClick={onClose}>

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   GraphNode,
   GraphLink,
@@ -75,8 +75,11 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
             .catch(() => {});
         })
         .catch((err) => {
-          setError(err.message);
           setLoading(false);
+          // Swallow AbortError — clearGraph fired mid-load, expected on
+          // project switch. Any real error still surfaces.
+          if (err?.name === 'AbortError') return;
+          setError(err.message);
         });
     },
     [store],
@@ -114,14 +117,30 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     }
   }, [loadGraph, store]);
 
-  return {
-    graphData,
-    loading,
-    error,
-    stats,
-    lastSearchQuery,
-    graphVersion,
-    loadGraph,
-    setError,
-  };
+  // Memoize the returned state so context consumers (and downstream
+  // memoized components) don't re-render every commit just because the
+  // wrapping object changed identity. `loadGraph`/`setError` are already
+  // stable (useCallback / useState dispatcher); the rest is primitive
+  // state, so identity tracks the values.
+  return useMemo(
+    () => ({
+      graphData,
+      loading,
+      error,
+      stats,
+      lastSearchQuery,
+      graphVersion,
+      loadGraph,
+      setError,
+    }),
+    [
+      graphData,
+      loading,
+      error,
+      stats,
+      lastSearchQuery,
+      graphVersion,
+      loadGraph,
+    ],
+  );
 }

@@ -25,6 +25,7 @@ import {
   parseKotlin,
   parseSwift,
   parseC,
+  parsePhp,
 } from './helpers';
 
 describe('extractGeneric', () => {
@@ -1792,6 +1793,192 @@ fn bar() {}
       for (const sym of result.symbols) {
         expect(sym.paramTypes).toBeNull();
       }
+    });
+  });
+
+  describe('PHP', () => {
+    it('extracts a class with methods', async () => {
+      const root = await parsePhp(`<?php
+class Greeter {
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function greet(): string {
+        return "Hello";
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.language).toBe('php');
+      expect(result.symbols).toHaveLength(1);
+
+      const cls = result.symbols[0];
+      expect(cls.name).toBe('Greeter');
+      expect(cls.kind).toBe('class');
+      expect(cls.children).toHaveLength(2);
+
+      const methodNames = cls.children.map((c) => c.name);
+      expect(methodNames).toContain('__construct');
+      expect(methodNames).toContain('greet');
+    });
+
+    it('extracts a top-level function', async () => {
+      const root = await parsePhp(`<?php
+function add(int $a, int $b): int {
+    return $a + $b;
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(1);
+      expect(result.symbols[0].name).toBe('add');
+      expect(result.symbols[0].kind).toBe('function');
+    });
+
+    it('extracts an interface as a class with subtype', async () => {
+      const root = await parsePhp(`<?php
+interface Repository {
+    public function save(object $item): void;
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(1);
+      expect(result.symbols[0].name).toBe('Repository');
+      expect(result.symbols[0].kind).toBe('class');
+      expect(result.symbols[0].subtype).toBe('interface');
+    });
+
+    it('extracts a trait', async () => {
+      const root = await parsePhp(`<?php
+trait Loggable {
+    public function log(string $msg): void {
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(1);
+      expect(result.symbols[0].name).toBe('Loggable');
+      expect(result.symbols[0].subtype).toBe('trait');
+      expect(result.symbols[0].children).toHaveLength(1);
+      expect(result.symbols[0].children[0].name).toBe('log');
+    });
+
+    it('extracts an enum (PHP 8.1+)', async () => {
+      const root = await parsePhp(`<?php
+enum LogLevel {
+    case Debug;
+    case Info;
+    case Error;
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(1);
+      expect(result.symbols[0].name).toBe('LogLevel');
+      expect(result.symbols[0].subtype).toBe('enum');
+    });
+
+    it('extracts functions and classes inside a namespace', async () => {
+      const root = await parsePhp(`<?php
+namespace App\\Services;
+
+class UserService {
+    public function find(int $id): ?object {
+        return null;
+    }
+}
+
+function helper(): void {
+}
+`);
+      const result = extractGeneric(root, 'php');
+      // Namespace is a container; both the class and the top-level function
+      // inside it should surface.
+      const names = result.symbols.map((s) => s.name);
+      expect(names).toContain('UserService');
+      expect(names).toContain('helper');
+
+      const cls = result.symbols.find((s) => s.name === 'UserService')!;
+      expect(cls.children.map((c) => c.name)).toContain('find');
+    });
+
+    it('extracts multiple classes', async () => {
+      const root = await parsePhp(`<?php
+class Dog {
+    public function bark(): string {
+        return "woof";
+    }
+}
+
+class Cat {
+    public function meow(): string {
+        return "meow";
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(2);
+      expect(result.symbols[0].name).toBe('Dog');
+      expect(result.symbols[1].name).toBe('Cat');
+    });
+
+    it('records correct line numbers', async () => {
+      const root = await parsePhp(`<?php
+class Foo {
+    public function bar(): void {
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      const cls = result.symbols[0];
+      // <?php is on line 1, `class Foo` is on line 2
+      expect(cls.startLine).toBe(2);
+      expect(cls.endLine).toBe(5);
+      expect(cls.children[0].startLine).toBe(3);
+      expect(cls.children[0].endLine).toBe(4);
+    });
+
+    it('extracts an empty class', async () => {
+      const root = await parsePhp(`<?php
+class Empty_ {
+}
+`);
+      const result = extractGeneric(root, 'php');
+      expect(result.symbols).toHaveLength(1);
+      expect(result.symbols[0].name).toBe('Empty_');
+      expect(result.symbols[0].children).toHaveLength(0);
+    });
+
+    it('captures the raw parameter signature', async () => {
+      const root = await parsePhp(`<?php
+class Calc {
+    public function add(int $a, int $b): int {
+        return $a + $b;
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      const method = result.symbols[0].children[0];
+      // PHP is typed=false in the generic config, so typeSignature is null;
+      // the raw `signature` captures the params-node text.
+      expect(method.signature).toContain('$a');
+      expect(method.signature).toContain('$b');
+      expect(method.typeSignature).toBeNull();
+    });
+
+    it('handles property-promoted constructor parameters', async () => {
+      const root = await parsePhp(`<?php
+class User {
+    public function __construct(public string $name, public int $age) {
+    }
+}
+`);
+      const result = extractGeneric(root, 'php');
+      const ctor = result.symbols[0].children[0];
+      expect(ctor.name).toBe('__construct');
+      // property_promotion_parameter is in paramChildTypes; promoted params
+      // should appear in the raw signature text.
+      expect(ctor.signature).toContain('$name');
+      expect(ctor.signature).toContain('$age');
     });
   });
 });

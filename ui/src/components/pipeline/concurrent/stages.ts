@@ -547,7 +547,14 @@ export class EmbedStage implements INodeStage {
           await embedder.init();
           this.store.setEmbedder?.(embedder);
           return embedder;
-        } catch {
+        } catch (err) {
+          // Returning null keeps the rest of the pipeline working — the user
+          // gets an indexed graph without embeddings rather than a hard crash.
+          // But the failure must be visible: silent zero-embedding states are
+          // indistinguishable from "embedding disabled" and have cost real
+          // hours of debugging when chunk URLs go stale or model fetches are
+          // blocked by CSP/COEP.
+          console.error('[EmbedStage] embedder init failed:', err);
           return null;
         }
       })();
@@ -575,7 +582,15 @@ export class EmbedStage implements INodeStage {
     onProgress?: (embedded: number, total: number) => void,
   ): Promise<void> {
     const embedder = await this.ensureModel();
-    if (!embedder || this.queue.length === 0) return;
+    if (!embedder) {
+      // Init failed — drop queued nodes so the (potentially long-lived)
+      // EmbedStage instance does not retain File-node references and their
+      // attached source/summary properties. For large repos the queue can
+      // hold thousands of entries.
+      this.queue = [];
+      return;
+    }
+    if (this.queue.length === 0) return;
 
     const BATCH = 8;
     for (let off = 0; off < this.queue.length; off += BATCH) {
@@ -600,8 +615,14 @@ export class EmbedStage implements INodeStage {
           await this.store.importVectors(pending);
           this.embedded += pending.length;
         }
-      } catch {
-        // Skip failed batch
+      } catch (err) {
+        // Skip the bad batch but keep going — one toxic input shouldn't
+        // abort the whole indexing run. Log so the failure is debuggable
+        // instead of silently dropping vectors.
+        console.error(
+          `[EmbedStage] batch failed (offset ${off}, size ${batch.length}):`,
+          err,
+        );
       }
 
       onProgress?.(this.embedded, this.queue.length);

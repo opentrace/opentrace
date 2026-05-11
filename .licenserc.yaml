@@ -29,6 +29,7 @@ header:
     - "**/.pytest_cache/**"
     - "**/.ruff_cache/**"
     - "**/.python-version"
+    - "**/.bun-version"
     - "**/*.wasm"
     - "**/*.svg"
     - "**/*.png"

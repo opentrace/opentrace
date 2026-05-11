@@ -70,7 +70,7 @@ jobs:
 
           # Bump UI version
           cd ui
-          npm version "${VERSION}" --no-git-tag-version
+          npm version "${VERSION}" --no-git-tag-version --allow-same-version
           cd ..
 
           # Regenerate full changelog

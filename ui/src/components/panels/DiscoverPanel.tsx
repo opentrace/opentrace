@@ -189,7 +189,7 @@ function TreeRow({
         className="discover-tree-placeholder"
         style={{
           ...style,
-          paddingLeft: `${12 + depth * 16}px`,
+          paddingLeft: `${8 + depth * 12}px`,
         }}
       >
         Loading...
@@ -218,7 +218,7 @@ function TreeRow({
 
   const rowStyle: React.CSSProperties = {
     ...style,
-    paddingLeft: `${12 + depth * 16}px`,
+    paddingLeft: `${8 + depth * 12}px`,
     ...(!isSelected && hopHighlight !== undefined
       ? ({ '--hop-intensity': hopHighlight } as React.CSSProperties)
       : {}),

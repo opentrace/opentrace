@@ -47,6 +47,7 @@ nav:
       - Browser: getting-started/install-browser.md
       - CLI: getting-started/install-cli.md
       - Claude Code Plugin: getting-started/install-plugin.md
+      - OpenCode Plugin: getting-started/install-opencode.md
       - Configuration: getting-started/configuration.md
       - Troubleshooting: getting-started/troubleshooting.md
   - Architecture:
@@ -58,5 +59,6 @@ nav:
       - Browser Requirements: reference/browser-requirements.md
       - Chat Providers: reference/chat-providers.md
       - Claude Code Plugin: reference/claude-code-plugin.md
+      - OpenCode Plugin: reference/opencode-plugin.md
       - Graph Tools: reference/graph-tools.md
       - Supported Languages: reference/languages.md

@@ -17,11 +17,17 @@ ui/dist/
 functions/node_modules/
 functions/lib/
 components/node_modules/
+plugins/opencode/node_modules/
+plugins/opencode/dist/
 
 # IDE
 .idea/
 *.iml
 .vscode/
+
+# Local OpenCode plugin configs (contain absolute machine-specific paths)
+.opencode/
+agent/.opencode/
 
 # OS
 .DS_Store

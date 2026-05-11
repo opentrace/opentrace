@@ -22,4 +22,4 @@ Edit `.env` to configure your instance.
 
 ## Claude Code Plugin
 
-OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server. See `claude-code-plugin/` for configuration details.
+OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that connects Claude to an OpenTrace MCP server. See `plugins/claude-code/` for configuration details.

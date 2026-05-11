@@ -71,6 +71,7 @@ const PARSER_WASM_MAP: Record<string, string> = {
   cpp: 'tree-sitter-cpp.wasm',
   csharp: 'tree-sitter-c_sharp.wasm',
   swift: 'tree-sitter-swift.wasm',
+  php: 'tree-sitter-php.wasm',
 };
 
 async function loadParser(wasmFile: string): Promise<Parser> {
@@ -164,7 +165,8 @@ export class BrowserJobService implements JobService {
 
   async startJob(message: JobMessage): Promise<JobStream> {
     let input: LoaderInput;
-    if (message.type === 'index-repo') {
+    const isReindex = message.type === 'reindex-repo';
+    if (message.type === 'index-repo' || message.type === 'reindex-repo') {
       input = {
         kind: 'url',
         url: message.repoUrl,
@@ -257,6 +259,30 @@ export class BrowserJobService implements JobService {
 
       // Store source files for UI code viewing
       const repoId = `${repoTree.owner}/${repoTree.repo}`;
+
+      // Reindex: wipe the existing rows for this repo before any writes, so
+      // the COPY FROM path doesn't hit PK violations on shared ids. Runs
+      // after the fetch succeeds — a failed fetch must not destroy existing
+      // data. No-op when deleteRepo is absent (server mode), matching the
+      // rest of the store's server-mode write-path conventions.
+      if (isReindex && this.store.deleteRepo) {
+        debug.log('reindex', `clearing existing data for ${repoId}`);
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+          phase: JobPhase.JOB_PHASE_INITIALIZING,
+          message: 'Clearing existing data…',
+        });
+        await this.store.deleteRepo(repoId);
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+          phase: JobPhase.JOB_PHASE_INITIALIZING,
+          message: 'Existing data cleared',
+        });
+        if (cancelled) return;
+      }
+
       this.store.storeSource(
         repoTree.files.map((f) => ({
           id: `${repoId}/${f.path}`,

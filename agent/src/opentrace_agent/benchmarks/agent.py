@@ -480,7 +480,7 @@ EXPLORE_WITH_OT = (
 EXPLORE_WITHOUT_OT = "Explore the codebase using Read, Grep, and Glob to find relevant files."
 
 
-PLUGIN_DIR = Path(__file__).resolve().parents[4] / "claude-code-plugin"
+PLUGIN_DIR = Path(__file__).resolve().parents[4] / "plugins" / "claude-code"
 
 # ANSI colors for trace output
 _DIM = "\033[2m"
@@ -694,7 +694,7 @@ def create_claude_code_agent_fn(
         If True, stream Claude Code's output to stderr in real-time.
     plugin_dir : str, Path, or None
         Path to the OpenTrace plugin directory. If None, auto-detects from
-        the repo layout (``claude-code-plugin/`` next to ``agent/``).
+        the repo layout (``plugins/claude-code/`` next to ``agent/``).
     """
     cmd = shutil.which(claude_cmd)
     if cmd is None:

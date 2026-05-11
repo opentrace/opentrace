@@ -58,6 +58,7 @@ export function getExtractor(
     case 'ruby':
     case 'rust':
     case 'swift':
+    case 'php':
       return (rootNode) => extractGeneric(rootNode, language);
     default:
       return null;
