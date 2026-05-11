@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { PRReviewComment } from '../types';
 import { markdownComponents } from '../markdownComponents';
@@ -171,6 +171,13 @@ export default function ReviewResult({
   const [tokenInput, setTokenInput] = useState('');
   const [savingToken, setSavingToken] = useState(false);
 
+  // Sync `done` if the parent later flips `submitted` to true (e.g. after
+  // restoring a previously-submitted review from cache while this component
+  // stays mounted across PR switches).
+  useEffect(() => {
+    if (submitted) setDone(true);
+  }, [submitted]);
+
   const handleSubmit = async () => {
     if (!onSubmit) return;
     setSubmitting(true);
@@ -190,15 +197,22 @@ export default function ReviewResult({
 
   const handleSaveTokenAndRetry = async () => {
     if (!onProvideToken || !tokenInput.trim()) return;
+    if (submitting || savingToken) return; // guard against double-submits
     setSavingToken(true);
     try {
       await onProvideToken(tokenInput.trim());
-      setTokenInput('');
-      // Clear the error so the prompt collapses; then retry submit.
+      // Clear error so the prompt collapses; then retry submit.
       setError(null);
       setErrorRaw(null);
       await handleSubmit();
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      setErrorRaw(raw);
+      setError(friendlyError(raw));
     } finally {
+      // Always clear the token from state — even on failure — so it doesn't
+      // linger in the React tree.
+      setTokenInput('');
       setSavingToken(false);
     }
   };
@@ -327,6 +341,7 @@ export default function ReviewResult({
               <div className="review-token-prompt-row">
                 <input
                   type="password"
+                  autoComplete="new-password"
                   className="review-token-input"
                   placeholder={`Paste ${providerLabel} ${tokenNoun}`}
                   value={tokenInput}

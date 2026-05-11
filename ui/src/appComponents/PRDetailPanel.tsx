@@ -103,10 +103,21 @@ export default function PRDetailPanel({
   const [reviewResult, setReviewResult] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
-  const [hasToken, setHasToken] = useState(() => prClient?.hasToken() ?? false);
+  // `hasToken` is set by the restore effect on mount / PR change; starting at
+  // `false` here would cause a one-render flash of the token form, so we
+  // derive it lazily from `prClient` at first read and keep it in sync below.
+  const [hasToken, setHasToken] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Mirror of `reviewResult` so async handlers always see the latest value
+  // even if a re-render happens between the click and the save.
+  const reviewResultRef = useRef<string | null>(null);
 
   const canReview = !!(llm && store);
+
+  // Keep the ref mirror of reviewResult in sync each render.
+  useEffect(() => {
+    reviewResultRef.current = reviewResult;
+  }, [reviewResult]);
 
   // Restore any previously cached review for this PR
   useEffect(() => {
@@ -115,6 +126,7 @@ export default function PRDetailPanel({
     if (!prClient) {
       setReviewResult(null);
       setReviewSubmitted(false);
+      setHasToken(false);
       return;
     }
     const saved = loadReview(prClient.meta, pr.number);
@@ -217,9 +229,10 @@ export default function PRDetailPanel({
     );
     // Persist submitted state so refresh / re-open doesn't re-show the form.
     setReviewSubmitted(true);
-    if (reviewResult) {
+    const latest = reviewResultRef.current;
+    if (latest) {
       saveReview(prClient.meta, pr.number, {
-        result: reviewResult,
+        result: latest,
         submittedAt: Date.now(),
       });
     }
@@ -229,9 +242,10 @@ export default function PRDetailPanel({
     if (!prClient) throw new Error('No PR client configured');
     await prClient.postComment(pr.number, body);
     setReviewSubmitted(true);
-    if (reviewResult) {
+    const latest = reviewResultRef.current;
+    if (latest) {
       saveReview(prClient.meta, pr.number, {
-        result: reviewResult,
+        result: latest,
         submittedAt: Date.now(),
       });
     }

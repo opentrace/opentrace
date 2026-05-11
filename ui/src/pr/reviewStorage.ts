@@ -26,7 +26,12 @@ export interface SavedReview {
 }
 
 function key(meta: Pick<RepoMeta, 'provider' | 'owner' | 'repo'>, n: number) {
-  return `${KEY_PREFIX}${meta.provider}:${meta.owner}:${meta.repo}:${n}`;
+  // encodeURIComponent each component so values containing the `:` separator
+  // (e.g. Azure DevOps `org/project` style owners, or any future host) can't
+  // collide with a different repo's key.
+  return `${KEY_PREFIX}${encodeURIComponent(meta.provider)}:${encodeURIComponent(
+    meta.owner,
+  )}:${encodeURIComponent(meta.repo)}:${n}`;
 }
 
 export function loadReview(
