@@ -172,11 +172,53 @@ import (
 
 
 class TestTypeScriptImports:
-    def test_relative_import(self):
+    def test_named_import_binding(self):
+        """Named imports map the imported binding name to the file.
+
+        Regression: previously the path basename was used as the alias, so
+        ``import { helper } from './utils'`` registered ``utils`` instead of
+        ``helper`` and bare ``helper()`` calls never resolved.
+        """
         source = b"import { helper } from './utils';\n"
         known = {"src/utils.ts", "src/main.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("helper") == "src/utils.ts"
+
+    def test_named_import_with_alias(self):
+        """``import { foo as bar }`` maps the local binding (``bar``)."""
+        source = b"import { helper as h } from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("h") == "src/utils.ts"
+        assert "helper" not in result.internal
+
+    def test_default_import(self):
+        source = b"import helper from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("helper") == "src/utils.ts"
+
+    def test_namespace_import(self):
+        source = b"import * as utils from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
         assert result.internal.get("utils") == "src/utils.ts"
+
+    def test_mixed_default_and_named(self):
+        source = b"import React, { useState, useEffect as ue } from './react';\n"
+        known = {"src/react.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("React") == "src/react.ts"
+        assert result.internal.get("useState") == "src/react.ts"
+        assert result.internal.get("ue") == "src/react.ts"
+
+    def test_multiple_named_imports(self):
+        source = b"import { a, b, c } from './lib';\n"
+        known = {"src/lib.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("a") == "src/lib.ts"
+        assert result.internal.get("b") == "src/lib.ts"
+        assert result.internal.get("c") == "src/lib.ts"
 
     def test_relative_import_parent_dir(self):
         source = b"import { config } from '../config';\n"
@@ -203,6 +245,8 @@ class TestTypeScriptImports:
         source = b"import { App } from './components';\n"
         known = {"src/components/index.ts", "src/main.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("App") == "src/components/index.ts"
+        # Path-basename alias is still registered for namespace-style attribute calls.
         assert result.internal.get("components") == "src/components/index.ts"
 
     def test_tsx_extension_resolution(self):

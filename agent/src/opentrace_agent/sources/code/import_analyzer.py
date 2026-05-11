@@ -390,13 +390,78 @@ def _parse_ts_import(
         "/index.tsx",
         "/index.js",
     ]
+    candidate_path: str | None = None
     for ext in extensions:
         candidate = resolved + ext
         if candidate in known_files:
-            # Alias is the last path segment
-            alias = source_text.rsplit("/", 1)[-1]
-            result[alias] = candidate
+            candidate_path = candidate
             break
+
+    if candidate_path is None:
+        return
+
+    # Map every binding name introduced by the import statement (default,
+    # named, namespace) to the resolved file. Without this, bare calls like
+    # ``foo()`` from ``import { foo } from './utils'`` never reach the
+    # resolver's import-aware strategy because nothing in the registry has
+    # ``foo`` as a key. The previous implementation used the path basename
+    # as the alias, which only matched by coincidence when the imported
+    # name happened to equal the file name.
+    for alias in _ts_import_bindings(node):
+        result[alias] = candidate_path
+
+    # Preserve path-basename alias for namespace-style attribute calls
+    # (e.g. resolving ``utils.helper()`` when no explicit ``import * as
+    # utils`` was used). Doesn't override an explicit binding of the same
+    # name.
+    basename_alias = source_text.rsplit("/", 1)[-1]
+    if basename_alias and basename_alias not in result:
+        result[basename_alias] = candidate_path
+
+
+def _ts_import_bindings(node: tree_sitter.Node) -> list[str]:
+    """Return the local binding names introduced by a TS import statement.
+
+    Covers:
+      - ``import foo from '...'``                      → ["foo"]
+      - ``import { foo, bar as baz } from '...'``      → ["foo", "baz"]
+      - ``import * as ns from '...'``                  → ["ns"]
+      - ``import foo, { bar } from '...'``             → ["foo", "bar"]
+      - ``import type { Foo } from '...'``             → ["Foo"]
+      - ``import './side-effect'``                     → []
+    """
+    bindings: list[str] = []
+    for child in node.children:
+        if child.type != "import_clause":
+            continue
+        for sub in child.children:
+            if sub.type == "identifier":
+                # Default import: `import foo from '...'`
+                bindings.append(sub.text.decode())
+            elif sub.type == "named_imports":
+                # `{ foo, bar as baz }`
+                for spec in sub.children:
+                    if spec.type != "import_specifier":
+                        continue
+                    alias_node = spec.child_by_field_name("alias")
+                    name_node = spec.child_by_field_name("name")
+                    bound = alias_node or name_node
+                    if bound is not None:
+                        bindings.append(bound.text.decode())
+                        continue
+                    # Fallback for grammars that don't expose field names:
+                    # the binding is the LAST identifier in the specifier
+                    # (covers both `foo` and `bar as baz`).
+                    idents = [c for c in spec.children if c.type == "identifier"]
+                    if idents:
+                        bindings.append(idents[-1].text.decode())
+            elif sub.type == "namespace_import":
+                # `* as ns`
+                for ns_child in sub.children:
+                    if ns_child.type == "identifier":
+                        bindings.append(ns_child.text.decode())
+                        break
+    return bindings
 
 
 def _parse_ts_reexport(
