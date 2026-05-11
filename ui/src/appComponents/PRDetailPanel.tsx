@@ -22,6 +22,7 @@ import {
   ReviewResult,
   parseReviewResult,
   stripReviewBlock,
+  TOKEN_PROVIDER_LABEL,
   type ReviewData,
 } from '@opentrace/components/chat';
 import type { PRDetail, PRFileDiff } from '../pr/types';
@@ -351,7 +352,8 @@ export default function PRDetailPanel({
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open in {pr.url.includes('gitlab') ? 'GitLab' : 'GitHub'}
+          Open in{' '}
+          {prClient ? TOKEN_PROVIDER_LABEL[prClient.meta.provider] : 'GitHub'}
           <svg
             width="12"
             height="12"

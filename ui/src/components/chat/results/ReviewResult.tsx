@@ -117,9 +117,11 @@ function isTokenError(raw: string): boolean {
   );
 }
 
-type TokenProvider = 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
+// eslint-disable-next-line react-refresh/only-export-components
+export type TokenProvider = 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
 
-const TOKEN_PROVIDER_LABEL: Record<TokenProvider, string> = {
+// eslint-disable-next-line react-refresh/only-export-components
+export const TOKEN_PROVIDER_LABEL: Record<TokenProvider, string> = {
   github: 'GitHub',
   gitlab: 'GitLab',
   bitbucket: 'Bitbucket',
