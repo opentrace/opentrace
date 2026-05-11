@@ -263,6 +263,24 @@ const GraphViewer = memo(
       const [showExportModal, setShowExportModal] = useState(false);
       const [exporting, setExporting] = useState(false);
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      const physicsTriggerRef = useRef<HTMLButtonElement>(null);
+      const physicsPanelRef = useRef<HTMLDivElement>(null);
+
+      // Close the physics panel when the user clicks outside it. The trigger
+      // button is excluded so its own onClick can toggle without this handler
+      // racing it back open/closed.
+      useEffect(() => {
+        if (!showPhysicsPanel) return;
+        const onMouseDown = (e: MouseEvent) => {
+          const target = e.target as Node | null;
+          if (!target) return;
+          if (physicsPanelRef.current?.contains(target)) return;
+          if (physicsTriggerRef.current?.contains(target)) return;
+          setShowPhysicsPanel(false);
+        };
+        document.addEventListener('mousedown', onMouseDown);
+        return () => document.removeEventListener('mousedown', onMouseDown);
+      }, [showPhysicsPanel]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -542,43 +560,45 @@ const GraphViewer = memo(
           />
 
           {showPhysicsPanel && (
-            <PhysicsPanelContainer
-              canvasRef={v.canvasRef}
-              repulsion={v.settings.repulsion}
-              setRepulsion={v.settings.setRepulsion}
-              labelsVisible={v.settings.labelsVisible}
-              setLabelsVisible={v.settings.setLabelsVisible}
-              colorMode={colorMode}
-              setColorMode={setColorMode}
-              physicsRunning={v.settings.physicsRunning}
-              setPhysicsRunning={v.settings.setPhysicsRunning}
-              pixiLinkDist={v.settings.pixiLinkDist}
-              setPixiLinkDist={v.settings.setPixiLinkDist}
-              pixiCenter={v.settings.pixiCenter}
-              setPixiCenter={v.settings.setPixiCenter}
-              pixiZoomExponent={v.settings.pixiZoomExponent}
-              setPixiZoomExponent={v.settings.setPixiZoomExponent}
-              layoutMode={v.settings.layoutMode}
-              setLayoutMode={v.settings.setLayoutMode}
-              compactRadial={v.settings.compactRadial}
-              setCompactRadial={v.settings.setCompactRadial}
-              compactCommunity={v.settings.compactCommunity}
-              setCompactCommunity={v.settings.setCompactCommunity}
-              compactCentering={v.settings.compactCentering}
-              setCompactCentering={v.settings.setCompactCentering}
-              compactRadius={v.settings.compactRadius}
-              setCompactRadius={v.settings.setCompactRadius}
-              mode3d={v.settings.mode3d}
-              setMode3d={v.settings.setMode3d}
-              mode3dSpeed={v.settings.mode3dSpeed}
-              setMode3dSpeed={v.settings.setMode3dSpeed}
-              mode3dTilt={v.settings.mode3dTilt}
-              setMode3dTilt={v.settings.setMode3dTilt}
-              rendererAutoRotate={v.settings.rendererAutoRotate}
-              setRendererAutoRotate={v.settings.setRendererAutoRotate}
-              labelScale={v.settings.labelScale}
-              setLabelScale={v.settings.setLabelScale}
-            />
+            <div ref={physicsPanelRef} style={{ display: 'contents' }}>
+              <PhysicsPanelContainer
+                canvasRef={v.canvasRef}
+                repulsion={v.settings.repulsion}
+                setRepulsion={v.settings.setRepulsion}
+                labelsVisible={v.settings.labelsVisible}
+                setLabelsVisible={v.settings.setLabelsVisible}
+                colorMode={colorMode}
+                setColorMode={setColorMode}
+                physicsRunning={v.settings.physicsRunning}
+                setPhysicsRunning={v.settings.setPhysicsRunning}
+                pixiLinkDist={v.settings.pixiLinkDist}
+                setPixiLinkDist={v.settings.setPixiLinkDist}
+                pixiCenter={v.settings.pixiCenter}
+                setPixiCenter={v.settings.setPixiCenter}
+                pixiZoomExponent={v.settings.pixiZoomExponent}
+                setPixiZoomExponent={v.settings.setPixiZoomExponent}
+                layoutMode={v.settings.layoutMode}
+                setLayoutMode={v.settings.setLayoutMode}
+                compactRadial={v.settings.compactRadial}
+                setCompactRadial={v.settings.setCompactRadial}
+                compactCommunity={v.settings.compactCommunity}
+                setCompactCommunity={v.settings.setCompactCommunity}
+                compactCentering={v.settings.compactCentering}
+                setCompactCentering={v.settings.setCompactCentering}
+                compactRadius={v.settings.compactRadius}
+                setCompactRadius={v.settings.setCompactRadius}
+                mode3d={v.settings.mode3d}
+                setMode3d={v.settings.setMode3d}
+                mode3dSpeed={v.settings.mode3dSpeed}
+                setMode3dSpeed={v.settings.setMode3dSpeed}
+                mode3dTilt={v.settings.mode3dTilt}
+                setMode3dTilt={v.settings.setMode3dTilt}
+                rendererAutoRotate={v.settings.rendererAutoRotate}
+                setRendererAutoRotate={v.settings.setRendererAutoRotate}
+                labelScale={v.settings.labelScale}
+                setLabelScale={v.settings.setLabelScale}
+              />
+            </div>
           )}
 
           <GraphControlsBar
@@ -589,6 +609,7 @@ const GraphViewer = memo(
             setZoomOnSelect={v.settings.setZoomOnSelect}
             showPhysicsPanel={showPhysicsPanel}
             setShowPhysicsPanel={setShowPhysicsPanel}
+            physicsTriggerRef={physicsTriggerRef}
             layoutMode={v.settings.layoutMode}
             setLayoutMode={v.settings.setLayoutMode}
             mode3d={v.settings.mode3d}
