@@ -17,6 +17,7 @@
 import { homedir } from "node:os"
 import { join, delimiter } from "node:path"
 import { debug } from "./debug.js"
+import { runCommand, whichSync } from "./process.js"
 
 // Hard cap on how long `<cmd> --version` is allowed to run. The probe is
 // awaited synchronously by `GraphClient.run` / `runWithTimeout` before the
@@ -76,23 +77,15 @@ async function probeVersion(
   searchPath: string,
 ): Promise<boolean> {
   try {
-    const proc = Bun.spawn([cand.cmd, ...cand.args, "--version"], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const result = await runCommand(cand.cmd, [...cand.args, "--version"], {
       env: { ...process.env, PATH: searchPath },
+      timeoutMs: PROBE_TIMEOUT_MS,
     })
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      proc.kill()
-    }, PROBE_TIMEOUT_MS)
-    const exitCode = await proc.exited
-    clearTimeout(timer)
-    if (timedOut) {
+    if (result.timedOut) {
       debug("db", "probeVersion: timed out", cand.cmd, cand.args.join(" "))
       return false
     }
-    return exitCode === 0
+    return result.exitCode === 0
   } catch {
     return false
   }
@@ -135,20 +128,21 @@ export async function findExecutable(): Promise<{ cmd: string; args: string[] } 
   }
 
   // 2. Direct binary on PATH (including ~/.local/bin where `uv tool install`
-  //    and `pipx install` drop their shims). `Bun.which` does the lookup in
-  //    the runtime — no shelling out to `which` (which doesn't exist on
-  //    Windows by default), and on Windows it honors PATHEXT so an
-  //    `opentraceai.exe` shim resolves the same way.
-  const found = Bun.which("opentraceai", { PATH: searchPath })
+  //    and `pipx install` drop their shims). `whichSync` is a thin
+  //    cross-runtime port of `Bun.which`: no shelling out to `which`
+  //    (which doesn't exist on Windows by default), and on Windows it
+  //    honors PATHEXT so an `opentraceai.exe` shim resolves the same way.
+  //    Works under both Bun (CLI) and Node (desktop sidecar).
+  const found = whichSync("opentraceai", { PATH: searchPath })
   if (found) {
     const cand = { cmd: found, args: [] }
-    // Bun.which confirms the path resolves; --version confirms it's actually
+    // whichSync confirms the path resolves; --version confirms it's actually
     // a working opentraceai (and not a stale shim or unrelated binary).
     if (await probeVersion(cand, searchPath)) {
       debug("db", "findExecutable: found on PATH at", found)
       return cand
     }
-    debug("db", "findExecutable: Bun.which returned a path but --version failed", found)
+    debug("db", "findExecutable: whichSync returned a path but --version failed", found)
   }
 
   debug("db", "findExecutable: no opentraceai binary found")

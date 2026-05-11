@@ -17,6 +17,7 @@
 import { getCliMissingMessage } from "./util/cli-install.js"
 import { findExecutable, pathWithLocalBin } from "./util/db-discovery.js"
 import { debug } from "./util/debug.js"
+import { runCommand } from "./util/process.js"
 import {
   DB_MISSING_MESSAGE,
   EXIT_DB_MISSING,
@@ -404,22 +405,13 @@ export class GraphClient {
     // `--workspace` is a top-level flag, so it precedes the subcommand.
     const args = [...this.exe.args, "--workspace", this.directory, ...subArgs]
     try {
-      const proc = Bun.spawn([this.exe.cmd, ...args], {
-        stdout: "pipe",
-        stderr: "pipe",
+      // runCommand drains stdout/stderr via `data` events, so the pipes
+      // never deadlock on a chatty subprocess. Cross-runtime: same call
+      // works under Bun and the desktop's Node sidecar.
+      const { exitCode, stdout, stderr, timedOut } = await runCommand(this.exe.cmd, args, {
         env: spawnEnvWithLocalBin(),
+        timeoutMs: remaining,
       })
-
-      // Read stdout and stderr BEFORE awaiting exit to avoid pipe buffer deadlock
-      const stdoutPromise = new Response(proc.stdout).text()
-      const stderrPromise = new Response(proc.stderr).text()
-      let timedOut = false
-      const timeout = setTimeout(() => {
-        timedOut = true
-        proc.kill()
-      }, remaining)
-      const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutPromise, stderrPromise])
-      clearTimeout(timeout)
 
       const semanticMessage = this._recordExit(exitCode)
 
@@ -822,23 +814,15 @@ export class GraphClient {
         redactArgs(subArgs).join(" "),
         remaining !== null ? `(timeout ${remaining}ms)` : "(no timeout)",
       )
-      const proc = Bun.spawn([this.exe.cmd, ...args], {
-        stdout: "pipe",
-        stderr: "pipe",
+      // runCommand drains stdout/stderr via `data` events so the pipes
+      // never deadlock on chatty subprocesses (large index outputs are
+      // routine here). `timeoutMs: 0` / undefined disables the kill timer,
+      // matching the "wait indefinitely" semantics requested by callers
+      // that pass `indexTimeout: 0`.
+      const { exitCode, stdout, stderr, timedOut } = await runCommand(this.exe.cmd, args, {
         env: spawnEnvWithLocalBin(),
+        timeoutMs: remaining ?? 0,
       })
-      // Read stdout/stderr BEFORE awaiting exit to avoid pipe buffer deadlock
-      const stdoutPromise = new Response(proc.stdout).text()
-      const stderrPromise = new Response(proc.stderr).text()
-      let timedOut = false
-      const killTimer = remaining !== null
-        ? setTimeout(() => {
-            timedOut = true
-            proc.kill()
-          }, remaining)
-        : null
-      const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutPromise, stderrPromise])
-      if (killTimer) clearTimeout(killTimer)
 
       const semanticMessage = this._recordExit(exitCode)
 

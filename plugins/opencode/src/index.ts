@@ -106,6 +106,20 @@ const server: Plugin = async (
   }
   const opts = parseResult.data
   configureDebug({ debug: opts.debug, debugFile: opts.debugFile })
+  // Stamp the runtime up front so the next "plugin loaded but nothing
+  // works" report is a one-glance diagnosis: Bun (CLI / TUI) vs Node
+  // (OpenCode desktop's Electron utility process). Earlier versions
+  // assumed Bun and threw a synchronous ReferenceError on Node, killing
+  // every hook before they could register.
+  debug(
+    "plugin",
+    "runtime",
+    typeof (globalThis as any).Bun !== "undefined" ? "bun" : "node",
+    "process.version",
+    process.version,
+    "directory",
+    input.directory,
+  )
 
   // Initialize the graph client
   const client = await GraphClient.create(input.directory, {
