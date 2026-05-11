@@ -136,6 +136,53 @@ def test_pipeline_ts_project(tmp_path: Path) -> None:
     assert result.classes_extracted >= 1
 
 
+def test_pipeline_ts_named_import_resolves_calls(tmp_path: Path) -> None:
+    """Regression: a bare call to a named import resolves to a CALLS edge.
+
+    Reproduces the find_usages-returns-zero-callers bug for TypeScript.
+    Before the fix, ``import { foo } from './a'`` registered the path
+    basename (``a``) as the alias instead of the imported name (``foo``),
+    so the resolver's import-aware strategy never matched the bare
+    ``foo()`` call site. The CALLS edge silently disappeared and
+    find_usages reported no callers.
+    """
+    (tmp_path / "a.ts").write_text("export function foo(): number {\n  return 42;\n}\n")
+    (tmp_path / "b.ts").write_text(
+        "import { foo } from './a';\n\nexport function callFoo(): number {\n  return foo();\n}\n"
+    )
+
+    inp = PipelineInput(path=str(tmp_path), repo_id="test/tsproject")
+    _, _, rels = collect_pipeline(inp)
+
+    calls = [r for r in rels if r.type == "CALLS"]
+    callers_of_foo = [r for r in calls if r.target_id.endswith("a.ts::foo()")]
+    assert callers_of_foo, (
+        f"Expected at least one CALLS edge into a.ts::foo, got none. "
+        f"All CALLS: {[(r.source_id, r.target_id) for r in calls]}"
+    )
+    assert any(r.source_id.endswith("b.ts::callFoo()") for r in callers_of_foo), (
+        f"Expected b.ts::callFoo to be the caller. Got: "
+        f"{[r.source_id for r in callers_of_foo]}"
+    )
+
+
+def test_pipeline_ts_default_import_resolves_calls(tmp_path: Path) -> None:
+    """``import foo from './a'`` (default import) resolves a bare ``foo()`` call."""
+    (tmp_path / "a.ts").write_text("export default function foo(): number {\n  return 42;\n}\n")
+    (tmp_path / "b.ts").write_text(
+        "import foo from './a';\n\nexport function callFoo(): number {\n  return foo();\n}\n"
+    )
+
+    inp = PipelineInput(path=str(tmp_path), repo_id="test/tsproject")
+    _, _, rels = collect_pipeline(inp)
+
+    calls = [r for r in rels if r.type == "CALLS"]
+    assert any(
+        r.source_id.endswith("b.ts::callFoo()") and r.target_id.endswith("a.ts::foo()")
+        for r in calls
+    ), f"Expected b.ts::callFoo -CALLS-> a.ts::foo, got: {[(r.source_id, r.target_id) for r in calls]}"
+
+
 def test_pipeline_empty_directory(tmp_path: Path) -> None:
     """Pipeline handles an empty directory gracefully."""
     inp = PipelineInput(path=str(tmp_path), repo_id="test/empty")
