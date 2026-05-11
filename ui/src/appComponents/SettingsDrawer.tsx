@@ -44,6 +44,55 @@ function loadLimit(key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+type PatProvider = 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
+
+const PAT_PROVIDERS: ReadonlyArray<{
+  id: PatProvider;
+  label: string;
+  helpUrl: string;
+  noun: string;
+}> = [
+  {
+    id: 'github',
+    label: 'GitHub',
+    helpUrl: 'https://github.com/settings/tokens',
+    noun: 'Personal Access Token',
+  },
+  {
+    id: 'gitlab',
+    label: 'GitLab',
+    helpUrl: 'https://gitlab.com/-/user_settings/personal_access_tokens',
+    noun: 'Personal Access Token',
+  },
+  {
+    id: 'bitbucket',
+    label: 'Bitbucket',
+    helpUrl: 'https://bitbucket.org/account/settings/app-passwords/',
+    noun: 'App Password',
+  },
+  {
+    id: 'azuredevops',
+    label: 'Azure DevOps',
+    helpUrl:
+      'https://learn.microsoft.com/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate',
+    noun: 'Personal Access Token',
+  },
+];
+
+function patStorageKey(p: PatProvider): string {
+  return `ot_${p}_pat`;
+}
+
+function loadAllPats(): Record<PatProvider, string> {
+  return PAT_PROVIDERS.reduce(
+    (acc, p) => {
+      acc[p.id] = localStorage.getItem(patStorageKey(p.id)) ?? '';
+      return acc;
+    },
+    {} as Record<PatProvider, string>,
+  );
+}
+
 interface SettingsDrawerProps {
   onClose: () => void;
   onGraphCleared: () => void;
@@ -82,6 +131,23 @@ export default function SettingsDrawer({
     loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES),
   );
   const [animSettings, setAnimSettings] = useState(loadAnimationSettings);
+  const [pats, setPats] = useState<Record<PatProvider, string>>(loadAllPats);
+  const [patSaved, setPatSaved] = useState<PatProvider | null>(null);
+
+  const handlePatChange = (provider: PatProvider, value: string) => {
+    setPats((prev) => ({ ...prev, [provider]: value }));
+    if (patSaved === provider) setPatSaved(null);
+  };
+
+  const handlePatSave = (provider: PatProvider) => {
+    const value = pats[provider].trim();
+    if (value) {
+      localStorage.setItem(patStorageKey(provider), value);
+    } else {
+      localStorage.removeItem(patStorageKey(provider));
+    }
+    setPatSaved(provider);
+  };
 
   const handleAnimToggle = (key: keyof AnimationSettings) => {
     const next = { ...animSettings, [key]: !animSettings[key] };
@@ -399,6 +465,61 @@ export default function SettingsDrawer({
                   style={{ width: '100%', marginTop: 2 }}
                 >
                   {hint}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h4>PR Tokens</h4>
+          <div className="setting-card">
+            <div className="setting-info">
+              <strong>Git host access tokens</strong>
+              <p>
+                Used to fetch private repos and to submit PR reviews / comments
+                from OpenTrace. Stored locally in your browser — never sent to
+                OpenTrace servers.
+              </p>
+            </div>
+            {PAT_PROVIDERS.map((p) => (
+              <div
+                key={p.id}
+                className="limit-row"
+                style={{ flexWrap: 'wrap' }}
+              >
+                <label
+                  className="limit-label"
+                  htmlFor={`pat-${p.id}`}
+                  style={{ flex: 1 }}
+                >
+                  {p.label}
+                </label>
+                <input
+                  id={`pat-${p.id}`}
+                  type="password"
+                  className="settings-select"
+                  placeholder={`${p.noun}`}
+                  value={pats[p.id]}
+                  onChange={(e) => handlePatChange(p.id, e.target.value)}
+                  style={{ flex: '1 1 200px' }}
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="settings-back-btn"
+                  onClick={() => handlePatSave(p.id)}
+                  style={{ flex: 'none' }}
+                >
+                  {patSaved === p.id ? 'Saved ✓' : 'Save'}
+                </button>
+                <p
+                  className="setting-hint"
+                  style={{ width: '100%', marginTop: 2 }}
+                >
+                  <a href={p.helpUrl} target="_blank" rel="noopener noreferrer">
+                    Create a {p.label} {p.noun} &rarr;
+                  </a>
                 </p>
               </div>
             ))}

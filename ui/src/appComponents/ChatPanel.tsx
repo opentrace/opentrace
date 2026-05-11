@@ -186,10 +186,8 @@ export default function ChatPanel({
     if (!repoUrl) return null;
     const meta = parseRepoUrl(repoUrl);
     if (!meta) return null;
-    // Use the same localStorage keys as AddRepoModal
-    const tokenKey =
-      meta.provider === 'gitlab' ? 'ot_gitlab_pat' : 'ot_github_pat';
-    const token = localStorage.getItem(tokenKey) ?? undefined;
+    // Same localStorage keys as AddRepoModal: ot_<provider>_pat
+    const token = localStorage.getItem(`ot_${meta.provider}_pat`) ?? undefined;
     return new PRClient(meta, token);
   }, [repoUrl]);
 

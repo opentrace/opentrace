@@ -22,6 +22,7 @@ import {
   ReviewResult,
   parseReviewResult,
   stripReviewBlock,
+  TOKEN_PROVIDER_LABEL,
   type ReviewData,
 } from '@opentrace/components/chat';
 import type { PRDetail, PRFileDiff } from '../pr/types';
@@ -29,6 +30,11 @@ import type { PRClient } from '../pr/client';
 import type { GraphStore } from '../store/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { runPRReview } from '../pr/reviewRunner';
+import {
+  loadReview,
+  saveReview,
+  clearReview as clearSavedReview,
+} from '../pr/reviewStorage';
 import './PRDetailPanel.css';
 
 interface Props {
@@ -97,9 +103,38 @@ export default function PRDetailPanel({
   const [reviewSteps, setReviewSteps] = useState<string[]>([]);
   const [reviewResult, setReviewResult] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  // `hasToken` is set by the restore effect on mount / PR change; starting at
+  // `false` here would cause a one-render flash of the token form, so we
+  // derive it lazily from `prClient` at first read and keep it in sync below.
+  const [hasToken, setHasToken] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Mirror of `reviewResult` so async handlers always see the latest value
+  // even if a re-render happens between the click and the save.
+  const reviewResultRef = useRef<string | null>(null);
 
   const canReview = !!(llm && store);
+
+  // Keep the ref mirror of reviewResult in sync each render.
+  useEffect(() => {
+    reviewResultRef.current = reviewResult;
+  }, [reviewResult]);
+
+  // Restore any previously cached review for this PR
+  useEffect(() => {
+    setReviewSteps([]);
+    setReviewError(null);
+    if (!prClient) {
+      setReviewResult(null);
+      setReviewSubmitted(false);
+      setHasToken(false);
+      return;
+    }
+    const saved = loadReview(prClient.meta, pr.number);
+    setReviewResult(saved?.result ?? null);
+    setReviewSubmitted(!!saved?.submittedAt);
+    setHasToken(prClient.hasToken());
+  }, [prClient, pr.number]);
 
   // Check if this PR is already indexed in the graph
   useEffect(() => {
@@ -152,6 +187,8 @@ export default function PRDetailPanel({
     setReviewSteps([]);
     setReviewResult(null);
     setReviewError(null);
+    setReviewSubmitted(false);
+    if (prClient) clearSavedReview(prClient.meta, pr.number);
 
     const meta = prClient
       ? { owner: prClient.meta.owner, repo: prClient.meta.repo }
@@ -164,6 +201,9 @@ export default function PRDetailPanel({
       });
       if (!controller.signal.aborted) {
         setReviewResult(result);
+        if (prClient) {
+          saveReview(prClient.meta, pr.number, { result });
+        }
       }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -188,11 +228,35 @@ export default function PRDetailPanel({
       data.comments.filter((c) => c.path),
       pr.files, // pass diffs so line numbers can be validated against patches
     );
+    // Persist submitted state so refresh / re-open doesn't re-show the form.
+    setReviewSubmitted(true);
+    const latest = reviewResultRef.current;
+    if (latest) {
+      saveReview(prClient.meta, pr.number, {
+        result: latest,
+        submittedAt: Date.now(),
+      });
+    }
   };
 
   const handlePostAsComment = async (body: string) => {
     if (!prClient) throw new Error('No PR client configured');
     await prClient.postComment(pr.number, body);
+    setReviewSubmitted(true);
+    const latest = reviewResultRef.current;
+    if (latest) {
+      saveReview(prClient.meta, pr.number, {
+        result: latest,
+        submittedAt: Date.now(),
+      });
+    }
+  };
+
+  const handleProvideToken = (token: string) => {
+    if (!prClient) return;
+    localStorage.setItem(`ot_${prClient.meta.provider}_pat`, token);
+    prClient.setToken(token);
+    setHasToken(true);
   };
 
   const totalAdditions = pr.files.reduce((s, f) => s + f.additions, 0);
@@ -288,7 +352,8 @@ export default function PRDetailPanel({
           target="_blank"
           rel="noopener noreferrer"
         >
-          Open in {pr.url.includes('gitlab') ? 'GitLab' : 'GitHub'}
+          Open in{' '}
+          {prClient ? TOKEN_PROVIDER_LABEL[prClient.meta.provider] : 'GitHub'}
           <svg
             width="12"
             height="12"
@@ -373,6 +438,10 @@ export default function PRDetailPanel({
               review={parsedReview}
               onSubmit={prClient ? handleSubmitReview : undefined}
               onPostAsComment={prClient ? handlePostAsComment : undefined}
+              provider={prClient?.meta.provider}
+              onProvideToken={prClient ? handleProvideToken : undefined}
+              tokenMissing={!!prClient && !hasToken}
+              submitted={reviewSubmitted}
             />
           ) : (
             <ReviewResult
@@ -383,6 +452,10 @@ export default function PRDetailPanel({
               }}
               onSubmit={prClient ? handleSubmitReview : undefined}
               onPostAsComment={prClient ? handlePostAsComment : undefined}
+              provider={prClient?.meta.provider}
+              onProvideToken={prClient ? handleProvideToken : undefined}
+              tokenMissing={!!prClient && !hasToken}
+              submitted={reviewSubmitted}
             />
           )}
           {onChatWithPR && (

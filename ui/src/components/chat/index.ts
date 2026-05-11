@@ -51,7 +51,9 @@ export {
   default as ReviewResult,
   parseReviewResult,
   stripReviewBlock,
+  TOKEN_PROVIDER_LABEL,
   type ReviewData,
+  type TokenProvider,
 } from './results/ReviewResult';
 export {
   default as SuggestCommentResult,
