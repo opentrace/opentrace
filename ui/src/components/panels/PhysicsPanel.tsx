@@ -45,6 +45,16 @@ interface PhysicsPanelProps {
   onEdgesEnabledChange?: (enabled: boolean) => void;
   layoutMode?: 'spread' | 'compact';
   onLayoutModeChange?: (mode: 'spread' | 'compact') => void;
+  /** Whether community wayfinder labels are visible. Decoupled from
+   *  layoutMode (Fix #52) — toggling visibility no longer reflows the
+   *  graph, it just shows or hides the cluster labels in place. */
+  communityLabelsVisible?: boolean;
+  onCommunityLabelsVisibleChange?: (visible: boolean) => void;
+  /** Master switch for community processing. When false, Louvain is not
+   *  run and the community sub-controls (colors, labels, pull slider)
+   *  are visually disabled. Defaults to true for compatibility. */
+  communitiesEnabled?: boolean;
+  onCommunitiesEnabledChange?: (enabled: boolean) => void;
   // Compact-mode-specific
   radialStrength?: number;
   onRadialStrengthChange?: (value: number) => void;
@@ -88,8 +98,14 @@ export default function PhysicsPanel({
   onLinkDistanceChange,
   centerStrength = 0.3,
   onCenterStrengthChange,
+  edgesEnabled = true,
+  onEdgesEnabledChange,
   layoutMode = 'spread',
   onLayoutModeChange,
+  communityLabelsVisible = true,
+  onCommunityLabelsVisibleChange,
+  communitiesEnabled = true,
+  onCommunitiesEnabledChange,
   radialStrength = 8,
   onRadialStrengthChange,
   communityPull = 10,
@@ -187,19 +203,70 @@ export default function PhysicsPanel({
       <div className="physics-panel-scroll">
         <h4 className="physics-panel-title">Display</h4>
 
+        {/* Master switch — when off, Louvain doesn't run and the
+            community-derived controls below become no-ops. Mounted only
+            when the consumer supplied a handler so older callers keep
+            their existing controls. */}
+        {onCommunitiesEnabledChange && (
+          <div
+            className="physics-toggle-row"
+            onClick={() => onCommunitiesEnabledChange(!communitiesEnabled)}
+          >
+            <span className="physics-toggle-label">Communities</span>
+            <div
+              className={`physics-toggle-track${communitiesEnabled ? ' on' : ''}`}
+            >
+              <div className="physics-toggle-thumb" />
+            </div>
+          </div>
+        )}
+
         <div
           className="physics-toggle-row"
-          onClick={() =>
-            onColorModeChange(colorMode === 'type' ? 'community' : 'type')
+          onClick={() => {
+            if (!communitiesEnabled) return;
+            onColorModeChange(colorMode === 'type' ? 'community' : 'type');
+          }}
+          style={
+            communitiesEnabled
+              ? undefined
+              : { opacity: 0.4, cursor: 'not-allowed' }
           }
         >
           <span className="physics-toggle-label">Community colors</span>
           <div
-            className={`physics-toggle-track${colorMode === 'community' ? ' on' : ''}`}
+            className={`physics-toggle-track${colorMode === 'community' && communitiesEnabled ? ' on' : ''}`}
           >
             <div className="physics-toggle-thumb" />
           </div>
         </div>
+
+        {/* Community wayfinder labels — show/hide only, no layout
+            reflow (Fix #52). Adjacent to "Community colors" since
+            both are visual-only community controls. The compact ↔
+            spread layout toggle lives separately in the bottom
+            controls bar. */}
+        {pixiMode && onCommunityLabelsVisibleChange && (
+          <div
+            className="physics-toggle-row"
+            onClick={() => {
+              if (!communitiesEnabled) return;
+              onCommunityLabelsVisibleChange(!communityLabelsVisible);
+            }}
+            style={
+              communitiesEnabled
+                ? undefined
+                : { opacity: 0.4, cursor: 'not-allowed' }
+            }
+          >
+            <span className="physics-toggle-label">Community labels</span>
+            <div
+              className={`physics-toggle-track${communityLabelsVisible && communitiesEnabled ? ' on' : ''}`}
+            >
+              <div className="physics-toggle-thumb" />
+            </div>
+          </div>
+        )}
 
         <div
           className="physics-toggle-row"
@@ -211,22 +278,31 @@ export default function PhysicsPanel({
           </div>
         </div>
 
-        {/* Pixi: layout mode toggle (spread vs compact) */}
-        {pixiMode && onLayoutModeChange && (
+        {/* Pixi: edges visibility toggle (Fix #7). Hides the edge
+            layer at the renderer level — node positions are preserved
+            and edges reappear on re-enable without a relayout. Useful
+            on hub-heavy graphs where the edge draw dominates each
+            frame (>3000 edges around a single node) and the canvas
+            becomes unresponsive. */}
+        {pixiMode && onEdgesEnabledChange && (
           <div
             className="physics-toggle-row"
-            onClick={() =>
-              onLayoutModeChange(layoutMode === 'spread' ? 'compact' : 'spread')
-            }
+            onClick={() => onEdgesEnabledChange(!edgesEnabled)}
           >
-            <span className="physics-toggle-label">Community clusters</span>
+            <span className="physics-toggle-label">Show edges</span>
             <div
-              className={`physics-toggle-track${layoutMode === 'compact' ? ' on' : ''}`}
+              className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}
             >
               <div className="physics-toggle-thumb" />
             </div>
           </div>
         )}
+
+        {/* Layout mode is controlled via the bottom-right "Switch
+            to compact/spread layout" button (Fix #52) — keeping it
+            here as well used to share a single toggle with the
+            community-clusters label visibility, which conflated two
+            different concerns. */}
 
         {/* Pixi: 3D rotation toggle + controls */}
         {pixiMode && onMode3dChange && (
@@ -369,9 +445,18 @@ export default function PhysicsPanel({
           </div>
         )}
 
-        {/* Compact-only: community pull */}
+        {/* Compact-only: community pull. Disabled when communities are
+            off — the underlying force needs community assignments which
+            Louvain produces. */}
         {pixiMode && layoutMode === 'compact' && onCommunityPullChange && (
-          <div className="physics-slider-row">
+          <div
+            className="physics-slider-row"
+            style={
+              communitiesEnabled
+                ? undefined
+                : { opacity: 0.4, pointerEvents: 'none' }
+            }
+          >
             <div className="physics-slider-label">
               <span>Community pull</span>
               <span className="physics-slider-value">{communityPull}%</span>
@@ -381,6 +466,7 @@ export default function PhysicsPanel({
               min={0}
               max={50}
               value={communityPull}
+              disabled={!communitiesEnabled}
               onInput={(e) =>
                 onCommunityPullChange(Number(e.currentTarget.value))
               }

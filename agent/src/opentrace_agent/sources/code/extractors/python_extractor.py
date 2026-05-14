@@ -272,31 +272,48 @@ def _collect_call_args(call_node: tree_sitter.Node) -> list[str]:
     return args
 
 
+def _extract_call_from_node(node: tree_sitter.Node) -> CallRef | None:
+    """Extract a single CallRef if ``node`` is itself a Python call.
+
+    Returns None for non-call nodes. Lambda bodies (``lambda x: foo(x)``)
+    and similar single-expression contexts set the body directly to the
+    ``call`` node, so the recursive walk has to check ``node`` itself
+    before descending (Fix #17).
+    """
+    if node.type != "call":
+        return None
+    func_node = node.child_by_field_name("function")
+    call_args = _collect_call_args(node)
+    if func_node and func_node.type == "identifier":
+        return CallRef(name=func_node.text.decode(), args=call_args)
+    if func_node and func_node.type == "attribute":
+        obj_node = func_node.child_by_field_name("object")
+        attr_node = func_node.child_by_field_name("attribute")
+        if obj_node and attr_node:
+            return CallRef(
+                name=attr_node.text.decode(),
+                receiver=obj_node.text.decode(),
+                kind="attribute",
+                args=call_args,
+            )
+    return None
+
+
 def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     """Collect function/method call references from a tree-sitter subtree.
 
     Captures both bare identifier calls (``foo()``) and attribute calls
     (``self.foo()``, ``mod.func()``).
+
+    Mirrors the UI's ``parser/extractors/python.ts:collectCalls`` — we
+    test the current node before recursing into children so a
+    lambda-body call_expression isn't dropped at the boundary (Fix #17).
     """
     calls: list[CallRef] = []
+    own = _extract_call_from_node(node)
+    if own is not None:
+        calls.append(own)
     for child in node.children:
-        if child.type == "call":
-            func_node = child.child_by_field_name("function")
-            call_args = _collect_call_args(child)
-            if func_node and func_node.type == "identifier":
-                calls.append(CallRef(name=func_node.text.decode(), args=call_args))
-            elif func_node and func_node.type == "attribute":
-                obj_node = func_node.child_by_field_name("object")
-                attr_node = func_node.child_by_field_name("attribute")
-                if obj_node and attr_node:
-                    calls.append(
-                        CallRef(
-                            name=attr_node.text.decode(),
-                            receiver=obj_node.text.decode(),
-                            kind="attribute",
-                            args=call_args,
-                        )
-                    )
         calls.extend(_collect_calls(child))
     return calls
 

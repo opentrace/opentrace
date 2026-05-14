@@ -165,6 +165,20 @@
   border-color: var(--primary);
 }
 
+/* "Update" button highlight when the user has unapplied limit edits.
+ * The attribute is set by SettingsDrawer.tsx when the parsed input
+ * values differ from the values persisted in localStorage. */
+.settings-back-btn[data-changed='true'] {
+  border-color: color-mix(in oklch, var(--primary) 65%, transparent);
+  color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 18%, transparent);
+}
+
+.settings-back-btn[data-changed='true']:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
 .settings-section + .settings-section {
   margin-top: 28px;
 }

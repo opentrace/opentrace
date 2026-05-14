@@ -90,6 +90,14 @@ export const PROVIDER_IDS = Object.keys(PROVIDERS) as Array<
   keyof typeof PROVIDERS
 >;
 
+/**
+ * Fallback provider used when a persisted choice (`localStorage`) doesn't
+ * match any current `PROVIDERS` key — e.g. after a rename/removal across
+ * builds. Must always be a key of `PROVIDERS`. See `loadProviderChoice`
+ * in `chat/storage.ts` (Fix #3).
+ */
+export const DEFAULT_PROVIDER_ID = 'gemini';
+
 export interface ApiKeyResource {
   docs: string;
   dashboard: string;

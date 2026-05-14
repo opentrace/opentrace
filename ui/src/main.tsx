@@ -21,7 +21,23 @@ import { OpenTraceApp } from './OpenTraceApp';
 
 const root = document.getElementById('root')!;
 
-if (!window.crossOriginIsolated) {
+// Server mode (when `?server=<valid url>` is present) talks to an
+// `opentrace serve` agent over REST and never loads the in-browser WASM
+// store, so cross-origin isolation isn't required. Bypass the gate in
+// that case. Detection mirrors `OpenTraceApp.detectInitialMode()` —
+// invalid URLs fall through to the standard COI check.
+function isServerMode(): boolean {
+  try {
+    const serverUrl = new URLSearchParams(window.location.search).get('server');
+    if (!serverUrl) return false;
+    new URL(serverUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (!isServerMode() && !window.crossOriginIsolated) {
   root.innerHTML =
     '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;color:#888;text-align:center;padding:2rem">' +
     '<div>' +

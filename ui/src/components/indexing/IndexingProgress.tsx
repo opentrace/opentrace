@@ -160,6 +160,7 @@ export default function IndexingProgress({
   stages: stageConfig,
   icon,
   onClose,
+  onMinimize,
   title,
   message,
 }: IndexingProgressProps) {
@@ -293,6 +294,17 @@ export default function IndexingProgress({
         <div className="indexing-header">
           {icon && <span className="indexing-header-icon">{icon}</span>}
           <h2>{title ?? 'Indexing Repository'}</h2>
+          {onMinimize && (
+            <button
+              type="button"
+              className="indexing-header-minimize"
+              onClick={onMinimize}
+              title="Minimize — indexing continues in the background"
+              aria-label="Minimize"
+            >
+              &minus;
+            </button>
+          )}
         </div>
         <div className="indexing-progress">
           <MultiStageProgress stages={state.stages} stageConfig={stageConfig} />

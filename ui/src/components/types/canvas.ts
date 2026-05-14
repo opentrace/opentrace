@@ -65,6 +65,12 @@ export interface GraphCanvasProps {
   communityData?: CommunityData;
   /** When false, all node labels are hidden. */
   labelsVisible?: boolean;
+  /** When false, the edge layer is not drawn (Fix #7). Reapplied on
+   *  prop change so the value survives graph refreshes; the imperative
+   *  `setEdgesEnabled` handle remains available for one-off toggles. */
+  edgesEnabled?: boolean;
+  /** Whether community wayfinder labels are shown (Fix #52). */
+  communityLabelsVisible?: boolean;
   /** Animation settings (glow, pulse, particles, smooth layout). */
   animationSettings?: AnimationSettings;
   /** Called when a node is clicked. */
@@ -77,6 +83,15 @@ export interface GraphCanvasProps {
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
   /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
   layoutMode?: 'spread' | 'compact';
+  /** Sprite size response to zoom — `appliedSize = baseSize * (1/scale)^exp`.
+   *  Re-applied on every prop change so the persisted user setting takes
+   *  effect immediately on mount (Fix #22). Without this the renderer
+   *  sat at its hard-coded default of 0.8 even when the slider showed a
+   *  different saved value, and only a manual touch would resync them. */
+  zoomSizeExponent?: number;
+  /** Label scale multiplier. Persisted setting; re-applied like
+   *  `zoomSizeExponent` so the renderer matches the slider on mount. */
+  labelScale?: number;
   /** Enable pseudo-3D rotation mode. */
   mode3d?: boolean;
   /** Called when auto-rotation state changes (e.g. paused on node click). */
@@ -117,6 +132,9 @@ export interface GraphCanvasHandle {
   isPhysicsRunning: () => boolean;
   setEdgesEnabled?: (enabled: boolean) => void;
   setShowLabels?: (show: boolean) => void;
+  /** Show/hide the community wayfinder labels independently of
+   *  layout mode (Fix #52). */
+  setShowCommunityLabels?: (show: boolean) => void;
   setChargeStrength?: (strength: number) => void;
   setLinkDistance?: (distance: number) => void;
   setCenterStrength?: (strength: number) => void;

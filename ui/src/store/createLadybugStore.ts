@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 
-import { LadybugGraphStore } from './ladybugStore';
+import { WorkerGraphStore } from './workerStore';
 
 // Module-level singleton — survives React StrictMode double-invocation.
-// Without this, StrictMode creates two LadybugGraphStore instances (two workers,
-// two independent in-memory databases), so imports go to one and reads to the other.
-let singletonStore: LadybugGraphStore | null = null;
+// Without this, StrictMode creates two stores (two workers, two independent
+// in-memory databases), so imports go to one and reads to the other.
+let singletonStore: WorkerGraphStore | null = null;
 
-/** Returns a singleton LadybugGraphStore backed by the in-browser WASM engine. */
-export function createLadybugStore(): LadybugGraphStore {
+/** Returns a singleton store backed by the in-browser WASM engine.
+ *  The LadybugGraphStore class is hosted inside a Web Worker; this returns
+ *  a thin main-thread proxy implementing the same GraphStore interface. */
+export function createLadybugStore(): WorkerGraphStore {
   if (!singletonStore) {
-    singletonStore = new LadybugGraphStore();
+    singletonStore = new WorkerGraphStore();
   }
   return singletonStore;
 }

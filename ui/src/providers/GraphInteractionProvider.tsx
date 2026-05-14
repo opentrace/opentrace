@@ -113,6 +113,11 @@ export interface GraphInteractionState {
   /** Focus all nodes in a community (also clears selection). */
   focusCommunity: (communityId: number) => void;
 
+  /** Master switch — when false, Louvain is not run and all
+   *  community-derived features (colors, labels, gravity) are dormant. */
+  communitiesEnabled: boolean;
+  setCommunitiesEnabled: Dispatch<SetStateAction<boolean>>;
+
   // Derived (memoized) — computed once here, read by both GraphViewer and SidePanel
   availableNodeTypes: AvailableType[];
   availableLinkTypes: AvailableType[];
@@ -196,6 +201,45 @@ function InternalGraphInteractionProvider({
   const [focusedCommunityNodes, setFocusedCommunityNodes] =
     useState<Set<string>>(EMPTY_NODE_SET);
 
+  // Master switch for community processing. Persisted alongside the other
+  // physics/display settings under the same `graph-settings` key — reading
+  // localStorage inline here keeps this state self-contained without
+  // pulling in the useGraphViewer-internal `readPersistedSettings` helper.
+  const [communitiesEnabled, setCommunitiesEnabledState] = useState<boolean>(
+    () => {
+      try {
+        const stored = JSON.parse(
+          localStorage.getItem('graph-settings') ?? '{}',
+        ) as Record<string, unknown>;
+        const val = stored.communitiesEnabled;
+        return typeof val === 'boolean' ? val : true;
+      } catch {
+        return true;
+      }
+    },
+  );
+  const setCommunitiesEnabled: Dispatch<SetStateAction<boolean>> = useCallback(
+    (action) => {
+      setCommunitiesEnabledState((prev) => {
+        const next =
+          typeof action === 'function'
+            ? (action as (p: boolean) => boolean)(prev)
+            : action;
+        try {
+          const stored = JSON.parse(
+            localStorage.getItem('graph-settings') ?? '{}',
+          ) as Record<string, unknown>;
+          stored.communitiesEnabled = next;
+          localStorage.setItem('graph-settings', JSON.stringify(stored));
+        } catch {
+          // localStorage unavailable — ignore, the in-memory state still updates.
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
   // ─── Derived: available types ────────────────────────────────────────
   const availableNodeTypes = useMemo<AvailableType[]>(() => {
     const counts: Record<string, number> = {};
@@ -264,6 +308,7 @@ function InternalGraphInteractionProvider({
     graphData.nodes,
     graphData.links,
     DEFAULT_LAYOUT_CONFIG,
+    communitiesEnabled,
   );
 
   const availableCommunities = useMemo<AvailableCommunity[]>(() => {
@@ -436,6 +481,8 @@ function InternalGraphInteractionProvider({
       focusedCommunityNodes,
       setFocusedCommunityNodes,
       focusCommunity,
+      communitiesEnabled,
+      setCommunitiesEnabled,
       availableNodeTypes,
       availableLinkTypes,
       availableSubTypes,
@@ -463,6 +510,8 @@ function InternalGraphInteractionProvider({
       hops,
       focusedCommunityNodes,
       focusCommunity,
+      communitiesEnabled,
+      setCommunitiesEnabled,
       availableNodeTypes,
       availableLinkTypes,
       availableSubTypes,

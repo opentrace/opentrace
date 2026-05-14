@@ -34,13 +34,67 @@ import type {
   TraverseResult,
 } from './types';
 
+/** Shape returned by GET /api/index-progress/{jobId} (Fix #6). */
+export interface IndexProgress {
+  jobId: string;
+  /** Coarse phase string; matches the agent's serve.py vocabulary —
+   *  `queued | initializing | deleting | fetching | parsing | done | error`. */
+  phase: string;
+  /** Raw pipeline phase from the agent's PipelineEvent.Phase enum
+   *  (`scanning | processing | resolving | submitting`). Used by the UI
+   *  to choose a more granular stage when available, falling back to
+   *  the coarse `phase` above. */
+  phaseRaw?: string | null;
+  message: string;
+  done: boolean;
+  error: string | null;
+  /** Running per-stage counter (file index within the current stage). */
+  currentItems?: number;
+  /** Running per-stage total (e.g. total files in the stage). */
+  totalItems?: number;
+  /** File the agent is currently working on, when applicable. */
+  currentFile?: string | null;
+  /** Cumulative count of nodes that have been or will be created so
+   *  far. Updated as pipeline stages emit their cumulative results. */
+  nodesCreated?: number;
+  /** Cumulative count of relationships in the same vein. */
+  relationshipsCreated?: number;
+  result: {
+    elapsedSeconds: number;
+    repoId: string;
+    totalNodes: number;
+    totalEdges: number;
+  } | null;
+  startedAt: number;
+}
+
 export class ServerGraphStore implements GraphStore {
   private readonly baseUrl: string;
   private _hasData = false;
 
+  // Visualization caps threaded into /api/graph as ?maxNodes=&maxEdges=.
+  // Defaults match LadybugStore and SettingsDrawer's DEFAULT_MAX_*. The
+  // agent caps the response server-side (see serve.py:fetch_graph).
+  private maxVisNodes = 20000;
+  private maxVisEdges = 20000;
+
   constructor(baseUrl: string) {
     // Strip trailing slash for consistent URL building
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+
+    // Apply persisted visualization limits so the first fetch uses them
+    // without waiting for the user to open Settings and click Update.
+    // Mirrors LadybugStore's behavior in ensureReady().
+    try {
+      const savedNodes = localStorage.getItem('ot:maxVisNodes');
+      const savedEdges = localStorage.getItem('ot:maxVisEdges');
+      const n = savedNodes != null ? Number(savedNodes) : NaN;
+      const e = savedEdges != null ? Number(savedEdges) : NaN;
+      if (Number.isFinite(n) && n > 0) this.maxVisNodes = n;
+      if (Number.isFinite(e) && e > 0) this.maxVisEdges = e;
+    } catch {
+      /* localStorage unavailable (SSR, restricted browser) — keep defaults */
+    }
   }
 
   // ---- Helpers --------------------------------------------------------
@@ -93,10 +147,68 @@ export class ServerGraphStore implements GraphStore {
     this._hasData = stats.total_nodes > 0;
   }
 
+  /**
+   * Update visualization node/edge caps. Stored locally and threaded into
+   * subsequent `fetchGraph` calls as `?maxNodes=&maxEdges=` query params.
+   * Persistence to localStorage is the caller's responsibility — see
+   * SettingsDrawer's `applyLimits()`.
+   */
+  async setLimits(maxNodes: number, maxEdges: number): Promise<void> {
+    this.maxVisNodes = maxNodes;
+    this.maxVisEdges = maxEdges;
+  }
+
+  /**
+   * Ask the agent to index a remote repository server-side. The agent
+   * handles cloning/extracting; the browser does no tree-sitter work in
+   * this path. Used by server-mode "Add Repo" (browserJobService routes
+   * to this method instead of running the in-browser pipeline).
+   *
+   * Returns the job id; poll {@link getIndexProgress} until `done`.
+   */
+  async indexUrl(body: {
+    repoUrl: string;
+    repoId?: string;
+    token?: string;
+    ref?: string;
+    zipball?: boolean;
+    reindex?: boolean;
+  }): Promise<{ jobId: string; status: string }> {
+    return this.post<{ jobId: string; status: string }>('/api/index-url', body);
+  }
+
+  /** Read the current state of a server-side index job. The UI polls
+   *  this every ~1.5s during a server-mode index (Fix #6). */
+  async getIndexProgress(jobId: string): Promise<IndexProgress> {
+    return this.get<IndexProgress>(
+      `/api/index-progress/${encodeURIComponent(jobId)}`,
+    );
+  }
+
+  /** Return the currently-running index job, or null. Used by the
+   *  SPA on mount to resume polling after a page reload (Fix #14).
+   *  Returns null if the agent doesn't implement the endpoint
+   *  (older agents that pre-date Fix #14). */
+  async getActiveIndexJob(): Promise<IndexProgress | null> {
+    try {
+      return await this.get<IndexProgress | null>('/api/index-active');
+    } catch (err) {
+      // 404 / 405 from an older agent: just behave as if there's no
+      // active job. The user will only miss "resume polling on
+      // reload" — everything else still works.
+      if (err instanceof Error && /404|405/.test(err.message)) return null;
+      throw err;
+    }
+  }
+
   async fetchGraph(query?: string, hops?: number): Promise<GraphData> {
     const params: Record<string, string> = {};
     if (query) params.query = query;
     if (hops != null) params.hops = String(hops);
+    // Always thread the caps. Agent honors them in /api/graph; older
+    // agents that don't recognize the params simply ignore them.
+    params.maxNodes = String(this.maxVisNodes);
+    params.maxEdges = String(this.maxVisEdges);
 
     const raw = await this.get<{
       nodes: NodeResult[];
@@ -234,6 +346,13 @@ export class ServerGraphStore implements GraphStore {
   }
 
   async clearGraph(): Promise<void> {
-    // No-op — the server manages the database lifecycle.
+    // Fix #11: ask the agent to wipe its database. Previously this
+    // was a no-op so the Settings "Clear Database" button looked
+    // like it worked but the next `/api/graph` call still returned
+    // every node. The agent endpoint refuses while an index job is
+    // in flight; we surface that as a thrown error so the
+    // SettingsDrawer's existing catch shows it inline.
+    await this.post('/api/clear', {});
+    this._hasData = false;
   }
 }

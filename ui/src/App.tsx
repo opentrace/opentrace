@@ -27,6 +27,7 @@ import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
 import { useStore } from './store';
+import { ServerGraphStore } from './store/serverStore';
 import { GraphDataProvider, useGraph } from './providers/GraphDataProvider';
 import { GraphInteractionProvider } from './providers/GraphInteractionProvider';
 import './App.css';
@@ -61,10 +62,35 @@ function AppInner({
   const {
     state: jobState,
     start: startJob,
+    attach: attachJob,
     cancel: cancelJob,
     minimize: minimizeJob,
     reset: resetJob,
   } = useJobStream(jobService);
+
+  // Fix #14 — after a page reload, if the agent is still running an
+  // index job, attach to it so the user sees the progress indicator
+  // resume instead of landing on the empty "Add Repository" state.
+  // Server-mode only; ladybug-backed sessions don't have an agent.
+  useEffect(() => {
+    if (!(store instanceof ServerGraphStore)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const active = await store.getActiveIndexJob();
+        if (cancelled || !active || active.done) return;
+        attachJob(active.jobId);
+      } catch (err) {
+        console.warn('[App] failed to probe for active index job', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only run on mount; attachJob/store identities are stable for a
+    // mounted session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const graphViewerRef = useRef<GraphViewerHandle>(null);
   const [chatHighlightNodes, setChatHighlightNodes] = useState<Set<string>>(
@@ -85,7 +111,23 @@ function AppInner({
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
+  // `true` while the IndexingProgress modal should be on top; `false`
+  // when the user has minimized it (JobMinimizedBar takes over).
+  // Default `false` preserves the existing enriching/done flow (bar
+  // takes over automatically after persist). For the new server-mode
+  // running case (Fix #13) we re-expand below via an effect whenever
+  // the job transitions idle → running so the modal surfaces by
+  // default for new submissions.
   const [jobExpanded, setJobExpanded] = useState(false);
+  /** Previous job status, used by the effect below to detect
+   *  idle → running transitions for the auto-expand. */
+  const prevJobStatus = useRef<typeof jobState.status>(jobState.status);
+  useEffect(() => {
+    if (prevJobStatus.current === 'idle' && jobState.status === 'running') {
+      setJobExpanded(true);
+    }
+    prevJobStatus.current = jobState.status;
+  }, [jobState.status]);
   const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
     null,
   );

@@ -203,10 +203,26 @@ export function usePixiLayout(
       workerRef.current !== null;
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
 
-    // ── Same nodes (metadata change like communityData) — skip ──
-    // Also guard on workerRef: if the worker was killed (e.g. by React
-    // StrictMode's cleanup cycle), fall through to full-init to recreate it.
-    if (isSameNodes && workerRef.current) return;
+    // ── Same nodes (metadata change like communityData) — push updated
+    //    community map to the worker, then skip the rebuild ──
+    // Without this, when Louvain finishes asynchronously the worker is
+    // never told about the new community assignments — `buildSimulation`
+    // already ran with an empty `{}`, so the custom community-gravity
+    // force was never installed and the slider does nothing (Fix #20
+    // follow-up).
+    //
+    // Guard on workerRef: if the worker was killed (e.g. by React
+    // StrictMode's cleanup cycle), fall through to full-init to recreate
+    // it.
+    if (isSameNodes && workerRef.current) {
+      if (communityData.assignments) {
+        workerRef.current.postMessage({
+          type: 'set-communities',
+          communities: communityData.assignments,
+        } satisfies WorkerInMessage);
+      }
+      return;
+    }
 
     // ── Incremental: send add-nodes to existing worker ──
     if (isIncremental) {

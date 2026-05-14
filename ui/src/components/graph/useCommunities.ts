@@ -44,6 +44,7 @@ export function useCommunities(
   allNodes: GraphNode[],
   allLinks: GraphLink[],
   layoutConfig: LayoutConfig,
+  enabled: boolean = true,
 ): CommunityData {
   const [communityData, setCommunityData] =
     useState<CommunityData>(EMPTY_COMMUNITY);
@@ -61,6 +62,18 @@ export function useCommunities(
   }, []);
 
   useEffect(() => {
+    // Master switch: when communities are disabled, never spawn the
+    // Louvain worker and keep assignments empty. Downstream features
+    // (colors, labels, community-gravity force, 3D depth) already treat
+    // empty assignments as "no communities" — flipping this off cleanly
+    // returns to a community-agnostic view with no wasted compute.
+    if (!enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when disabled
+      setCommunityData(EMPTY_COMMUNITY);
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      return;
+    }
     if (allNodes.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when graph clears
       setCommunityData(EMPTY_COMMUNITY);
@@ -129,7 +142,7 @@ export function useCommunities(
       worker.terminate();
       if (workerRef.current === worker) workerRef.current = null;
     };
-  }, [allNodes, allLinks, layoutConfig]);
+  }, [allNodes, allLinks, layoutConfig, enabled]);
 
   return communityData;
 }

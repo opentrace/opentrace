@@ -118,6 +118,21 @@ export interface PersistedSettings {
   setRepulsion: Dispatch<SetStateAction<number>>;
   labelsVisible: boolean;
   setLabelsVisible: Dispatch<SetStateAction<boolean>>;
+  /** Whether edges are drawn on the canvas. Persisted. Fix #7 —
+   *  hides the edge layer at the renderer level without removing
+   *  edges from the graph data, so node positions are preserved and
+   *  edges reappear on re-enable without a relayout. */
+  edgesVisible: boolean;
+  setEdgesVisible: Dispatch<SetStateAction<boolean>>;
+  /** Whether community wayfinder labels are shown. Decoupled from
+   *  layout mode in Fix #52 — toggling no longer reflows the graph. */
+  communityLabelsVisible: boolean;
+  setCommunityLabelsVisible: Dispatch<SetStateAction<boolean>>;
+  /** Master switch — when false, Louvain is not run and community
+   *  colors/labels/gravity are all dormant. The sub-toggles are
+   *  visually disabled in the panel when this is off. */
+  communitiesEnabled: boolean;
+  setCommunitiesEnabled: Dispatch<SetStateAction<boolean>>;
   zoomOnSelect: boolean;
   setZoomOnSelect: Dispatch<SetStateAction<boolean>>;
   pixiLinkDist: number;
@@ -148,6 +163,9 @@ export interface PersistedSettings {
   setRendererAutoRotate: Dispatch<SetStateAction<boolean | null>>;
   physicsRunning: boolean;
   setPhysicsRunning: Dispatch<SetStateAction<boolean>>;
+  /** Reset every persisted panel setting back to its default and
+   *  clear localStorage. Used by the "Reset graph" toolbar button. */
+  resetSettings: () => void;
 }
 
 export interface LegendItem {
@@ -218,6 +236,31 @@ function readPersistedSettings(): Record<string, unknown> {
   }
 }
 
+/** Single source of truth for the default values of every persisted
+ *  panel setting. Used to initialize state and to power the "Reset
+ *  graph" button — keep these in sync with the literal defaults that
+ *  the renderer / physics layout ships with. */
+export const GRAPH_SETTING_DEFAULTS = {
+  zoomOnSelect: false,
+  repulsion: 120,
+  labelsVisible: true,
+  edgesVisible: true,
+  communityLabelsVisible: true,
+  pixiLinkDist: 200,
+  pixiCenter: 0.3,
+  pixiZoomExponent: 0.25,
+  layoutMode: 'compact' as 'spread' | 'compact',
+  compactRadial: 8,
+  compactCommunity: 10,
+  compactCentering: 5,
+  compactRadius: 32,
+  mode3d: true,
+  mode3dSpeed: 30,
+  mode3dTilt: 35,
+  labelScale: 100,
+  communitiesEnabled: true,
+} as const;
+
 /**
  * Orchestration hook for a graph viewer shell. Owns the state, effects,
  * and memoized computations that every consumer of `<PixiGraphCanvas>` ends
@@ -262,6 +305,8 @@ export function useGraphViewer(
     setHops,
     focusedCommunityNodes,
     setFocusedCommunityNodes,
+    communitiesEnabled,
+    setCommunitiesEnabled,
     communityData,
     filteredGraphData,
     highlights,
@@ -352,43 +397,59 @@ export function useGraphViewer(
   const stored = useMemo(readPersistedSettings, []);
   const ps = <T>(key: string, def: T): T => (stored[key] as T) ?? def;
 
+  const D = GRAPH_SETTING_DEFAULTS;
+
   const [zoomOnSelect, setZoomOnSelect] = useState(() =>
-    ps('zoomOnSelect', true),
+    ps('zoomOnSelect', D.zoomOnSelect),
   );
-  const [repulsion, setRepulsion] = useState(() => ps('repulsion', 120));
+  const [repulsion, setRepulsion] = useState(() => ps('repulsion', D.repulsion));
   const [labelsVisible, setLabelsVisible] = useState(() =>
-    ps('labelsVisible', true),
+    ps('labelsVisible', D.labelsVisible),
+  );
+  const [edgesVisible, setEdgesVisible] = useState(() =>
+    ps('edgesVisible', D.edgesVisible),
+  );
+  const [communityLabelsVisible, setCommunityLabelsVisible] = useState(() =>
+    ps('communityLabelsVisible', D.communityLabelsVisible),
   );
   const [physicsRunning, setPhysicsRunning] = useState(false);
 
   const [pixiLinkDist, setPixiLinkDist] = useState(() =>
-    ps('pixiLinkDist', 200),
+    ps('pixiLinkDist', D.pixiLinkDist),
   );
-  const [pixiCenter, setPixiCenter] = useState(() => ps('pixiCenter', 0.3));
+  const [pixiCenter, setPixiCenter] = useState(() =>
+    ps('pixiCenter', D.pixiCenter),
+  );
   const [pixiZoomExponent, setPixiZoomExponent] = useState(() =>
-    ps('pixiZoomExponent', 0.8),
+    ps('pixiZoomExponent', D.pixiZoomExponent),
   );
 
   const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>(() =>
-    ps('layoutMode', 'spread'),
+    ps('layoutMode', D.layoutMode),
   );
   const [compactRadial, setCompactRadial] = useState(() =>
-    ps('compactRadial', 8),
+    ps('compactRadial', D.compactRadial),
   );
   const [compactCommunity, setCompactCommunity] = useState(() =>
-    ps('compactCommunity', 10),
+    ps('compactCommunity', D.compactCommunity),
   );
   const [compactCentering, setCompactCentering] = useState(() =>
-    ps('compactCentering', 5),
+    ps('compactCentering', D.compactCentering),
   );
   const [compactRadius, setCompactRadius] = useState(() =>
-    ps('compactRadius', 32),
+    ps('compactRadius', D.compactRadius),
   );
 
-  const [mode3d, setMode3d] = useState(() => ps('mode3d', true));
-  const [mode3dSpeed, setMode3dSpeed] = useState(() => ps('mode3dSpeed', 30));
-  const [mode3dTilt, setMode3dTilt] = useState(() => ps('mode3dTilt', 35));
-  const [labelScale, setLabelScale] = useState(() => ps('labelScale', 100));
+  const [mode3d, setMode3d] = useState(() => ps('mode3d', D.mode3d));
+  const [mode3dSpeed, setMode3dSpeed] = useState(() =>
+    ps('mode3dSpeed', D.mode3dSpeed),
+  );
+  const [mode3dTilt, setMode3dTilt] = useState(() =>
+    ps('mode3dTilt', D.mode3dTilt),
+  );
+  const [labelScale, setLabelScale] = useState(() =>
+    ps('labelScale', D.labelScale),
+  );
 
   const [rendererAutoRotate, setRendererAutoRotate] = useState<boolean | null>(
     null,
@@ -398,6 +459,8 @@ export function useGraphViewer(
     const settings = {
       repulsion,
       labelsVisible,
+      edgesVisible,
+      communityLabelsVisible,
       zoomOnSelect,
       pixiLinkDist,
       pixiCenter,
@@ -416,6 +479,8 @@ export function useGraphViewer(
   }, [
     repulsion,
     labelsVisible,
+    edgesVisible,
+    communityLabelsVisible,
     zoomOnSelect,
     pixiLinkDist,
     pixiCenter,
@@ -461,6 +526,39 @@ export function useGraphViewer(
     lastSearchQuery,
     loadGraph,
   ]);
+
+  /** Reset every persisted panel setting back to its default value and
+   *  clear the localStorage entry. Used by the "Reset graph" button.
+   *  Caller is responsible for pushing values into the renderer for
+   *  imperative settings (repulsion, link distance, compact forces,
+   *  etc.) — those don't flow as React props. */
+  const resetSettings = useCallback(() => {
+    const D = GRAPH_SETTING_DEFAULTS;
+    setZoomOnSelect(D.zoomOnSelect);
+    setRepulsion(D.repulsion);
+    setLabelsVisible(D.labelsVisible);
+    setEdgesVisible(D.edgesVisible);
+    setCommunityLabelsVisible(D.communityLabelsVisible);
+    setPixiLinkDist(D.pixiLinkDist);
+    setPixiCenter(D.pixiCenter);
+    setPixiZoomExponent(D.pixiZoomExponent);
+    setLayoutMode(D.layoutMode);
+    setCompactRadial(D.compactRadial);
+    setCompactCommunity(D.compactCommunity);
+    setCompactCentering(D.compactCentering);
+    setCompactRadius(D.compactRadius);
+    setMode3d(D.mode3d);
+    setMode3dSpeed(D.mode3dSpeed);
+    setMode3dTilt(D.mode3dTilt);
+    setLabelScale(D.labelScale);
+    setCommunitiesEnabled(D.communitiesEnabled);
+    setRendererAutoRotate(null);
+    try {
+      localStorage.removeItem('graph-settings');
+    } catch {
+      // ignore
+    }
+  }, [setCommunitiesEnabled]);
 
   const applyFilter = useCallback(
     (filter: typeof activeFilter) => {
@@ -834,6 +932,12 @@ export function useGraphViewer(
       setRepulsion,
       labelsVisible,
       setLabelsVisible,
+      edgesVisible,
+      setEdgesVisible,
+      communityLabelsVisible,
+      setCommunityLabelsVisible,
+      communitiesEnabled,
+      setCommunitiesEnabled,
       zoomOnSelect,
       setZoomOnSelect,
       pixiLinkDist,
@@ -864,10 +968,15 @@ export function useGraphViewer(
       setRendererAutoRotate,
       physicsRunning,
       setPhysicsRunning,
+      resetSettings,
     }),
     [
       repulsion,
       labelsVisible,
+      edgesVisible,
+      communityLabelsVisible,
+      communitiesEnabled,
+      setCommunitiesEnabled,
       zoomOnSelect,
       pixiLinkDist,
       pixiCenter,
@@ -883,6 +992,7 @@ export function useGraphViewer(
       labelScale,
       rendererAutoRotate,
       physicsRunning,
+      resetSettings,
     ],
   );
 

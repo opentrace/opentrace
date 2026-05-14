@@ -28,8 +28,15 @@ import type { LoaderInput } from '../runner/browser';
 import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
 import type { JobEvent } from '../gen/opentrace/v1/agent_service';
 import type { GraphStore } from '../store/types';
+import { ServerGraphStore } from '../store/serverStore';
 import { EventChannel } from './eventChannel';
-import type { JobMessage, JobService, JobStream } from './types';
+import type {
+  JobMessage,
+  JobService,
+  JobStream,
+  IndexRepoMessage,
+  ReindexRepoMessage,
+} from './types';
 import {
   initParsers,
   executeScanning,
@@ -142,6 +149,23 @@ const CONCURRENT_PHASE_MAP: Record<string, JobPhase> = {
   embed: JobPhase.JOB_PHASE_EMBEDDING,
 };
 
+/** Translate raw agent error messages into UI-friendly ones (Fix #12).
+ *  Matches the agent's `_acquire_index_lock` text and the friendly
+ *  409 message added in the same fix; anything else falls through
+ *  unchanged. */
+function friendlyServerError(message: string): string {
+  if (
+    /Another index is (already running|in progress)/i.test(message) ||
+    /index\.db\.indexlock/i.test(message)
+  ) {
+    return (
+      'Another index is already running on the agent. Wait for it to ' +
+      'finish before starting a new one.'
+    );
+  }
+  return message;
+}
+
 /** Build a default empty JobEvent shell (proto fields are always present). */
 function emptyEvent(): JobEvent {
   return {
@@ -164,6 +188,18 @@ export class BrowserJobService implements JobService {
   }
 
   async startJob(message: JobMessage): Promise<JobStream> {
+    // Server-mode indexing (Fix #6): when the store is backed by an
+    // `opentrace serve` agent, ask the agent to do the work instead of
+    // running tree-sitter in the browser. The agent owns its own DB
+    // and the browser pipeline's writes would no-op against the
+    // read-only ServerGraphStore.
+    if (
+      (message.type === 'index-repo' || message.type === 'reindex-repo') &&
+      this.store instanceof ServerGraphStore
+    ) {
+      return this.startServerIndexUrlJob(message);
+    }
+
     let input: LoaderInput;
     const isReindex = message.type === 'reindex-repo';
     if (message.type === 'index-repo' || message.type === 'reindex-repo') {
@@ -902,5 +938,234 @@ export class BrowserJobService implements JobService {
         channel.close();
       },
     };
+  }
+
+  /**
+   * Server-mode indexing job (Fix #6). POSTs the URL to the agent's
+   * `/api/index-url`, then polls `/api/index-progress/{jobId}` every
+   * ~1.5s, translating the agent's phase strings to `JobEvent`s for
+   * the existing `IndexingProgress` UI.
+   *
+   * Cancellation here is one-sided: the UI stops polling, but the
+   * agent's background thread continues to completion. A future
+   * `/api/index-url/{jobId}/cancel` would be needed to actually
+   * abort the agent-side work.
+   */
+  private async startServerIndexUrlJob(
+    message: IndexRepoMessage | ReindexRepoMessage,
+  ): Promise<JobStream> {
+    const channel = new EventChannel<JobEvent>();
+    const cancelRef = { cancelled: false };
+    const store = this.store as ServerGraphStore;
+
+    const run = async () => {
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+        phase: JobPhase.JOB_PHASE_INITIALIZING,
+        message: 'Submitting indexing job to agent…',
+      });
+
+      let jobId: string;
+      try {
+        const submitResult = await store.indexUrl({
+          repoUrl: message.repoUrl,
+          repoId: message.repoId,
+          token: message.token,
+          ref: message.ref,
+          zipball: message.zipball,
+          reindex: message.type === 'reindex-repo',
+        });
+        jobId = submitResult.jobId;
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        const friendly = friendlyServerError(raw);
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+          message: friendly,
+          errors: [raw],
+        });
+        return;
+      }
+
+      await this.pollServerIndexJob(store, jobId, channel, cancelRef);
+    };
+
+    run().finally(() => channel.close());
+
+    return {
+      [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
+      cancel() {
+        cancelRef.cancelled = true;
+        channel.close();
+      },
+    };
+  }
+
+  /**
+   * Attach to an already-running server-mode index job (Fix #14).
+   * Used after a page reload to resume the progress indicator for
+   * work the agent started before the SPA was navigated away —
+   * without this, a long-running index becomes invisible the moment
+   * the user refreshes the page.
+   */
+  async attachToServerIndexJob(jobId: string): Promise<JobStream> {
+    if (!(this.store instanceof ServerGraphStore)) {
+      throw new Error(
+        'attachToServerIndexJob requires a ServerGraphStore-backed session',
+      );
+    }
+    const store = this.store;
+    const channel = new EventChannel<JobEvent>();
+    const cancelRef = { cancelled: false };
+
+    channel.push({
+      ...emptyEvent(),
+      kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+      phase: JobPhase.JOB_PHASE_INITIALIZING,
+      message: 'Resuming indexing job…',
+    });
+
+    this.pollServerIndexJob(store, jobId, channel, cancelRef).finally(() =>
+      channel.close(),
+    );
+
+    return {
+      [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
+      cancel() {
+        cancelRef.cancelled = true;
+        channel.close();
+      },
+    };
+  }
+
+  /** Shared polling loop used by both `startServerIndexUrlJob` and
+   *  `attachToServerIndexJob`. Translates the agent's progress
+   *  states into `JobEvent`s and pushes them onto `channel` until
+   *  the job is done, errors, or the caller cancels. */
+  private async pollServerIndexJob(
+    store: ServerGraphStore,
+    jobId: string,
+    channel: EventChannel<JobEvent>,
+    cancelRef: { cancelled: boolean },
+  ): Promise<void> {
+    const phaseMap: Record<string, JobPhase> = {
+      queued: JobPhase.JOB_PHASE_INITIALIZING,
+      initializing: JobPhase.JOB_PHASE_INITIALIZING,
+      deleting: JobPhase.JOB_PHASE_INITIALIZING,
+      fetching: JobPhase.JOB_PHASE_FETCHING,
+      parsing: JobPhase.JOB_PHASE_PARSING,
+      done: JobPhase.JOB_PHASE_DONE,
+      error: JobPhase.JOB_PHASE_UNSPECIFIED,
+    };
+    const rawPhaseMap: Record<string, JobPhase> = {
+      scanning: JobPhase.JOB_PHASE_FETCHING,
+      processing: JobPhase.JOB_PHASE_PARSING,
+      resolving: JobPhase.JOB_PHASE_RESOLVING,
+      submitting: JobPhase.JOB_PHASE_SUBMITTING,
+    };
+    let lastPhaseString = '';
+    while (!cancelRef.cancelled) {
+      let state;
+      try {
+        state = await store.getIndexProgress(jobId);
+      } catch (err) {
+        // Transient agent unreachability — treat as a polling
+        // glitch unless multiple consecutive failures pile up.
+        // For v1 we just surface and abort; the UI can resubmit.
+        const msg = err instanceof Error ? err.message : String(err);
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+          message: `Lost contact with agent: ${msg}`,
+          errors: [msg],
+        });
+        return;
+      }
+
+      if (cancelRef.cancelled) return;
+
+      // Prefer the agent's fine-grained phase when it's known; fall
+      // back to the coarse phase mapping otherwise.
+      const protoPhase =
+        (state.phaseRaw && rawPhaseMap[state.phaseRaw]) ||
+        phaseMap[state.phase] ||
+        JobPhase.JOB_PHASE_UNSPECIFIED;
+
+      // Use the combined "coarse:raw" key to detect transitions so a
+      // change from `parsing/processing` → `parsing/resolving` still
+      // triggers a STAGE_COMPLETE (without spamming one per poll).
+      const phaseKey = `${state.phase}:${state.phaseRaw ?? ''}`;
+      if (lastPhaseString && lastPhaseString !== phaseKey) {
+        const [prevCoarse, prevRaw] = lastPhaseString.split(':');
+        const prevProto =
+          (prevRaw && rawPhaseMap[prevRaw]) ||
+          phaseMap[prevCoarse] ||
+          JobPhase.JOB_PHASE_UNSPECIFIED;
+        if (prevProto !== JobPhase.JOB_PHASE_UNSPECIFIED) {
+          channel.push({
+            ...emptyEvent(),
+            kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+            phase: prevProto,
+            message: `Completed ${prevRaw || prevCoarse}`,
+          });
+        }
+      }
+      lastPhaseString = phaseKey;
+
+      if (state.error) {
+        const friendly = friendlyServerError(state.error);
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_ERROR,
+          message: friendly,
+          errors: [state.error],
+        });
+        return;
+      }
+
+      if (state.done && state.result) {
+        // Graph is ready — UI can refresh from /api/graph.
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_GRAPH_READY,
+          result: {
+            nodesCreated: state.result.totalNodes,
+            relationshipsCreated: state.result.totalEdges,
+            reposProcessed: 1,
+          },
+        });
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_DONE,
+          phase: JobPhase.JOB_PHASE_DONE,
+          result: {
+            nodesCreated: state.result.totalNodes,
+            relationshipsCreated: state.result.totalEdges,
+            reposProcessed: 1,
+          },
+        });
+        return;
+      }
+
+      // Surface the running counts so IndexingProgress can fill in
+      // the "X nodes / Y edges" tiles instead of showing zeros.
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+        phase: protoPhase,
+        message: state.message,
+        detail: {
+          current: state.currentItems ?? 0,
+          total: state.totalItems ?? 0,
+          fileName: state.currentFile ?? '',
+          nodesCreated: state.nodesCreated ?? 0,
+          relationshipsCreated: state.relationshipsCreated ?? 0,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
 }

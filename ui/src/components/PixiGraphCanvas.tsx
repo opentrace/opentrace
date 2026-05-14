@@ -79,7 +79,11 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onStageClick,
       onOptimizeStatus,
       labelsVisible: labelsVisibleProp = true,
+      edgesEnabled: edgesEnabledProp = true,
+      communityLabelsVisible: communityLabelsVisibleProp = true,
       layoutMode: layoutModeProp = 'spread',
+      zoomSizeExponent: zoomSizeExponentProp,
+      labelScale: labelScaleProp,
       mode3d: mode3dProp = false,
       on3DAutoRotateChange,
       className,
@@ -346,6 +350,67 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rendererRef.current.setShowAllLabels(labelsVisibleProp);
     }, [dataVersion, labelsVisibleProp]);
 
+    // ── Apply edges visibility (Fix #7) ───────────────────────────────
+    // Re-runs on every graph refresh so the persisted preference
+    // survives data reloads — the renderer's own edgesEnabled default
+    // (true) would otherwise reset it.
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setEdgesEnabled(edgesEnabledProp);
+    }, [dataVersion, edgesEnabledProp]);
+
+    // ── Apply community label visibility (Fix #52) ────────────────────
+    // Independent from `labelsVisible` — node labels and community
+    // wayfinder labels are two separate features with their own toggles.
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setShowCommunityLabels(communityLabelsVisibleProp);
+    }, [dataVersion, communityLabelsVisibleProp]);
+
+    // ── Apply zoom/label scaling on mount (Fix #22) ───────────────────
+    // The renderer constructs with hard-coded defaults (zoomSizeExponent
+    // 0.8, labelScale 1.0). Persisted values from `useGraphViewer`
+    // weren't pushed in until the user touched the slider — the panel
+    // would display "32%" while the renderer was actually at 80%.
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      if (zoomSizeExponentProp !== undefined) {
+        rendererRef.current.setZoomSizeExponent(zoomSizeExponentProp);
+      }
+    }, [dataVersion, zoomSizeExponentProp]);
+
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      if (labelScaleProp !== undefined) {
+        rendererRef.current.setLabelScale(labelScaleProp);
+      }
+    }, [dataVersion, labelScaleProp]);
+
+    // ── Community wayfinder labels in compact mode (Fix #32) ────────
+    // Push the layoutMode + community data into the renderer so it can
+    // draw community names at cluster centroids when the user has the
+    // "Community clusters" toggle on. Two separate effects because the
+    // mode prop changes on user toggle while the community data
+    // changes after Louvain finishes (different rhythms).
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setLayoutMode(layoutModeProp);
+    }, [dataVersion, layoutModeProp]);
+
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setCommunityData(
+        communityData.assignments,
+        communityData.names,
+        communityData.colorMap,
+      );
+    }, [
+      dataVersion,
+      communityData.assignments,
+      communityData.names,
+      communityData.colorMap,
+    ]);
+
     // ── Apply 3D mode when data is ready or prop changes ──────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
@@ -356,6 +421,68 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         rendererRef.current.set3DMode(false);
       }
     }, [dataVersion, mode3dProp, communityData.assignments]);
+
+    // Fix #8 + Fix #9 — react to layoutMode changes.
+    //
+    // Without intervention, switching compact ↔ spread does two bad
+    // things at once:
+    //   • In 3D, mode3dRadius stays stuck at the previous layout's
+    //     extent because `recomputeMode3DExtents` only grows, leaving
+    //     a vertical cylinder until the user manually toggles 3D.
+    //   • The worker streams positions every ~66 ms; each tick calls
+    //     `scheduleAutoFit()` which animates the camera over 200 ms.
+    //     New fits cancel in-progress animations — the user sees
+    //     jitter and unwanted zoom changes during the transition.
+    //
+    // Both fix together: suspend auto-fit immediately, then ~3 s
+    // later (long enough for typical compact pack-in / spread
+    // expansion) reset 3D state and re-enable + retrigger auto-fit.
+    //
+    // The deferred work reads `communityData.assignments` via a ref
+    // so that a Louvain recompute during the 3 s window doesn't
+    // re-fire this effect (Fix #19). Listing it in the dep array
+    // caused the cleanup to clear the timer; the rerun early-returned
+    // because layoutMode hadn't changed, so the deferred `set3DMode`
+    // / `scheduleAutoFit` was silently dropped — symptom: switching
+    // community clusters on/off looked like it did nothing in 3D mode
+    // and produced a missed auto-fit in 2D.
+    const previousLayoutMode = useRef(layoutModeProp);
+    const communityAssignmentsRef = useRef(communityData.assignments);
+    useEffect(() => {
+      communityAssignmentsRef.current = communityData.assignments;
+    });
+    useEffect(() => {
+      if (previousLayoutMode.current === layoutModeProp) return;
+      previousLayoutMode.current = layoutModeProp;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      // Suspend auto-fit briefly so the follower doesn't chase the
+      // worker through the first chaotic frames of reheat (Fix #41
+      // / #42 follow-up). The gentle alpha(0.5) reheat from Fix #31
+      // means there's no longer a violent "explode" to fight; we
+      // just keep the camera steady for ~3 s while physics finds the
+      // new equilibrium, then let the auto-fit follower frame the
+      // result. Releasing camera ownership ensures the refit
+      // actually runs — the follower no-ops when
+      // `hasUserMovedCamera` is true.
+      renderer.setAutoFitSuspended(true);
+      const handle = setTimeout(() => {
+        const r = rendererRef.current;
+        if (!r) return;
+        if (mode3dProp) {
+          // Reassigns nodeDepthT to current community assignments and
+          // recomputes mode3dRadius from settled positions.
+          r.set3DMode(true, communityAssignmentsRef.current);
+        }
+        r.setHasUserMovedCamera(false);
+        r.setAutoFitSuspended(false);
+        r.scheduleAutoFit();
+      }, 3000);
+      return () => {
+        clearTimeout(handle);
+        rendererRef.current?.setAutoFitSuspended(false);
+      };
+    }, [layoutModeProp, mode3dProp]);
 
     // ── Apply highlights ────────────────────────────────────────────────
     useEffect(() => {
@@ -479,6 +606,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         },
         setShowLabels: (show: boolean) => {
           rendererRef.current?.setShowAllLabels(show);
+        },
+        setShowCommunityLabels: (show: boolean) => {
+          rendererRef.current?.setShowCommunityLabels(show);
         },
         setChargeStrength,
         setLinkDistance,

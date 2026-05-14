@@ -326,28 +326,47 @@ def _extract_jsdoc(node: tree_sitter.Node) -> str | None:
     return None
 
 
+def _extract_call_from_node(node: tree_sitter.Node) -> CallRef | None:
+    """Extract a single CallRef if ``node`` is itself a TS call_expression.
+
+    Returns None for non-call nodes. Pulled out so callers can check the
+    top-level node before recursing — concise arrow bodies (``x => foo(x)``)
+    set ``body`` directly to the call_expression, so an iterate-children
+    only walk would miss the outermost call (Fix #17).
+    """
+    if node.type != "call_expression":
+        return None
+    func_node = node.child_by_field_name("function")
+    if func_node and func_node.type == "identifier":
+        return CallRef(name=func_node.text.decode())
+    if func_node and func_node.type == "member_expression":
+        obj_node = func_node.child_by_field_name("object")
+        prop_node = func_node.child_by_field_name("property")
+        if obj_node and prop_node:
+            return CallRef(
+                name=prop_node.text.decode(),
+                receiver=obj_node.text.decode(),
+                kind="attribute",
+            )
+    return None
+
+
 def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     """Collect function/method call references from a tree-sitter subtree.
 
     Captures both bare identifier calls (``foo()``) and member expression calls
     (``this.foo()``, ``console.log()``).
+
+    Mirrors the UI's ``parser/extractors/typescript.ts:collectCalls`` —
+    we test the **current** node before recursing into its children.
+    Without that, concise arrow bodies and parenthesized-expression
+    statements have their outermost call dropped because we never look
+    at the node itself (Fix #17).
     """
     calls: list[CallRef] = []
+    own = _extract_call_from_node(node)
+    if own is not None:
+        calls.append(own)
     for child in node.children:
-        if child.type == "call_expression":
-            func_node = child.child_by_field_name("function")
-            if func_node and func_node.type == "identifier":
-                calls.append(CallRef(name=func_node.text.decode()))
-            elif func_node and func_node.type == "member_expression":
-                obj_node = func_node.child_by_field_name("object")
-                prop_node = func_node.child_by_field_name("property")
-                if obj_node and prop_node:
-                    calls.append(
-                        CallRef(
-                            name=prop_node.text.decode(),
-                            receiver=obj_node.text.decode(),
-                            kind="attribute",
-                        )
-                    )
         calls.extend(_collect_calls(child))
     return calls
