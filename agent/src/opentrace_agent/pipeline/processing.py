@@ -172,7 +172,16 @@ def processing(
                 if id_imports:
                     registries.import_registry[file_id] = id_imports
 
-            # External imports → Package nodes + IMPORTS rels
+            # External imports → Package nodes + IMPORTS rels.  The
+            # package node MUST be emitted in the same event as its
+            # IMPORTS edge — saving processes nodes-then-rels per
+            # event, so co-emitting guarantees the endpoint exists by
+            # the time add_relationship's MATCH runs.  Previously the
+            # package nodes were collected in ``package_nodes`` and
+            # bulk-emitted only after every file was processed, which
+            # caused MATCH to fail for the IMPORTS edge and the edge
+            # to be silently lost (~300 IMPORTS edges per real-world
+            # index).
             for pkg_name, pkg_id in import_result.external.items():
                 if pkg_id not in package_nodes:
                     registry = pkg_id.split(":")[1]
@@ -180,12 +189,16 @@ def processing(
                     source_url = package_source_url(registry, pkg_name)
                     if source_url:
                         pkg_props["sourceUri"] = source_url
-                    package_nodes[pkg_id] = GraphNode(
+                    pkg_node = GraphNode(
                         id=pkg_id,
                         type="Dependency",
                         name=pkg_name,
                         properties=pkg_props,
                     )
+                    package_nodes[pkg_id] = pkg_node
+                    # Co-emit the node with the very first IMPORTS edge
+                    # that references it.
+                    file_nodes.append(pkg_node)
                 file_rels.append(
                     GraphRelationship(
                         id=f"{file_id}->IMPORTS->{pkg_id}",
@@ -230,17 +243,13 @@ def processing(
             relationships=file_rels if file_rels else None,
         )
 
-    # Emit deduplicated Package nodes
+    # Bump the running total to account for the package nodes that
+    # were co-emitted with their first IMPORTS edge above.  We don't
+    # re-emit them here — that would double-count and rely on the
+    # store's MERGE for correctness.  Tracking is done after the loop
+    # so the per-file STAGE_PROGRESS messages stay accurate.
     if package_nodes:
-        pkg_node_list = list(package_nodes.values())
-        total_nodes += len(pkg_node_list)
-        yield PipelineEvent(
-            kind=EventKind.STAGE_PROGRESS,
-            phase=Phase.PROCESSING,
-            message=f"Emitting {len(pkg_node_list)} package nodes",
-            detail=ProgressDetail(current=total, total=total),
-            nodes=pkg_node_list,
-        )
+        total_nodes += len(package_nodes)
 
     yield PipelineEvent(
         kind=EventKind.STAGE_STOP,

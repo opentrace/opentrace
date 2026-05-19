@@ -23,7 +23,7 @@ Task format (JSON):
         "id": "find_database_class",
         "category": "symbol_discovery",
         "description": "Search should find the Database class",
-        "tool": "search_graph",
+        "tool": "keyword_search",
         "tool_args": {"query": "Database", "nodeTypes": "Class"},
         "assertions": [
             {"type": "min_count", "value": 1},

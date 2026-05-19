@@ -56,6 +56,8 @@ def indexed_go_store(tmp_path_factory):
     for _event in collect_pipeline(inp, store=adapter)[0]:
         pass
     adapter.flush()
+    # source_read/source_grep need repoPath in metadata to find files on disk.
+    store.save_metadata({"repoId": "test/go-project", "repoPath": str(GO_PROJECT)})
 
     yield store
     store.close()
@@ -72,6 +74,7 @@ def indexed_python_store(tmp_path_factory):
     for _event in collect_pipeline(inp, store=adapter)[0]:
         pass
     adapter.flush()
+    store.save_metadata({"repoId": "test/py-project", "repoPath": str(PYTHON_PROJECT)})
 
     yield store
     store.close()
@@ -183,43 +186,87 @@ class TestMCPGetStats:
 
 
 # ---------------------------------------------------------------------------
-# MCP tool: search_graph
+# MCP tool: keyword_search (formerly the flat-list version of search_graph)
 # ---------------------------------------------------------------------------
 
 
-class TestMCPSearchGraph:
+class TestMCPFindNodesViaKeywordSearch:
     def test_search_by_name(self, indexed_go_store):
-        result = _call_tool(indexed_go_store, "search_graph", query="main")
+        result = _call_tool(indexed_go_store, "keyword_search", query="main")
         assert isinstance(result, list)
         assert len(result) > 0
-        # Each result should have id, type, name
         for node in result:
             assert "id" in node
             assert "type" in node
             assert "name" in node
+            # keyword_search tags every result for caller verification
+            assert "_match_field" in node
 
     def test_search_with_type_filter(self, indexed_go_store):
-        result = _call_tool(indexed_go_store, "search_graph", query="main", nodeTypes="File")
+        result = _call_tool(indexed_go_store, "keyword_search", query="main", nodeTypes="File")
         assert isinstance(result, list)
         for node in result:
             assert node["type"] == "File"
 
     def test_search_no_results(self, indexed_go_store):
-        result = _call_tool(indexed_go_store, "search_graph", query="zzz_nonexistent_zzz")
+        result = _call_tool(indexed_go_store, "keyword_search", query="zzz_nonexistent_zzz")
         assert isinstance(result, list)
         assert len(result) == 0
 
     def test_search_respects_limit(self, indexed_go_store):
-        result = _call_tool(indexed_go_store, "search_graph", query="e", limit=2)
+        result = _call_tool(indexed_go_store, "keyword_search", query="e", limit=2)
         assert len(result) <= 2
 
     def test_search_properties_are_valid(self, indexed_go_store):
         """Properties should be dicts or None, never unparsed strings."""
-        result = _call_tool(indexed_go_store, "search_graph", query="db")
+        result = _call_tool(indexed_go_store, "keyword_search", query="db")
         for node in result:
             props = node.get("properties")
             if props is not None:
                 assert isinstance(props, dict), f"Properties should be dict, got {type(props)}: {props}"
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: search_graph (subgraph — the *real* search_graph)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSearchGraph:
+    """search_graph now returns a SUBGRAPH around matches — both nodes
+    and the relationships between them — not a flat list."""
+
+    def test_returns_nodes_and_relationships(self, indexed_go_store):
+        result = _call_tool(indexed_go_store, "search_graph", query="main", hops=1)
+        assert isinstance(result, dict)
+        assert "nodes" in result and isinstance(result["nodes"], list)
+        assert "relationships" in result and isinstance(result["relationships"], list)
+        assert "summary" in result
+        assert result["summary"]["node_count"] == len(result["nodes"])
+        assert result["summary"]["relationship_count"] == len(result["relationships"])
+
+    def test_zero_hops_returns_only_seed_matches(self, indexed_go_store):
+        """hops=0 should still return the matched seed nodes, no expansion."""
+        zero = _call_tool(indexed_go_store, "search_graph", query="main", hops=0)
+        assert isinstance(zero, dict)
+        assert len(zero["nodes"]) > 0
+
+    def test_hops_expands_neighborhood(self, indexed_go_store):
+        """Higher hops should yield ≥ as many nodes as a smaller hop count."""
+        one = _call_tool(indexed_go_store, "search_graph", query="main", hops=1)
+        two = _call_tool(indexed_go_store, "search_graph", query="main", hops=2)
+        assert len(two["nodes"]) >= len(one["nodes"])
+
+    def test_no_match_returns_empty_subgraph(self, indexed_go_store):
+        result = _call_tool(indexed_go_store, "search_graph", query="zzz_no_such_thing")
+        assert isinstance(result, dict)
+        assert result["nodes"] == []
+        assert result["relationships"] == []
+
+    def test_hops_capped_at_5(self, indexed_python_store):
+        """Excessive hops should be silently capped, not error."""
+        result = _call_tool(indexed_python_store, "search_graph", query="Database", hops=99)
+        assert isinstance(result, dict)
+        assert result["summary"]["hops"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -408,9 +455,9 @@ class TestMCPRoundTrip:
     """Verify tools work together: search → get_node → traverse."""
 
     def test_search_then_get_then_traverse(self, indexed_go_store):
-        """Full round-trip: search for a node, get its details, traverse from it."""
-        # Search
-        search_results = _call_tool(indexed_go_store, "search_graph", query="handler")
+        """Full round-trip: find a node, get its details, traverse from it."""
+        # Find
+        search_results = _call_tool(indexed_go_store, "keyword_search", query="handler")
         assert len(search_results) > 0
 
         # Get details of first result
@@ -429,8 +476,8 @@ class TestMCPRoundTrip:
         assert isinstance(traversal, list)
 
     def test_python_class_methods_reachable(self, indexed_python_store):
-        """Search for Database class, verify its methods are reachable via traversal."""
-        classes = _call_tool(indexed_python_store, "search_graph", query="Database", nodeTypes="Class")
+        """Find Database class, verify its methods are reachable via traversal."""
+        classes = _call_tool(indexed_python_store, "keyword_search", query="Database", nodeTypes="Class")
         if not classes:
             pytest.skip("Database class not found")
 
@@ -441,6 +488,358 @@ class TestMCPRoundTrip:
         # Neighbors should include methods or the file it's defined in
         neighbor_types = {n["relationship"]["type"] for n in details["neighbors"]}
         assert len(neighbor_types) > 0
+
+    def test_search_graph_returns_subgraph_with_neighbors(self, indexed_python_store):
+        """The new search_graph should include both nodes and the
+        relationships connecting them — proves the subgraph wiring."""
+        result = _call_tool(indexed_python_store, "search_graph", query="Database", hops=1)
+        assert isinstance(result, dict)
+        assert len(result["nodes"]) > 0
+        # With hops=1, we should pull in at least one related node, so
+        # there should be at least one relationship in the subgraph.
+        assert len(result["relationships"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: keyword_search (renamed from semantic_search — never was)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPKeywordSearch:
+    def test_returns_results(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "keyword_search", query="database")
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+    def test_respects_node_types(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "keyword_search", query="user", nodeTypes="Function")
+        assert isinstance(result, list)
+        for node in result:
+            assert node["type"] == "Function"
+
+    def test_respects_limit(self, indexed_go_store):
+        result = _call_tool(indexed_go_store, "keyword_search", query="handler", limit=2)
+        assert len(result) <= 2
+
+    def test_natural_language_query_finds_results(self, indexed_python_store):
+        """Multi-word natural-language query should still hit nodes via tokenization.
+
+        The python fixture has a Database class. A phrase like
+        ``"functions that connect to the database"`` previously returned []
+        because FTS treated it as a phrase; the tokenized version drops
+        stopwords + filler ("functions", "that", "to", "the"), then
+        searches per-keyword and merges.  ``database`` should still match.
+        """
+        result = _call_tool(
+            indexed_python_store,
+            "keyword_search",
+            query="functions that connect to the database",
+        )
+        assert isinstance(result, list)
+        assert len(result) > 0, "tokenized query should have matched on 'database'"
+
+    def test_multi_keyword_ranks_by_match_count(self, indexed_python_store):
+        """Nodes hit by more keywords should sort first."""
+        result = _call_tool(
+            indexed_python_store,
+            "keyword_search",
+            query="user database insert",
+        )
+        assert isinstance(result, list)
+        if len(result) >= 2:
+            assert "_match_count" in result[0]
+            scores = [n.get("_match_count", 0) for n in result]
+            assert scores == sorted(scores, reverse=True)
+
+    def test_pure_stopword_query_falls_through(self, indexed_python_store):
+        """A query with no extractable keywords should still call into
+        the underlying search rather than returning [] outright."""
+        result = _call_tool(indexed_python_store, "keyword_search", query="the of a")
+        assert isinstance(result, list)
+
+    def test_results_are_tagged_with_match_field(self, indexed_python_store):
+        """Every result should carry a _match_field annotation so the LLM
+        knows whether it matched on name (high confidence) vs docs only."""
+        result = _call_tool(indexed_python_store, "keyword_search", query="database")
+        assert isinstance(result, list)
+        assert len(result) > 0
+        for node in result:
+            assert "_match_field" in node
+            assert node["_match_field"] in {
+                "name",
+                "signature",
+                "path",
+                "summary",
+                "docs",
+                "unknown",
+            }
+            # docs-only matches must carry a verify hint
+            if node["_match_field"] == "docs":
+                assert "_verify" in node
+                assert "stale" in node["_verify"].lower() or "verify" in node["_verify"].lower()
+
+
+class TestExtractQueryKeywords:
+    """Pure-function tests for the tokenizer (no DB needed)."""
+
+    def test_drops_stopwords(self):
+        from opentrace_agent.cli.mcp_server import _extract_query_keywords
+
+        assert _extract_query_keywords("the function that handles auth") == ["auth"]
+
+    def test_drops_filler_nouns(self):
+        from opentrace_agent.cli.mcp_server import _extract_query_keywords
+
+        # "function", "code", "thing" are all dropped as filler
+        assert _extract_query_keywords("function code that handles auth") == ["auth"]
+
+    def test_preserves_order_and_dedupes(self):
+        from opentrace_agent.cli.mcp_server import _extract_query_keywords
+
+        assert _extract_query_keywords("database user database query") == [
+            "database",
+            "user",
+            "query",
+        ]
+
+    def test_drops_short_tokens(self):
+        from opentrace_agent.cli.mcp_server import _extract_query_keywords
+
+        # "go" is 2 chars → dropped.  "rust" stays.
+        assert _extract_query_keywords("go rust py") == ["rust"]
+
+    def test_empty_query(self):
+        from opentrace_agent.cli.mcp_server import _extract_query_keywords
+
+        assert _extract_query_keywords("") == []
+        assert _extract_query_keywords("the of a is") == []
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: source_read
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSourceRead:
+    def test_read_by_node_id(self, indexed_python_store):
+        files = _call_tool(indexed_python_store, "list_nodes", type="File", limit=10)
+        target = next((f for f in files if f["name"] == "main.py"), files[0])
+        result = create_mcp_server(indexed_python_store)._tool_manager._tools["source_read"].fn(nodeId=target["id"])
+        assert "[Could not" not in result
+        # The fixture file has at least one Python statement.
+        assert "def " in result or "from " in result or "import " in result
+
+    def test_read_by_path(self, indexed_python_store):
+        result = create_mcp_server(indexed_python_store)._tool_manager._tools["source_read"].fn(path="main.py")
+        assert "[Could not" not in result
+
+    def test_missing_path_returns_error(self, indexed_python_store):
+        result = (
+            create_mcp_server(indexed_python_store)
+            ._tool_manager._tools["source_read"]
+            .fn(path="this/file/does/not/exist.py")
+        )
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+    def test_no_args_returns_error(self, indexed_python_store):
+        result = create_mcp_server(indexed_python_store)._tool_manager._tools["source_read"].fn()
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+    def test_line_slice(self, indexed_python_store):
+        result = (
+            create_mcp_server(indexed_python_store)
+            ._tool_manager._tools["source_read"]
+            .fn(path="main.py", startLine=1, endLine=3)
+        )
+        # Numbered output prefixes lines with "<n>\t"
+        assert "1\t" in result
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: source_grep
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSourceGrep:
+    def test_finds_matches(self, indexed_python_store):
+        import shutil as _sh
+
+        if not _sh.which("rg"):
+            pytest.skip("ripgrep not installed")
+        result = create_mcp_server(indexed_python_store)._tool_manager._tools["source_grep"].fn(pattern="def ")
+        # Tagged output: "[repoId] file.py:N:line"
+        assert "[test/py-project]" in result
+
+    def test_no_matches(self, indexed_python_store):
+        import shutil as _sh
+
+        if not _sh.which("rg"):
+            pytest.skip("ripgrep not installed")
+        result = (
+            create_mcp_server(indexed_python_store)
+            ._tool_manager._tools["source_grep"]
+            .fn(pattern="this_string_should_not_appear_anywhere_zzz_xyz")
+        )
+        parsed = json.loads(result)
+        assert parsed.get("matches") == []
+
+    def test_repo_filter(self, indexed_python_store):
+        import shutil as _sh
+
+        if not _sh.which("rg"):
+            pytest.skip("ripgrep not installed")
+        result = (
+            create_mcp_server(indexed_python_store)
+            ._tool_manager._tools["source_grep"]
+            .fn(pattern="def ", repo="nonexistent-repo")
+        )
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: find_usages
+# ---------------------------------------------------------------------------
+
+
+class TestMCPFindUsages:
+    def test_finds_target(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "find_usages", symbol="Database")
+        assert "target" in result
+        assert "dependents" in result
+        assert isinstance(result["dependents"], list)
+
+    def test_unknown_symbol(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "find_usages", symbol="zzz_no_such_symbol_zzz")
+        assert "error" in result
+
+    def test_caps_depth(self, indexed_go_store):
+        result = _call_tool(indexed_go_store, "find_usages", symbol="main", depth=99)
+        # depth is capped at 5; tool should still succeed (no crash)
+        assert "target" in result or "error" in result
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: impact_analysis
+# ---------------------------------------------------------------------------
+
+
+class TestMCPImpactAnalysis:
+    def test_finds_file(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "impact_analysis", target="db.py")
+        assert "file" in result
+        assert "symbols" in result
+        assert "total_dependents" in result
+
+    def test_unknown_file(self, indexed_python_store):
+        result = _call_tool(indexed_python_store, "impact_analysis", target="ghost_file.xyz")
+        assert "error" in result
+
+    def test_line_range_filter(self, indexed_python_store):
+        # Wide range — should still return file/symbols structure
+        result = _call_tool(indexed_python_store, "impact_analysis", target="db.py", lines="1-9999")
+        assert "file" in result
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: repo_index
+# ---------------------------------------------------------------------------
+
+
+class TestMCPRepoIndex:
+    def test_invalid_path_returns_error(self, indexed_python_store):
+        result = (
+            create_mcp_server(indexed_python_store)
+            ._tool_manager._tools["repo_index"]
+            .fn(path_or_url="/this/path/does/not/exist/zzz_xyz")
+        )
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+    def test_file_path_rejected(self, indexed_python_store, tmp_path):
+        f = tmp_path / "not-a-dir.txt"
+        f.write_text("hi")
+        result = create_mcp_server(indexed_python_store)._tool_manager._tools["repo_index"].fn(path_or_url=str(f))
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+    def test_url_routes_to_fetch_and_index(self, indexed_python_store, monkeypatch):
+        """An https:// URL should invoke `opentraceai fetch-and-index`."""
+        import subprocess
+
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+
+            class _Result:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+
+            return _Result()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        create_mcp_server(indexed_python_store, db_path="/tmp/idx.db")._tool_manager._tools["repo_index"].fn(
+            path_or_url="https://github.com/foo/bar", repoId="bar", ref="main"
+        )
+
+        cmd = captured["cmd"]
+        assert cmd[:2] == ["opentraceai", "fetch-and-index"]
+        assert "https://github.com/foo/bar" in cmd
+        assert "--repo-id" in cmd and "bar" in cmd
+        assert "--ref" in cmd and "main" in cmd
+        assert "--db" in cmd and "/tmp/idx.db" in cmd
+        # Critically: never pass --token through MCP — auth comes from the
+        # CLI's own resolver so the LLM can't see the token.
+        assert "--token" not in cmd
+
+    def test_git_ssh_url_also_routes_to_fetch_and_index(self, indexed_python_store, monkeypatch):
+        import subprocess
+
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+
+            class _Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return _Result()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        create_mcp_server(indexed_python_store)._tool_manager._tools["repo_index"].fn(
+            path_or_url="git@github.com:foo/bar.git"
+        )
+        assert captured["cmd"][:2] == ["opentraceai", "fetch-and-index"]
+
+    def test_local_path_still_uses_index(self, indexed_python_store, tmp_path, monkeypatch):
+        import subprocess
+
+        captured: dict = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+
+            class _Result:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return _Result()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        local = tmp_path / "src"
+        local.mkdir()
+
+        create_mcp_server(indexed_python_store)._tool_manager._tools["repo_index"].fn(path_or_url=str(local))
+        assert captured["cmd"][:2] == ["opentraceai", "index"]
 
 
 # ---------------------------------------------------------------------------
