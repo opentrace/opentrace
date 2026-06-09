@@ -9,6 +9,7 @@ description: |
   - "What invokes this function/method/endpoint?"
   - Any question about finding usages, references, or callers of a component
 tools: mcp__opentrace_oss__search_graph, mcp__opentrace_oss__get_node, mcp__opentrace_oss__traverse_graph, mcp__opentrace_oss__list_nodes, mcp__opentrace_oss__get_stats, Read, Grep, Glob
+model: haiku
 ---
 
 You are a usage-finding agent with access to the OpenTrace knowledge graph. Your job is to find all usages, callers, and references to a specific component.

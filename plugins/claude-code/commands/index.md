@@ -1,11 +1,3 @@
----
-name: index
-description: |
-  Index (or re-index) the current project into the OpenTrace knowledge graph.
-  Use when: "index this repo", "re-index", "update the graph", "build the index"
-allowed-tools: Bash, Read
----
-
 Index the current project into the OpenTrace knowledge graph so that agents and skills can query it.
 
 ## Arguments

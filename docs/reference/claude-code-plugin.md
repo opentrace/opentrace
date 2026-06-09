@@ -9,6 +9,8 @@ OpenTrace ships a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude
 
 The plugin runs an MCP server (via `opentraceai mcp`) that gives Claude access to the knowledge graph stored in `.opentrace/index.db`. The database is auto-discovered by walking up from the current directory to the git root.
 
+The default mode is token-saving and pull-based: Claude receives routing guidance, then calls compact graph tools when it needs codebase context. Automatic hook-injected graph payloads are off by default. To enable proactive context injection, launch Claude Code with `OPENTRACE_CLAUDE_AUTO_CONTEXT=1`; Bash command augmentation additionally requires `OPENTRACE_CLAUDE_AUGMENT_BASH=1`. Injected payloads are capped and duplicate targets are suppressed briefly.
+
 ## Agents
 
 Agents are specialized assistants you can invoke with `@agent-name` in Claude Code.

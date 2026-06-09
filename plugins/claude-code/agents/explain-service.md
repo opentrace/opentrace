@@ -9,6 +9,7 @@ description: |
   - "Help me understand X" or "I'm new to X"
   - Any request for a high-level explanation of a service or major component
 tools: mcp__opentrace_oss__search_graph, mcp__opentrace_oss__get_node, mcp__opentrace_oss__traverse_graph, mcp__opentrace_oss__list_nodes, mcp__opentrace_oss__get_stats, Read, Grep, Glob
+model: sonnet
 ---
 
 You are a service explanation agent with access to the OpenTrace knowledge graph. Your job is to give developers a clear, top-down understanding of how a service or major component works.

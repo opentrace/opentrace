@@ -12,6 +12,7 @@ jobs:
       agent: ${{ steps.filter.outputs.agent }}
       ui: ${{ steps.filter.outputs.ui }}
       opencode: ${{ steps.filter.outputs.opencode }}
+      claude_code: ${{ steps.filter.outputs.claude_code }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
@@ -25,6 +26,10 @@ jobs:
               - 'ui/**'
             opencode:
               - 'plugins/opencode/**'
+            claude_code:
+              - 'plugins/claude-code/**'
+              - '.claude-plugin/marketplace.json'
+              - 'scripts/check_versions.py'
 
   agent:
     name: Agent (Python)
@@ -120,6 +125,44 @@ jobs:
 
       - name: Build
         run: bun run build
+
+  claude-code:
+    name: Claude Code Plugin
+    needs: changes
+    if: needs.changes.outputs.claude_code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest PyYAML
+
+      - name: Version sync (plugin / marketplace / agent)
+        run: python3 scripts/check_versions.py
+
+      - name: Byte-compile hook scripts
+        run: python3 -m py_compile plugins/claude-code/scripts/*.py
+
+      - name: Validate hooks.json
+        run: python3 -c "import json; json.load(open('plugins/claude-code/hooks/hooks.json'))"
+
+      - name: Validate plugin.json
+        run: python3 -c "import json; json.load(open('plugins/claude-code/.claude-plugin/plugin.json'))"
+
+      - name: Validate marketplace.json
+        run: python3 -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
+
+      - name: Run plugin tests
+        run: pytest plugins/claude-code/tests/ -v
+
+      - name: Smoke-test statusline.sh
+        run: |
+          echo '{"cwd":"'"$PWD"'"}' | bash plugins/claude-code/statusline.sh
+          echo
 
   e2e:
     name: Playwright Smoke

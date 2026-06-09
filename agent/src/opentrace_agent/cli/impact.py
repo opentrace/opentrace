@@ -282,7 +282,22 @@ def _run(
 
     symbols = _find_defined_symbols(store, file_node, line_ranges)
 
-    if not symbols:
+    # Cross-file imports are modeled at File granularity in the graph
+    # (other.py --IMPORTS--> this.py), so they don't show up in the
+    # per-symbol traversal below. Collect them here and report
+    # separately so callers see "N other files import this file".
+    file_importers: list[dict[str, Any]] = []
+    try:
+        for nb_node, nb_rel in store._get_neighbors(file_node["id"], "incoming"):
+            if nb_rel["type"] != "IMPORTS":
+                continue
+            if nb_node["type"] != "File":
+                continue
+            file_importers.append(nb_node)
+    except Exception:
+        file_importers = []
+
+    if not symbols and not file_importers:
         _print_file_only_impact(store, file_node)
         return
 
@@ -325,8 +340,18 @@ def _run(
 
         lines.append("")
 
-    if total_callers > 0:
-        lines.append(f"  ⚠ {total_callers} dependent(s) may be affected by changes to this file.")
+    if file_importers:
+        lines.append(f"  Files importing this file ({len(file_importers)}):")
+        for importer in file_importers[:_MAX_CALLERS_PER_SYMBOL]:
+            importer_path = (importer.get("properties") or {}).get("path", importer.get("name", "?"))
+            lines.append(f"    --IMPORTS-- {importer_path}")
+        if len(file_importers) > _MAX_CALLERS_PER_SYMBOL:
+            lines.append(f"    ... and {len(file_importers) - _MAX_CALLERS_PER_SYMBOL} more")
+        lines.append("")
+
+    total_dependents = total_callers + len(file_importers)
+    if total_dependents > 0:
+        lines.append(f"  ⚠ {total_dependents} dependent(s) may be affected by changes to this file.")
         lines.append("  Consider reviewing these callers for compatibility.")
     else:
         lines.append("  No known dependents found in the graph.")

@@ -119,6 +119,51 @@ class TestPythonImports:
         assert result.internal == {}
         assert result.external.get("requests") == "pkg:pypi:requests"
 
+    def test_from_import_resolves_src_layout(self):
+        """``from opentrace_agent.cli.main import _resolve_db`` must resolve
+        even when the actual file lives under a src-layout prefix.
+
+        Before the suffix-match fallback, the analyzer only checked exact
+        path equality, so absolute imports against src-layout repos
+        silently fell through to the external ``pkg:pypi:*`` branch and
+        no IMPORTS edge was created. Regression for the cross-file
+        impact-analysis gap.
+        """
+        source = b"from opentrace_agent.cli.main import _resolve_db\n"
+        known = {"agent/src/opentrace_agent/cli/main.py"}
+        result = analyze_python_imports(_parse_python(source), "agent/src/foo.py", known)
+        assert result.internal.get("main") == "agent/src/opentrace_agent/cli/main.py"
+        assert result.internal.get("_resolve_db") == "agent/src/opentrace_agent/cli/main.py"
+        # Must NOT have leaked into the external bucket.
+        assert "opentrace_agent" not in result.external
+
+    def test_import_resolves_src_layout(self):
+        """``import opentrace_agent.cli.main`` resolves under src layout."""
+        source = b"import opentrace_agent.cli.main\n"
+        known = {"agent/src/opentrace_agent/cli/main.py"}
+        result = analyze_python_imports(_parse_python(source), "agent/src/foo.py", known)
+        assert result.internal.get("main") == "agent/src/opentrace_agent/cli/main.py"
+
+    def test_suffix_match_picks_shortest_when_ambiguous(self):
+        """Vendored copy in a monorepo shouldn't beat the canonical path."""
+        source = b"from db import Database\n"
+        known = {
+            "src/db.py",
+            "vendor/some/deep/nested/copy/db.py",
+        }
+        result = analyze_python_imports(_parse_python(source), "src/main.py", known)
+        # Shortest path wins as the canonical match.
+        assert result.internal.get("db") == "src/db.py"
+
+    def test_suffix_match_anchors_on_slash_boundary(self):
+        """Suffix match must not pick ``my_utils.py`` for ``import utils``."""
+        source = b"import utils\n"
+        known = {"my_utils.py"}
+        result = analyze_python_imports(_parse_python(source), "main.py", known)
+        # No internal resolution; falls through to external.
+        assert "utils" not in result.internal
+        assert result.external.get("utils") == "pkg:pypi:utils"
+
 
 class TestGoImports:
     def test_import_local_package(self):

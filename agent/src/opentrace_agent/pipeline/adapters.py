@@ -86,6 +86,15 @@ class GraphStoreAdapter:
     def _flush_rels(self) -> None:
         if not self._rels:
             return
+        # CRITICAL: flush pending nodes first.  add_relationship uses
+        # MATCH (a:Node), (b:Node) CREATE ... — if either endpoint
+        # isn't in the DB yet, MATCH returns no rows, CREATE silently
+        # does nothing, and the relationship is lost.  Without this
+        # call, a threshold-triggered rel flush (rels reach batch_size
+        # before nodes do) silently drops every edge whose endpoints
+        # are still buffered.  Verified loss: ~16% of edges on a
+        # real-world index.
+        self._flush_nodes()
         result = self._store.import_batch([], self._rels)
         if result["errors"]:
             logger.warning("Batch rel import had %d errors", result["errors"])

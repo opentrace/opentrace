@@ -1,11 +1,21 @@
 {
   "name": "opentrace-oss",
-  "version": "0.7.0",
+  "version": "0.10.0",
   "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies.",
   "author": {
     "name": "OpenTrace"
   },
+  "homepage": "https://github.com/opentrace/opentrace",
   "repository": "https://github.com/opentrace/opentrace",
+  "bugs": "https://github.com/opentrace/opentrace/issues",
   "license": "Apache-2.0",
-  "keywords": ["architecture", "graph", "dependencies", "observability"]
+  "keywords": [
+    "knowledge-graph",
+    "code-search",
+    "architecture",
+    "dependencies",
+    "refactoring",
+    "observability",
+    "mcp"
+  ]
 }

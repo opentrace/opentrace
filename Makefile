@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-.PHONY: all install build test clean agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix
+.PHONY: all install build test clean agent ui ui-preview proto plugin-reload ui-build-static deploy-preview deploy-live functions-build functions-test functions-emulator fmt lint license-check license-fix check-versions
 
 all: build
 
@@ -82,3 +82,7 @@ plugin-reload:
 	-claude plugin marketplace remove opentrace-oss
 	claude plugin marketplace add ./
 	claude plugin install opentrace-oss@opentrace-oss
+
+## Verify plugin.json, marketplace.json, and agent/pyproject.toml share a version
+check-versions:
+	@python3 scripts/check_versions.py

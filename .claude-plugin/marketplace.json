@@ -3,18 +3,32 @@
   "name": "opentrace-oss",
   "description": "Knowledge graph tools for exploring system architecture, code structure, and service dependencies",
   "owner": {
-    "name": "OpenTrace"
+    "name": "OpenTrace",
+    "url": "https://opentrace.com"
   },
   "plugins": [
     {
       "name": "opentrace-oss",
-      "description": "OpenTrace knowledge graph — search, traverse, and analyze indexed codebases",
-      "version": "0.7.0",
+      "description": "OpenTrace knowledge graph — search, traverse, and analyze indexed codebases. Twelve MCP tools, eleven skills, three subagents, four slash commands, eight hooks.",
+      "version": "0.10.0",
       "author": {
         "name": "OpenTrace"
       },
       "source": "./plugins/claude-code",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/opentrace/opentrace",
+      "repository": "https://github.com/opentrace/opentrace",
+      "bugs": "https://github.com/opentrace/opentrace/issues",
+      "license": "Apache-2.0",
+      "keywords": [
+        "knowledge-graph",
+        "code-search",
+        "architecture",
+        "dependencies",
+        "refactoring",
+        "observability",
+        "mcp"
+      ]
     }
   ]
 }

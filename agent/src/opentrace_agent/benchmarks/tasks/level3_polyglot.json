@@ -39,7 +39,7 @@
       "id": "find_go_files",
       "category": "structure",
       "description": "Should index all Go files",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": ".go", "nodeTypes": "File"},
       "assertions": [
         {"type": "min_count", "value": 3},
@@ -52,7 +52,7 @@
       "id": "find_python_files",
       "category": "structure",
       "description": "Should index all Python files",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": ".py", "nodeTypes": "File"},
       "assertions": [
         {"type": "min_count", "value": 2},
@@ -64,7 +64,7 @@
       "id": "find_handler_struct",
       "category": "symbol_discovery",
       "description": "Search should find the Handler struct",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "Handler", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -75,7 +75,7 @@
       "id": "find_store_struct",
       "category": "symbol_discovery",
       "description": "Search should find the Store struct",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "Store", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -86,7 +86,7 @@
       "id": "find_base_model",
       "category": "symbol_discovery",
       "description": "Search should find the BaseModel class",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "BaseModel", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -97,7 +97,7 @@
       "id": "find_user_model",
       "category": "symbol_discovery",
       "description": "Search should find the UserModel class",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "UserModel", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -108,7 +108,7 @@
       "id": "find_new_handler",
       "category": "symbol_discovery",
       "description": "Search should find the NewHandler function",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "NewHandler", "nodeTypes": "Function"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -119,7 +119,7 @@
       "id": "find_new_store",
       "category": "symbol_discovery",
       "description": "Search should find the NewStore function",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "NewStore", "nodeTypes": "Function"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -250,7 +250,7 @@
       "id": "search_inheritance",
       "category": "symbol_discovery",
       "description": "Search for 'Model' should find both BaseModel and UserModel",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "Model", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 2},
@@ -262,7 +262,7 @@
       "id": "search_type_filter",
       "category": "search_quality",
       "description": "File type filter should restrict results",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "handler", "nodeTypes": "File"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -273,7 +273,7 @@
       "id": "search_no_results",
       "category": "search_quality",
       "description": "Searching for nonsense should return empty",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "zzz_nonexistent_zzz"},
       "assertions": [
         {"type": "exact_count", "value": 0}

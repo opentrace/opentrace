@@ -400,6 +400,55 @@ class TestGraphStoreSearchNodes:
         assert len(results) <= 2
 
 
+class TestGraphStoreFtsSearch:
+    """``fts_search`` happy-path + filter behavior is exercised end-to-end
+    with specific assertions by ``test_source_search.py`` (the CLI delegates
+    to this method) and ``test_mcp_integration.py`` (the ``fts_search`` MCP
+    tool). Here we cover the cases those don't: the substring fallback and
+    the deterministic no-result / limit guards (no reliance on how Kuzu's
+    FTS tokenizer stems any particular fixture term).
+    """
+
+    def test_no_results_returns_empty(self, store):
+        _seed(store)
+        assert store.fts_search("zzz_nonexistent_zzz") == []
+
+    def test_respects_limit(self, store):
+        _seed(store)
+        results = store.fts_search("e", limit=2)  # broad query
+        assert len(results) <= 2
+
+    def test_falls_back_to_substring_when_fts_unavailable(self):
+        """When the FTS extension errors, the call must degrade to
+        ``search_nodes`` rather than raise — and stamp a ``score`` so the
+        result shape stays stable for callers.
+        """
+        bare = GraphStore.__new__(GraphStore)
+
+        class _RaisingConn:
+            def execute(self, *args, **kwargs):
+                raise RuntimeError("FTS extension not loaded")
+
+        bare._conn = _RaisingConn()
+
+        captured: dict[str, object] = {}
+
+        def _fake_search_nodes(query, node_types=None, limit=20):
+            captured["call"] = (query, node_types, limit)
+            return [{"id": "r/a.py::f", "type": "Function", "name": "f", "properties": {"path": "a.py"}}]
+
+        bare.search_nodes = _fake_search_nodes  # type: ignore[method-assign]
+
+        results = bare.fts_search("validate user", node_types=["Function"], limit=5)
+
+        # Delegated to the substring path with the same query/filters/limit.
+        assert captured["call"] == ("validate user", ["Function"], 5)
+        assert len(results) == 1
+        assert results[0]["id"] == "r/a.py::f"
+        # Fallback rows carry a stable score so the shape matches FTS hits.
+        assert results[0]["score"] == 0.0
+
+
 class TestGraphStoreSearchGraph:
     def test_search_graph_returns_neighbors(self, store):
         _seed(store)
