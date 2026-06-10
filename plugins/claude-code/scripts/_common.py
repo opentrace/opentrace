@@ -597,6 +597,117 @@ def last_index_seen(workspace_root: Path) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
+# Background indexing — SessionStart starts one when no DB exists; the
+# opt-in auto-reindex path (Stop) starts one when the graph has gone stale.
+# ---------------------------------------------------------------------------
+
+def start_background_index(repo_root: Path) -> Optional[int]:
+    """Kick off `uvx opentraceai index .` detached. Returns the PID or None.
+
+    Output goes to ``<repo>/.opentrace-index.log`` (covered by the root
+    ``*.log`` gitignore pattern). The indexer writes to a ``.staging``
+    database and swaps atomically, so a running session can keep querying
+    the old index until the new one lands.
+    """
+    if not shutil.which("uvx"):
+        return None
+    log_path = repo_root / ".opentrace-index.log"
+    try:
+        with open(log_path, "ab") as logf:
+            proc = subprocess.Popen(
+                ["uvx", "opentraceai", "index", str(repo_root)],
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                cwd=str(repo_root),
+                start_new_session=True,
+            )
+    except OSError:
+        return None
+    return proc.pid
+
+
+def git_repo_root(start: Path) -> Optional[Path]:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            cwd=str(start),
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    out = result.stdout.strip()
+    return Path(out) if out else None
+
+
+# ---------------------------------------------------------------------------
+# Auto-reindex — opt-in: when the graph is stale, refresh it in the
+# background instead of only nagging. Guarded by a cooldown sentinel and
+# an "indexer already running" check so repeated Stop events can't stack
+# subprocesses.
+# ---------------------------------------------------------------------------
+
+AUTO_REINDEX_DEFAULT = False
+REINDEX_COOLDOWN_SECONDS = 600  # at most one auto-reindex per 10 min
+REINDEX_SENTINEL_PATH = CACHE_DIR / "reindex.json"
+
+
+def reindex_in_progress(workspace_root: Path) -> bool:
+    """True while the indexer's staging database exists — an index run is
+    underway (or died mid-write; the cooldown covers that case too)."""
+    return (workspace_root / ".opentrace" / "index.db.staging").exists()
+
+
+def _load_reindex() -> dict:
+    try:
+        return json.loads(REINDEX_SENTINEL_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def reindex_recently_started(workspace_root: Path) -> bool:
+    val = _load_reindex().get(str(workspace_root.resolve()))
+    try:
+        return (time.time() - float(val)) < REINDEX_COOLDOWN_SECONDS
+    except (TypeError, ValueError):
+        return False
+
+
+def mark_reindex_started(workspace_root: Path) -> None:
+    data = _load_reindex()
+    data[str(workspace_root.resolve())] = time.time()
+    try:
+        _ensure_cache_dir()
+        REINDEX_SENTINEL_PATH.write_text(json.dumps(data))
+    except OSError:
+        pass
+
+
+def maybe_start_auto_reindex(workspace_root: Path) -> bool:
+    """Start a background reindex of ``workspace_root`` unless one is
+    already running or was started within the cooldown window. Returns
+    True when a new reindex was actually launched.
+
+    Callers are responsible for the env-var opt-in gate (the variable
+    name differs per host) and for only calling this when the graph is
+    actually stale.
+    """
+    if reindex_in_progress(workspace_root):
+        return False
+    if reindex_recently_started(workspace_root):
+        return False
+    pid = start_background_index(workspace_root)
+    if pid is None:
+        return False
+    mark_reindex_started(workspace_root)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Directive builder — used by SessionStart and PreCompact so both events
 # produce identical routing guidance.
 # ---------------------------------------------------------------------------

@@ -129,6 +129,61 @@ def test_stop_prunes_old_entries_even_without_index(tmp_cache, tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------------
+# stop.py — opt-in auto-reindex
+# ---------------------------------------------------------------------------
+
+def _make_stale(tmp_cache, tmp_workspace, name="a.py"):
+    edited = tmp_workspace / name
+    edited.write_text("x = 1\n")
+    db_mtime = (tmp_workspace / ".opentrace" / "index.db").stat().st_mtime
+    _touch_newer(edited, db_mtime)
+    tmp_cache.record_edit(str(edited), tmp_workspace)
+    return edited
+
+
+def test_stop_auto_reindex_off_by_default(
+    tmp_cache, tmp_workspace, fake_background_index, monkeypatch
+):
+    _make_stale(tmp_cache, tmp_workspace)
+    out, _ = _run_hook_in_process("stop", {"cwd": str(tmp_workspace)}, monkeypatch)
+    assert "/index" in json.loads(out)["systemMessage"]
+    assert fake_background_index.calls == []
+
+
+def test_stop_auto_reindex_launches_when_enabled(
+    tmp_cache, tmp_workspace, fake_background_index, monkeypatch
+):
+    monkeypatch.setenv("OPENTRACE_CLAUDE_AUTO_REINDEX", "1")
+    _make_stale(tmp_cache, tmp_workspace)
+    out, _ = _run_hook_in_process("stop", {"cwd": str(tmp_workspace)}, monkeypatch)
+    assert "Auto-reindex started" in json.loads(out)["systemMessage"]
+    assert fake_background_index.calls == [str(tmp_workspace)]
+
+
+def test_stop_auto_reindex_respects_cooldown(
+    tmp_cache, tmp_workspace, fake_background_index, monkeypatch
+):
+    monkeypatch.setenv("OPENTRACE_CLAUDE_AUTO_REINDEX", "1")
+    _make_stale(tmp_cache, tmp_workspace)
+    out1, _ = _run_hook_in_process("stop", {"cwd": str(tmp_workspace)}, monkeypatch)
+    assert out1  # first fire launches + announces
+    out2, _ = _run_hook_in_process("stop", {"cwd": str(tmp_workspace)}, monkeypatch)
+    assert out2 == ""  # cooldown: silent, no second launch
+    assert len(fake_background_index.calls) == 1
+
+
+def test_stop_auto_reindex_skips_when_indexer_running(
+    tmp_cache, tmp_workspace, fake_background_index, monkeypatch
+):
+    monkeypatch.setenv("OPENTRACE_CLAUDE_AUTO_REINDEX", "1")
+    _make_stale(tmp_cache, tmp_workspace)
+    (tmp_workspace / ".opentrace" / "index.db.staging").write_text("busy")
+    out, _ = _run_hook_in_process("stop", {"cwd": str(tmp_workspace)}, monkeypatch)
+    assert out == ""
+    assert fake_background_index.calls == []
+
+
+# ---------------------------------------------------------------------------
 # pre_compact.py
 # ---------------------------------------------------------------------------
 

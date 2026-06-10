@@ -30,6 +30,7 @@ The plugin works out of the box with no configuration — the defaults below fav
 |---------|---------|--------|
 | `OPENTRACE_CLAUDE_AUTO_CONTEXT` | off | When `=1`, the `PreToolUse` hook augments Grep/Glob with graph results, and `PostToolUse` injects `impact_analysis` after each Edit/Write. Off by default so prompts stay token-cheap; the normal path is explicit MCP tool calls plus the SessionStart routing directive. Turn it on if you want the graph to proactively surface context as you search and edit. |
 | `OPENTRACE_CLAUDE_AUGMENT_BASH` | off | When `=1`, also augments shell search/read commands (`rg`/`grep`/`cat`/`head`/…) run via Bash. **Requires `OPENTRACE_CLAUDE_AUTO_CONTEXT=1`** — it widens auto-context to the Bash tool, it doesn't enable auto-context on its own. |
+| `OPENTRACE_CLAUDE_AUTO_REINDEX` | off | When `=1`, the `Stop` hook launches a detached background `uvx opentraceai index` whenever the graph is stale, instead of only suggesting `/index`. At most one launch per 10 minutes; skipped while an indexer is already running (`index.db.staging` present). Completion is announced by the `Notification` hook. |
 | `OPENTRACE_DEBUG` | off | When `=1`, every hook writes timestamped traces to `.opentrace/hook-debug.log` (and stderr). See [Debug Mode](#debug-mode). |
 | `OPENTRACE_DEBUG_LOG` | `.opentrace/hook-debug.log` | Override the debug log path. |
 | `OPENTRACE_INDEX_TIMEOUT` | `1800` | Wall-clock budget in **seconds** for `repo_index` / background indexing subprocesses. `0` (or negative) means no timeout. Applies to the MCP server process. |
@@ -105,7 +106,7 @@ The plugin ships eight hooks that Claude Code runs automatically:
 | `UserPromptSubmit` | `scripts/user_prompt_submit.py` | If any files have been edited since the last index, emit a one-shot staleness warning (throttled to 10 min) |
 | `PreToolUse` (Grep / Glob / Bash) | `scripts/pre_tool_use.py` | Opt-in auto context: augment shell `rg`/`grep` with graph results, and shell `cat`/`head`/`tail`/`sed`/`awk` with impact analysis |
 | `PostToolUse` (Edit / Write) | `scripts/post_tool_use.py` | Record the edited file path + mtime to `staleness.json`; opt-in auto context: run `impact_analysis` on the changed file |
-| `Stop` | `scripts/stop.py` | At session end, summarize stale files and suggest `/index`; prune `staleness.json` entries older than 7 days |
+| `Stop` | `scripts/stop.py` | At session end, summarize stale files and suggest `/index` (or, with `OPENTRACE_CLAUDE_AUTO_REINDEX=1`, start a background reindex); prune `staleness.json` entries older than 7 days |
 | `PreCompact` | `scripts/pre_compact.py` | Re-inject the routing directive + current `get_stats` so post-compact context still knows how to route |
 | `SubagentStop` | `scripts/subagent_stop.py` | Warn if a delegated OpenTrace subagent finished without using any graph tool |
 | `Notification` | `scripts/notification.py` | When awaiting input AND a background index has completed since last fire, announce "index updated" (best-effort — only fires when a notification event occurs) |

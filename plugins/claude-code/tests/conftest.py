@@ -42,8 +42,48 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 
+# Hook script module names. The Gemini CLI extension's test suite uses the
+# same basenames (_common, session_start, ...) — when both suites run in a
+# single pytest process, whichever imports first would otherwise win for
+# both. The autouse fixture below purges any of these whose __file__ lives
+# outside this plugin's scripts dir and keeps SCRIPTS_DIR at the front of
+# sys.path so re-imports resolve locally.
+_HOOK_MODULE_NAMES = frozenset({
+    "_common",
+    "_debug",
+    "session_start",
+    "user_prompt_submit",
+    "pre_tool_use",
+    "post_tool_use",
+    "stop",
+    "pre_compact",
+    "subagent_stop",
+    "notification",
+})
+
+
+def _purge_foreign_hook_modules() -> None:
+    prefix = str(SCRIPTS_DIR)
+    for name in list(sys.modules):
+        if name not in _HOOK_MODULE_NAMES:
+            continue
+        file = getattr(sys.modules[name], "__file__", "") or ""
+        if not file.startswith(prefix):
+            del sys.modules[name]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_hook_modules():
+    if str(SCRIPTS_DIR) in sys.path:
+        sys.path.remove(str(SCRIPTS_DIR))
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    _purge_foreign_hook_modules()
+    yield
+
+
 def _reload_common():
     """Re-import _common after $TMPDIR changes so CACHE_DIR is rebound."""
+    _purge_foreign_hook_modules()
     if "_common" in sys.modules:
         return importlib.reload(sys.modules["_common"])
     return importlib.import_module("_common")
@@ -60,6 +100,7 @@ def tmp_cache(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENTRACE_DEBUG_LOG", raising=False)
     monkeypatch.delenv("OPENTRACE_CLAUDE_AUTO_CONTEXT", raising=False)
     monkeypatch.delenv("OPENTRACE_CLAUDE_AUGMENT_BASH", raising=False)
+    monkeypatch.delenv("OPENTRACE_CLAUDE_AUTO_REINDEX", raising=False)
     return _reload_common()
 
 
@@ -110,4 +151,32 @@ def fake_run_opentraceai(monkeypatch):
                 monkeypatch.setattr(sys.modules[mod_name], "run_opentraceai", _fake)
             except AttributeError:
                 pass
+    return _Ctl()
+
+
+@pytest.fixture
+def fake_background_index(monkeypatch):
+    """Replace ``_common.start_background_index`` so auto-reindex tests
+    don't spawn real ``uvx opentraceai index`` subprocesses.
+
+    Request AFTER ``tmp_cache`` so the patch lands on the reloaded
+    ``_common`` module. ``maybe_start_auto_reindex`` resolves the name
+    inside ``_common`` at call time, so patching there covers every hook.
+    """
+    state = {"pid": 4242, "calls": []}
+
+    def _fake(repo_root):
+        state["calls"].append(str(repo_root))
+        return state["pid"]
+
+    class _Ctl:
+        def set_pid(self, pid):
+            state["pid"] = pid
+
+        @property
+        def calls(self):
+            return state["calls"]
+
+    if "_common" in sys.modules:
+        monkeypatch.setattr(sys.modules["_common"], "start_background_index", _fake)
     return _Ctl()

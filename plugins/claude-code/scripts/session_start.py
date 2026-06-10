@@ -26,10 +26,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
 import sys
-import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -39,9 +36,11 @@ from _common import (
     emit_json,
     find_db_path,
     find_workspace_root,
+    git_repo_root,
     opentrace_healthy,
     record_index_complete,
     run_opentraceai,
+    start_background_index,
 )
 from _debug import DebugLogger
 
@@ -56,50 +55,6 @@ _DEPRECATION_NOTE = (
     "`@dependency-analyzer`, `@find-usages`, or `@explain-service` for "
     "multi-step delegated investigations."
 )
-
-
-# ---------------------------------------------------------------------------
-# Background indexing — when no .opentrace/index.db is present
-# ---------------------------------------------------------------------------
-
-def _start_background_index(repo_root: Path) -> Optional[int]:
-    """Kick off `uvx opentraceai index .` detached. Returns the PID or None."""
-    if not shutil.which("uvx"):
-        _debug("background index: skipped (uvx missing)")
-        return None
-    log_path = repo_root / ".opentrace-index.log"
-    try:
-        with open(log_path, "ab") as logf:
-            proc = subprocess.Popen(
-                ["uvx", "opentraceai", "index", str(repo_root)],
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                cwd=str(repo_root),
-                start_new_session=True,
-            )
-    except OSError as exc:
-        _debug(f"background index: failed to spawn: {exc}")
-        return None
-    _debug(f"background index: pid={proc.pid} log={log_path}")
-    return proc.pid
-
-
-def _git_repo_root(start: Path) -> Optional[Path]:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            cwd=str(start),
-            timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    out = result.stdout.strip()
-    return Path(out) if out else None
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +192,10 @@ def main() -> None:
 
     # No index → emit a system message and start indexing in the background.
     if not opentrace_healthy(workspace_root):
-        repo_root = workspace_root or _git_repo_root(Path(cwd))
+        repo_root = workspace_root or git_repo_root(Path(cwd))
         if repo_root:
-            _start_background_index(repo_root)
+            pid = start_background_index(repo_root)
+            _debug(f"background index: pid={pid}")
             msg = (
                 "OpenTrace: no index found — background indexing started. "
                 "Tools will be available shortly."
