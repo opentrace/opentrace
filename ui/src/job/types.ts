@@ -28,9 +28,9 @@ export {
   type JobEvent,
   type JobResult,
   type ProgressDetail,
-} from '../gen/opentrace/v1/agent_service';
+} from '../gen/agent_service';
 
-import type { JobEvent } from '../gen/opentrace/v1/agent_service';
+import type { JobEvent } from '../gen/agent_service';
 
 // --- Job messages (what to do) ---
 

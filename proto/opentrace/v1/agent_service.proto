@@ -44,6 +44,10 @@ enum JobPhase {
   JOB_PHASE_DONE = 7;
   JOB_PHASE_SUMMARIZING = 8;
   JOB_PHASE_EMBEDDING = 9;
+  JOB_PHASE_NORMALIZING = 10;
+  JOB_PHASE_PLANNING = 11;
+  JOB_PHASE_EXECUTING = 12;
+  JOB_PHASE_PERSISTING = 13;
 }
 
 // JobEventKind discriminates the event type within a JobEvent stream.

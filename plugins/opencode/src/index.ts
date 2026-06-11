@@ -26,6 +26,9 @@ import { createFindUsagesTool } from "./tools/find-usages.js"
 import { createImpactAnalysisTool } from "./tools/impact-analysis.js"
 import { createGraphExploreTool } from "./tools/graph-explore.js"
 import { createGraphStatsTool } from "./tools/graph-stats.js"
+import { createGraphBuildTool } from "./tools/graph-build.js"
+import { createGraphQueryTool } from "./tools/graph-query.js"
+import { createGraphAnalyzeTool } from "./tools/graph-analyze.js"
 import { buildSystemPrompt, STATIC_CORE_TEXT } from "./hooks/system-prompt.js"
 import { createToolAugmentHook } from "./hooks/tool-augment.js"
 import { createToolImpactHook } from "./hooks/tool-impact.js"
@@ -126,7 +129,7 @@ const server: Plugin = async (
     auth: authHook,
 
     // ---------------------------------------------------------------
-    // Register 9 native tools
+    // Register native tools
     // ---------------------------------------------------------------
     tool: {
       "opentrace_source_search": createSourceSearchTool(client),
@@ -138,6 +141,10 @@ const server: Plugin = async (
       "opentrace_impact_analysis": createImpactAnalysisTool(client),
       "opentrace_graph_explore": createGraphExploreTool(client),
       "opentrace_graph_stats": createGraphStatsTool(client),
+      // Knowledge-graph pipeline (requires opentraceai[graph])
+      "opentrace_graph_build": createGraphBuildTool(client),
+      "opentrace_graph_query": createGraphQueryTool(client),
+      "opentrace_graph_analyze": createGraphAnalyzeTool(client),
     },
 
     // ---------------------------------------------------------------

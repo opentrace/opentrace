@@ -1,0 +1,13 @@
+{
+  "id": "arch_diagram",
+  "source_type": "image",
+  "entities": [
+    {"id": "order_api", "label": "Order API", "type": "service"},
+    {"id": "billing_worker", "label": "Billing Worker", "type": "service"},
+    {"id": "ledger_db", "label": "Ledger DB", "type": "service"}
+  ],
+  "edges": [
+    {"source": "order_api", "target": "billing_worker", "relation": "publishes_to", "confidence": "EXTRACTED"},
+    {"source": "billing_worker", "target": "ledger_db", "relation": "writes", "confidence": "EXTRACTED"}
+  ]
+}

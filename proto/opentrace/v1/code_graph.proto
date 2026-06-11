@@ -41,6 +41,9 @@ message RepositoryNode {
   string provider       = 5;
   string default_branch = 6 [(ladybug.column) = "defaultBranch"];
   string summary        = 7;
+  // Filesystem path when the repo was indexed from a local directory.
+  // Empty for cloned remote repos (clone is not retained after indexing).
+  string local_path     = 8 [(ladybug.column) = "localPath"];
 }
 
 // DirectoryNode represents a directory in a repository.
@@ -129,6 +132,133 @@ message VariableNode {
   string docs            = 9;
 }
 
+// ConfidenceTier records how a wiki or semantic edge/node was derived, so
+// downstream consumers can tell directly observed facts apart from model
+// judgement.
+//
+//   EXTRACTED  — the source states the relationship itself; a reader could
+//                point at the line that asserts it.
+//   INFERRED   — concluded from context rather than from any explicit
+//                statement. Usually right, weighted below EXTRACTED.
+//   AMBIGUOUS  — a candidate the producer could neither confirm nor rule
+//                out, kept so review tooling can surface it rather than
+//                lose it.
+enum ConfidenceTier {
+  CONFIDENCE_TIER_UNSPECIFIED = 0;
+  CONFIDENCE_TIER_EXTRACTED   = 1;
+  CONFIDENCE_TIER_INFERRED    = 2;
+  CONFIDENCE_TIER_AMBIGUOUS   = 3;
+}
+
+// WikiVaultNode represents a knowledge vault — a named collection of compiled
+// wiki pages produced by the wiki ingest pipeline. One per vault directory.
+message WikiVaultNode {
+  string id                  = 1;          // vault name (validated, no separators)
+  string name                = 2;          // display name (same as id today)
+  string last_compiled_at    = 3 [(ladybug.column) = "lastCompiledAt"];   // ISO-8601 UTC
+  string summary             = 4;
+  // "local" (vault lives in <project>/.opentrace/vaults/) or "global"
+  // (vault lives in ~/.opentrace/vaults/ or $OT_VAULT_ROOT). Local vaults
+  // are visible only to the project they were compiled in; global vaults
+  // can be attached to any graph via ``opentraceai vault attach``.
+  string scope               = 5;
+  // ISO-8601 UTC timestamp of the most recent ``write_vault_to_graph``
+  // call into THIS graph store. Compared against the disk vault's
+  // ``last_compiled_at`` to surface stale mirrors in ``vault list``.
+  string mirror_compiled_at  = 6 [(ladybug.column) = "mirrorCompiledAt"];
+}
+
+// WikiPageNode represents a single compiled markdown page within a vault.
+// One per .md file under <vault>/pages/. Pages are LLM-managed; provenance
+// fields are stamped at compile time.
+message WikiPageNode {
+  string id                = 1;          // "<vault>::<slug>"
+  string name              = 2;          // page title
+  string slug              = 3;
+  string kind              = 4;          // "source_summary" | "concept"
+  string one_line_summary  = 5 [(ladybug.column) = "oneLineSummary"];
+  int32  revision          = 6;
+  string last_updated      = 7 [(ladybug.column) = "lastUpdated"];      // ISO-8601 UTC
+  // Provenance fields (Phase 5 populates; Phase 1 reserves the columns).
+  string agent             = 8;          // e.g. "opentrace-wiki-compiler"
+  string model             = 9;          // e.g. "claude-opus-4-7"
+  string session           = 10;         // UUID per compile run
+  float  confidence        = 11;         // numeric score, 0.0–1.0 (per ConfidenceTier rubric)
+  // Stamped by autoprune when a cited Source is removed and the page wasn't
+  // regenerated this run. ``vault refresh-stale-pages`` re-runs Plan+Execute against
+  // remaining citations to clear it. ISO-8601 UTC timestamp.
+  string stale_since       = 12 [(ladybug.column) = "staleSince"];
+}
+
+// SourceNode represents a raw input artifact ingested into the graph — both
+// vault uploads (wiki pipeline) and generic ingestion (`opentraceai ingest`)
+// share this shape. The body is persisted to `.opentrace/corpus/<sha>.<ext>`
+// so it's available for re-extraction and grep.
+message SourceNode {
+  string id            = 1;          // sha256 hex (full) or `src:<sha16>` for legacy ingest
+  string name          = 2;          // original filename or title
+  string sha256        = 3;
+  string filename      = 4;
+  string content_type  = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
+  int64  size_bytes    = 6 [(ladybug.column) = "sizeBytes"];
+  string acquired_at   = 7 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+}
+
+// CommunityNode represents a cluster of related nodes detected by Leiden/Louvain.
+// Written by `opentraceai cluster`. The `members` count is stored for fast
+// summary rendering without traversing membership edges.
+message CommunityNode {
+  string id          = 1;
+  string name        = 2;   // human-readable label, e.g. "Attention Mechanism"
+  int32  community_id = 3 [(ladybug.column) = "communityId"];
+  double cohesion    = 4;   // 0.0–1.0, intra-community edge density
+  int32  members     = 5;   // node count in this community
+  bool   is_god      = 6 [(ladybug.column) = "isGod"];   // true if this is a top-centrality community
+}
+
+// HyperedgeNode names a set of three or more nodes that act as one unit —
+// a workflow, a layered design, a recurring theme. Stored as a node because
+// a property graph has no native n-ary edge; members attach individually
+// through ParticipatesInRel.
+message HyperedgeNode {
+  string id               = 1;
+  string name             = 2;   // human-readable label
+  string relation         = 3;   // "participate_in", "implement", "form"
+  ConfidenceTier confidence = 4;
+  double confidence_score = 5 [(ladybug.column) = "confidenceScore"];
+  string source_file      = 6 [(ladybug.column) = "sourceFile"];
+}
+
+// SemanticEdgeRel represents a semantic edge derived by LLM extraction.
+// Source and target are arbitrary graph nodes. The `relation` field is a
+// free-form verb naming the edge type (e.g. "calls", "cites", "depends_on",
+// "rationale_for").
+message SemanticEdgeRel {
+  string         id               = 1;
+  string         source_id        = 2;
+  string         target_id        = 3;
+  string         relation         = 4;
+  ConfidenceTier confidence       = 5;
+  double         confidence_score = 6 [(ladybug.column) = "confidenceScore"];
+  string         source_file      = 7 [(ladybug.column) = "sourceFile"];
+  string         source_location  = 8 [(ladybug.column) = "sourceLocation"];
+  double         weight           = 9;
+}
+
+// MemberOfCommunityRel links a graph node to its CommunityNode.
+message MemberOfCommunityRel {
+  string id        = 1;
+  string source_id = 2;   // member node
+  string target_id = 3;   // CommunityNode
+}
+
+// ParticipatesInRel links a graph node to a HyperedgeNode it participates in.
+message ParticipatesInRel {
+  string id        = 1;
+  string source_id = 2;   // member node
+  string target_id = 3;   // HyperedgeNode
+}
+
 // IndexMetadataNode stores a single record of index provenance per database.
 // Written by the CLI after each `opentraceai index` run.
 message IndexMetadataNode {
@@ -198,6 +328,41 @@ message DerivedFromRel {
   string source_id = 2;
   string target_id = 3;
   string transform = 4;  // "identity", "call", "attribute"
+}
+
+// LinksToRel represents a wiki-style link between two WikiPage nodes.
+// Created by parsing [[wiki-link]] syntax in page bodies during compile.
+message LinksToRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// CitesRel represents a wiki provenance citation.
+//   WikiPage --Cites--> SourceNode               (source-summary page → its source)
+//   WikiPage --Cites--> WikiPage (source_summary) (concept page → source-summary it cites)
+//
+// Distinct from DerivedFromRel (variable data flow); kept separate to avoid
+// overloading edge semantics across the code-graph and wiki-graph domains.
+message CitesRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// MentionsRel links a WikiPage (which has a body) to an Idea/Service/Module/
+// Paper/Person/Event entity whose name appears in the body. Bridges the
+// curated-page layer with the flat-entity layer so
+// cross-cutting queries work — "which pages discuss this concept?",
+// "which concepts span both code and curated docs?".
+//
+// Written by the wiki ingest graph_writer after each page body is
+// persisted; uses whole-word name matching against the vault's entity
+// set (case-insensitive except for Person types).
+message MentionsRel {
+  string id        = 1;
+  string source_id = 2;   // WikiPage
+  string target_id = 3;   // Idea / Service / Module / Paper / Person / Event
 }
 
 // TargetsRepoRel links a PullRequest to its target Repository.

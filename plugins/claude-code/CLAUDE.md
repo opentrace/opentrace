@@ -35,6 +35,45 @@ Plugin and marketplace versions must always match. Agent version is bumped indep
 | `@dependency-analyzer` | `agents/dependency-analyzer.md` | Blast radius and impact analysis |
 | `@find-usages` | `agents/find-usages.md` | Caller/reference lookups |
 | `@explain-service` | `agents/explain-service.md` | Top-down service walkthroughs |
+| `@graph-guide` | `agents/graph-guide.md` | Interactive guide over the knowledge graph |
+
+## Skills
+
+| Skill | File | Purpose |
+|---|---|---|
+| `explore-code` | `skills/explore-code/SKILL.md` | General codebase exploration via OpenTrace MCP |
+| `graph` | `skills/graph/SKILL.md` | Router for knowledge-graph commands (build, query, explain, export) |
+
+## Slash Commands
+
+OpenTrace-native:
+
+| Command | Purpose |
+|---|---|
+| `/index` | Index the current project into OpenTrace |
+| `/update` | Update the `opentraceai` CLI |
+| `/graph-status` | Overview of indexed nodes by type |
+| `/explore <name>` | Quick exploration of a named component |
+| `/interrogate <q>` | Read-only Q&A over the OpenTrace graph |
+
+Knowledge-graph pipeline (all native — no external indexer dependency):
+
+| Command | Purpose |
+|---|---|
+| `/build [path or url]` | Full pipeline — `opentraceai index` → `cluster` → `analyze` |
+| `/add <url>` | Ingest a URL/document (PDF, Word, EPub, HTML, image, audio, video) via `opentraceai ingest` |
+| `/path A B` | Shortest path between two graph nodes, walked hop-by-hop |
+| `/cluster` | Re-run community detection (Leiden / Louvain) on the existing graph |
+| `/analyze` | God nodes, cross-community bridges, starter questions |
+| `/benchmark` | LLM extraction eval — precision/recall + confidence calibration |
+| `/export-obsidian` | Obsidian vault (one file per node, wikilinks for edges) |
+| `/export-wiki` | Markdown report folder — index dashboard with Mermaid map, per-community and per-god-node pages, bridges page |
+| `/export-graphml` | GraphML for Gephi / yEd / Cytoscape |
+| `/watch` | Watch a folder and re-index on changes |
+| `/hook install\|uninstall\|status` | Post-commit git hook for incremental rebuilds |
+
+Cross-corpus merge is folded into `opentraceai import`. MCP serving is the
+existing `opentraceai mcp` — no separate `/mcp-server`.
 
 ## Writing Agent/Skill Descriptions
 

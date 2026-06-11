@@ -56,6 +56,10 @@ class GraphStoreAdapter:
         self._batch_size = batch_size
         self._nodes: list[dict[str, Any]] = []
         self._rels: list[dict[str, Any]] = []
+        # Set of rel ids already in the graph, fetched once on the first rel
+        # flush. Lets us CREATE brand-new edges directly (no per-rel delete
+        # scan) and only delete-then-recreate the ids we're actually replacing.
+        self._existing_rel_ids: set[str] | None = None
 
     def save_node(self, node: GraphNode) -> None:
         self._nodes.append(_node_to_dict(node))
@@ -86,7 +90,19 @@ class GraphStoreAdapter:
     def _flush_rels(self) -> None:
         if not self._rels:
             return
-        result = self._store.import_batch([], self._rels)
+        # Learn the existing rel ids once (empty on a first index). New ids are
+        # created directly; only ids that already exist are deleted first, in a
+        # single batched IN-delete rather than an O(E) scan per rel.
+        if self._existing_rel_ids is None:
+            self._existing_rel_ids = self._store.existing_relationship_ids()
+        existing = self._existing_rel_ids
+        to_replace = [r["id"] for r in self._rels if r["id"] in existing]
+        if to_replace:
+            self._store.delete_relationships_by_ids(to_replace)
+        result = self._store.create_relationships(self._rels)
+        # Mark these ids as present so a later flush carrying the same id (rare;
+        # ids are unique per run) replaces rather than duplicates.
+        existing.update(r["id"] for r in self._rels)
         if result["errors"]:
             logger.warning("Batch rel import had %d errors", result["errors"])
         self._rels.clear()

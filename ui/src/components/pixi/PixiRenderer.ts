@@ -244,6 +244,11 @@ export class PixiRenderer {
   private lastEdgeRedraw = 0;
   private edgesEnabled = true;
   private hiddenLinkTypes: Set<string> = new Set();
+  // Confidence tiers that should be hidden. Reads from
+  // `edge.graphLink.properties.confidence`; missing/unknown values are
+  // treated as EXTRACTED (the trustworthy default), so semantic edges
+  // without a tier never disappear unexpectedly.
+  private hiddenConfidenceTiers: Set<string> = new Set();
   private layoutSettled = false; // set by consumer when worker reports settled
   private edgesHiddenForInteraction = false; // edges hidden during zoom/pan
   private interactionResumeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -285,9 +290,19 @@ export class PixiRenderer {
   private mode3dTilt = 0.35; // X-axis tilt (radians)
   private mode3dSpeed = 0.003; // auto-rotation speed (radians/frame)
   private mode3dAutoRotate = true;
-  private mode3dDepthScale = 800;
   private mode3dPerspectiveD = 2000; // perspective distance
   private nodeDepthT: Map<string, number> = new Map(); // per-node depth [-1, 1]
+  // 3D depth uses a per-community local sphere centred at each cluster's
+  // own centroid, not one global sphere centred at the world origin. The
+  // global approach (main's) collapses any cluster that sits far from
+  // origin — `zMax = sqrt(R² - d²)` is near zero at the boundary — and
+  // crushes a small offset cluster (e.g. a vault next to a big repo) into
+  // a flat vertical chain. Per-community local spheres keep each cluster
+  // shaped like a sphere regardless of where it sits in 2D.
+  private nodeCommunity: Map<string, number> = new Map();
+  private communityCentroids: Map<number, { cx: number; cy: number }> =
+    new Map();
+  private communityRadii: Map<number, number> = new Map();
   private mode3dRadius = 0; // computed from node positions at enable time
   private mode3dFrameCounter = 0;
 
@@ -1196,12 +1211,17 @@ export class PixiRenderer {
     const edgeWidth = 0.5 * this.zoomInvScale();
     const doCull = this.bp.edgeViewportCulling;
 
-    // Draw background edges using pre-computed color groups
+    // Draw background edges using pre-computed color groups. Each color
+    // group is sub-bucketed by confidence tier so EXTRACTED, INFERRED, and
+    // AMBIGUOUS edges get distinct stroke styles in the same pass.
     for (const [color, indices] of this.edgeColorGroups) {
-      let drawn = false;
+      const byTier = new Map<
+        string,
+        { sx: number; sy: number; tx: number; ty: number }[]
+      >();
       for (const i of indices) {
         const e = this.edges[i];
-        if (this.hiddenLinkTypes.has(e.label)) continue;
+        if (this.isEdgeFiltered(e)) continue;
         const s = this.nodes.get(e.sourceId);
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
@@ -1215,47 +1235,64 @@ export class PixiRenderer {
           !this.isInViewport(t.x, t.y)
         )
           continue;
-        this.drawEdge(this.edgeBgGfx, s.x, s.y, t.x, t.y);
-        drawn = true;
+        const tier = this.getEdgeConfidence(e);
+        let lines = byTier.get(tier);
+        if (!lines) {
+          lines = [];
+          byTier.set(tier, lines);
+        }
+        lines.push({ sx: s.x, sy: s.y, tx: t.x, ty: t.y });
       }
-      if (drawn) {
+      for (const [tier, lines] of byTier) {
+        const { alphaMul, widthMul } = this.tierStyle(tier);
+        for (const l of lines) {
+          this.drawEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
+        }
         this.edgeBgGfx.stroke({
-          width: edgeWidth,
+          width: edgeWidth * widthMul,
           color: hexToNum(color),
-          alpha: bgAlpha,
+          alpha: bgAlpha * alphaMul,
         });
       }
     }
 
-    // Foreground highlight edges
+    // Foreground highlight edges — also bucketed by confidence tier so
+    // highlighted inferred edges stay distinguishable from highlighted
+    // extracted ones.
     if (this.hasHighlight) {
-      const hlColorGroups = new Map<
-        string,
+      const hlGroups = new Map<
+        string, // `${color}|${tier}`
         { sx: number; sy: number; tx: number; ty: number }[]
       >();
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
-        if (this.hiddenLinkTypes.has(e.label)) continue;
+        if (this.isEdgeFiltered(e)) continue;
         const linkKey = `${e.sourceId}-${e.targetId}`;
         if (!this.highlightLinks.has(linkKey)) continue;
         const s = this.nodes.get(e.sourceId);
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
-        let group = hlColorGroups.get(e.color);
+        const tier = this.getEdgeConfidence(e);
+        const key = `${e.color}|${tier}`;
+        let group = hlGroups.get(key);
         if (!group) {
           group = [];
-          hlColorGroups.set(e.color, group);
+          hlGroups.set(key, group);
         }
         group.push({ sx: s.x, sy: s.y, tx: t.x, ty: t.y });
       }
-      for (const [color, lines] of hlColorGroups) {
+      for (const [key, lines] of hlGroups) {
+        const sepIdx = key.lastIndexOf('|');
+        const color = key.slice(0, sepIdx);
+        const tier = key.slice(sepIdx + 1);
+        const { alphaMul, widthMul } = this.tierStyle(tier);
         for (const l of lines) {
           this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
         }
         this.edgeFgGfx.stroke({
-          width: 1.5 * this.zoomInvScale(),
+          width: 1.5 * this.zoomInvScale() * widthMul,
           color: hexToNum(color),
-          alpha: EDGE_OPACITY_HIGHLIGHTED,
+          alpha: EDGE_OPACITY_HIGHLIGHTED * alphaMul,
         });
       }
     }
@@ -1279,7 +1316,7 @@ export class PixiRenderer {
     >();
     for (const idx of myEdges) {
       const e = this.edges[idx];
-      if (this.hiddenLinkTypes.has(e.label)) continue;
+      if (this.isEdgeFiltered(e)) continue;
       const s = this.nodes.get(e.sourceId);
       const t = this.nodes.get(e.targetId);
       if (!s || !t) continue;
@@ -1406,6 +1443,62 @@ export class PixiRenderer {
   setHiddenLinkTypes(hidden: Set<string>): void {
     this.hiddenLinkTypes = hidden;
     this.redrawAllEdges();
+  }
+
+  /**
+   * Hide edges whose confidence tier is in *hidden*.
+   *
+   * Tiers come from the agent's ``ConfidenceTier`` proto:
+   * ``EXTRACTED`` | ``INFERRED`` | ``AMBIGUOUS``. Edges without a tier are
+   * treated as EXTRACTED, so this only hides LLM-derived edges.
+   */
+  setHiddenConfidenceTiers(hidden: Set<string>): void {
+    this.hiddenConfidenceTiers = hidden;
+    this.redrawAllEdges();
+  }
+
+  /**
+   * Read the confidence tier off an edge's properties bag. Returns
+   * "EXTRACTED" for edges that didn't come from the LLM pipeline so they're
+   * never accidentally filtered out.
+   */
+  private getEdgeConfidence(edge: PixiEdge): string {
+    const tier = (
+      edge.graphLink?.properties as Record<string, unknown> | undefined
+    )?.confidence;
+    if (tier === 'INFERRED' || tier === 'AMBIGUOUS' || tier === 'EXTRACTED') {
+      return tier;
+    }
+    return 'EXTRACTED';
+  }
+
+  /** True when the edge should be skipped by the renderer. */
+  private isEdgeFiltered(edge: PixiEdge): boolean {
+    if (this.hiddenLinkTypes.has(edge.label)) return true;
+    if (this.hiddenConfidenceTiers.size > 0) {
+      return this.hiddenConfidenceTiers.has(this.getEdgeConfidence(edge));
+    }
+    return false;
+  }
+
+  /**
+   * Visual modifiers applied to background-edge strokes by confidence tier.
+   *
+   * EXTRACTED edges are the trustworthy baseline — full alpha, normal width.
+   * INFERRED is the most common LLM-derived case, so the cue is intentionally
+   * subtle (60% alpha, same width) — readable at a glance but not jarring.
+   * AMBIGUOUS is the "flagged for review" tier, so it's washed out *and*
+   * thinned (35% alpha, 70% width) to mark "do not trust this without
+   * verification."
+   *
+   * Pixi v8 Graphics doesn't expose a dash pattern on stroke, so we lean on
+   * alpha + width — these are intrinsic stroke options that work with the
+   * existing color-group batching without segmenting each edge by hand.
+   */
+  private tierStyle(tier: string): { alphaMul: number; widthMul: number } {
+    if (tier === 'INFERRED') return { alphaMul: 0.6, widthMul: 1.0 };
+    if (tier === 'AMBIGUOUS') return { alphaMul: 0.35, widthMul: 0.7 };
+    return { alphaMul: 1.0, widthMul: 1.0 }; // EXTRACTED + unknown
   }
 
   // ─── Bloom ─────────────────────────────────────────────────────────
@@ -1541,7 +1634,7 @@ export class PixiRenderer {
 
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
-      if (this.hiddenLinkTypes.has(e.label)) continue;
+      if (this.isEdgeFiltered(e)) continue;
       const s = this.nodes.get(e.sourceId);
       const t = this.nodes.get(e.targetId);
       if (!s?.visible || !t?.visible) continue;
@@ -2046,6 +2139,14 @@ export class PixiRenderer {
       return;
     }
 
+    // Cache community membership for per-cluster sphere lookups in getNodeZ.
+    this.nodeCommunity.clear();
+    if (communityAssignments) {
+      for (const [id, cid] of Object.entries(communityAssignments)) {
+        this.nodeCommunity.set(id, cid);
+      }
+    }
+
     // Compute initial bounding radius from current positions.
     // Reset first so recomputeMode3DExtents() picks the real extent
     // rather than a stale (possibly larger) previous radius.
@@ -2105,20 +2206,97 @@ export class PixiRenderer {
       this.mode3dRadius = newRadius;
       // PerspectiveD ~3-4x the radius for a natural look.
       this.mode3dPerspectiveD = newRadius * 3;
-      // Depth scale relative to radius — controls how "thick" the sphere is.
-      this.mode3dDepthScale = newRadius * 0.6;
+    }
+
+    // Per-community centroids and radii — each community gets its own local
+    // sphere so getNodeZ() can give cluster-far-from-origin nodes a useful
+    // depth range instead of clamping them flat against the global boundary.
+    if (this.nodeCommunity.size === 0) {
+      this.communityCentroids.clear();
+      this.communityRadii.clear();
+      return;
+    }
+    const sumX = new Map<number, number>();
+    const sumY = new Map<number, number>();
+    const count = new Map<number, number>();
+    for (const node of this.nodeArray) {
+      if (!node.visible) continue;
+      const cid = this.nodeCommunity.get(node.id);
+      if (cid === undefined) continue;
+      sumX.set(cid, (sumX.get(cid) ?? 0) + node.x);
+      sumY.set(cid, (sumY.get(cid) ?? 0) + node.y);
+      count.set(cid, (count.get(cid) ?? 0) + 1);
+    }
+    this.communityCentroids.clear();
+    for (const [cid, n] of count) {
+      this.communityCentroids.set(cid, {
+        cx: (sumX.get(cid) ?? 0) / n,
+        cy: (sumY.get(cid) ?? 0) / n,
+      });
+    }
+    const maxR = new Map<number, number>();
+    for (const node of this.nodeArray) {
+      if (!node.visible) continue;
+      const cid = this.nodeCommunity.get(node.id);
+      if (cid === undefined) continue;
+      const c = this.communityCentroids.get(cid);
+      if (!c) continue;
+      const dx = node.x - c.cx;
+      const dy = node.y - c.cy;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      maxR.set(cid, Math.max(maxR.get(cid) ?? 0, d));
+    }
+    this.communityRadii.clear();
+    for (const [cid, r] of maxR) {
+      // 1.1× headroom matches the global sphere's logic so simulation drift
+      // doesn't immediately hit the boundary; floor at 200 to keep tiny
+      // clusters (e.g. a 1-2 node WikiVault) from collapsing to a point.
+      this.communityRadii.set(cid, Math.max(200, r * 1.1));
     }
   }
 
-  /** Get Z coordinate for a node (filled sphere distribution). */
+  /**
+   * Get Z coordinate for a node — per-community filled-sphere distribution.
+   *
+   * For each community we compute distance from the community's *own*
+   * centroid (not the world origin) and use the standard chord taper
+   * `zMax = sqrt(R² - d²)`. This gives every cluster a proper 3D sphere
+   * regardless of where it sits in 2D, which fixes two failure modes:
+   *
+   * - Whole-graph view: a single global sphere produced cylinder/dome
+   *   collapse for clusters far from origin — every community now has
+   *   its own taper, so they round out into spheres.
+   * - Vault-only view: a small offset cluster against a global sphere
+   *   crushed to Z≈0 (a vertical chain/stick). Per-community geometry
+   *   measures distance from the cluster's own centre, so the vault
+   *   community spheres around itself at d≈0.
+   *
+   * `0.6` matches main's depth-to-radius ratio (mode3dDepthScale was
+   * `R * 0.6`, formula was `t * zMax * (mode3dDepthScale / R)` =
+   * `t * zMax * 0.6`).
+   */
   private getNodeZ(node: PixiNode): number {
-    const R = this.mode3dRadius;
+    const cid = this.nodeCommunity.get(node.id);
+    let cx = 0;
+    let cy = 0;
+    let R = this.mode3dRadius;
+    if (cid !== undefined) {
+      const c = this.communityCentroids.get(cid);
+      const lr = this.communityRadii.get(cid);
+      if (c !== undefined && lr !== undefined) {
+        cx = c.cx;
+        cy = c.cy;
+        R = lr;
+      }
+    }
+    const dx = node.x - cx;
+    const dy = node.y - cy;
     const R2 = R * R;
-    const d2 = node.x * node.x + node.y * node.y;
+    const d2 = dx * dx + dy * dy;
     if (d2 >= R2) return 0;
     const zMax = Math.sqrt(R2 - d2);
     const t = this.nodeDepthT.get(node.id) ?? 0;
-    return t * zMax * (this.mode3dDepthScale / R);
+    return t * zMax * 0.6;
   }
 
   /** Project a 3D point to 2D screen coordinates with perspective. */
@@ -2224,49 +2402,66 @@ export class PixiRenderer {
       : EDGE_OPACITY_DEFAULT;
     const edgeWidth = 0.5 * this.zoomInvScale();
 
+    // Mirror redrawAllEdges' tier-aware batching, just with projected
+    // 3D positions read off the sprites instead of the stored (x, y).
     for (const [color, indices] of this.edgeColorGroups) {
-      let drawn = false;
+      const byTier = new Map<
+        string,
+        { sx: number; sy: number; tx: number; ty: number }[]
+      >();
       for (const i of indices) {
         const e = this.edges[i];
-        if (this.hiddenLinkTypes.has(e.label)) continue;
+        if (this.isEdgeFiltered(e)) continue;
         const s = this.nodes.get(e.sourceId);
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
-        // Use projected positions (already set on sprites)
-        const sx = s.sprite.position.x;
-        const sy = s.sprite.position.y;
-        const tx = t.sprite.position.x;
-        const ty = t.sprite.position.y;
-        this.drawEdge(this.edgeBgGfx, sx, sy, tx, ty);
-        drawn = true;
+        const tier = this.getEdgeConfidence(e);
+        let lines = byTier.get(tier);
+        if (!lines) {
+          lines = [];
+          byTier.set(tier, lines);
+        }
+        lines.push({
+          sx: s.sprite.position.x,
+          sy: s.sprite.position.y,
+          tx: t.sprite.position.x,
+          ty: t.sprite.position.y,
+        });
       }
-      if (drawn) {
+      for (const [tier, lines] of byTier) {
+        const { alphaMul, widthMul } = this.tierStyle(tier);
+        for (const l of lines) {
+          this.drawEdge(this.edgeBgGfx, l.sx, l.sy, l.tx, l.ty);
+        }
         this.edgeBgGfx.stroke({
-          width: edgeWidth,
+          width: edgeWidth * widthMul,
           color: hexToNum(color),
-          alpha: bgAlpha,
+          alpha: bgAlpha * alphaMul,
         });
       }
     }
 
-    // Foreground highlight edges (same logic as 2D redrawAllEdges)
+    // Foreground highlight edges (same tier-aware logic as 2D redrawAllEdges,
+    // but read positions off the projected sprites).
     if (this.hasHighlight) {
-      const hlColorGroups = new Map<
-        string,
+      const hlGroups = new Map<
+        string, // `${color}|${tier}`
         { sx: number; sy: number; tx: number; ty: number }[]
       >();
       for (let i = 0; i < this.edges.length; i++) {
         const e = this.edges[i];
-        if (this.hiddenLinkTypes.has(e.label)) continue;
+        if (this.isEdgeFiltered(e)) continue;
         const linkKey = `${e.sourceId}-${e.targetId}`;
         if (!this.highlightLinks.has(linkKey)) continue;
         const s = this.nodes.get(e.sourceId);
         const t = this.nodes.get(e.targetId);
         if (!s?.visible || !t?.visible) continue;
-        let group = hlColorGroups.get(e.color);
+        const tier = this.getEdgeConfidence(e);
+        const key = `${e.color}|${tier}`;
+        let group = hlGroups.get(key);
         if (!group) {
           group = [];
-          hlColorGroups.set(e.color, group);
+          hlGroups.set(key, group);
         }
         group.push({
           sx: s.sprite.position.x,
@@ -2275,14 +2470,18 @@ export class PixiRenderer {
           ty: t.sprite.position.y,
         });
       }
-      for (const [color, lines] of hlColorGroups) {
+      for (const [key, lines] of hlGroups) {
+        const sepIdx = key.lastIndexOf('|');
+        const color = key.slice(0, sepIdx);
+        const tier = key.slice(sepIdx + 1);
+        const { alphaMul, widthMul } = this.tierStyle(tier);
         for (const l of lines) {
           this.drawEdge(this.edgeFgGfx, l.sx, l.sy, l.tx, l.ty);
         }
         this.edgeFgGfx.stroke({
-          width: 1.5 * this.zoomInvScale(),
+          width: 1.5 * this.zoomInvScale() * widthMul,
           color: hexToNum(color),
-          alpha: EDGE_OPACITY_HIGHLIGHTED,
+          alpha: EDGE_OPACITY_HIGHLIGHTED * alphaMul,
         });
       }
     }

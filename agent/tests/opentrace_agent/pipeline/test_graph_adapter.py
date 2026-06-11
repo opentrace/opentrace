@@ -137,3 +137,98 @@ class TestGraphStoreAdapter:
         assert result is not None
         assert result["properties"]["language"] == "python"
         assert result["properties"]["lines"] == 42
+
+
+class TestFastRelImport:
+    """The rel write path must be O(E), not O(E^2): new edges create directly,
+    only existing ids are deleted (batched) before recreation."""
+
+    def test_reimport_same_rels_is_idempotent(self, graph_store):
+        a1 = GraphStoreAdapter(graph_store, batch_size=100)
+        a1.save_node(_make_node(1))
+        a1.save_node(_make_node(2))
+        a1.save_relationship(_make_rel(1, src=1, tgt=2))
+        a1.flush()
+        assert graph_store.get_stats()["total_edges"] == 1
+
+        # A fresh adapter re-imports the same edge — must replace, not duplicate.
+        a2 = GraphStoreAdapter(graph_store, batch_size=100)
+        a2.save_relationship(_make_rel(1, src=1, tgt=2))
+        a2.flush()
+        assert graph_store.get_stats()["total_edges"] == 1
+
+    def test_fresh_db_performs_no_deletes(self, graph_store, monkeypatch):
+        calls = {"n": 0}
+        real = graph_store.delete_relationships_by_ids
+        monkeypatch.setattr(
+            graph_store,
+            "delete_relationships_by_ids",
+            lambda ids: (calls.__setitem__("n", calls["n"] + 1), real(ids))[1],
+        )
+        a = GraphStoreAdapter(graph_store, batch_size=100)
+        a.save_node(_make_node(1))
+        a.save_node(_make_node(2))
+        a.save_relationship(_make_rel(1, src=1, tgt=2))
+        a.save_relationship(_make_rel(2, src=2, tgt=1))
+        a.flush()
+        assert calls["n"] == 0  # nothing pre-existed → no delete-scans at all
+        assert graph_store.get_stats()["total_edges"] == 2
+
+    def test_mixed_new_and_replace(self, graph_store):
+        a1 = GraphStoreAdapter(graph_store, batch_size=100)
+        for i in range(3):
+            a1.save_node(_make_node(i))
+        a1.save_relationship(_make_rel(1, src=0, tgt=1))
+        a1.flush()
+
+        # Second pass: rel-1 already exists (replace), rel-2 is new (create).
+        a2 = GraphStoreAdapter(graph_store, batch_size=100)
+        a2.save_relationship(_make_rel(1, src=0, tgt=1))
+        a2.save_relationship(_make_rel(2, src=1, tgt=2))
+        a2.flush()
+        assert graph_store.get_stats()["total_edges"] == 2
+
+    def test_duplicate_ids_in_one_batch_dedupe(self, graph_store):
+        """The resolver can emit the same edge id twice in one run (e.g. a var
+        derived from the same target via two paths). A plain CREATE would make
+        parallel duplicate edges; the fast path must collapse them to one."""
+        a = GraphStoreAdapter(graph_store, batch_size=100)
+        a.save_node(_make_node(1))
+        a.save_node(_make_node(2))
+        # Same id emitted twice within a single flush.
+        a.save_relationship(_make_rel(1, src=1, tgt=2))
+        a.save_relationship(_make_rel(1, src=1, tgt=2))
+        a.flush()
+        assert graph_store.get_stats()["total_edges"] == 1
+
+    def test_create_relationships_dedupes_by_id(self, graph_store):
+        for i in range(2):
+            graph_store.add_node(f"n{i}", "Node", f"n{i}")
+        graph_store.create_relationships(
+            [
+                {"id": "r0", "type": "REL", "source_id": "n0", "target_id": "n1"},
+                {"id": "r0", "type": "REL", "source_id": "n0", "target_id": "n1"},
+            ]
+        )
+        assert graph_store.existing_relationship_ids() == {"r0"}
+
+    def test_store_methods_directly(self, graph_store):
+        for i in range(4):
+            graph_store.add_node(f"n{i}", "Node", f"n{i}")
+        graph_store.create_relationships(
+            [{"id": f"r{i}", "type": "REL", "source_id": f"n{i}", "target_id": f"n{i + 1}"} for i in range(3)]
+        )
+        assert graph_store.existing_relationship_ids() == {"r0", "r1", "r2"}
+        graph_store.delete_relationships_by_ids(["r0", "r2"])
+        assert graph_store.existing_relationship_ids() == {"r1"}
+
+    def test_delete_by_ids_chunks(self, graph_store, monkeypatch):
+        # Force multiple chunks to exercise the IN-batching path.
+        monkeypatch.setattr(type(graph_store), "_DELETE_CHUNK", 2)
+        for i in range(5):
+            graph_store.add_node(f"n{i}", "Node", f"n{i}")
+        graph_store.create_relationships(
+            [{"id": f"r{i}", "type": "REL", "source_id": f"n{i}", "target_id": f"n{(i + 1) % 5}"} for i in range(5)]
+        )
+        graph_store.delete_relationships_by_ids([f"r{i}" for i in range(5)])  # 5 ids, chunk=2 -> 3 chunks
+        assert graph_store.existing_relationship_ids() == set()

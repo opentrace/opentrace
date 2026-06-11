@@ -22,6 +22,7 @@ import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
+import { VaultBrowser } from './components/wiki/VaultBrowser';
 import SidePanel, { type SidePanelTab } from './appComponents/SidePanel';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
@@ -37,6 +38,9 @@ interface AppProps {
   initialRepoUrl?: string;
   /** Called when the user connects to a remote server via the AddRepo modal. */
   onConnectServer?: (serverUrl: string) => void;
+  /** True when the graph store is talking to a backend `opentraceai serve`.
+   * Gates features that require the backend (e.g. vault compile + browse). */
+  isServerMode?: boolean;
 }
 
 function App(props: AppProps = {}) {
@@ -54,6 +58,7 @@ function AppInner({
   buildTime,
   initialRepoUrl,
   onConnectServer,
+  isServerMode = false,
 }: AppProps) {
   const { store } = useStore();
   const { loadGraph } = useGraph();
@@ -84,6 +89,7 @@ function AppInner({
     loadAnimationSettings,
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
+  const [showVaults, setShowVaults] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   const [jobExpanded, setJobExpanded] = useState(false);
   const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
@@ -304,6 +310,9 @@ function AppInner({
             isMobile ? handleToggleGraphFullscreen : undefined
           }
           onMobilePanelTabChange={setMobilePanelTab}
+          isServerMode={isServerMode}
+          showVaults={showVaults}
+          onToggleVaults={() => setShowVaults((v) => !v)}
         />
 
         <SidePanel
@@ -377,6 +386,10 @@ function AppInner({
           onLimitsChanged={() => loadGraph()}
           onAnimationSettingsChanged={setAnimationSettings}
         />
+      )}
+
+      {isServerMode && showVaults && (
+        <VaultBrowser onClose={() => setShowVaults(false)} />
       )}
 
       {(version || typeof __APP_VERSION__ !== 'undefined') && (

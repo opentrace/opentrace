@@ -80,6 +80,22 @@ class TestMatchesFilters:
     def test_empty_filters(self):
         assert matches_filters({"any": "val"}, {})
 
+    def test_wildcard_substring(self):
+        assert matches_filters({"name": "userService"}, {"name": "*Service"})
+        assert matches_filters({"name": "userService"}, {"name": "user*"})
+        assert matches_filters({"name": "userService"}, {"name": "*erSer*"})
+
+    def test_wildcard_no_match(self):
+        assert not matches_filters({"name": "userService"}, {"name": "*foo*"})
+
+    def test_wildcard_anchors(self):
+        # 'user*' is anchored — does not match a string starting with something else
+        assert not matches_filters({"name": "MyUserService"}, {"name": "user*"})
+
+    def test_wildcard_only_when_star_present(self):
+        # No `*` → exact match still applies; `Service` does NOT match `userService`.
+        assert not matches_filters({"name": "userService"}, {"name": "Service"})
+
 
 class TestMarshalProps:
     def test_none_returns_empty_object(self):
@@ -648,3 +664,116 @@ class TestGraphStoreContextManager:
         # After __exit__, re-opening should still see the data
         with GraphStore(db_path) as s2:
             assert s2.get_node("cm-1") is not None
+
+
+class TestKnowledgeGraph:
+    """Community, hyperedge, and semantic-edge round-trips."""
+
+    def test_save_community_roundtrip(self, store):
+        store.save_community("c1", "Auth Subsystem", 1, 0.82, 14, is_god=True)
+        node = store.get_node("c1")
+        assert node["type"] == "Community"
+        assert node["name"] == "Auth Subsystem"
+        assert node["properties"]["community_id"] == 1
+        assert node["properties"]["cohesion"] == 0.82
+        assert node["properties"]["members"] == 14
+        assert node["properties"]["is_god"] is True
+
+    def test_save_hyperedge_roundtrip(self, store):
+        store.save_hyperedge("h1", "OAuth Handshake", "implement", "INFERRED", 0.75, source_file="auth.py")
+        node = store.get_node("h1")
+        assert node["type"] == "Hyperedge"
+        assert node["properties"]["relation"] == "implement"
+        assert node["properties"]["confidence"] == "INFERRED"
+        assert node["properties"]["confidence_score"] == 0.75
+        assert node["properties"]["source_file"] == "auth.py"
+
+    def test_save_semantic_edge_persists_confidence(self, store):
+        store.add_node("a", "Function", "login")
+        store.add_node("b", "Function", "authenticate")
+        store.save_semantic_edge(
+            "se1",
+            "a",
+            "b",
+            "rationale_for",
+            "AMBIGUOUS",
+            0.3,
+            source_file="auth.py",
+            source_location="auth.py:42",
+        )
+        rels = store.list_relationships_for_nodes({"a", "b"})
+        assert len(rels) == 1
+        rel = rels[0]
+        assert rel["type"] == "SEMANTIC_EDGE"
+        assert rel["properties"]["confidence"] == "AMBIGUOUS"
+        assert rel["properties"]["confidence_score"] == 0.3
+        assert rel["properties"]["source_location"] == "auth.py:42"
+
+    def test_membership_query(self, store):
+        store.add_node("fn1", "Function", "login")
+        store.save_community("c1", "Auth", 1, 0.7, 5)
+        store.save_membership("m1", "fn1", "c1")
+        community = store.get_node_community("fn1")
+        assert community is not None
+        assert community["id"] == "c1"
+        assert community["name"] == "Auth"
+        assert community["community_id"] == 1
+
+    def test_get_node_community_returns_none_for_unassigned(self, store):
+        store.add_node("orphan", "Function", "orphan")
+        assert store.get_node_community("orphan") is None
+
+    def test_list_communities_ordered_by_community_id(self, store):
+        store.save_community("c2", "Beta", 2, 0.6, 3)
+        store.save_community("c1", "Alpha", 1, 0.7, 5)
+        store.save_community("c3", "Gamma", 3, 0.5, 8)
+        names = [c["name"] for c in store.list_communities()]
+        assert names == ["Alpha", "Beta", "Gamma"]
+
+    def test_participation_query(self, store):
+        store.add_node("fn1", "Function", "step1")
+        store.save_hyperedge("h1", "Login Flow", "participate_in", "EXTRACTED", 1.0)
+        store.save_hyperedge("h2", "Audit Log", "participate_in", "INFERRED", 0.7)
+        store.save_participation("p1", "fn1", "h1")
+        store.save_participation("p2", "fn1", "h2")
+        hyperedges = store.list_hyperedges_for_node("fn1")
+        names = sorted(h["name"] for h in hyperedges)
+        assert names == ["Audit Log", "Login Flow"]
+
+    def test_list_god_nodes_sorted_by_degree(self, store):
+        _seed(store)
+        gods = store.list_god_nodes(limit=5)
+        # svc-api has the most edges (3 outgoing)
+        assert gods[0]["id"] == "svc-api"
+        assert gods[0]["degree"] >= 3
+
+    def test_list_god_nodes_excludes_types(self, store):
+        _seed(store)
+        gods = store.list_god_nodes(limit=10, exclude_types=("Service",))
+        assert all(g["type"] != "Service" for g in gods)
+
+    def test_cross_community_bridges(self, store):
+        # Two communities, one bridge edge
+        store.save_community("ca", "A", 1, 0.7, 2)
+        store.save_community("cb", "B", 2, 0.7, 2)
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
+        store.save_membership("m1", "n1", "ca")
+        store.save_membership("m2", "n2", "cb")
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        bridges = store.list_cross_community_bridges()
+        assert len(bridges) == 1
+        b = bridges[0]
+        assert b["source_id"] == "n1"
+        assert b["target_id"] == "n2"
+        assert b["source_community_id"] != b["target_community_id"]
+        assert b["relation"] == "CALLS"
+
+    def test_cross_community_bridges_excludes_same_community(self, store):
+        store.save_community("ca", "A", 1, 0.7, 3)
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
+        store.save_membership("m1", "n1", "ca")
+        store.save_membership("m2", "n2", "ca")
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        assert store.list_cross_community_bridges() == []

@@ -1,0 +1,17 @@
+{
+  "id": "deps_table",
+  "source_type": "excel",
+  "entities": [
+    {"id": "auth_service", "label": "Auth Service", "type": "service"},
+    {"id": "token_vault", "label": "Token Vault", "type": "service"},
+    {"id": "user_directory", "label": "User Directory", "type": "service"},
+    {"id": "notification_hub", "label": "Notification Hub", "type": "service"},
+    {"id": "email_relay", "label": "Email Relay", "type": "service"}
+  ],
+  "edges": [
+    {"source": "auth_service", "target": "token_vault", "relation": "depends_on", "confidence": "EXTRACTED"},
+    {"source": "auth_service", "target": "user_directory", "relation": "depends_on", "confidence": "EXTRACTED"},
+    {"source": "notification_hub", "target": "auth_service", "relation": "depends_on", "confidence": "EXTRACTED"},
+    {"source": "notification_hub", "target": "email_relay", "relation": "depends_on", "confidence": "EXTRACTED"}
+  ]
+}

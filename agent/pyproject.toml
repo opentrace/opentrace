@@ -31,6 +31,18 @@ dependencies = [
     "pyarrow>=15.0",
     "pyyaml>=6.0",
     "cryptography>=42.0",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+    "openai>=1.0",
+    # Knowledge graph + doc ingestion — required by the headline wikiv3
+    # features (index --extract-entities, --build-pages, cluster, analyze,
+    # export-graph). markitdown[all] bundles PDF/DOCX/audio/video adapters;
+    # faster-whisper handles audio transcription; yt-dlp pulls YouTube
+    # transcripts. networkx powers community detection + exports.
+    "networkx>=3.0",
+    "markitdown[all]>=0.1.5",
+    "faster-whisper>=1.0",
+    "yt-dlp>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +52,26 @@ summarization = [
 ]
 swe-bench = [
     "anthropic>=0.40",
+]
+# Vestigial — the packages that used to live here are now in core deps.
+# Kept so existing `pip install opentraceai[graph]` callers don't break.
+graph = [
+    "networkx>=3.0",
+    "markitdown[all]>=0.1.5",
+    "faster-whisper>=1.0",
+    "yt-dlp>=2024.1",
+    "anthropic>=0.40",
+    "openai>=1.0",
+]
+# Leiden community detection — graspologic doesn't support Python 3.13 yet,
+# so it has to stay opt-in. `cluster` falls back to Louvain (in networkx)
+# when graspologic isn't installed.
+graph-leiden = [
+    "graspologic; python_version < '3.13'",
+]
+# Filesystem watcher for `opentraceai watch`. Only that one command uses it.
+graph-watch = [
+    "watchdog>=3.0",
 ]
 
 [project.urls]
@@ -53,7 +85,9 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-anyio", "ruff", "grpcio-tools"]
+# watchdog: optional at runtime (graph-watch extra) but needed so the watch
+# tests exercise the real event handler instead of skipping.
+dev = ["pytest", "pytest-anyio", "ruff", "watchdog>=3.0"]
 
 [build-system]
 requires = ["hatchling"]

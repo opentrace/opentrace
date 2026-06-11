@@ -15,11 +15,8 @@
  */
 
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
-import type {
-  JobResult,
-  ProgressDetail,
-} from '../gen/opentrace/v1/agent_service';
+import { JobEventKind, JobPhase } from '../gen/agent_service';
+import type { JobResult, ProgressDetail } from '../gen/agent_service';
 import type { JobMessage, JobService, JobStream } from './types';
 
 export type StageStatus = 'pending' | 'active' | 'completed';

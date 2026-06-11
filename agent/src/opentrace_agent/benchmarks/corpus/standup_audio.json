@@ -1,0 +1,15 @@
+{
+  "id": "standup_audio",
+  "source_type": "audio",
+  "entities": [
+    {"id": "priya_nair", "label": "Priya Nair", "type": "person"},
+    {"id": "tom_okafor", "label": "Tom Okafor", "type": "person"},
+    {"id": "relay_3_0", "label": "Relay 3.0", "type": "service"},
+    {"id": "fan_out_worker", "label": "Fan-out Worker", "type": "service"},
+    {"id": "metrics_sink", "label": "Metrics Sink", "type": "service"}
+  ],
+  "edges": [
+    {"source": "relay_3_0", "target": "fan_out_worker", "relation": "replaces", "confidence": "EXTRACTED"},
+    {"source": "fan_out_worker", "target": "metrics_sink", "relation": "writes", "confidence": "EXTRACTED"}
+  ]
+}

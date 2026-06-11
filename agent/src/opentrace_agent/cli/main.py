@@ -219,6 +219,13 @@ def app(ctx: click.Context, workspace_dir: str | None) -> None:
         click.echo(ctx.get_help())
 
 
+# Register the wiki subgroup. Imported here (after `app` is defined) so the
+# subgroup module can stay independent of the rest of the CLI.
+from opentrace_agent.cli.vault_cmd import vault as _vault_group  # noqa: E402
+
+app.add_command(_vault_group)
+
+
 def _safe_unlink(path_str: str, *, context: str) -> bool:
     """Unlink *path_str*, tolerating both missing files and permission errors.
 
@@ -360,6 +367,11 @@ def _run_indexing_pipeline(
     batch_size: int,
     verbose: bool,
     extra_metadata: dict[str, object] | None = None,
+    wiki: bool = False,
+    vault_name: str | None = None,
+    vault_scope: str = "local",
+    no_prune: bool = False,
+    refresh_stale_pages: bool = False,
 ) -> float:
     """Run the four-stage pipeline with atomic-write staging.
 
@@ -394,7 +406,11 @@ def _run_indexing_pipeline(
                 click.echo(f"Indexing {source_path} ...")
                 t0 = time.monotonic()
 
-                inp = PipelineInput(path=str(source_path), repo_id=repo_id)
+                inp = PipelineInput(
+                    path=str(source_path),
+                    repo_id=repo_id,
+                    db_path=staging_db,
+                )
 
                 last_result = None
                 for event in run_pipeline(inp, store=store):
@@ -402,14 +418,58 @@ def _run_indexing_pipeline(
                     if getattr(event, "result", None) is not None:
                         last_result = event.result
 
+                store.flush()
+
+                # --- Phase 3: unified doc ingestion when --wiki is set ---
+                # The code pipeline above is code-only now. The wiki doc pass
+                # reads the doc files into SourceInputs and, in ONE LLM call per
+                # doc, produces file_summary + concept WikiPages AND the
+                # knowledge-graph entities/edges — all into the same staging DB;
+                # the atomic swap covers them together.
+                if wiki:
+                    _run_wiki_compile_against_index(
+                        graph_store=graph_store,
+                        source_path=source_path,
+                        vault_name=vault_name or _default_vault_name(source_path),
+                        vault_scope=vault_scope,
+                        verbose=verbose,
+                    )
+
+                # --- Phase 4: autoprune orphan sources/entities/pages ---
+                # Sweep state for files that disappeared between this run
+                # and the previous one. Scoped to the walked path / vault
+                # so partial indexes don't blast away other repos' data.
+                if wiki and not no_prune:
+                    _run_autoprune_after_index(
+                        graph_store=graph_store,
+                        source_path=source_path,
+                        vault_name=vault_name,
+                        db_path=staging_db,
+                        verbose=verbose,
+                    )
+
+                # --- Phase 8: --refresh-stale-pages runs Plan+Execute against
+                # concept pages stamped stale_since by autoprune. Shares
+                # the same refresh_stale_pages helper that
+                # ``vault refresh-stale-pages`` uses, so both surfaces produce
+                # identical output. Cost: one LLM call per stale page.
+                if refresh_stale_pages and wiki:
+                    _run_refresh_stale_after_index(
+                        graph_store=graph_store,
+                        vault_name=vault_name,
+                        verbose=verbose,
+                    )
+
+                # Capture elapsed *after* every phase so metadata and the
+                # "Done in N.Ns" line reflect actual wall-clock time —
+                # wiki compile + autoprune + refresh dominate the runtime
+                # when LLM flags are set.
                 elapsed = time.monotonic() - t0
 
                 metadata = _collect_metadata(source_path, repo_id, elapsed, last_result)
                 if extra_metadata:
                     metadata.update(extra_metadata)
                 graph_store.save_metadata(metadata)
-
-                store.flush()
 
             # Inside the try so a swap-time failure (ENOSPC, permission flip)
             # gets the same staging cleanup as a pipeline failure.
@@ -425,7 +485,8 @@ def _run_indexing_pipeline(
 
 
 @app.command()
-@click.argument("path", default=".", type=click.Path(exists=True, file_okay=False, resolve_path=True))
+@click.argument("path", default=".", type=str)
+@click.argument("vault_name", required=False, default=None)
 @click.option(
     "--db",
     "db_path",
@@ -435,31 +496,553 @@ def _run_indexing_pipeline(
 )
 @click.option("--repo-id", default=None, help="Repository ID (defaults to directory name).")
 @click.option("--batch-size", default=200, show_default=True, help="Items per batch.")
+@click.option(
+    "--wiki",
+    "wiki_flag",
+    is_flag=True,
+    help=(
+        "Ingest doc files (PDF/DOCX/MD/HTML/...) alongside code: ONE LLM call "
+        "per doc produces a file-summary page, the knowledge-graph entities "
+        "(Idea / Service / Module / Paper / Person / Event + relationships), and "
+        "the concept inventory, then synthesises cross-document concept pages "
+        "under ~/.opentrace/vaults/<vault>/. The vault name defaults to the path "
+        "basename; pass it as a second positional to override "
+        "(e.g. ``index ./papers research``). Requires a configured LLM key — "
+        "fails fast if missing. Plain ``index`` (no --wiki) stays code-only."
+    ),
+)
+@click.option(
+    "--global",
+    "global_scope",
+    is_flag=True,
+    help=(
+        "Compile the vault into the user-global root (~/.opentrace/vaults/ "
+        "or $OT_VAULT_ROOT) instead of the project-local "
+        "<cwd>/.opentrace/vaults/. Global vaults can be attached to any "
+        "graph via ``opentraceai vault attach``. Only meaningful with "
+        "--wiki."
+    ),
+)
+@click.option(
+    "--no-prune",
+    is_flag=True,
+    help=(
+        "Skip autoprune on re-runs. By default, ``index --wiki`` removes graph "
+        "state for sources that disappeared from disk between runs "
+        "(scope-limited to the walked path / vault); this flag preserves "
+        "orphans for inspection."
+    ),
+)
+@click.option(
+    "--refresh-stale-pages",
+    "refresh_stale_pages",
+    is_flag=True,
+    help=(
+        "After autoprune marks concept pages stale (because their cited "
+        "Sources were removed), automatically re-run synthesis against the "
+        "remaining citations to regenerate them. Only meaningful with --wiki. "
+        "Without this flag, stale pages stay stamped and you can refresh later "
+        "via ``opentraceai vault refresh-stale-pages``."
+    ),
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def index(
     path: str,
     db_path: str | None,
     repo_id: str | None,
     batch_size: int,
+    wiki_flag: bool,
+    vault_name: str | None,
+    global_scope: bool,
+    no_prune: bool,
+    refresh_stale_pages: bool,
     verbose: bool,
 ) -> None:
     """Index a local codebase into a LadybugDB knowledge graph."""
     _configure_logging(verbose)
 
-    root = Path(path)
+    # A vault-name positional implies doc ingestion (--wiki).
+    wiki = wiki_flag or vault_name is not None
+
+    if refresh_stale_pages and not wiki:
+        raise click.ClickException("--refresh-stale-pages requires --wiki (or a vault name).")
+
+    # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
+    # before opening the staging DB / acquiring locks, rather than mid-pipeline.
+    if wiki:
+        from opentrace_agent.sources._llm_common import actionable_no_backend_message
+        from opentrace_agent.sources.markdown.clients import detect_client
+
+        if detect_client() is None:
+            raise click.ClickException(actionable_no_backend_message())
+
+    # Classify the input shape. URLs and single files take a different path —
+    # they skip the directory walker and feed one SourceInput straight to the
+    # extract/wiki pipelines. Only a directory makes sense for the full code
+    # walk (Repository/Directory/File nodes).
+    input_kind = _classify_index_input(path)
+
+    if input_kind in ("url", "file"):
+        if not wiki:
+            raise click.ClickException(f"Single-{input_kind} input requires --wiki (there's no code to walk).")
+        resolved_db = _resolve_db(db_path)
+        resolved_vault = vault_name or _default_vault_name_for_uri(path, input_kind)
+        elapsed = _run_single_source_pipeline(
+            uri=path,
+            kind=input_kind,
+            db_path=resolved_db,
+            verbose=verbose,
+            vault_name=resolved_vault,
+            vault_scope="global" if global_scope else "local",
+        )
+        click.echo(f"Done in {elapsed:.1f}s.")
+        return
+
+    # Directory path: existing flow.
+    root = Path(path).resolve()
+    if not root.is_dir():
+        raise click.ClickException(f"Path does not exist or is not a directory: {path}")
     if repo_id is None:
         repo_id = root.name
 
     resolved_db = _resolve_db(db_path)
+    resolved_vault = vault_name or _default_vault_name(root)
+
     elapsed = _run_indexing_pipeline(
         source_path=root,
         repo_id=repo_id,
         db_path=resolved_db,
         batch_size=batch_size,
         verbose=verbose,
+        wiki=wiki,
+        vault_name=resolved_vault,
+        vault_scope="global" if global_scope else "local",
+        no_prune=no_prune,
+        refresh_stale_pages=refresh_stale_pages,
     )
 
     click.echo(f"Done in {elapsed:.1f}s.")
+
+
+def _run_refresh_stale_after_index(
+    *,
+    graph_store,
+    vault_name: str | None,
+    verbose: bool,
+) -> None:
+    """Re-run Plan+Execute against any WikiPages stamped stale_since this run.
+
+    Delegates to ``wiki.ingest.pipeline.refresh_stale_pages`` (the same
+    helper backing ``opentraceai vault refresh-stale-pages``) so both surfaces
+    produce identical output. Reuses the wiki autodetect for LLM key
+    resolution.
+    """
+    from opentrace_agent.cli.vault_cmd import _autodetect_provider
+    from opentrace_agent.wiki.ingest.pipeline import refresh_stale_pages
+
+    provider = _autodetect_provider()
+    regenerated = refresh_stale_pages(
+        graph_store,
+        vault_name=vault_name,
+        provider=provider,
+    )
+    if regenerated:
+        click.echo(f"  --refresh-stale-pages: regenerated {regenerated} page(s).")
+    elif verbose:
+        click.echo("  --refresh-stale-pages: no stale pages found.")
+
+
+def _run_autoprune_after_index(
+    *,
+    graph_store,
+    source_path: Path,
+    vault_name: str | None,
+    db_path: str,
+    verbose: bool,
+) -> None:
+    """Re-walk the source path, compute walked shas, then run autoprune.
+
+    Re-walks are cheap (no LLM, just filesystem traversal) and keep the
+    autoprune logic decoupled from the pipeline event stream. We use the
+    same DirectoryWalker classification the index pipeline used so the
+    walked set is consistent.
+    """
+    from opentrace_agent.pipeline.autoprune import (
+        autoprune_after_index,
+        compute_walked_shas,
+    )
+    from opentrace_agent.sources.code.directory_walker import (
+        DOC_EXTENSIONS,
+        EXCLUDED_DIRS,
+        INCLUDED_EXTENSIONS,
+    )
+
+    walked_docs: list[Path] = []
+    walked_file_ids: set[str] = set()
+    repo_id = source_path.name
+
+    if source_path.is_file():
+        if source_path.suffix.lower() in DOC_EXTENSIONS:
+            walked_docs.append(source_path)
+    else:
+        for dirpath, dirnames, filenames in os.walk(source_path):
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
+            rel_dir = Path(dirpath).relative_to(source_path)
+            rel_dir_str = str(rel_dir) if str(rel_dir) != "." else ""
+            for filename in sorted(filenames):
+                ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                abs_file = Path(dirpath) / filename
+                rel_file = str(rel_dir / filename) if rel_dir_str else filename
+                if ext in DOC_EXTENSIONS:
+                    walked_docs.append(abs_file)
+                if ext in INCLUDED_EXTENSIONS:
+                    walked_file_ids.add(f"{repo_id}/{rel_file}")
+
+    walked_shas = compute_walked_shas(walked_docs)
+
+    report = autoprune_after_index(
+        graph_store,
+        walked_doc_shas=walked_shas,
+        walked_file_ids=walked_file_ids,
+        vault_name=vault_name,
+        scope_path=source_path,
+        db_path=db_path,
+    )
+
+    if any(
+        [
+            report.sources_deleted,
+            report.entities_deleted,
+            report.file_summary_pages_deleted,
+            report.concept_pages_deleted,
+            report.concept_pages_marked_stale,
+        ]
+    ):
+        click.echo(
+            f"  Autoprune: -{report.sources_deleted} sources, "
+            f"-{report.entities_deleted} entities, "
+            f"-{report.file_summary_pages_deleted} file_summary pages, "
+            f"-{report.concept_pages_deleted} concept pages, "
+            f"{report.concept_pages_marked_stale} stale-marked, "
+            f"-{report.corpus_files_deleted} corpus files"
+        )
+    elif verbose:
+        click.echo("  Autoprune: no orphans found.")
+
+
+def _run_wiki_compile_against_index(
+    *,
+    graph_store,
+    source_path: Path,
+    vault_name: str,
+    vault_scope: str = "local",
+    verbose: bool,
+) -> None:
+    """Run the wiki Plan+Execute pipeline against doc files under *source_path*.
+
+    Reuses the DirectoryWalker's DOC_EXTENSIONS classification to discover
+    the same files the entity-extraction stage saw, builds them into
+    ``SourceInput`` objects, and feeds them to ``wiki.ingest.pipeline.
+    run_compile`` against the given vault. ``graph_store`` is the staging
+    DB the index pipeline is already writing to — the wiki pipeline
+    mirrors its output into the same store.
+
+    LLM autodetect mirrors ``cli/vault_cmd._autodetect_provider`` (hard-fail
+    when no key set, anthropic→gemini→openai priority).
+    """
+    from opentrace_agent.cli.vault_cmd import _autodetect_provider
+    from opentrace_agent.sources.code.directory_walker import (
+        DOC_EXTENSIONS,
+        EXCLUDED_DIRS,
+    )
+    from opentrace_agent.wiki import SourceInput, run_compile
+
+    # Collect doc files via the same classification the walker uses.
+    inputs: list[SourceInput] = []
+    if source_path.is_file():
+        if source_path.suffix.lower() in DOC_EXTENSIONS:
+            inputs.append(SourceInput(name=source_path.name, data=source_path.read_bytes()))
+    else:
+        for dirpath, dirnames, filenames in os.walk(source_path):
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
+            for filename in sorted(filenames):
+                ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                if ext not in DOC_EXTENSIONS:
+                    continue
+                abs_file = Path(dirpath) / filename
+                # Pass the path RELATIVE to the walked root, not the bare
+                # basename — corpora routinely repeat filenames across folders
+                # (every package dir has a README.md / index.md). The relative
+                # path lets the summariser disambiguate otherwise-identical page
+                # titles so bare [[Readme]] wiki-links don't render broken.
+                rel_name = os.path.relpath(abs_file, source_path)
+                try:
+                    inputs.append(SourceInput(name=rel_name, data=abs_file.read_bytes()))
+                except OSError as exc:
+                    click.echo(f"  Skipped {rel_name}: {exc}", err=True)
+
+    if not inputs:
+        click.echo(f"  --wiki: no doc files found under {source_path}.")
+        return
+
+    scope_label = "global" if vault_scope == "global" else "local"
+    click.echo(f"  --wiki: ingesting {len(inputs)} doc(s) into {scope_label} vault {vault_name!r} ...")
+
+    # Vault must live next to the index DB (so a single `.opentrace/`
+    # dir holds both the graph and its vaults), not nested inside the
+    # walked source path. db_path looks like `<root>/.opentrace/index.db`
+    # (or its `.staging` sibling) — strip two levels to get the project root.
+    db_path = Path(graph_store.db_path)
+    project_root = db_path.parent.parent
+
+    provider = _autodetect_provider()
+
+    # Pre-flight cost estimate. The unified doc pass is ONE call per source
+    # (summary + entities + concept inventory), plus 1 resolve call and a share
+    # of concept-page synthesis (~0.5 per source). Token assumption: 4k input /
+    # 1k output per LLM call.
+    from opentrace_agent.sources._llm_common import BACKENDS
+
+    cfg = BACKENDS.get(provider)
+    if cfg is not None:
+        est_calls = len(inputs) + 1 + max(1, len(inputs) // 2)
+        est_input_tokens = est_calls * 4_000
+        est_output_tokens = est_calls * 1_000
+        est_cost = (
+            est_input_tokens / 1_000_000 * cfg.pricing_input_per_million
+            + est_output_tokens / 1_000_000 * cfg.pricing_output_per_million
+        )
+        click.echo(f"    via {provider} (~${est_cost:.2f} estimated)")
+
+    from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase
+
+    # Stages whose per-unit progress is worth showing by default — the
+    # LLM-bound ones the user is actually waiting on. Cheap stages (hashing,
+    # normalizing) stay --verbose-only so they don't spam the output.
+    _progress_phases = {WikiPhase.SUMMARIZING_SOURCES, WikiPhase.PLANNING, WikiPhase.EXECUTING}
+
+    # Globals are disk-only at compile time — attach them to a project's
+    # graph via ``opentraceai vault attach`` (or the UI's Global-tab "+"
+    # button). Mirroring at compile time would assume "the project that
+    # created this vault wants it indexed here", which isn't always true.
+    mirror_target = graph_store if vault_scope == "local" else None
+    for event in run_compile(
+        vault_name=vault_name,
+        inputs=inputs,
+        provider=provider,
+        scope=vault_scope,
+        project_root=project_root,
+        graph_store=mirror_target,
+    ):
+        # Stage boundaries + completion + errors always print so users can see
+        # the wiki phase progressing. Per-unit progress prints for the slow
+        # LLM stages by default (with an [n/total] counter like the entity
+        # stage); cheap stages stay --verbose-only.
+        if event.kind in (
+            WikiEventKind.STAGE_START,
+            WikiEventKind.STAGE_STOP,
+            WikiEventKind.DONE,
+        ):
+            click.echo(f"    wiki: {event.message}")
+        elif event.kind == WikiEventKind.ERROR:
+            click.echo(f"    wiki ERROR: {event.message}", err=True)
+        elif event.kind == WikiEventKind.STAGE_PROGRESS and (verbose or event.phase in _progress_phases):
+            counter = f"[{event.current}/{event.total}] " if event.total else ""
+            click.echo(f"    wiki: {counter}{event.message}")
+
+
+def _default_vault_name(path: Path) -> str:
+    """Derive a vault name from an input path.
+
+    - Git repo (.git/ walks up): the basename of the repo root
+    - Plain folder: ``path.name``
+    - Single file: ``path.stem``
+    - URL: handled separately in the CLI (caller slugifies the URL path)
+
+    Falls back to ``path.name`` when classification is ambiguous.
+    Always run through ``wiki.slugify.base_slug`` so the result is
+    filesystem-safe.
+    """
+    from opentrace_agent.wiki.slugify import base_slug
+
+    if path.is_file():
+        candidate = path.stem
+    else:
+        # Walk up for a git root — index typically points at the repo
+        # itself, but sometimes a subdirectory. Walking up gives the
+        # natural project name when that happens.
+        try:
+            import git
+
+            repo = git.Repo(path, search_parent_directories=True)
+            repo_root = Path(repo.working_tree_dir or path).name
+            candidate = repo_root or path.name
+        except Exception:
+            candidate = path.name
+
+    slug = base_slug(candidate or "default")
+    return slug or "default"
+
+
+def _classify_index_input(path: str) -> str:
+    """Return ``"url"`` / ``"file"`` / ``"dir"`` for an ``index`` argument.
+
+    URLs are detected by scheme. Local paths must exist; a non-existent path
+    raises so the caller surfaces a clear error before pipeline setup.
+    """
+    from opentrace_agent.sources.markdown.fetchers import is_url
+
+    if is_url(path):
+        return "url"
+    p = Path(path)
+    if p.is_dir():
+        return "dir"
+    if p.is_file():
+        return "file"
+    raise click.ClickException(f"Path does not exist: {path}")
+
+
+def _default_vault_name_for_uri(uri: str, kind: str) -> str:
+    """Vault name fallback for URL / single-file inputs (slugified)."""
+    from opentrace_agent.sources.markdown.fetchers import url_basename
+    from opentrace_agent.wiki.slugify import base_slug
+
+    if kind == "url":
+        candidate = Path(url_basename(uri)).stem or "url"
+    else:
+        candidate = Path(uri).stem or "default"
+    return base_slug(candidate) or "default"
+
+
+def _run_single_source_pipeline(
+    *,
+    uri: str,
+    kind: str,
+    db_path: str,
+    verbose: bool,
+    vault_name: str,
+    vault_scope: str = "local",
+) -> float:
+    """Index a single URL or local file as one SourceInput.
+
+    Skips the DirectoryWalker (no Repository/Directory/File nodes). Builds a
+    SourceInput from raw bytes and runs the unified wiki doc pass against it
+    (one LLM call → summary + entities + concept inventory), persists into the
+    staging DB, and atomically swaps. Returns elapsed seconds.
+
+    Autoprune intentionally doesn't run here — single-source ingest doesn't
+    have a "walked set" to compute orphans against.
+    """
+    from opentrace_agent.sources.markdown.fetchers import (
+        UnsupportedSourceError,
+        fetch_bytes,
+        resolve,
+        url_basename,
+    )
+    from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki import SourceInput, run_compile
+
+    db_dir = Path(db_path).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    staging_db = db_path + ".staging"
+
+    # Fetch raw bytes (so we can content-address the Source by sha) and
+    # decide what URI to hand markitdown for conversion.
+    if kind == "url":
+        try:
+            markitdown_uri = resolve(uri)
+        except UnsupportedSourceError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Fetching {markitdown_uri} ...")
+        try:
+            raw_bytes = fetch_bytes(markitdown_uri)
+        except Exception as e:  # noqa: BLE001
+            raise click.ClickException(f"failed to fetch {markitdown_uri}: {e}")
+        display_name = url_basename(markitdown_uri)
+        source_uri = uri  # user-facing URL, stamped on run metadata
+    else:
+        local = Path(uri).resolve()
+        raw_bytes = local.read_bytes()
+        display_name = local.name
+        source_uri = str(local)
+
+    lock_fh = _acquire_index_lock(db_path)
+    try:
+        _clean_stale_staging(staging_db)
+        click.echo(f"Opening staging database at {staging_db} ...")
+        try:
+            _seed_staging_from_live(db_path, staging_db)
+            with GraphStore(staging_db) as graph_store:
+                t0 = time.monotonic()
+
+                # One unified per-doc pass: summary + entities + concept
+                # inventory, then (for ≥2-source concepts) synthesis. A lone
+                # source produces a summary page + entities; the wiki owns
+                # Source + entity-node creation.
+                project_root = Path(staging_db).parent.parent
+                inputs = [SourceInput(name=display_name, data=raw_bytes)]
+                click.echo(f"  --wiki: ingesting 1 doc into {vault_scope} vault {vault_name!r} ...")
+                provider = _autodetect_provider_for_compile()
+
+                from opentrace_agent.sources._llm_common import BACKENDS
+
+                cfg = BACKENDS.get(provider)
+                if cfg is not None:
+                    est_calls = 1 + 1  # 1 unified doc call + ~1 synthesis
+                    est_cost = (
+                        est_calls * 4_000 / 1_000_000 * cfg.pricing_input_per_million
+                        + est_calls * 1_000 / 1_000_000 * cfg.pricing_output_per_million
+                    )
+                    click.echo(f"    via {provider} (~${est_cost:.2f} estimated)")
+
+                from opentrace_agent.wiki.ingest.types import WikiEventKind
+
+                for event in run_compile(
+                    vault_name=vault_name,
+                    inputs=inputs,
+                    provider=provider,
+                    scope=vault_scope,
+                    project_root=project_root,
+                    graph_store=graph_store,
+                ):
+                    if event.kind in (
+                        WikiEventKind.STAGE_START,
+                        WikiEventKind.STAGE_STOP,
+                        WikiEventKind.DONE,
+                    ):
+                        click.echo(f"    wiki: {event.message}")
+                    elif event.kind == WikiEventKind.ERROR:
+                        click.echo(f"    wiki ERROR: {event.message}", err=True)
+                    elif verbose:
+                        click.echo(f"    wiki: {event.message}")
+
+                elapsed = time.monotonic() - t0
+                # For URL inputs the source_uri isn't a meaningful filesystem
+                # path; use the project dir as the metadata anchor instead so
+                # gitpython probing doesn't trip over the URL string.
+                meta_anchor = Path(db_path).resolve().parent.parent
+                metadata = _collect_metadata(meta_anchor, None, elapsed, None)
+                metadata["sourceUri"] = source_uri
+                graph_store.save_metadata(metadata)
+
+            _swap_staging_into_place(staging_db, db_path)
+        except BaseException:
+            _safe_unlink(staging_db, context="failed-index cleanup")
+            _safe_unlink(staging_db + ".wal", context="failed-index cleanup")
+            raise
+
+        return elapsed
+    finally:
+        _release_index_lock(lock_fh)
+
+
+def _autodetect_provider_for_compile() -> str:
+    """Local alias around the vault command's autodetect — avoids the import cycle."""
+    from opentrace_agent.cli.vault_cmd import _autodetect_provider
+
+    return _autodetect_provider()
 
 
 def _print_event(event: object, verbose: bool) -> None:
@@ -472,10 +1055,12 @@ def _print_event(event: object, verbose: bool) -> None:
 
     if kind == EventKind.STAGE_START:
         click.echo(f"  {message}")
-    elif kind == EventKind.STAGE_PROGRESS and verbose:
+    elif kind == EventKind.STAGE_PROGRESS and (verbose or getattr(event, "important", False)):
         detail = getattr(event, "detail", None)
         if detail:
             click.echo(f"    [{detail.current}/{detail.total}] {message}")
+        else:
+            click.echo(f"    {message}")
     elif kind == EventKind.STAGE_STOP:
         click.echo(f"  {message}")
     elif kind == EventKind.DONE and result:
@@ -782,10 +1367,14 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
 @click.option("--port", default=8787, show_default=True, help="Bind port.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
-    """Start an HTTP server exposing the graph database.
+    """Start an HTTP server exposing the graph database + vault routes.
 
     Provides a REST API that replaces the in-browser WASM LadybugDB engine,
-    allowing the UI to query a server-backed graph store instead.
+    letting the UI query a server-backed graph. When no ``.opentrace/index.db``
+    is found, an empty one is bootstrapped at ``<cwd>/.opentrace/index.db``
+    so the UI's full chrome (toolbar, side panel, vault browser, chat) is
+    available immediately — the user sees an empty graph + Add Repo prompt
+    without losing access to the rest of the app.
     """
     import uvicorn
 
@@ -795,17 +1384,32 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     from opentrace_agent.cli.serve import create_app
     from opentrace_agent.store import GraphStore
 
+    # Bootstrap an empty DB when none is found, rather than refusing to
+    # start or running in a half-broken vault-only mode. The UI relies on
+    # graph routes (`/api/stats`, `/api/graph`, etc.) being mounted to
+    # render its full chrome; an empty graph (``total_nodes=0``) lets it
+    # render the inline empty-state overlay over the canvas while keeping
+    # the toolbar, side panel, vault browser, and chat all reachable.
     try:
         resolved_db = _resolve_db(db_path, must_exist=True)
-    except click.UsageError as e:
-        raise SystemExit(str(e))
+    except click.UsageError:
+        resolved_db = _resolve_db(db_path, must_exist=False)
+        db_parent = Path(resolved_db).parent
+        db_parent.mkdir(parents=True, exist_ok=True)
+        _ensure_gitignore(db_parent)
+        # Opening GraphStore on a non-existent path creates the LadybugDB
+        # file + initialises the schema. Close + reopen below so the
+        # normal stats/echo path runs uniformly.
+        with GraphStore(resolved_db) as _bootstrap:
+            pass
+        click.echo(f"Created empty graph DB at {resolved_db}")
 
     log.debug("Opening database: %s", resolved_db)
     store = GraphStore(resolved_db)
-
     stats = store.get_stats()
     click.echo(f"Database: {resolved_db}")
     click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
+
     click.echo(f"Listening on http://{host}:{port}")
 
     app = create_app(store)
@@ -815,7 +1419,8 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 @app.command()
@@ -2049,3 +2654,139 @@ def _configure_logging(verbose: bool) -> None:
         level=level,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+
+# Knowledge-graph features (cluster, analyze, export-graph, watch, hook,
+# ingest, llm-extraction-eval) are registered as first-class top-level
+# commands below — no separate `graph` subgroup.
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
+def cluster(db_path: str | None, output_json: bool) -> None:
+    """Run community detection over the stored graph.
+
+    Reads non-internal nodes + edges, runs Leiden (falls back to Louvain),
+    re-splits oversized or low-cohesion communities, and writes ``Community``
+    nodes + ``MEMBER_OF_COMMUNITY`` edges. Idempotent — re-running clears
+    prior Community state before writing.
+    """
+    from opentrace_agent.cli.cluster_cmd import run_cluster_cli
+
+    resolved = _resolve_db(db_path, must_exist=True)
+    run_cluster_cli(resolved, output_json=output_json)
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option("--gods", "god_limit", default=10, show_default=True, help="Top-N god nodes to surface.")
+@click.option(
+    "--bridges",
+    "bridge_limit",
+    default=10,
+    show_default=True,
+    help="Top-N cross-community bridges to surface.",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
+def analyze(db_path: str | None, god_limit: int, bridge_limit: int, output_json: bool) -> None:
+    """Surface god nodes, cross-community bridges, and suggested questions.
+
+    Run ``opentraceai cluster`` first — bridges depend on community
+    membership. Without communities, only god nodes are reported.
+    """
+    from opentrace_agent.cli.analyze_cmd import run_analyze_cli
+
+    resolved = _resolve_db(db_path, must_exist=True)
+    run_analyze_cli(
+        resolved,
+        god_limit=god_limit,
+        bridge_limit=bridge_limit,
+        output_json=output_json,
+    )
+
+
+from opentrace_agent.cli.export_graph import export_graph_app as _export_graph_app  # noqa: E402
+from opentrace_agent.cli.hook import hook_app as _hook_app  # noqa: E402
+from opentrace_agent.cli.watch import watch as _watch_cmd  # noqa: E402
+
+app.add_command(_export_graph_app)
+app.add_command(_hook_app)
+app.add_command(_watch_cmd)
+
+
+@app.command()
+@click.argument("source_id")
+@click.argument("target_id")
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option("--max-hops", default=6, show_default=True, help="Maximum path length.")
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
+def path(
+    source_id: str,
+    target_id: str,
+    db_path: str | None,
+    max_hops: int,
+    output_json: bool,
+) -> None:
+    """Find a shortest path between two graph nodes by ID.
+
+    Returns the sequence of node IDs from SOURCE_ID to TARGET_ID via the
+    retrieval-layer BFS (no networkx dependency). When no route exists
+    within MAX_HOPS, prints a friendly message and exits cleanly.
+    """
+    import json as _json
+
+    from opentrace_agent.retrieval import find_path as _find_path
+    from opentrace_agent.store import GraphStore
+
+    resolved = _resolve_db(db_path, must_exist=True)
+    with GraphStore(resolved) as store:
+        result = _find_path(store, source_id, target_id, max_hops=max_hops)
+
+    path_steps = result.get("path") or []
+    if not path_steps:
+        err = result.get("error")
+        if err:
+            reason, friendly = "node not found", "Node not found."
+        elif result.get("length") is None:
+            reason, friendly = "no path", "No path between those nodes."
+        else:
+            reason, friendly = (
+                "exceeds max_hops",
+                f"A path exists but is longer than {max_hops} hops — raise --max-hops to see it.",
+            )
+        if output_json:
+            click.echo(_json.dumps({"path": [], "reason": reason}))
+        else:
+            click.echo(friendly)
+        return
+
+    ids = [step["node"]["id"] for step in path_steps]
+    if output_json:
+        click.echo(_json.dumps({"path": ids, "hops": len(ids) - 1}))
+    else:
+        click.echo(" → ".join(ids))
+
+
+# Note: the standalone ``opentraceai ingest`` command was removed in the
+# ingestion-unification work. Single-file/URL ingestion goes through
+# ``opentraceai index --wiki <path>``, which routes the source through the
+# unified wiki doc pass (one LLM call → summary + entities + concept pages).

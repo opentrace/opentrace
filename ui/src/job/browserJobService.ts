@@ -25,8 +25,8 @@
 
 import { loaderRegistry } from '../runner/browser/loader/registry';
 import type { LoaderInput } from '../runner/browser';
-import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
-import type { JobEvent } from '../gen/opentrace/v1/agent_service';
+import { JobEventKind, JobPhase } from '../gen/agent_service';
+import type { JobEvent } from '../gen/agent_service';
 import type { GraphStore } from '../store/types';
 import { EventChannel } from './eventChannel';
 import type { JobMessage, JobService, JobStream } from './types';

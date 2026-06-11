@@ -5,10 +5,24 @@ Click-based command-line interface for the `opentraceai` binary. Also hosts the 
 ## Commands
 
 ```
-main.py          — Click root group; --db override, find_db() discovery
-index            — Run the four-stage pipeline against a target path/repo
+main.py          — Click root group + the unified index command:
+                   • code-only walk (plain `index`; no LLM calls)
+                   • --wiki [VAULT_NAME] [--global] — unified doc ingestion:
+                     ONE LLM call/doc → file-summary page + entities
+                     (Idea/Service/… + edges) + concept inventory, then
+                     cross-document concept-page synthesis
+                   • --no-prune / --refresh-stale-pages for cleanup behaviour
+vault_cmd.py     — vault list / show / attach / detach / promote / demote / refresh-stale-pages
+analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
+cluster_cmd.py   — community detection (Leiden → Louvain fallback)
+export_graph.py  — graphml / obsidian / report exporters (deterministic, no LLM)
 serve.py         — Starlette HTTP server; REST API consumed by the UI
-mcp_server.py    — MCP (Model Context Protocol) server for Claude Code agents
+mcp_server.py    — MCP (Model Context Protocol) server for agent clients
+watch.py         — debounced filesystem watcher. SCAFFOLDING: the rebuild
+                   callback is a no-op shim until incremental indexing lands
+hook.py          — git post-commit hook install/uninstall. SCAFFOLDING: the
+                   installed hook calls `index --incremental`, which doesn't
+                   exist yet, so it no-ops on every commit
 augment.py       — Post-process: add AI summaries to existing graph nodes
 bench.py         — SWE-bench / accuracy benchmark runner (see /benchmark)
 impact.py        — Blast-radius analysis for a given symbol or file
@@ -17,6 +31,8 @@ credentials.py   — Token storage helpers
 config.py        — pydantic-settings (env prefix OT_)
 export_import.py — Dump and reload graph state for backups / cross-machine moves
 ```
+
+The standalone ``ingest``, ``wiki compile``, ``wiki backfill``, and ``export-graph wiki`` commands were removed during the ingestion unification — all of those flows now route through ``index`` or ``vault attach``. No backward-compat aliases.
 
 ## Database Discovery
 
@@ -35,9 +51,18 @@ This is a **security boundary** — don't loosen the symlink check casually. If 
 | REST | `serve.py` | Starlette HTTP | UI (`ServerGraphStore` in `ui/src/store/`) | None today |
 | MCP | `mcp_server.py` | stdio JSON-RPC | Claude Code plugin | OAuth flow (separate) |
 
-REST endpoints: `/api/health`, `/api/stats`, `/api/graph`, `/api/nodes/{id}`, `/api/traverse`, `/api/source/{id}`, `/api/nodes/search`, `/api/nodes/list`, `/api/metadata`. The UI is the contract holder — see `ui/src/store/CLAUDE.md` for the client side.
+REST endpoints (full list in `docs/reference/graph-tools.md`):
+`/api/health`, `/api/stats`, `/api/metadata`, `/api/graph`, `/api/nodes/*`, `/api/traverse`,
+`/api/retrieval/{search,overview,find_path,find_orphans,find_via_relationship_to_type,count_by,provenance,grep}`,
+`/api/communities`, `/api/highlights/{gods,bridges,questions}`, plus `/api/source/*` and the vault routes:
 
-MCP tools mirror the same operations but with names matching the plugin agents' expectations: `get_stats`, `search_graph`, `list_nodes`, `get_node`, `traverse_graph`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
+- `GET /api/vaults?view=project|global` — project view returns local vaults + globals attached to this project; global view lists every global with an `attached` flag.
+- `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` — optional `?scope=local|global` to disambiguate; legacy flat disk layouts are migrated on read.
+- `POST /api/vaults/{vault}/compile` — multipart upload; accepts a `scope` form field (default `local`). Globals are written disk-only — no graph mirror.
+- `POST /api/vaults/{vault}/attach` / `POST /api/vaults/{vault}/detach` — mirror a global vault into this project's graph (and copy its corpus into `<project>/.opentrace/corpus/`) / remove the mirror.
+- `DELETE /api/vaults/{vault}?scope=...` — delete from disk (and graph) for the given scope.
+
+MCP tools mirror the same primitives plus the cross-cutting helpers (`find_pages_mentioning`, `find_entities_mentioned_by`, `find_cross_cutting_communities`). Tool list lives in `plugins/claude-code/CLAUDE.md`.
 
 ## Adding a Subcommand
 

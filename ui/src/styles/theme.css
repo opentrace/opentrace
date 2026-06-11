@@ -29,6 +29,15 @@
   --font-mono:
     'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, monospace;
+
+  /* Tell the browser our base palette is dark so native UI (the <select>
+     popup, scrollbars, autofill) renders in dark colors instead of the
+     OS default. Overridden below for [data-mode='light']. */
+  color-scheme: dark;
+}
+
+:root[data-mode='light'] {
+  color-scheme: light;
 }
 
 /* ── Graph node & edge colors (overridable per theme) ────────────────────── */

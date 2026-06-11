@@ -67,8 +67,13 @@ export interface LayoutConfig {
   louvainResolution: number;
   // Rendering
   edgeProgramThreshold: number;
-  // Graph structure — which edge type to use for force layout
-  layoutEdgeType: string;
+  /**
+   * Edge type(s) the force simulation pulls along. Accepts a single label
+   * (legacy) or an array of labels — the latter lets us treat code edges
+   * (`DEFINES`) and wiki edges (`CONTAINS`) as equally structural so vault
+   * nodes anchor their pages/sources the same way a repo anchors its files.
+   */
+  layoutEdgeType: string | string[];
   // Node types considered structural (affect sizing)
   structuralTypes: string[];
   // Color functions — consumers provide their own palettes

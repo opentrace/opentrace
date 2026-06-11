@@ -23,7 +23,7 @@
  * d3-force work off the main thread entirely.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   GraphNode,
   GraphLink,
@@ -169,11 +169,20 @@ export function usePixiLayout(
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
 
   // Build layout-only links helper
+  const layoutEdgeTypes = useMemo(
+    () =>
+      new Set(
+        Array.isArray(layoutConfig.layoutEdgeType)
+          ? layoutConfig.layoutEdgeType
+          : [layoutConfig.layoutEdgeType],
+      ),
+    [layoutConfig.layoutEdgeType],
+  );
   const buildLayoutLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
       const out: { source: string; target: string }[] = [];
       for (const link of linkArray) {
-        if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
+        if (!flatMode && !layoutEdgeTypes.has(link.label)) continue;
         const source = endpointId(link.source);
         const target = endpointId(link.target);
         if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
@@ -182,7 +191,7 @@ export function usePixiLayout(
       }
       return out;
     },
-    [flatMode, layoutConfig.layoutEdgeType],
+    [flatMode, layoutEdgeTypes],
   );
 
   // Single effect: handles full init, incremental add-nodes, and same-nodes skip.

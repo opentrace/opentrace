@@ -80,10 +80,14 @@ def scanning(
 
     # Walk directory tree → flat nodes/rels
     walker = DirectoryWalker()
+    # Code-only walk. Doc ingestion (--wiki) is handled entirely by the wiki
+    # doc pass, which discovers and reads docs itself; the code pipeline no
+    # longer surfaces doc files.
     walk = walker.walk(
         root_path=root_path,
         repo_id=repo_id,
         repo_name=root_path.name,
+        walk_docs=False,
     )
 
     if ctx.cancelled:
@@ -92,7 +96,11 @@ def scanning(
     nodes = walk.nodes
     rels = walk.relationships
 
-    # Enrich Repository node with ref/sourceUri/provider
+    # Enrich Repository node with ref/sourceUri/provider/local_path.
+    # local_path is set when this is a local-directory index — i.e. the path
+    # will still exist after this run completes. Cloned remote repos (which
+    # set repo_url) get a temp dir that's torn down post-index, so we leave
+    # local_path null in that case.
     for node in nodes:
         if node.type == "Repository":
             props = dict(node.properties or {})
@@ -103,6 +111,10 @@ def scanning(
                 props["sourceUri"] = repo_url
             if provider:
                 props["provider"] = provider
+            if not repo_url:
+                # Local index — record the resolved path so retrieval/grep
+                # can spawn ripgrep against it later.
+                props["local_path"] = str(root_path)
             nodes[nodes.index(node)] = GraphNode(
                 id=node.id,
                 type=node.type,
@@ -202,4 +214,5 @@ def scanning(
         repo_url=repo_url,
         ref=ref,
         provider=provider,
+        db_path=inp.db_path,
     )

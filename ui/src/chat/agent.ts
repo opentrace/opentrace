@@ -22,6 +22,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { makeGraphTools } from './tools';
 import { makePRTools } from './prTools';
 import { makeSubAgentTools, type ProgressFn } from './subagents';
+import { makeVaultTools } from './vaultTools';
 import type { GraphStore } from '../store/types';
 import type { PRClient } from '../pr/client';
 
@@ -73,6 +74,7 @@ export function createChatAgent(
   const llm = createLLM(providerId, modelId, apiKey, baseUrl);
   const graphTools = makeGraphTools(store);
   const prTools = makePRTools(store, prClient);
+  const vaultTools = makeVaultTools();
 
   // Mutable listener — set by ChatPanel, called by sub-agent tools
   let listener: ProgressFn | null = null;
@@ -83,7 +85,7 @@ export function createChatAgent(
 
   const agent = createReactAgent({
     llm,
-    tools: [...graphTools, ...prTools, ...subAgentTools],
+    tools: [...graphTools, ...prTools, ...subAgentTools, ...vaultTools],
     stateModifier: systemPrompt,
   });
 

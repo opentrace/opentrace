@@ -30,6 +30,17 @@ VALID_NODE_TYPES = {
     # Legacy aliases (accepted on input, not emitted)
     "Repo",
     "Package",
+    # Markdown-ingested documents (PDF/Word/HTML/...). Not in code_graph.proto
+    # because it lives in the data dimension, not the code dimension.
+    "Source",
+    # Entity types emitted by the LLM extractor — the prompt constrains
+    # output to this set. Accepted as legacy aliases so they round-trip
+    # through the store without proto regen. ``Idea`` is the catch-all.
+    "Idea",
+    "Module",
+    "Paper",
+    "Person",
+    "Event",
     # Runtime / observability types (not in code_graph.proto)
     "Service",
     "Cluster",

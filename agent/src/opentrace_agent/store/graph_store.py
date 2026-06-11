@@ -22,11 +22,20 @@ from __future__ import annotations
 import json
 import logging
 from collections import deque
-from typing import Any
+from typing import Any, Literal
 
 import real_ladybug as ladybug
 
-from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
+from opentrace_agent.gen.schema_gen import (
+    NODE_TYPE_COMMUNITY,
+    NODE_TYPE_HYPEREDGE,
+    NODE_TYPE_INDEX_METADATA,
+    REL_TYPE_MEMBER_OF_COMMUNITY,
+    REL_TYPE_PARTICIPATES_IN,
+    REL_TYPE_SEMANTIC_EDGE,
+)
+
+ConfidenceTier = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +55,25 @@ def build_search_text(name: str, node_type: str, properties: dict[str, Any]) -> 
 
 
 def matches_filters(properties: dict[str, Any], filters: dict[str, Any]) -> bool:
-    """Check if a node's properties match all filter conditions."""
+    """Check if a node's properties match all filter conditions.
+
+    Filter values containing ``*`` are treated as wildcard patterns
+    (``*foo*`` substring, ``foo*`` prefix, ``*foo`` suffix). All other
+    values match by ``str()`` equality.
+    """
+    import re
+
     for k, v in filters.items():
         prop = properties.get(k)
         if prop is None:
             return False
-        if str(prop) != str(v):
+        v_str = str(v)
+        if "*" in v_str:
+            # Convert wildcard to regex: escape, then unescape stars to .*
+            pattern = "^" + re.escape(v_str).replace(r"\*", ".*") + "$"
+            if not re.match(pattern, str(prop)):
+                return False
+        elif str(prop) != v_str:
             return False
     return True
 
@@ -156,6 +178,7 @@ class GraphStore:
     """
 
     def __init__(self, db_path: str, *, read_only: bool = False) -> None:
+        self.db_path = db_path
         self._db = ladybug.Database(db_path, read_only=read_only)
         self._conn = ladybug.Connection(self._db)
         self._load_extensions()
@@ -262,6 +285,36 @@ class GraphStore:
         except Exception:
             pass  # relationship didn't exist
         self.add_relationship(id, rel_type, source_id, target_id, properties)
+
+    def delete_node(self, node_id: str) -> bool:
+        """Delete a node and any edges touching it (DETACH DELETE).
+
+        Returns ``True`` when a node existed and was removed, ``False`` when
+        no such node was present.
+        """
+        if self.get_node(node_id) is None:
+            return False
+        # Detach incoming and outgoing edges first — LadybugDB DETACH DELETE
+        # support varies, so we delete edges by RELATES match then the node.
+        try:
+            self._conn.execute(
+                "MATCH (a:Node {id: $id})-[r:RELATES]->(:Node) DELETE r",
+                parameters={"id": node_id},
+            )
+        except Exception:
+            pass
+        try:
+            self._conn.execute(
+                "MATCH (:Node)-[r:RELATES]->(b:Node {id: $id}) DELETE r",
+                parameters={"id": node_id},
+            )
+        except Exception:
+            pass
+        self._conn.execute(
+            "MATCH (n:Node {id: $id}) DELETE n",
+            parameters={"id": node_id},
+        )
+        return True
 
     def import_batch(
         self,
@@ -376,6 +429,80 @@ class GraphStore:
                 logger.warning("Failed to import rel %s", r.get("id"), exc_info=True)
                 errs += 1
         return ok, errs
+
+    # -- fast relationship import (avoids the O(E^2) per-rel delete scan) -------
+    #
+    # ``merge_relationship`` deletes-then-creates by scanning the (unindexed)
+    # ``RELATES.id`` for every edge — O(E) per rel, O(E^2) for a full save. The
+    # pipeline's saving path instead learns which ids already exist *once*
+    # (``existing_relationship_ids``), creates brand-new edges directly (no
+    # scan), and batch-deletes only the ids it needs to replace
+    # (``delete_relationships_by_ids``) before recreating them.
+
+    _DELETE_CHUNK = 1000
+
+    def existing_relationship_ids(self) -> set[str]:
+        """Return the id of every relationship currently in the graph (one scan)."""
+        result = self._conn.execute("MATCH ()-[r:RELATES]->() RETURN r.id")
+        ids: set[str] = set()
+        while result.has_next():
+            ids.add(str(result.get_next()[0]))
+        return ids
+
+    def delete_relationships_by_ids(self, ids: list[str]) -> None:
+        """Delete relationships whose id is in *ids*, in chunked ``IN`` queries.
+
+        One full-relationship scan per chunk instead of one per id.
+        """
+        for start in range(0, len(ids), self._DELETE_CHUNK):
+            chunk = ids[start : start + self._DELETE_CHUNK]
+            self._conn.execute(
+                "MATCH ()-[r:RELATES]->() WHERE r.id IN $ids DELETE r",
+                parameters={"ids": chunk},
+            )
+
+    def create_relationships(self, relationships: list[dict[str, Any]]) -> dict[str, int]:
+        """Bulk ``CREATE`` relationships in one transaction (no per-rel scan).
+
+        Callers must guarantee the ids don't already exist in the DB (delete
+        first if replacing) — this never deletes. Mirrors :meth:`import_batch`'s
+        transaction + individual-fallback shape.
+
+        De-dupes the input by id (last wins) before creating: the resolver can
+        emit the same edge id from multiple call sites within one run (e.g. a
+        variable derived from the same target via two paths), and a plain
+        ``CREATE`` would otherwise produce parallel duplicate edges. This
+        matches the old per-edge delete-then-create idempotency.
+        """
+        if not relationships:
+            return {"relationships_created": 0, "errors": 0}
+        relationships = list({r["id"]: r for r in relationships}.values())
+        ok = 0
+        errors = 0
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            for r in relationships:
+                try:
+                    self.add_relationship(
+                        id=r["id"],
+                        rel_type=r["type"],
+                        source_id=r["source_id"],
+                        target_id=r["target_id"],
+                        properties=r.get("properties"),
+                    )
+                    ok += 1
+                except Exception:
+                    logger.warning("Failed to create rel %s", r.get("id"), exc_info=True)
+                    errors += 1
+            self._conn.execute("COMMIT")
+        except Exception:
+            logger.warning("Rel create transaction failed, rolling back", exc_info=True)
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            ok, errors = self._import_rels_individually(relationships)
+        return {"relationships_created": ok, "errors": errors}
 
     # -- read ------------------------------------------------------------
 
@@ -528,14 +655,40 @@ class GraphStore:
         direction: str = "outgoing",
         max_depth: int = 3,
         relationship_type: str | None = None,
+        relationship_types: list[str] | None = None,
+        vault_scope: str | None = None,
+        confidence_threshold: float | None = None,
     ) -> list[dict[str, Any]]:
         """BFS traversal from a starting node.
+
+        Parameters
+        ----------
+        relationship_type
+            Single rel-type filter (legacy single-string form).
+        relationship_types
+            Allowlist of rel types — when set, only these rel types traverse.
+            Supersedes ``relationship_type`` if both are passed.
+        vault_scope
+            When set, only neighbours whose ``properties.vault`` matches this
+            value are traversed.
+        confidence_threshold
+            When > 0, relationships whose ``properties.confidence`` is below
+            this value are skipped. Edges without a ``confidence`` property
+            (or with a non-numeric one) are kept.
 
         Returns a list of ``{node, relationship, depth}`` dicts.
         """
         # Verify start node exists
         if self.get_node(node_id) is None:
             raise ValueError(f"node not found: {node_id}")
+
+        rel_filter: set[str] | None
+        if relationship_types:
+            rel_filter = set(relationship_types)
+        elif relationship_type:
+            rel_filter = {relationship_type}
+        else:
+            rel_filter = None
 
         visited: set[str] = {node_id}
         results: list[dict[str, Any]] = []
@@ -548,8 +701,21 @@ class GraphStore:
 
             neighbors = self._get_neighbors(curr_id, direction)
             for nb_node, nb_rel in neighbors:
-                if relationship_type and nb_rel["type"] != relationship_type:
+                if rel_filter is not None and nb_rel["type"] not in rel_filter:
                     continue
+                if vault_scope is not None:
+                    nb_props = nb_node.get("properties") or {}
+                    if nb_props.get("vault") != vault_scope:
+                        continue
+                if confidence_threshold is not None and confidence_threshold > 0:
+                    rel_props = nb_rel.get("properties") or {}
+                    rel_conf = rel_props.get("confidence")
+                    if rel_conf is not None:
+                        try:
+                            if float(rel_conf) < confidence_threshold:
+                                continue
+                        except (TypeError, ValueError):
+                            pass
                 if nb_node["id"] in visited:
                     continue
                 visited.add(nb_node["id"])
@@ -591,6 +757,307 @@ class GraphStore:
             "total_edges": total_edges,
             "nodes_by_type": nodes_by_type,
         }
+
+    # -- knowledge graph (communities, hyperedges, semantic edges) ------
+
+    def save_community(
+        self,
+        id: str,
+        name: str,
+        community_id: int,
+        cohesion: float,
+        members: int,
+        is_god: bool = False,
+    ) -> None:
+        """Upsert a Community node detected by Leiden/Louvain."""
+        self.add_node(
+            id=id,
+            node_type=NODE_TYPE_COMMUNITY,
+            name=name,
+            properties={
+                "community_id": community_id,
+                "cohesion": cohesion,
+                "members": members,
+                "is_god": is_god,
+            },
+        )
+
+    def save_hyperedge(
+        self,
+        id: str,
+        name: str,
+        relation: str,
+        confidence: ConfidenceTier,
+        confidence_score: float,
+        source_file: str = "",
+    ) -> None:
+        """Upsert a Hyperedge node — a labelled n-ary grouping from LLM extraction."""
+        self.add_node(
+            id=id,
+            node_type=NODE_TYPE_HYPEREDGE,
+            name=name,
+            properties={
+                "relation": relation,
+                "confidence": confidence,
+                "confidence_score": confidence_score,
+                "source_file": source_file,
+            },
+        )
+
+    def save_semantic_edge(
+        self,
+        id: str,
+        source_id: str,
+        target_id: str,
+        relation: str,
+        confidence: ConfidenceTier,
+        confidence_score: float,
+        *,
+        source_file: str = "",
+        source_location: str = "",
+        weight: float = 1.0,
+    ) -> None:
+        """Upsert a SEMANTIC_EDGE relationship derived by LLM extraction."""
+        self.merge_relationship(
+            id=id,
+            rel_type=REL_TYPE_SEMANTIC_EDGE,
+            source_id=source_id,
+            target_id=target_id,
+            properties={
+                "relation": relation,
+                "confidence": confidence,
+                "confidence_score": confidence_score,
+                "source_file": source_file,
+                "source_location": source_location,
+                "weight": weight,
+            },
+        )
+
+    def save_membership(self, id: str, node_id: str, community_id: str) -> None:
+        """Link a node to its Community via MEMBER_OF_COMMUNITY."""
+        self.merge_relationship(
+            id=id,
+            rel_type=REL_TYPE_MEMBER_OF_COMMUNITY,
+            source_id=node_id,
+            target_id=community_id,
+        )
+
+    def save_participation(self, id: str, node_id: str, hyperedge_id: str) -> None:
+        """Link a node to a Hyperedge it participates in."""
+        self.merge_relationship(
+            id=id,
+            rel_type=REL_TYPE_PARTICIPATES_IN,
+            source_id=node_id,
+            target_id=hyperedge_id,
+        )
+
+    def iter_analysis_graph(
+        self,
+        *,
+        exclude_types: tuple[str, ...] = (
+            NODE_TYPE_COMMUNITY,
+            NODE_TYPE_HYPEREDGE,
+            NODE_TYPE_INDEX_METADATA,
+        ),
+        exclude_rel_types: tuple[str, ...] = (
+            REL_TYPE_MEMBER_OF_COMMUNITY,
+            REL_TYPE_PARTICIPATES_IN,
+        ),
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+        """Return (nodes, edges) for analytical workloads (clustering, exports).
+
+        Excludes Community/Hyperedge/IndexMetadata nodes and the membership
+        relationships that link them, so clustering operates on the underlying
+        graph and doesn't ingest its own previous output.
+        """
+        node_result = self._conn.execute(
+            "MATCH (n:Node) WHERE NOT n.type IN $excl RETURN n.id, n.type, n.name",
+            parameters={"excl": list(exclude_types)},
+        )
+        nodes: list[dict[str, Any]] = []
+        while node_result.has_next():
+            r = node_result.get_next()
+            nodes.append({"id": str(r[0]), "type": str(r[1]), "name": str(r[2])})
+
+        edge_result = self._conn.execute(
+            "MATCH (a:Node)-[r:RELATES]->(b:Node) "
+            "WHERE NOT a.type IN $excl AND NOT b.type IN $excl AND NOT r.type IN $excl_rel "
+            "RETURN a.id, b.id",
+            parameters={"excl": list(exclude_types), "excl_rel": list(exclude_rel_types)},
+        )
+        edges: list[tuple[str, str]] = []
+        while edge_result.has_next():
+            r = edge_result.get_next()
+            edges.append((str(r[0]), str(r[1])))
+        return nodes, edges
+
+    def clear_communities(self) -> None:
+        """Remove all Community nodes and their membership edges.
+
+        Used by ``opentraceai cluster`` to make re-clustering idempotent.
+        """
+        try:
+            self._conn.execute(
+                "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = $rt DELETE r",
+                parameters={"rt": REL_TYPE_MEMBER_OF_COMMUNITY},
+            )
+        except Exception:
+            logger.warning("clear_communities: failed to delete memberships", exc_info=True)
+        try:
+            self._conn.execute(
+                "MATCH (n:Node) WHERE n.type = $t DETACH DELETE n",
+                parameters={"t": NODE_TYPE_COMMUNITY},
+            )
+        except Exception:
+            logger.warning("clear_communities: failed to delete communities", exc_info=True)
+
+    def list_communities(self) -> list[dict[str, Any]]:
+        """Return all Community nodes, ordered by community_id."""
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = $t RETURN n.id, n.name, n.properties",
+            parameters={"t": NODE_TYPE_COMMUNITY},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            props = _parse_props(r[2]) or {}
+            rows.append({"id": str(r[0]), "name": str(r[1]), **props})
+        rows.sort(key=lambda x: x.get("community_id", 0))
+        return rows
+
+    def get_node_community(self, node_id: str) -> dict[str, Any] | None:
+        """Return the Community a node belongs to, or None if unassigned."""
+        result = self._conn.execute(
+            "MATCH (n:Node {id: $id})-[r:RELATES]->(c:Node) "
+            "WHERE r.type = $rt AND c.type = $ct "
+            "RETURN c.id, c.name, c.properties LIMIT 1",
+            parameters={
+                "id": node_id,
+                "rt": REL_TYPE_MEMBER_OF_COMMUNITY,
+                "ct": NODE_TYPE_COMMUNITY,
+            },
+        )
+        if not result.has_next():
+            return None
+        r = result.get_next()
+        props = _parse_props(r[2]) or {}
+        return {"id": str(r[0]), "name": str(r[1]), **props}
+
+    def list_hyperedges_for_node(self, node_id: str) -> list[dict[str, Any]]:
+        """Return Hyperedges this node participates in."""
+        result = self._conn.execute(
+            "MATCH (n:Node {id: $id})-[r:RELATES]->(h:Node) "
+            "WHERE r.type = $rt AND h.type = $ht "
+            "RETURN h.id, h.name, h.properties",
+            parameters={
+                "id": node_id,
+                "rt": REL_TYPE_PARTICIPATES_IN,
+                "ht": NODE_TYPE_HYPEREDGE,
+            },
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            props = _parse_props(r[2]) or {}
+            rows.append({"id": str(r[0]), "name": str(r[1]), **props})
+        return rows
+
+    def list_hyperedges(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Return every Hyperedge with the ids of its participating members.
+
+        Rows are ``{id, name, <hyperedge properties>, member_ids: [...]}``,
+        ordered by member count descending then name. Hyperedges with no
+        remaining participants are not returned (the MATCH requires at least
+        one PARTICIPATES_IN edge).
+        """
+        result = self._conn.execute(
+            "MATCH (n:Node)-[r:RELATES]->(h:Node) "
+            "WHERE r.type = $rt AND h.type = $ht "
+            "RETURN h.id, h.name, h.properties, n.id",
+            parameters={
+                "rt": REL_TYPE_PARTICIPATES_IN,
+                "ht": NODE_TYPE_HYPEREDGE,
+            },
+        )
+        by_id: dict[str, dict[str, Any]] = {}
+        while result.has_next():
+            r = result.get_next()
+            hid = str(r[0])
+            entry = by_id.get(hid)
+            if entry is None:
+                props = _parse_props(r[2]) or {}
+                entry = by_id[hid] = {"id": hid, "name": str(r[1]), **props, "member_ids": []}
+            entry["member_ids"].append(str(r[3]))
+        ranked = sorted(by_id.values(), key=lambda h: (-len(h["member_ids"]), h["name"]))
+        return ranked[:limit]
+
+    def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        """Return top-degree non-synthetic nodes.
+
+        Degree = inbound + outbound RELATES count. Excludes the index-metadata
+        type by default; pass extra types in ``exclude_types`` to filter further.
+        """
+        exclude = (NODE_TYPE_INDEX_METADATA, *exclude_types)
+        result = self._conn.execute(
+            "MATCH (n:Node) "
+            "WHERE NOT n.type IN $excl "
+            "OPTIONAL MATCH (n)-[r:RELATES]-() "
+            "RETURN n.id, n.type, n.name, count(r) AS degree "
+            "ORDER BY degree DESC LIMIT $lim",
+            parameters={"excl": list(exclude), "lim": limit},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "id": str(r[0]),
+                    "type": str(r[1]),
+                    "name": str(r[2]),
+                    "degree": int(r[3]),
+                }
+            )
+        return rows
+
+    def list_cross_community_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return edges whose endpoints belong to different communities.
+
+        Only returns edges where both endpoints have community membership; nodes
+        with no community are silently skipped. Useful for surfacing cross-cluster
+        couplings — places where two architecturally distinct regions touch.
+        """
+        result = self._conn.execute(
+            "MATCH (a:Node)-[r:RELATES]->(b:Node), "
+            "(a)-[ma:RELATES]->(ca:Node), (b)-[mb:RELATES]->(cb:Node) "
+            "WHERE r.type <> $member_rel "
+            "AND ma.type = $member_rel AND mb.type = $member_rel "
+            "AND ca.type = $com AND cb.type = $com "
+            "AND ca.id <> cb.id "
+            "RETURN a.id, a.name, ca.id, ca.name, "
+            "b.id, b.name, cb.id, cb.name, r.type LIMIT $lim",
+            parameters={
+                "member_rel": REL_TYPE_MEMBER_OF_COMMUNITY,
+                "com": NODE_TYPE_COMMUNITY,
+                "lim": limit,
+            },
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "source_id": str(r[0]),
+                    "source_name": str(r[1]),
+                    "source_community_id": str(r[2]),
+                    "source_community_name": str(r[3]),
+                    "target_id": str(r[4]),
+                    "target_name": str(r[5]),
+                    "target_community_id": str(r[6]),
+                    "target_community_name": str(r[7]),
+                    "relation": str(r[8]),
+                }
+            )
+        return rows
 
     # -- metadata --------------------------------------------------------
 

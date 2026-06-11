@@ -13,19 +13,24 @@ opentrace/v1/
 ## Code Generation
 
 ```bash
-make all   # Generate for all targets (ts, py, go)
+make all   # Generate for all targets (ts, go, graph)
 make ts    # TypeScript only  -> ../ui/src/gen/
-make py    # Python only      -> ../agent/src/opentrace_agent/gen/
 make go    # Go only          -> ../api/pkg/gen/otv1/
+make graph # LadybugDB graph schema (Python + TS) -> ../agent/src/opentrace_agent/gen/ + ../ui/src/gen/
 make clean # Remove TS and Python generated code
 ```
+
+The Python `make py` target was retired when the agent went local-only —
+the agent no longer consumes the gRPC stubs. If a future change reintroduces
+a Python gRPC consumer, restore the `py:` target (and `grpcio-tools` in
+`agent/pyproject.toml [dependency-groups] dev`).
 
 ### Prerequisites
 
 - `protoc` (v3.21+)
 - Go: `protoc-gen-go`, `protoc-gen-go-grpc`
-- Python: `grpcio-tools` (`python -m grpc_tools.protoc`)
 - TypeScript: `protoc-gen-ts_proto` (installed via `npm install` in `../ui/`)
+- Graph schema: `protoc-gen-ladybug` (LadybugDB schema generator)
 
 ### TypeScript Options
 
@@ -37,10 +42,6 @@ The TS target uses `protoc-gen-ts_proto` with these options:
 | `enumsAsLiterals=true` | Emit `as const` objects instead of `enum` declarations (required for `erasableSyntaxOnly` in tsconfig) |
 | `outputServices=false` | Suppress gRPC service stubs (UI uses HTTP/SSE, not gRPC directly) |
 | `esModuleInterop=true` | Use ES module import style |
-
-### Python Post-Processing
-
-The Python target patches cross-file imports after generation because `protoc` uses the proto package path (`opentrace.v1`) but the files live under `opentrace_agent.gen.opentrace.v1`.
 
 ## Services
 
@@ -54,4 +55,6 @@ service AgentService {
 }
 ```
 
-The Go API server acts as gRPC client, calling the Python agent which implements `AgentService`. Job progress streams back as `JobEvent` messages.
+Currently consumed by the UI (TypeScript types only) and the Go API. The
+Python agent is local-only and does not implement the gRPC service today;
+see the note above about restoring the `py:` target if that changes.

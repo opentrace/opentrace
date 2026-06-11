@@ -54,6 +54,7 @@ import { GraphControlsBar } from './GraphControlsBar';
 import {
   GitHubStarButton,
   GraphToolbarActionButtons,
+  VaultsButton,
   buildMobilePanelTabs,
 } from './GraphToolbarActions';
 import { PhysicsPanelContainer } from './PhysicsPanelContainer';
@@ -145,6 +146,16 @@ export interface GraphViewerProps {
   onToggleGraphFullscreen?: () => void;
   /** Mobile: open SidePanel on a given tab (state lives in App). */
   onMobilePanelTabChange?: (tab: SidePanelTab) => void;
+  /** True when the graph store is backed by `opentrace serve` (server mode).
+   *  Server mode is read-only (`importBatch` is a no-op), so the Add Repo
+   *  auto-popup is suppressed — the user reaches the empty-canvas state
+   *  with all other chrome (vault browser, chat, settings) accessible
+   *  instead of being trapped in a modal that can't write. */
+  isServerMode?: boolean;
+  /** Server mode only: whether the vault browser is open. */
+  showVaults?: boolean;
+  /** Server mode only: toggle the vault browser. */
+  onToggleVaults?: () => void;
 }
 
 const GraphViewer = memo(
@@ -177,6 +188,9 @@ const GraphViewer = memo(
         graphFullscreen,
         onToggleGraphFullscreen,
         onMobilePanelTabChange,
+        isServerMode = false,
+        showVaults = false,
+        onToggleVaults,
       } = props;
 
       const { store } = useStore();
@@ -263,6 +277,24 @@ const GraphViewer = memo(
       const [showExportModal, setShowExportModal] = useState(false);
       const [exporting, setExporting] = useState(false);
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      const physicsTriggerRef = useRef<HTMLButtonElement>(null);
+      const physicsPanelRef = useRef<HTMLDivElement>(null);
+
+      // Close the physics panel when the user clicks outside it. The trigger
+      // button is excluded so its own onClick can toggle without this handler
+      // racing it back open/closed.
+      useEffect(() => {
+        if (!showPhysicsPanel) return;
+        const onMouseDown = (e: MouseEvent) => {
+          const target = e.target as Node | null;
+          if (!target) return;
+          if (physicsPanelRef.current?.contains(target)) return;
+          if (physicsTriggerRef.current?.contains(target)) return;
+          setShowPhysicsPanel(false);
+        };
+        document.addEventListener('mousedown', onMouseDown);
+        return () => document.removeEventListener('mousedown', onMouseDown);
+      }, [showPhysicsPanel]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -330,6 +362,10 @@ const GraphViewer = memo(
 
       // Auto-open the Add Repo modal when the graph is empty and idle
       useEffect(() => {
+        // Server mode is read-only; auto-opening Add Repo would trap the
+        // user in a modal that can't actually populate the graph. Let them
+        // reach the empty canvas + chrome instead (vaults, chat, settings).
+        if (isServerMode) return;
         if (
           v.isEmpty &&
           !v.isSearchEmpty &&
@@ -338,9 +374,26 @@ const GraphViewer = memo(
         ) {
           onAddRepoOpen();
         }
-      }, [v.isEmpty, v.isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
+      }, [
+        isServerMode,
+        v.isEmpty,
+        v.isSearchEmpty,
+        loading,
+        jobState.status,
+        onAddRepoOpen,
+      ]);
 
-      const persistentActions = useMemo(() => <GitHubStarButton />, []);
+      const persistentActions = useMemo(
+        () => (
+          <>
+            <GitHubStarButton />
+            {isServerMode && onToggleVaults && (
+              <VaultsButton active={showVaults} onClick={onToggleVaults} />
+            )}
+          </>
+        ),
+        [isServerMode, onToggleVaults, showVaults],
+      );
 
       // --- Early returns for loading/error/empty states ---
 
@@ -369,25 +422,10 @@ const GraphViewer = memo(
         );
       }
 
-      if (v.isEmpty && !showFullModal) {
-        return (
-          <GraphInitialEmpty
-            showAddRepo={showAddRepo}
-            showFullModal={showFullModal}
-            onAddRepoOpen={onAddRepoOpen}
-            onAddRepoClose={onAddRepoClose}
-            onJobSubmit={onJobSubmit}
-            onValidateRepo={validateRepo}
-            indexingProgress={
-              <IndexingProgress
-                {...toIndexingProps(jobState, activeRepoUrl)}
-                stages={INDEXING_STAGES}
-                onClose={onJobClose}
-              />
-            }
-          />
-        );
-      }
+      // Note: empty graphs no longer take over the screen. The main viewport
+      // below renders normally (toolbar, side panel, chat/vault buttons) and
+      // an inline "No data" overlay is drawn into the empty canvas area —
+      // see the `.empty-state-overlay--inline` block below.
 
       // --- Main graph viewport ---
 
@@ -508,6 +546,28 @@ const GraphViewer = memo(
 
           <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
 
+          {v.isEmpty && !showAddRepo && !showFullModal && (
+            <div className="empty-state-overlay empty-state-overlay--inline">
+              <div className="empty-state-content">
+                <p>No data in the graph yet.</p>
+                {isServerMode ? (
+                  <p style={{ opacity: 0.7, fontSize: '0.9em' }}>
+                    Run <code>opentraceai index &lt;path&gt;</code> from the CLI
+                    to populate this graph.
+                  </p>
+                ) : (
+                  <button
+                    className="empty-state-add-btn"
+                    onClick={onAddRepoOpen}
+                    type="button"
+                  >
+                    + Add Repository
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <PixiGraphCanvas
             ref={v.canvasRef}
             nodes={graphData.nodes}
@@ -542,43 +602,45 @@ const GraphViewer = memo(
           />
 
           {showPhysicsPanel && (
-            <PhysicsPanelContainer
-              canvasRef={v.canvasRef}
-              repulsion={v.settings.repulsion}
-              setRepulsion={v.settings.setRepulsion}
-              labelsVisible={v.settings.labelsVisible}
-              setLabelsVisible={v.settings.setLabelsVisible}
-              colorMode={colorMode}
-              setColorMode={setColorMode}
-              physicsRunning={v.settings.physicsRunning}
-              setPhysicsRunning={v.settings.setPhysicsRunning}
-              pixiLinkDist={v.settings.pixiLinkDist}
-              setPixiLinkDist={v.settings.setPixiLinkDist}
-              pixiCenter={v.settings.pixiCenter}
-              setPixiCenter={v.settings.setPixiCenter}
-              pixiZoomExponent={v.settings.pixiZoomExponent}
-              setPixiZoomExponent={v.settings.setPixiZoomExponent}
-              layoutMode={v.settings.layoutMode}
-              setLayoutMode={v.settings.setLayoutMode}
-              compactRadial={v.settings.compactRadial}
-              setCompactRadial={v.settings.setCompactRadial}
-              compactCommunity={v.settings.compactCommunity}
-              setCompactCommunity={v.settings.setCompactCommunity}
-              compactCentering={v.settings.compactCentering}
-              setCompactCentering={v.settings.setCompactCentering}
-              compactRadius={v.settings.compactRadius}
-              setCompactRadius={v.settings.setCompactRadius}
-              mode3d={v.settings.mode3d}
-              setMode3d={v.settings.setMode3d}
-              mode3dSpeed={v.settings.mode3dSpeed}
-              setMode3dSpeed={v.settings.setMode3dSpeed}
-              mode3dTilt={v.settings.mode3dTilt}
-              setMode3dTilt={v.settings.setMode3dTilt}
-              rendererAutoRotate={v.settings.rendererAutoRotate}
-              setRendererAutoRotate={v.settings.setRendererAutoRotate}
-              labelScale={v.settings.labelScale}
-              setLabelScale={v.settings.setLabelScale}
-            />
+            <div ref={physicsPanelRef} style={{ display: 'contents' }}>
+              <PhysicsPanelContainer
+                canvasRef={v.canvasRef}
+                repulsion={v.settings.repulsion}
+                setRepulsion={v.settings.setRepulsion}
+                labelsVisible={v.settings.labelsVisible}
+                setLabelsVisible={v.settings.setLabelsVisible}
+                colorMode={colorMode}
+                setColorMode={setColorMode}
+                physicsRunning={v.settings.physicsRunning}
+                setPhysicsRunning={v.settings.setPhysicsRunning}
+                pixiLinkDist={v.settings.pixiLinkDist}
+                setPixiLinkDist={v.settings.setPixiLinkDist}
+                pixiCenter={v.settings.pixiCenter}
+                setPixiCenter={v.settings.setPixiCenter}
+                pixiZoomExponent={v.settings.pixiZoomExponent}
+                setPixiZoomExponent={v.settings.setPixiZoomExponent}
+                layoutMode={v.settings.layoutMode}
+                setLayoutMode={v.settings.setLayoutMode}
+                compactRadial={v.settings.compactRadial}
+                setCompactRadial={v.settings.setCompactRadial}
+                compactCommunity={v.settings.compactCommunity}
+                setCompactCommunity={v.settings.setCompactCommunity}
+                compactCentering={v.settings.compactCentering}
+                setCompactCentering={v.settings.setCompactCentering}
+                compactRadius={v.settings.compactRadius}
+                setCompactRadius={v.settings.setCompactRadius}
+                mode3d={v.settings.mode3d}
+                setMode3d={v.settings.setMode3d}
+                mode3dSpeed={v.settings.mode3dSpeed}
+                setMode3dSpeed={v.settings.setMode3dSpeed}
+                mode3dTilt={v.settings.mode3dTilt}
+                setMode3dTilt={v.settings.setMode3dTilt}
+                rendererAutoRotate={v.settings.rendererAutoRotate}
+                setRendererAutoRotate={v.settings.setRendererAutoRotate}
+                labelScale={v.settings.labelScale}
+                setLabelScale={v.settings.setLabelScale}
+              />
+            </div>
           )}
 
           <GraphControlsBar
@@ -589,6 +651,7 @@ const GraphViewer = memo(
             setZoomOnSelect={v.settings.setZoomOnSelect}
             showPhysicsPanel={showPhysicsPanel}
             setShowPhysicsPanel={setShowPhysicsPanel}
+            physicsTriggerRef={physicsTriggerRef}
             layoutMode={v.settings.layoutMode}
             setLayoutMode={v.settings.setLayoutMode}
             mode3d={v.settings.mode3d}

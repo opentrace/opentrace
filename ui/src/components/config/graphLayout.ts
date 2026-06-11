@@ -153,8 +153,18 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
-  layoutEdgeType: 'DEFINES',
-  structuralTypes: ['Repository', 'Directory', 'Dependency'],
+  // DEFINES anchors code (Repository → Directory → File → symbol).
+  // For wiki, the equivalent hierarchy spans two edge types:
+  //   CONTAINS — WikiVault → WikiPage / Source       (top of the tree)
+  //   CITES    — Concept → File-summary → Source   (the inner levels)
+  // CONTAINS alone leaves a flat star (vault → everything in one hop) and
+  // FA2 collapses stars into chains because siblings have no lateral pull.
+  // Adding CITES gives the layout an intermediate branching point per
+  // file-summary, the same way a directory acts as a branching point
+  // inside a repo. LINKS_TO is intentionally excluded — it's a semantic
+  // cross-link (analogous to CALLS), not structural hierarchy.
+  layoutEdgeType: ['DEFINES', 'CONTAINS', 'CITES'],
+  structuralTypes: ['Repository', 'Directory', 'Dependency', 'WikiVault'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,
