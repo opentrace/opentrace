@@ -723,7 +723,7 @@ class TestSessionStartMain:
 
         with (
             patch.object(_session_start, "_installed_version", return_value="0.4.0"),
-            patch.object(_session_start, "_start_background_index", return_value=12345) as mock_idx,
+            patch.object(_session_start, "start_background_index", return_value=12345) as mock_idx,
         ):
             data = _run_hook(
                 _session_start,
