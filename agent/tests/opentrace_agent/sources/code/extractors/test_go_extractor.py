@@ -47,6 +47,34 @@ func Hello(name string) string {
         assert sym.end_line == 5
         assert "(name string)" in sym.signature
 
+    def test_godoc_captures_adjacent_comment(self):
+        source = b"""\
+package main
+
+// Hello greets a user.
+// Second line of the doc.
+func Hello(name string) string {
+\treturn "Hi " + name
+}
+"""
+        result = self.extractor.extract(source)
+        assert result.symbols[0].docs == "Hello greets a user.\nSecond line of the doc."
+
+    def test_godoc_ignores_comment_separated_by_blank_line(self):
+        # A comment separated from the declaration by a blank line is not a
+        # doc comment (Go convention) and must not be attached.
+        source = b"""\
+package main
+
+// This is a free-floating comment, not a doc.
+
+func Hello(name string) string {
+\treturn "Hi " + name
+}
+"""
+        result = self.extractor.extract(source)
+        assert result.symbols[0].docs is None
+
     def test_extract_struct(self):
         source = b"""\
 package main
