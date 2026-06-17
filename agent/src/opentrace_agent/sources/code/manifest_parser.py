@@ -248,7 +248,10 @@ def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
         if in_project_deps:
             for item in re.findall(r'"([^"]+)"', stripped):
                 _add_runtime(item)
-            if "]" in stripped:
+            # Detect the closing ``]`` on the unquoted part only — a bracket
+            # inside a quoted dependency (e.g. extras like ``requests[security]``)
+            # must not be mistaken for the end of the array.
+            if "]" in re.sub(r'"[^"]*"', "", stripped):
                 in_project_deps = False
             continue
 
@@ -261,9 +264,12 @@ def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
             if stripped.startswith("dependencies") and "=" in stripped:
                 for item in re.findall(r'"([^"]+)"', stripped):
                     _add_runtime(item)
-                # Array opened here but not closed on the same line: the
-                # entries continue on following lines until the closing ``]``.
-                if "[" in stripped and "]" not in stripped:
+                # Array opened but not closed on the same line: entries
+                # continue on following lines until the closing ``]``. Check
+                # brackets on the unquoted part so extras inside a quoted dep
+                # (``requests[security]``) don't look like an open/close.
+                unquoted = re.sub(r'"[^"]*"', "", stripped)
+                if "[" in unquoted and "]" not in unquoted:
                     in_project_deps = True
 
         elif section and section.startswith("project.optional-dependencies"):
