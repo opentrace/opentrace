@@ -22,7 +22,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+import os
+import subprocess
+import threading
+import uuid
+from pathlib import Path
+from typing import Any, Callable
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -34,6 +39,10 @@ from starlette.routing import Route
 from opentrace_agent.store import GraphStore
 
 logger = logging.getLogger(__name__)
+
+# Keep at most this many stdout lines per job so a long index can't grow
+# the in-memory buffer without bound.
+_MAX_JOB_LINES = 2000
 
 
 def _error(status: int, message: str) -> JSONResponse:
@@ -47,8 +56,162 @@ async def _read_json(request: Request) -> Any:
         return None
 
 
-def create_app(store: GraphStore) -> Starlette:
-    """Create a Starlette ASGI app exposing *store* as a REST API."""
+class _IndexJob:
+    """In-memory record of a single background index run."""
+
+    def __init__(self, job_id: str, target: str) -> None:
+        self.id = job_id
+        self.target = target
+        self.status = "running"  # running | done | error
+        self.lines: list[str] = []
+        self.exit_code: int | None = None
+        self.error: str | None = None
+        self._lock = threading.Lock()
+
+    def add_line(self, line: str) -> None:
+        with self._lock:
+            self.lines.append(line)
+            if len(self.lines) > _MAX_JOB_LINES:
+                del self.lines[: len(self.lines) - _MAX_JOB_LINES]
+
+    def finish(self, exit_code: int | None, error: str | None) -> None:
+        with self._lock:
+            self.exit_code = exit_code
+            self.error = error
+            self.status = "done" if (exit_code == 0 and error is None) else "error"
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "jobId": self.id,
+                "status": self.status,
+                "lines": list(self.lines),
+                "exitCode": self.exit_code,
+                "error": self.error,
+            }
+
+
+# A runner takes (job, cmd, token) and drives the subprocess to completion.
+IndexRunner = Callable[["_IndexJob", list[str], str], None]
+
+
+class _IndexJobManager:
+    """Runs `opentraceai index` / `fetch-and-index` subprocesses out-of-band.
+
+    The REST server holds a read-only handle on the live DB. Writes must not
+    go through that handle — instead they are delegated to a short-lived
+    subprocess that writes a staging file and atomically renames it over the
+    live DB (the same pattern the MCP `repo_index` tool uses). The server's
+    `_ReloadableStore` wrapper then reopens the new file on the next query.
+
+    Only one index runs at a time; a concurrent request gets a 409. Each run
+    streams its stdout into the job's ``lines`` so the UI can show progress.
+    """
+
+    def __init__(self, db_path: str | None, runner: IndexRunner | None = None) -> None:
+        self._db_path = db_path
+        self._jobs: dict[str, _IndexJob] = {}
+        self._active: str | None = None
+        self._lock = threading.Lock()
+        self._runner = runner or self._default_runner
+
+    def get(self, job_id: str) -> _IndexJob | None:
+        return self._jobs.get(job_id)
+
+    def start(self, path_or_url: str, repo_id: str = "", ref: str = "", token: str = "") -> _IndexJob:
+        """Validate, register, and launch an index job. Returns the job.
+
+        Raises ``ValueError`` for a bad target and ``RuntimeError`` if an
+        index is already running.
+        """
+        with self._lock:
+            active = self._jobs.get(self._active) if self._active else None
+            if active is not None and active.status == "running":
+                raise RuntimeError("An index job is already running")
+            cmd = self._build_cmd(path_or_url, repo_id, ref)  # may raise ValueError
+            job_id = uuid.uuid4().hex
+            job = _IndexJob(job_id, path_or_url)
+            self._jobs[job_id] = job
+            self._active = job_id
+
+        thread = threading.Thread(target=self._runner, args=(job, cmd, token), daemon=True)
+        thread.start()
+        return job
+
+    def _build_cmd(self, path_or_url: str, repo_id: str, ref: str) -> list[str]:
+        is_url = path_or_url.startswith(("https://", "http://", "git@"))
+        if is_url:
+            cmd = ["opentraceai", "fetch-and-index", path_or_url]
+            if repo_id:
+                cmd += ["--repo-id", repo_id]
+            if ref:
+                cmd += ["--ref", ref]
+            if self._db_path:
+                cmd += ["--db", self._db_path]
+            return cmd
+
+        try:
+            target = Path(path_or_url).expanduser().resolve()
+        except Exception as e:
+            raise ValueError(f"Invalid path: {e}")
+        if not target.exists():
+            raise ValueError(f"Path does not exist: {target}")
+        if not target.is_dir():
+            raise ValueError(f"Path is not a directory: {target}")
+        cmd = ["opentraceai", "index", str(target)]
+        if self._db_path:
+            cmd += ["--db", self._db_path]
+        if repo_id:
+            cmd += ["--repo-id", repo_id]
+        return cmd
+
+    def _default_runner(self, job: _IndexJob, cmd: list[str], token: str) -> None:
+        env = os.environ.copy()
+        if token:
+            # fetch-and-index resolves a clone token from these env vars when
+            # one isn't already configured server-side.
+            env.setdefault("OPENTRACE_GIT_TOKEN", token)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+        except FileNotFoundError:
+            job.finish(None, "opentraceai not found on PATH — install with `pip install opentraceai`")
+            return
+        except Exception as e:  # pragma: no cover - defensive
+            job.finish(None, str(e))
+            return
+
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            if line:
+                job.add_line(line)
+        proc.wait()
+        if proc.returncode == 0:
+            job.finish(0, None)
+        else:
+            job.finish(proc.returncode, f"Indexer exited with code {proc.returncode}")
+
+
+def create_app(
+    store: GraphStore,
+    db_path: str | None = None,
+    index_runner: IndexRunner | None = None,
+) -> Starlette:
+    """Create a Starlette ASGI app exposing *store* as a REST API.
+
+    *db_path* is the live database path; it is passed to indexer subprocesses
+    so they write to the same DB the server reads. *index_runner* overrides the
+    subprocess runner (used in tests). When *db_path* is ``None`` the indexer
+    falls back to its own DB discovery.
+    """
+    jobs = _IndexJobManager(db_path, runner=index_runner)
 
     async def get_stats(request: Request) -> JSONResponse:
         """GET /api/stats"""
@@ -172,6 +335,41 @@ def create_app(store: GraphStore) -> Starlette:
         """GET /api/health"""
         return JSONResponse({"status": "ok"})
 
+    async def start_index(request: Request) -> JSONResponse:
+        """POST /api/index — index a local path or remote git URL.
+
+        Body: ``{"pathOrUrl": str, "repoId"?: str, "ref"?: str, "token"?: str}``.
+        Runs the indexer in a background subprocess (staging file + atomic
+        rename) and returns a job id immediately; poll ``GET /api/index/{id}``
+        for progress. Indexing happens out-of-band so it never contends with
+        the server's read-only DB handle.
+
+        Security: this clones/indexes arbitrary URLs and local paths. The
+        server has no auth and should stay bound to loopback.
+        """
+        body = await _read_json(request)
+        if not body or not body.get("pathOrUrl"):
+            return _error(400, "Missing required field: pathOrUrl")
+        try:
+            job = jobs.start(
+                str(body["pathOrUrl"]),
+                repo_id=str(body.get("repoId") or ""),
+                ref=str(body.get("ref") or ""),
+                token=str(body.get("token") or ""),
+            )
+        except ValueError as e:
+            return _error(400, str(e))
+        except RuntimeError as e:
+            return _error(409, str(e))
+        return JSONResponse({"jobId": job.id, "status": job.status}, status_code=202)
+
+    async def index_status(request: Request) -> JSONResponse:
+        """GET /api/index/{job_id} — poll a running or finished index job."""
+        job = jobs.get(request.path_params["job_id"])
+        if job is None:
+            return _error(404, "Unknown index job")
+        return JSONResponse(job.snapshot())
+
     routes = [
         Route("/api/health", health, methods=["GET"]),
         Route("/api/stats", get_stats, methods=["GET"]),
@@ -181,6 +379,8 @@ def create_app(store: GraphStore) -> Starlette:
         Route("/api/nodes/list", list_nodes, methods=["GET"]),
         Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
         Route("/api/traverse", traverse, methods=["POST"]),
+        Route("/api/index", start_index, methods=["POST"]),
+        Route("/api/index/{job_id}", index_status, methods=["GET"]),
     ]
 
     middleware = [

@@ -27,7 +27,7 @@ The UI runs in one of two modes, chosen at startup:
 
 | Mode | Store | Backend | Writes? | Use case |
 |---|---|---|---|---|
-| **Server** | `ServerGraphStore` | `opentrace serve` REST | Read-only (no-op `importBatch`) | CLI-indexed repo, production |
+| **Server** | `ServerGraphStore` | `opentrace serve` REST | Read-only graph writes; indexing via `POST /api/index` | CLI-indexed repo, production |
 | **In-memory** | `LadybugStore` (WASM) | Browser-local LadybugDB | Full read/write | Browser-only indexing |
 
 Mode is determined by whether a server URL is configured. The `StoreContext` React provider wraps the singleton store; swapping mode requires re-mounting the provider — there's no hot-swap.

@@ -34,6 +34,15 @@ import type {
   TraverseResult,
 } from './types';
 
+/** Status of a server-side index job (`/api/index/{id}`). */
+export interface IndexJobStatus {
+  jobId: string;
+  status: 'running' | 'done' | 'error';
+  lines: string[];
+  exitCode: number | null;
+  error: string | null;
+}
+
 export class ServerGraphStore implements GraphStore {
   private readonly baseUrl: string;
   private _hasData = false;
@@ -131,6 +140,24 @@ export class ServerGraphStore implements GraphStore {
     const stats = await this.get<GraphStats>('/api/stats');
     this._hasData = stats.total_nodes > 0;
     return stats;
+  }
+
+  // ---- Server-side indexing (write path) ------------------------------
+  // Unlike importBatch (a no-op here), these delegate the write to the
+  // server, which runs the indexer out-of-band and hot-reloads. See
+  // ServerJobService for the polling/progress wrapper.
+
+  async startIndexJob(req: {
+    pathOrUrl: string;
+    repoId?: string;
+    ref?: string;
+    token?: string;
+  }): Promise<IndexJobStatus> {
+    return this.post<IndexJobStatus>('/api/index', req);
+  }
+
+  async getIndexJob(jobId: string): Promise<IndexJobStatus> {
+    return this.get<IndexJobStatus>(`/api/index/${encodeURIComponent(jobId)}`);
   }
 
   async fetchMetadata(): Promise<IndexMetadata[]> {

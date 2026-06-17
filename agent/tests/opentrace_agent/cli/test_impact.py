@@ -96,6 +96,26 @@ def test_run_impact_no_file_match(tmp_path, capsys):
     mock_store.close.assert_called_once()
 
 
+def _neighbors_side_effect(outgoing: list, incoming: list | None = None):
+    """Mock helper for ``_get_neighbors`` that returns different lists for
+    ``outgoing`` vs ``incoming`` direction.
+
+    The production code now calls ``_get_neighbors`` twice on the file
+    node — once for outgoing DEFINES (symbols defined in the file) and
+    once for incoming IMPORTS (other files importing this one).
+    """
+    incoming = incoming or []
+
+    def _impl(_node_id, direction):
+        if direction == "outgoing":
+            return outgoing
+        if direction == "incoming":
+            return incoming
+        return []
+
+    return _impl
+
+
 def test_run_impact_with_symbols_and_callers(tmp_path, capsys):
     """Should show symbols and their callers via File -DEFINES-> Symbol."""
     file_node = {
@@ -110,6 +130,8 @@ def test_run_impact_with_symbols_and_callers(tmp_path, capsys):
         "name": "handle_request",
         "properties": {"start_line": 10, "end_line": 25},
     }
+    # File --DEFINES--> Function (file is source, function is target —
+    # outgoing from the file's perspective).
     defines_rel = {
         "id": "r1",
         "type": "DEFINES",
@@ -134,8 +156,7 @@ def test_run_impact_with_symbols_and_callers(tmp_path, capsys):
     mock_store = MagicMock()
     mock_store.list_nodes.return_value = [file_node]
     mock_store.get_metadata.return_value = []
-    # _get_neighbors returns Function via DEFINES (outgoing from file)
-    mock_store._get_neighbors.return_value = [(func_node, defines_rel)]
+    mock_store._get_neighbors.side_effect = _neighbors_side_effect(outgoing=[(func_node, defines_rel)])
     # traverse returns callers
     mock_store.traverse.return_value = [{"node": caller_node, "relationship": calls_rel, "depth": 1}]
 
@@ -148,8 +169,9 @@ def test_run_impact_with_symbols_and_callers(tmp_path, capsys):
     assert "<--CALLS--" in out
     assert "main" in out
     assert "dependent(s) may be affected" in out
-    # _get_neighbors must be called with "outgoing", not "incoming"
-    mock_store._get_neighbors.assert_called_with("f1", "outgoing")
+    # _get_neighbors must be called with "outgoing" for DEFINES symbol-walk
+    # (it's also called with "incoming" for file-level importers).
+    mock_store._get_neighbors.assert_any_call("f1", "outgoing")
     mock_store.close.assert_called_once()
 
 
@@ -178,7 +200,7 @@ def test_run_impact_no_callers(tmp_path, capsys):
     mock_store = MagicMock()
     mock_store.list_nodes.return_value = [file_node]
     mock_store.get_metadata.return_value = []
-    mock_store._get_neighbors.return_value = [(func_node, defines_rel)]
+    mock_store._get_neighbors.side_effect = _neighbors_side_effect(outgoing=[(func_node, defines_rel)])
     mock_store.traverse.return_value = []
 
     with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
@@ -215,10 +237,9 @@ def test_run_impact_with_line_filter(tmp_path, capsys):
     mock_store = MagicMock()
     mock_store.list_nodes.return_value = [file_node]
     mock_store.get_metadata.return_value = []
-    mock_store._get_neighbors.return_value = [
-        (func_in_range, rel1),
-        (func_out_of_range, rel2),
-    ]
+    mock_store._get_neighbors.side_effect = _neighbors_side_effect(
+        outgoing=[(func_in_range, rel1), (func_out_of_range, rel2)]
+    )
     mock_store.traverse.return_value = []
 
     with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
@@ -228,6 +249,53 @@ def test_run_impact_with_line_filter(tmp_path, capsys):
     assert "targeted" in out
     assert "untouched" not in out
     mock_store.close.assert_called_once()
+
+
+def test_run_impact_surfaces_file_importers(tmp_path, capsys):
+    """Files that import the target should appear as a dedicated section,
+    even when the target file has no per-symbol callers.
+
+    Regression for the cross-file IMPORTS gap: previously such importers
+    were invisible because impact_analysis only walked per-symbol
+    incoming edges, never the file node's incoming IMPORTS edges.
+    """
+    file_node = {
+        "id": "f1",
+        "type": "File",
+        "name": "lib.py",
+        "properties": {"path": "src/lib.py"},
+    }
+    func_node = {
+        "id": "fn1",
+        "type": "Function",
+        "name": "exported",
+        "properties": {"start_line": 1, "end_line": 5},
+    }
+    defines_rel = {"id": "r1", "type": "DEFINES", "source_id": "f1", "target_id": "fn1", "properties": {}}
+    importer = {
+        "id": "f2",
+        "type": "File",
+        "name": "consumer.py",
+        "properties": {"path": "src/consumer.py"},
+    }
+    imports_rel = {"id": "r2", "type": "IMPORTS", "source_id": "f2", "target_id": "f1", "properties": {}}
+
+    mock_store = MagicMock()
+    mock_store.list_nodes.return_value = [file_node]
+    mock_store.get_metadata.return_value = []
+    mock_store._get_neighbors.side_effect = _neighbors_side_effect(
+        outgoing=[(func_node, defines_rel)],
+        incoming=[(importer, imports_rel)],
+    )
+    mock_store.traverse.return_value = []
+
+    with patch("opentrace_agent.store.GraphStore", return_value=mock_store):
+        run_impact("src/lib.py", str(tmp_path / "fake.db"))
+
+    out = capsys.readouterr().out
+    assert "Files importing this file" in out
+    assert "src/consumer.py" in out
+    assert "1 dependent(s)" in out
 
 
 # -- _resolve_file_node ------------------------------------------------------

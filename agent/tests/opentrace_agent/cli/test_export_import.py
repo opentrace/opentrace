@@ -23,7 +23,10 @@ import pytest
 
 pytest.importorskip("real_ladybug")
 
+from click.testing import CliRunner  # noqa: E402
+
 from opentrace_agent.cli.export_import import export_database, import_database  # noqa: E402
+from opentrace_agent.cli.main import app  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 
@@ -148,3 +151,60 @@ def test_import_progress_callback(store, tmp_path):
     assert len(messages) > 0
     assert any("Unpacking" in m for m in messages)
     assert any("Done" in m for m in messages)
+
+
+class TestImportCommandIsLockSafe:
+    """The `import` CLI must write through staging + atomic rename, so it
+    never takes the live DB's exclusive lock — it can run while a long-lived
+    reader (the MCP server / `serve`) holds a read-only handle on the DB.
+    """
+
+    def test_import_runs_while_readonly_handle_is_held(self, store, tmp_path):
+        # An archive to import (built from the fixture store's 3 nodes).
+        archive = tmp_path / "graph.parquet.zip"
+        archive.write_bytes(export_database(store))
+
+        # A live DB with pre-existing data, then a held READ-ONLY handle on it
+        # (this is exactly what the MCP server / serve do). A read-write open
+        # of this file would now fail with LadybugDB's "Could not set lock".
+
+        (tmp_path / "live").mkdir()
+        live = str(tmp_path / "live" / "index.db")
+        seed = GraphStore(live)
+        seed.add_node("pre-1", "Repository", "existing-repo", {})
+        seed.close()
+
+        reader = GraphStore(live, read_only=True)
+        try:
+            assert reader.get_stats()["total_nodes"] == 1
+
+            result = CliRunner().invoke(app, ["import", str(archive), "--db", live])
+            assert result.exit_code == 0, result.output
+        finally:
+            reader.close()
+
+        # The live DB was atomically replaced; the import merged on top of the
+        # seeded data (staging is seeded from live), so the original repo plus
+        # the 3 imported nodes are all present.
+        after = GraphStore(live, read_only=True)
+        try:
+            stats = after.get_stats()
+            assert stats["total_nodes"] == 4  # 1 pre-existing + 3 imported
+            assert after.get_node("pre-1") is not None  # not clobbered
+            assert after.get_node("n1") is not None  # imported
+        finally:
+            after.close()
+
+    def test_import_leaves_no_staging_file_on_success(self, store, tmp_path):
+        archive = tmp_path / "graph.parquet.zip"
+        archive.write_bytes(export_database(store))
+        live = str(tmp_path / "ws" / "index.db")
+
+        result = CliRunner().invoke(app, ["import", str(archive), "--db", live])
+        assert result.exit_code == 0, result.output
+
+        from pathlib import Path
+
+        assert Path(live).exists()
+        assert not Path(live + ".staging").exists()
+        assert not Path(live + ".staging.wal").exists()

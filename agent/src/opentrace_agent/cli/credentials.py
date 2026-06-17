@@ -290,6 +290,77 @@ def clear_org_tokens() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Git PATs  (git_tokens.json) — encrypted, host-keyed
+#
+# Personal access tokens used by ``fetch-and-index`` to clone private
+# repos. Stored in a single encrypted file mapping host -> token so a
+# multi-host setup (github.com + a self-hosted GitLab) can keep several
+# PATs at once. The hardware-bound Fernet key means the file is useless
+# if copied to another machine.
+# ---------------------------------------------------------------------------
+
+_GIT_TOKENS_FILE = "git_tokens.json"
+
+
+def normalize_git_host(host: str) -> str:
+    """Normalize a git host for use as a storage key.
+
+    Lowercases and strips a leading ``www.``. Returns ``""`` for falsy
+    input so callers can treat "no host" uniformly.
+    """
+    if not host:
+        return ""
+    h = host.strip().lower()
+    if h.startswith("www."):
+        h = h[4:]
+    return h
+
+
+def save_git_token(host: str, token: str) -> None:
+    """Persist a git PAT for *host* (encrypted), keyed by normalized host."""
+    key = normalize_git_host(host)
+    if not key or not token:
+        return
+    path = _base_dir() / _GIT_TOKENS_FILE
+    data = _read_encrypted(path) or {}
+    data[key] = token
+    _write_encrypted(path, data)
+
+
+def load_git_token(host: str) -> str | None:
+    """Return the stored git PAT for *host*, or ``None`` if none is saved."""
+    key = normalize_git_host(host)
+    if not key:
+        return None
+    data = _read_encrypted(_base_dir() / _GIT_TOKENS_FILE)
+    if not data:
+        return None
+    token = data.get(key)
+    return token if isinstance(token, str) and token else None
+
+
+def list_git_token_hosts() -> list[str]:
+    """Return the sorted list of hosts that have a stored git PAT.
+
+    Never returns the tokens themselves — for ``auth git --status``.
+    """
+    data = _read_encrypted(_base_dir() / _GIT_TOKENS_FILE)
+    if not data:
+        return []
+    return sorted(k for k, v in data.items() if isinstance(v, str) and v)
+
+
+def clear_git_tokens() -> int:
+    """Remove all stored git PATs. Returns the number of hosts cleared."""
+    path = _base_dir() / _GIT_TOKENS_FILE
+    data = _read_encrypted(path)
+    count = len(data) if data else 0
+    if path.exists():
+        path.unlink()
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Client registration  (client.json) — plain JSON (not secret)
 # ---------------------------------------------------------------------------
 

@@ -415,3 +415,69 @@ def test_login_resolve_exchange_fails(tmp_path: Path, monkeypatch: object) -> No
 
     assert result.exit_code != 0
     assert "Org token resolution failed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# CLI command — `auth git`
+# ---------------------------------------------------------------------------
+
+
+def test_auth_git_stores_with_no_validate(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    result = runner.invoke(
+        app,
+        ["auth", "git", "--host", "github.com", "--no-validate"],
+        input="ghp_token\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert credentials.load_git_token("github.com") == "ghp_token"
+
+
+def test_auth_git_validates_before_storing(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    with patch("urllib.request.urlopen", return_value=_fake_urlopen_response({"login": "octocat"})):
+        result = runner.invoke(app, ["auth", "git"], input="ghp_valid\n")
+    assert result.exit_code == 0, result.output
+    assert credentials.load_git_token("github.com") == "ghp_valid"
+
+
+def test_auth_git_rejects_bad_token(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    err = urllib.error.HTTPError("url", 401, "Unauthorized", {}, BytesIO(b"nope"))
+    with patch("urllib.request.urlopen", side_effect=err):
+        result = runner.invoke(app, ["auth", "git"], input="ghp_bad\n")
+    assert result.exit_code != 0
+    assert "rejected" in result.output.lower()
+    # Nothing is persisted when validation fails.
+    assert credentials.load_git_token("github.com") is None
+
+
+def test_auth_git_unknown_host_skips_validation(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    # No urlopen patch — a self-hosted host must not attempt a network call.
+    result = runner.invoke(
+        app,
+        ["auth", "git", "--host", "git.internal.corp"],
+        input="pat\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "without validation" in result.output
+    assert credentials.load_git_token("git.internal.corp") == "pat"
+
+
+def test_auth_git_status_lists_hosts(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    credentials.save_git_token("github.com", "gh")
+    result = runner.invoke(app, ["auth", "git", "--status"])
+    assert result.exit_code == 0, result.output
+    assert "github.com" in result.output
+    # Never prints the token itself.
+    assert "gh" not in result.output.split("github.com")[0]
+
+
+def test_auth_git_clear(tmp_path: Path, monkeypatch: object) -> None:
+    _patch_base_dir(monkeypatch, tmp_path)
+    credentials.save_git_token("github.com", "gh")
+    result = runner.invoke(app, ["auth", "git", "--clear"])
+    assert result.exit_code == 0, result.output
+    assert credentials.load_git_token("github.com") is None

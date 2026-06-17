@@ -16,7 +16,9 @@
 
 import { createContext, use, useMemo, type ReactNode } from 'react';
 import { useStore } from '../store';
+import { ServerGraphStore } from '../store/serverStore';
 import { BrowserJobService } from './browserJobService';
+import { ServerJobService } from './serverJobService';
 import type { JobService } from './types';
 
 const JobServiceContext = createContext<JobService | null>(null);
@@ -24,7 +26,15 @@ const JobServiceContext = createContext<JobService | null>(null);
 export function JobServiceProvider({ children }: { children: ReactNode }) {
   const { store } = useStore();
 
-  const jobService = useMemo(() => new BrowserJobService(store), [store]);
+  // Server-backed stores can't be written through the browser pipeline; route
+  // indexing to the server's /api/index endpoint instead.
+  const jobService = useMemo(
+    () =>
+      store instanceof ServerGraphStore
+        ? new ServerJobService(store)
+        : new BrowserJobService(store),
+    [store],
+  );
 
   return <JobServiceContext value={jobService}>{children}</JobServiceContext>;
 }

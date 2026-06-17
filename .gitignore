@@ -48,6 +48,18 @@ agent/.opencode/
 # OpenTrace index (legacy location)
 otindex.db
 otindex.db.wal
+.opentrace/*.indexlock
+
+# Claude Code session state
+.claude/scheduled_tasks.lock
+
+# Gradle output inside the kotlin test fixture (only build.gradle.kts,
+# settings.gradle.kts, and src/ are part of the fixture)
+tests/fixtures/kotlin/project/.gradle/
+tests/fixtures/kotlin/project/build/
+tests/fixtures/kotlin/project/gradle/
+tests/fixtures/kotlin/project/gradlew
+tests/fixtures/kotlin/project/gradlew.bat
 
 # Developer Files
 config.yaml

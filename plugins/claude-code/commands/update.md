@@ -1,11 +1,3 @@
----
-name: update
-description: |
-  Check for and install updates to the OpenTrace CLI (opentraceai).
-  Use when: "update opentraceai", "update cli", "check for updates", "upgrade opentraceai", "new version"
-allowed-tools: Bash
----
-
 Check for updates to the OpenTrace CLI (`opentraceai`) and optionally install them.
 
 ## Arguments

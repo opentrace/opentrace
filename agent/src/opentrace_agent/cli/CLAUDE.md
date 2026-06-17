@@ -16,7 +16,19 @@ auth.py          — GitHub token onboarding flows
 credentials.py   — Token storage helpers
 config.py        — pydantic-settings (env prefix OT_)
 export_import.py — Dump and reload graph state for backups / cross-machine moves
+install.py       — `opentraceai install <target>` — wire OpenTrace into an agent's plugin system
 ```
+
+### `install` command
+
+`opentraceai install claude` adds the OpenTrace marketplace and installs the
+plugin via Claude Code's native plugin CLI (`claude plugin marketplace add` →
+`claude plugin install opentrace-oss@opentrace-oss`) — an *online* install,
+pulled from the GitHub repo. The marketplace source defaults to
+`opentrace/opentrace`, overridable with `--source` or
+`$OPENTRACE_MARKETPLACE_SOURCE` (forks / local checkouts). `--dry-run` prints
+the commands without running them. This is a slim, single-target command; the
+full multi-platform installer (Codex, Cursor, OpenCode, …) lives separately.
 
 ## Database Discovery
 
@@ -35,7 +47,9 @@ This is a **security boundary** — don't loosen the symlink check casually. If 
 | REST | `serve.py` | Starlette HTTP | UI (`ServerGraphStore` in `ui/src/store/`) | None today |
 | MCP | `mcp_server.py` | stdio JSON-RPC | Claude Code plugin | OAuth flow (separate) |
 
-REST endpoints: `/api/health`, `/api/stats`, `/api/graph`, `/api/nodes/{id}`, `/api/traverse`, `/api/source/{id}`, `/api/nodes/search`, `/api/nodes/list`, `/api/metadata`. The UI is the contract holder — see `ui/src/store/CLAUDE.md` for the client side.
+REST endpoints: `/api/health`, `/api/stats`, `/api/graph`, `/api/nodes/{id}`, `/api/traverse`, `/api/source/{id}`, `/api/nodes/search`, `/api/nodes/list`, `/api/metadata`, `POST /api/index`, `GET /api/index/{job_id}`. The UI is the contract holder — see `ui/src/store/CLAUDE.md` for the client side.
+
+**`serve` opens the DB read-only** and wraps it in the same `_ReloadableStore` (inode-swap proxy) the MCP server uses. This is deliberate: a read-write open takes LadybugDB's exclusive lock and cannot coexist with a long-lived MCP reader on the same `index.db`. Indexing is *not* done through the server's handle — `POST /api/index` delegates to a background `opentraceai index` / `fetch-and-index` subprocess (staging file + atomic rename), and the reloadable proxy reopens the swapped file on the next query. Only one index runs at a time (409 otherwise); poll `GET /api/index/{job_id}` for status + streamed stdout lines.
 
 MCP tools mirror the same operations but with names matching the plugin agents' expectations: `get_stats`, `search_graph`, `list_nodes`, `get_node`, `traverse_graph`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
 

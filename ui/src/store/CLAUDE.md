@@ -50,8 +50,12 @@ Optional methods (`?`) exist on LadybugStore only and are feature-detected at ca
 | `/api/nodes/search` | GET | Full-text search |
 | `/api/nodes/list` | GET | Paginated node listing by type |
 | `/api/metadata` | GET | Index metadata (when indexed, by whom, counts) |
+| `/api/index` | POST | Start a server-side index of a URL/path (returns a job id) |
+| `/api/index/{id}` | GET | Poll index job status + streamed stdout lines |
 
 The server side of these lives in `agent/src/opentrace_agent/cli/serve.py`. Changes must be coordinated.
+
+`startIndexJob` / `getIndexJob` on `ServerGraphStore` wrap the two index endpoints. `ServerJobService` (`job/serverJobService.ts`) drives them — it's selected over `BrowserJobService` whenever the store is a `ServerGraphStore`, so the existing `useJobStream` / `IndexingProgress` UI works against server-side indexing. Only URL-based indexing is supported in server mode (directory/import can't stream to a remote server).
 
 ## Search Architecture
 
@@ -65,7 +69,7 @@ These only apply in browser (LadybugStore) mode. In server mode, search delegate
 
 ## Pitfalls
 
-- **Server mode is read-only.** `importBatch`, `storeSource`, `clearGraph` are all no-ops in `ServerGraphStore`. Code calling these must not assume they had an effect.
+- **Server mode is read-only for graph writes.** `importBatch`, `storeSource`, `clearGraph` are all no-ops in `ServerGraphStore`. Code calling these must not assume they had an effect. Indexing is the exception — it goes through `startIndexJob` (the server runs the indexer out-of-band), not `importBatch`.
 - **LadybugStore requires WASM init.** Call `ensureReady()` before querying. The WASM init is async and can take >1s on first load.
 - **Optional method detection.** Use `if (store.importVectors)` — TypeScript's optional interface members don't throw, but calling `undefined()` does.
 - **Concurrent `flush()` calls conflict.** LadybugStore `flush()` issues bulk Parquet writes; overlapping flushes can produce duplicates. The pipeline serializes flushes; don't bypass that.

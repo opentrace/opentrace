@@ -38,30 +38,6 @@ from typing import Any
 
 import click
 
-from opentrace_agent.store.graph_store import _unmarshal_props
-
-# Cap on the FTS scan window when --repo is set. Compensates for the
-# global FTS ranking dropping results from other repos before the
-# WHERE filter applies. 10× the user's limit, capped to keep the scan
-# bounded even for absurd --limit values.
-_FTS_OVERFETCH_MULT = 10
-_FTS_OVERFETCH_CAP = 500
-
-
-def _props_to_dict(raw: Any) -> dict[str, Any]:
-    """Coerce a node's ``properties`` column to a dict.
-
-    Kuzu may return JSON or its MAP literal format
-    (``{key: value, ...}`` with no quotes) depending on the read path;
-    ``_unmarshal_props`` handles both. The dict branch is for callers
-    that have already parsed the column upstream.
-    """
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        return _unmarshal_props(raw) or {}
-    return {}
-
 
 def _load_repo_ids(store: Any) -> list[str]:
     """Return all Repository node ids, longest first.
@@ -142,37 +118,22 @@ def _run_fts_search(
     node_types: list[str] | None,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Execute the FTS-with-filter query as a single round trip."""
-    top = limit if not repo_id else min(limit * _FTS_OVERFETCH_MULT, _FTS_OVERFETCH_CAP)
+    """Execute the FTS-with-filter query as a single round trip.
 
-    where_clauses: list[str] = []
-    params: dict[str, Any] = {"query": query, "top": top, "limit": limit}
-    if repo_id:
-        where_clauses.append("node.id STARTS WITH $repo_prefix")
-        params["repo_prefix"] = f"{repo_id}/"
-    if node_types:
-        where_clauses.append("node.type IN $node_types")
-        params["node_types"] = list(node_types)
+    Thin adapter over :meth:`GraphStore.fts_search` — the FTS Cypher and
+    its repo/type predicates live in the store layer (the single source
+    of truth shared with the ``fts_search`` MCP tool). This wrapper keeps
+    the positional call signature ``run_source_search`` already uses.
 
-    cypher = "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $top) WITH node, score "
-    if where_clauses:
-        cypher += "WHERE " + " AND ".join(where_clauses) + " "
-    cypher += "RETURN node.id, node.name, node.type, node.properties, score ORDER BY score DESC LIMIT $limit"
-
-    result = store._conn.execute(cypher, parameters=params)
-    rows: list[dict[str, Any]] = []
-    while result.has_next():
-        row = result.get_next()
-        rows.append(
-            {
-                "id": str(row[0]),
-                "name": str(row[1]),
-                "type": str(row[2]),
-                "properties": _props_to_dict(row[3]),
-                "score": float(row[4]),
-            }
-        )
-    return rows
+    The store follows the ``get_node`` convention of returning ``None``
+    for empty properties; the source-search emitters expect a dict, so
+    normalize ``None`` → ``{}`` here to preserve that contract.
+    """
+    results = store.fts_search(query, node_types=node_types, repo_id=repo_id, limit=limit)
+    for node in results:
+        if node.get("properties") is None:
+            node["properties"] = {}
+    return results
 
 
 def run_source_search(

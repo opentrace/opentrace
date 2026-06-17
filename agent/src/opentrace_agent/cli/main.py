@@ -219,6 +219,13 @@ def app(ctx: click.Context, workspace_dir: str | None) -> None:
         click.echo(ctx.get_help())
 
 
+# `opentraceai install <target>` — wire OpenTrace into a coding agent's
+# plugin system (Claude Code today). Lives in its own module; mounted here.
+from opentrace_agent.cli.install import register as _register_install  # noqa: E402
+
+_register_install(app)
+
+
 def _safe_unlink(path_str: str, *, context: str) -> bool:
     """Unlink *path_str*, tolerating both missing files and permission errors.
 
@@ -420,6 +427,42 @@ def _run_indexing_pipeline(
             raise
 
         return elapsed
+    finally:
+        _release_index_lock(lock_fh)
+
+
+def _write_via_staging(db_path: str, work):
+    """Run *work(store)* against a staging DB, then atomically swap it in.
+
+    The same atomic-write pattern ``index`` uses: seed ``<db>.staging`` from
+    the live DB (so existing data is preserved), let *work* mutate the staging
+    store, then rename it over the live file. Writers never hold the exclusive
+    lock on the live DB, so long-lived readers (the MCP server, ``serve``) keep
+    working and reopen on the inode swap. Holds the ``<db>.indexlock`` flock so
+    concurrent writers can't race the swap. Returns whatever *work* returns.
+    """
+    from opentrace_agent.store import GraphStore
+
+    db_dir = Path(db_path).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    staging_db = db_path + ".staging"
+
+    lock_fh = _acquire_index_lock(db_path)
+    try:
+        _clean_stale_staging(staging_db)
+        try:
+            _seed_staging_from_live(db_path, staging_db)
+            with GraphStore(staging_db) as store:
+                result = work(store)
+            # Inside the try so a swap-time failure gets the same cleanup.
+            _swap_staging_into_place(staging_db, db_path)
+        except BaseException:
+            _safe_unlink(staging_db, context="failed-write cleanup")
+            _safe_unlink(staging_db + ".wal", context="failed-write cleanup")
+            raise
+        return result
     finally:
         _release_index_lock(lock_fh)
 
@@ -757,7 +800,7 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        server = create_mcp_server(reloadable)
+        server = create_mcp_server(reloadable, db_path=resolved_db)
         log.debug("MCP server running on stdio")
         server.run(transport="stdio")
     except KeyboardInterrupt:
@@ -801,21 +844,27 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
         raise SystemExit(str(e))
 
     log.debug("Opening database: %s", resolved_db)
-    store = GraphStore(resolved_db)
+    # Open read-only and wrap in the same inode-swap proxy the MCP server uses.
+    # A read-write open takes LadybugDB's exclusive lock, which cannot coexist
+    # with a long-lived MCP reader on the same DB; read-only opens are
+    # shareable. Re-indexing happens out-of-band (staging file + atomic
+    # rename), and _ReloadableStore transparently reopens on the inode swap.
+    store = GraphStore(resolved_db, read_only=True)
+    reloadable = _ReloadableStore(resolved_db, store)
 
-    stats = store.get_stats()
+    stats = reloadable.get_stats()
     click.echo(f"Database: {resolved_db}")
     click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
     click.echo(f"Listening on http://{host}:{port}")
 
-    app = create_app(store)
+    app = create_app(reloadable, db_path=resolved_db)
 
     try:
         uvicorn.run(app, host=host, port=port, log_level="debug" if verbose else "info")
     except KeyboardInterrupt:
         pass
     finally:
-        store.close()
+        reloadable.close()
 
 
 @app.command()
@@ -898,15 +947,8 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
     _configure_logging(verbose)
 
     from opentrace_agent.cli.export_import import import_database
-    from opentrace_agent.store import GraphStore
 
     resolved_db = _resolve_db(db_path)
-    db_dir = Path(resolved_db).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_gitignore(db_dir)
-
-    click.echo(f"Opening database at {resolved_db} ...")
-    store = GraphStore(resolved_db)
 
     data = Path(archive).read_bytes()
     click.echo(f"Importing {archive} ({len(data) / 1024:.1f} KB) ...")
@@ -914,10 +956,10 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
     def on_progress(msg: str) -> None:
         click.echo(f"  {msg}")
 
-    try:
-        result = import_database(store, data, on_progress=on_progress)
-    finally:
-        store.close()
+    # Write through a staging file + atomic rename (like `index`) so the import
+    # never takes the live DB's exclusive lock — it can run while the MCP server
+    # or `serve` hold read-only handles on the same database.
+    result = _write_via_staging(resolved_db, lambda store: import_database(store, data, on_progress=on_progress))
 
     click.echo(
         f"Imported {result['nodes_created']} nodes, "
@@ -1061,6 +1103,103 @@ def logout() -> None:
         click.echo(f"Logged out. Removed {', '.join(parts)}.")
     else:
         click.echo("Not logged in.")
+
+
+# Provider user-info endpoints used to validate a PAT before storing it.
+# Mirrors the opencode plugin's auth.ts validation. Self-hosted hosts that
+# aren't listed here are stored without validation.
+_GIT_PROVIDER_USER_URLS = {
+    "github.com": "https://api.github.com/user",
+    "gitlab.com": "https://gitlab.com/api/v4/user",
+}
+
+
+def _validate_git_pat(host: str, token: str) -> None:
+    """Validate *token* against *host*'s user API. Raise ClickException if rejected.
+
+    Unknown (self-hosted) hosts can't be validated without knowing their API
+    layout, so they're accepted as-is with a note.
+    """
+    import urllib.error
+    import urllib.request
+
+    user_url = _GIT_PROVIDER_USER_URLS.get(host)
+    if not user_url:
+        click.echo(f"Note: '{host}' is not a known provider — storing token without validation.")
+        return
+    req = urllib.request.Request(
+        user_url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "User-Agent": "opentraceai",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            pass  # 2xx — token is valid.
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise click.ClickException(f"Token rejected by {host} ({exc.code}). Check the value and required scopes.")
+        raise click.ClickException(f"Token validation failed ({exc.code} {exc.reason}).")
+    except urllib.error.URLError as exc:
+        raise click.ClickException(f"Could not reach {host} to validate token: {exc.reason}")
+
+
+@app.group()
+def auth() -> None:
+    """Manage git provider credentials for private-repo indexing."""
+
+
+@auth.command("git")
+@click.option("--host", default="github.com", show_default=True, help="Git host the token authenticates to.")
+@click.option("--clear", "do_clear", is_flag=True, help="Remove all stored git PATs and exit.")
+@click.option(
+    "--status", "show_status", is_flag=True, help="List hosts with a stored PAT (never prints tokens) and exit."
+)
+@click.option("--no-validate", is_flag=True, help="Skip provider-side validation before storing.")
+def auth_git(host: str, do_clear: bool, show_status: bool, no_validate: bool) -> None:
+    """Store a git personal access token (PAT) for private-repo indexing.
+
+    The token is encrypted at rest in ``~/.opentrace/git_tokens.json`` with a
+    machine-bound key and used as a fallback by ``fetch-and-index`` when no
+    ``--token`` / env var is set. Prompts securely (input hidden) for the PAT.
+    """
+    from opentrace_agent.cli.credentials import (
+        clear_git_tokens,
+        list_git_token_hosts,
+        normalize_git_host,
+        save_git_token,
+    )
+
+    if do_clear:
+        n = clear_git_tokens()
+        click.echo(f"Cleared {n} stored git token(s)." if n else "No stored git tokens to clear.")
+        return
+
+    if show_status:
+        hosts = list_git_token_hosts()
+        if hosts:
+            click.echo("Stored git PATs for:")
+            for h in hosts:
+                click.echo(f"  - {h}")
+        else:
+            click.echo("No stored git tokens.")
+        return
+
+    norm = normalize_git_host(host)
+    if not norm:
+        raise click.ClickException("Invalid host.")
+
+    token = click.prompt(f"Enter a personal access token for {norm}", hide_input=True).strip()
+    if not token:
+        raise click.ClickException("No token entered.")
+
+    if not no_validate:
+        _validate_git_pat(norm, token)
+
+    save_git_token(norm, token)
+    click.echo(f"Saved git PAT for {norm}. Private repos on this host can now be indexed.")
 
 
 @app.command()
@@ -1846,6 +1985,46 @@ def _print_file_slice(
         click.echo(f"{start_idx + i}\t{line}")
 
 
+def _git_host_from_url(repo_url: str) -> str | None:
+    """Extract the host from a git URL for stored-token lookup.
+
+    Handles both the HTTP(S) form (``https://github.com/org/repo``) and the
+    SSH/scp form (``git@github.com:org/repo.git``). Returns ``None`` when no
+    host can be determined (e.g. a bare local path).
+    """
+    from urllib.parse import urlparse
+
+    if not repo_url:
+        return None
+    # scp-like syntax: git@host:org/repo — no scheme for urlparse to find.
+    if "://" not in repo_url and "@" in repo_url and ":" in repo_url:
+        host = repo_url.split("@", 1)[1].split(":", 1)[0]
+        return host or None
+    host = urlparse(repo_url).hostname
+    return host or None
+
+
+def _resolve_git_token(repo_url: str, token: str | None) -> str | None:
+    """Resolve the git PAT for *repo_url*.
+
+    ``token`` is whatever Click already resolved from ``--token`` or the
+    ``OPENTRACE_GIT_TOKEN`` / ``GITHUB_TOKEN`` / ``GITLAB_TOKEN`` env vars.
+    When that's empty, fall back to a PAT stored via ``opentraceai auth git``
+    for the repo's host. Explicit/env tokens always win.
+    """
+    if token:
+        return token
+    host = _git_host_from_url(repo_url)
+    if not host:
+        return None
+    from opentrace_agent.cli.credentials import load_git_token
+
+    stored = load_git_token(host)
+    if stored:
+        logging.getLogger(__name__).debug("Using stored git PAT for host %s", host)
+    return stored
+
+
 def _do_clone(repo_url: str, clone_dir: Path, ref: str | None, token: str | None) -> Path:
     """Clone a repo into *clone_dir*, returning the local path."""
     from opentrace_agent.sources.code.git_cloner import GitCloner
@@ -1992,9 +2171,17 @@ def fetch_and_index(
 
     For private repos, pass --token with a GitHub/GitLab personal access
     token (PAT), or set OPENTRACE_GIT_TOKEN, GITHUB_TOKEN, or GITLAB_TOKEN
-    (resolved in that order by Click via the --token envvar binding).
+    (resolved in that order by Click via the --token envvar binding). When
+    none of those is set, a PAT saved for the repo's host via
+    `opentraceai auth git` is used as a final fallback.
     """
     _configure_logging(verbose)
+
+    # Resolve the git PAT: explicit --token / env (already bound by Click)
+    # wins; otherwise fall back to a token stored via `opentraceai auth git`
+    # for this repo's host. Lets the MCP server and plugins index private
+    # repos without threading a token through every call site.
+    token = _resolve_git_token(repo_url, token)
 
     # Determine repo name from URL
     url_parts = repo_url.rstrip("/").split("/")
@@ -2041,6 +2228,38 @@ def fetch_and_index(
     )
 
     click.echo(f"Done in {elapsed:.1f}s. Repository '{effective_repo_id}' is now indexed.")
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option(
+    "--staged",
+    "staged_only",
+    is_flag=True,
+    default=False,
+    help="Only analyze changes staged in the index, ignoring unstaged work.",
+)
+def diff(db_path: str | None, staged_only: bool) -> None:
+    """Run impact analysis on every uncommitted code file.
+
+    Discovers files changed in the working tree (or the index, with
+    ``--staged``) via ``git diff --name-only`` and prints the blast radius
+    for each. Exits 0 with no output when there are no changes or no index.
+    """
+    from opentrace_agent.cli.diff import run_diff
+
+    try:
+        resolved = _resolve_db(db_path, must_exist=True)
+    except click.UsageError:
+        resolved = None
+
+    run_diff(os.getcwd(), resolved, staged_only=staged_only)
 
 
 def _configure_logging(verbose: bool) -> None:

@@ -500,6 +500,84 @@ class TestTokenPrecedence:
         assert calls["do_clone"][0]["token"] == "gl"
 
 
+class TestStoredPatFallback:
+    """A PAT stored via `opentraceai auth git` is the final fallback.
+
+    ``_patch_home`` points ``Path.home()`` at tmp_path, and the credential
+    store keys off ``Path.home()`` — so ``save_git_token`` lands under the
+    test's tmp tree, isolated from the real machine.
+    """
+
+    def _store_token(self, host: str, token: str) -> None:
+        from opentrace_agent.cli.credentials import save_git_token
+
+        save_git_token(host, token)
+
+    def test_stored_pat_used_when_no_flag_or_env(self, tmp_path, monkeypatch) -> None:
+        _patch_home(monkeypatch, tmp_path)
+        calls = _stub_collaborators(monkeypatch)
+        self._store_token("github.com", "stored-pat")
+
+        result = _run(["https://github.com/owner/repo"])
+        assert result.exit_code == 0, result.output
+        assert calls["do_clone"][0]["token"] == "stored-pat"
+
+    def test_explicit_flag_beats_stored_pat(self, tmp_path, monkeypatch) -> None:
+        _patch_home(monkeypatch, tmp_path)
+        calls = _stub_collaborators(monkeypatch)
+        self._store_token("github.com", "stored-pat")
+
+        result = _run(["https://github.com/owner/repo", "--token", "explicit"])
+        assert result.exit_code == 0, result.output
+        assert calls["do_clone"][0]["token"] == "explicit"
+
+    def test_env_beats_stored_pat(self, tmp_path, monkeypatch) -> None:
+        _patch_home(monkeypatch, tmp_path)
+        calls = _stub_collaborators(monkeypatch)
+        self._store_token("github.com", "stored-pat")
+
+        result = _run(["https://github.com/owner/repo"], env={"GITHUB_TOKEN": "from-env"})
+        assert result.exit_code == 0, result.output
+        assert calls["do_clone"][0]["token"] == "from-env"
+
+    def test_stored_pat_resolved_by_host(self, tmp_path, monkeypatch) -> None:
+        # A token stored for gitlab.com must not be used for a github URL.
+        _patch_home(monkeypatch, tmp_path)
+        calls = _stub_collaborators(monkeypatch)
+        self._store_token("gitlab.com", "gl-pat")
+
+        result = _run(["https://github.com/owner/repo"])
+        assert result.exit_code == 0, result.output
+        assert calls["do_clone"][0]["token"] is None
+
+    def test_no_token_anywhere_passes_none(self, tmp_path, monkeypatch) -> None:
+        _patch_home(monkeypatch, tmp_path)
+        calls = _stub_collaborators(monkeypatch)
+
+        result = _run(["https://github.com/owner/repo"])
+        assert result.exit_code == 0, result.output
+        assert calls["do_clone"][0]["token"] is None
+
+
+class TestGitHostFromUrl:
+    """Host extraction feeding the stored-PAT lookup."""
+
+    def test_https_url(self) -> None:
+        from opentrace_agent.cli.main import _git_host_from_url
+
+        assert _git_host_from_url("https://github.com/owner/repo") == "github.com"
+
+    def test_scp_style_url(self) -> None:
+        from opentrace_agent.cli.main import _git_host_from_url
+
+        assert _git_host_from_url("git@gitlab.com:owner/repo.git") == "gitlab.com"
+
+    def test_local_path_has_no_host(self) -> None:
+        from opentrace_agent.cli.main import _git_host_from_url
+
+        assert _git_host_from_url("/home/me/project") is None
+
+
 class TestPipelineHandoff:
     """The handoff from clone result to ``_run_indexing_pipeline``."""
 

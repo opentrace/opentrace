@@ -53,7 +53,7 @@
       "id": "find_user_class",
       "category": "symbol_discovery",
       "description": "Search should find the User class",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "User", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -64,7 +64,7 @@
       "id": "find_user_service_class",
       "category": "symbol_discovery",
       "description": "Search should find the UserService class",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "UserService", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -75,7 +75,7 @@
       "id": "find_validate_email",
       "category": "symbol_discovery",
       "description": "Search should find validate_email function",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "validate_email", "nodeTypes": "Function"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -86,7 +86,7 @@
       "id": "find_validate_name",
       "category": "symbol_discovery",
       "description": "Search should find validate_name function",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "validate_name", "nodeTypes": "Function"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -159,7 +159,7 @@
       "id": "search_type_filter",
       "category": "search_quality",
       "description": "Searching for 'User' with Class filter should only return Classes",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "User", "nodeTypes": "Class"},
       "assertions": [
         {"type": "min_count", "value": 1},
@@ -170,7 +170,7 @@
       "id": "search_no_results",
       "category": "search_quality",
       "description": "Searching for nonsense should return empty",
-      "tool": "search_graph",
+      "tool": "keyword_search",
       "tool_args": {"query": "zzz_nonexistent_zzz"},
       "assertions": [
         {"type": "exact_count", "value": 0}
