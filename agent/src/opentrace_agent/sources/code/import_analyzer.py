@@ -288,19 +288,22 @@ def _parse_go_import_spec(
     # Try to find matching files — match directory-based Go packages.
     # The import path may have a module prefix (e.g. "myproject/internal/store")
     # but the known files use repo-relative paths (e.g. "internal/store/store.go").
-    # We check if the last package segment of the import path matches the
-    # last directory segment of the known file.
-    pkg_name = import_path.rsplit("/", 1)[-1]
+    # Strip the module prefix when we know it so the path is repo-relative.
+    rel_path = import_path
+    if go_module_path and import_path.startswith(go_module_path):
+        rel_path = import_path[len(go_module_path) :].lstrip("/")
     resolved = False
     for known in known_files:
         known_dir = _parent_dir(known)
-        # Check: exact match, suffix match, or last segment match
+        # Require the *full* package directory to match (exactly, or as a
+        # trailing path-component sequence of the import path). Matching only
+        # the last segment would wrongly link unrelated third-party packages
+        # (e.g. "github.com/other/store") to any local dir named "store".
         if (
-            known_dir == import_path
-            or known_dir.endswith("/" + import_path)
-            or known_dir.endswith(import_path)
-            or known_dir == pkg_name
-            or known_dir.endswith("/" + pkg_name)
+            known_dir == rel_path
+            or known_dir == import_path
+            or rel_path.endswith("/" + known_dir)
+            or import_path.endswith("/" + known_dir)
         ):
             result[alias] = known
             resolved = True

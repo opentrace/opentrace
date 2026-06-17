@@ -170,6 +170,23 @@ import (
         assert result.internal == {}
         assert result.external.get("github.com/gorilla/mux") == "pkg:go:github.com/gorilla/mux"
 
+    def test_external_import_not_matched_by_shared_last_segment(self):
+        """A third-party import must not resolve to a local dir that merely
+        shares its last path segment (e.g. .../store vs internal/store)."""
+        source = b'package main\n\nimport "github.com/other/store"\n'
+        known = {"internal/store/store.go"}
+        result = analyze_go_imports(_parse_go(source), known)
+        assert result.internal == {}
+        assert result.external.get("github.com/other/store") == "pkg:go:github.com/other/store"
+
+    def test_import_resolved_with_module_prefix_stripped(self):
+        """When the module path is known, the prefix is stripped to match the
+        repo-relative package directory."""
+        source = b'package main\n\nimport "myproject/internal/store"\n'
+        known = {"internal/store/store.go"}
+        result = analyze_go_imports(_parse_go(source), known, go_module_path="myproject")
+        assert result.internal.get("store") == "internal/store/store.go"
+
 
 class TestTypeScriptImports:
     def test_relative_import(self):
