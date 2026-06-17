@@ -19,6 +19,25 @@ Fixtures (store, client) are provided by conftest.py in this directory.
 
 from __future__ import annotations
 
+import threading
+import time
+
+from starlette.testclient import TestClient
+
+from opentrace_agent.cli.serve import create_app
+
+
+def _wait_for_finish(client: TestClient, job_id: str, timeout: float = 5.0) -> dict:
+    """Poll an index job until it leaves the 'running' state."""
+    deadline = time.monotonic() + timeout
+    data: dict = {}
+    while time.monotonic() < deadline:
+        data = client.get(f"/api/index/{job_id}").json()
+        if data["status"] != "running":
+            return data
+        time.sleep(0.02)
+    raise AssertionError(f"index job did not finish in time: {data}")
+
 
 class TestHealth:
     def test_health(self, client):
@@ -103,3 +122,81 @@ class TestTraverse:
     def test_missing_body(self, client):
         resp = client.post("/api/traverse")
         assert resp.status_code == 400
+
+
+class TestIndexEndpoint:
+    def _client(self, store, runner):
+        app = create_app(store, db_path="/tmp/opentrace-test.db", index_runner=runner)
+        return TestClient(app)
+
+    def test_missing_path_or_url(self, client):
+        resp = client.post("/api/index", json={})
+        assert resp.status_code == 400
+
+    def test_nonexistent_local_path_rejected(self, client):
+        # Bad target is rejected synchronously before any subprocess spawns,
+        # so the default runner is never invoked.
+        resp = client.post("/api/index", json={"pathOrUrl": "/no/such/dir/xyz"})
+        assert resp.status_code == 400
+        assert "does not exist" in resp.json()["error"]
+
+    def test_start_and_complete(self, store):
+        captured: dict = {}
+
+        def runner(job, cmd, token):
+            captured["cmd"] = cmd
+            captured["token"] = token
+            job.add_line("Scanning directory tree")
+            job.add_line("Saved 5 nodes, 3 relationships")
+            job.finish(0, None)
+
+        client = self._client(store, runner)
+        resp = client.post(
+            "/api/index",
+            json={"pathOrUrl": "https://github.com/owner/repo", "ref": "main"},
+        )
+        assert resp.status_code == 202
+        job_id = resp.json()["jobId"]
+
+        data = _wait_for_finish(client, job_id)
+        assert data["status"] == "done"
+        assert data["exitCode"] == 0
+        assert any("Saved 5 nodes" in line for line in data["lines"])
+
+        # URL routed to fetch-and-index, targeting the server's DB.
+        assert captured["cmd"][:2] == ["opentraceai", "fetch-and-index"]
+        assert "--ref" in captured["cmd"] and "main" in captured["cmd"]
+        assert "--db" in captured["cmd"]
+
+    def test_failure_reports_error(self, store):
+        def runner(job, cmd, token):
+            job.add_line("boom")
+            job.finish(2, "Indexer exited with code 2")
+
+        client = self._client(store, runner)
+        job_id = client.post("/api/index", json={"pathOrUrl": "git@github.com:o/r.git"}).json()["jobId"]
+        data = _wait_for_finish(client, job_id)
+        assert data["status"] == "error"
+        assert data["exitCode"] == 2
+        assert "code 2" in data["error"]
+
+    def test_concurrent_index_rejected(self, store):
+        release = threading.Event()
+
+        def runner(job, cmd, token):
+            release.wait(timeout=5.0)
+            job.finish(0, None)
+
+        client = self._client(store, runner)
+        first = client.post("/api/index", json={"pathOrUrl": "https://github.com/o/r"})
+        assert first.status_code == 202
+
+        second = client.post("/api/index", json={"pathOrUrl": "https://github.com/o/r2"})
+        assert second.status_code == 409
+
+        release.set()
+        _wait_for_finish(client, first.json()["jobId"])
+
+    def test_unknown_job_404(self, client):
+        resp = client.get("/api/index/deadbeef")
+        assert resp.status_code == 404

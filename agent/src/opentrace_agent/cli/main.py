@@ -219,6 +219,13 @@ def app(ctx: click.Context, workspace_dir: str | None) -> None:
         click.echo(ctx.get_help())
 
 
+# `opentraceai install <target>` — wire OpenTrace into a coding agent's
+# plugin system (Claude Code today). Lives in its own module; mounted here.
+from opentrace_agent.cli.install import register as _register_install  # noqa: E402
+
+_register_install(app)
+
+
 def _safe_unlink(path_str: str, *, context: str) -> bool:
     """Unlink *path_str*, tolerating both missing files and permission errors.
 
@@ -420,6 +427,42 @@ def _run_indexing_pipeline(
             raise
 
         return elapsed
+    finally:
+        _release_index_lock(lock_fh)
+
+
+def _write_via_staging(db_path: str, work):
+    """Run *work(store)* against a staging DB, then atomically swap it in.
+
+    The same atomic-write pattern ``index`` uses: seed ``<db>.staging`` from
+    the live DB (so existing data is preserved), let *work* mutate the staging
+    store, then rename it over the live file. Writers never hold the exclusive
+    lock on the live DB, so long-lived readers (the MCP server, ``serve``) keep
+    working and reopen on the inode swap. Holds the ``<db>.indexlock`` flock so
+    concurrent writers can't race the swap. Returns whatever *work* returns.
+    """
+    from opentrace_agent.store import GraphStore
+
+    db_dir = Path(db_path).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_gitignore(db_dir)
+
+    staging_db = db_path + ".staging"
+
+    lock_fh = _acquire_index_lock(db_path)
+    try:
+        _clean_stale_staging(staging_db)
+        try:
+            _seed_staging_from_live(db_path, staging_db)
+            with GraphStore(staging_db) as store:
+                result = work(store)
+            # Inside the try so a swap-time failure gets the same cleanup.
+            _swap_staging_into_place(staging_db, db_path)
+        except BaseException:
+            _safe_unlink(staging_db, context="failed-write cleanup")
+            _safe_unlink(staging_db + ".wal", context="failed-write cleanup")
+            raise
+        return result
     finally:
         _release_index_lock(lock_fh)
 
@@ -801,21 +844,27 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
         raise SystemExit(str(e))
 
     log.debug("Opening database: %s", resolved_db)
-    store = GraphStore(resolved_db)
+    # Open read-only and wrap in the same inode-swap proxy the MCP server uses.
+    # A read-write open takes LadybugDB's exclusive lock, which cannot coexist
+    # with a long-lived MCP reader on the same DB; read-only opens are
+    # shareable. Re-indexing happens out-of-band (staging file + atomic
+    # rename), and _ReloadableStore transparently reopens on the inode swap.
+    store = GraphStore(resolved_db, read_only=True)
+    reloadable = _ReloadableStore(resolved_db, store)
 
-    stats = store.get_stats()
+    stats = reloadable.get_stats()
     click.echo(f"Database: {resolved_db}")
     click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
     click.echo(f"Listening on http://{host}:{port}")
 
-    app = create_app(store)
+    app = create_app(reloadable, db_path=resolved_db)
 
     try:
         uvicorn.run(app, host=host, port=port, log_level="debug" if verbose else "info")
     except KeyboardInterrupt:
         pass
     finally:
-        store.close()
+        reloadable.close()
 
 
 @app.command()
@@ -898,15 +947,8 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
     _configure_logging(verbose)
 
     from opentrace_agent.cli.export_import import import_database
-    from opentrace_agent.store import GraphStore
 
     resolved_db = _resolve_db(db_path)
-    db_dir = Path(resolved_db).parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_gitignore(db_dir)
-
-    click.echo(f"Opening database at {resolved_db} ...")
-    store = GraphStore(resolved_db)
 
     data = Path(archive).read_bytes()
     click.echo(f"Importing {archive} ({len(data) / 1024:.1f} KB) ...")
@@ -914,10 +956,10 @@ def import_cmd(archive: str, db_path: str | None, verbose: bool) -> None:
     def on_progress(msg: str) -> None:
         click.echo(f"  {msg}")
 
-    try:
-        result = import_database(store, data, on_progress=on_progress)
-    finally:
-        store.close()
+    # Write through a staging file + atomic rename (like `index`) so the import
+    # never takes the live DB's exclusive lock — it can run while the MCP server
+    # or `serve` hold read-only handles on the same database.
+    result = _write_via_staging(resolved_db, lambda store: import_database(store, data, on_progress=on_progress))
 
     click.echo(
         f"Imported {result['nodes_created']} nodes, "
