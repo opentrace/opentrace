@@ -86,6 +86,31 @@ class TestGitCloner:
         assert "ot-clone-" in str(result)
 
     @patch("opentrace_agent.sources.code.git_cloner.git.Repo.clone_from")
+    def test_clone_cleans_up_temp_dir_on_failure(self, mock_clone: MagicMock):
+        # When we created the temp dir and the clone fails, it must not leak.
+        created: list[str] = []
+
+        def fail(url: str, dest: str, **kwargs: object) -> None:
+            created.append(dest)
+            raise RuntimeError("clone failed")
+
+        mock_clone.side_effect = fail
+        cloner = GitCloner()
+        with pytest.raises(RuntimeError, match="clone failed"):
+            cloner.clone(repo_url="https://github.com/o/r")
+
+        assert created and not Path(created[0]).exists()
+
+    @patch("opentrace_agent.sources.code.git_cloner.git.Repo.clone_from")
+    def test_clone_keeps_caller_dest_on_failure(self, mock_clone: MagicMock, tmp_path: Path):
+        # A caller-provided dest is not ours to delete, even on failure.
+        mock_clone.side_effect = RuntimeError("boom")
+        cloner = GitCloner()
+        with pytest.raises(RuntimeError):
+            cloner.clone(repo_url="https://github.com/o/r", dest=tmp_path)
+        assert tmp_path.exists()
+
+    @patch("opentrace_agent.sources.code.git_cloner.git.Repo.clone_from")
     def test_clone_env_strips_git_vars(self, mock_clone: MagicMock, tmp_path: Path):
         cloner = GitCloner()
         cloner.clone(repo_url="https://github.com/o/r", dest=tmp_path)
