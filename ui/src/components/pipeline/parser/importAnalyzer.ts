@@ -393,6 +393,59 @@ export function analyzeTypeScriptImports(
   return { internal, external };
 }
 
+/** Local binding name of an import/export specifier (alias if renamed). */
+function tsSpecifierLocalName(spec: SyntaxNode): string | null {
+  const local =
+    spec.childForFieldName('alias') ?? spec.childForFieldName('name');
+  return local ? local.text : null;
+}
+
+/**
+ * Local binding names introduced by a TS `import` statement — the default
+ * import, the `* as ns` namespace, and each named import's local name (its
+ * alias when renamed). Side-effect imports (`import './x'`) yield none.
+ */
+function tsImportBindings(node: SyntaxNode): string[] {
+  const clause = node.children.find((c) => c.type === 'import_clause');
+  if (!clause) return [];
+  const names: string[] = [];
+  for (const child of clause.children) {
+    if (child.type === 'identifier') {
+      names.push(child.text); // default import
+    } else if (child.type === 'namespace_import') {
+      const id = child.children.find((c) => c.type === 'identifier');
+      if (id) names.push(id.text);
+    } else if (child.type === 'named_imports') {
+      for (const spec of child.children) {
+        if (spec.type === 'import_specifier') {
+          const name = tsSpecifierLocalName(spec);
+          if (name) names.push(name);
+        }
+      }
+    }
+  }
+  return names;
+}
+
+/** Local binding names introduced by an `export ... from` re-export. */
+function tsReexportBindings(node: SyntaxNode): string[] {
+  const names: string[] = [];
+  for (const child of node.children) {
+    if (child.type === 'export_clause') {
+      for (const spec of child.children) {
+        if (spec.type === 'export_specifier') {
+          const name = tsSpecifierLocalName(spec);
+          if (name) names.push(name);
+        }
+      }
+    } else if (child.type === 'namespace_export') {
+      const id = child.children.find((c) => c.type === 'identifier');
+      if (id) names.push(id.text);
+    }
+  }
+  return names;
+}
+
 function parseTsImport(
   node: SyntaxNode,
   fileDir: string,
@@ -426,8 +479,11 @@ function parseTsImport(
   for (const ext of extensions) {
     const candidate = resolved + ext;
     if (knownFiles.has(candidate)) {
-      const alias = sourceText.split('/').pop()!;
-      internal[alias] = candidate;
+      // Map each local binding name (not the file basename) to the file, so
+      // call resolution can match the identifier actually used in code.
+      for (const binding of tsImportBindings(node)) {
+        internal[binding] = candidate;
+      }
       break;
     }
   }
@@ -466,8 +522,9 @@ function parseTsReexport(
   for (const ext of extensions) {
     const candidate = resolved + ext;
     if (knownFiles.has(candidate)) {
-      const alias = sourceText.split('/').pop()!;
-      internal[alias] = candidate;
+      for (const binding of tsReexportBindings(node)) {
+        internal[binding] = candidate;
+      }
       break;
     }
   }
