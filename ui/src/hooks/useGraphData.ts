@@ -25,13 +25,26 @@ import { useStore } from '../store';
 export interface GraphDataState {
   graphData: { nodes: GraphNode[]; links: GraphLink[] };
   loading: boolean;
+  /**
+   * Cold-start error — set only when a `loadGraph` failed while there
+   * was no prior data on screen. Consumers typically render a full
+   * error state for this (e.g. `<GraphErrorState>`).
+   */
   error: string | null;
+  /**
+   * Warm-refresh error — set when a `loadGraph` failed while data was
+   * already rendered. The previous `graphData` is preserved so the
+   * existing view stays visible; consumers should surface this as a
+   * non-destructive banner (Fix #2).
+   */
+  refreshError: string | null;
   stats: GraphStats | null;
   lastSearchQuery: string;
   /** Monotonically increasing counter — bumps after each successful loadGraph */
   graphVersion: number;
   loadGraph: (query?: string, hops?: number) => Promise<void>;
   setError: (error: string | null) => void;
+  setRefreshError: (error: string | null) => void;
 }
 
 export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
@@ -47,9 +60,13 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     () => store.hasData() || !!store.ensureReady,
   );
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [lastSearchQuery, setLastApiQuery] = useState('');
   const [graphVersion, setGraphVersion] = useState(0);
+
+  // Monotonic counter to discard stale overlapping loadGraph results.
+  const loadSeqRef = useRef(0);
 
   // Use a ref so loadGraph's identity doesn't depend on the callback
   const onGraphLoadedRef = useRef(onGraphLoaded);
@@ -57,13 +74,29 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     onGraphLoadedRef.current = onGraphLoaded;
   });
 
+  // Track current graphData via ref so the .catch handler below can
+  // decide cold-start vs warm-refresh based on what's actually on
+  // screen at the moment of failure, not the (stale) value captured
+  // when loadGraph's closure was last memoized.
+  const graphDataRef = useRef(graphData);
+  useEffect(() => {
+    graphDataRef.current = graphData;
+  });
+
   const loadGraph = useCallback(
     (query?: string, hops: number = 0): Promise<void> => {
+      // Latest-wins guard: if a newer loadGraph starts before this one
+      // resolves, the stale result must not clobber the newer graph/stats.
+      const seq = ++loadSeqRef.current;
       setLoading(true);
       return store
         .fetchGraph(query, hops)
         .then((data) => {
+          // Stale result from an older load — a newer one started first.
+          if (seq !== loadSeqRef.current) return;
+          // Successful fetch clears both error tracks.
           setError(null);
+          setRefreshError(null);
           setGraphData(data);
           setLoading(false);
           setLastApiQuery(query ?? '');
@@ -71,15 +104,30 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
           onGraphLoadedRef.current?.();
           store
             .fetchStats()
-            .then(setStats)
+            .then((s) => {
+              if (seq === loadSeqRef.current) setStats(s);
+            })
             .catch(() => {});
         })
         .catch((err) => {
+          if (seq !== loadSeqRef.current) return;
           setLoading(false);
           // Swallow AbortError — clearGraph fired mid-load, expected on
           // project switch. Any real error still surfaces.
           if (err?.name === 'AbortError') return;
-          setError(err.message);
+          // Cold start (no prior data): surface as a full error state.
+          // Warm refresh (data already rendered): surface as a banner,
+          // and keep the previous graph on screen. See Fix #2.
+          const hadData = graphDataRef.current.nodes.length > 0;
+          // Clear the opposite channel so a stale error from a prior
+          // warm-refresh ↔ cold-start transition doesn't linger.
+          if (hadData) {
+            setError(null);
+            setRefreshError(err.message);
+          } else {
+            setRefreshError(null);
+            setError(err.message);
+          }
         });
     },
     [store],
@@ -127,16 +175,19 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       graphData,
       loading,
       error,
+      refreshError,
       stats,
       lastSearchQuery,
       graphVersion,
       loadGraph,
       setError,
+      setRefreshError,
     }),
     [
       graphData,
       loading,
       error,
+      refreshError,
       stats,
       lastSearchQuery,
       graphVersion,

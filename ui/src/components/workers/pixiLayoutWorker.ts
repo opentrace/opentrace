@@ -102,7 +102,8 @@ export type WorkerInMessage =
   | { type: 'start' }
   | { type: 'boost-theta' }
   | { type: 'reset-theta' }
-  | { type: 'set-community-gravity'; enabled: boolean; strength?: number };
+  | { type: 'set-community-gravity'; enabled: boolean; strength?: number }
+  | { type: 'set-communities'; communities: Record<string, number> };
 
 export type WorkerOutMessage =
   | { type: 'positions'; buffer: Float64Array }
@@ -482,13 +483,39 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
         // Contain force captures radius at build time — must rebuild
         needsRebuild = true;
       }
+      // Reheat aggressively (Fix #20). Custom forces multiply their
+      // contribution by `s.alpha()` each tick, so at steady state
+      // (alpha ≈ alphaMin) a strength change has no observable effect —
+      // the slider would appear broken. Alpha(0.8) gives the new
+      // strength enough headroom to actually move thousands of nodes
+      // toward (or away from) their community centroids before the
+      // simulation cools again. Matches `set-layout-mode`'s full-reset
+      // energy for perceptual consistency between the two controls.
       if (needsRebuild) {
         sim.stop();
         sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-        sim.alpha(0.5).restart();
+        sim.alpha(0.8).restart();
       } else {
-        sim.alpha(0.3).restart();
+        sim.alpha(0.8).restart();
       }
+      settled = false;
+      startStreaming();
+      break;
+    }
+
+    case 'set-communities': {
+      // Louvain runs asynchronously after init, so the first `init` message
+      // typically carries an empty `{}`. Without this handler, the
+      // module-level `communities` stays empty for the lifetime of the
+      // worker, `buildSimulation` skips installing the custom
+      // `communityGravity` force, and the compact-mode community-pull
+      // slider does nothing. Rebuild the simulation so the force is
+      // wired (Fix #20 follow-up).
+      communities = msg.communities;
+      if (!sim || !cachedConfig) break;
+      sim.stop();
+      sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+      sim.alpha(0.5).restart();
       settled = false;
       startStreaming();
       break;
@@ -500,7 +527,14 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       // Rebuild simulation with new force composition, keeping current positions
       sim.stop();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      sim.alpha(1).restart();
+      // Reheat to 0.5 rather than 1.0 (Fix #31). Alpha(1) is "fresh
+      // cold start" energy — when applied to a settled graph it
+      // launches every node toward the new equilibrium at full speed,
+      // which reads as the layout "exploding" before it resizes back.
+      // 0.5 still has enough headroom to reach the new equilibrium
+      // for typical graphs, but the visible motion is a drift rather
+      // than a detonation.
+      sim.alpha(0.5).restart();
       settled = false;
       startStreaming();
       break;

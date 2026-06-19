@@ -541,9 +541,14 @@ export class EmbedStage implements INodeStage {
     if (!this.initPromise) {
       this.initPromise = (async () => {
         try {
-          const { MiniLmEmbedder } =
-            await import('../../../runner/browser/enricher/embedder/miniLmEmbedder');
-          const embedder = new MiniLmEmbedder(this.embedderConfig);
+          // Embedder runs in a Web Worker (Fix #55 / Plan E) so
+          // inference doesn't block the Pixi ticker during indexing.
+          // `WorkerEmbedder` implements the same `Embedder` interface
+          // as the old in-process `MiniLmEmbedder`, so the rest of
+          // the pipeline doesn't know the difference.
+          const { WorkerEmbedder } =
+            await import('../../../runner/browser/enricher/embedder/workerEmbedder');
+          const embedder = new WorkerEmbedder(this.embedderConfig);
           await embedder.init();
           this.store.setEmbedder?.(embedder);
           return embedder;

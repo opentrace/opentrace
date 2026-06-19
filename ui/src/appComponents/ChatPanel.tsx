@@ -20,6 +20,8 @@ import {
   PROVIDERS,
   PROVIDER_IDS,
   API_KEY_RESOURCES,
+  DEFAULT_PROVIDER_ID,
+  detectProvider,
   type ChatMessage,
   type AssistantMessage,
   type MessagePart,
@@ -133,6 +135,12 @@ export default function ChatPanel({
     return loadModelChoice(pid) ?? PROVIDERS[pid].defaultModel;
   });
   const [apiKey, setApiKey] = useState(() => loadApiKey(loadProviderChoice()));
+  // Live value of the auto-detect key field (cloud mode). Held separately
+  // from `apiKey` so we can detect the provider as the user types without
+  // committing the key until Save. Seeded from the persisted key.
+  const [keyDraft, setKeyDraft] = useState(() =>
+    loadApiKey(loadProviderChoice()),
+  );
   const [localUrl, setLocalUrl] = useState(loadLocalUrl);
   const [localModels, setLocalModels] = useState<string[] | null>(null);
   const [localModelsFetching, setLocalModelsFetching] = useState(false);
@@ -266,12 +274,54 @@ export default function ChatPanel({
   const switchProvider = (id: string) => {
     setProviderId(id);
     saveProviderChoice(id);
-    setApiKey(loadApiKey(id));
+    const key = loadApiKey(id);
+    setApiKey(key);
+    setKeyDraft(key);
     const savedModel = loadModelChoice(id);
     setModelId(savedModel ?? PROVIDERS[id].defaultModel);
     if (id === 'local') setLocalUrl(loadLocalUrl());
     setShowSettings(true);
   };
+
+  // Cloud-key mode: the user pastes a key and we detect the provider live.
+  // Switching here from local picks the detected provider (if the draft
+  // already holds a recognizable key) or the last cloud provider, falling
+  // back to the default so the model dropdown + help have something to show.
+  const switchToKeyMode = () => {
+    const target =
+      detectProvider(keyDraft) ??
+      (providerId !== 'local' ? providerId : DEFAULT_PROVIDER_ID);
+    switchProvider(target);
+  };
+
+  // Update detection as the user types/pastes. Re-pointing `providerId`
+  // live keeps the model dropdown and help block in sync with the key.
+  // We don't persist the key until Save (mirrors the old read-on-save
+  // behaviour); only the provider choice follows the keystrokes.
+  const handleKeyChange = (value: string) => {
+    setKeyDraft(value);
+    const detected = detectProvider(value);
+    if (detected && detected !== providerId) {
+      setProviderId(detected);
+      saveProviderChoice(detected);
+      const savedModel = loadModelChoice(detected);
+      setModelId(savedModel ?? PROVIDERS[detected].defaultModel);
+    }
+  };
+
+  // Manual fallback when detection fails: assign the typed key to a chosen
+  // provider WITHOUT touching `keyDraft` (unlike `switchProvider`, which
+  // reloads the stored key and would discard what the user just pasted).
+  const pickProviderKeepKey = (id: string) => {
+    setProviderId(id);
+    saveProviderChoice(id);
+    const savedModel = loadModelChoice(id);
+    setModelId(savedModel ?? PROVIDERS[id].defaultModel);
+  };
+
+  // Provider inferred from the current draft key (null while empty or
+  // unrecognized). Drives the "Detected: …" badge and the fallback picker.
+  const detectedProvider = detectProvider(keyDraft);
 
   const switchModel = (model: string) => {
     setModelId(model);
@@ -279,11 +329,10 @@ export default function ChatPanel({
   };
 
   const handleSaveKey = () => {
-    const val = keyInputRef.current?.value.trim() ?? '';
-    saveApiKey(providerId, val);
-    setApiKey(val);
-
     if (providerId === 'local') {
+      const val = keyInputRef.current?.value.trim() ?? '';
+      saveApiKey('local', val);
+      setApiKey(val);
       const url = localUrlInputRef.current?.value.trim() ?? '';
       if (url) {
         saveLocalUrl(url);
@@ -299,9 +348,19 @@ export default function ChatPanel({
         setModelId(model);
       }
       setShowSettings(false);
-    } else if (val) {
-      setShowSettings(false);
+      return;
     }
+
+    // Cloud mode: persist the key under the provider we detected from its
+    // shape. When the format wasn't recognized, `providerId` still reflects
+    // whatever the manual-picker fallback selected, so save under that.
+    const val = keyDraft.trim();
+    const target = detectProvider(val) ?? providerId;
+    saveApiKey(target, val);
+    saveProviderChoice(target);
+    setProviderId(target);
+    setApiKey(val);
+    if (val) setShowSettings(false);
   };
 
   const fetchLocalModels = async () => {
@@ -1112,16 +1171,21 @@ export default function ChatPanel({
         </div>
       ) : showSettingsView ? (
         <div className="api-key-config">
+          {/* Pick how to connect: paste a cloud key (provider auto-detected)
+              or run a local model. Provider is no longer chosen up front. */}
           <div className="provider-selector">
-            {PROVIDER_IDS.map((id) => (
-              <button
-                key={id}
-                className={id === providerId ? 'active' : ''}
-                onClick={() => switchProvider(id)}
-              >
-                {PROVIDERS[id].name}
-              </button>
-            ))}
+            <button
+              className={providerId !== 'local' ? 'active' : ''}
+              onClick={switchToKeyMode}
+            >
+              API key
+            </button>
+            <button
+              className={providerId === 'local' ? 'active' : ''}
+              onClick={() => switchProvider('local')}
+            >
+              Local model
+            </button>
           </div>
           {providerId === 'local' ? (
             <>
@@ -1200,6 +1264,42 @@ export default function ChatPanel({
             </>
           ) : (
             <>
+              <p>Paste your API key — we'll detect the provider:</p>
+              <input
+                type="password"
+                placeholder="sk-…, sk-ant-…, or AIza…"
+                value={keyDraft}
+                onChange={(e) => handleKeyChange(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
+                className="api-key-input"
+                autoFocus
+              />
+              {detectedProvider ? (
+                <p className="hint">
+                  Detected provider:{' '}
+                  <strong>{PROVIDERS[detectedProvider].name}</strong>
+                </p>
+              ) : keyDraft.trim() ? (
+                <>
+                  <p
+                    className="hint"
+                    style={{ color: 'var(--color-error, #f87171)' }}
+                  >
+                    Couldn't recognize this key — choose a provider:
+                  </p>
+                  <div className="provider-selector">
+                    {PROVIDER_IDS.filter((id) => id !== 'local').map((id) => (
+                      <button
+                        key={id}
+                        className={id === providerId ? 'active' : ''}
+                        onClick={() => pickProviderKeepKey(id)}
+                      >
+                        {PROVIDERS[id].name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
               <div className="model-selector">
                 <label htmlFor="model-select">Model</label>
                 <select
@@ -1214,20 +1314,37 @@ export default function ChatPanel({
                   ))}
                 </select>
               </div>
-              <p>Enter your {PROVIDERS[providerId].name} API key:</p>
-              <input
-                key={providerId}
-                ref={keyInputRef}
-                type="password"
-                placeholder="API Key..."
-                defaultValue={apiKey}
-                onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-                className="api-key-input"
-              />
               {API_KEY_RESOURCES[providerId] && (
                 <div className="api-key-help">
+                  {/* Lets the user read any provider's key-setup steps before
+                      they've pasted a key. The label makes clear these pick
+                      WHICH guide to show — not which provider to use (that's
+                      auto-detected from the key). Sorted alphabetically.
+                      Clicking re-points the guide without discarding a draft
+                      key. */}
                   <p className="api-key-help-title">
-                    How to get your {PROVIDERS[providerId].name} key:
+                    Show me how to get a key for:
+                  </p>
+                  <div className="api-key-help-providers">
+                    {PROVIDER_IDS.filter((id) => API_KEY_RESOURCES[id])
+                      .sort((a, b) =>
+                        PROVIDERS[a].name.localeCompare(PROVIDERS[b].name),
+                      )
+                      .map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`api-key-provider-chip${
+                            id === providerId ? ' active' : ''
+                          }`}
+                          onClick={() => pickProviderKeepKey(id)}
+                        >
+                          {PROVIDERS[id].name}
+                        </button>
+                      ))}
+                  </div>
+                  <p className="api-key-help-title">
+                    {PROVIDERS[providerId].name} — get your key:
                   </p>
                   <ol className="api-key-steps">
                     <li>
@@ -1245,7 +1362,8 @@ export default function ChatPanel({
                     ))}
                   </ol>
                   <p className="api-key-help-footer">
-                    See the{' '}
+                    Paste any provider&apos;s key above — we&apos;ll detect it
+                    automatically. See the{' '}
                     <a
                       href="https://opentrace.github.io/opentrace/reference/chat-providers/"
                       target="_blank"

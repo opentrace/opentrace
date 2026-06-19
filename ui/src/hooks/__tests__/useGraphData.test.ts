@@ -88,4 +88,46 @@ describe('useGraphData', () => {
 
     expect(mockStore.fetchGraph).toHaveBeenCalledWith('auth', 2);
   });
+
+  it('ignores a stale load that resolves after a newer one', async () => {
+    type GD = Awaited<ReturnType<typeof mockStore.fetchGraph>>;
+    const { result } = renderHook(() => useGraphData());
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    // Two overlapping loads with manually controlled resolution.
+    let resolveA!: (v: GD) => void;
+    let resolveB!: (v: GD) => void;
+    const pA = new Promise<GD>((r) => {
+      resolveA = r;
+    });
+    const pB = new Promise<GD>((r) => {
+      resolveB = r;
+    });
+    vi.mocked(mockStore.fetchGraph)
+      .mockReturnValueOnce(pA)
+      .mockReturnValueOnce(pB);
+
+    let loadA!: Promise<void>;
+    let loadB!: Promise<void>;
+    act(() => {
+      loadA = result.current.loadGraph('A');
+      loadB = result.current.loadGraph('B');
+    });
+
+    // Newer load (B) resolves first, then the stale (A) resolves last.
+    await act(async () => {
+      resolveB({ nodes: [{ id: 'B', name: 'B', type: 'X' }], links: [] });
+      await loadB;
+      resolveA({ nodes: [{ id: 'A', name: 'A', type: 'X' }], links: [] });
+      await loadA;
+    });
+
+    // The stale A result must not clobber B.
+    expect(result.current.graphData.nodes).toEqual([
+      { id: 'B', name: 'B', type: 'X' },
+    ]);
+    expect(result.current.lastSearchQuery).toBe('B');
+  });
 });

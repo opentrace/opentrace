@@ -15,12 +15,7 @@
  */
 
 import type { GraphCanvasHandle } from '@opentrace/components';
-import {
-  useState,
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-} from 'react';
+import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 
 type LayoutMode = 'spread' | 'compact';
 
@@ -38,23 +33,6 @@ const FullscreenExitIcon = () => (
     <polyline points="4 14 4 20 10 20" />
     <polyline points="20 10 20 4 14 4" />
   </>
-);
-
-const KebabIcon = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="5" r="1" />
-    <circle cx="12" cy="12" r="1" />
-    <circle cx="12" cy="19" r="1" />
-  </svg>
 );
 
 const SearchIcon = ({ withCross }: { withCross: boolean }) => (
@@ -163,10 +141,39 @@ const LayoutIcon = ({ compact }: { compact: boolean }) => (
     strokeLinejoin="round"
   >
     {compact ? (
-      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+      // Three tight clusters — visually distinct from Zoom-to-fit's
+      // outward arrows (Fix #40).
+      <>
+        <circle cx="7" cy="7" r="2.2" />
+        <circle cx="17" cy="7" r="2.2" />
+        <circle cx="12" cy="17" r="2.2" />
+      </>
     ) : (
-      <circle cx="12" cy="12" r="9" />
+      // Spread mode: ring of scattered points
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="6" r="1" fill="currentColor" />
+        <circle cx="6" cy="14" r="1" fill="currentColor" />
+        <circle cx="18" cy="14" r="1" fill="currentColor" />
+      </>
     )}
+  </svg>
+);
+
+const ResetIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Circular refresh arrow — universally legible "reset" symbol. */}
+    <path d="M21 12a9 9 0 1 1-3-6.7" />
+    <polyline points="21 3 21 9 15 9" />
   </svg>
 );
 
@@ -210,11 +217,11 @@ interface GraphControlsBarProps {
   mode3d: boolean;
   setMode3d: Dispatch<SetStateAction<boolean>>;
 
-  /** Controlled mobile menu state. Pass both to lift it out of this
-   *  component (e.g. to close it from a layout-mode effect). When omitted,
-   *  the menu manages its own internal open/closed state. */
-  showMenu?: boolean;
-  setShowMenu?: Dispatch<SetStateAction<boolean>>;
+  /** Override for the "Reset graph" button click. When provided, replaces
+   *  the default behaviour (reheat physics + reset camera) with a full
+   *  settings-and-state reset — used by callers that wire it to
+   *  `settings.resetSettings`. */
+  onResetGraph?: () => void;
 }
 
 /** Bottom-right control bar with mobile toggle and zoom/layout/3D buttons. */
@@ -231,13 +238,8 @@ export const GraphControlsBar = ({
   setLayoutMode,
   mode3d,
   setMode3d,
-  showMenu,
-  setShowMenu,
+  onResetGraph,
 }: GraphControlsBarProps) => {
-  const [internalShowMenu, setInternalShowMenu] = useState(false);
-  const showGraphMenu = showMenu ?? internalShowMenu;
-  const setShowGraphMenu = setShowMenu ?? setInternalShowMenu;
-
   return (
     <div className="graph-controls">
       {onToggleGraphFullscreen && (
@@ -261,17 +263,7 @@ export const GraphControlsBar = ({
         </button>
       )}
 
-      <button
-        className={`graph-control-btn graph-controls-trigger${showGraphMenu ? ' graph-control-btn--active' : ''}`}
-        onClick={() => setShowGraphMenu((v) => !v)}
-        title="Graph controls"
-      >
-        <KebabIcon />
-      </button>
-
-      <div
-        className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
-      >
+      <div className="graph-controls-items graph-controls-items--open">
         <button
           className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
           onClick={() => setZoomOnSelect((z) => !z)}
@@ -306,6 +298,23 @@ export const GraphControlsBar = ({
           title="Zoom to fit"
         >
           <ZoomToFitIcon />
+        </button>
+
+        <button
+          className="graph-control-btn"
+          onClick={() => {
+            if (onResetGraph) {
+              onResetGraph();
+            } else {
+              // Default: reheat physics so the layout reflows from current
+              // positions, then re-fit the view.
+              canvasRef.current?.reheat?.();
+              canvasRef.current?.resetCamera();
+            }
+          }}
+          title="Reset graph"
+        >
+          <ResetIcon />
         </button>
 
         <button

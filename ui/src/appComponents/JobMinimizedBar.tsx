@@ -19,6 +19,15 @@ import type { JobState } from '../job';
 import './JobMinimizedBar.css';
 
 const PHASE_LABELS: Partial<Record<JobPhase, string>> = {
+  // Pre-graph phases (used by Fix #13 — the bar can now appear during
+  // 'running' state, not just enriching/done, so it needs labels for
+  // every phase the pipeline reports).
+  [JobPhase.JOB_PHASE_INITIALIZING]: 'Initializing',
+  [JobPhase.JOB_PHASE_FETCHING]: 'Fetching files',
+  [JobPhase.JOB_PHASE_PARSING]: 'Indexing files',
+  [JobPhase.JOB_PHASE_RESOLVING]: 'Resolving calls',
+  [JobPhase.JOB_PHASE_SUMMARIZING]: 'Summarizing',
+  // Post-graph phases (existing).
   [JobPhase.JOB_PHASE_ENRICHING]: 'Enriching',
   [JobPhase.JOB_PHASE_EMBEDDING]: 'Generating embeddings',
   [JobPhase.JOB_PHASE_SUBMITTING]: 'Submitting',
@@ -32,9 +41,7 @@ interface Props {
 
 export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
   const isDone = state.status === 'done';
-  const label = isDone
-    ? 'Complete'
-    : (PHASE_LABELS[state.phase] ?? 'Enriching');
+  const label = isDone ? 'Complete' : (PHASE_LABELS[state.phase] ?? 'Indexing');
   const hasCount = !isDone && state.detail.total > 0;
 
   return (

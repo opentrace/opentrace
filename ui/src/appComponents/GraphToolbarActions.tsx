@@ -217,8 +217,16 @@ export const GraphToolbarActionButtons = ({
   showSettings,
   onToggleSettings,
 }: GraphToolbarActionButtonsProps) => {
+  // 'running' is included so the JobMinimizedBar surfaces as the
+  // persistent indicator after the user clicks the new Minimize
+  // button on the IndexingProgress modal (Fix #13). Previously the
+  // bar only appeared post-persist; server-mode jobs spend most of
+  // their time in 'running', so an indicator was missing during the
+  // bulk of the work.
   const showJobMinimized =
-    (jobState.status === 'enriching' || jobState.status === 'done') &&
+    (jobState.status === 'running' ||
+      jobState.status === 'enriching' ||
+      jobState.status === 'done') &&
     !jobExpanded;
 
   return (

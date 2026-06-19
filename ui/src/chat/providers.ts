@@ -90,6 +90,38 @@ export const PROVIDER_IDS = Object.keys(PROVIDERS) as Array<
   keyof typeof PROVIDERS
 >;
 
+/**
+ * Fallback provider used when a persisted choice (`localStorage`) doesn't
+ * match any current `PROVIDERS` key — e.g. after a rename/removal across
+ * builds. Must always be a key of `PROVIDERS`. See `loadProviderChoice`
+ * in `chat/storage.ts` (Fix #3).
+ */
+export const DEFAULT_PROVIDER_ID = 'gemini';
+
+/**
+ * Infer the provider from the shape of an API key so the user can just
+ * paste a key instead of picking a provider first.
+ *
+ * Prefixes are stable and provider-specific:
+ *   - Anthropic  → `sk-ant-…`
+ *   - OpenAI     → `sk-…` / `sk-proj-…` (checked AFTER Anthropic, since
+ *                  both begin with `sk-`)
+ *   - Gemini     → Google API keys are `AIza` + 35 url-safe chars
+ *
+ * Returns the matching provider id, or `null` when the format isn't
+ * recognized — callers fall back to a manual picker. Never matches the
+ * `local` provider: local models have no detectable key (the key is
+ * optional), so local stays an explicit choice.
+ */
+export function detectProvider(key: string): string | null {
+  const k = key.trim();
+  if (!k) return null;
+  if (k.startsWith('sk-ant-')) return 'anthropic';
+  if (/^AIza[0-9A-Za-z_-]{35}$/.test(k)) return 'gemini';
+  if (k.startsWith('sk-')) return 'openai';
+  return null;
+}
+
 export interface ApiKeyResource {
   docs: string;
   dashboard: string;

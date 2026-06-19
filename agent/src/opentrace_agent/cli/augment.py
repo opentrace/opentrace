@@ -21,7 +21,10 @@ relationships, and prints a compact human-readable block to stdout.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Relationship types we surface in the context block.
 _INTERESTING_RELS = frozenset(
@@ -86,7 +89,9 @@ def run_augment(pattern: str, db_path: str | None, *, output_json: bool = False)
         else:
             _emit_text(store, pattern, nodes)
     except Exception:
-        pass
+        # Don't crash the hook consumer, but don't hide the failure either —
+        # a silent empty result is indistinguishable from "no matches".
+        logger.warning("augment failed for pattern %r", pattern, exc_info=True)
     finally:
         try:
             store.close()

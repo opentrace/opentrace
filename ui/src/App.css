@@ -36,6 +36,79 @@
   touch-action: none;
 }
 
+/* Refresh-error banner (Fix #2).
+ * Surfaces graph-fetch failures without unmounting the previously
+ * rendered graph. Positioned over the canvas; dismissable. */
+.refresh-error-banner {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px 8px 16px;
+  max-width: min(720px, 90%);
+  font-size: 0.82rem;
+  color: var(--destructive-foreground, #fff);
+  background: color-mix(in oklch, var(--destructive) 85%, transparent);
+  border: 1px solid color-mix(in oklch, var(--destructive) 60%, transparent);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px -4px hsl(0 0% 0% / 0.35);
+  animation: refresh-error-banner-in 0.18s ease-out;
+}
+
+.refresh-error-banner__text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refresh-error-banner__retry,
+.refresh-error-banner__dismiss {
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in oklch, currentcolor 40%, transparent);
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.refresh-error-banner__retry {
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.refresh-error-banner__dismiss {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.refresh-error-banner__retry:hover,
+.refresh-error-banner__dismiss:hover {
+  background: color-mix(in oklch, currentcolor 12%, transparent);
+}
+
+@keyframes refresh-error-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 /* Header */
 /* Toolbar layout & search styles are now in @opentrace/components (GraphToolbar) */
 /* GraphBadge styles are now in @opentrace/components */

@@ -288,19 +288,22 @@ def _parse_go_import_spec(
     # Try to find matching files — match directory-based Go packages.
     # The import path may have a module prefix (e.g. "myproject/internal/store")
     # but the known files use repo-relative paths (e.g. "internal/store/store.go").
-    # We check if the last package segment of the import path matches the
-    # last directory segment of the known file.
-    pkg_name = import_path.rsplit("/", 1)[-1]
+    # Strip the module prefix when we know it so the path is repo-relative.
+    rel_path = import_path
+    if go_module_path and import_path.startswith(go_module_path):
+        rel_path = import_path[len(go_module_path) :].lstrip("/")
     resolved = False
     for known in known_files:
         known_dir = _parent_dir(known)
-        # Check: exact match, suffix match, or last segment match
+        # Require the *full* package directory to match (exactly, or as a
+        # trailing path-component sequence of the import path). Matching only
+        # the last segment would wrongly link unrelated third-party packages
+        # (e.g. "github.com/other/store") to any local dir named "store".
         if (
-            known_dir == import_path
-            or known_dir.endswith("/" + import_path)
-            or known_dir.endswith(import_path)
-            or known_dir == pkg_name
-            or known_dir.endswith("/" + pkg_name)
+            known_dir == rel_path
+            or known_dir == import_path
+            or rel_path.endswith("/" + known_dir)
+            or import_path.endswith("/" + known_dir)
         ):
             result[alias] = known
             resolved = True
@@ -356,6 +359,60 @@ def _npm_package_name(specifier: str) -> str:
     return specifier.split("/")[0]
 
 
+def _ts_specifier_local_name(spec: tree_sitter.Node) -> str | None:
+    """Local binding name of an import/export specifier (``alias`` if renamed)."""
+    local = spec.child_by_field_name("alias") or spec.child_by_field_name("name")
+    return local.text.decode() if local is not None else None
+
+
+def _ts_import_bindings(node: tree_sitter.Node) -> list[str]:
+    """Local binding names introduced by a TS ``import`` statement.
+
+    Returns the names actually usable in code — the default import, the
+    ``* as ns`` namespace, and each named import's local name (its ``alias``
+    when renamed). Side-effect imports (``import './x'``) have no clause and
+    yield no bindings.
+    """
+    clause = next((c for c in node.children if c.type == "import_clause"), None)
+    if clause is None:
+        return []
+    names: list[str] = []
+    for child in clause.children:
+        if child.type == "identifier":  # default import
+            names.append(child.text.decode())
+        elif child.type == "namespace_import":  # * as ns
+            ident = next((c for c in child.children if c.type == "identifier"), None)
+            if ident is not None:
+                names.append(ident.text.decode())
+        elif child.type == "named_imports":
+            for spec in child.children:
+                if spec.type == "import_specifier":
+                    name = _ts_specifier_local_name(spec)
+                    if name is not None:
+                        names.append(name)
+    return names
+
+
+def _ts_reexport_bindings(node: tree_sitter.Node) -> list[str]:
+    """Local binding names introduced by a ``export ... from`` re-export.
+
+    ``export * from './x'`` introduces no single named binding and yields none.
+    """
+    names: list[str] = []
+    for child in node.children:
+        if child.type == "export_clause":
+            for spec in child.children:
+                if spec.type == "export_specifier":
+                    name = _ts_specifier_local_name(spec)
+                    if name is not None:
+                        names.append(name)
+        elif child.type == "namespace_export":  # export * as ns
+            ident = next((c for c in child.children if c.type == "identifier"), None)
+            if ident is not None:
+                names.append(ident.text.decode())
+    return names
+
+
 def _parse_ts_import(
     node: tree_sitter.Node,
     file_dir: str,
@@ -393,9 +450,10 @@ def _parse_ts_import(
     for ext in extensions:
         candidate = resolved + ext
         if candidate in known_files:
-            # Alias is the last path segment
-            alias = source_text.rsplit("/", 1)[-1]
-            result[alias] = candidate
+            # Map each local binding name (not the file basename) to the file,
+            # so call resolution can match the identifier actually used in code.
+            for binding in _ts_import_bindings(node):
+                result[binding] = candidate
             break
 
 
@@ -432,8 +490,8 @@ def _parse_ts_reexport(
     for ext in extensions:
         candidate = resolved + ext
         if candidate in known_files:
-            alias = source_text.rsplit("/", 1)[-1]
-            result[alias] = candidate
+            for binding in _ts_reexport_bindings(node):
+                result[binding] = candidate
             break
 
 

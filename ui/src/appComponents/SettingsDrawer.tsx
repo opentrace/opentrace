@@ -44,6 +44,22 @@ function loadLimit(key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * Parse a user-typed limit value, falling back to `fallback` for anything
+ * unparseable or non-positive. Used by the limits inputs, which hold their
+ * value as a string so intermediate keystrokes ("4" before typing "000") are
+ * not clamped against `min`. Parsing happens only when the user clicks
+ * "Update".
+ */
+function parseLimit(text: string, fallback: number): number {
+  // Reject partial parses ("100abc" → 100) — require all-digits so a
+  // malformed entry falls back instead of silently applying a bad limit.
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 interface SettingsDrawerProps {
   onClose: () => void;
   onGraphCleared: () => void;
@@ -75,11 +91,14 @@ export default function SettingsDrawer({
   const [llmConfig, setLlmConfig] = useState(loadSummarizerLlmConfig);
   const [llmModels, setLlmModels] = useState<string[] | null>(null);
   const [llmModelsFetching, setLlmModelsFetching] = useState(false);
-  const [maxNodes, setMaxNodes] = useState(() =>
-    loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES),
+  // String state so intermediate keystrokes (typing "4" before "000") are
+  // not clamped to `min` while still in flight. Parsed/clamped only when
+  // the user commits by clicking "Update".
+  const [maxNodesText, setMaxNodesText] = useState(() =>
+    String(loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES)),
   );
-  const [maxEdges, setMaxEdges] = useState(() =>
-    loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES),
+  const [maxEdgesText, setMaxEdgesText] = useState(() =>
+    String(loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES)),
   );
   const [animSettings, setAnimSettings] = useState(loadAnimationSettings);
 
@@ -133,15 +152,27 @@ export default function SettingsDrawer({
     }
   };
 
-  // Track whether limits have been edited but not yet applied
+  // Track whether limits have been edited but not yet applied. Compare
+  // parsed values rather than raw text — so leading zeros or trailing
+  // spaces don't register as dirty, and unparseable input (which would
+  // fall back to the saved value on apply) doesn't either.
   const savedNodes = loadLimit(LS_KEY_NODES, DEFAULT_MAX_NODES);
   const savedEdges = loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES);
-  const limitsChanged = maxNodes !== savedNodes || maxEdges !== savedEdges;
+  const parsedNodes = parseLimit(maxNodesText, savedNodes);
+  const parsedEdges = parseLimit(maxEdgesText, savedEdges);
+  const limitsChanged =
+    parsedNodes !== savedNodes || parsedEdges !== savedEdges;
 
   const applyLimits = async () => {
-    localStorage.setItem(LS_KEY_NODES, String(maxNodes));
-    localStorage.setItem(LS_KEY_EDGES, String(maxEdges));
-    await store.setLimits?.(maxNodes, maxEdges);
+    const nextNodes = parsedNodes;
+    const nextEdges = parsedEdges;
+    localStorage.setItem(LS_KEY_NODES, String(nextNodes));
+    localStorage.setItem(LS_KEY_EDGES, String(nextEdges));
+    // Normalize the text inputs so any unparseable input snaps back to
+    // the accepted value and the dirty indicator clears.
+    setMaxNodesText(String(nextNodes));
+    setMaxEdgesText(String(nextEdges));
+    await store.setLimits?.(nextNodes, nextEdges);
     onLimitsChanged?.();
   };
 
@@ -313,19 +344,12 @@ export default function SettingsDrawer({
               </label>
               <input
                 id="max-nodes"
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="limit-input"
-                min={100}
-                max={50000}
-                step={500}
-                value={maxNodes}
-                onChange={(e) => {
-                  const v = Math.max(
-                    100,
-                    Number(e.target.value) || DEFAULT_MAX_NODES,
-                  );
-                  setMaxNodes(v);
-                }}
+                value={maxNodesText}
+                onChange={(e) => setMaxNodesText(e.target.value)}
               />
             </div>
             <div className="limit-row">
@@ -334,19 +358,12 @@ export default function SettingsDrawer({
               </label>
               <input
                 id="max-edges"
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="limit-input"
-                min={100}
-                max={100000}
-                step={1000}
-                value={maxEdges}
-                onChange={(e) => {
-                  const v = Math.max(
-                    100,
-                    Number(e.target.value) || DEFAULT_MAX_EDGES,
-                  );
-                  setMaxEdges(v);
-                }}
+                value={maxEdgesText}
+                onChange={(e) => setMaxEdgesText(e.target.value)}
               />
             </div>
             <button
@@ -355,7 +372,7 @@ export default function SettingsDrawer({
               data-changed={limitsChanged || undefined}
               style={{ marginTop: 8, alignSelf: 'flex-start' }}
             >
-              Redraw Graph
+              Update
             </button>
             <p className="setting-hint">
               Defaults: {DEFAULT_MAX_NODES.toLocaleString()} nodes /{' '}

@@ -15,5 +15,5 @@
  */
 
 export { StoreProvider, useStore } from './context';
-export { createLadybugStore } from './createLadybugStore';
+export { createLadybugStore, disposeLadybugStore } from './createLadybugStore';
 export type { GraphStore } from './types';

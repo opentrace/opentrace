@@ -23,7 +23,7 @@ describe('analyzeTypeScriptImports', () => {
     const root = await parseTS("import { helper } from './utils';\n");
     const known = new Set(['src/utils.ts', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['utils']).toBe('src/utils.ts');
+    expect(result.internal['helper']).toBe('src/utils.ts');
     expect(result.external).toEqual({});
   });
 
@@ -46,7 +46,7 @@ describe('analyzeTypeScriptImports', () => {
     const root = await parseTS("import { App } from './components';\n");
     const known = new Set(['src/components/index.ts', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['components']).toBe('src/components/index.ts');
+    expect(result.internal['App']).toBe('src/components/index.ts');
   });
 
   it('resolves tsx extension', async () => {
@@ -60,7 +60,7 @@ describe('analyzeTypeScriptImports', () => {
     const root = await parseTS("export { Config } from './config';\n");
     const known = new Set(['src/config.ts', 'src/index.ts']);
     const result = analyzeTypeScriptImports(root, 'src/index.ts', known);
-    expect(result.internal['config']).toBe('src/config.ts');
+    expect(result.internal['Config']).toBe('src/config.ts');
   });
 
   it('captures external re-export', async () => {
@@ -93,7 +93,7 @@ describe('analyzeTypeScriptImports', () => {
     );
     const known = new Set(['src/utils.ts', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['utils']).toBe('src/utils.ts');
+    expect(result.internal['helper']).toBe('src/utils.ts');
     expect(result.external['react']).toBe('pkg:npm:react');
   });
 
@@ -101,28 +101,28 @@ describe('analyzeTypeScriptImports', () => {
     const root = await parseTS("import { legacy } from './old';\n");
     const known = new Set(['src/old.js', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['old']).toBe('src/old.js');
+    expect(result.internal['legacy']).toBe('src/old.js');
   });
 
   it('resolves .jsx extension import', async () => {
     const root = await parseTS("import { Component } from './Button';\n");
     const known = new Set(['src/Button.jsx', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['Button']).toBe('src/Button.jsx');
+    expect(result.internal['Component']).toBe('src/Button.jsx');
   });
 
   it('resolves index.tsx barrel', async () => {
     const root = await parseTS("import { Page } from './pages';\n");
     const known = new Set(['src/pages/index.tsx', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['pages']).toBe('src/pages/index.tsx');
+    expect(result.internal['Page']).toBe('src/pages/index.tsx');
   });
 
   it('resolves index.js barrel', async () => {
     const root = await parseTS("import { util } from './lib';\n");
     const known = new Set(['src/lib/index.js', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
-    expect(result.internal['lib']).toBe('src/lib/index.js');
+    expect(result.internal['util']).toBe('src/lib/index.js');
   });
 
   it('handles default import from external', async () => {
@@ -155,11 +155,39 @@ describe('analyzeTypeScriptImports', () => {
     expect(result.external['react']).toBe('pkg:npm:react');
   });
 
-  it('handles wildcard re-export', async () => {
+  it('wildcard re-export introduces no named binding', async () => {
+    // `export * from './types'` re-exports every name but binds none locally,
+    // so there is no identifier to key call resolution on.
     const root = await parseTS("export * from './types';\n");
     const known = new Set(['src/types.ts', 'src/index.ts']);
     const result = analyzeTypeScriptImports(root, 'src/index.ts', known);
-    expect(result.internal['types']).toBe('src/types.ts');
+    expect(result.internal).toEqual({});
+  });
+
+  it('keys named import by its local binding, not the file basename', async () => {
+    const root = await parseTS("import { getUser as gu } from './users';\n");
+    const known = new Set(['src/users.ts', 'src/main.ts']);
+    const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
+    expect(result.internal['gu']).toBe('src/users.ts');
+    expect(result.internal['users']).toBeUndefined();
+  });
+
+  it('keys default and namespace internal imports by binding', async () => {
+    const def = await parseTS("import db from './database';\n");
+    const r1 = analyzeTypeScriptImports(
+      def,
+      'src/main.ts',
+      new Set(['src/database.ts', 'src/main.ts']),
+    );
+    expect(r1.internal['db']).toBe('src/database.ts');
+
+    const ns = await parseTS("import * as u from './utils';\n");
+    const r2 = analyzeTypeScriptImports(
+      ns,
+      'src/main.ts',
+      new Set(['src/utils.ts', 'src/main.ts']),
+    );
+    expect(r2.internal['u']).toBe('src/utils.ts');
   });
 
   it('ignores bare export statements (no source)', async () => {
@@ -186,7 +214,7 @@ describe('analyzeTypeScriptImports', () => {
     const known = new Set(['src/README.md', 'src/main.ts']);
     const result = analyzeTypeScriptImports(root, 'src/main.ts', known);
     // TS bundlers (Vite, webpack) support importing non-code files — knownFiles includes them intentionally
-    expect(result.internal['README.md']).toBe('src/README.md');
+    expect(result.internal['readme']).toBe('src/README.md');
   });
 
   it('returns empty result for file with no imports', async () => {

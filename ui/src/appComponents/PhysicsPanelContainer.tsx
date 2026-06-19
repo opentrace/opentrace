@@ -27,6 +27,14 @@ interface PhysicsPanelContainerProps {
   setRepulsion: Dispatch<SetStateAction<number>>;
   labelsVisible: boolean;
   setLabelsVisible: Dispatch<SetStateAction<boolean>>;
+  edgesVisible: boolean;
+  setEdgesVisible: Dispatch<SetStateAction<boolean>>;
+  communityLabelsVisible: boolean;
+  setCommunityLabelsVisible: Dispatch<SetStateAction<boolean>>;
+  /** Master switch — when false, Louvain doesn't run and the
+   *  community sub-controls below are visually disabled. */
+  communitiesEnabled: boolean;
+  setCommunitiesEnabled: Dispatch<SetStateAction<boolean>>;
 
   colorMode: ColorMode;
   setColorMode: Dispatch<SetStateAction<ColorMode>>;
@@ -74,6 +82,12 @@ export const PhysicsPanelContainer = ({
   setRepulsion,
   labelsVisible,
   setLabelsVisible,
+  edgesVisible,
+  setEdgesVisible,
+  communityLabelsVisible,
+  setCommunityLabelsVisible,
+  communitiesEnabled,
+  setCommunitiesEnabled,
   colorMode,
   setColorMode,
   physicsRunning,
@@ -116,6 +130,18 @@ export const PhysicsPanelContainer = ({
       setLabelsVisible(v);
       canvasRef.current?.setShowLabels?.(v);
     }}
+    edgesEnabled={edgesVisible}
+    onEdgesEnabledChange={(v) => {
+      setEdgesVisible(v);
+      canvasRef.current?.setEdgesEnabled?.(v);
+    }}
+    communityLabelsVisible={communityLabelsVisible}
+    onCommunityLabelsVisibleChange={(v) => {
+      setCommunityLabelsVisible(v);
+      canvasRef.current?.setShowCommunityLabels?.(v);
+    }}
+    communitiesEnabled={communitiesEnabled}
+    onCommunitiesEnabledChange={setCommunitiesEnabled}
     colorMode={colorMode}
     onColorModeChange={setColorMode}
     isPhysicsRunning={physicsRunning}

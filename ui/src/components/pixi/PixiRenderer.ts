@@ -203,6 +203,39 @@ export class PixiRenderer {
   private nodeContainer: Container | null = null;
   private rippleContainer: Container | null = null;
   private labelContainer: Container | null = null;
+  /** Wayfinder layer (Fix #30): community names rendered at each
+   *  cluster centroid. Visible only in compact layout mode — that's
+   *  when the graph's spatial organization actually reflects community
+   *  membership; in spread mode the centroids drift across the canvas
+   *  and the names don't anchor anything useful. */
+  private communityLabelContainer: Container | null = null;
+  private communityLabels = new Map<number, Text>();
+  private communityAssignments: Record<string, number> | null = null;
+  private communityNames: Map<number, string> | null = null;
+  private communityColorMap: Map<number, string> | null = null;
+  /** Fingerprint of the sorted name set on the last rebuild. Used to
+   *  short-circuit `setCommunityData` when Louvain reruns produce the
+   *  same names under different community IDs (Fix #36). */
+  private communityNamesFingerprint: string | null = null;
+  /** Stickiness for community wayfinders (Fix #35). The cull prefers
+   *  previously-shown communities so they don't blink in/out as rotation
+   *  drifts their projected centroids in and out of overlap with
+   *  neighbours. */
+  private currentlyShownCommunities = new Set<number>();
+  /** User toggle for community wayfinder visibility (Fix #52).
+   *  Previously the labels were gated on `layoutMode === 'compact'`,
+   *  which conflated "show labels" with "use compact layout". Now
+   *  the two are independent: layout mode is changed via the bottom
+   *  controls bar, this toggle just shows/hides the label layer. */
+  private showCommunityLabels = true;
+  /** Once true, the overlap cull stops re-running and the visible
+   *  community set is held fixed (Fix #36). Positions still update
+   *  every frame so labels track 3D rotation, but membership doesn't
+   *  change — the user sees the same wayfinders all the way through a
+   *  rotation. Cleared on data change, layout-mode flip, and 3D
+   *  on/off, so the cull re-decides under a fresh frame of reference. */
+  private communityVisibilityFrozen = false;
+  private currentLayoutMode: 'spread' | 'compact' = 'spread';
 
   // Data
   private nodes: Map<string, PixiNode> = new Map();
@@ -224,8 +257,21 @@ export class PixiRenderer {
   // pan, 3D rotate, node drag) and by zoomToNodes; reset by setData() (new
   // graph session) and resetCamera() (explicit "Reset View").
   private hasUserMovedCamera = false;
-  private autoFitThrottleTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly AUTO_FIT_THROTTLE_MS = 180;
+  /** Target viewport the auto-fit follower is easing the live `vp`
+   *  toward, or null when no auto-fit is in flight (Fix #9). Set by
+   *  `scheduleAutoFit()`; the ticker reads and interpolates each
+   *  frame; cleared automatically when `vp` reaches the target. */
+  private autoFitTarget: Viewport | null = null;
+  /** Per-frame lerp weight used by the ticker's auto-fit follower.
+   *  0.15 = ~95% of the way to a static target in ~18 frames (~0.3 s
+   *  at 60fps), which matches the "feel" of the previous one-shot
+   *  zoomToFit animation while gracefully tracking a moving target. */
+  private readonly AUTO_FIT_FOLLOW_ALPHA = 0.15;
+  /** Set by `setAutoFitSuspended()`. When true, `scheduleAutoFit()` is
+   *  a no-op. PixiGraphCanvas uses this for the first few seconds of
+   *  a layoutMode transition — positions haven't actually moved yet,
+   *  so an early fit would just frame the OLD layout. */
+  private autoFitSuspended = false;
 
   // Interaction state
   private _quadtree: Quadtree<PixiNode> | null = null;
@@ -381,6 +427,13 @@ export class PixiRenderer {
     world.addChild(labelContainer);
     this.labelContainer = labelContainer;
 
+    // Community wayfinder labels go on top of node labels — they're
+    // larger and act as area markers (Fix #30).
+    const communityLabelContainer = new Container();
+    communityLabelContainer.visible = false;
+    world.addChild(communityLabelContainer);
+    this.communityLabelContainer = communityLabelContainer;
+
     // Viewport centered
     this.vp = { x: width / 2, y: height / 2, scale: 1 };
     this.lastAppliedInvScale = 1;
@@ -388,24 +441,64 @@ export class PixiRenderer {
     // Render loop — apply viewport transform + counter-scale sprites + 3D
     app.ticker.add(() => {
       if (!this.world) return;
+      // Auto-fit follower (Fix #9). Replaces the previous one-shot
+      // animateViewport for auto-fit — instead of N discrete animations
+      // that the user perceives as zoom thrash, we continuously ease
+      // the live viewport toward `autoFitTarget`. The target itself is
+      // refreshed from the latest node positions whenever
+      // `scheduleAutoFit()` is called; if it moves while we're easing,
+      // the camera silently re-aims without ever cancelling/restarting
+      // an animation. Manual `zoomToFit()` clears `autoFitTarget` and
+      // runs a snappy one-shot animation for predictable button feel.
+      if (this.autoFitTarget && !this.hasUserMovedCamera) {
+        const target = this.autoFitTarget;
+        const alpha = this.AUTO_FIT_FOLLOW_ALPHA;
+        this.vp = {
+          x: this.vp.x + (target.x - this.vp.x) * alpha,
+          y: this.vp.y + (target.y - this.vp.y) * alpha,
+          scale: this.vp.scale + (target.scale - this.vp.scale) * alpha,
+        };
+        // Snap + clear when essentially at target — avoids floating-
+        // point noise keeping the easer alive forever.
+        const dx = Math.abs(target.x - this.vp.x);
+        const dy = Math.abs(target.y - this.vp.y);
+        const dScale = Math.abs(target.scale - this.vp.scale);
+        if (dx < 0.5 && dy < 0.5 && dScale < 0.0005) {
+          this.vp = target;
+          this.autoFitTarget = null;
+        }
+        // Don't re-cull labels on each follower ease step (Fix #48).
+        // The follower fires per-frame during physics settling and
+        // layout-mode transitions; running the cull there reshuffles
+        // labels in response to physics, which the user reads as
+        // blinking. Sprites/labels still get re-sized for the new
+        // scale; only the visibility decision is held.
+        this.applyCounterScale(false);
+      }
       this.world.position.set(this.vp.x, this.vp.y);
       this.world.scale.set(this.vp.scale);
 
       // 3D mode: project all nodes every frame (overrides normal position updates)
       if (this.mode3d) {
         this.update3D();
-        // Debounce label cull when viewport is actively changing (zoom/pan/rotate).
-        // Only schedule the debounce when something actually changed — not every frame.
-        if (this.vp.scale !== this._lastEdgeScale) {
-          this._lastEdgeScale = this.vp.scale;
-          this.debouncedLabelCull();
-        } else if (
-          !this.mode3dAutoRotate &&
-          this.labelCullDebounceTimer === null
-        ) {
-          // Rotation paused and no pending debounce — cull once for the static view
-          this.debouncedLabelCull();
-        }
+        // No label-cull trigger from the ticker (Fix #37). Rotation
+        // — auto or manual — must never reshuffle the visible label
+        // set, and even small vp.scale drift counts as a "zoom
+        // change" because the auto-fit follower re-aims the camera
+        // every worker tick as the sphere's projected silhouette
+        // changes shape with the rotation. The wheel handler still
+        // calls `debouncedLabelCull()` directly on real user zoom,
+        // so deliberate zoom updates are covered.
+        // We still bookkeep `_lastEdgeScale` so the 2D path stays
+        // consistent if the user toggles back.
+        this._lastEdgeScale = this.vp.scale;
+        // Re-scale community wayfinders for the current zoom (Fix
+        // #51). Without this, 3D mode skips `applyCounterScale`
+        // entirely, so the community labels stay at whatever scale
+        // they were last rendered at — when the user zooms in after
+        // entering 3D the labels look huge because their scale was
+        // computed for the original zoom-out vp.scale.
+        this.applyCommunityLabelCounterScale();
         this.applyPingAnimations();
         return; // skip counter-scale — 3D handles its own scaling
       }
@@ -441,15 +534,17 @@ export class PixiRenderer {
       clearTimeout(this.labelCullDebounceTimer);
       this.labelCullDebounceTimer = null;
     }
-    if (this.autoFitThrottleTimer !== null) {
-      clearTimeout(this.autoFitThrottleTimer);
-      this.autoFitThrottleTimer = null;
-    }
+    this.autoFitTarget = null;
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     clearTextureCache(this.textureCache);
     for (const ping of this.pingNodes.values()) ping.glow.destroy();
     this.pingNodes.clear();
+    // Pixi's app.destroy({children:true}) recursively destroys all
+    // labels — just drop our refs.
+    this.communityLabels.clear();
+    this.communityAssignments = null;
+    this.communityNames = null;
     this.nodes.clear();
     this.nodeArray = [];
     this.nodeIdToIndex.clear();
@@ -724,8 +819,43 @@ export class PixiRenderer {
     return 1 / this.vp.scale;
   }
 
-  /** Counter-scale all sprites, labels, and edges for current viewport scale. */
-  private applyCounterScale(): void {
+  /**
+   * World-space gap from a node's sprite center to the left edge of its
+   * label. Sized so the on-screen gap (gap × vp.scale) equals the sprite's
+   * actual on-screen radius plus a small breathing margin — the label
+   * stays glued to the sprite edge at every zoom level (Fix #27).
+   *
+   * Sprite screen radius = `node.size × vp.scale^(1 − zoomSizeExponent)`.
+   * Translating that back to world units (dividing by vp.scale) gives:
+   *   gap = node.size × vp.scale^(−exp) + LABEL_EDGE_MARGIN / vp.scale
+   *       = node.size × zoomInvScale + LABEL_EDGE_MARGIN / vp.scale
+   *
+   * All 2D label position writes and the cull's overlap rect MUST use
+   * this same formula — historically they diverged (cull used
+   * `zoomInvScale`, render used `labelInvScale`) which made labels
+   * jitter by 2–3 character widths as zoom changed.
+   */
+  private labelGap(node: PixiNode): number {
+    return node.size * this.zoomInvScale() + 4 / this.vp.scale;
+  }
+
+  /** Counter-scale all sprites, labels, and edges for current viewport scale.
+   *
+   * `cull` controls whether the visible label set is re-evaluated.
+   * - `true` (default) — call from user-zoom paths (wheel, ticker
+   *   zoom-change check, imperative setX, initial setData). Recomputes
+   *   which labels survive overlap based on the new scale, exactly
+   *   what the user wants on zoom.
+   * - `false` — call from the auto-fit follower in the ticker (Fix #48).
+   *   The follower eases vp.scale every frame during physics settling
+   *   and layout-mode transitions; running the cull on each ease step
+   *   reshuffles labels in response to physics, not zoom — visible to
+   *   the user as label blinking. Skip the cull on those frames; the
+   *   sprite/label scaling still happens so things look right at the
+   *   new scale, just the *which-labels-are-visible* decision stays
+   *   put until a user actually zooms.
+   */
+  private applyCounterScale(cull = true): void {
     const invScale = this.zoomInvScale();
     const wantLabel: PixiNode[] = [];
 
@@ -754,7 +884,9 @@ export class PixiRenderer {
     }
 
     const lblInv = this.labelInvScale();
-    this.applyLabelCulling(wantLabel, lblInv);
+    if (cull) {
+      this.applyLabelCulling(wantLabel, lblInv);
+    }
 
     // Update scale + position for visible labels (skip in 3D — ticker handles it)
     if (!this.mode3d) {
@@ -762,7 +894,7 @@ export class PixiRenderer {
       for (const node of wantLabel) {
         if (!node.label?.visible) continue;
         node.label.scale.set(lblInv * lm);
-        const gap = (node.size + 4) * lblInv * lm;
+        const gap = this.labelGap(node);
         node.label.position.set(
           node.sprite.position.x + gap,
           node.sprite.position.y,
@@ -773,12 +905,25 @@ export class PixiRenderer {
     // Only redraw edges if scale actually changed (edge widths depend on zoom).
     // Skip if this is just an exponent change at the same zoom level —
     // edge geometry hasn't changed, only sprite sizes.
+    //
+    // Skip while edges are hidden for interaction (Fix #24). The wheel
+    // handler hides the edge layer for instant zoom response, but the
+    // ticker still drives `applyCounterScale` per frame the scale
+    // changes — and the original code redrew 15 k+ edges into an
+    // invisible Graphics object on each of those frames, blocking the
+    // main thread enough that the zoom itself stuttered. The 3D path
+    // already had this guard; the 2D path was missing it. The
+    // `showEdgesAfterInteraction` path re-draws once on resume so we
+    // don't strand the geometry stale.
     const scaleChanged = this.vp.scale !== this._lastEdgeScale;
     this.lastAppliedInvScale = invScale;
-    if (scaleChanged) {
+    if (scaleChanged && !this.edgesHiddenForInteraction) {
       this._lastEdgeScale = this.vp.scale;
       this.redrawAllEdges();
     }
+
+    // Keep community wayfinder labels at constant screen size (Fix #32).
+    this.applyCommunityLabelCounterScale();
   }
 
   /**
@@ -840,7 +985,6 @@ export class PixiRenderer {
   // ─── Position Updates (called from simulation tick) ───────────────
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    const invScale = this.zoomInvScale();
     for (const [id, pos] of positions) {
       const node = this.nodes.get(id);
       if (!node || !node.visible) continue;
@@ -850,7 +994,7 @@ export class PixiRenderer {
       if (!this.mode3d) {
         node.sprite.position.set(pos.x, pos.y);
         if (node.label?.visible) {
-          const gap = (node.size + 4) * invScale;
+          const gap = this.labelGap(node);
           node.label.position.set(pos.x + gap, pos.y);
         }
       }
@@ -876,13 +1020,12 @@ export class PixiRenderer {
     // In 3D mode, the ticker handles sprite positioning via projection.
     // Just store the 2D positions and let postPositionUpdate run.
     if (!this.mode3d) {
-      const invScale = this.zoomInvScale();
       for (let i = 0; i < len; i++) {
         const node = arr[i];
         if (!node.visible) continue;
         node.sprite.position.set(node.x, node.y);
         if (node.label?.visible) {
-          const gap = (node.size + 4) * invScale;
+          const gap = this.labelGap(node);
           node.label.position.set(node.x + gap, node.y);
         }
       }
@@ -917,7 +1060,21 @@ export class PixiRenderer {
       this.rebuildQuadtree();
       this.quadtreeDirty = false;
     }
+
+    // Re-track community wayfinder centroids while the layout is moving
+    // (Fix #32). Throttled — recomputing centroids every worker tick on
+    // 8 k nodes is wasted work; 250 ms is more than smooth enough since
+    // the labels are at cluster scale.
+    if (
+      this.showCommunityLabels &&
+      this.communityLabels.size > 0 &&
+      now - this.lastCommunityCentroidUpdate > 250
+    ) {
+      this.lastCommunityCentroidUpdate = now;
+      this.updateCommunityLabelPositions();
+    }
   }
+  private lastCommunityCentroidUpdate = 0;
 
   // ─── Visual State ─────────────────────────────────────────────────
 
@@ -963,6 +1120,24 @@ export class PixiRenderer {
   }
 
   setNodeVisibility(visibleIds: Set<string>): void {
+    // Detect whether the visible set actually changed (Fix #38). The
+    // wiring effect in PixiGraphCanvas re-fires this on every Louvain
+    // rerun because `communityData.assignments` is in its dep list —
+    // but the resulting visible-id set is usually identical (Louvain
+    // renames communities, doesn't change which nodes pass the
+    // filter). Treating every fire as a real change re-culled the
+    // labels, which the user sees as random label churn while physics
+    // is running.
+    let changed = false;
+    for (const node of this.nodes.values()) {
+      const vis = visibleIds.has(node.id);
+      if (node.visible !== vis) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+
     for (const [id, node] of this.nodes) {
       const vis = visibleIds.has(id);
       node.visible = vis;
@@ -1103,9 +1278,52 @@ export class PixiRenderer {
     const screenLabelScale = invScale * lm * this.vp.scale;
     const labelH = (LABEL_SIZE + 4) * screenLabelScale;
 
+    // Viewport bounds in screen pixels with a small margin so a label
+    // partially clipped at the edge still gets a slot — avoids
+    // labels popping in/out as you pan across the boundary (Fix #49).
+    const VIEWPORT_MARGIN = 80;
+    const vpLeft = -VIEWPORT_MARGIN;
+    const vpRight = this.width + VIEWPORT_MARGIN;
+    const vpTop = -VIEWPORT_MARGIN;
+    const vpBottom = this.height + VIEWPORT_MARGIN;
+
+    // Skip labels for nodes whose sprite is too small on screen
+    // (Fix #49). At zoom-out the entire graph compresses into a tiny
+    // area; without this gate, every node still tries for a label
+    // slot and the screen fills with text. Sprite on-screen radius =
+    // node.size × vp.scale^(1-zoomSizeExponent). 2.5 px is the
+    // current threshold — was 4, lowered so larger anchor nodes get
+    // labels at lower zoom levels (overlap cull still keeps the
+    // screen from filling with text at extreme zoom-out).
+    const MIN_SPRITE_SCREEN_RADIUS = 2.5;
+    const spriteRadiusFactor = Math.pow(
+      this.vp.scale,
+      Math.max(0, 1 - this.zoomSizeExponent),
+    );
+
     for (const node of candidates) {
-      const gap = (node.size + 4) * invScale * lm;
-      // Use sprite position (correct in both 2D and 3D modes)
+      // Screen position of the sprite — used for the viewport
+      // pre-filter (skip cull work for off-screen labels).
+      const cx = node.sprite.position.x * this.vp.scale + this.vp.x;
+      const cy = node.sprite.position.y * this.vp.scale + this.vp.y;
+      if (cx < vpLeft || cx > vpRight || cy < vpTop || cy > vpBottom) {
+        if (node.label) node.label.visible = false;
+        continue;
+      }
+
+      // Size gate — sprites too small to read don't get labels.
+      const spriteScreenRadius = node.size * spriteRadiusFactor;
+      if (spriteScreenRadius < MIN_SPRITE_SCREEN_RADIUS) {
+        if (node.label) node.label.visible = false;
+        continue;
+      }
+
+      // World-space gap that lands the label just outside the sprite
+      // edge (Fix #27 — the only piece of my label rework that
+      // survived the revert; without it the label slides inside the
+      // sprite at deep zoom because the sprite is in world coords
+      // while the label is screen-pixel-constant).
+      const gap = this.labelGap(node);
       const nx = node.sprite.position.x;
       const ny = node.sprite.position.y;
 
@@ -1357,9 +1575,9 @@ export class PixiRenderer {
     if (this.edgeBgGfx) this.edgeBgGfx.visible = true;
     if (this.edgeFgGfx) this.edgeFgGfx.visible = true;
     if (this.mode3d) {
-      // In 3D mode the ticker redraws edges; just re-cull labels for new view angle
-      this.lastLabelCull = 0;
-      this.throttledLabelCull();
+      // In 3D mode the ticker redraws edges; do NOT re-cull labels —
+      // the visible set is decided by zoom and stays stable across
+      // rotation/pan/release (Fix #38).
     } else {
       this.redrawAllEdges();
       this.applyCounterScale();
@@ -1408,15 +1626,367 @@ export class PixiRenderer {
     this.redrawAllEdges();
   }
 
+  // ─── Community wayfinder labels (Fix #32) ──────────────────────────
+
+  /** Tell the renderer the current layout mode. After Fix #52 this
+   *  no longer drives community-label visibility (which now follows
+   *  `showCommunityLabels`), but the renderer still tracks it for
+   *  downstream consumers (e.g. label-position recomputes). */
+  setLayoutMode(mode: 'spread' | 'compact'): void {
+    if (this.currentLayoutMode === mode) return;
+    this.currentLayoutMode = mode;
+    // Force a fresh cull on the next position update — the visible
+    // set is determined by current geometry, which just changed.
+    this.communityVisibilityFrozen = false;
+    this.updateCommunityLabelPositions();
+  }
+
+  /** Show or hide the community wayfinder label layer (Fix #52). */
+  setShowCommunityLabels(show: boolean): void {
+    this.showCommunityLabels = show;
+    if (this.communityLabelContainer) {
+      this.communityLabelContainer.visible = show;
+    }
+    if (show) {
+      this.updateCommunityLabelPositions();
+      // Counter-scale is only applied to *visible* labels (see
+      // applyCommunityLabelCounterScale), so flipping the layer back on
+      // would leave each Text at whatever scale it had when last seen.
+      // For labels that had never been counter-scaled (e.g. opened on a
+      // graph that started with labels off), that's the base font size
+      // — tiny at the current zoom. Apply now so the first frame after
+      // toggling matches what the user will see after the next zoom.
+      this.applyCommunityLabelCounterScale();
+    }
+  }
+
+  /** Refresh the community wayfinder label set. Call after Louvain
+   *  finishes (the names map changes) or when assignments swap.
+   *
+   *  Louvain re-runs frequently (StrictMode, worker respawn,
+   *  position-driven dep changes) but the *names* it produces are
+   *  generally stable — just attached to different numeric community
+   *  IDs. Detect that case via a fingerprint of the sorted name set
+   *  and skip the rebuild: the existing label objects get re-keyed
+   *  to the new IDs, and the visibility-frozen flag stays put so the
+   *  user doesn't see a fresh cull on every rerun (Fix #36). */
+  setCommunityData(
+    assignments: Record<string, number>,
+    names: Map<number, string>,
+    colorMap?: Map<number, string>,
+  ): void {
+    const fingerprint = [...names.values()].sort().join('\n');
+    const sameNames = fingerprint === this.communityNamesFingerprint;
+    if (sameNames && this.communityLabels.size > 0) {
+      this.rekeyCommunityLabels(this.communityNames, names);
+      this.communityAssignments = assignments;
+      this.communityNames = names;
+      this.communityColorMap = colorMap ?? null;
+      // Do NOT reset `communityVisibilityFrozen` — same labels, same
+      // visible set, just new community IDs under the hood.
+      return;
+    }
+    this.communityAssignments = assignments;
+    this.communityNames = names;
+    this.communityColorMap = colorMap ?? null;
+    this.communityNamesFingerprint = fingerprint;
+    this.rebuildCommunityLabels();
+  }
+
+  /** Re-key the community-label Map (and the sticky-shown set) when
+   *  Louvain produces the same names with different numeric IDs.
+   *  Preserves Text instances, positions, and the visible-set
+   *  decision across runs. */
+  private rekeyCommunityLabels(
+    oldNames: Map<number, string> | null,
+    newNames: Map<number, string>,
+  ): void {
+    if (!oldNames) return;
+    const nameToNewCid = new Map<string, number>();
+    for (const [cid, name] of newNames) nameToNewCid.set(name, cid);
+
+    const reKeyed = new Map<number, Text>();
+    for (const [oldCid, text] of this.communityLabels) {
+      const oldName = oldNames.get(oldCid);
+      if (!oldName) continue;
+      const newCid = nameToNewCid.get(oldName);
+      if (newCid !== undefined) reKeyed.set(newCid, text);
+    }
+    this.communityLabels = reKeyed;
+
+    const reKeyedShown = new Set<number>();
+    for (const oldCid of this.currentlyShownCommunities) {
+      const oldName = oldNames.get(oldCid);
+      if (!oldName) continue;
+      const newCid = nameToNewCid.get(oldName);
+      if (newCid !== undefined) reKeyedShown.add(newCid);
+    }
+    this.currentlyShownCommunities = reKeyedShown;
+  }
+
+  private rebuildCommunityLabels(): void {
+    if (!this.communityLabelContainer) return;
+    for (const text of this.communityLabels.values()) {
+      text.destroy();
+    }
+    this.communityLabels.clear();
+    // Fresh data → fresh cull decision next frame.
+    this.communityVisibilityFrozen = false;
+    if (!this.communityAssignments || !this.communityNames) return;
+
+    // Count members per community so we can suppress one-node clusters
+    // and size labels by importance.
+    const memberCount = new Map<number, number>();
+    for (const cid of Object.values(this.communityAssignments)) {
+      memberCount.set(cid, (memberCount.get(cid) ?? 0) + 1);
+    }
+
+    // Only label communities above a meaningful size — Louvain on a
+    // 9 k-node graph produces ~130 clusters, most of them small. We
+    // want a couple dozen big anchors, not 130 overlapping names.
+    const MIN_COMMUNITY_SIZE = 25;
+    // Larger than node labels (LABEL_SIZE = 12) so wayfinders read
+    // as area markers, not as one of the node names. Tight enough
+    // that they don't billboard the canvas at zoom-out. The
+    // shrink-by-zoom curve below pulls them down at zoom-in.
+    const FONT_MIN = LABEL_SIZE + 3; // 15
+    const FONT_MAX = LABEL_SIZE + 6; // 18
+    for (const [cid, name] of this.communityNames) {
+      if (!name) continue;
+      const count = memberCount.get(cid) ?? 0;
+      if (count < MIN_COMMUNITY_SIZE) continue;
+
+      // Scale font tightly by member count so the largest cluster gets
+      // a touch more emphasis but no label dominates the canvas.
+      const sizeT = Math.min(1, Math.log2(count / MIN_COMMUNITY_SIZE) / 4);
+      const fontSize = FONT_MIN + (FONT_MAX - FONT_MIN) * sizeT;
+
+      const colorHex = this.communityColorMap?.get(cid);
+      const fillColor =
+        colorHex !== undefined ? colorHex : getGraphThemeColors().labelColor;
+
+      const text = new Text({
+        text: name,
+        style: new TextStyle({
+          fontSize,
+          fontFamily: LABEL_FONT,
+          fontWeight: 'bold',
+          fill: fillColor,
+          // Black stroke + drop-shadow keeps the colored text readable
+          // against the underlying cluster colors.
+          stroke: { color: 0x000000, width: 3 },
+          dropShadow: {
+            color: 0x000000,
+            distance: 0,
+            blur: 6,
+            alpha: 0.9,
+            angle: 0,
+          },
+        }),
+      });
+      text.anchor.set(0.5);
+      text.alpha = 0.95;
+      this.communityLabelContainer.addChild(text);
+      this.communityLabels.set(cid, text);
+    }
+
+    this.updateCommunityLabelPositions();
+    // Counter-scale immediately so newly-created labels render at the
+    // correct screen size on first paint. Without this they appear at
+    // their base font size (huge against a zoomed-out graph) until the
+    // user's next zoom/pan triggers applyCounterScale.
+    this.applyCommunityLabelCounterScale();
+  }
+
+  /** Recompute community centroids from current node positions,
+   *  reposition each wayfinder label, then run an overlap cull so
+   *  adjacent communities don't pile their names on top of each other.
+   *  Larger communities (more members) win overlaps.
+   *
+   *  Callers may pass pre-computed `sums` to skip the per-node loop —
+   *  `update3D` does this so it can fold centroid accumulation into
+   *  the projection pass it already runs every frame (Fix #34). */
+  private updateCommunityLabelPositions(
+    sums?: Map<number, { x: number; y: number; n: number }>,
+  ): void {
+    if (this.communityLabels.size === 0) return;
+    if (!this.communityAssignments) return;
+
+    // 1. Compute centroid for each community when not provided.
+    // Use sprite.position rather than node.x/node.y so the labels
+    // track 3D rotation — in 3D mode sprite.position is the projected
+    // world coord while node.x/y stay at the un-projected base (Fix #33).
+    if (!sums) {
+      sums = new Map<number, { x: number; y: number; n: number }>();
+      for (const node of this.nodes.values()) {
+        if (!node.visible) continue;
+        const cid = this.communityAssignments[node.id];
+        if (cid === undefined) continue;
+        const sx = node.sprite.position.x;
+        const sy = node.sprite.position.y;
+        const e = sums.get(cid);
+        if (e) {
+          e.x += sx;
+          e.y += sy;
+          e.n += 1;
+        } else {
+          sums.set(cid, { x: sx, y: sy, n: 1 });
+        }
+      }
+    }
+
+    // 2. Position each label at its centroid. Only update position for
+    // labels in the visible set — hidden ones don't need it and we
+    // don't want them flickering visible if visibility was set to
+    // false elsewhere.
+    const positioned: { cid: number; text: Text; n: number }[] = [];
+    for (const [cid, text] of this.communityLabels) {
+      const s = sums.get(cid);
+      if (!s || s.n === 0) continue;
+      text.position.set(s.x / s.n, s.y / s.n);
+      positioned.push({ cid, text, n: s.n });
+    }
+
+    // Overlap cull — runs until the layout is stable, then freezes
+    // (Fix #36 / refined in #50). The freeze is what stops labels
+    // from blinking during 3D rotation: once decided, positions can
+    // continue updating but visibility stays put. But we can't
+    // freeze on the *first* cull — at data-add time many new nodes
+    // are still at (0,0) and centroids are dragged toward the
+    // origin, leaving most communities culled. Wait until the worker
+    // reports the layout settled before locking the set in.
+    if (this.communityVisibilityFrozen) return;
+    this.recullCommunityLabels(positioned);
+    if (this.layoutSettled) this.communityVisibilityFrozen = true;
+  }
+
+  /** Decide which community labels survive the overlap test. Called
+   *  by `updateCommunityLabelPositions` only when the visible set
+   *  needs a refresh (data change, layout mode flip, 3D toggle). */
+  private recullCommunityLabels(
+    positioned: { cid: number; text: Text; n: number }[],
+  ): void {
+    // Reset any labels that were positioned but aren't in this pass —
+    // they'll be hidden below unless picked.
+    for (const text of this.communityLabels.values()) {
+      text.visible = false;
+    }
+
+    // Sticky-first ordering (Fix #35) is still useful when the cull
+    // *does* re-run (e.g. user toggles compact mode off and on, or
+    // data refreshes) — keeps the previous decision when nothing
+    // about the geometry forces a change.
+    const shown = this.currentlyShownCommunities;
+    positioned.sort((a, b) => {
+      const aSticky = shown.has(a.cid) ? 1 : 0;
+      const bSticky = shown.has(b.cid) ? 1 : 0;
+      if (aSticky !== bSticky) return bSticky - aSticky;
+      return b.n - a.n;
+    });
+
+    const vp = this.vp;
+    const boxes: { x: number; y: number; w: number; h: number }[] = [];
+    const accepted: number[] = [];
+    // Less padding so adjacent communities can both surface a label
+    // (Fix #47) — previous 12 px was eating slots when labels are
+    // smaller anyway.
+    const PADDING = 4;
+    for (const { cid, text } of positioned) {
+      const localBounds = text.getLocalBounds();
+      const screenW = localBounds.width;
+      const screenH = localBounds.height;
+      const cxScreen = text.position.x * vp.scale + vp.x;
+      const cyScreen = text.position.y * vp.scale + vp.y;
+      const x = cxScreen - screenW / 2 - PADDING;
+      const y = cyScreen - screenH / 2 - PADDING;
+      const w = screenW + PADDING * 2;
+      const h = screenH + PADDING * 2;
+
+      let overlap = false;
+      for (const box of boxes) {
+        if (
+          x < box.x + box.w &&
+          x + w > box.x &&
+          y < box.y + box.h &&
+          y + h > box.y
+        ) {
+          overlap = true;
+          break;
+        }
+      }
+      if (!overlap) {
+        text.visible = true;
+        boxes.push({ x, y, w, h });
+        accepted.push(cid);
+      }
+    }
+    this.currentlyShownCommunities = new Set(accepted);
+  }
+
+  /** Counter-scale community labels and fade them by zoom (Fix #32).
+   *  At zoom-out they're prominent wayfinders; as the user zooms in
+   *  past where individual node labels become readable they fade out
+   *  so the two label layers don't pile on top of each other.
+   *
+   *  Fade curve: full opacity below `FADE_START_SCALE`, linear ramp to
+   *  zero by `FADE_END_SCALE`. Container set invisible once fully
+   *  transparent so it stops costing render time. */
+  private applyCommunityLabelCounterScale(): void {
+    if (!this.communityLabelContainer) return;
+    if (!this.showCommunityLabels) {
+      this.communityLabelContainer.visible = false;
+      return;
+    }
+    // Fade alpha by zoom (Fix #32 baseline).
+    const FADE_START_SCALE = 0.6;
+    const FADE_END_SCALE = 1.2;
+    let alpha = 1;
+    if (this.vp.scale >= FADE_END_SCALE) alpha = 0;
+    else if (this.vp.scale > FADE_START_SCALE) {
+      alpha =
+        1 -
+        (this.vp.scale - FADE_START_SCALE) /
+          (FADE_END_SCALE - FADE_START_SCALE);
+    }
+    if (alpha <= 0.01) {
+      this.communityLabelContainer.visible = false;
+      return;
+    }
+    this.communityLabelContainer.visible = true;
+    this.communityLabelContainer.alpha = alpha;
+    // Counter-scale formula (Fix #43 / tuned in #46). Wayfinders stay
+    // readable at zoom-out (constant screen size) but shrink in screen
+    // size as the user zooms in past the canvas-fit range, so they
+    // don't overwhelm the graph at detail zoom. The piecewise formula:
+    //
+    //   • vp.scale ≤ SHRINK_THRESHOLD:  text.scale = 1/vp.scale
+    //       → screen size = constant
+    //   • vp.scale > SHRINK_THRESHOLD: text.scale = SHRINK_THRESHOLD / vp.scale²
+    //       → screen size = font × SHRINK_THRESHOLD / vp.scale  (shrinks)
+    //
+    // Continuous at the threshold: both branches give 1/THRESHOLD.
+    // 0.2 starts the shrink early so by the time the user has zoomed
+    // even a little past fit-to-screen, wayfinders are already
+    // dropping in size and don't dominate the node detail behind
+    // them (Fix #47).
+    const SHRINK_THRESHOLD = 0.2;
+    const labelScale =
+      this.vp.scale <= SHRINK_THRESHOLD
+        ? 1 / this.vp.scale
+        : SHRINK_THRESHOLD / (this.vp.scale * this.vp.scale);
+    for (const text of this.communityLabels.values()) {
+      if (!text.visible) continue;
+      text.scale.set(labelScale);
+    }
+  }
+
   // ─── Bloom ─────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomEnabled(_enabled: boolean): void {
     // Placeholder — full bloom requires pixi-filters v6 package.
     // When available, creates AdvancedBloomFilter on app.stage.
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomStrength(_strength: number): void {
     // Placeholder for bloom strength control — requires pixi-filters.
   }
@@ -1446,7 +2016,7 @@ export class PixiRenderer {
     label.anchor.set(0, 0.5);
     const lm = this.labelScaleMultiplier;
     label.scale.set(lblInv * lm);
-    const gap = (node.size + 4) * lblInv * lm;
+    const gap = this.labelGap(node);
     label.position.set(node.sprite.position.x + gap, node.sprite.position.y);
     this.labelContainer!.addChild(label);
     return label;
@@ -1494,9 +2064,8 @@ export class PixiRenderer {
   setShowAllLabels(show: boolean): void {
     this.showAllLabels = show;
     if (!this.app || !this.labelContainer) return;
-    // Re-run the full counter-scale pass which includes label culling.
-    // When showAllLabels=true, all visible nodes become candidates but still
-    // go through overlap culling so labels don't pile up.
+    // applyCounterScale runs the cull inline; no need to call it
+    // separately.
     this.applyCounterScale();
   }
 
@@ -1629,6 +2198,10 @@ export class PixiRenderer {
     const bounds = computeBounds(positions);
     const target = fitBounds(bounds, this.width, this.height);
 
+    // Hand the camera off from any in-progress auto-fit follower to
+    // this explicit one-shot animation (Fix #9).
+    this.autoFitTarget = null;
+
     if (duration <= 0) {
       this.vp = target;
       this.applyCounterScale();
@@ -1651,24 +2224,91 @@ export class PixiRenderer {
   }
 
   /**
-   * Throttled auto-fit — re-frames the graph at most ~5×/sec while the user
-   * has not taken manual control of the camera. Trailing-edge throttle: the
-   * first call schedules a fit; subsequent calls while a fit is pending are
-   * ignored (not reset), so bursty producers like the d3-force worker
-   * streaming positions every ~66 ms still get periodic re-fits. Resetting
-   * the timer on every call (classic debounce) would starve the fit
-   * indefinitely because sim ticks arrive faster than the throttle window.
+   * Continuous easing auto-fit — refreshes the follower's target from live
+   * positions while the user has not taken manual control of the camera. The
+   * ticker eases the viewport toward this target each frame, so bursty
+   * producers like the d3-force worker streaming positions every ~66 ms drive
+   * a smooth chase rather than discrete animations (Fix #9 / Option C).
+   *
+   * `_duration` is retained for API compatibility with callers (and the
+   * `IPixiCanvasHandle` contract); the easing follower has its own per-frame
+   * rate, so the value is intentionally ignored.
    */
-  scheduleAutoFit(duration = 200): void {
+  scheduleAutoFit(_duration = 200): void {
     if (this.hasUserMovedCamera) return;
+    if (this.autoFitSuspended) return;
     if (this.nodes.size === 0) return;
-    // A fit is already queued — keep it, don't reset.
-    if (this.autoFitThrottleTimer !== null) return;
-    this.autoFitThrottleTimer = setTimeout(() => {
-      this.autoFitThrottleTimer = null;
-      if (this.destroyed || this.hasUserMovedCamera) return;
-      this.zoomToFit(duration);
-    }, this.AUTO_FIT_THROTTLE_MS);
+    // A manual zoomToFit/zoomToNodes animation is in progress — the
+    // user (or another explicit caller) has the most-recent intent.
+    // Don't overwrite their target with auto-fit.
+    if (this.cancelAnimation !== null) return;
+    // Refresh the follower's target from live positions. Cheap (O(n)
+    // bounds compute), called at worker tick rate (~66 ms). The
+    // ticker eases `vp` toward this target each frame; if the
+    // layout keeps moving, the target keeps shifting and the camera
+    // smoothly chases it — no discrete animations, no zoom thrash
+    // (Fix #9 / Option C).
+    const target = this.computeFitTarget();
+    if (target) this.autoFitTarget = target;
+  }
+
+  private computeFitTarget(): Viewport | null {
+    if (this.nodes.size === 0) return null;
+    const positions = Array.from(this.nodes.values())
+      .filter((n) => n.visible)
+      .map((n) =>
+        this.mode3d
+          ? { x: n.sprite.position.x, y: n.sprite.position.y }
+          : { x: n.x, y: n.y },
+      );
+    if (positions.length === 0) return null;
+    const bounds = computeBounds(positions);
+    return fitBounds(bounds, this.width, this.height);
+  }
+
+  /** Pause auto-fit (Fix #9). Used during layoutMode transitions to
+   *  hold the camera steady before positions have actually moved.
+   *  Manual `zoomToFit()` calls still work — only `scheduleAutoFit()`
+   *  is gated. */
+  setAutoFitSuspended(suspended: boolean): void {
+    this.autoFitSuspended = suspended;
+    if (suspended) this.autoFitTarget = null;
+  }
+
+  /** Mark the camera as user-controlled or not (Fix #41). When true,
+   *  the auto-fit follower stops re-framing the view from worker
+   *  ticks — the user's current zoom/pan sticks. Used by the layout-
+   *  mode toggle so switching compact ↔ spread doesn't zoom in/out
+   *  to fit the new layout's extent. The explicit Reset and
+   *  Zoom-to-fit buttons clear it via `resetCamera()`. */
+  setHasUserMovedCamera(moved: boolean): void {
+    this.hasUserMovedCamera = moved;
+    if (moved) this.autoFitTarget = null;
+  }
+
+  /** Fraction of visible nodes whose sprite sits inside the current
+   *  viewport (Fix #42). Used by the layout-mode toggle to decide
+   *  whether the graph has outgrown the viewport (spread mode
+   *  expanding past the canvas) and a smooth re-fit is warranted.
+   *  Returns 1 when nothing's loaded so callers don't trigger fits on
+   *  empty graphs. */
+  fractionInViewport(): number {
+    if (this.nodes.size === 0) return 1;
+    const vp = this.vp;
+    const left = -vp.x / vp.scale;
+    const right = (this.width - vp.x) / vp.scale;
+    const top = -vp.y / vp.scale;
+    const bottom = (this.height - vp.y) / vp.scale;
+    let total = 0;
+    let inside = 0;
+    for (const node of this.nodes.values()) {
+      if (!node.visible) continue;
+      total += 1;
+      const x = node.sprite.position.x;
+      const y = node.sprite.position.y;
+      if (x >= left && x <= right && y >= top && y <= bottom) inside += 1;
+    }
+    return total > 0 ? inside / total : 1;
   }
 
   zoomToNodes(nodeIds: Iterable<string>, duration = 300): void {
@@ -1709,6 +2349,12 @@ export class PixiRenderer {
   }
 
   zoomIn(duration = 200): void {
+    // Mark this as a user-driven zoom so the auto-fit follower
+    // doesn't yank the camera back to fit-bounds on the next worker
+    // tick (Fix #39). Also clear any pending follower target so it
+    // doesn't fight the animation.
+    this.hasUserMovedCamera = true;
+    this.autoFitTarget = null;
     const target: Viewport = {
       x: this.vp.x,
       y: this.vp.y,
@@ -1730,6 +2376,8 @@ export class PixiRenderer {
   }
 
   zoomOut(duration = 200): void {
+    this.hasUserMovedCamera = true;
+    this.autoFitTarget = null;
     const target: Viewport = {
       x: this.vp.x,
       y: this.vp.y,
@@ -1896,7 +2544,7 @@ export class PixiRenderer {
             this.dragNode.y = world.y;
             this.dragNode.sprite.position.set(world.x, world.y);
             if (this.dragNode.label?.visible) {
-              const gap = (this.dragNode.size + 4) * this.zoomInvScale();
+              const gap = this.labelGap(this.dragNode);
               this.dragNode.label.position.set(world.x + gap, world.y);
             }
             this.callbacks.onNodeDragMove?.(this.dragNode.id, world.x, world.y);
@@ -1917,7 +2565,8 @@ export class PixiRenderer {
               this.mode3dAutoRotate = false;
               this.callbacks.on3DAutoRotateChange?.(false);
             }
-            this.debouncedLabelCull();
+            // No cull on rotate/release (Fix #38) — labels ride the
+            // sphere as a fixed set.
           } else {
             // Pan — compute delta from last pointer position (not movementX/Y)
             // to avoid a jump on the first move after crossing the drag threshold.
@@ -1927,7 +2576,8 @@ export class PixiRenderer {
             this.vp.y += panDy;
             // Hide edges during pan for instant response
             this.hideEdgesForInteraction();
-            this.debouncedLabelCull();
+            // No cull on pan (Fix #38) — panning a fixed-zoom view
+            // doesn't change which labels should be visible.
           }
         }
 
@@ -2030,8 +2680,27 @@ export class PixiRenderer {
     enabled: boolean,
     communityAssignments?: Record<string, number>,
   ): void {
+    // Guard against re-entry with the same mode (Fix #36). React in
+    // dev StrictMode and the `communityData.assignments` dep on the
+    // wiring effect both cause this to fire even when nothing about
+    // the mode itself changed. Without the guard each rerun would
+    // reset `communityVisibilityFrozen`, triggering a fresh community
+    // cull — and the user would see a new label set on every Louvain
+    // rerun mid-rotation.
+    if (this.mode3d === enabled && enabled) {
+      // Same mode + 3D: just refresh community depth assignments if
+      // provided (still useful when Louvain produces new IDs), but
+      // don't unfreeze the wayfinders.
+      if (communityAssignments) {
+        this.assignCommunityDepths(communityAssignments);
+      }
+      return;
+    }
     this.mode3d = enabled;
     this.mode3dFrameCounter = 0;
+    // Re-cull on the next frame — 2D ↔ 3D changes the projection so
+    // the prior visible set may no longer be optimal.
+    this.communityVisibilityFrozen = false;
     if (!enabled) {
       // Restore 2D positions from stored (x, y)
       for (const node of this.nodeArray) {
@@ -2053,26 +2722,10 @@ export class PixiRenderer {
     this.recomputeMode3DExtents();
 
     // Assign Z depth per node: community-based + jitter
-    this.nodeDepthT.clear();
     if (communityAssignments) {
-      const uniqueComms = [
-        ...new Set(Object.values(communityAssignments)),
-      ].sort((a, b) => a - b);
-      const commDepth = new Map<number, number>();
-      const GOLDEN_ANGLE = 0.618033988749;
-      for (let i = 0; i < uniqueComms.length; i++) {
-        const t = (i * GOLDEN_ANGLE) % 1;
-        commDepth.set(uniqueComms[i], (t - 0.5) * 2);
-      }
-      for (let i = 0; i < this.nodeArray.length; i++) {
-        const node = this.nodeArray[i];
-        const cid = communityAssignments[node.id];
-        const base = cid !== undefined ? (commDepth.get(cid) ?? 0) : 0;
-        // Deterministic jitter from node index
-        const hash = Math.sin(i * 127.1 + 311.7) * 43758.5453;
-        const jitter = (hash - Math.floor(hash) - 0.5) * 0.8;
-        this.nodeDepthT.set(node.id, Math.max(-1, Math.min(1, base + jitter)));
-      }
+      this.assignCommunityDepths(communityAssignments);
+    } else {
+      this.nodeDepthT.clear();
     }
 
     this.mode3dAngle = 0;
@@ -2084,15 +2737,51 @@ export class PixiRenderer {
     this.throttledLabelCull();
   }
 
+  /** Assign per-node 3D depth based on community membership. Extracted
+   *  so `set3DMode` can refresh depths on Louvain rerun without doing
+   *  the rest of the 3D-init work (which would also reset the
+   *  community wayfinder freeze flag — Fix #36). */
+  private assignCommunityDepths(
+    communityAssignments: Record<string, number>,
+  ): void {
+    this.nodeDepthT.clear();
+    const uniqueComms = [...new Set(Object.values(communityAssignments))].sort(
+      (a, b) => a - b,
+    );
+    const commDepth = new Map<number, number>();
+    const GOLDEN_ANGLE = 0.618033988749;
+    for (let i = 0; i < uniqueComms.length; i++) {
+      const t = (i * GOLDEN_ANGLE) % 1;
+      commDepth.set(uniqueComms[i], (t - 0.5) * 2);
+    }
+    for (let i = 0; i < this.nodeArray.length; i++) {
+      const node = this.nodeArray[i];
+      const cid = communityAssignments[node.id];
+      const base = cid !== undefined ? (commDepth.get(cid) ?? 0) : 0;
+      // Deterministic jitter from node index
+      const hash = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+      const jitter = (hash - Math.floor(hash) - 0.5) * 0.8;
+      this.nodeDepthT.set(node.id, Math.max(-1, Math.min(1, base + jitter)));
+    }
+  }
+
   /**
-   * Recompute `mode3dRadius` (and derived perspective/depth scales) from the
-   * current node positions. Radius only grows: while the simulation is warm,
-   * nodes can drift outward and we must keep the sphere bounds in sync so
-   * `getNodeZ()` does not hard-clamp drifted nodes to Z=0 (which collapses the
-   * sphere into a disk). Called from `set3DMode()` and periodically from
-   * `update3D()`.
+   * Recompute `mode3dRadius` (and derived perspective/depth scales) from
+   * the current node positions.
+   *
+   * Default behaviour is only-grow: during steady-state physics, brief
+   * outward jitter could otherwise cause `getNodeZ()` to hard-clamp
+   * drifted nodes to Z=0 (collapsing the sphere into a disk) in the
+   * frames between recomputes. Holding R at the high water mark avoids
+   * that flicker.
+   *
+   * `allowShrink=true` shrinks R to fit the current positions. Used
+   * during layout transitions (Fix #8) so switching to a tighter layout
+   * (e.g. compact community packing) re-tracks the smaller XY extent
+   * instead of leaving us with a stale large radius — which would
+   * project a tiny XY ring across a full Z spread, i.e. a cylinder.
    */
-  private recomputeMode3DExtents(): void {
+  private recomputeMode3DExtents(allowShrink = false): void {
     let maxDist = 0;
     for (const node of this.nodeArray) {
       if (!node.visible) continue;
@@ -2100,7 +2789,9 @@ export class PixiRenderer {
       if (d > maxDist) maxDist = d;
     }
     const candidate = maxDist * 1.1 || 500;
-    const newRadius = Math.max(this.mode3dRadius, candidate);
+    const newRadius = allowShrink
+      ? candidate
+      : Math.max(this.mode3dRadius, candidate);
     if (newRadius !== this.mode3dRadius) {
       this.mode3dRadius = newRadius;
       // PerspectiveD ~3-4x the radius for a natural look.
@@ -2147,20 +2838,55 @@ export class PixiRenderer {
    * Projects all nodes and redraws edges.
    */
   private update3D(): void {
+    // Auto-rotation used to be gated on `layoutSettled` (Fix #54) to hide
+    // ticker stutter while the main thread was busy in bursts during
+    // indexing. After Plans D + E moved the store and embedder off the
+    // main thread, that stutter source is gone, and the gate was instead
+    // suppressing rotation on graphs where d3-force never reports settled
+    // (large graphs, warm alphaTarget). Manual drag still updates
+    // `mode3dAngle` directly in the pointer handler regardless.
     if (this.mode3dAutoRotate) {
       this.mode3dAngle += this.mode3dSpeed;
     }
 
-    // Keep sphere bounds in sync with drifting node positions (spread layout
-    // can push nodes beyond the initial radius over time). Throttled to every
-    // ~0.5s at 60fps — amortized cost is negligible even at thousands of nodes.
+    // Keep sphere bounds in sync with the layout.
+    //   • While the worker simulation is running (`!layoutSettled`) we
+    //     recompute every frame with allow-shrink so R tracks live
+    //     positions through any transition — e.g. spread → compact,
+    //     compact → spread. Without this, switching to a tighter
+    //     layout leaves R stuck at the larger value and the projection
+    //     collapses into a vertical cylinder (Fix #8).
+    //   • Once settled, fall back to throttled only-grows so brief
+    //     outward jitter doesn't trigger Z=0 hard-clamp flicker.
     this.mode3dFrameCounter++;
-    if (this.mode3dFrameCounter % 30 === 0) {
+    if (!this.layoutSettled) {
+      this.recomputeMode3DExtents(true);
+    } else if (this.mode3dFrameCounter % 30 === 0) {
       this.recomputeMode3DExtents();
     }
 
     const invScale = this.zoomInvScale();
     const lblInv = this.labelInvScale();
+    // Fold community-centroid accumulation into the projection loop so
+    // the wayfinders re-aim every frame at zero extra cost (Fix #34).
+    // Allocating a Map per frame is cheap (~20 entries); the per-node
+    // dict lookup is a single property read.
+    const trackCommunities =
+      this.showCommunityLabels &&
+      this.communityLabels.size > 0 &&
+      this.communityAssignments !== null;
+    const communitySums: Map<
+      number,
+      { x: number; y: number; n: number }
+    > | null = trackCommunities ? new Map() : null;
+    // Per-community representative Z (golden-angle bucket from
+    // set3DMode), captured from the first member encountered. Reused
+    // below to project each community's 2D centroid through the
+    // current rotation.
+    const communityZ: Map<number, number> | null = trackCommunities
+      ? new Map()
+      : null;
+    const assignments = this.communityAssignments;
     for (const node of this.nodeArray) {
       if (!node.visible) continue;
       // Skip the dragged node — its sprite position is controlled by pointermove
@@ -2168,6 +2894,30 @@ export class PixiRenderer {
       const z = this.getNodeZ(node);
       const p = this.project3d(node.x, node.y, z);
       node.sprite.position.set(p.px, p.py);
+
+      if (communitySums && communityZ && assignments) {
+        const cid = assignments[node.id];
+        if (cid !== undefined) {
+          // Accumulate the *2D* physics position, not the projected
+          // one (Fix #35 follow-up). Per-node projection bakes the
+          // current rotation into each member's screen position, and
+          // members at the back of the sphere drift differently than
+          // members at the front — the mean wobbles frame to frame
+          // because of perspective even though the cluster center
+          // hasn't really moved. By averaging 2D first and projecting
+          // the single centroid below, the label position becomes a
+          // deterministic function of the rotation angle.
+          const e = communitySums.get(cid);
+          if (e) {
+            e.x += node.x;
+            e.y += node.y;
+            e.n += 1;
+          } else {
+            communitySums.set(cid, { x: node.x, y: node.y, n: 1 });
+            communityZ.set(cid, z);
+          }
+        }
+      }
       // Clamp both ends: the lower bound prevents far nodes from vanishing,
       // the upper bound prevents near-singular perspective scale from exploding
       // sprite/label sizes when rz approaches -mode3dPerspectiveD during rotation.
@@ -2207,6 +2957,30 @@ export class PixiRenderer {
     // Redraw edges every frame in 3D (projection changes each frame)
     if (!this.edgesHiddenForInteraction) {
       this.redrawAllEdges3D();
+    }
+
+    // Update wayfinder positions every frame using the centroids we
+    // accumulated above — no extra O(N) pass, just the same fluid
+    // motion node labels get (Fix #34). The overlap cull and label
+    // visibility logic still happen here, but they're O(K · K) on
+    // ~20-30 communities — negligible.
+    //
+    // Project each community's 2D centroid through the current
+    // rotation so the wayfinder swings around the sphere as one rigid
+    // point (Fix #35 follow-up). Without this, every member's
+    // perspective scaling factored into the mean and the centroid
+    // jittered across frames — which made the overlap cull pick
+    // different winners each frame, blinking labels on/off.
+    if (communitySums && communityZ) {
+      const projected = new Map<number, { x: number; y: number; n: number }>();
+      for (const [cid, sum] of communitySums) {
+        const cx = sum.x / sum.n;
+        const cy = sum.y / sum.n;
+        const cz = communityZ.get(cid) ?? 0;
+        const cp = this.project3d(cx, cy, cz);
+        projected.set(cid, { x: cp.px, y: cp.py, n: 1 });
+      }
+      this.updateCommunityLabelPositions(projected);
     }
   }
 
@@ -2296,11 +3070,8 @@ export class PixiRenderer {
 
   set3DAutoRotate(enabled: boolean): void {
     this.mode3dAutoRotate = enabled;
-    // Force immediate label re-cull when rotation stops
-    if (!enabled) {
-      this.lastLabelCull = 0;
-      this.throttledLabelCull();
-    }
+    // No cull on rotation stop (Fix #38) — rotation state, manual or
+    // auto, has no bearing on which labels should be visible.
   }
 
   set3DSpeed(speed: number): void {

@@ -40,7 +40,10 @@ import { getSubType } from '../providers/graphFilterUtils';
 import type { JobMessage, JobState } from '../job';
 import { JobPhase } from '../job';
 import { useStore } from '../store';
-import { useGraphViewer } from '../hooks/useGraphViewer';
+import {
+  useGraphViewer,
+  GRAPH_SETTING_DEFAULTS,
+} from '../hooks/useGraphViewer';
 import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
 import ExportModal from './ExportModal';
 import {
@@ -202,9 +205,11 @@ const GraphViewer = memo(
         graphData,
         loading,
         error,
+        refreshError,
         lastSearchQuery,
         loadGraph,
         setError,
+        setRefreshError,
       } = useGraph();
 
       const {
@@ -263,6 +268,30 @@ const GraphViewer = memo(
       const [showExportModal, setShowExportModal] = useState(false);
       const [exporting, setExporting] = useState(false);
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      const physicsTriggerRef = useRef<HTMLButtonElement>(null);
+
+      // Close the physics panel on a pointerdown outside the panel and
+      // outside its trigger button (Fix #21). The trigger handles its
+      // own toggle, so we skip it here to avoid double-toggling — the
+      // existing `onClick` would re-open immediately otherwise.
+      useEffect(() => {
+        if (!showPhysicsPanel) return;
+        const onPointerDown = (e: PointerEvent) => {
+          const target = e.target as Element | null;
+          if (!target) return;
+          if (target.closest('.physics-panel')) return;
+          if (
+            physicsTriggerRef.current &&
+            physicsTriggerRef.current.contains(target)
+          )
+            return;
+          setShowPhysicsPanel(false);
+        };
+        document.addEventListener('pointerdown', onPointerDown, true);
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown, true);
+        };
+      }, [showPhysicsPanel]);
 
       const pendingMinimize = useRef(false);
       const minimizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -300,13 +329,20 @@ const GraphViewer = memo(
       // Expose imperative handle for parent/sibling access
       useImperativeHandle(ref, () => v.buildImperativeHandle(), [v]);
 
-      // Determine whether to show the full indexing progress modal
+      // Determine whether to show the full indexing progress modal.
+      // 'running' used to always show the modal; now it respects
+      // `jobExpanded` so the user can minimize and keep working
+      // while the agent indexes in the background (Fix #13). App
+      // auto-sets `jobExpanded=true` on every idle → running
+      // transition so the modal still surfaces by default for new
+      // jobs.
       const showFullModal =
-        jobState.status === 'running' ||
+        ((jobState.status === 'running' ||
+          jobState.status === 'enriching' ||
+          jobState.status === 'done') &&
+          (jobExpanded || (loading && v.isEmpty))) ||
         jobState.status === 'persisted' ||
-        jobState.status === 'error' ||
-        ((jobState.status === 'enriching' || jobState.status === 'done') &&
-          (jobExpanded || (loading && v.isEmpty)));
+        jobState.status === 'error';
 
       const graphWidth = showChat || showHelp ? width - chatWidth : width;
 
@@ -383,6 +419,7 @@ const GraphViewer = memo(
                 {...toIndexingProps(jobState, activeRepoUrl)}
                 stages={INDEXING_STAGES}
                 onClose={onJobClose}
+                onMinimize={onJobMinimize}
               />
             }
           />
@@ -503,10 +540,38 @@ const GraphViewer = memo(
               {...toIndexingProps(jobState, activeRepoUrl)}
               stages={INDEXING_STAGES}
               onClose={onJobClose}
+              onMinimize={
+                jobState.status === 'running' || jobState.status === 'enriching'
+                  ? onJobMinimize
+                  : undefined
+              }
             />
           )}
 
           <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
+
+          {refreshError && (
+            <div className="refresh-error-banner" role="alert">
+              <span className="refresh-error-banner__text">
+                Refresh failed: {refreshError}
+              </span>
+              <button
+                type="button"
+                className="refresh-error-banner__retry"
+                onClick={() => loadGraph()}
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                className="refresh-error-banner__dismiss"
+                aria-label="Dismiss"
+                onClick={() => setRefreshError(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           <PixiGraphCanvas
             ref={v.canvasRef}
@@ -534,7 +599,11 @@ const GraphViewer = memo(
             onEdgeClick={v.onLinkClick}
             onStageClick={v.onStageClick}
             labelsVisible={v.settings.labelsVisible}
+            edgesEnabled={v.settings.edgesVisible}
+            communityLabelsVisible={v.settings.communityLabelsVisible}
             layoutMode={v.settings.layoutMode}
+            zoomSizeExponent={v.settings.pixiZoomExponent}
+            labelScale={v.settings.labelScale / 100}
             mode3d={v.settings.mode3d}
             on3DAutoRotateChange={v.settings.setRendererAutoRotate}
             animationSettings={animationSettings}
@@ -548,6 +617,12 @@ const GraphViewer = memo(
               setRepulsion={v.settings.setRepulsion}
               labelsVisible={v.settings.labelsVisible}
               setLabelsVisible={v.settings.setLabelsVisible}
+              edgesVisible={v.settings.edgesVisible}
+              setEdgesVisible={v.settings.setEdgesVisible}
+              communityLabelsVisible={v.settings.communityLabelsVisible}
+              setCommunityLabelsVisible={v.settings.setCommunityLabelsVisible}
+              communitiesEnabled={v.settings.communitiesEnabled}
+              setCommunitiesEnabled={v.settings.setCommunitiesEnabled}
               colorMode={colorMode}
               setColorMode={setColorMode}
               physicsRunning={v.settings.physicsRunning}
@@ -589,10 +664,47 @@ const GraphViewer = memo(
             setZoomOnSelect={v.settings.setZoomOnSelect}
             showPhysicsPanel={showPhysicsPanel}
             setShowPhysicsPanel={setShowPhysicsPanel}
+            physicsTriggerRef={physicsTriggerRef}
             layoutMode={v.settings.layoutMode}
             setLayoutMode={v.settings.setLayoutMode}
             mode3d={v.settings.mode3d}
             setMode3d={v.settings.setMode3d}
+            onResetGraph={() => {
+              const D = GRAPH_SETTING_DEFAULTS;
+              // 1. Reset React state + clear localStorage.
+              v.settings.resetSettings();
+              // 2. Push EVERY setting to the renderer/layout-worker.
+              //    We do this even for settings that PixiGraphCanvas
+              //    already re-syncs via prop-driven useEffects, because
+              //    those effects only fire when the prop *changes*. If
+              //    the React state already matched the default before
+              //    reset (e.g. layoutMode was 'compact' and the new
+              //    default is 'compact'), the effect wouldn't fire and
+              //    the renderer would be left in a stale state.
+              const c = v.canvasRef.current;
+              c?.setChargeStrength?.(-D.repulsion);
+              c?.setLinkDistance?.(D.pixiLinkDist);
+              c?.setCenterStrength?.(D.pixiCenter);
+              c?.setLayoutMode?.(D.layoutMode);
+              c?.updateCompactConfig?.({
+                radialStrength: D.compactRadial / 100,
+                communityPull: D.compactCommunity / 100,
+                centeringStrength: D.compactCentering / 100,
+                radiusScale: D.compactRadius,
+              });
+              c?.setZoomSizeExponent?.(D.pixiZoomExponent);
+              c?.setLabelScale?.(D.labelScale / 100);
+              c?.set3DMode?.(D.mode3d);
+              c?.set3DSpeed?.(D.mode3dSpeed / 10000);
+              c?.set3DTilt?.(D.mode3dTilt / 100);
+              c?.set3DAutoRotate?.(true);
+              c?.setShowLabels?.(D.labelsVisible);
+              c?.setEdgesEnabled?.(D.edgesVisible);
+              c?.setShowCommunityLabels?.(D.communityLabelsVisible);
+              // 3. Reheat physics + reset camera (the original behaviour).
+              c?.reheat?.();
+              c?.resetCamera?.();
+            }}
           />
         </div>
       );

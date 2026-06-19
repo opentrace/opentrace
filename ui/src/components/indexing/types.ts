@@ -90,6 +90,12 @@ export interface IndexingProgressProps {
   /** Icon shown in the header while running (e.g. a provider logo). */
   icon?: import('react').ReactNode;
   onClose: () => void;
+  /** Optional callback for the "Minimize" button on the running view
+   *  (Fix #13). When provided, the running modal shows a Minimize
+   *  control that lets the user dismiss the modal while keeping the
+   *  job alive — the JobMinimizedBar takes over as the persistent
+   *  indicator. */
+  onMinimize?: () => void;
   /** Override the header title (default: "Indexing Repository" when running, "Complete" when done). */
   title?: string;
   /** Supplementary message shown below stats (e.g. "Loading graph..."). */

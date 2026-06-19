@@ -324,7 +324,7 @@ export class IDBChatHistoryStore implements ChatHistoryStore {
       all = await db.getAll(STORE_NAME);
     }
     return all
-      .map(({ messages: _, ...summary }) => summary) // eslint-disable-line @typescript-eslint/no-unused-vars
+      .map(({ messages: _, ...summary }) => summary)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 }

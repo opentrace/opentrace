@@ -559,6 +559,14 @@ export class LadybugGraphStore implements GraphStore {
     const t0 = performance.now();
     lbug.setWorkerPath('/lbug_wasm_worker.js');
     await lbug.init();
+    // Buffer pool size note: lbug accepts a `bufferPoolSize` argument
+    // here, but in WASM the linear memory is a single shared heap —
+    // reserving more for the page cache leaves less for everything
+    // else (CSV temp files, query state, parser tables). An explicit
+    // 512 MB reservation broke ingest even for small repos, so we
+    // let the engine's auto-sizing decide. To genuinely fit larger
+    // graphs the right move is to reduce extraction depth or use
+    // server mode rather than push this number up.
     this.db = new lbug.Database(':memory:');
     await this.db.init();
     this.conn = new lbug.Connection(this.db);
@@ -568,16 +576,10 @@ export class LadybugGraphStore implements GraphStore {
     console.log(
       `[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`,
     );
-    const savedNodes = localStorage.getItem('ot:maxVisNodes');
-    const savedEdges = localStorage.getItem('ot:maxVisEdges');
-    if (savedNodes || savedEdges) {
-      const maxN = savedNodes ? Number(savedNodes) : 2000;
-      const maxE = savedEdges ? Number(savedEdges) : 5000;
-      if (Number.isFinite(maxN) && Number.isFinite(maxE)) {
-        this.maxVisNodes = maxN;
-        this.maxVisEdges = maxE;
-      }
-    }
+    // Visualization limits used to be loaded here from localStorage, but the
+    // store now runs in a Web Worker where window.localStorage is undefined.
+    // The main-thread proxy reads the saved values and pushes them in via
+    // setLimits() after ensureReady().
   }
 
   private async initSchema(): Promise<void> {
@@ -935,10 +937,113 @@ export class LadybugGraphStore implements GraphStore {
       );
     }
 
-    // For large graphs, fetch edges first then their endpoint nodes.
-    // This guarantees every edge has both endpoints in the result.
+    // Two large-graph strategies, depending on which cap is binding:
+    //
+    //  (a) Nodes don't fit (totalNodes > maxVisNodes): fetch a stratified
+    //      sample of nodes first, then keep only edges that connect two
+    //      sampled nodes. Guarantees every visible edge has both endpoints
+    //      in the node set.
+    //
+    //  (b) Nodes fit but edges don't: fetch ALL nodes, then sample
+    //      edges among them up to maxVisEdges. Without this, the
+    //      edges-first path would silently cap visible nodes to the
+    //      edge endpoints — surprising to users who bumped the node
+    //      cap explicitly to see more nodes.
+    if (isLarge && totalNodes > this.maxVisNodes) {
+      // Strategy (a): stratified per-type sampling.
+      //
+      // Each non-empty node type gets a fair share of `maxVisNodes`.
+      // Small types take their full count and leave room for larger
+      // ones, so a tiny Repository (1) doesn't burn a 143-slot share.
+      // Result: the sampled subgraph contains Functions, Classes,
+      // Files, etc. in roughly equal numbers — not whatever type the
+      // DB happens to surface first in iteration order.
+      const typeCounts: { type: NodeType; count: number }[] = [];
+      for (const row of countRows as Record<string, unknown>[]) {
+        const count = Number(row.cnt ?? 0);
+        if (count > 0) {
+          typeCounts.push({ type: row.type as NodeType, count });
+        }
+      }
+      // Allocate by ascending count: small types take what they have,
+      // leftover capacity gets re-divided among the remaining (bigger)
+      // types each iteration.
+      typeCounts.sort((a, b) => a.count - b.count);
+      let remaining = this.maxVisNodes;
+      const allocations = new Map<NodeType, number>();
+      for (let i = 0; i < typeCounts.length; i++) {
+        const evenShare = Math.floor(remaining / (typeCounts.length - i));
+        const take = Math.min(typeCounts[i].count, evenShare);
+        allocations.set(typeCounts[i].type, take);
+        remaining -= take;
+      }
+
+      const nodes: GraphNode[] = [];
+      const nodeIdSet = new Set<string>();
+      for (const [type, take] of allocations) {
+        if (take <= 0) continue;
+        const rows = await this.query(
+          `MATCH (n:${type}) RETURN ${typedReturnClause(type)} LIMIT ${take}`,
+        );
+        for (const r of rows as Record<string, unknown>[]) {
+          const id = String(r.id);
+          nodes.push({
+            id,
+            type: String(r.type),
+            name: String(r.name),
+            properties: rowToProperties(r),
+          });
+          nodeIdSet.add(id);
+        }
+      }
+
+      // Fetch only edges whose endpoints are both in the sample, capped at
+      // maxVisEdges — pushed into the query so the DB never materializes the
+      // full RELATES set (can be 100k+ on large repos) just to discard it.
+      const sampledIds = [...nodeIdSet].map((id) => `'${esc(id)}'`).join(', ');
+      const relRows =
+        nodeIdSet.size > 0
+          ? await this.query(
+              `MATCH (a)-[r:RELATES]->(b) ` +
+                `WHERE a.id IN [${sampledIds}] AND b.id IN [${sampledIds}] ` +
+                `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
+                `LIMIT ${this.maxVisEdges}`,
+            )
+          : [];
+      const links: GraphLink[] = [];
+      for (const r of relRows as Record<string, string>[]) {
+        if (!nodeIdSet.has(r.source) || !nodeIdSet.has(r.target)) continue;
+        links.push({
+          source: r.source,
+          target: r.target,
+          label: r.type,
+          properties: parseProps(r.properties),
+        });
+        if (links.length >= this.maxVisEdges) break;
+      }
+
+      return { nodes, links };
+    }
+
     if (isLarge) {
-      // Fetch limited edges
+      // Strategy (b): nodes-first. Fetch every node (it fits), then
+      // sample edges and keep only those whose endpoints are in the
+      // node set. The endpoint filter is essentially a no-op here
+      // (every node is in the set) but matches the (a) path's shape.
+      const nodeRows = await this.query(unionAllNodes());
+      const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
+        (r) => {
+          const id = String(r.id);
+          const cached = this.nodeCache.get(id);
+          return {
+            id,
+            type: String(r.type),
+            name: String(r.name),
+            properties: cached?.properties,
+          };
+        },
+      );
+
       const relRows = await this.query(
         `MATCH (a)-[r:RELATES]->(b) ` +
           `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
@@ -953,33 +1058,7 @@ export class LadybugGraphStore implements GraphStore {
         }),
       );
 
-      // Collect unique node IDs from edges
-      const connectedIds = new Set<string>();
-      for (const link of links) {
-        connectedIds.add(link.source as string);
-        connectedIds.add(link.target as string);
-      }
-
-      // Fetch connected nodes — routed by type instead of 7-way UNION ALL
-      const cappedIds = [...connectedIds].slice(0, this.maxVisNodes);
-      const nodeRows = await this.fetchNodesByIds(cappedIds);
-      const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
-        (r) => ({
-          id: String(r.id),
-          type: String(r.type),
-          name: String(r.name),
-          properties: rowToProperties(r),
-        }),
-      );
-
-      const nodeIdSet = new Set(nodes.map((n) => n.id));
-      const filteredLinks = links.filter(
-        (l) =>
-          nodeIdSet.has(l.source as string) &&
-          nodeIdSet.has(l.target as string),
-      );
-
-      return { nodes, links: filteredLinks };
+      return { nodes, links };
     }
 
     // Small graph — fetch everything via UNION ALL (returns id/type/name only,

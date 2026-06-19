@@ -37,6 +37,7 @@ export interface SymbolNode {
   kind: 'class' | 'function';
   fileId: string;
   parentId: string;
+  language: string;
   receiverVar: string | null;
   receiverType: string | null;
   paramTypes: Record<string, string> | null;
@@ -143,7 +144,14 @@ function resolveSingleCall(
   if (ref.kind === 'attribute' && ref.receiver && callerNode.paramTypes) {
     const typeName = callerNode.paramTypes[ref.receiver];
     if (typeName && classRegistry.has(typeName)) {
-      const classCandidates = classRegistry.get(typeName)!;
+      // Same-file-or-same-language guard (matches strategies 3/5/7) so a
+      // param type name colliding with a class in another language can't
+      // cross-resolve.
+      const classCandidates = classRegistry
+        .get(typeName)!
+        .filter(
+          (c) => c.fileId === fileId || c.language === callerNode.language,
+        );
       for (const cls of classCandidates) {
         for (const child of cls.children) {
           if (child.name === ref.name) {
@@ -160,7 +168,9 @@ function resolveSingleCall(
     ref.receiver &&
     classRegistry.has(ref.receiver)
   ) {
-    const classCandidates = classRegistry.get(ref.receiver)!;
+    const classCandidates = classRegistry
+      .get(ref.receiver)!
+      .filter((c) => c.fileId === fileId || c.language === callerNode.language);
     // Prefer same-file class, then fall back to any
     const sorted = [...classCandidates].sort(
       (a, b) => (a.fileId === fileId ? 0 : 1) - (b.fileId === fileId ? 0 : 1),
@@ -177,7 +187,11 @@ function resolveSingleCall(
     // Also check Go-style methods (not class children but have matching receiver_type)
     const candidates = nameRegistry.get(ref.name) ?? [];
     for (const candidate of candidates) {
-      if (candidate.receiverType === ref.receiver) {
+      if (
+        candidate.receiverType === ref.receiver &&
+        (candidate.fileId === fileId ||
+          candidate.language === callerNode.language)
+      ) {
         const targetFileId = candidate.id.split('::')[0];
         const conf = targetFileId === fileId ? 1.0 : 0.9;
         return { targetId: candidate.id, confidence: conf };
@@ -230,26 +244,31 @@ function resolveSingleCall(
 
   // Strategy 5: Constructor call — bare name matches a class
   if (ref.kind === 'bare' && classRegistry.has(ref.name)) {
-    const classCandidates = classRegistry.get(ref.name)!;
-    // Prefer same-file class, then fall back to any
-    const sorted = [...classCandidates].sort(
-      (a, b) => (a.fileId === fileId ? 0 : 1) - (b.fileId === fileId ? 0 : 1),
-    );
-    for (const cls of sorted) {
-      // Try to find __init__ or constructor child
-      for (const child of cls.children) {
-        if (child.name === '__init__' || child.name === 'constructor') {
-          const targetFileId = child.id.split('::')[0];
-          const conf = targetFileId === fileId ? 1.0 : 0.8;
-          return { targetId: child.id, confidence: conf };
+    const classCandidates = classRegistry
+      .get(ref.name)!
+      .filter((c) => c.fileId === fileId || c.language === callerNode.language);
+    if (classCandidates.length > 0) {
+      // Prefer same-file class, then fall back to any same-language
+      const sorted = [...classCandidates].sort(
+        (a, b) => (a.fileId === fileId ? 0 : 1) - (b.fileId === fileId ? 0 : 1),
+      );
+      for (const cls of sorted) {
+        // Try to find __init__ or constructor child
+        for (const child of cls.children) {
+          if (child.name === '__init__' || child.name === 'constructor') {
+            const targetFileId = child.id.split('::')[0];
+            const conf = targetFileId === fileId ? 1.0 : 0.8;
+            return { targetId: child.id, confidence: conf };
+          }
         }
       }
+      // Fall back to the class node itself
+      const cls = sorted[0];
+      const targetFileId = cls.id.split('::')[0];
+      const conf = targetFileId === fileId ? 1.0 : 0.8;
+      return { targetId: cls.id, confidence: conf };
     }
-    // Fall back to the class node itself (prefer same-file)
-    const cls = sorted[0];
-    const targetFileId = cls.id.split('::')[0];
-    const conf = targetFileId === fileId ? 1.0 : 0.8;
-    return { targetId: cls.id, confidence: conf };
+    // No same-language constructor match — fall through to Strategy 6/7
   }
 
   // Strategy 6: Intra-file bare call
@@ -263,10 +282,13 @@ function resolveSingleCall(
     }
   }
 
-  // Strategy 7: Cross-file bare call (unique match only)
+  // Strategy 7: Cross-file bare call (unique same-language match only)
   if (ref.kind === 'bare') {
     const candidates = nameRegistry.get(ref.name) ?? [];
-    const crossFile = candidates.filter((c) => c.id.split('::')[0] !== fileId);
+    const crossFile = candidates.filter(
+      (c) =>
+        c.id.split('::')[0] !== fileId && c.language === callerNode.language,
+    );
     if (crossFile.length === 1) {
       return { targetId: crossFile[0].id, confidence: 0.8 };
     }

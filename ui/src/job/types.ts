@@ -46,6 +46,14 @@ export interface IndexRepoMessage {
   repoUrl: string;
   token?: string;
   ref?: string;
+  /** Explicit repo id; falls back to the URL's last path segment on
+   *  the agent side. Only used by server-mode indexing today (Fix #6);
+   *  the in-browser pipeline derives its own id. */
+  repoId?: string;
+  /** If true, ask the agent to fetch the source as a zipball rather
+   *  than a git clone. Server-mode only; ignored by the in-browser
+   *  pipeline. */
+  zipball?: boolean;
 }
 
 /** Re-fetch a repo's files and rebuild its graph from scratch. Deletes the
@@ -57,6 +65,8 @@ export interface ReindexRepoMessage {
   repoUrl: string;
   token?: string;
   ref?: string;
+  repoId?: string;
+  zipball?: boolean;
 }
 
 export interface IndexDirectoryMessage {

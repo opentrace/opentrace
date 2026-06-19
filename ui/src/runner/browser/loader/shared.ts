@@ -264,18 +264,35 @@ export async function runWithConcurrency<T>(
 ): Promise<void> {
   const queue = [...items];
   const active: Promise<void>[] = [];
+  const errors: unknown[] = [];
 
   while (queue.length > 0 || active.length > 0) {
     while (active.length < concurrency && queue.length > 0) {
       const item = queue.shift()!;
-      const p: Promise<void> = fn(item).then(() => {
-        const idx = active.indexOf(p);
-        if (idx >= 0) active.splice(idx, 1);
-      });
+      // Capture per-item failures instead of letting them reject the
+      // Promise.race below (which would abandon the queue and leave the
+      // other in-flight promises as unhandled rejections). Always remove
+      // from `active` via finally so the loop can drain.
+      const p: Promise<void> = fn(item)
+        .catch((err) => {
+          errors.push(err);
+        })
+        .finally(() => {
+          const idx = active.indexOf(p);
+          if (idx >= 0) active.splice(idx, 1);
+        });
       active.push(p);
     }
     if (active.length > 0) {
       await Promise.race(active);
     }
+  }
+
+  // All items were attempted; surface failures once the queue is drained.
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      `runWithConcurrency: ${errors.length} of ${items.length} task(s) failed`,
+    );
   }
 }

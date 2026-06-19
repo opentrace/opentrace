@@ -28,7 +28,10 @@ function makeNode(
   name: string,
   kind: 'class' | 'function' = 'function',
   opts: Partial<
-    Pick<SymbolNode, 'receiverVar' | 'receiverType' | 'paramTypes' | 'children'>
+    Pick<
+      SymbolNode,
+      'receiverVar' | 'receiverType' | 'paramTypes' | 'children' | 'language'
+    >
   > = {},
 ): SymbolNode {
   return {
@@ -37,6 +40,7 @@ function makeNode(
     kind,
     fileId: id.split('::')[0],
     parentId: id.split('::').slice(0, -1).join('::') || id.split('::')[0],
+    language: opts.language ?? 'python',
     receiverVar: opts.receiverVar ?? null,
     receiverType: opts.receiverType ?? null,
     paramTypes: opts.paramTypes ?? null,
@@ -354,6 +358,59 @@ describe('resolveCalls', () => {
 
     const resolved = resolveCalls(infos, reg);
     expect(resolved).toHaveLength(0);
+  });
+
+  it('does not resolve cross-language bare call (Python list() vs TS list method)', () => {
+    // Reproduces a false positive seen indexing opentrace: Python `list(...)`
+    // matched a TS class method `IDBChatHistoryStore::list`. With the
+    // language filter the call should now not resolve.
+    const reg = emptyRegistries();
+    const tsMethod = makeNode(
+      'chat.ts::IDBChatHistoryStore::list',
+      'list',
+      'function',
+      {
+        language: 'typescript',
+      },
+    );
+    const pyCaller = makeNode('test.py::run', 'run', 'function', {
+      language: 'python',
+    });
+
+    registerNode(reg, tsMethod);
+    registerNode(reg, pyCaller);
+
+    const calls: CallRef[] = [{ name: 'list', receiver: null, kind: 'bare' }];
+    const infos: CallInfo[] = [
+      { callerNode: pyCaller, calls, fileId: 'test.py' },
+    ];
+
+    const resolved = resolveCalls(infos, reg);
+    expect(resolved).toHaveLength(0);
+  });
+
+  it('still resolves cross-file same-language bare call when unique', () => {
+    const reg = emptyRegistries();
+    const target = makeNode('a.py::setup', 'setup', 'function', {
+      language: 'python',
+    });
+    const distraction = makeNode('b.ts::setup', 'setup', 'function', {
+      language: 'typescript',
+    });
+    const caller = makeNode('c.py::main', 'main', 'function', {
+      language: 'python',
+    });
+
+    registerNode(reg, target);
+    registerNode(reg, distraction);
+    registerNode(reg, caller);
+
+    const calls: CallRef[] = [{ name: 'setup', receiver: null, kind: 'bare' }];
+    const infos: CallInfo[] = [{ callerNode: caller, calls, fileId: 'c.py' }];
+
+    const resolved = resolveCalls(infos, reg);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].targetId).toBe('a.py::setup');
   });
 
   it('deduplicates identical call refs', () => {

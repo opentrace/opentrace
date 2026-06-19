@@ -402,6 +402,37 @@
   border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
 }
 
+/* Provider switcher chips inside the help block — pick whose guide to read. */
+.api-key-help-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.api-key-provider-chip {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: color-mix(in oklch, var(--card) 50%, transparent);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.api-key-provider-chip:hover {
+  border-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  color: var(--secondary-foreground);
+}
+
+.api-key-provider-chip.active {
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+  border-color: var(--primary);
+  color: var(--ring);
+}
+
 .api-key-help-title {
   margin: 0 0 8px 0;
   font-size: 0.72rem;
