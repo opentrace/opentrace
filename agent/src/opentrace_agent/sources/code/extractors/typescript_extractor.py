@@ -159,11 +159,25 @@ def _extract_method(node: tree_sitter.Node) -> CodeSymbol | None:
     name_node = node.child_by_field_name("name")
     if not name_node:
         return None
-    params_node = node.child_by_field_name("parameters")
+    # A class field (`public_field_definition`) is only method-like when its
+    # value is a function — and then the parameters/body/return type live on
+    # that nested function, not the field node. A non-function field
+    # (e.g. `count = 5`) is data, not a method, so it must not be emitted as a
+    # function symbol.
+    fn_node = node
+    if node.type == "public_field_definition":
+        value_node = node.child_by_field_name("value")
+        if value_node is None or value_node.type not in (
+            "arrow_function",
+            "function_expression",
+        ):
+            return None
+        fn_node = value_node
+    params_node = fn_node.child_by_field_name("parameters")
     signature = params_node.text.decode() if params_node else None
     type_signature = _extract_ts_type_signature(params_node) if params_node else None
-    return_type = _extract_return_type(node)
-    body_node = node.child_by_field_name("body")
+    return_type = _extract_return_type(fn_node)
+    body_node = fn_node.child_by_field_name("body")
     calls = _collect_calls(body_node) if body_node else []
     return CodeSymbol(
         name=name_node.text.decode(),
@@ -255,14 +269,19 @@ def _extract_heritage(
                             superclasses.append(sub.text.decode())
                 elif clause.type == "implements_clause":
                     for sub in clause.children:
-                        if sub.type == "identifier":
+                        # Interface names in an implements clause are
+                        # `type_identifier` nodes (not `identifier`).
+                        if sub.type in ("identifier", "type_identifier"):
                             interfaces.append(sub.text.decode())
                         elif sub.type == "member_expression":
                             interfaces.append(sub.text.decode())
                         elif sub.type == "generic_type":
                             # e.g. Iterable<T> — take the base identifier
                             name_node = sub.children[0] if sub.children else None
-                            if name_node and name_node.type == "identifier":
+                            if name_node and name_node.type in (
+                                "identifier",
+                                "type_identifier",
+                            ):
                                 interfaces.append(name_node.text.decode())
     return (superclasses or None, interfaces or None)
 

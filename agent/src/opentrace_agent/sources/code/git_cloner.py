@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -76,6 +77,7 @@ class GitCloner:
             Path to the cloned repository root.
         """
         url = _inject_token(repo_url, token) if token else repo_url
+        created_temp = dest is None
         clone_dest = dest or Path(tempfile.mkdtemp(prefix="ot-clone-"))
 
         logger.info("Cloning %s (ref=%s) → %s", repo_url, ref or "default", clone_dest)
@@ -87,7 +89,13 @@ class GitCloner:
         if ref:
             kwargs["branch"] = ref
 
-        git.Repo.clone_from(url, str(clone_dest), **kwargs)
+        try:
+            git.Repo.clone_from(url, str(clone_dest), **kwargs)
+        except Exception:
+            # Don't leak the temp dir we created if the clone fails.
+            if created_temp:
+                shutil.rmtree(clone_dest, ignore_errors=True)
+            raise
 
         logger.info("Clone complete: %s", clone_dest)
         return clone_dest

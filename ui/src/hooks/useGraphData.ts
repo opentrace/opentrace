@@ -65,6 +65,9 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   const [lastSearchQuery, setLastApiQuery] = useState('');
   const [graphVersion, setGraphVersion] = useState(0);
 
+  // Monotonic counter to discard stale overlapping loadGraph results.
+  const loadSeqRef = useRef(0);
+
   // Use a ref so loadGraph's identity doesn't depend on the callback
   const onGraphLoadedRef = useRef(onGraphLoaded);
   useEffect(() => {
@@ -82,10 +85,15 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
 
   const loadGraph = useCallback(
     (query?: string, hops: number = 0): Promise<void> => {
+      // Latest-wins guard: if a newer loadGraph starts before this one
+      // resolves, the stale result must not clobber the newer graph/stats.
+      const seq = ++loadSeqRef.current;
       setLoading(true);
       return store
         .fetchGraph(query, hops)
         .then((data) => {
+          // Stale result from an older load — a newer one started first.
+          if (seq !== loadSeqRef.current) return;
           // Successful fetch clears both error tracks.
           setError(null);
           setRefreshError(null);
@@ -96,10 +104,13 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
           onGraphLoadedRef.current?.();
           store
             .fetchStats()
-            .then(setStats)
+            .then((s) => {
+              if (seq === loadSeqRef.current) setStats(s);
+            })
             .catch(() => {});
         })
         .catch((err) => {
+          if (seq !== loadSeqRef.current) return;
           setLoading(false);
           // Swallow AbortError — clearGraph fired mid-load, expected on
           // project switch. Any real error still surfaces.

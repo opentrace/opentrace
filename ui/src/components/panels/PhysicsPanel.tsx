@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import {
   useResizablePanel,
   useResizablePanelHeight,
@@ -146,22 +146,20 @@ export default function PhysicsPanel({
       panelRef,
     });
 
-  // Debounce repulsion slider changes (200ms)
+  // Debounce repulsion slider changes (200ms). Keep a local controlled value
+  // so the thumb tracks the drag immediately, while still reflecting external
+  // changes to the `repulsion` prop (e.g. a reset).
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const localRef = useRef(repulsion);
+  const [localRepulsion, setLocalRepulsion] = useState(repulsion);
 
   useEffect(() => {
-    localRef.current = repulsion;
+    setLocalRepulsion(repulsion);
   }, [repulsion]);
 
   const handleRepulsionInput = useCallback(
     (e: React.FormEvent<HTMLInputElement>) => {
       const value = Number(e.currentTarget.value);
-      localRef.current = value;
-      // Update the displayed value immediately via the input
-      e.currentTarget.parentElement
-        ?.querySelector('.physics-slider-value')
-        ?.replaceChildren(String(value));
+      setLocalRepulsion(value);
 
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
@@ -371,14 +369,14 @@ export default function PhysicsPanel({
         <div className="physics-slider-row">
           <div className="physics-slider-label">
             <span>Repulsion</span>
-            <span className="physics-slider-value">{repulsion}</span>
+            <span className="physics-slider-value">{localRepulsion}</span>
           </div>
           <input
             type="range"
             min={10}
             max={500}
             step={10}
-            defaultValue={repulsion}
+            value={localRepulsion}
             onInput={handleRepulsionInput}
           />
         </div>

@@ -129,4 +129,53 @@ describe('InMemoryGraphStore', () => {
       });
     });
   });
+
+  describe('traverse', () => {
+    it('returns a convergent node once for diamond paths', async () => {
+      const store = new InMemoryGraphStore();
+      await store.importBatch({
+        nodes: ['A', 'B', 'C', 'D'].map((id) => ({
+          id,
+          type: 'Function',
+          name: id,
+          properties: {},
+        })),
+        relationships: [
+          {
+            id: 'r1',
+            type: 'CALLS',
+            source_id: 'A',
+            target_id: 'B',
+            properties: {},
+          },
+          {
+            id: 'r2',
+            type: 'CALLS',
+            source_id: 'A',
+            target_id: 'C',
+            properties: {},
+          },
+          {
+            id: 'r3',
+            type: 'CALLS',
+            source_id: 'B',
+            target_id: 'D',
+            properties: {},
+          },
+          {
+            id: 'r4',
+            type: 'CALLS',
+            source_id: 'C',
+            target_id: 'D',
+            properties: {},
+          },
+        ],
+      });
+
+      const results = await store.traverse('A', 'outgoing', 5);
+      // D is reachable via both B and C but must appear exactly once.
+      expect(results.filter((r) => r.node.id === 'D')).toHaveLength(1);
+      expect(results.map((r) => r.node.id).sort()).toEqual(['B', 'C', 'D']);
+    });
+  });
 });

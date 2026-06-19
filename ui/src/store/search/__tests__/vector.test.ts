@@ -82,6 +82,15 @@ describe('VectorIndex', () => {
     expect(() => idx.search([1, 2])).toThrow('dimension mismatch');
   });
 
+  it('does not mutate the caller-provided Float32Array', () => {
+    const idx = new VectorIndex(3);
+    const input = new Float32Array([3, 0, 4]); // magnitude 5, not unit-length
+    const original = Float32Array.from(input);
+    idx.addVector('a', input);
+    // Indexing must not normalize the caller's array in place.
+    expect(Array.from(input)).toEqual(Array.from(original));
+  });
+
   it('handles zero vector gracefully', () => {
     const idx = new VectorIndex(3);
     idx.addVector('zero', [0, 0, 0]);

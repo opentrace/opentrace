@@ -71,7 +71,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       getSubType = DEFAULT_GET_SUB_TYPE,
       highlightNodes: highlightNodesProp,
       highlightLinks: highlightLinksProp,
-      labelNodes: labelNodesProp,
       availableSubTypes = EMPTY_MAP,
       communityData: communityDataProp,
       onNodeClick,
@@ -120,7 +119,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const {
       highlightNodes: computedHighlightNodes,
       highlightLinks: computedHighlightLinks,
-      labelNodes: computedLabelNodes,
     } = useHighlights(
       dummyGraph,
       true,
@@ -134,7 +132,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     const activeHighlightNodes = highlightNodesProp ?? computedHighlightNodes;
     const activeHighlightLinks = highlightLinksProp ?? computedHighlightLinks;
-    const activeLabelNodes = labelNodesProp ?? computedLabelNodes;
 
     // ── Node colors ─────────────────────────────────────────────────────
     const nodeColors = useMemo(() => {
@@ -491,12 +488,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         activeHighlightNodes,
         activeHighlightLinks,
       );
-    }, [
-      dataVersion,
-      activeHighlightNodes,
-      activeHighlightLinks,
-      activeLabelNodes,
-    ]);
+    }, [dataVersion, activeHighlightNodes, activeHighlightLinks]);
 
     // ── Apply link type filtering ──────────────────────────────────────
     useEffect(() => {

@@ -325,10 +325,17 @@ def _extract_godoc(node: tree_sitter.Node) -> str | None:
     """Extract GoDoc comment from consecutive // comment lines above a node."""
     lines: list[str] = []
     sibling = node.prev_named_sibling
+    # GoDoc comments sit on consecutive lines directly above the declaration.
+    # A blank-line gap ends the doc block (per Go convention), so track the
+    # row each comment must occupy and stop once the chain is broken.
+    expected_row = node.start_point.row - 1
     while sibling is not None and sibling.type == "comment":
+        if sibling.end_point.row != expected_row:
+            break
         text = sibling.text.decode()
         if text.startswith("//"):
             lines.append(text[2:].strip())
+            expected_row = sibling.start_point.row - 1
             sibling = sibling.prev_named_sibling
         else:
             break

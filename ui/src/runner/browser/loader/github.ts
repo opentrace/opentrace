@@ -38,7 +38,11 @@ import type { RepoTree } from '../types';
 export function parseGitHubUrl(
   url: string,
 ): { owner: string; repo: string } | null {
-  const match = url.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+  // Repo names may contain dots (e.g. "react.dev"); stop only at a path
+  // separator / query / fragment, and drop an optional trailing ".git".
+  const match = url.match(
+    /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?(?:[/?#]|$)/,
+  );
   if (!match) return null;
   return { owner: match[1], repo: match[2] };
 }

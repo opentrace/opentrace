@@ -218,6 +218,22 @@ def parse_requirements_txt(content: str, source: str) -> list[ParsedDependency]:
 def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
     deps: list[ParsedDependency] = []
     section: str | None = None
+    # True while consuming a multi-line ``dependencies = [ ... ]`` array
+    # under ``[project]`` (the standard PEP 621 form).
+    in_project_deps = False
+
+    def _add_runtime(spec: str) -> None:
+        parsed = _parse_pep508_line(spec)
+        if parsed:
+            deps.append(
+                ParsedDependency(
+                    name=parsed[0],
+                    version=parsed[1],
+                    registry="pypi",
+                    source=source,
+                    dependency_type="runtime",
+                )
+            )
 
     for line in content.splitlines():
         stripped = line.strip()
@@ -225,37 +241,36 @@ def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
         # Section headers
         if stripped.startswith("["):
             section = stripped.strip("[]").strip()
+            in_project_deps = False
+            continue
+
+        # Continuation lines of a multi-line ``[project]`` dependencies array.
+        if in_project_deps:
+            for item in re.findall(r'"([^"]+)"', stripped):
+                _add_runtime(item)
+            # Detect the closing ``]`` on the unquoted part only — a bracket
+            # inside a quoted dependency (e.g. extras like ``requests[security]``)
+            # must not be mistaken for the end of the array.
+            if "]" in re.sub(r'"[^"]*"', "", stripped):
+                in_project_deps = False
             continue
 
         if section == "project.dependencies":
             # Array entry: "requests>=2.0"
             if stripped.startswith('"') or stripped.startswith("'"):
-                dep = _parse_pep508_line(stripped.strip("\"', "))
-                if dep:
-                    deps.append(
-                        ParsedDependency(
-                            name=dep[0],
-                            version=dep[1],
-                            registry="pypi",
-                            source=source,
-                            dependency_type="runtime",
-                        )
-                    )
+                _add_runtime(stripped.strip("\"', "))
         elif section == "project":
-            # Inline: dependencies = ["requests>=2.0", ...]
+            # dependencies = ["requests>=2.0", ...]  (inline or multi-line)
             if stripped.startswith("dependencies") and "=" in stripped:
                 for item in re.findall(r'"([^"]+)"', stripped):
-                    dep = _parse_pep508_line(item)
-                    if dep:
-                        deps.append(
-                            ParsedDependency(
-                                name=dep[0],
-                                version=dep[1],
-                                registry="pypi",
-                                source=source,
-                                dependency_type="runtime",
-                            )
-                        )
+                    _add_runtime(item)
+                # Array opened but not closed on the same line: entries
+                # continue on following lines until the closing ``]``. Check
+                # brackets on the unquoted part so extras inside a quoted dep
+                # (``requests[security]``) don't look like an open/close.
+                unquoted = re.sub(r'"[^"]*"', "", stripped)
+                if "[" in unquoted and "]" not in unquoted:
+                    in_project_deps = True
 
         elif section and section.startswith("project.optional-dependencies"):
             if stripped.startswith('"') or stripped.startswith("'"):

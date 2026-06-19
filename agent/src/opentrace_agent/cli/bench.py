@@ -31,7 +31,7 @@ from opentrace_agent.cli.main import _resolve_db
 
 
 def _configure_logging(verbose: bool) -> None:
-    level = logging.WARNING
+    level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
         format="%(levelname)s %(name)s: %(message)s",

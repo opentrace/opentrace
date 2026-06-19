@@ -817,7 +817,9 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
         raise SystemExit(str(e))
 
     log.debug("Opening database: %s", resolved_db)
-    store = GraphStore(resolved_db)
+    # serve is a read-only query surface; opening read-only avoids taking the
+    # exclusive write lock (which would block a concurrent `index`).
+    store = GraphStore(resolved_db, read_only=True)
 
     stats = store.get_stats()
     click.echo(f"Database: {resolved_db}")
@@ -1100,7 +1102,7 @@ def whoami() -> None:
     click.echo(f"Issuer:  {issuer}")
     click.echo(f"Type:    {token_type}")
     click.echo(f"Scope:   {scope}")
-    if created:
+    if isinstance(created, (int, float)):
         from datetime import datetime, timezone
 
         dt = datetime.fromtimestamp(created, tz=timezone.utc)

@@ -170,13 +170,57 @@ import (
         assert result.internal == {}
         assert result.external.get("github.com/gorilla/mux") == "pkg:go:github.com/gorilla/mux"
 
+    def test_external_import_not_matched_by_shared_last_segment(self):
+        """A third-party import must not resolve to a local dir that merely
+        shares its last path segment (e.g. .../store vs internal/store)."""
+        source = b'package main\n\nimport "github.com/other/store"\n'
+        known = {"internal/store/store.go"}
+        result = analyze_go_imports(_parse_go(source), known)
+        assert result.internal == {}
+        assert result.external.get("github.com/other/store") == "pkg:go:github.com/other/store"
+
+    def test_import_resolved_with_module_prefix_stripped(self):
+        """When the module path is known, the prefix is stripped to match the
+        repo-relative package directory."""
+        source = b'package main\n\nimport "myproject/internal/store"\n'
+        known = {"internal/store/store.go"}
+        result = analyze_go_imports(_parse_go(source), known, go_module_path="myproject")
+        assert result.internal.get("store") == "internal/store/store.go"
+
 
 class TestTypeScriptImports:
     def test_relative_import(self):
         source = b"import { helper } from './utils';\n"
         known = {"src/utils.ts", "src/main.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
-        assert result.internal.get("utils") == "src/utils.ts"
+        # Keyed by the imported binding name, not the file basename.
+        assert result.internal.get("helper") == "src/utils.ts"
+
+    def test_named_import_alias(self):
+        source = b"import { helper as h } from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("h") == "src/utils.ts"
+        assert "helper" not in result.internal
+
+    def test_default_import_binding(self):
+        source = b"import db from './database';\n"
+        known = {"src/database.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("db") == "src/database.ts"
+
+    def test_namespace_import_binding(self):
+        source = b"import * as u from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("u") == "src/utils.ts"
+
+    def test_multiple_named_bindings(self):
+        source = b"import { a, b } from './utils';\n"
+        known = {"src/utils.ts", "src/main.ts"}
+        result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
+        assert result.internal.get("a") == "src/utils.ts"
+        assert result.internal.get("b") == "src/utils.ts"
 
     def test_relative_import_parent_dir(self):
         source = b"import { config } from '../config';\n"
@@ -203,7 +247,7 @@ class TestTypeScriptImports:
         source = b"import { App } from './components';\n"
         known = {"src/components/index.ts", "src/main.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/main.ts", known)
-        assert result.internal.get("components") == "src/components/index.ts"
+        assert result.internal.get("App") == "src/components/index.ts"
 
     def test_tsx_extension_resolution(self):
         source = b"import { Widget } from './Widget';\n"
@@ -212,11 +256,11 @@ class TestTypeScriptImports:
         assert result.internal.get("Widget") == "src/Widget.tsx"
 
     def test_named_reexport(self):
-        """export { Config } from './config' should create an alias."""
+        """export { Config } from './config' should map the binding name."""
         source = b"export { Config } from './config';\n"
         known = {"src/config.ts", "src/index.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/index.ts", known)
-        assert result.internal.get("config") == "src/config.ts"
+        assert result.internal.get("Config") == "src/config.ts"
 
     def test_reexport_skips_external(self):
         """Re-exports from external packages should be skipped."""

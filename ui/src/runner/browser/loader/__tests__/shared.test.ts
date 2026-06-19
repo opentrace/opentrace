@@ -102,6 +102,24 @@ describe('runWithConcurrency', () => {
       throw new Error('should not be called');
     });
   });
+
+  it('attempts every item even when one fails, then throws AggregateError', async () => {
+    const processed: number[] = [];
+    await expect(
+      runWithConcurrency([1, 2, 3, 4], 2, async (item) => {
+        processed.push(item);
+        if (item === 2) throw new Error('boom');
+      }),
+    ).rejects.toBeInstanceOf(AggregateError);
+    // A single failure must not abandon the remaining queued items.
+    expect(processed.sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('does not reject when all items succeed', async () => {
+    await expect(
+      runWithConcurrency([1, 2, 3], 2, async () => {}),
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('extractFilesFromZip', () => {
