@@ -939,11 +939,10 @@ export class LadybugGraphStore implements GraphStore {
 
     // Two large-graph strategies, depending on which cap is binding:
     //
-    //  (a) Nodes don't fit (totalNodes > maxVisNodes): fetch edges first
-    //      then their endpoint nodes. Picks the most-connected subgraph
-    //      and guarantees every visible edge has both endpoints. The
-    //      node count is necessarily <= edge_endpoints, which is <=
-    //      maxVisNodes after capping.
+    //  (a) Nodes don't fit (totalNodes > maxVisNodes): fetch a stratified
+    //      sample of nodes first, then keep only edges that connect two
+    //      sampled nodes. Guarantees every visible edge has both endpoints
+    //      in the node set.
     //
     //  (b) Nodes fit but edges don't: fetch ALL nodes, then sample
     //      edges among them up to maxVisEdges. Without this, the
@@ -998,12 +997,19 @@ export class LadybugGraphStore implements GraphStore {
         }
       }
 
-      // Fetch all edges, keep those with both endpoints in the sample,
-      // stop at the edge cap.
-      const relRows = await this.query(
-        `MATCH (a)-[r:RELATES]->(b) ` +
-          `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties`,
-      );
+      // Fetch only edges whose endpoints are both in the sample, capped at
+      // maxVisEdges — pushed into the query so the DB never materializes the
+      // full RELATES set (can be 100k+ on large repos) just to discard it.
+      const sampledIds = [...nodeIdSet].map((id) => `'${esc(id)}'`).join(', ');
+      const relRows =
+        nodeIdSet.size > 0
+          ? await this.query(
+              `MATCH (a)-[r:RELATES]->(b) ` +
+                `WHERE a.id IN [${sampledIds}] AND b.id IN [${sampledIds}] ` +
+                `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
+                `LIMIT ${this.maxVisEdges}`,
+            )
+          : [];
       const links: GraphLink[] = [];
       for (const r of relRows as Record<string, string>[]) {
         if (!nodeIdSet.has(r.source) || !nodeIdSet.has(r.target)) continue;

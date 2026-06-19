@@ -365,9 +365,14 @@ describe('resolveCalls', () => {
     // matched a TS class method `IDBChatHistoryStore::list`. With the
     // language filter the call should now not resolve.
     const reg = emptyRegistries();
-    const tsMethod = makeNode('chat.ts::IDBChatHistoryStore::list', 'list', 'function', {
-      language: 'typescript',
-    });
+    const tsMethod = makeNode(
+      'chat.ts::IDBChatHistoryStore::list',
+      'list',
+      'function',
+      {
+        language: 'typescript',
+      },
+    );
     const pyCaller = makeNode('test.py::run', 'run', 'function', {
       language: 'python',
     });

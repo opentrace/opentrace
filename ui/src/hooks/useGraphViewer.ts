@@ -259,7 +259,7 @@ export const GRAPH_SETTING_DEFAULTS = {
   mode3dTilt: 35,
   labelScale: 100,
   communitiesEnabled: true,
-} as const;
+};
 
 /**
  * Orchestration hook for a graph viewer shell. Owns the state, effects,
@@ -402,7 +402,9 @@ export function useGraphViewer(
   const [zoomOnSelect, setZoomOnSelect] = useState(() =>
     ps('zoomOnSelect', D.zoomOnSelect),
   );
-  const [repulsion, setRepulsion] = useState(() => ps('repulsion', D.repulsion));
+  const [repulsion, setRepulsion] = useState(() =>
+    ps('repulsion', D.repulsion),
+  );
   const [labelsVisible, setLabelsVisible] = useState(() =>
     ps('labelsVisible', D.labelsVisible),
   );
@@ -475,7 +477,20 @@ export function useGraphViewer(
       mode3dTilt,
       labelScale,
     };
-    localStorage.setItem('graph-settings', JSON.stringify(settings));
+    // Merge into the existing entry rather than overwriting it — fields
+    // owned by other writers of this shared key (e.g. `communitiesEnabled`
+    // from GraphInteractionProvider) must survive our persist.
+    try {
+      const prev = JSON.parse(
+        localStorage.getItem('graph-settings') ?? '{}',
+      ) as Record<string, unknown>;
+      localStorage.setItem(
+        'graph-settings',
+        JSON.stringify({ ...prev, ...settings }),
+      );
+    } catch {
+      localStorage.setItem('graph-settings', JSON.stringify(settings));
+    }
   }, [
     repulsion,
     labelsVisible,

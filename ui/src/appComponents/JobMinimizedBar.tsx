@@ -41,9 +41,7 @@ interface Props {
 
 export default function JobMinimizedBar({ state, onClick, onCancel }: Props) {
   const isDone = state.status === 'done';
-  const label = isDone
-    ? 'Complete'
-    : (PHASE_LABELS[state.phase] ?? 'Indexing');
+  const label = isDone ? 'Complete' : (PHASE_LABELS[state.phase] ?? 'Indexing');
   const hasCount = !isDone && state.detail.total > 0;
 
   return (

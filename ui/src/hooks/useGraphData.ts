@@ -108,9 +108,13 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
           // Warm refresh (data already rendered): surface as a banner,
           // and keep the previous graph on screen. See Fix #2.
           const hadData = graphDataRef.current.nodes.length > 0;
+          // Clear the opposite channel so a stale error from a prior
+          // warm-refresh ↔ cold-start transition doesn't linger.
           if (hadData) {
+            setError(null);
             setRefreshError(err.message);
           } else {
+            setRefreshError(null);
             setError(err.message);
           }
         });

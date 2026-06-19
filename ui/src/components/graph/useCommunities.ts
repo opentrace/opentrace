@@ -75,7 +75,6 @@ export function useCommunities(
       return;
     }
     if (allNodes.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when graph clears
       setCommunityData(EMPTY_COMMUNITY);
       return;
     }

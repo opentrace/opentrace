@@ -65,11 +65,11 @@ export class WorkerGraphStore implements GraphStore {
   private nodesImportedSinceClear = 0;
 
   constructor() {
-    this.worker = new Worker(
-      new URL('./storeWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    this.worker.onmessage = (e: MessageEvent<InMessage>) => this.onMessage(e.data);
+    this.worker = new Worker(new URL('./storeWorker.ts', import.meta.url), {
+      type: 'module',
+    });
+    this.worker.onmessage = (e: MessageEvent<InMessage>) =>
+      this.onMessage(e.data);
     this.worker.onerror = (e) => {
       const err = new Error(e.message || 'store worker error');
       for (const req of this.pending.values()) req.reject(err);
@@ -130,7 +130,9 @@ export class WorkerGraphStore implements GraphStore {
 
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
     const result = await this.call<ImportBatchResponse>('importBatch', [batch]);
-    this.nodesImportedSinceClear += batch.nodes.length;
+    // Count nodes actually created, not the batch size — the worker may reject
+    // some (reported via result.errors), so batch.nodes.length would overcount.
+    this.nodesImportedSinceClear += result.nodes_created;
     return result;
   }
 

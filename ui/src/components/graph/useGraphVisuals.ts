@@ -162,6 +162,5 @@ export function useGraphVisuals(
       },
       { attributes: ['zIndex'] },
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, layoutReady, visualState, layoutConfig, isLargeGraph, themeKey]);
 }

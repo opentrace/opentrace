@@ -15,7 +15,11 @@
  */
 
 import { useCallback, useState } from 'react';
-import { StoreProvider, createLadybugStore } from './store';
+import {
+  StoreProvider,
+  createLadybugStore,
+  disposeLadybugStore,
+} from './store';
 import type { GraphStore } from './store';
 import { ServerGraphStore } from './store/serverStore';
 import { JobServiceProvider } from './job';
@@ -80,6 +84,9 @@ export function OpenTraceApp({
   );
 
   const handleConnectServer = useCallback((serverUrl: string) => {
+    // Leaving in-memory mode: tear down the local Web Worker + WASM DB so it
+    // doesn't linger for the page lifetime. No-op if it was never created.
+    disposeLadybugStore();
     const nextMode: StoreMode = `server:${serverUrl}`;
     setMode(nextMode);
     setStore(createStoreForMode(nextMode));

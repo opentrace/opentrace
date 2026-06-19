@@ -36,6 +36,7 @@ type OutMessage =
   | { seq: number; type: 'error'; message: string };
 
 interface PendingRequest {
+  type: 'init' | 'embed' | 'dispose';
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 }
@@ -49,17 +50,19 @@ export class WorkerEmbedder implements Embedder {
   private disposed = false;
 
   constructor(config: EmbedderConfig) {
-    this.worker = new Worker(
-      new URL('./embedderWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
+    this.worker = new Worker(new URL('./embedderWorker.ts', import.meta.url), {
+      type: 'module',
+    });
     this.worker.onmessage = (e: MessageEvent<OutMessage>) =>
       this.onMessage(e.data);
     this.worker.onerror = (e) => {
-      // Reject all pending requests if the worker itself errors out.
+      // A worker-level error is fatal: terminate, mark disposed so later
+      // calls fail fast instead of posting to a dead worker, and reject
+      // everything still pending.
       const err = new Error(e.message || 'embedder worker error');
-      for (const req of this.pending.values()) req.reject(err);
-      this.pending.clear();
+      this.disposed = true;
+      this.worker.terminate();
+      this.rejectAllPending(err);
     };
     // Eager init: fire off the model load now so it overlaps with
     // earlier pipeline stages. Matches the previous main-thread
@@ -99,13 +102,21 @@ export class WorkerEmbedder implements Embedder {
     if (this.disposed) return;
     this.disposed = true;
     try {
-      await this.request('dispose', {});
+      // Don't wait forever for a reply — a wedged worker would hang
+      // dispose() indefinitely. Race the ack against a short timeout.
+      await Promise.race([
+        this.request('dispose', {}),
+        new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+      ]);
     } catch {
       // Worker may already be dead — fall through to terminate.
     }
     this.worker.terminate();
     // Reject anything still pending.
-    const err = new Error('WorkerEmbedder disposed');
+    this.rejectAllPending(new Error('WorkerEmbedder disposed'));
+  }
+
+  private rejectAllPending(err: Error): void {
     for (const req of this.pending.values()) req.reject(err);
     this.pending.clear();
   }
@@ -114,13 +125,24 @@ export class WorkerEmbedder implements Embedder {
     type: 'init' | 'embed' | 'dispose',
     args: Record<string, unknown>,
   ): Promise<TReply> {
+    if (this.disposed && type !== 'dispose') {
+      return Promise.reject(new Error('WorkerEmbedder disposed'));
+    }
     const seq = this.nextSeq++;
     return new Promise<TReply>((resolve, reject) => {
       this.pending.set(seq, {
+        type,
         resolve: resolve as (value: unknown) => void,
         reject,
       });
-      this.worker.postMessage({ seq, type, ...args });
+      try {
+        this.worker.postMessage({ seq, type, ...args });
+      } catch (err) {
+        // postMessage can throw (e.g. worker terminated). Don't leave a
+        // dangling pending entry that would never settle.
+        this.pending.delete(seq);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -129,7 +151,15 @@ export class WorkerEmbedder implements Embedder {
     if (!req) return;
     this.pending.delete(msg.seq);
     if (msg.type === 'error') {
-      req.reject(new Error(msg.message));
+      const err = new Error(msg.message);
+      req.reject(err);
+      // A failed init means the model never loaded — the worker is
+      // unusable. Make it terminal so embed() calls fail fast.
+      if (req.type === 'init') {
+        this.disposed = true;
+        this.worker.terminate();
+        this.rejectAllPending(err);
+      }
       return;
     }
     if (msg.type === 'init-done') {

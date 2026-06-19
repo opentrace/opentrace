@@ -31,6 +31,15 @@ export function createLadybugStore(): WorkerGraphStore {
   return singletonStore;
 }
 
+/** Dispose and clear the singleton store, terminating its Web Worker.
+ *  Call when leaving in-memory mode (e.g. switching to a server backend)
+ *  so the worker and its WASM database don't linger for the lifetime of
+ *  the page. A later createLadybugStore() transparently rebuilds it. */
+export function disposeLadybugStore(): void {
+  singletonStore?.dispose();
+  singletonStore = null;
+}
+
 // Clean up WASM resources on Vite HMR to prevent memory leaks.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {

@@ -306,8 +306,8 @@ def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     (``self.foo()``, ``mod.func()``).
 
     Mirrors the UI's ``parser/extractors/python.ts:collectCalls`` — we
-    test the current node before recursing into children so a
-    lambda-body call_expression isn't dropped at the boundary (Fix #17).
+    test the current node before recursing into children so a lambda-body
+    ``call`` node isn't dropped at the boundary (Fix #17).
     """
     calls: list[CallRef] = []
     own = _extract_call_from_node(node)

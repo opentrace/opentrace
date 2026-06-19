@@ -318,11 +318,11 @@ class GraphStore:
           * **Rel FK filter** — drop rels whose FROM/TO nodes aren't
             yet in the DB. They'll come back on the next batch once
             their nodes have landed.
-          * **PARALLEL=FALSE / IGNORE_ERRORS=TRUE** — LadybugDB's
-            parallel CSV reader can't handle quoted newlines (which
-            our Python type-signature names regularly contain), so
-            we force single-threaded reads. The IGNORE option is
-            belt-and-braces for any row that still trips up.
+          * **PARALLEL=FALSE** — LadybugDB's parallel CSV reader can't
+            handle quoted newlines (which our Python type-signature
+            names regularly contain), so we force single-threaded
+            reads. Any row that still trips up raises, which import_batch
+            catches and routes to the MERGE fallback (no data loss).
         """
         import csv as _csv
         import os as _os
@@ -386,9 +386,24 @@ class GraphStore:
                     while res.has_next():
                         existing.add(str(res.get_next()[0]))
 
+                # In-batch dedup by id, keep last (matches node dedup above).
+                rel_seen: dict[str, dict[str, Any]] = {}
+                for r in relationships:
+                    rel_seen[r["id"]] = r
+
+                # Preserve merge-path idempotency: RELATES.id is not unique, so
+                # COPY would append duplicate logical edges on re-import. Delete
+                # any existing rels carrying these ids first, then re-insert.
+                rel_ids = list(rel_seen.keys())
+                if rel_ids:
+                    self._conn.execute(
+                        "MATCH ()-[r:RELATES]->() WHERE r.id IN $ids DELETE r",
+                        parameters={"ids": rel_ids},
+                    )
+
                 clean_rels = [
                     r
-                    for r in relationships
+                    for r in rel_seen.values()
                     if r["source_id"] in existing and r["target_id"] in existing
                 ]
                 if clean_rels:

@@ -78,120 +78,119 @@ export function useJobStream(jobService: JobService) {
       try {
         for await (const event of stream) {
           switch (event.kind) {
-              case JobEventKind.JOB_EVENT_KIND_PROGRESS: {
-                const d = event.detail ?? EMPTY_DETAIL;
-                setState((s) => {
-                  // Don't reopen a completed stage with new progress events
-                  // (e.g. enrichment batches fire "submitting" after parse already completed it)
-                  const existing = s.stages[event.phase];
-                  const stageUpdate =
-                    existing?.status === 'completed'
-                      ? {
-                          ...existing,
-                          current: d.current,
-                          total: d.total,
-                          message: event.message,
-                        }
-                      : {
-                          status: 'active' as StageStatus,
-                          current: d.current,
-                          total: d.total,
-                          message: event.message,
-                          fileName: d.fileName || undefined,
-                          ...(event.phase === JobPhase.JOB_PHASE_FETCHING
-                            ? { format: 'bytes' as const }
-                            : {}),
-                        };
-                  return {
-                    ...s,
-                    // Keep "enriching" status during enrichment progress updates
-                    status: s.status === 'enriching' ? 'enriching' : s.status,
-                    phase: event.phase,
+            case JobEventKind.JOB_EVENT_KIND_PROGRESS: {
+              const d = event.detail ?? EMPTY_DETAIL;
+              setState((s) => {
+                // Don't reopen a completed stage with new progress events
+                // (e.g. enrichment batches fire "submitting" after parse already completed it)
+                const existing = s.stages[event.phase];
+                const stageUpdate =
+                  existing?.status === 'completed'
+                    ? {
+                        ...existing,
+                        current: d.current,
+                        total: d.total,
+                        message: event.message,
+                      }
+                    : {
+                        status: 'active' as StageStatus,
+                        current: d.current,
+                        total: d.total,
+                        message: event.message,
+                        fileName: d.fileName || undefined,
+                        ...(event.phase === JobPhase.JOB_PHASE_FETCHING
+                          ? { format: 'bytes' as const }
+                          : {}),
+                      };
+                return {
+                  ...s,
+                  // Keep "enriching" status during enrichment progress updates
+                  status: s.status === 'enriching' ? 'enriching' : s.status,
+                  phase: event.phase,
+                  message: event.message,
+                  detail: d,
+                  nodesCreated: d.nodesCreated || s.nodesCreated,
+                  relationshipsCreated:
+                    d.relationshipsCreated || s.relationshipsCreated,
+                  stages: { ...s.stages, [event.phase]: stageUpdate },
+                };
+              });
+              break;
+            }
+            case JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE:
+              setState((s) => ({
+                ...s,
+                stages: {
+                  ...s.stages,
+                  [event.phase]: {
+                    ...s.stages[event.phase],
+                    status: 'completed' as StageStatus,
                     message: event.message,
-                    detail: d,
-                    nodesCreated: d.nodesCreated || s.nodesCreated,
-                    relationshipsCreated:
-                      d.relationshipsCreated || s.relationshipsCreated,
-                    stages: { ...s.stages, [event.phase]: stageUpdate },
-                  };
-                });
-                break;
-              }
-              case JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE:
-                setState((s) => ({
-                  ...s,
-                  stages: {
-                    ...s.stages,
-                    [event.phase]: {
-                      ...s.stages[event.phase],
-                      status: 'completed' as StageStatus,
-                      message: event.message,
-                    },
                   },
-                }));
-                break;
-              case JobEventKind.JOB_EVENT_KIND_GRAPH_READY:
-                setState((s) => ({
+                },
+              }));
+              break;
+            case JobEventKind.JOB_EVENT_KIND_GRAPH_READY:
+              setState((s) => ({
+                ...s,
+                status: 'persisted',
+                nodesCreated: event.result?.nodesCreated ?? s.nodesCreated,
+                relationshipsCreated:
+                  event.result?.relationshipsCreated ?? s.relationshipsCreated,
+                result: event.result ?? null,
+              }));
+              break;
+            case JobEventKind.JOB_EVENT_KIND_DONE:
+              setState((s) => {
+                // Mark all remaining active stages as completed
+                const finalStages = { ...s.stages };
+                for (const key of Object.keys(
+                  finalStages,
+                ) as unknown as JobPhase[]) {
+                  if (finalStages[key]?.status === 'active') {
+                    finalStages[key] = {
+                      ...finalStages[key]!,
+                      status: 'completed',
+                    };
+                  }
+                }
+                return {
                   ...s,
-                  status: 'persisted',
+                  status: 'done',
+                  phase: JobPhase.JOB_PHASE_DONE,
                   nodesCreated: event.result?.nodesCreated ?? s.nodesCreated,
                   relationshipsCreated:
                     event.result?.relationshipsCreated ??
                     s.relationshipsCreated,
                   result: event.result ?? null,
-                }));
-                break;
-              case JobEventKind.JOB_EVENT_KIND_DONE:
-                setState((s) => {
-                  // Mark all remaining active stages as completed
-                  const finalStages = { ...s.stages };
-                  for (const key of Object.keys(
-                    finalStages,
-                  ) as unknown as JobPhase[]) {
-                    if (finalStages[key]?.status === 'active') {
-                      finalStages[key] = {
-                        ...finalStages[key]!,
-                        status: 'completed',
-                      };
-                    }
+                  stages: finalStages,
+                };
+              });
+              break;
+            case JobEventKind.JOB_EVENT_KIND_ERROR:
+              setState((s) => {
+                // Mark all remaining active stages as completed to stop spinners
+                const finalStages = { ...s.stages };
+                for (const key of Object.keys(
+                  finalStages,
+                ) as unknown as JobPhase[]) {
+                  if (finalStages[key]?.status === 'active') {
+                    finalStages[key] = {
+                      ...finalStages[key]!,
+                      status: 'completed',
+                    };
                   }
-                  return {
-                    ...s,
-                    status: 'done',
-                    phase: JobPhase.JOB_PHASE_DONE,
-                    nodesCreated: event.result?.nodesCreated ?? s.nodesCreated,
-                    relationshipsCreated:
-                      event.result?.relationshipsCreated ??
-                      s.relationshipsCreated,
-                    result: event.result ?? null,
-                    stages: finalStages,
-                  };
-                });
-                break;
-              case JobEventKind.JOB_EVENT_KIND_ERROR:
-                setState((s) => {
-                  // Mark all remaining active stages as completed to stop spinners
-                  const finalStages = { ...s.stages };
-                  for (const key of Object.keys(
-                    finalStages,
-                  ) as unknown as JobPhase[]) {
-                    if (finalStages[key]?.status === 'active') {
-                      finalStages[key] = {
-                        ...finalStages[key]!,
-                        status: 'completed',
-                      };
-                    }
-                  }
-                  return {
-                    ...s,
-                    status: 'error',
-                    error: event.message,
-                    stages: finalStages,
-                  };
-                });
-                break;
-            }
+                }
+                return {
+                  ...s,
+                  status: 'error',
+                  error: event.message,
+                  stages: finalStages,
+                };
+              });
+              break;
           }
+        }
       } catch (err) {
         // Log stream errors — cancelled streams are expected, but other
         // errors (e.g. stack overflow) need to be visible for debugging

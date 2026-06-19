@@ -40,7 +40,10 @@ import { getSubType } from '../providers/graphFilterUtils';
 import type { JobMessage, JobState } from '../job';
 import { JobPhase } from '../job';
 import { useStore } from '../store';
-import { useGraphViewer, GRAPH_SETTING_DEFAULTS } from '../hooks/useGraphViewer';
+import {
+  useGraphViewer,
+  GRAPH_SETTING_DEFAULTS,
+} from '../hooks/useGraphViewer';
 import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
 import ExportModal from './ExportModal';
 import {
@@ -538,8 +541,7 @@ const GraphViewer = memo(
               stages={INDEXING_STAGES}
               onClose={onJobClose}
               onMinimize={
-                jobState.status === 'running' ||
-                jobState.status === 'enriching'
+                jobState.status === 'running' || jobState.status === 'enriching'
                   ? onJobMinimize
                   : undefined
               }
@@ -618,9 +620,7 @@ const GraphViewer = memo(
               edgesVisible={v.settings.edgesVisible}
               setEdgesVisible={v.settings.setEdgesVisible}
               communityLabelsVisible={v.settings.communityLabelsVisible}
-              setCommunityLabelsVisible={
-                v.settings.setCommunityLabelsVisible
-              }
+              setCommunityLabelsVisible={v.settings.setCommunityLabelsVisible}
               communitiesEnabled={v.settings.communitiesEnabled}
               setCommunitiesEnabled={v.settings.setCommunitiesEnabled}
               colorMode={colorMode}

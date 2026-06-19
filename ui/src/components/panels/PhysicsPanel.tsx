@@ -101,7 +101,6 @@ export default function PhysicsPanel({
   edgesEnabled = true,
   onEdgesEnabledChange,
   layoutMode = 'spread',
-  onLayoutModeChange,
   communityLabelsVisible = true,
   onCommunityLabelsVisibleChange,
   communitiesEnabled = true,
@@ -290,9 +289,7 @@ export default function PhysicsPanel({
             onClick={() => onEdgesEnabledChange(!edgesEnabled)}
           >
             <span className="physics-toggle-label">Show edges</span>
-            <div
-              className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}
-            >
+            <div className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}>
               <div className="physics-toggle-thumb" />
             </div>
           </div>

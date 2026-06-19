@@ -144,7 +144,14 @@ function resolveSingleCall(
   if (ref.kind === 'attribute' && ref.receiver && callerNode.paramTypes) {
     const typeName = callerNode.paramTypes[ref.receiver];
     if (typeName && classRegistry.has(typeName)) {
-      const classCandidates = classRegistry.get(typeName)!;
+      // Same-file-or-same-language guard (matches strategies 3/5/7) so a
+      // param type name colliding with a class in another language can't
+      // cross-resolve.
+      const classCandidates = classRegistry
+        .get(typeName)!
+        .filter(
+          (c) => c.fileId === fileId || c.language === callerNode.language,
+        );
       for (const cls of classCandidates) {
         for (const child of cls.children) {
           if (child.name === ref.name) {

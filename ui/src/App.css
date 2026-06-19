@@ -56,7 +56,7 @@
   border: 1px solid color-mix(in oklch, var(--destructive) 60%, transparent);
   border-radius: var(--radius);
   box-shadow: 0 4px 14px -4px hsl(0 0% 0% / 0.35);
-  animation: refreshErrorBannerIn 0.18s ease-out;
+  animation: refresh-error-banner-in 0.18s ease-out;
 }
 
 .refresh-error-banner__text {
@@ -70,7 +70,7 @@
 .refresh-error-banner__dismiss {
   background: transparent;
   color: inherit;
-  border: 1px solid color-mix(in oklch, currentColor 40%, transparent);
+  border: 1px solid color-mix(in oklch, currentcolor 40%, transparent);
   border-radius: calc(var(--radius) - 2px);
   cursor: pointer;
   transition: background 0.15s;
@@ -95,10 +95,10 @@
 
 .refresh-error-banner__retry:hover,
 .refresh-error-banner__dismiss:hover {
-  background: color-mix(in oklch, currentColor 12%, transparent);
+  background: color-mix(in oklch, currentcolor 12%, transparent);
 }
 
-@keyframes refreshErrorBannerIn {
+@keyframes refresh-error-banner-in {
   from {
     opacity: 0;
     transform: translate(-50%, -8px);

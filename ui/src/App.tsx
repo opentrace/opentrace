@@ -165,7 +165,7 @@ function AppInner({
       setJobExpanded(false);
       startJob(message);
     },
-    [startJob],
+    [startJob, onConnectServer],
   );
 
   // Index or navigate to a repo by URL — shared by ?repo= param and postMessage

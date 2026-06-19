@@ -26,6 +26,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -77,25 +78,28 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
     index_jobs: dict[str, dict[str, Any]] = {}
     index_jobs_lock = threading.Lock()
 
-    def _current_store() -> Optional[GraphStore]:
-        with store_lock:
-            return store_ref["store"]
+    def _with_store(fn: Callable[[GraphStore], JSONResponse]) -> JSONResponse:
+        """Run *fn* against the live store while holding ``store_lock``.
 
-    def _require_store() -> GraphStore | JSONResponse:
-        """Return the current store, or a 503 if it's being swapped
-        (i.e. indexing is mid-flight)."""
-        cur = _current_store()
-        if cur is None:
-            return _error(503, "Server is reindexing; retry shortly")
-        return cur
+        Holding the lock for the whole operation closes the use-after-close
+        race with the reindex worker, which closes the store under the same
+        lock: previously a read handler snapshotted the store and called it
+        *outside* the lock, so the worker could ``cur.close()`` mid-read and
+        crash the LadybugDB C extension. Read handlers issue blocking store
+        calls on the event loop (which already serializes them), so holding
+        the lock adds only read-vs-swap exclusion, not read-vs-read
+        contention. Returns 503 while the store is being swapped
+        (``store_ref["store"]`` is None mid-reindex).
+        """
+        with store_lock:
+            cur = store_ref["store"]
+            if cur is None:
+                return _error(503, "Server is reindexing; retry shortly")
+            return fn(cur)
 
     async def get_stats(request: Request) -> JSONResponse:
         """GET /api/stats"""
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        data = cur.get_stats()
-        return JSONResponse(data)
+        return _with_store(lambda cur: JSONResponse(cur.get_stats()))
 
     async def fetch_graph(request: Request) -> JSONResponse:
         """GET /api/graph?query=&hops=&limit=&maxNodes=&maxEdges=
@@ -139,22 +143,57 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         if isinstance(max_edges, JSONResponse):
             return max_edges
 
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
+        def _do(cur: GraphStore) -> JSONResponse:
+            if not query:
+                # Return a stratified sample of nodes (across all types) and the
+                # relationships among them. Allocate `max_nodes` across non-empty
+                # types by ascending count: small types take their full count and
+                # leave room for larger ones, leftover capacity is re-divided
+                # among the remaining (bigger) types each iteration. This mirrors
+                # the browser store (ui/src/store/ladybugStore.ts) and avoids a
+                # biased sample dominated by whichever type the DB surfaces first.
+                stats = cur.get_stats()
+                type_counts = [
+                    (ntype, int(count))
+                    for ntype, count in stats.get("nodes_by_type", {}).items()
+                    if int(count) > 0
+                ]
+                type_counts.sort(key=lambda tc: tc[1])
 
-        if not query:
-            # Return all nodes (across all types) and their relationships
-            all_nodes: list[dict] = []
-            stats = cur.get_stats()
-            for ntype in stats.get("nodes_by_type", {}):
-                all_nodes.extend(cur.list_nodes(node_type=ntype, limit=max_nodes))
-                if len(all_nodes) >= max_nodes:
-                    break
-            all_nodes = all_nodes[:max_nodes]
+                all_nodes: list[dict] = []
+                remaining = max_nodes
+                for i, (ntype, count) in enumerate(type_counts):
+                    even_share = remaining // (len(type_counts) - i)
+                    take = min(count, even_share)
+                    if take <= 0:
+                        continue
+                    all_nodes.extend(cur.list_nodes(node_type=ntype, limit=take))
+                    remaining -= take
 
-            node_ids = {n["id"] for n in all_nodes}
-            all_rels = cur.list_relationships_for_nodes(node_ids, max_edges)
+                node_ids = {n["id"] for n in all_nodes}
+                # list_relationships_for_nodes already caps at max_edges.
+                all_rels = cur.list_relationships_for_nodes(node_ids, max_edges)
+                links = [
+                    {
+                        "source": r["source_id"],
+                        "target": r["target_id"],
+                        "type": r["type"],
+                        "id": r["id"],
+                        "properties": r.get("properties"),
+                    }
+                    for r in all_rels
+                ]
+                return JSONResponse({"nodes": all_nodes, "links": links})
+
+            nodes, relationships = cur.search_graph(query, hops=hops)
+            # Search path: apply the same caps after the search returns.
+            nodes = nodes[:max_nodes]
+            node_ids = {n["id"] for n in nodes}
+            capped_rels = [
+                r
+                for r in relationships
+                if r["source_id"] in node_ids and r["target_id"] in node_ids
+            ][:max_edges]
             links = [
                 {
                     "source": r["source_id"],
@@ -163,30 +202,11 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
                     "id": r["id"],
                     "properties": r.get("properties"),
                 }
-                for r in all_rels[:max_edges]
+                for r in capped_rels
             ]
-            return JSONResponse({"nodes": all_nodes, "links": links})
+            return JSONResponse({"nodes": nodes, "links": links})
 
-        nodes, relationships = cur.search_graph(query, hops=hops)
-        # Search path: apply the same caps after the search returns.
-        nodes = nodes[:max_nodes]
-        node_ids = {n["id"] for n in nodes}
-        capped_rels = [
-            r
-            for r in relationships
-            if r["source_id"] in node_ids and r["target_id"] in node_ids
-        ][:max_edges]
-        links = [
-            {
-                "source": r["source_id"],
-                "target": r["target_id"],
-                "type": r["type"],
-                "id": r["id"],
-                "properties": r.get("properties"),
-            }
-            for r in capped_rels
-        ]
-        return JSONResponse({"nodes": nodes, "links": links})
+        return _with_store(_do)
 
     async def search_nodes(request: Request) -> JSONResponse:
         """GET /api/nodes/search?query=&limit=&nodeTypes="""
@@ -199,11 +219,11 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             return _error(400, "Invalid parameter: limit must be an integer")
         node_types_param = request.query_params.get("nodeTypes", "")
         node_types = [t.strip() for t in node_types_param.split(",") if t.strip()] or None
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        results = cur.search_nodes(query, node_types=node_types, limit=limit)
-        return JSONResponse(results)
+        return _with_store(
+            lambda cur: JSONResponse(
+                cur.search_nodes(query, node_types=node_types, limit=limit)
+            )
+        )
 
     async def list_nodes(request: Request) -> JSONResponse:
         """GET /api/nodes/list?type=&limit=&filters="""
@@ -216,22 +236,23 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             filters = json.loads(filters_param) if filters_param else None
         except (ValueError, json.JSONDecodeError) as e:
             return _error(400, f"Invalid parameter: {e}")
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        results = cur.list_nodes(node_type=node_type, filters=filters, limit=limit)
-        return JSONResponse(results)
+        return _with_store(
+            lambda cur: JSONResponse(
+                cur.list_nodes(node_type=node_type, filters=filters, limit=limit)
+            )
+        )
 
     async def get_node(request: Request) -> JSONResponse:
         """GET /api/nodes/{node_id}"""
         node_id = request.path_params["node_id"]
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        node = cur.get_node(node_id)
-        if node is None:
-            return _error(404, f"Node not found: {node_id}")
-        return JSONResponse(node)
+
+        def _do(cur: GraphStore) -> JSONResponse:
+            node = cur.get_node(node_id)
+            if node is None:
+                return _error(404, f"Node not found: {node_id}")
+            return JSONResponse(node)
+
+        return _with_store(_do)
 
     async def traverse(request: Request) -> JSONResponse:
         """POST /api/traverse"""
@@ -247,21 +268,24 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         rel_type = body.get("relType") or None
         if direction not in ("outgoing", "incoming", "both"):
             return _error(400, f"Invalid direction: {direction}")
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        try:
-            results = cur.traverse(node_id, direction=direction, max_depth=max_depth, relationship_type=rel_type)
-        except ValueError as e:
-            return _error(404, str(e))
-        return JSONResponse(results)
+
+        def _do(cur: GraphStore) -> JSONResponse:
+            try:
+                results = cur.traverse(
+                    node_id,
+                    direction=direction,
+                    max_depth=max_depth,
+                    relationship_type=rel_type,
+                )
+            except ValueError as e:
+                return _error(404, str(e))
+            return JSONResponse(results)
+
+        return _with_store(_do)
 
     async def get_metadata(request: Request) -> JSONResponse:
         """GET /api/metadata"""
-        cur = _require_store()
-        if isinstance(cur, JSONResponse):
-            return cur
-        return JSONResponse(cur.get_metadata())
+        return _with_store(lambda cur: JSONResponse(cur.get_metadata()))
 
     async def health(request: Request) -> JSONResponse:
         """GET /api/health"""
@@ -309,8 +333,8 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         # Local imports — avoid forcing CLI dependencies on read-only
         # `serve` startups that never call this endpoint.
         from opentrace_agent.cli.main import (
-            _run_indexing_pipeline,
             _do_clone,
+            _run_indexing_pipeline,
             _update_existing_clone,
         )
 
@@ -507,19 +531,22 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         if not isinstance(body.get("repoUrl"), str):
             return _error(400, "Invalid field: repoUrl must be a string")
 
+        # Atomic check-and-insert: hold the lock across both the active-job
+        # guard and the new job's insertion. Releasing between the two would
+        # let two concurrent requests both observe no active job and each
+        # spawn an indexing thread (TOCTOU), wasting clone/parse work.
+        job_id = uuid.uuid4().hex
         with index_jobs_lock:
             active = [
                 jid for jid, st in index_jobs.items() if not st.get("done")
             ]
-        if active:
-            return _error(
-                409,
-                "Another index is already running on this agent. Wait "
-                "for it to finish before starting a new one.",
-            )
+            if active:
+                return _error(
+                    409,
+                    "Another index is already running on this agent. Wait "
+                    "for it to finish before starting a new one.",
+                )
 
-        job_id = uuid.uuid4().hex
-        with index_jobs_lock:
             index_jobs[job_id] = {
                 "jobId": job_id,
                 "phase": "queued",
@@ -567,7 +594,9 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         """
         with index_jobs_lock:
             active = [
-                st for st in index_jobs.values() if not st.get("done")
+                st
+                for st in index_jobs.values()
+                if not st.get("done") and st.get("kind") != "clear"
             ]
             if not active:
                 return JSONResponse(None)
@@ -590,48 +619,74 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         """
         if db_path is None:
             return _error(503, "Server was started without --db; clear is unavailable")
+
+        # Atomically reserve exclusivity against index-url: check that no job
+        # is active AND register a sentinel under the SAME lock acquisition.
+        # Without this, a concurrent index-url could pass its own guard
+        # between our check and our unlink, then have its pipeline swap a
+        # staging DB over the files we're deleting (clear-vs-index TOCTOU).
+        # The index-vs-index hole is already closed by index_url's atomic
+        # check-and-insert; this extends the same guard to clear.
+        clear_job_id = uuid.uuid4().hex
         with index_jobs_lock:
             active = [
                 jid for jid, st in index_jobs.items() if not st.get("done")
             ]
-        if active:
-            return _error(
-                409,
-                "An index job is currently running — wait for it to "
-                "finish before clearing the database.",
-            )
+            if active:
+                return _error(
+                    409,
+                    "An index job is currently running — wait for it to "
+                    "finish before clearing the database.",
+                )
+            index_jobs[clear_job_id] = {
+                "jobId": clear_job_id,
+                "kind": "clear",
+                "phase": "clearing",
+                "message": "Clearing database",
+                "done": False,
+                "error": None,
+                "result": None,
+                "startedAt": time.time(),
+            }
 
         from pathlib import Path as _Path
 
-        with store_lock:
-            cur = store_ref["store"]
-            if cur is not None:
-                try:
-                    cur.close()
-                except Exception:
-                    logger.warning("Failed to close store cleanly before clear", exc_info=True)
-            store_ref["store"] = None
-
-            # Drop the on-disk artifacts. Mirrors what `opentraceai
-            # index` does when it swaps staging into place — same set
-            # of files to remove. Cleared in this order so a partial
-            # failure doesn't leave a half-removed DB that fails to
-            # reopen.
-            for suffix in ("", ".wal"):
-                p = _Path(db_path + suffix)
-                if p.exists():
+        try:
+            with store_lock:
+                cur = store_ref["store"]
+                if cur is not None:
                     try:
-                        p.unlink()
-                    except OSError as exc:
-                        logger.warning("Failed to remove %s: %s", p, exc)
+                        cur.close()
+                    except Exception:
+                        logger.warning("Failed to close store cleanly before clear", exc_info=True)
+                store_ref["store"] = None
 
-            try:
-                store_ref["store"] = GraphStore(db_path)
-            except Exception:
-                logger.exception("Failed to reopen empty store after clear")
-                return _error(500, "Database cleared but could not reopen — restart the agent.")
+                # Drop the on-disk artifacts. Mirrors what `opentraceai
+                # index` does when it swaps staging into place — same set
+                # of files to remove. Cleared in this order so a partial
+                # failure doesn't leave a half-removed DB that fails to
+                # reopen.
+                for suffix in ("", ".wal"):
+                    p = _Path(db_path + suffix)
+                    if p.exists():
+                        try:
+                            p.unlink()
+                        except OSError as exc:
+                            logger.warning("Failed to remove %s: %s", p, exc)
 
-        return JSONResponse({"status": "ok"})
+                try:
+                    store_ref["store"] = GraphStore(db_path)
+                except Exception:
+                    logger.exception("Failed to reopen empty store after clear")
+                    return _error(500, "Database cleared but could not reopen — restart the agent.")
+
+            return JSONResponse({"status": "ok"})
+        finally:
+            # Release the exclusivity sentinel so index-url can run again.
+            with index_jobs_lock:
+                job = index_jobs.get(clear_job_id)
+                if job is not None:
+                    job["done"] = True
 
     routes = [
         Route("/api/health", health, methods=["GET"]),

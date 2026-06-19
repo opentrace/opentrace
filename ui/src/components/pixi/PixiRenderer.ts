@@ -217,10 +217,10 @@ export class PixiRenderer {
    *  short-circuit `setCommunityData` when Louvain reruns produce the
    *  same names under different community IDs (Fix #36). */
   private communityNamesFingerprint: string | null = null;
-  /** Stickiness for community wayfinders (Fix #35). Same idea as
-   *  `currentlyLabeled` for node labels — the cull prefers previously-
-   *  shown communities so they don't blink in/out as rotation drifts
-   *  their projected centroids in and out of overlap with neighbours. */
+  /** Stickiness for community wayfinders (Fix #35). The cull prefers
+   *  previously-shown communities so they don't blink in/out as rotation
+   *  drifts their projected centroids in and out of overlap with
+   *  neighbours. */
   private currentlyShownCommunities = new Set<number>();
   /** User toggle for community wayfinder visibility (Fix #52).
    *  Previously the labels were gated on `layoutMode === 'compact'`,
@@ -315,24 +315,6 @@ export class PixiRenderer {
   // Debounced label re-culling
   private lastLabelCull = 0;
   private readonly LABEL_CULL_INTERVAL = 500; // ms (throttle for non-debounced calls)
-  /** Node IDs that received a label on the most recent cull (Fix #30).
-   *  Used as a stability hint: when the cull runs again on slightly
-   *  drifted positions, these candidates get processed before equally
-   *  important newcomers, so the same label keeps its slot unless a
-   *  *strictly larger* node now occupies its overlap rect. Without
-   *  this, labels visibly flicker every cull cycle during settling
-   *  because tiny position shifts swap which candidate "wins" a tile. */
-  private currentlyLabeled = new Set<string>();
-  /** Longer cull interval while the layout is unsettled or the
-   *  auto-fit follower is actively easing the viewport (Fix #9 follow-
-   *  up). Without this, `applyCounterScale` — which the follower
-   *  invokes on every ticker frame — would re-run the overlap cull
-   *  at 60fps. Each frame's tiny position shift produces a slightly
-   *  different overlap order, so labels rapidly switch on and off
-   *  until the layout stops moving. Throttling to ~1.5 s lets the
-   *  user see a stable label set throughout the transition; the cull
-   *  catches up quickly once the layout settles. */
-  private readonly LABEL_CULL_INTERVAL_TRANSITION = 1500; // ms
   private labelCullDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly LABEL_CULL_DEBOUNCE = 300; // ms — wait for zoom/interaction to stop
 
@@ -2000,13 +1982,11 @@ export class PixiRenderer {
 
   // ─── Bloom ─────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomEnabled(_enabled: boolean): void {
     // Placeholder — full bloom requires pixi-filters v6 package.
     // When available, creates AdvancedBloomFilter on app.stage.
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setBloomStrength(_strength: number): void {
     // Placeholder for bloom strength control — requires pixi-filters.
   }
@@ -2244,13 +2224,15 @@ export class PixiRenderer {
   }
 
   /**
-   * Throttled auto-fit — re-frames the graph at most ~5×/sec while the user
-   * has not taken manual control of the camera. Trailing-edge throttle: the
-   * first call schedules a fit; subsequent calls while a fit is pending are
-   * ignored (not reset), so bursty producers like the d3-force worker
-   * streaming positions every ~66 ms still get periodic re-fits. Resetting
-   * the timer on every call (classic debounce) would starve the fit
-   * indefinitely because sim ticks arrive faster than the throttle window.
+   * Continuous easing auto-fit — refreshes the follower's target from live
+   * positions while the user has not taken manual control of the camera. The
+   * ticker eases the viewport toward this target each frame, so bursty
+   * producers like the d3-force worker streaming positions every ~66 ms drive
+   * a smooth chase rather than discrete animations (Fix #9 / Option C).
+   *
+   * `_duration` is retained for API compatibility with callers (and the
+   * `IPixiCanvasHandle` contract); the easing follower has its own per-frame
+   * rate, so the value is intentionally ignored.
    */
   scheduleAutoFit(_duration = 200): void {
     if (this.hasUserMovedCamera) return;
@@ -2763,9 +2745,9 @@ export class PixiRenderer {
     communityAssignments: Record<string, number>,
   ): void {
     this.nodeDepthT.clear();
-    const uniqueComms = [
-      ...new Set(Object.values(communityAssignments)),
-    ].sort((a, b) => a - b);
+    const uniqueComms = [...new Set(Object.values(communityAssignments))].sort(
+      (a, b) => a - b,
+    );
     const commDepth = new Map<number, number>();
     const GOLDEN_ANGLE = 0.618033988749;
     for (let i = 0; i < uniqueComms.length; i++) {
@@ -2990,10 +2972,7 @@ export class PixiRenderer {
     // jittered across frames — which made the overlap cull pick
     // different winners each frame, blinking labels on/off.
     if (communitySums && communityZ) {
-      const projected = new Map<
-        number,
-        { x: number; y: number; n: number }
-      >();
+      const projected = new Map<number, { x: number; y: number; n: number }>();
       for (const [cid, sum] of communitySums) {
         const cx = sum.x / sum.n;
         const cy = sum.y / sum.n;

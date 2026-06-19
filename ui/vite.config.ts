@@ -201,6 +201,11 @@ export default defineConfig(({ mode }) => {
     },
     worker: {
       format: 'es',
+      // Workers bundle through a separate plugin pipeline. storeWorker.ts
+      // pulls in parquet-wasm (via LadybugGraphStore), so the worker build
+      // needs vite-plugin-wasm too — without it production `vite build`
+      // fails on the .wasm ESM import (dev works via the wasm middleware).
+      plugins: () => [wasm()],
     },
   };
 });

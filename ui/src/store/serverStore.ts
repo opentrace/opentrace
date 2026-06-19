@@ -90,8 +90,10 @@ export class ServerGraphStore implements GraphStore {
       const savedEdges = localStorage.getItem('ot:maxVisEdges');
       const n = savedNodes != null ? Number(savedNodes) : NaN;
       const e = savedEdges != null ? Number(savedEdges) : NaN;
-      if (Number.isFinite(n) && n > 0) this.maxVisNodes = n;
-      if (Number.isFinite(e) && e > 0) this.maxVisEdges = e;
+      // Integers only — the /api/graph contract rejects non-integer caps,
+      // so a persisted decimal would make every fetch 400.
+      if (Number.isInteger(n) && n > 0) this.maxVisNodes = n;
+      if (Number.isInteger(e) && e > 0) this.maxVisEdges = e;
     } catch {
       /* localStorage unavailable (SSR, restricted browser) — keep defaults */
     }
@@ -154,6 +156,14 @@ export class ServerGraphStore implements GraphStore {
    * SettingsDrawer's `applyLimits()`.
    */
   async setLimits(maxNodes: number, maxEdges: number): Promise<void> {
+    // The /api/graph contract rejects non-integer caps — validate here so a
+    // bad value fails loudly instead of 400-ing every subsequent fetch.
+    if (!Number.isInteger(maxNodes) || maxNodes <= 0) {
+      throw new Error('maxNodes must be a positive integer');
+    }
+    if (!Number.isInteger(maxEdges) || maxEdges <= 0) {
+      throw new Error('maxEdges must be a positive integer');
+    }
     this.maxVisNodes = maxNodes;
     this.maxVisEdges = maxEdges;
   }
@@ -330,7 +340,6 @@ export class ServerGraphStore implements GraphStore {
 
   // ---- Write methods (no-ops — server owns the data) ------------------
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async importBatch(_batch: ImportBatchRequest): Promise<ImportBatchResponse> {
     // Server mode: data lives on the server, not imported from the browser.
     return { nodes_created: 0, relationships_created: 0 };
@@ -340,7 +349,6 @@ export class ServerGraphStore implements GraphStore {
     // No-op — nothing buffered.
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   storeSource(_files: SourceFile[]): void {
     // No-op — source lives on the server.
   }

@@ -42,7 +42,14 @@ type OutMessage =
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pipelineInstance: any = null;
-let dimension = 384;
+const dimension = 384;
+
+// Serializes embed work across messages. `handleEmbed` is sequential
+// *within* one message, but without this a second `embed` message could
+// enter `onmessage` while the first is still awaiting, running concurrent
+// WASM inference and defeating the OOM guard. Chain every embed onto this
+// promise so only one runs at a time.
+let embedQueue: Promise<void> = Promise.resolve();
 
 async function handleInit(config: EmbedderConfig): Promise<number> {
   const { pipeline } = await import('@huggingface/transformers');
@@ -90,19 +97,34 @@ self.onmessage = async (e: MessageEvent<InMessage>) => {
   try {
     if (msg.type === 'init') {
       const dim = await handleInit(msg.config);
-      const reply: OutMessage = { seq: msg.seq, type: 'init-done', dimension: dim };
+      const reply: OutMessage = {
+        seq: msg.seq,
+        type: 'init-done',
+        dimension: dim,
+      };
       (self as unknown as Worker).postMessage(reply);
       return;
     }
     if (msg.type === 'embed') {
-      const vectors = await handleEmbed(msg.texts);
-      const reply: OutMessage = { seq: msg.seq, type: 'embed-result', vectors };
-      // Transfer the underlying buffers — zero-copy hand-off back to
-      // the main thread. Once transferred we no longer hold a usable
-      // reference in the worker, which is fine: we constructed them
-      // for this reply and don't reuse.
-      const transfer = vectors.map((v) => v.buffer);
-      (self as unknown as Worker).postMessage(reply, transfer);
+      // Queue behind any in-flight embed so inference stays serialized.
+      const task = embedQueue.then(async () => {
+        const vectors = await handleEmbed(msg.texts);
+        const reply: OutMessage = {
+          seq: msg.seq,
+          type: 'embed-result',
+          vectors,
+        };
+        // Transfer the underlying buffers — zero-copy hand-off back to
+        // the main thread. Once transferred we no longer hold a usable
+        // reference in the worker, which is fine: we constructed them
+        // for this reply and don't reuse.
+        const transfer = vectors.map((v) => v.buffer);
+        (self as unknown as Worker).postMessage(reply, transfer);
+      });
+      // Keep the chain alive even if this task rejects; the await below
+      // routes the error to the catch handler for an error reply.
+      embedQueue = task.catch(() => undefined);
+      await task;
       return;
     }
     if (msg.type === 'dispose') {

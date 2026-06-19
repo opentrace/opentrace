@@ -32,14 +32,20 @@
 
 import { LadybugGraphStore } from './ladybugStore';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
-import type {
-  ImportBatchRequest,
-  SourceFile,
-} from './types';
+import type { ImportBatchRequest, SourceFile } from './types';
 
-type CallMessage = { seq: number; type: 'call'; method: string; args: unknown[] };
+type CallMessage = {
+  seq: number;
+  type: 'call';
+  method: string;
+  args: unknown[];
+};
 type SetEmbedderMessage = { type: 'set-embedder' };
-type EmbedReplyMessage = { seq: number; type: 'embed-reply'; vectors: number[][] };
+type EmbedReplyMessage = {
+  seq: number;
+  type: 'embed-reply';
+  vectors: number[][];
+};
 type EmbedErrorMessage = { seq: number; type: 'embed-error'; message: string };
 
 type InMessage =

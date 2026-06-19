@@ -52,7 +52,11 @@ function loadLimit(key: string, fallback: number): number {
  * "Update".
  */
 function parseLimit(text: string, fallback: number): number {
-  const n = Number.parseInt(text, 10);
+  // Reject partial parses ("100abc" → 100) — require all-digits so a
+  // malformed entry falls back instead of silently applying a bad limit.
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return fallback;
+  const n = Number(trimmed);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
@@ -156,7 +160,8 @@ export default function SettingsDrawer({
   const savedEdges = loadLimit(LS_KEY_EDGES, DEFAULT_MAX_EDGES);
   const parsedNodes = parseLimit(maxNodesText, savedNodes);
   const parsedEdges = parseLimit(maxEdgesText, savedEdges);
-  const limitsChanged = parsedNodes !== savedNodes || parsedEdges !== savedEdges;
+  const limitsChanged =
+    parsedNodes !== savedNodes || parsedEdges !== savedEdges;
 
   const applyLimits = async () => {
     const nextNodes = parsedNodes;

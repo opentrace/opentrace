@@ -35,7 +35,6 @@ const FullscreenExitIcon = () => (
   </>
 );
 
-
 const SearchIcon = ({ withCross }: { withCross: boolean }) => (
   <svg
     width="16"
