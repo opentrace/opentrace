@@ -414,9 +414,7 @@ def _run_indexing_pipeline(
                         try:
                             on_event(event)
                         except Exception:
-                            logging.getLogger(__name__).debug(
-                                "on_event callback raised; ignoring", exc_info=True
-                            )
+                            logging.getLogger(__name__).debug("on_event callback raised; ignoring", exc_info=True)
 
                 elapsed = time.monotonic() - t0
 

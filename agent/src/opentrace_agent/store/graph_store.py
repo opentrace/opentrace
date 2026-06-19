@@ -350,9 +350,7 @@ class GraphStore:
                     while res.has_next():
                         existing_node_ids.add(str(res.get_next()[0]))
 
-                deduped = [
-                    n for nid, n in seen.items() if nid not in existing_node_ids
-                ]
+                deduped = [n for nid, n in seen.items() if nid not in existing_node_ids]
 
                 if deduped:
                     csv_path = _os.path.join(tmpdir, "nodes.csv")
@@ -401,11 +399,7 @@ class GraphStore:
                         parameters={"ids": rel_ids},
                     )
 
-                clean_rels = [
-                    r
-                    for r in rel_seen.values()
-                    if r["source_id"] in existing and r["target_id"] in existing
-                ]
+                clean_rels = [r for r in rel_seen.values() if r["source_id"] in existing and r["target_id"] in existing]
                 if clean_rels:
                     csv_path = _os.path.join(tmpdir, "rels.csv")
                     with open(csv_path, "w", newline="", encoding="utf-8") as fh:
@@ -845,9 +839,7 @@ class GraphStore:
         # Pre-count for a meaningful return value. LadybugDB lacks a
         # `RETURN count(*)` from DETACH DELETE, so we count up front.
         node_count = self._conn.execute(
-            "MATCH (n:Node) "
-            "WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id "
-            "RETURN count(n)",
+            "MATCH (n:Node) WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id RETURN count(n)",
             parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
         )
         nodes_deleted = 0
@@ -868,9 +860,7 @@ class GraphStore:
         # DETACH DELETE drops the node plus all incident relationships
         # in a single statement, so we don't need a separate edge delete.
         self._conn.execute(
-            "MATCH (n:Node) "
-            "WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id "
-            "DETACH DELETE n",
+            "MATCH (n:Node) WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id DETACH DELETE n",
             parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
         )
 

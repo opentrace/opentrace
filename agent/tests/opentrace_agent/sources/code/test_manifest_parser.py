@@ -46,3 +46,9 @@ class TestPyprojectDependencies:
     def test_extras_on_opening_line(self):
         toml = '[project]\ndependencies = ["requests[security]>=1",\n  "click",\n]\n'
         assert _names(toml) == ["requests", "click"]
+
+    def test_multiline_single_quoted(self):
+        # TOML allows single-quoted strings; multi-line continuation lines
+        # must capture them too, not just double-quoted entries.
+        toml = "[project]\ndependencies = [\n  'requests>=2.0',\n  'click<9',\n]\n"
+        assert _names(toml) == ["requests", "click"]

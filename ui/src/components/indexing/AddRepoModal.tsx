@@ -398,7 +398,7 @@ export default function AddRepoModal({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- retry reset
     setLoading(false);
-  }, [source, repoUrl, serverUrl, selectedFiles, importFile]);
+  }, [source, repoUrl, serverUrl, selectedFiles, importFile, pat, ref]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();

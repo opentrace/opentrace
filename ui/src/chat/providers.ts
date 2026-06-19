@@ -117,7 +117,7 @@ export function detectProvider(key: string): string | null {
   const k = key.trim();
   if (!k) return null;
   if (k.startsWith('sk-ant-')) return 'anthropic';
-  if (/^AIza[0-9A-Za-z_-]{20,}$/.test(k)) return 'gemini';
+  if (/^AIza[0-9A-Za-z_-]{35}$/.test(k)) return 'gemini';
   if (k.startsWith('sk-')) return 'openai';
   return null;
 }

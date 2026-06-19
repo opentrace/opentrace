@@ -246,12 +246,13 @@ def parse_pyproject_toml(content: str, source: str) -> list[ParsedDependency]:
 
         # Continuation lines of a multi-line ``[project]`` dependencies array.
         if in_project_deps:
-            for item in re.findall(r'"([^"]+)"', stripped):
-                _add_runtime(item)
+            # TOML strings may be double- or single-quoted; match both.
+            for dq, sq in re.findall(r'"([^"]+)"|\'([^\']+)\'', stripped):
+                _add_runtime(dq or sq)
             # Detect the closing ``]`` on the unquoted part only — a bracket
             # inside a quoted dependency (e.g. extras like ``requests[security]``)
             # must not be mistaken for the end of the array.
-            if "]" in re.sub(r'"[^"]*"', "", stripped):
+            if "]" in re.sub(r'"[^"]*"|\'[^\']*\'', "", stripped):
                 in_project_deps = False
             continue
 

@@ -33,13 +33,14 @@ describe('detectProvider', () => {
   });
 
   it('detects Gemini keys (AIza prefix)', () => {
-    expect(detectProvider('AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6')).toBe(
-      'gemini',
-    );
+    // Real Google API keys are exactly `AIza` + 35 url-safe chars (39 total).
+    expect(detectProvider('AIza' + 'A'.repeat(35))).toBe('gemini');
   });
 
-  it('does not match a bare AIza without enough length', () => {
+  it('does not match AIza strings of the wrong length', () => {
     expect(detectProvider('AIza')).toBeNull();
+    expect(detectProvider('AIza' + 'A'.repeat(20))).toBeNull(); // too short
+    expect(detectProvider('AIza' + 'A'.repeat(50))).toBeNull(); // too long
   });
 
   it('trims surrounding whitespace before matching', () => {

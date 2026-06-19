@@ -154,9 +154,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
                 # biased sample dominated by whichever type the DB surfaces first.
                 stats = cur.get_stats()
                 type_counts = [
-                    (ntype, int(count))
-                    for ntype, count in stats.get("nodes_by_type", {}).items()
-                    if int(count) > 0
+                    (ntype, int(count)) for ntype, count in stats.get("nodes_by_type", {}).items() if int(count) > 0
                 ]
                 type_counts.sort(key=lambda tc: tc[1])
 
@@ -189,11 +187,9 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             # Search path: apply the same caps after the search returns.
             nodes = nodes[:max_nodes]
             node_ids = {n["id"] for n in nodes}
-            capped_rels = [
-                r
-                for r in relationships
-                if r["source_id"] in node_ids and r["target_id"] in node_ids
-            ][:max_edges]
+            capped_rels = [r for r in relationships if r["source_id"] in node_ids and r["target_id"] in node_ids][
+                :max_edges
+            ]
             links = [
                 {
                     "source": r["source_id"],
@@ -219,11 +215,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             return _error(400, "Invalid parameter: limit must be an integer")
         node_types_param = request.query_params.get("nodeTypes", "")
         node_types = [t.strip() for t in node_types_param.split(",") if t.strip()] or None
-        return _with_store(
-            lambda cur: JSONResponse(
-                cur.search_nodes(query, node_types=node_types, limit=limit)
-            )
-        )
+        return _with_store(lambda cur: JSONResponse(cur.search_nodes(query, node_types=node_types, limit=limit)))
 
     async def list_nodes(request: Request) -> JSONResponse:
         """GET /api/nodes/list?type=&limit=&filters="""
@@ -236,11 +228,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             filters = json.loads(filters_param) if filters_param else None
         except (ValueError, json.JSONDecodeError) as e:
             return _error(400, f"Invalid parameter: {e}")
-        return _with_store(
-            lambda cur: JSONResponse(
-                cur.list_nodes(node_type=node_type, filters=filters, limit=limit)
-            )
-        )
+        return _with_store(lambda cur: JSONResponse(cur.list_nodes(node_type=node_type, filters=filters, limit=limit)))
 
     async def get_node(request: Request) -> JSONResponse:
         """GET /api/nodes/{node_id}"""
@@ -296,11 +284,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         with index_jobs_lock:
             if len(index_jobs) <= _INDEX_JOBS_MAX:
                 return
-            done = [
-                (jid, st)
-                for jid, st in index_jobs.items()
-                if st.get("done")
-            ]
+            done = [(jid, st) for jid, st in index_jobs.items() if st.get("done")]
             done.sort(key=lambda kv: kv[1].get("startedAt", 0))
             for jid, _ in done[: len(index_jobs) - _INDEX_JOBS_MAX]:
                 index_jobs.pop(jid, None)
@@ -413,6 +397,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
             # STAGE_PROGRESS is throttled to ~5/sec which is plenty
             # for a polling UI that samples every 1.5 s anyway.
             from opentrace_agent.pipeline.types import EventKind
+
             last_progress_emit = [0.0]
             PROGRESS_MIN_INTERVAL = 0.2  # seconds — ~5 emits/sec
 
@@ -426,9 +411,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
                     last_progress_emit[0] = now
 
                 phase_obj = getattr(event, "phase", None)
-                phase_str = (
-                    getattr(phase_obj, "value", phase_obj) if phase_obj else None
-                )
+                phase_str = getattr(phase_obj, "value", phase_obj) if phase_obj else None
                 ui_phase = pipeline_phase_to_ui.get(phase_str, "parsing")
 
                 detail = getattr(event, "detail", None)
@@ -441,9 +424,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
                 result = getattr(event, "result", None)
                 if result is not None:
                     counts["nodes"] = getattr(result, "nodes_created", counts["nodes"])
-                    counts["edges"] = getattr(
-                        result, "relationships_created", counts["edges"]
-                    )
+                    counts["edges"] = getattr(result, "relationships_created", counts["edges"])
 
                 fields: dict[str, Any] = {
                     "phase": ui_phase,
@@ -537,14 +518,11 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         # spawn an indexing thread (TOCTOU), wasting clone/parse work.
         job_id = uuid.uuid4().hex
         with index_jobs_lock:
-            active = [
-                jid for jid, st in index_jobs.items() if not st.get("done")
-            ]
+            active = [jid for jid, st in index_jobs.items() if not st.get("done")]
             if active:
                 return _error(
                     409,
-                    "Another index is already running on this agent. Wait "
-                    "for it to finish before starting a new one.",
+                    "Another index is already running on this agent. Wait for it to finish before starting a new one.",
                 )
 
             index_jobs[job_id] = {
@@ -593,11 +571,7 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         post-Fix-#12 but defensive) still returns the right one.
         """
         with index_jobs_lock:
-            active = [
-                st
-                for st in index_jobs.values()
-                if not st.get("done") and st.get("kind") != "clear"
-            ]
+            active = [st for st in index_jobs.values() if not st.get("done") and st.get("kind") != "clear"]
             if not active:
                 return JSONResponse(None)
             active.sort(key=lambda s: s.get("startedAt", 0), reverse=True)
@@ -629,14 +603,11 @@ def create_app(store: GraphStore, *, db_path: Optional[str] = None) -> Starlette
         # check-and-insert; this extends the same guard to clear.
         clear_job_id = uuid.uuid4().hex
         with index_jobs_lock:
-            active = [
-                jid for jid, st in index_jobs.items() if not st.get("done")
-            ]
+            active = [jid for jid, st in index_jobs.items() if not st.get("done")]
             if active:
                 return _error(
                     409,
-                    "An index job is currently running — wait for it to "
-                    "finish before clearing the database.",
+                    "An index job is currently running — wait for it to finish before clearing the database.",
                 )
             index_jobs[clear_job_id] = {
                 "jobId": clear_job_id,
