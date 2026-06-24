@@ -253,8 +253,15 @@ function AppInner({
   const handleJobExpand = useCallback(() => setJobExpanded(true), []);
   const handleAddRepoOpen = useCallback(() => {
     if (hasRepoParam.current) return; // suppress while deep link is being handled
+    // A finished job leaves status at 'done' (the "Complete" bar). The
+    // AddRepoModal only renders while status is 'idle', so clear the
+    // done job first — otherwise opening it from the toolbar would no-op
+    // until the user manually dismisses the completion indicator.
+    if (jobState.status === 'done') {
+      resetJob();
+    }
     setShowAddRepo(true);
-  }, []);
+  }, [jobState.status, resetJob]);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
   const handleToggleChat = useCallback(() => {
     setShowChat((v) => {

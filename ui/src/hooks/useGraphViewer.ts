@@ -518,6 +518,21 @@ export function useGraphViewer(
     }
   }, [searchQuery, hops, loadGraph]);
 
+  // Re-run the active search when the hop depth changes so the neighborhood
+  // visibly grows/shrinks instead of waiting for the next manual search.
+  // Guarded on a ref so it fires only on a real hops change (not when
+  // `lastSearchQuery` updates after a search, which already loaded). When no
+  // search is active, hops only drives the selection highlight, which
+  // `useHighlights` recomputes reactively — nothing to reload here.
+  const prevHopsRef = useRef(hops);
+  useEffect(() => {
+    if (prevHopsRef.current === hops) return;
+    prevHopsRef.current = hops;
+    if (lastSearchQuery) {
+      loadGraph(lastSearchQuery, hops);
+    }
+  }, [hops, lastSearchQuery, loadGraph]);
+
   const handleReset = useCallback(() => {
     setSearchQuery('');
     setHops(2);
@@ -672,9 +687,18 @@ export function useGraphViewer(
               );
               if (node) {
                 onNodeClick(node);
+                // Zoom to the node AND its immediate neighbors. Fitting a
+                // single node maxes out the zoom (it fills the screen);
+                // including neighbors gives the bounding box room so the
+                // camera lands at a sane, context-preserving zoom.
+                const focusIds = new Set<string>([targetId]);
+                for (const link of graphDataRef.current.links) {
+                  if (link.source === targetId) focusIds.add(link.target);
+                  else if (link.target === targetId) focusIds.add(link.source);
+                }
                 // Layout-settle delay before zooming to the freshly selected node
                 setTimeout(() => {
-                  canvasRef.current?.zoomToNodes(new Set([targetId]), 600);
+                  canvasRef.current?.zoomToNodes(focusIds, 600);
                 }, 100);
               }
             }

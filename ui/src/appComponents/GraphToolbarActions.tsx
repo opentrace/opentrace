@@ -229,16 +229,25 @@ export const GraphToolbarActionButtons = ({
       jobState.status === 'done') &&
     !jobExpanded;
 
+  // The Add Repository button is only hidden while a job is actively
+  // in progress — once the job is 'done', show it alongside the
+  // "Complete" bar so the user can index another graph without first
+  // dismissing the completion indicator.
+  const jobInProgress =
+    (jobState.status === 'running' || jobState.status === 'enriching') &&
+    !jobExpanded;
+
   return (
     <>
       {toolbarActions}
-      {showJobMinimized ? (
+      {showJobMinimized && (
         <JobMinimizedBar
           state={jobState}
           onClick={onJobExpand}
           onCancel={onJobCancel}
         />
-      ) : (
+      )}
+      {!jobInProgress && (
         <button
           className="add-repo-btn"
           onClick={onAddRepoOpen}

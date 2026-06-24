@@ -29,6 +29,12 @@ import {
 } from '../chat/providers';
 import type { Attachment, ImageAttachment } from '../components/chat/types';
 import {
+  conversationToMarkdown,
+  conversationToHtml,
+  downloadTextFile,
+  conversationFilenameBase,
+} from '../components/chat/exportConversation';
+import {
   processFiles,
   clipboardToFiles,
   dropToFiles,
@@ -183,6 +189,8 @@ export default function ChatPanel({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const attachMenuRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<ImageAttachment | null>(
     null,
@@ -225,6 +233,21 @@ export default function ChatPanel({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showAttachMenu]);
+
+  // Close export menu on outside click
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showExportMenu]);
 
   // Auto-scroll only when the user is near the bottom
   const isNearBottomRef = useRef(true);
@@ -943,6 +966,33 @@ export default function ChatPanel({
     onChatHighlight?.(new Set(), []);
   };
 
+  /** Export the current conversation to a downloaded Markdown or HTML file. */
+  const handleExport = useCallback(
+    async (format: 'md' | 'html') => {
+      setShowExportMenu(false);
+      if (messages.length === 0) return;
+      const conv = conversations.find((c) => c.id === conversationId);
+      const firstUser = messages.find((m) => m.role === 'user');
+      const title =
+        conv?.title?.trim() ||
+        firstUser?.content.slice(0, 60).trim() ||
+        'OpenTrace Chat';
+      const now = new Date();
+      const base = conversationFilenameBase(title, now);
+      if (format === 'md') {
+        downloadTextFile(
+          `${base}.md`,
+          conversationToMarkdown(messages, title, now),
+          'text/markdown;charset=utf-8',
+        );
+      } else {
+        const html = await conversationToHtml(messages, title, now);
+        downloadTextFile(`${base}.html`, html, 'text/html;charset=utf-8');
+      }
+    },
+    [messages, conversations, conversationId],
+  );
+
   /** Switch to chat tab and send a pre-seeded prompt (used by PR panel) */
   const handleChatWithPR = (prompt: string) => {
     setActiveTab('chat');
@@ -951,10 +1001,16 @@ export default function ChatPanel({
   };
 
   /** Post a comment on a PR (used by SuggestCommentResult widget) */
-  const handlePostComment = async (number: number, body: string) => {
-    if (!prClient) throw new Error('No PR client configured');
-    await prClient.postComment(number, body);
-  };
+  // useCallback so the reference stays stable across composer keystrokes —
+  // it's passed to the memoized ChatParts, and an unstable ref would defeat
+  // the memo and re-parse every message's markdown on each keystroke.
+  const handlePostComment = useCallback(
+    async (number: number, body: string) => {
+      if (!prClient) throw new Error('No PR client configured');
+      await prClient.postComment(number, body);
+    },
+    [prClient],
+  );
 
   // LLM instance for PR reviews (run directly, not through chat)
   const llm = useMemo(() => {
@@ -1065,6 +1121,47 @@ export default function ChatPanel({
                 <path d="M19.07 4.93l-1.41 1.41" />
               </svg>
             </button>
+          )}
+          {messages.length > 0 && !showSettingsView && (
+            <div className="chat-export-wrapper" ref={exportMenuRef}>
+              <button
+                className={`clear-chat-btn${showExportMenu ? ' active' : ''}`}
+                onClick={() => setShowExportMenu((v) => !v)}
+                title="Export conversation"
+                data-testid="chat-export-btn"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </button>
+              {showExportMenu && (
+                <div className="chat-export-menu">
+                  <button
+                    className="chat-export-item"
+                    onClick={() => handleExport('md')}
+                  >
+                    Markdown (.md)
+                  </button>
+                  <button
+                    className="chat-export-item"
+                    onClick={() => handleExport('html')}
+                  >
+                    HTML (.html)
+                  </button>
+                </div>
+              )}
+            </div>
           )}
           {(conversations.length > 0 || showHistory) && (
             <button
@@ -1274,45 +1371,57 @@ export default function ChatPanel({
                 className="api-key-input"
                 autoFocus
               />
-              {detectedProvider ? (
-                <p className="hint">
-                  Detected provider:{' '}
-                  <strong>{PROVIDERS[detectedProvider].name}</strong>
-                </p>
-              ) : keyDraft.trim() ? (
-                <>
-                  <p
-                    className="hint"
-                    style={{ color: 'var(--color-error, #f87171)' }}
-                  >
-                    Couldn't recognize this key — choose a provider:
-                  </p>
-                  <div className="provider-selector">
-                    {PROVIDER_IDS.filter((id) => id !== 'local').map((id) => (
-                      <button
-                        key={id}
-                        className={id === providerId ? 'active' : ''}
-                        onClick={() => pickProviderKeepKey(id)}
+              {/* Detection status + model picker stay collapsed until a key
+                  is present, then reveal smoothly (grid-rows transition). The
+                  status line keeps a fixed height so "Detected provider: …"
+                  swapping in doesn't shove the model selector — no jump. */}
+              <div
+                className={`cloud-key-reveal${keyDraft.trim() ? ' open' : ''}`}
+              >
+                <div className="cloud-key-reveal-inner">
+                  {detectedProvider ? (
+                    <p className="hint detect-status">
+                      Detected provider:{' '}
+                      <strong>{PROVIDERS[detectedProvider].name}</strong>
+                    </p>
+                  ) : (
+                    <>
+                      <p
+                        className="hint detect-status"
+                        style={{ color: 'var(--color-error, #f87171)' }}
                       >
-                        {PROVIDERS[id].name}
-                      </button>
-                    ))}
+                        Couldn't recognize this key — choose a provider:
+                      </p>
+                      <div className="provider-selector">
+                        {PROVIDER_IDS.filter((id) => id !== 'local').map(
+                          (id) => (
+                            <button
+                              key={id}
+                              className={id === providerId ? 'active' : ''}
+                              onClick={() => pickProviderKeepKey(id)}
+                            >
+                              {PROVIDERS[id].name}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  )}
+                  <div className="model-selector">
+                    <label htmlFor="model-select">Model</label>
+                    <select
+                      id="model-select"
+                      value={modelId}
+                      onChange={(e) => switchModel(e.target.value)}
+                    >
+                      {PROVIDERS[providerId].models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                </>
-              ) : null}
-              <div className="model-selector">
-                <label htmlFor="model-select">Model</label>
-                <select
-                  id="model-select"
-                  value={modelId}
-                  onChange={(e) => switchModel(e.target.value)}
-                >
-                  {PROVIDERS[providerId].models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                </div>
               </div>
               {API_KEY_RESOURCES[providerId] && (
                 <div className="api-key-help">

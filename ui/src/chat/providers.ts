@@ -96,7 +96,7 @@ export const PROVIDER_IDS = Object.keys(PROVIDERS) as Array<
  * builds. Must always be a key of `PROVIDERS`. See `loadProviderChoice`
  * in `chat/storage.ts` (Fix #3).
  */
-export const DEFAULT_PROVIDER_ID = 'gemini';
+export const DEFAULT_PROVIDER_ID = 'anthropic';
 
 /**
  * Infer the provider from the shape of an API key so the user can just

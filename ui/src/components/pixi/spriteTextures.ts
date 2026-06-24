@@ -21,7 +21,7 @@
  * color. This enables sprite batching — Pixi draws all same-texture sprites
  * in a single GPU draw call.
  */
-import { Graphics, type Application, type Texture } from 'pixi.js';
+import { Graphics, Texture, type Application } from 'pixi.js';
 
 const CIRCLE_RADIUS = 16; // texture size in pixels (sprites scale via .scale)
 
@@ -50,15 +50,35 @@ export function getCircleTexture(
   return tex;
 }
 
-const GLOW_RADIUS = 48; // outer radius of the glow texture
-const GLOW_RINGS = 8; // number of concentric rings to simulate gradient
+const GLOW_RADIUS = 48; // outer radius of the glow texture (texture is 2× this)
+
+/** Parse a CSS hex color (#rgb or #rrggbb) into 0–255 channels. */
+function parseHexColor(hex: string): { r: number; g: number; b: number } {
+  const h = hex.replace('#', '');
+  const full =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h;
+  const n = parseInt(full, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
 
 /**
  * Get (or create) a soft glow texture for the given hex color.
- * Draws concentric filled circles with decreasing alpha to simulate a radial gradient.
+ *
+ * Uses a real canvas radial gradient rather than stacked concentric
+ * circles — the old ring approach left visible alpha banding ("layers")
+ * when the glow was scaled up. The gradient falls off smoothly from a
+ * bright center to a fully transparent edge.
+ *
+ * `_app` is unused (the texture is built from a canvas, not the renderer)
+ * but kept for signature parity with the other texture helpers.
  */
 export function getGlowTexture(
-  app: Application,
+  _app: Application,
   color: string,
   cache: Map<string, Texture>,
 ): Texture {
@@ -66,17 +86,28 @@ export function getGlowTexture(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const g = new Graphics();
-  // Draw rings from outer (faint) to inner (bright) so inner overwrites outer
-  for (let i = GLOW_RINGS; i >= 0; i--) {
-    const t = i / GLOW_RINGS; // 1 = outermost, 0 = center
-    const r = GLOW_RADIUS * (0.3 + 0.7 * t); // rings from 30% to 100% of radius
-    const alpha = 0.5 * (1 - t); // 0 at edge, 0.5 at center
-    g.circle(GLOW_RADIUS, GLOW_RADIUS, r);
-    g.fill({ color, alpha });
-  }
-  const tex = app.renderer.generateTexture(g);
-  g.destroy();
+  const size = GLOW_RADIUS * 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const { r, g, b } = parseHexColor(color);
+  const grad = ctx.createRadialGradient(
+    GLOW_RADIUS,
+    GLOW_RADIUS,
+    0,
+    GLOW_RADIUS,
+    GLOW_RADIUS,
+    GLOW_RADIUS,
+  );
+  // Smooth multi-stop falloff — center is brightest, edge fully clear.
+  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.5)`);
+  grad.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.16)`);
+  grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = Texture.from(canvas);
   cache.set(key, tex);
   return tex;
 }

@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react';
 import type { GraphToolbarProps, SearchSuggestion } from './types';
 import GraphBadge from './GraphBadge';
 import './GraphToolbar.css';
@@ -105,6 +112,48 @@ export default function GraphToolbar({
   const [activeIndex, setActiveIndex] = useState(-1);
   const navRef = useRef<HTMLElement>(null);
   const burgerRef = useRef<HTMLButtonElement>(null);
+
+  // Hops input keeps a local string draft so the field can be cleared while
+  // editing without snapping to 0 (the bare numeric input committed 0 the
+  // instant the digit was deleted). The draft re-syncs whenever `hops`
+  // changes from outside (steppers, reset, node selection).
+  const [hopsDraft, setHopsDraft] = useState(String(hops));
+  useEffect(() => {
+    setHopsDraft(String(hops));
+  }, [hops]);
+
+  const clampHops = useCallback(
+    (n: number) => Math.min(maxHops, Math.max(0, n)),
+    [maxHops],
+  );
+  const handleHopsInput = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => {
+      const raw = e.target.value;
+      if (raw === '') {
+        setHopsDraft(''); // allow clearing; graph stays on current hops
+        return;
+      }
+      const n = parseInt(raw, 10);
+      if (Number.isNaN(n)) return; // ignore non-numeric input
+      const clamped = clampHops(n);
+      setHopsDraft(String(clamped));
+      if (clamped !== hops) onHopsChange(clamped);
+    },
+    [hops, clampHops, onHopsChange],
+  );
+  const handleHopsBlur = useCallback(() => {
+    // Empty/invalid on blur reverts to the committed value.
+    if (hopsDraft === '' || Number.isNaN(parseInt(hopsDraft, 10))) {
+      setHopsDraft(String(hops));
+    }
+  }, [hopsDraft, hops]);
+  const stepHops = useCallback(
+    (delta: number) => {
+      const next = clampHops(hops + delta);
+      if (next !== hops) onHopsChange(next);
+    },
+    [hops, clampHops, onHopsChange],
+  );
 
   const suggestions = useMemo(
     () => filterSuggestions(searchSuggestions ?? [], searchQuery),
@@ -228,20 +277,37 @@ export default function GraphToolbar({
         />
         <div className="ot-search-params">
           <label htmlFor={`ot-hops-input-${id}`}>Hops:</label>
-          <input
-            id={`ot-hops-input-${id}`}
-            type="number"
-            min="0"
-            max={maxHops}
-            value={hops}
-            onChange={(e) =>
-              onHopsChange(
-                Math.min(maxHops, Math.max(0, parseInt(e.target.value) || 0)),
-              )
-            }
-            className="ot-hops-input"
-            title={`Number of connection hops to include (max ${maxHops})`}
-          />
+          <div className="ot-hops-stepper">
+            <button
+              type="button"
+              className="ot-hops-step"
+              aria-label="Decrease hops"
+              onClick={() => stepHops(-1)}
+              disabled={hops <= 0}
+            >
+              &minus;
+            </button>
+            <input
+              id={`ot-hops-input-${id}`}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={hopsDraft}
+              onChange={handleHopsInput}
+              onBlur={handleHopsBlur}
+              className="ot-hops-input"
+              title={`Number of connection hops to include (max ${maxHops})`}
+            />
+            <button
+              type="button"
+              className="ot-hops-step"
+              aria-label="Increase hops"
+              onClick={() => stepHops(1)}
+              disabled={hops >= maxHops}
+            >
+              +
+            </button>
+          </div>
         </div>
         <div className="ot-search-actions">
           {searchQuery && (

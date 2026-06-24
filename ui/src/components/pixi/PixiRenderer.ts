@@ -61,6 +61,7 @@ import {
 import {
   NODE_OPACITY_DIMMED,
   NODE_SIZE_DIMMED_SCALE,
+  NODE_SIZE_HIGHLIGHTED_SCALE,
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_HIGHLIGHTED,
   EDGE_OPACITY_DIMMED,
@@ -247,7 +248,7 @@ export class PixiRenderer {
 
   // Viewport
   private vp: Viewport = { x: 0, y: 0, scale: 1 };
-  private lastAppliedInvScale = 1; // tracks zoomInvScale() to detect changes
+  private lastAppliedScale = 1; // vp.scale at last applyCounterScale — re-run on any zoom change
   private _lastEdgeScale = 1; // tracks vp.scale to avoid unnecessary edge redraws
   private width = 0;
   private height = 0;
@@ -302,9 +303,9 @@ export class PixiRenderer {
   // Ping animation state — maps node ID → animation state
   private pingNodes: Map<string, { startTime: number; glow: Sprite }> =
     new Map();
-  private static readonly PING_DURATION = 900; // ms
-  private static readonly PING_SCALE = 1.6; // peak node scale multiplier
-  private static readonly GLOW_SIZE = 3; // glow sprite scale relative to node
+  private static readonly PING_DURATION = 1000; // ms
+  private static readonly PING_SCALE = 1.8; // peak node scale multiplier
+  private static readonly GLOW_SIZE = 3.5; // glow sprite scale relative to node
 
   // Show-all-labels mode (toggled from control panel)
   private showAllLabels = true;
@@ -317,6 +318,13 @@ export class PixiRenderer {
   private readonly LABEL_CULL_INTERVAL = 500; // ms (throttle for non-debounced calls)
   private labelCullDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly LABEL_CULL_DEBOUNCE = 300; // ms — wait for zoom/interaction to stop
+
+  // Level-of-detail handoff: below this viewport zoom the community
+  // wayfinders are at/near full strength (matches FADE_START_SCALE in
+  // applyCommunityLabelCounterScale), so individual node labels are
+  // suppressed and only community labels show. Above it, node labels
+  // return and the wayfinders fade out.
+  private readonly NODE_LABEL_MIN_VP_SCALE = 0.6;
 
   // Zoom-size exponent: controls how nodes/edges scale with zoom.
   // 0 = nodes scale fully with zoom (world-space), 1 = fixed screen size.
@@ -436,7 +444,7 @@ export class PixiRenderer {
 
     // Viewport centered
     this.vp = { x: width / 2, y: height / 2, scale: 1 };
-    this.lastAppliedInvScale = 1;
+    this.lastAppliedScale = 1;
 
     // Render loop — apply viewport transform + counter-scale sprites + 3D
     app.ticker.add(() => {
@@ -503,9 +511,17 @@ export class PixiRenderer {
         return; // skip counter-scale — 3D handles its own scaling
       }
 
-      // Counter-scale sprites when zoom OR exponent changes
-      const currentInv = this.zoomInvScale();
-      if (currentInv !== this.lastAppliedInvScale) {
+      // Re-apply counter-scale + label cull whenever the zoom changes.
+      // Gate on vp.scale itself, NOT zoomInvScale(): at zoomSizeExponent
+      // 0 the latter is (1/vp.scale)^0 === 1, constant, so the old gate
+      // never fired mid-zoom — labels were neither counter-scaled (they
+      // ballooned/shrank with the world) nor culled (they over-crowded)
+      // until the 300ms debounce. Labels always counter-scale at
+      // exponent 1 regardless of the sprite exponent, so the trigger must
+      // track vp.scale. For any exponent > 0 this fires on the same
+      // frames as before. Exponent changes call applyCounterScale()
+      // directly via setZoomSizeExponent(), so they stay covered.
+      if (this.vp.scale !== this.lastAppliedScale) {
         this.applyCounterScale();
       }
 
@@ -863,10 +879,7 @@ export class PixiRenderer {
       if (!node.visible) continue;
       // In 3D mode, skip sprite scale — the ticker's update3D() handles it.
       if (!this.mode3d) {
-        const s =
-          this.hasHighlight && !this.highlightNodes.has(node.id)
-            ? node.size * NODE_SIZE_DIMMED_SCALE
-            : node.size;
+        const s = this.highlightBaseSize(node);
         node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
       }
 
@@ -916,7 +929,7 @@ export class PixiRenderer {
     // `showEdgesAfterInteraction` path re-draws once on resume so we
     // don't strand the geometry stale.
     const scaleChanged = this.vp.scale !== this._lastEdgeScale;
-    this.lastAppliedInvScale = invScale;
+    this.lastAppliedScale = this.vp.scale;
     if (scaleChanged && !this.edgesHiddenForInteraction) {
       this._lastEdgeScale = this.vp.scale;
       this.redrawAllEdges();
@@ -954,10 +967,7 @@ export class PixiRenderer {
       // ── Scale pulse: sharp pop then smooth settle ──
       const pulse = Math.sin(Math.PI * t) * (1 - t);
       const pingScale = 1 + (PixiRenderer.PING_SCALE - 1) * pulse;
-      const baseSize =
-        this.hasHighlight && !this.highlightNodes.has(id)
-          ? node.size * NODE_SIZE_DIMMED_SCALE
-          : node.size;
+      const baseSize = this.highlightBaseSize(node);
       node.sprite.scale.set((baseSize / CIRCLE_RADIUS) * invScale * pingScale);
 
       // ── Glow: follow the sprite's actual position (handles 3D projection) ──
@@ -970,7 +980,7 @@ export class PixiRenderer {
       // Alpha envelope: quick ramp up (0→0.15), hold, then fade out
       const alphaIn = Math.min(1, t * 5); // 0→1 over first 20% of duration
       const alphaOut = Math.max(0, 1 - (t - 0.5) * 2); // 1→0 over last 50%
-      glow.alpha = 0.45 * Math.min(alphaIn, alphaOut);
+      glow.alpha = 0.65 * Math.min(alphaIn, alphaOut);
     }
 
     for (const id of expired) {
@@ -1215,6 +1225,18 @@ export class PixiRenderer {
     }
   }
 
+  /** Effective base sprite size for a node given the current highlight
+   *  state: enlarged when it's a highlighted node so it pops, shrunk when
+   *  it's dimmed by another node's highlight, unchanged otherwise. Used by
+   *  every sprite-sizing path (applyVisuals, applyCounterScale, ping, 3D)
+   *  so the highlight emphasis stays consistent across zoom and modes. */
+  private highlightBaseSize(node: PixiNode): number {
+    if (!this.hasHighlight) return node.size;
+    return this.highlightNodes.has(node.id)
+      ? node.size * NODE_SIZE_HIGHLIGHTED_SCALE
+      : node.size * NODE_SIZE_DIMMED_SCALE;
+  }
+
   private applyVisuals(): void {
     if (!this.app) return;
     const invScale = this.zoomInvScale();
@@ -1229,9 +1251,7 @@ export class PixiRenderer {
         if (this.hasHighlight) {
           const isHighlighted = this.highlightNodes.has(id);
           node.sprite.alpha = isHighlighted ? 1.0 : NODE_OPACITY_DIMMED;
-          const s = isHighlighted
-            ? node.size
-            : node.size * NODE_SIZE_DIMMED_SCALE;
+          const s = this.highlightBaseSize(node);
           node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale);
         } else {
           node.sprite.alpha = 0.9;
@@ -1270,6 +1290,23 @@ export class PixiRenderer {
    * to avoid jitter from competing writes.
    */
   private applyLabelCulling(candidates: PixiNode[], invScale: number): void {
+    // Level-of-detail handoff: when zoomed out far enough that the
+    // community wayfinders are at full strength, hide ALL individual node
+    // labels so the overview shows only community labels. Without this,
+    // high-degree nodes keep their labels at any zoom because their sprite
+    // stays above MIN_SPRITE_SCREEN_RADIUS. Only applies when community
+    // labels are enabled to take over — otherwise node labels stay so the
+    // zoomed-out graph isn't left unlabeled.
+    if (
+      this.showCommunityLabels &&
+      this.vp.scale < this.NODE_LABEL_MIN_VP_SCALE
+    ) {
+      for (const node of candidates) {
+        if (node.label) node.label.visible = false;
+      }
+      return;
+    }
+
     // Sort by size descending — largest (highest degree) nodes get labels first
     candidates.sort((a, b) => b.size - a.size);
 
@@ -1353,6 +1390,17 @@ export class PixiRenderer {
           node.label = this.createLabel(node);
         }
         node.label.visible = true;
+        // Set scale + position for the *current* zoom as we reveal the
+        // label. A label hidden during a zoom gesture and revealed here
+        // still carries the scale it had when last visible — a different
+        // zoom level. The standalone cull paths (debouncedLabelCull,
+        // setNodeVisibility) don't run applyCounterScale afterward, and
+        // once zoom settles the ticker's scale-change gate stops firing,
+        // so that stale scale would persist — labels render too big or
+        // small after a fast zoom. applyCounterScale re-sets these in its
+        // own tail loop, so the overlap there is harmless.
+        node.label.scale.set(invScale * this.labelScaleMultiplier);
+        node.label.position.set(nx + gap, ny);
         boxes.push({ x: sx, y: sy, w: sw, h: sh });
       }
     }
@@ -2313,9 +2361,11 @@ export class PixiRenderer {
 
   zoomToNodes(nodeIds: Iterable<string>, duration = 300): void {
     const positions: { x: number; y: number }[] = [];
+    let maxSize = 0;
     for (const id of nodeIds) {
       const node = this.nodes.get(id);
       if (!node?.visible) continue;
+      if (node.size > maxSize) maxSize = node.size;
       // In 3D, use projected positions (rotation paused on click so they're stable)
       if (this.mode3d) {
         positions.push({
@@ -2328,6 +2378,38 @@ export class PixiRenderer {
     }
     if (positions.length === 0) return;
     const bounds = computeBounds(positions);
+    // Enforce a minimum world-span so focusing on a single node (or a tight
+    // cluster) doesn't collapse the bounds to a point and zoom the camera all
+    // the way in. Two floors, whichever is larger:
+    //   • node-size relative (~24× the largest node) — tight focus on small
+    //     loaded subgraphs;
+    //   • graph relative (~1/6 of the whole graph's extent) — robust to any
+    //     layout coordinate scale, so a big graph never zooms to a pinpoint.
+    let allMinX = Infinity,
+      allMaxX = -Infinity,
+      allMinY = Infinity,
+      allMaxY = -Infinity;
+    for (const n of this.nodes.values()) {
+      if (!n.visible) continue;
+      const x = this.mode3d ? n.sprite.position.x : n.x;
+      const y = this.mode3d ? n.sprite.position.y : n.y;
+      if (x < allMinX) allMinX = x;
+      if (x > allMaxX) allMaxX = x;
+      if (y < allMinY) allMinY = y;
+      if (y > allMaxY) allMaxY = y;
+    }
+    const fullSpan = Math.max(allMaxX - allMinX, allMaxY - allMinY, 0);
+    const minSpan = Math.max(maxSize * 24, fullSpan / 6, 1);
+    const cx = (bounds.minX + bounds.maxX) / 2;
+    const cy = (bounds.minY + bounds.maxY) / 2;
+    if (bounds.maxX - bounds.minX < minSpan) {
+      bounds.minX = cx - minSpan / 2;
+      bounds.maxX = cx + minSpan / 2;
+    }
+    if (bounds.maxY - bounds.minY < minSpan) {
+      bounds.minY = cy - minSpan / 2;
+      bounds.maxY = cy + minSpan / 2;
+    }
     const target = fitBounds(bounds, this.width, this.height, 120);
 
     // Focusing on specific nodes is a deliberate user action — stop auto-fit.
@@ -2932,9 +3014,7 @@ export class PixiRenderer {
       // Apply highlight dimming in 3D (same as 2D applyVisuals)
       if (this.hasHighlight) {
         const isHighlighted = this.highlightNodes.has(node.id);
-        const s = isHighlighted
-          ? node.size
-          : node.size * NODE_SIZE_DIMMED_SCALE;
+        const s = this.highlightBaseSize(node);
         node.sprite.scale.set((s / CIRCLE_RADIUS) * invScale * depthScale);
         node.sprite.alpha = isHighlighted
           ? depthAlpha
