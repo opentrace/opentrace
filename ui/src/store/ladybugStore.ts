@@ -50,10 +50,11 @@ async function getParquetWasm(): Promise<
   return _parquetMod;
 }
 
-import lbug from '@ladybugdb/wasm-core';
-
-type Database = InstanceType<typeof lbug.Database>;
-type Connection = InstanceType<typeof lbug.Connection>;
+// The LadybugDB engine itself runs on the MAIN thread (see lbugEngine.ts).
+// This store runs inside `storeWorker` and reaches the engine over an
+// injected RPC surface — never importing `@ladybugdb/wasm-core` directly, so
+// the engine's worker is spawned from main and is never a nested worker.
+import type { LbugEngine } from './lbugEngine';
 import type {
   ImportBatchRequest,
   ImportBatchResponse,
@@ -483,8 +484,7 @@ async function parquetToArrow(
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
-  private db!: Database;
-  private conn!: Connection;
+  private engine: LbugEngine;
   private ready: Promise<void> | null = null;
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
@@ -537,7 +537,13 @@ export class LadybugGraphStore implements GraphStore {
    *  it skip work that's about to be invalidated anyway. */
   private generation = 0;
 
-  constructor() {
+  /**
+   * @param engine LadybugDB engine RPC surface. In production this is a shim
+   *   (installed by `storeWorker`) that forwards each call to the real
+   *   main-thread engine; tests inject a mock.
+   */
+  constructor(engine: LbugEngine) {
+    this.engine = engine;
     // Don't init WASM here — the constructor runs at app startup.
     // WASM loads lazily on first DB operation via ensureReady().
   }
@@ -557,20 +563,8 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initModule(): Promise<void> {
     const t0 = performance.now();
-    lbug.setWorkerPath('/lbug_wasm_worker.js');
-    await lbug.init();
-    // Buffer pool size note: lbug accepts a `bufferPoolSize` argument
-    // here, but in WASM the linear memory is a single shared heap —
-    // reserving more for the page cache leaves less for everything
-    // else (CSV temp files, query state, parser tables). An explicit
-    // 512 MB reservation broke ingest even for small repos, so we
-    // let the engine's auto-sizing decide. To genuinely fit larger
-    // graphs the right move is to reduce extraction depth or use
-    // server mode rather than push this number up.
-    this.db = new lbug.Database(':memory:');
-    await this.db.init();
-    this.conn = new lbug.Connection(this.db);
-    await this.conn.init();
+    // Boots the engine worker (on the main thread) and opens the connection.
+    await this.engine.init();
     await this.initSchema();
 
     console.log(
@@ -584,8 +578,7 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
-      const result = await this.conn.query(stmt);
-      await result.close();
+      await this.engine.exec(stmt);
     }
     // Create FTS indexes on code-bearing node types for content search
     await this.createFTSIndexes();
@@ -596,18 +589,15 @@ export class LadybugGraphStore implements GraphStore {
   /** Install VECTOR extension and create the NodeVector table for persistent embeddings. */
   private async initVectorSchema(): Promise<void> {
     try {
-      const r1 = await this.conn.query('INSTALL VECTOR');
-      await r1.close();
-      const r2 = await this.conn.query('LOAD EXTENSION VECTOR');
-      await r2.close();
+      await this.engine.exec('INSTALL VECTOR');
+      await this.engine.exec('LOAD EXTENSION VECTOR');
     } catch {
       // Already installed/loaded — safe to ignore
     }
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         'CREATE NODE TABLE IF NOT EXISTS NodeVector(id STRING PRIMARY KEY, vec FLOAT[384])',
       );
-      await r.close();
     } catch {
       // Table may already exist
     }
@@ -616,10 +606,9 @@ export class LadybugGraphStore implements GraphStore {
   /** Create the vector index on NodeVector. Call once after all embeddings are loaded. */
   private async createVectorIndex(): Promise<void> {
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_VECTOR_INDEX('NodeVector', 'nodevec_idx', 'vec', metric := 'cosine')`,
       );
-      await r.close();
       this.hasVectorIndex = true;
     } catch {
       // Index may already exist — check if we can query it
@@ -631,20 +620,17 @@ export class LadybugGraphStore implements GraphStore {
   private async createFTSIndexes(): Promise<void> {
     // LadybugDB requires the FTS extension to be installed and loaded
     try {
-      const r1 = await this.conn.query('INSTALL FTS');
-      await r1.close();
-      const r2 = await this.conn.query('LOAD EXTENSION FTS');
-      await r2.close();
+      await this.engine.exec('INSTALL FTS');
+      await this.engine.exec('LOAD EXTENSION FTS');
     } catch {
       // Already installed/loaded — safe to ignore
     }
 
     // Create FTS index on the SourceText table (name + source content)
     try {
-      const result = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
       );
-      await result.close();
     } catch {
       // Index may already exist on re-init — safe to ignore
     }
@@ -654,18 +640,16 @@ export class LadybugGraphStore implements GraphStore {
    *  LadybugDB FTS indexes are static — new rows require a rebuild. */
   private async rebuildSourceFTS(): Promise<void> {
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL DROP_FTS_INDEX('SourceText', 'search_idx_source')`,
       );
-      await r.close();
     } catch {
       // Index may not exist yet — safe to ignore
     }
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
       );
-      await r.close();
     } catch {
       // Empty table is fine — index will be rebuilt on next flush
     }
@@ -673,7 +657,7 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Uses conn.query() + getAllObjects() for row extraction.
+   * Delegates row extraction to the engine (engine.query()).
    * Serialized through a queue to prevent concurrent calls.
    *
    * If clearGraph() fires between the enqueue and the run, the task
@@ -690,14 +674,9 @@ export class LadybugGraphStore implements GraphStore {
             return;
           }
           const qt0 = performance.now();
-          const result = await this.conn.query(cypher);
-          try {
-            const rows = await result.getAllObjects();
-            logQuery(cypher, rows.length, performance.now() - qt0);
-            resolve(rows);
-          } finally {
-            await result.close();
-          }
+          const rows = await this.engine.query(cypher);
+          logQuery(cypher, rows.length, performance.now() - qt0);
+          resolve(rows);
         })
         .catch((err) => {
           reject(err);
@@ -719,8 +698,7 @@ export class LadybugGraphStore implements GraphStore {
             reject(abortError('Exec aborted: store was cleared'));
             return;
           }
-          const result = await this.conn.query(cypher);
-          await result.close();
+          await this.engine.exec(cypher);
           resolve();
         })
         .catch((err) => {
@@ -739,8 +717,7 @@ export class LadybugGraphStore implements GraphStore {
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const result = await this.conn.query(cypher);
-          await result.close();
+          await this.engine.exec(cypher);
           resolve();
         })
         .catch((err) => {
@@ -841,31 +818,18 @@ export class LadybugGraphStore implements GraphStore {
   /** Close the database connection and release WASM resources. */
   async dispose(): Promise<void> {
     try {
-      await this.conn?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await this.db?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await lbug.close();
+      await this.engine.close();
     } catch {
       /* ignore */
     }
   }
 
-  /** Current WASM linear memory size in MB (for diagnostics). */
+  /** Current WASM linear memory size in MB (for diagnostics).
+   *  The engine's linear memory now lives behind the main-thread engine
+   *  worker boundary and isn't directly measurable from here, so this
+   *  reports -1 ("unknown"). */
   getWasmMemoryMB(): number {
-    try {
-      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory })
-        .wasmMemory;
-      return mem ? mem.buffer.byteLength / (1024 * 1024) : -1;
-    } catch {
-      return -1;
-    }
+    return -1;
   }
 
   /** Set an embedder for generating query embeddings during search. */
@@ -1830,11 +1794,11 @@ export class LadybugGraphStore implements GraphStore {
 
       const csv = generateTypedNodeCSV(type, nodes);
       const csvPath = `/import_nodes_${type}.csv`;
-      await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+      await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
       try {
         await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
       } finally {
-        await lbug.FS.unlink(csvPath);
+        await this.engine.fsUnlink(csvPath);
       }
 
       // Rebuild nodeTypeMap, BM25 index, and node cache for this type
@@ -1915,7 +1879,7 @@ export class LadybugGraphStore implements GraphStore {
             const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
             const csv = generateRelCSV(chunk);
             const csvPath = `/rels_${key}.csv`;
-            await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+            await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
             try {
               await this.exec(
                 `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
@@ -1926,7 +1890,7 @@ export class LadybugGraphStore implements GraphStore {
                 err,
               );
             }
-            await lbug.FS.unlink(csvPath);
+            await this.engine.fsUnlink(csvPath);
           }
         }
       } catch (err) {
@@ -1959,11 +1923,11 @@ export class LadybugGraphStore implements GraphStore {
       if (snippets.size > 0) {
         const csv = generateSourceTextCSV(snippets, fakeCache);
         const csvPath = '/import_source_text.csv';
-        await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+        await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
         try {
           await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
         } finally {
-          await lbug.FS.unlink(csvPath);
+          await this.engine.fsUnlink(csvPath);
         }
 
         // Repopulate sourceCache so fetchSource can serve code views
@@ -2188,9 +2152,9 @@ export class LadybugGraphStore implements GraphStore {
       }
       const csv = lines.join('\n');
       const path = '/vectors_embed.csv';
-      await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+      await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
       await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
-      await lbug.FS.unlink(path);
+      await this.engine.fsUnlink(path);
     }
 
     if (!this.hasVectorIndex) {
@@ -2294,9 +2258,9 @@ export class LadybugGraphStore implements GraphStore {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(type, chunk);
         const path = `/nodes_${type}.csv`;
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        await this.engine.fsUnlink(path);
       }
     }
 
@@ -2318,9 +2282,9 @@ export class LadybugGraphStore implements GraphStore {
         const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
         const csv = generateSourceTextCSV(chunk, this.sourceCache);
         const path = '/source_text.csv';
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        await this.engine.fsUnlink(path);
       }
       for (const id of newSnippets.keys()) {
         this.flushedSourceIds.add(id);
@@ -2342,9 +2306,9 @@ export class LadybugGraphStore implements GraphStore {
         }
         const csv = lines.join('\n');
         const path = '/vectors.csv';
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        await this.engine.fsUnlink(path);
       }
       // Create vector index if not yet created
       if (!this.hasVectorIndex) {
@@ -2380,7 +2344,7 @@ export class LadybugGraphStore implements GraphStore {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = `/rels_${key}.csv`;
-          await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+          await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
           try {
             await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
           } catch (err) {
@@ -2404,7 +2368,7 @@ export class LadybugGraphStore implements GraphStore {
               }
             }
           }
-          await lbug.FS.unlink(path);
+          await this.engine.fsUnlink(path);
         }
       }
     }
