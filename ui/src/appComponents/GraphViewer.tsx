@@ -20,6 +20,7 @@ import {
   GraphToolbar,
   IndexingProgress,
   PixiGraphCanvas,
+  ThreeGraphCanvas,
   detectProvider,
   normalizeRepoUrl,
   type IndexingState,
@@ -73,6 +74,22 @@ const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_SUBMITTING), label: 'Persisting graph' },
   { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
 ];
+
+/**
+ * Renderer selection via the `?renderer=three|pixi` query flag. The Three.js
+ * renderer is the default (real 3D + 100k-node headroom); `?renderer=pixi` is
+ * the escape hatch back to the legacy Pixi renderer. Both implement the
+ * identical GraphCanvasProps / GraphCanvasHandle contract, so the rest of
+ * GraphViewer is unchanged regardless of which is chosen.
+ */
+const GRAPH_RENDERER: 'three' | 'pixi' =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('renderer') === 'pixi'
+    ? 'pixi'
+    : 'three';
+
+const GraphCanvasImpl =
+  GRAPH_RENDERER === 'three' ? ThreeGraphCanvas : PixiGraphCanvas;
 
 /** Map app-specific JobState to the generic IndexingState + title/message. */
 function toIndexingProps(job: JobState, repoUrl: string) {
@@ -200,6 +217,24 @@ const GraphViewer = memo(
         chatHighlightNodes,
         suppressNextAutoFitRef: suppressNextFitRef,
       });
+
+      // Already-scaled compact-layout config for the canvas. Memoized so the
+      // canvas's "apply on load / change" effect only fires when a value
+      // actually changes (a fresh object every render would re-run it).
+      const compactConfigProp = useMemo(
+        () => ({
+          radialStrength: v.settings.compactRadial / 100,
+          communityPull: v.settings.compactCommunity / 100,
+          centeringStrength: v.settings.compactCentering / 100,
+          radiusScale: v.settings.compactRadius,
+        }),
+        [
+          v.settings.compactRadial,
+          v.settings.compactCommunity,
+          v.settings.compactCentering,
+          v.settings.compactRadius,
+        ],
+      );
 
       const {
         graphData,
@@ -573,7 +608,7 @@ const GraphViewer = memo(
             </div>
           )}
 
-          <PixiGraphCanvas
+          <GraphCanvasImpl
             ref={v.canvasRef}
             nodes={graphData.nodes}
             links={graphData.links}
@@ -604,7 +639,13 @@ const GraphViewer = memo(
             layoutMode={v.settings.layoutMode}
             zoomSizeExponent={v.settings.pixiZoomExponent}
             labelScale={v.settings.labelScale / 100}
+            edgeOpacity={v.settings.edgeOpacity / 100}
+            chargeStrength={-v.settings.repulsion}
+            linkDistance={v.settings.pixiLinkDist}
+            compactConfig={compactConfigProp}
             mode3d={v.settings.mode3d}
+            rotationSpeed={v.settings.mode3dSpeed / 10000}
+            cameraTilt={v.settings.mode3dTilt / 100}
             on3DAutoRotateChange={v.settings.setRendererAutoRotate}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
@@ -653,6 +694,8 @@ const GraphViewer = memo(
               setRendererAutoRotate={v.settings.setRendererAutoRotate}
               labelScale={v.settings.labelScale}
               setLabelScale={v.settings.setLabelScale}
+              edgeOpacity={v.settings.edgeOpacity}
+              setEdgeOpacity={v.settings.setEdgeOpacity}
             />
           )}
 
@@ -694,6 +737,7 @@ const GraphViewer = memo(
               });
               c?.setZoomSizeExponent?.(D.pixiZoomExponent);
               c?.setLabelScale?.(D.labelScale / 100);
+              c?.setEdgeOpacity?.(D.edgeOpacity / 100);
               c?.set3DMode?.(D.mode3d);
               c?.set3DSpeed?.(D.mode3dSpeed / 10000);
               c?.set3DTilt?.(D.mode3dTilt / 100);

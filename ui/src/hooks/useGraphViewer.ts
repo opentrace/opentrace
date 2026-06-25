@@ -159,6 +159,8 @@ export interface PersistedSettings {
   setMode3dTilt: Dispatch<SetStateAction<number>>;
   labelScale: number;
   setLabelScale: Dispatch<SetStateAction<number>>;
+  edgeOpacity: number;
+  setEdgeOpacity: Dispatch<SetStateAction<number>>;
   rendererAutoRotate: boolean | null;
   setRendererAutoRotate: Dispatch<SetStateAction<boolean | null>>;
   physicsRunning: boolean;
@@ -242,22 +244,29 @@ function readPersistedSettings(): Record<string, unknown> {
  *  the renderer / physics layout ships with. */
 export const GRAPH_SETTING_DEFAULTS = {
   zoomOnSelect: false,
-  repulsion: 120,
+  // Charge magnitude — matches the renderer's FORCE_CHARGE_STRENGTH (-200) so
+  // the slider value is the actual repulsion the worker initializes with. (Was
+  // 120, which silently disagreed with the -200 the layout really used.)
+  repulsion: 200,
   labelsVisible: true,
   edgesVisible: true,
   communityLabelsVisible: true,
   pixiLinkDist: 200,
   pixiCenter: 0.3,
   pixiZoomExponent: 0.25,
-  layoutMode: 'compact' as 'spread' | 'compact',
+  // Spread is the default so the graph opens in the branching tree/brainstem
+  // shape (DEFINES hierarchy spread out) rather than a tight community ball;
+  // toggle to 'compact' for the dense packed view.
+  layoutMode: 'spread' as 'spread' | 'compact',
   compactRadial: 8,
   compactCommunity: 10,
   compactCentering: 5,
-  compactRadius: 32,
+  compactRadius: 16,
   mode3d: true,
-  mode3dSpeed: 30,
+  mode3dSpeed: 15,
   mode3dTilt: 35,
   labelScale: 100,
+  edgeOpacity: 100,
   communitiesEnabled: true,
 };
 
@@ -452,6 +461,9 @@ export function useGraphViewer(
   const [labelScale, setLabelScale] = useState(() =>
     ps('labelScale', D.labelScale),
   );
+  const [edgeOpacity, setEdgeOpacity] = useState(() =>
+    ps('edgeOpacity', D.edgeOpacity),
+  );
 
   const [rendererAutoRotate, setRendererAutoRotate] = useState<boolean | null>(
     null,
@@ -476,6 +488,7 @@ export function useGraphViewer(
       mode3dSpeed,
       mode3dTilt,
       labelScale,
+      edgeOpacity,
     };
     // Merge into the existing entry rather than overwriting it — fields
     // owned by other writers of this shared key (e.g. `communitiesEnabled`
@@ -509,6 +522,7 @@ export function useGraphViewer(
     mode3dSpeed,
     mode3dTilt,
     labelScale,
+    edgeOpacity,
   ]);
 
   // ─── Search / reset / suggestions / filter ─────────────────────────────
@@ -581,6 +595,7 @@ export function useGraphViewer(
     setMode3dSpeed(D.mode3dSpeed);
     setMode3dTilt(D.mode3dTilt);
     setLabelScale(D.labelScale);
+    setEdgeOpacity(D.edgeOpacity);
     setCommunitiesEnabled(D.communitiesEnabled);
     setRendererAutoRotate(null);
     try {
@@ -1003,6 +1018,8 @@ export function useGraphViewer(
       setMode3dTilt,
       labelScale,
       setLabelScale,
+      edgeOpacity,
+      setEdgeOpacity,
       rendererAutoRotate,
       setRendererAutoRotate,
       physicsRunning,
@@ -1029,6 +1046,7 @@ export function useGraphViewer(
       mode3dSpeed,
       mode3dTilt,
       labelScale,
+      edgeOpacity,
       rendererAutoRotate,
       physicsRunning,
       resetSettings,

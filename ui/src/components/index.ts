@@ -26,6 +26,9 @@
 export { default as Graph } from './PixiGraphCanvas';
 export { default as GraphCanvas } from './PixiGraphCanvas';
 export { default as PixiGraphCanvas } from './PixiGraphCanvas';
+// Three.js renderer — drop-in peer (same GraphCanvasProps / GraphCanvasHandle).
+// Selected at the call site via the `?renderer=three` flag.
+export { default as ThreeGraphCanvas } from './ThreeGraphCanvas';
 export type {
   GraphCanvasProps,
   GraphCanvasHandle,

@@ -75,8 +75,8 @@ export class ServerGraphStore implements GraphStore {
   // Visualization caps threaded into /api/graph as ?maxNodes=&maxEdges=.
   // Defaults match LadybugStore and SettingsDrawer's DEFAULT_MAX_*. The
   // agent caps the response server-side (see serve.py:fetch_graph).
-  private maxVisNodes = 20000;
-  private maxVisEdges = 20000;
+  private maxVisNodes = 50000;
+  private maxVisEdges = 50000;
 
   constructor(baseUrl: string) {
     // Strip trailing slash for consistent URL building

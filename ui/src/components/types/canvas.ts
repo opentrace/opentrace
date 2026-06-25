@@ -92,8 +92,35 @@ export interface GraphCanvasProps {
   /** Label scale multiplier. Persisted setting; re-applied like
    *  `zoomSizeExponent` so the renderer matches the slider on mount. */
   labelScale?: number;
+  /** User edge-opacity multiplier (1.0 = default). Scales the renderer's
+   *  zoom-driven edge opacity so edges can be made more/less visible. */
+  edgeOpacity?: number;
+  /** Charge/repulsion strength (negative = repel). Persisted physics setting;
+   *  re-applied on prop change so a saved value takes effect on load, not just
+   *  on a live slider drag (same pattern as `zoomSizeExponent`/`labelScale`). */
+  chargeStrength?: number;
+  /** Target distance between linked nodes. Persisted; re-applied like
+   *  `chargeStrength`. */
+  linkDistance?: number;
+  /** Compact-layout tuning (already-scaled values). Persisted; re-applied on
+   *  prop change. Pass a stable (memoized) object so the effect only fires when
+   *  a value actually changes. */
+  compactConfig?: {
+    radialStrength: number;
+    communityPull: number;
+    centeringStrength: number;
+    radiusScale: number;
+  };
   /** Enable pseudo-3D rotation mode. */
   mode3d?: boolean;
+  /** Auto-rotation speed in radians/frame. Persisted setting; re-applied on
+   *  prop change so the renderer matches the slider on mount (same pattern as
+   *  `zoomSizeExponent`/`labelScale`). Without this a saved rotation speed was
+   *  stored but never applied — the renderer kept its hard-coded default. */
+  rotationSpeed?: number;
+  /** Camera tilt as a fraction (elevation above the equator). Persisted
+   *  setting; re-applied on prop change like `rotationSpeed`. */
+  cameraTilt?: number;
   /** Called when auto-rotation state changes (e.g. paused on node click). */
   on3DAutoRotateChange?: (autoRotate: boolean) => void;
   /** CSS class name for the container div. */
@@ -161,6 +188,8 @@ export interface GraphCanvasHandle {
   set3DAutoRotate?: (enabled: boolean) => void;
   /** Set label scale multiplier (independent of node size, default 1.0). */
   setLabelScale?: (scale: number) => void;
+  /** Set the user edge-opacity multiplier (1.0 = default). */
+  setEdgeOpacity?: (opacity: number) => void;
   /** Trigger a ping/glow animation on the given node IDs. */
   triggerPing?: (nodeIds: Iterable<string>) => void;
 }

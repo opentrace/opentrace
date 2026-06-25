@@ -337,7 +337,7 @@ export class PixiRenderer {
   private mode3d = false;
   private mode3dAngle = 0; // Y-axis rotation (radians)
   private mode3dTilt = 0.35; // X-axis tilt (radians)
-  private mode3dSpeed = 0.003; // auto-rotation speed (radians/frame)
+  private mode3dSpeed = 0.0015; // auto-rotation speed (radians/frame)
   private mode3dAutoRotate = true;
   private mode3dDepthScale = 800;
   private mode3dPerspectiveD = 2000; // perspective distance

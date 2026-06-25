@@ -292,13 +292,25 @@ function InternalGraphInteractionProvider({
   useEffect(() => {
     if (graphVersion === 0) return;
     if (lastDefaultsVersion.current === graphVersion) return;
-    const depSubs = availableSubTypes.get('Dependency');
-    if (!depSubs || depSubs.length === 0) return;
     lastDefaultsVersion.current = graphVersion;
+    // Hide Variables and Dependencies by default — Variables are the bulk of
+    // the nodes (often >half) and aren't part of the structural view people
+    // normally look at (files/classes/functions); Dependencies are registry
+    // noise. Both have sub-types, and in `shouldHideNode` sub-type visibility
+    // takes precedence over the whole-type flag — so they must be hidden at the
+    // sub-type level (the type flag alone is ignored for sub-typed nodes). We
+    // still add the type flag too, as a fallback for nodes that have no sub-type.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
+    setHiddenNodeTypes((prev) =>
+      prev.has('Variable') ? prev : new Set(prev).add('Variable'),
+    );
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
     setHiddenSubTypes((prev) => {
       const next = new Set(prev);
-      depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
+      for (const type of ['Variable', 'Dependency']) {
+        const subs = availableSubTypes.get(type);
+        if (subs) subs.forEach((s) => next.add(`${type}:${s.subType}`));
+      }
       return next;
     });
   }, [graphVersion, availableSubTypes]);

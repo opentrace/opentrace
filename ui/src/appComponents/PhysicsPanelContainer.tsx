@@ -73,6 +73,8 @@ interface PhysicsPanelContainerProps {
 
   labelScale: number;
   setLabelScale: Dispatch<SetStateAction<number>>;
+  edgeOpacity: number;
+  setEdgeOpacity: Dispatch<SetStateAction<number>>;
 }
 
 /** Wires PhysicsPanel state changes to the canvas's imperative API. */
@@ -118,6 +120,8 @@ export const PhysicsPanelContainer = ({
   setRendererAutoRotate,
   labelScale,
   setLabelScale,
+  edgeOpacity,
+  setEdgeOpacity,
 }: PhysicsPanelContainerProps) => (
   <PhysicsPanel
     repulsion={repulsion}
@@ -220,6 +224,11 @@ export const PhysicsPanelContainer = ({
     onLabelScaleChange={(v) => {
       setLabelScale(v);
       canvasRef.current?.setLabelScale?.(v / 100);
+    }}
+    edgeOpacity={edgeOpacity}
+    onEdgeOpacityChange={(v) => {
+      setEdgeOpacity(v);
+      canvasRef.current?.setEdgeOpacity?.(v / 100);
     }}
   />
 );

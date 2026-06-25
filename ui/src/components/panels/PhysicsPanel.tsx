@@ -68,6 +68,9 @@ interface PhysicsPanelProps {
   onZoomSizeExponentChange?: (value: number) => void;
   labelScale?: number;
   onLabelScaleChange?: (value: number) => void;
+  /** Edge-opacity multiplier as a percentage (100 = default). */
+  edgeOpacity?: number;
+  onEdgeOpacityChange?: (value: number) => void;
   onReheat?: () => void;
   onFitToScreen?: () => void;
   // 3D mode
@@ -117,13 +120,15 @@ export default function PhysicsPanel({
   onZoomSizeExponentChange,
   labelScale = 100,
   onLabelScaleChange,
+  edgeOpacity = 100,
+  onEdgeOpacityChange,
   onReheat,
   onFitToScreen,
   mode3d = false,
   onMode3dChange,
   mode3dAutoRotate = true,
   onMode3dAutoRotateChange,
-  mode3dSpeed = 30,
+  mode3dSpeed = 15,
   onMode3dSpeedChange,
   mode3dTilt = 35,
   onMode3dTiltChange,
@@ -541,6 +546,25 @@ export default function PhysicsPanel({
               max={300}
               value={labelScale}
               onInput={(e) => onLabelScaleChange(Number(e.currentTarget.value))}
+            />
+          </div>
+        )}
+
+        {/* Edge opacity — user multiplier on top of the zoom-driven fade */}
+        {pixiMode && onEdgeOpacityChange && (
+          <div className="physics-slider-row">
+            <div className="physics-slider-label">
+              <span>Edge opacity</span>
+              <span className="physics-slider-value">{edgeOpacity}%</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              value={edgeOpacity}
+              onInput={(e) =>
+                onEdgeOpacityChange(Number(e.currentTarget.value))
+              }
             />
           </div>
         )}

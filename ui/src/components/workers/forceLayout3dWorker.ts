@@ -15,20 +15,13 @@
  */
 
 /**
- * Persistent Web Worker for Pixi.js d3-force layout.
+ * Persistent Web Worker for the Three.js renderer's d3-force-3d layout.
  *
- * Unlike d3LayoutWorker (single-shot), this worker keeps the simulation alive
- * and streams position snapshots at ~15fps via transferable Float64Array.
- *
- * Protocol:
- *   init           → build simulation, return initial positions after sync ticks
- *   positions      ← streamed every ~66ms as Float64Array [x0,y0,x1,y1,...]
- *   settled        ← sent when alpha < 0.005
- *   update-config  → change force parameters, reheat
- *   fix-node       → pin node for dragging
- *   unfix-node     → unpin node
- *   reheat / stop / start → physics controls
- *   set-community-gravity → toggle cluster forces
+ * Sibling of pixiLayoutWorker, but runs the simulation in 2 OR 3 dimensions
+ * (d3-force-3d) and streams stride-3 position snapshots [x,y,z, ...] so the
+ * renderer gets genuine z-coordinates in 3D mode. Switching dimensions
+ * (`set-dimensions`) rebuilds the simulation in place, preserving x/y and
+ * seeding/zeroing z. Otherwise the message protocol matches pixiLayoutWorker.
  */
 
 import {
@@ -38,34 +31,40 @@ import {
   forceCenter,
   forceX,
   forceY,
+  forceZ,
   forceRadial,
   type Simulation,
   type SimulationNodeDatum,
   type SimulationLinkDatum,
-} from 'd3-force';
-
-// ─── Types ──────────────────────────────────────────────────────────────
+} from 'd3-force-3d';
 
 interface SimNode extends SimulationNodeDatum {
   id: string;
+  z?: number | null;
+  vz?: number | null;
   fx?: number | null;
   fy?: number | null;
+  fz?: number | null;
 }
 
 interface SimLink extends SimulationLinkDatum<SimNode> {
   source: string | SimNode;
   target: string | SimNode;
+  /** Link-force weight: 1 = structural (DEFINES, builds the tree/flower),
+   *  <1 = relational (calls/imports — a weak pull that shortens those edges
+   *  and forms logical branches without collapsing the structure). */
+  w?: number;
 }
 
-/** Layout mode: 'spread' = standard force-directed, 'compact' = radial/circular with contain force. */
 export type LayoutMode = 'spread' | 'compact';
 
-export type WorkerInMessage =
+export type Worker3DInMessage =
   | {
       type: 'init';
       nodeIds: string[];
-      links: { source: string; target: string }[];
+      links: { source: string; target: string; w?: number }[];
       communities?: Record<string, number>;
+      dimensions?: 2 | 3;
       config: {
         chargeStrength: number;
         linkDistance: number;
@@ -78,7 +77,7 @@ export type WorkerInMessage =
   | {
       type: 'add-nodes';
       nodeIds: string[];
-      links: { source: string; target: string }[];
+      links: { source: string; target: string; w?: number }[];
       communities?: Record<string, number>;
     }
   | {
@@ -95,6 +94,7 @@ export type WorkerInMessage =
       radiusScale?: number;
     }
   | { type: 'set-layout-mode'; mode: LayoutMode }
+  | { type: 'set-dimensions'; dimensions: 2 | 3 }
   | { type: 'fix-node'; nodeId: string; x: number; y: number }
   | { type: 'unfix-node'; nodeId: string }
   | { type: 'reheat' }
@@ -105,48 +105,62 @@ export type WorkerInMessage =
   | { type: 'set-community-gravity'; enabled: boolean; strength?: number }
   | { type: 'set-communities'; communities: Record<string, number> };
 
-export type WorkerOutMessage =
+export type Worker3DOutMessage =
   | { type: 'positions'; buffer: Float64Array }
   | { type: 'settled' }
   | { type: 'ready'; buffer: Float64Array };
 
-// ─── Worker State ────────────────────────────────────────────────────────
+// ─── State ────────────────────────────────────────────────────────────────
 
 let sim: Simulation<SimNode, SimLink> | null = null;
 let simNodes: SimNode[] = [];
 let nodeIdToIndex: Map<string, number> = new Map();
 let communities: Record<string, number> | undefined;
 let currentMode: LayoutMode = 'spread';
+let nDim: 2 | 3 = 2;
 let defaultTheta = 0.9;
 let dragTheta = 1.5;
 let settled = false;
-// Cached init config for re-building simulation on layout mode switch
 let cachedLinks: SimLink[] = [];
 let cachedConfig: {
   chargeStrength: number;
   linkDistance: number;
   centerStrength?: number;
 } | null = null;
-// Compact mode tuning (updated at runtime via update-compact-config)
 const compactConfig = {
   radialStrength: 0.08,
   communityPull: 0.1,
   centeringStrength: 0.05,
-  radiusScale: 32,
+  radiusScale: 16,
 };
 let streaming = false;
 let streamInterval: ReturnType<typeof setInterval> | null = null;
 
 const STREAM_INTERVAL = 66; // ~15fps
-const SETTLE_ALPHA = 0.005;
+// Declare the layout settled once alpha drops below this. The long tail from
+// ~0.02 → 0.005 is ~50 extra ticks of sub-pixel drift that's invisible but
+// costs seconds of "still loading" wall-time on a 12k-node 3D sim. Stopping at
+// 0.02 cuts that imperceptible tail without changing the visible layout.
+const SETTLE_ALPHA = 0.02;
+// Barnes-Hut accuracy/speed tradeoff for the charge force. The charge
+// (forceManyBody) is ~99% of every tick's CPU on a large 3D sim — at the
+// breakpoint default (0.9) it's ~60ms/tick for 12k nodes; at 1.5 it's ~21ms
+// (~3× faster) with no visible change to the cluster structure. 1.5 is the
+// same accuracy the renderer already uses during node drags (`dragTheta`), so
+// the layout was always being computed at this theta interactively. We floor
+// the requested theta here rather than mutating the shared breakpoints (those
+// also feed the Pixi renderer, which we don't want to perturb).
+const FAST_BARNES_HUT_THETA = 1.5;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────
 
 function buildPositionBuffer(): Float64Array {
-  const buf = new Float64Array(simNodes.length * 2);
+  // Stride 3 — [x,y,z]. z is 0 in 2D mode.
+  const buf = new Float64Array(simNodes.length * 3);
   for (let i = 0; i < simNodes.length; i++) {
-    buf[i * 2] = simNodes[i].x ?? 0;
-    buf[i * 2 + 1] = simNodes[i].y ?? 0;
+    buf[i * 3] = simNodes[i].x ?? 0;
+    buf[i * 3 + 1] = simNodes[i].y ?? 0;
+    buf[i * 3 + 2] = simNodes[i].z ?? 0;
   }
   return buf;
 }
@@ -154,7 +168,7 @@ function buildPositionBuffer(): Float64Array {
 function postPositions(): void {
   const buf = buildPositionBuffer();
   (self as unknown as Worker).postMessage(
-    { type: 'positions', buffer: buf } satisfies WorkerOutMessage,
+    { type: 'positions', buffer: buf } satisfies Worker3DOutMessage,
     [buf.buffer],
   );
 }
@@ -166,13 +180,12 @@ function startStreaming(): void {
   streamInterval = setInterval(() => {
     if (!sim) return;
     if (sim.alpha() < SETTLE_ALPHA) {
-      // Send one final position snapshot so the last ~66ms of movement isn't dropped
       postPositions();
       stopStreaming();
       settled = true;
       (self as unknown as Worker).postMessage({
         type: 'settled',
-      } satisfies WorkerOutMessage);
+      } satisfies Worker3DOutMessage);
       return;
     }
     postPositions();
@@ -187,15 +200,59 @@ function stopStreaming(): void {
   streaming = false;
 }
 
-// ─── Simulation Builder ──────────────────────────────────────────────────
+// ─── Simulation builder ─────────────────────────────────────────────────
 
 /**
- * Build a d3-force simulation with the appropriate forces for the layout mode.
- *
- * 'spread': Standard force-directed — nodes repel, links attract, gentle center.
- * 'compact': Radial/circular — weak charge, radial pull, contain force, community
- *            gravity. Produces the dense circular layout like Grafana/Obsidian.
+ * Build a custom force that pulls each node toward the centroid of its
+ * community every tick. This is what gives the graph its "flower" structure —
+ * communities condense into petals while charge repulsion keeps the petals
+ * apart. Used in BOTH layout modes so communities always shape the layout
+ * (the spread default would otherwise be a pure-force hairball). Single-member
+ * communities are skipped. `getStrength` is read each tick so the slider
+ * applies live.
  */
+function makeCommunityForce(
+  s: Simulation<SimNode, SimLink>,
+  nodes: SimNode[],
+  comms: Record<string, number>,
+  getStrength: () => number,
+): Parameters<typeof s.force>[1] {
+  const force = () => {
+    const is3D = nDim === 3;
+    const cx = new Map<number, number>();
+    const cy = new Map<number, number>();
+    const cz = new Map<number, number>();
+    const count = new Map<number, number>();
+    for (const node of nodes) {
+      const c = comms[node.id];
+      if (c === undefined) continue;
+      cx.set(c, (cx.get(c) ?? 0) + (node.x ?? 0));
+      cy.set(c, (cy.get(c) ?? 0) + (node.y ?? 0));
+      if (is3D) cz.set(c, (cz.get(c) ?? 0) + (node.z ?? 0));
+      count.set(c, (count.get(c) ?? 0) + 1);
+    }
+    const alpha = s.alpha();
+    const strength = getStrength();
+    for (const node of nodes) {
+      const c = comms[node.id];
+      if (c === undefined) continue;
+      const n = count.get(c)!;
+      if (n < 2) continue;
+      const targetX = cx.get(c)! / n;
+      const targetY = cy.get(c)! / n;
+      node.vx = (node.vx ?? 0) + (targetX - (node.x ?? 0)) * strength * alpha;
+      node.vy = (node.vy ?? 0) + (targetY - (node.y ?? 0)) * strength * alpha;
+      if (is3D) {
+        const targetZ = cz.get(c)! / n;
+        node.vz = (node.vz ?? 0) + (targetZ - (node.z ?? 0)) * strength * alpha;
+      }
+    }
+  };
+  (force as unknown as { initialize: (n: SimNode[]) => void }).initialize =
+    () => {};
+  return force as unknown as Parameters<typeof s.force>[1];
+}
+
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
@@ -206,44 +263,75 @@ function buildSimulation(
   },
   mode: LayoutMode,
 ): Simulation<SimNode, SimLink> {
-  const s = forceSimulation<SimNode, SimLink>(nodes);
+  const s = forceSimulation<SimNode, SimLink>(nodes, nDim);
 
-  // Link force — compact mode uses shorter, weaker links for dense packing
+  // Degree over the link set, so structural links keep d3's default
+  // degree-normalized strength (1/min-degree) — high-degree hubs don't get
+  // over-pulled. Relational links then scale that by their weight `w`.
+  const linkDeg = new Map<string, number>();
+  const endId = (v: string | SimNode) => (typeof v === 'string' ? v : v.id);
+  for (const l of links) {
+    const a = endId(l.source);
+    const b = endId(l.target);
+    linkDeg.set(a, (linkDeg.get(a) ?? 0) + 1);
+    linkDeg.set(b, (linkDeg.get(b) ?? 0) + 1);
+  }
   const linkForce = forceLink<SimNode, SimLink>(links)
-    .id((d) => d.id)
+    .id((d: SimNode) => d.id)
     .distance(mode === 'compact' ? 40 : config.linkDistance);
-  if (mode === 'compact') linkForce.strength(0.2);
+  // Per-link strength = weight × base. Compact uses a flat base (tight ball);
+  // spread uses the degree-normalized base. Either way, relational links
+  // (w < 1) pull weakly so they shorten without flattening the structure.
+  if (mode === 'compact') {
+    linkForce.strength((l: SimLink) => 0.2 * (l.w ?? 1));
+  } else {
+    linkForce.strength((l: SimLink) => {
+      const d = Math.min(
+        linkDeg.get(endId(l.source)) ?? 1,
+        linkDeg.get(endId(l.target)) ?? 1,
+      );
+      return (l.w ?? 1) / Math.max(1, d);
+    });
+  }
   s.force('link', linkForce);
 
   if (mode === 'compact') {
     const compactRadius = Math.sqrt(nodes.length) * compactConfig.radiusScale;
-
     s.force(
       'charge',
       forceManyBody().strength(config.chargeStrength).theta(defaultTheta),
     )
-      .force('center', forceCenter(0, 0).strength(0.3))
+      .force('center', forceCenter(0, 0, 0).strength(0.3))
       .force('x', forceX<SimNode>(0).strength(compactConfig.centeringStrength))
       .force('y', forceY<SimNode>(0).strength(compactConfig.centeringStrength))
       .force(
         'radial',
         forceRadial(0, 0, 0).strength(compactConfig.radialStrength),
       )
-      .alphaDecay(0.008)
-      .velocityDecay(0.4);
+      // Cool fast so the layout stops churning / streaming sooner — the long
+      // settle was a big chunk of perceived load lag on the 3D sim.
+      .alphaDecay(0.035)
+      .velocityDecay(0.45);
 
-    // Custom contain force — clamps nodes inside a circle
+    // Contain force — clamp nodes inside a circle (2D) or sphere (3D) so
+    // compact stays a tight ball. In 3D this fills a volume rather than a slab.
     const containForce = () => {
+      const is3D = nDim === 3;
       for (const node of nodes) {
-        const dist = Math.sqrt((node.x ?? 0) ** 2 + (node.y ?? 0) ** 2);
+        const x = node.x ?? 0;
+        const y = node.y ?? 0;
+        const z = node.z ?? 0;
+        const dist = is3D
+          ? Math.sqrt(x * x + y * y + z * z)
+          : Math.sqrt(x * x + y * y);
         if (dist > compactRadius) {
           const scale = compactRadius / dist;
-          node.x = (node.x ?? 0) * scale;
-          node.y = (node.y ?? 0) * scale;
+          node.x = x * scale;
+          node.y = y * scale;
+          if (is3D) node.z = z * scale;
         }
       }
     };
-    // d3-force accepts any function with .initialize as a force
     (
       containForce as unknown as { initialize: (n: SimNode[]) => void }
     ).initialize = () => {};
@@ -252,83 +340,132 @@ function buildSimulation(
       containForce as unknown as Parameters<typeof s.force>[1],
     );
 
-    // Community gravity — pulls nodes toward their community centroid each tick
     if (communities && Object.keys(communities).length > 0) {
-      const comms = communities;
-      const communityForce = () => {
-        const cx = new Map<number, number>();
-        const cy = new Map<number, number>();
-        const count = new Map<number, number>();
-        for (const node of nodes) {
-          const c = comms[node.id];
-          if (c === undefined) continue;
-          cx.set(c, (cx.get(c) ?? 0) + (node.x ?? 0));
-          cy.set(c, (cy.get(c) ?? 0) + (node.y ?? 0));
-          count.set(c, (count.get(c) ?? 0) + 1);
-        }
-        const alpha = s.alpha();
-        for (const node of nodes) {
-          const c = comms[node.id];
-          if (c === undefined) continue;
-          const n = count.get(c)!;
-          if (n < 2) continue;
-          const targetX = cx.get(c)! / n;
-          const targetY = cy.get(c)! / n;
-          node.vx =
-            (node.vx ?? 0) +
-            (targetX - (node.x ?? 0)) * compactConfig.communityPull * alpha;
-          node.vy =
-            (node.vy ?? 0) +
-            (targetY - (node.y ?? 0)) * compactConfig.communityPull * alpha;
-        }
-      };
-      (
-        communityForce as unknown as { initialize: (n: SimNode[]) => void }
-      ).initialize = () => {};
       s.force(
         'communityGravity',
-        communityForce as unknown as Parameters<typeof s.force>[1],
+        makeCommunityForce(
+          s,
+          nodes,
+          communities,
+          () => compactConfig.communityPull,
+        ),
       );
     }
   } else {
-    // Spread mode — standard force-directed
+    // Spread — force-directed, but with community clustering so it reads as a
+    // structured "flower" instead of a hairball. Stronger charge separates the
+    // petals; the community force condenses each one.
     s.force(
       'charge',
       forceManyBody().strength(config.chargeStrength).theta(defaultTheta),
-    ).force('center', forceCenter(0, 0).strength(config.centerStrength ?? 1));
+    )
+      // forceCenter only re-centers the centroid (a translation) — it does NOT
+      // pull nodes inward. Keep it to anchor the graph, but the user-facing
+      // "Center pull" is an actual attraction toward the origin via x/y(/z).
+      .force('center', forceCenter(0, 0, 0).strength(1))
+      .force(
+        'centerX',
+        forceX<SimNode>(0).strength(spreadCenterPull(config.centerStrength)),
+      )
+      .force(
+        'centerY',
+        forceY<SimNode>(0).strength(spreadCenterPull(config.centerStrength)),
+      );
+    if (nDim === 3) {
+      s.force(
+        'centerZ',
+        forceZ<SimNode>(0).strength(spreadCenterPull(config.centerStrength)),
+      );
+    }
+    if (communities && Object.keys(communities).length > 0) {
+      s.force(
+        'communityGravity',
+        makeCommunityForce(s, nodes, communities, () => SPREAD_COMMUNITY_PULL),
+      );
+    }
+    // Cool faster than the d3 default (0.0228) so the force-directed layout
+    // settles in fewer ticks — the slow convergence was the bulk of perceived
+    // load time on a 12k-node 3D sim. velocityDecay matches d3's default.
+    s.alphaDecay(0.035).velocityDecay(0.4);
   }
 
   return s;
 }
 
-// ─── Message Handler ─────────────────────────────────────────────────────
+/** Map the 0–1 "Center pull" setting to an attraction strength toward the
+ *  origin. Scaled so the default (~0.3) is a gentle pull and 1.0 is firm
+ *  without collapsing the graph. */
+function spreadCenterPull(centerStrength: number | undefined): number {
+  return (centerStrength ?? 0.3) * 0.25;
+}
 
-self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
+/** Community-clustering strength in spread mode. Kept gentle so the DEFINES
+ *  hierarchy spreads into branches (tree/brainstem look) rather than each
+ *  community condensing into a tight petal/ball — communities still tint and
+ *  loosely group, but the structural tree dominates the shape. */
+const SPREAD_COMMUNITY_PULL = 0.08;
+
+/** Rebuild keeping current positions; seed z when entering 3D, zero it in 2D. */
+function rebuild(alpha: number): void {
+  if (!cachedConfig) return;
+  sim?.stop();
+  if (nDim === 3) {
+    // Seed z with a spread comparable to the current x/y extent so 3D fills a
+    // real volume instead of staying a near-flat plane (the layout we're
+    // morphing from is 2D, i.e. all z≈0).
+    let ext = 0;
+    for (const n of simNodes) {
+      ext = Math.max(ext, Math.abs(n.x ?? 0), Math.abs(n.y ?? 0));
+    }
+    ext = ext || 500;
+    for (const n of simNodes) {
+      n.z = (Math.random() - 0.5) * ext;
+    }
+  } else {
+    for (const n of simNodes) {
+      n.z = 0;
+      n.vz = 0;
+      n.fz = null;
+    }
+  }
+  sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+  sim.alpha(alpha).restart();
+  settled = false;
+  startStreaming();
+}
+
+// ─── Message handler ────────────────────────────────────────────────────
+
+self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
   const msg = e.data;
-
   switch (msg.type) {
     case 'init': {
-      // Tear down previous
       stopStreaming();
       sim?.stop();
       communities = msg.communities;
-      defaultTheta = msg.config.barnesHutTheta ?? 0.9;
-      dragTheta = msg.config.dragTheta ?? 1.5;
+      defaultTheta = Math.max(
+        msg.config.barnesHutTheta ?? 0.9,
+        FAST_BARNES_HUT_THETA,
+      );
+      dragTheta = Math.max(msg.config.dragTheta ?? 1.5, FAST_BARNES_HUT_THETA);
       currentMode = msg.config.layoutMode ?? 'spread';
+      nDim = msg.dimensions ?? 2;
 
-      // Build sim nodes
       simNodes = msg.nodeIds.map((id) => ({ id }));
       nodeIdToIndex = new Map();
       for (let i = 0; i < msg.nodeIds.length; i++) {
         nodeIdToIndex.set(msg.nodeIds[i], i);
       }
 
-      // Build sim links — filter to valid endpoints
       const nodeIdSet = new Set(msg.nodeIds);
       const simLinks: SimLink[] = [];
       for (const link of msg.links) {
         if (nodeIdSet.has(link.source) && nodeIdSet.has(link.target)) {
-          simLinks.push({ source: link.source, target: link.target });
+          simLinks.push({
+            source: link.source,
+            target: link.target,
+            w: link.w,
+          });
         }
       }
       cachedLinks = simLinks;
@@ -338,50 +475,51 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
         centerStrength: msg.config.centerStrength,
       };
 
-      // Create simulation
       sim = buildSimulation(simNodes, simLinks, cachedConfig, currentMode);
-
-      // Run initial ticks synchronously
       sim.stop();
       const INITIAL_TICKS = currentMode === 'compact' ? 30 : 10;
       for (let i = 0; i < INITIAL_TICKS; i++) sim.tick();
 
-      // Send initial positions
       const buf = buildPositionBuffer();
       (self as unknown as Worker).postMessage(
-        { type: 'ready', buffer: buf } satisfies WorkerOutMessage,
+        { type: 'ready', buffer: buf } satisfies Worker3DOutMessage,
         [buf.buffer],
       );
 
-      // Resume simulation and start streaming
       sim.restart();
       settled = false;
       startStreaming();
       break;
     }
 
+    case 'set-dimensions': {
+      if (!sim || !cachedConfig) break;
+      if (msg.dimensions === nDim) break;
+      nDim = msg.dimensions;
+      rebuild(0.6);
+      break;
+    }
+
     case 'add-nodes': {
       if (!sim || !cachedConfig) break;
+      if (msg.communities) communities = { ...communities, ...msg.communities };
 
-      if (msg.communities) {
-        communities = { ...communities, ...msg.communities };
-      }
-
-      // Compute centroid of existing nodes
       const existingIds = new Set(simNodes.map((n) => n.id));
       let cx = 0,
-        cy = 0;
+        cy = 0,
+        cz = 0;
       for (const n of simNodes) {
         cx += n.x ?? 0;
         cy += n.y ?? 0;
+        cz += n.z ?? 0;
       }
       if (simNodes.length > 0) {
         cx /= simNodes.length;
         cy /= simNodes.length;
+        cz /= simNodes.length;
       }
       const spread = Math.sqrt(simNodes.length) * 10;
 
-      // Add new nodes scattered near centroid
       let added = 0;
       for (const id of msg.nodeIds) {
         if (existingIds.has(id)) continue;
@@ -391,33 +529,31 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
           id,
           x: cx + Math.cos(angle) * r,
           y: cy + Math.sin(angle) * r,
+          z: nDim === 3 ? cz + (Math.random() - 0.5) * spread : 0,
         };
         simNodes.push(node);
         nodeIdToIndex.set(id, simNodes.length - 1);
         added++;
       }
-
       if (added === 0) break;
 
-      // Add new links
       const updatedIds = new Set(simNodes.map((n) => n.id));
       for (const link of msg.links) {
         if (updatedIds.has(link.source) && updatedIds.has(link.target)) {
-          cachedLinks.push({ source: link.source, target: link.target });
+          cachedLinks.push({
+            source: link.source,
+            target: link.target,
+            w: link.w,
+          });
         }
       }
 
-      // Rebuild simulation preserving existing positions
       sim.stop();
       stopStreaming();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-
-      // Gentle reheat — existing nodes barely shift, new ones settle in
       sim.alpha(0.3).restart();
       settled = false;
       startStreaming();
-
-      // Send immediate position update for the expanded node set
       postPositions();
       break;
     }
@@ -440,8 +576,6 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
         cachedConfig.linkDistance = msg.linkDistance;
       if (msg.centerStrength !== undefined)
         cachedConfig.centerStrength = msg.centerStrength;
-
-      // Charge and link distance apply in both modes
       if (msg.chargeStrength !== undefined) {
         sim.force(
           'charge',
@@ -454,14 +588,24 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
           | undefined;
         if (link) link.distance(msg.linkDistance);
       }
-      // Center strength only applies in spread mode
       if (currentMode === 'spread' && msg.centerStrength !== undefined) {
-        const center = sim.force('center') as
-          | ReturnType<typeof forceCenter>
+        // Drive the attraction forces (centerX/Y/Z), not forceCenter (which is
+        // just a centroid translation and wouldn't visibly tighten anything).
+        const pull = spreadCenterPull(msg.centerStrength);
+        const fx = sim.force('centerX') as
+          | ReturnType<typeof forceX>
           | undefined;
-        if (center) center.strength(msg.centerStrength);
+        const fy = sim.force('centerY') as
+          | ReturnType<typeof forceY>
+          | undefined;
+        const fz = sim.force('centerZ') as
+          | ReturnType<typeof forceZ>
+          | undefined;
+        if (fx) fx.strength(pull);
+        if (fy) fy.strength(pull);
+        if (fz) fz.strength(pull);
       }
-      sim.alpha(0.3).restart();
+      sim.alpha(0.5).restart();
       settled = false;
       startStreaming();
       break;
@@ -489,10 +633,8 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
           | undefined;
         if (radial) radial.strength(msg.radialStrength);
       }
-      if (msg.communityPull !== undefined) {
+      if (msg.communityPull !== undefined)
         compactConfig.communityPull = msg.communityPull;
-        // communityGravity is a custom force — reads compactConfig.communityPull directly
-      }
       if (msg.centeringStrength !== undefined) {
         compactConfig.centeringStrength = msg.centeringStrength;
         const fx = sim.force('x') as ReturnType<typeof forceX> | undefined;
@@ -502,42 +644,26 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       }
       if (msg.radiusScale !== undefined) {
         compactConfig.radiusScale = msg.radiusScale;
-        // Contain force captures radius at build time — must rebuild
         needsRebuild = true;
       }
-      // Reheat aggressively (Fix #20). Custom forces multiply their
-      // contribution by `s.alpha()` each tick, so at steady state
-      // (alpha ≈ alphaMin) a strength change has no observable effect —
-      // the slider would appear broken. Alpha(0.8) gives the new
-      // strength enough headroom to actually move thousands of nodes
-      // toward (or away from) their community centroids before the
-      // simulation cools again. Matches `set-layout-mode`'s full-reset
-      // energy for perceptual consistency between the two controls.
       if (needsRebuild) {
         sim.stop();
         sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-        sim.alpha(0.8).restart();
-      } else {
-        sim.alpha(0.8).restart();
       }
+      sim.alpha(0.8).restart();
       settled = false;
       startStreaming();
       break;
     }
 
     case 'set-communities': {
-      // Louvain runs asynchronously after init, so the first `init` message
-      // typically carries an empty `{}`. Without this handler, the
-      // module-level `communities` stays empty for the lifetime of the
-      // worker, `buildSimulation` skips installing the custom
-      // `communityGravity` force, and the compact-mode community-pull
-      // slider does nothing. Rebuild the simulation so the force is
-      // wired (Fix #20 follow-up).
       communities = msg.communities;
       if (!sim || !cachedConfig) break;
       sim.stop();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      sim.alpha(0.5).restart();
+      // Reheat hard — community gravity was just (re)installed and needs energy
+      // to pull the (possibly settled) layout into petals.
+      sim.alpha(0.7).restart();
       settled = false;
       startStreaming();
       break;
@@ -546,16 +672,8 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     case 'set-layout-mode': {
       if (!sim || !cachedConfig) break;
       currentMode = msg.mode;
-      // Rebuild simulation with new force composition, keeping current positions
       sim.stop();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      // Reheat to 0.5 rather than 1.0 (Fix #31). Alpha(1) is "fresh
-      // cold start" energy — when applied to a settled graph it
-      // launches every node toward the new equilibrium at full speed,
-      // which reads as the layout "exploding" before it resizes back.
-      // 0.5 still has enough headroom to reach the new equilibrium
-      // for typical graphs, but the visible motion is a drift rather
-      // than a detonation.
       sim.alpha(0.5).restart();
       settled = false;
       startStreaming();
@@ -611,9 +729,6 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     }
 
     case 'boost-theta': {
-      // Increase Barnes-Hut theta during drag for faster computation.
-      // Less accurate but ~2x faster at 20k nodes — acceptable since only
-      // local nodes matter during drag.
       if (!sim) break;
       const charge = sim.force('charge') as
         | ReturnType<typeof forceManyBody>
@@ -633,7 +748,6 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
 
     case 'set-community-gravity': {
       if (!sim) break;
-
       if (!msg.enabled) {
         sim.force('clusterX', null);
         sim.force('clusterY', null);
@@ -642,49 +756,39 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
         startStreaming();
         break;
       }
-
-      // Compute centroids from current positions
       const strength = msg.strength ?? 0.1;
-      const centroidSums = new Map<
-        number,
-        { x: number; y: number; count: number }
-      >();
-
       if (!communities) break;
-
+      const sums = new Map<number, { x: number; y: number; count: number }>();
       for (const node of simNodes) {
         const cid = communities[node.id];
         if (cid === undefined) continue;
-        const entry = centroidSums.get(cid) || { x: 0, y: 0, count: 0 };
-        entry.x += node.x ?? 0;
-        entry.y += node.y ?? 0;
-        entry.count += 1;
-        centroidSums.set(cid, entry);
+        const e2 = sums.get(cid) || { x: 0, y: 0, count: 0 };
+        e2.x += node.x ?? 0;
+        e2.y += node.y ?? 0;
+        e2.count += 1;
+        sums.set(cid, e2);
       }
       const centroids = new Map<number, { x: number; y: number }>();
-      for (const [cid, { x, y, count }] of centroidSums) {
+      for (const [cid, { x, y, count }] of sums)
         centroids.set(cid, { x: x / count, y: y / count });
-      }
       const nodeCentroid = new Map<string, { x: number; y: number }>();
       for (const node of simNodes) {
         const cid = communities[node.id];
-        if (cid !== undefined && centroids.has(cid)) {
+        if (cid !== undefined && centroids.has(cid))
           nodeCentroid.set(node.id, centroids.get(cid)!);
-        }
       }
-
       sim
         .force(
           'clusterX',
-          forceX<SimNode>((d) => nodeCentroid.get(d.id)?.x ?? 0).strength(
-            strength,
-          ),
+          forceX<SimNode>(
+            (d: SimNode) => nodeCentroid.get(d.id)?.x ?? 0,
+          ).strength(strength),
         )
         .force(
           'clusterY',
-          forceY<SimNode>((d) => nodeCentroid.get(d.id)?.y ?? 0).strength(
-            strength,
-          ),
+          forceY<SimNode>(
+            (d: SimNode) => nodeCentroid.get(d.id)?.y ?? 0,
+          ).strength(strength),
         )
         .alpha(0.5)
         .restart();

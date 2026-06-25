@@ -143,12 +143,23 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 
 function csvEscape(value: string): string {
+  // RFC-4180 quoting: wrap in " and double embedded quotes (" → "").
+  // The COPY statements force ESCAPE='"' (see COPY_OPTS) so the reader uses
+  // this same doubling AND treats backslash as plain data — critical because
+  // node names/signatures contain both literal " (TS/Go type strings) and \
+  // (regexes, paths). With LadybugDB's *default* ESCAPE ('\\'), a backslash in
+  // the data is misread as an escape char and the COPY throws.
   const safe = (value ?? '')
     .replace(CONTROL_CHARS_RE, '') // strip control chars except \t \n \r
     .replace(/[\r\n]+/g, ' ') // flatten newlines
-    .replace(/"/g, '""'); // escape quotes
+    .replace(/"/g, '""'); // escape quotes by doubling (RFC-4180)
   return '"' + safe + '"';
 }
+
+/** Shared CSV COPY options. ESCAPE='"' forces RFC-4180 doubling and makes
+ *  backslashes literal data; PARALLEL=FALSE avoids the parallel reader's
+ *  mishandling of quoted newlines. */
+const COPY_OPTS = `(HEADER=true, PARALLEL=FALSE, ESCAPE='"')`;
 
 /** Format a value for a LadybugDB CSV column based on its type. */
 function csvFormatValue(value: unknown, colType: ColumnType): string {
@@ -525,8 +536,11 @@ export class LadybugGraphStore implements GraphStore {
   private flushedSourceIds = new Set<string>();
 
   // --- Visualization limits ---
-  private maxVisNodes = 20000;
-  private maxVisEdges = 20000;
+  // Match SettingsDrawer's DEFAULT_MAX_* and serverStore. Kept above typical
+  // graph sizes so a graph isn't silently truncated (orphaning nodes whose
+  // edges get cut). Lowerable in Settings for very large browser-indexed graphs.
+  private maxVisNodes = 50000;
+  private maxVisEdges = 50000;
 
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
@@ -1832,7 +1846,7 @@ export class LadybugGraphStore implements GraphStore {
       const csvPath = `/import_nodes_${type}.csv`;
       await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
       try {
-        await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
+        await this.exec(`COPY ${type} FROM '${csvPath}' ${COPY_OPTS}`);
       } finally {
         await lbug.FS.unlink(csvPath);
       }
@@ -1918,7 +1932,7 @@ export class LadybugGraphStore implements GraphStore {
             await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
             try {
               await this.exec(
-                `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
+                `COPY RELATES_${key} FROM '${csvPath}' ${COPY_OPTS}`,
               );
             } catch (err) {
               console.warn(
@@ -1961,7 +1975,7 @@ export class LadybugGraphStore implements GraphStore {
         const csvPath = '/import_source_text.csv';
         await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
         try {
-          await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
+          await this.exec(`COPY SourceText FROM '${csvPath}' ${COPY_OPTS}`);
         } finally {
           await lbug.FS.unlink(csvPath);
         }
@@ -2189,7 +2203,7 @@ export class LadybugGraphStore implements GraphStore {
       const csv = lines.join('\n');
       const path = '/vectors_embed.csv';
       await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-      await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
+      await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
       await lbug.FS.unlink(path);
     }
 
@@ -2289,13 +2303,18 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     // --- Flush nodes: chunked COPY FROM per type ---
+    // PARALLEL=FALSE: LadybugDB's parallel CSV reader mis-parses quoted fields
+    // containing embedded quotes / newlines — which TypeScript type-signature
+    // node names regularly do (e.g. `setup(:Partial<Props["x"]>)`), tripping
+    // "neither QUOTE nor ESCAPE is preceded by ESCAPE". Single-threaded reads
+    // parse them correctly (mirrors the agent's graph_store COPY).
     for (const [type, bucket] of buckets) {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(type, chunk);
         const path = `/nodes_${type}.csv`;
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
+        await this.exec(`COPY ${type} FROM '${path}' ${COPY_OPTS}`);
         await lbug.FS.unlink(path);
       }
     }
@@ -2319,7 +2338,7 @@ export class LadybugGraphStore implements GraphStore {
         const csv = generateSourceTextCSV(chunk, this.sourceCache);
         const path = '/source_text.csv';
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
+        await this.exec(`COPY SourceText FROM '${path}' ${COPY_OPTS}`);
         await lbug.FS.unlink(path);
       }
       for (const id of newSnippets.keys()) {
@@ -2343,7 +2362,7 @@ export class LadybugGraphStore implements GraphStore {
         const csv = lines.join('\n');
         const path = '/vectors.csv';
         await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
+        await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
         await lbug.FS.unlink(path);
       }
       // Create vector index if not yet created
@@ -2382,7 +2401,7 @@ export class LadybugGraphStore implements GraphStore {
           const path = `/rels_${key}.csv`;
           await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
           try {
-            await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
+            await this.exec(`COPY RELATES_${key} FROM '${path}' ${COPY_OPTS}`);
           } catch (err) {
             console.warn(
               `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
