@@ -531,6 +531,19 @@ export class LadybugGraphStore implements GraphStore {
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
 
+  /** Monotonic counter for COPY-FROM temp filenames. The engine's virtual
+   *  filesystem is process-wide, so a fixed path (e.g. /nodes_Function.csv)
+   *  would collide if two import/flush operations ran in close succession —
+   *  one COPY could read the other's bytes, or an unlink could remove a file
+   *  before the other's COPY runs. Unique names make the paths collision-proof
+   *  regardless of caller serialization. */
+  private copySeq = 0;
+
+  /** A unique temp path for a CSV about to be COPY'd in. */
+  private tmpCsvPath(label: string): string {
+    return `/${label}_${++this.copySeq}.csv`;
+  }
+
   /** Monotonic counter bumped by clearGraph(). Each queued task captures the
    *  current value at enqueue; when it runs, a mismatch means clearGraph fired
    *  in the meantime and the task is aborted. Keeps clearGraph fast by letting
@@ -1793,7 +1806,7 @@ export class LadybugGraphStore implements GraphStore {
       }
 
       const csv = generateTypedNodeCSV(type, nodes);
-      const csvPath = `/import_nodes_${type}.csv`;
+      const csvPath = this.tmpCsvPath(`import_nodes_${type}`);
       await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
       try {
         await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
@@ -1878,7 +1891,7 @@ export class LadybugGraphStore implements GraphStore {
           ) {
             const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
             const csv = generateRelCSV(chunk);
-            const csvPath = `/rels_${key}.csv`;
+            const csvPath = this.tmpCsvPath(`rels_${key}`);
             await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
             try {
               await this.exec(
@@ -1922,7 +1935,7 @@ export class LadybugGraphStore implements GraphStore {
       }
       if (snippets.size > 0) {
         const csv = generateSourceTextCSV(snippets, fakeCache);
-        const csvPath = '/import_source_text.csv';
+        const csvPath = this.tmpCsvPath('import_source_text');
         await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
         try {
           await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
@@ -2151,7 +2164,7 @@ export class LadybugGraphStore implements GraphStore {
         lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
       }
       const csv = lines.join('\n');
-      const path = '/vectors_embed.csv';
+      const path = this.tmpCsvPath('vectors_embed');
       await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
       await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
       await this.engine.fsUnlink(path);
@@ -2257,7 +2270,7 @@ export class LadybugGraphStore implements GraphStore {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(type, chunk);
-        const path = `/nodes_${type}.csv`;
+        const path = this.tmpCsvPath(`nodes_${type}`);
         await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
         await this.engine.fsUnlink(path);
@@ -2281,7 +2294,7 @@ export class LadybugGraphStore implements GraphStore {
       ) {
         const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
         const csv = generateSourceTextCSV(chunk, this.sourceCache);
-        const path = '/source_text.csv';
+        const path = this.tmpCsvPath('source_text');
         await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
         await this.engine.fsUnlink(path);
@@ -2305,7 +2318,7 @@ export class LadybugGraphStore implements GraphStore {
           lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
         }
         const csv = lines.join('\n');
-        const path = '/vectors.csv';
+        const path = this.tmpCsvPath('vectors');
         await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
         await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
         await this.engine.fsUnlink(path);
@@ -2343,7 +2356,7 @@ export class LadybugGraphStore implements GraphStore {
         ) {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
-          const path = `/rels_${key}.csv`;
+          const path = this.tmpCsvPath(`rels_${key}`);
           await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
           try {
             await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
