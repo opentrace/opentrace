@@ -82,7 +82,7 @@ export interface GraphCanvasProps {
   /** Called when the optimize status changes. */
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
   /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
-  layoutMode?: 'spread' | 'compact';
+  layoutMode?: 'spread' | 'compact' | 'tree';
   /** Sprite size response to zoom — `appliedSize = baseSize * (1/scale)^exp`.
    *  Re-applied on every prop change so the persisted user setting takes
    *  effect immediately on mount (Fix #22). Without this the renderer
@@ -170,7 +170,7 @@ export interface GraphCanvasHandle {
   fitToScreen?: () => void;
   setZoomSizeExponent?: (exponent: number) => void;
   /** Switch layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
-  setLayoutMode?: (mode: 'spread' | 'compact') => void;
+  setLayoutMode?: (mode: 'spread' | 'compact' | 'tree') => void;
   /** Update compact-mode-specific parameters. */
   updateCompactConfig?: (config: {
     radialStrength?: number;

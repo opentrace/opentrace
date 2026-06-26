@@ -56,7 +56,7 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
   w?: number;
 }
 
-export type LayoutMode = 'spread' | 'compact';
+export type LayoutMode = 'spread' | 'compact' | 'tree';
 
 export type Worker3DInMessage =
   | {
@@ -136,6 +136,11 @@ const compactConfig = {
 let streaming = false;
 let streamInterval: ReturnType<typeof setInterval> | null = null;
 
+// Tree mode: the deterministic radial-tree positions (stride 3), captured by
+// computeRadialTree(). The tree sim anchors each node here so the layout stays
+// the clean mind-map starburst rather than relaxing into a ball.
+let treeSeed = new Float64Array(0);
+
 const STREAM_INTERVAL = 66; // ~15fps
 // Declare the layout settled once alpha drops below this. The long tail from
 // ~0.02 → 0.005 is ~50 extra ticks of sub-pixel drift that's invisible but
@@ -151,6 +156,18 @@ const SETTLE_ALPHA = 0.02;
 // the requested theta here rather than mutating the shared breakpoints (those
 // also feed the Pixi renderer, which we don't want to perturb).
 const FAST_BARNES_HUT_THETA = 1.5;
+// Tree mode is a DETERMINISTIC radial mind-map: nodes are anchored to their
+// computeRadialTree() positions (root/repo at centre, folders branching out in
+// clean spokes, leaves on the rim) so it reads as an organised starburst, not a
+// force-relaxed ball. Relational (call/import) edges are drawn over it but do
+// NOT pull nodes around (that would distort the tidy tree) — they stay visible,
+// and a few are long, which is accepted. Connectivity-aware angular ordering
+// (see computeRadialTree) keeps call-related branches near each other so most
+// relational chords are still short.
+//
+// Anchor strength: how firmly each node is held at its radial position. High so
+// the structure stays crisp; a little charge still declutters local overlaps.
+const TREE_ANCHOR_STRENGTH = 0.35;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -253,6 +270,36 @@ function makeCommunityForce(
   return force as unknown as Parameters<typeof s.force>[1];
 }
 
+/**
+ * Tree mode anchor force. Pulls each node toward its deterministic radial
+ * position (treeSeed), so the layout holds the clean mind-map starburst. A
+ * light charge force runs alongside to push apart any locally-overlapping
+ * siblings without scattering the structure. By index — treeSeed is built in
+ * the same simNodes order.
+ */
+function makeTreeAnchorForce(
+  s: Simulation<SimNode, SimLink>,
+  nodes: SimNode[],
+  getStrength: () => number,
+): Parameters<typeof s.force>[1] {
+  const force = () => {
+    if (treeSeed.length < nodes.length * 3) return;
+    const is3D = nDim === 3;
+    const alpha = s.alpha();
+    const k = getStrength() * alpha;
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      node.vx = (node.vx ?? 0) + (treeSeed[i * 3] - (node.x ?? 0)) * k;
+      node.vy = (node.vy ?? 0) + (treeSeed[i * 3 + 1] - (node.y ?? 0)) * k;
+      if (is3D)
+        node.vz = (node.vz ?? 0) + (treeSeed[i * 3 + 2] - (node.z ?? 0)) * k;
+    }
+  };
+  (force as unknown as { initialize: (n: SimNode[]) => void }).initialize =
+    () => {};
+  return force as unknown as Parameters<typeof s.force>[1];
+}
+
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
@@ -264,6 +311,39 @@ function buildSimulation(
   mode: LayoutMode,
 ): Simulation<SimNode, SimLink> {
   const s = forceSimulation<SimNode, SimLink>(nodes, nDim);
+
+  if (mode === 'tree') {
+    // Deterministic radial mind-map. Each node is ANCHORED to its
+    // computeRadialTree() position (root/repo centre → folders branch out in
+    // clean spokes → leaves on the rim), so the layout stays an organised
+    // starburst rather than relaxing into a ball. A light charge declutters
+    // locally-overlapping siblings; firm DEFINES links keep parent→child
+    // spacing crisp along the spokes. Relational (call/import) links exert NO
+    // pull — they're drawn over the tree (some long, accepted) but must not
+    // distort it. See TREE_ANCHOR_STRENGTH.
+    s.force(
+      'link',
+      forceLink<SimNode, SimLink>(links)
+        .id((d: SimNode) => d.id)
+        .distance(config.linkDistance)
+        // Only the containment backbone constrains spacing; relational links
+        // are inert in the layout (strength 0) so the tree stays tidy.
+        .strength((l: SimLink) => ((l.w ?? 1) >= 1 ? 0.6 : 0)),
+    ).force(
+      'charge',
+      // Gentle repulsion — just enough to separate overlapping siblings without
+      // fighting the anchor and fanning the tree into a ball.
+      forceManyBody()
+        .strength(config.chargeStrength * 0.4)
+        .theta(defaultTheta),
+    );
+    s.force(
+      'treeAnchor',
+      makeTreeAnchorForce(s, nodes, () => TREE_ANCHOR_STRENGTH),
+    );
+    s.alphaDecay(0.03).velocityDecay(0.5);
+    return s;
+  }
 
   // Degree over the link set, so structural links keep d3's default
   // degree-normalized strength (1/min-degree) — high-degree hubs don't get
@@ -434,10 +514,495 @@ function rebuild(alpha: number): void {
   startStreaming();
 }
 
+// ─── Radial tree layout ─────────────────────────────────────────────────
+//
+// Deterministic hierarchical layout (NOT a force sim). The structural edges
+// (w >= 1, i.e. the DEFINES containment hierarchy: Repository → Directory →
+// File → Class → Function) form a tree; we lay it out radially — root at the
+// centre, each depth on its own ring, every subtree given an angular wedge
+// sized by its leaf count. This is what makes the graph read as an organised
+// tree/flower instead of a force-relaxed blob. Relational edges (calls/imports,
+// w < 1) don't shape it — they're drawn as chords over the tree.
+
+const TREE_LEAF_ARC = 26; // target world-units between adjacent outer leaves
+const TREE_MIN_RADIUS = 220;
+
+function endId(v: string | SimNode): string {
+  return typeof v === 'string' ? v : v.id;
+}
+
+function computeRadialTree(): void {
+  if (simNodes.length === 0) return;
+  const ids = new Set(simNodes.map((s) => s.id));
+
+  // parent → children from structural edges; first parent wins ⇒ a forest.
+  const children = new Map<string, string[]>();
+  const parentOf = new Map<string, string>();
+  for (const l of cachedLinks) {
+    if ((l.w ?? 1) < 1) continue; // structural (containment) only
+    const p = endId(l.source);
+    const c = endId(l.target);
+    if (p === c || !ids.has(p) || !ids.has(c) || parentOf.has(c)) continue;
+    parentOf.set(c, p);
+    let arr = children.get(p);
+    if (!arr) children.set(p, (arr = []));
+    arr.push(c);
+  }
+
+  // Primary root = the root whose subtree covers the most nodes (the repo,
+  // not a stray dependency). Other roots / cycle remnants go to an outer ring.
+  const roots = simNodes.map((s) => s.id).filter((id) => !parentOf.has(id));
+  const subtreeSize = (root: string): number => {
+    let cnt = 0;
+    const stack = [root];
+    const seenLocal = new Set<string>();
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (seenLocal.has(id)) continue;
+      seenLocal.add(id);
+      cnt++;
+      for (const c of children.get(id) ?? []) stack.push(c);
+    }
+    return cnt;
+  };
+  let primary = roots[0] ?? simNodes[0].id;
+  let bestSize = -1;
+  for (const r of roots) {
+    const sz = subtreeSize(r);
+    if (sz > bestSize) {
+      bestSize = sz;
+      primary = r;
+    }
+  }
+
+  // Iterative post-order over the primary tree: per node compute depth and a
+  // leaf-weight (subtree leaf count, used to size each subtree's share of the
+  // sphere in 3D). The leaf-order ANGLE is derived separately below, after the
+  // children of each node are reordered for connectivity (see buildAngles).
+  const depth = new Map<string, number>();
+  const leafWeight = new Map<string, number>();
+  const seen = new Set<string>([primary]);
+  let leafN = 0;
+  let maxDepth = 0;
+  const stack: { id: string; d: number; i: number }[] = [
+    { id: primary, d: 0, i: 0 },
+  ];
+  while (stack.length) {
+    const f = stack[stack.length - 1];
+    const kids = children.get(f.id) ?? [];
+    if (f.i === 0) {
+      depth.set(f.id, f.d);
+      if (f.d > maxDepth) maxDepth = f.d;
+    }
+    if (f.i < kids.length) {
+      const k = kids[f.i++];
+      if (seen.has(k)) continue;
+      seen.add(k);
+      stack.push({ id: k, d: f.d + 1, i: 0 });
+    } else {
+      if (kids.length === 0) {
+        leafN++;
+        leafWeight.set(f.id, 1);
+      } else {
+        let w = 0;
+        for (const k of kids) w += leafWeight.get(k) ?? 1;
+        leafWeight.set(f.id, Math.max(1, w));
+      }
+      stack.pop();
+    }
+  }
+
+  // ── Connectivity-aware angular ordering ──────────────────────────────────
+  // Order each parent's child subtrees so branches that call/import each other
+  // sit angularly ADJACENT, instead of in structural-insertion order. This is
+  // what shortens the cross-branch relational edges (the long "slashes" that
+  // grow with repo size) — we only permute SIBLINGS, so the containment
+  // grouping is untouched. Barycenter heuristic, iterated to convergence: each
+  // pass nudges every subtree toward the mean angle of what it connects to,
+  // then re-derives angles. Helps BOTH the 2D sunburst (leaf-order → angle) and
+  // the 3D sphere (the slice-and-dice walks children in array order).
+  const relAdj = new Map<string, string[]>();
+  for (const l of cachedLinks) {
+    if ((l.w ?? 1) >= 1) continue; // relational (calls/imports) only
+    const a = endId(l.source);
+    const b = endId(l.target);
+    if (a === b || !depth.has(a) || !depth.has(b)) continue;
+    (relAdj.get(a) ?? relAdj.set(a, []).get(a)!).push(b);
+    (relAdj.get(b) ?? relAdj.set(b, []).get(b)!).push(a);
+  }
+
+  // Linear angular coordinate (leaf order) for the CURRENT child ordering:
+  // leaves get sequential slots, internal nodes the mean of their children.
+  const buildAngles = (): Map<string, number> => {
+    const angle = new Map<string, number>();
+    let ln = 0;
+    const seenA = new Set<string>([primary]);
+    const st: { id: string; i: number }[] = [{ id: primary, i: 0 }];
+    while (st.length) {
+      const f = st[st.length - 1];
+      const kids = children.get(f.id) ?? [];
+      if (f.i < kids.length) {
+        const k = kids[f.i++];
+        if (seenA.has(k)) continue;
+        seenA.add(k);
+        st.push({ id: k, i: 0 });
+      } else {
+        if (kids.length === 0) {
+          angle.set(f.id, ln + 0.5);
+          ln++;
+        } else {
+          let sum = 0;
+          let cnt = 0;
+          for (const k of kids) {
+            const a = angle.get(k);
+            if (a !== undefined) {
+              sum += a;
+              cnt++;
+            }
+          }
+          angle.set(f.id, cnt ? sum / cnt : ln);
+        }
+        st.pop();
+      }
+    }
+    return angle;
+  };
+
+  // Reorder every parent's children by the barycenter of where their subtree's
+  // relational edges point. Subtrees with no relations keep their current spot.
+  const reorderByBarycenter = (angle: Map<string, number>): void => {
+    const sumSelf = new Map<string, number>();
+    const cntSelf = new Map<string, number>();
+    for (const id of depth.keys()) {
+      let s = 0;
+      let c = 0;
+      for (const v of relAdj.get(id) ?? []) {
+        const a = angle.get(v);
+        if (a !== undefined) {
+          s += a;
+          c++;
+        }
+      }
+      sumSelf.set(id, s);
+      cntSelf.set(id, c);
+    }
+    // Aggregate self + descendants (post-order) → per-subtree relational mean.
+    const accSum = new Map<string, number>();
+    const accCnt = new Map<string, number>();
+    const seenP = new Set<string>([primary]);
+    const st: { id: string; i: number }[] = [{ id: primary, i: 0 }];
+    while (st.length) {
+      const f = st[st.length - 1];
+      const kids = children.get(f.id) ?? [];
+      if (f.i < kids.length) {
+        const k = kids[f.i++];
+        if (seenP.has(k)) continue;
+        seenP.add(k);
+        st.push({ id: k, i: 0 });
+      } else {
+        let s = sumSelf.get(f.id) ?? 0;
+        let c = cntSelf.get(f.id) ?? 0;
+        for (const k of kids) {
+          s += accSum.get(k) ?? 0;
+          c += accCnt.get(k) ?? 0;
+        }
+        accSum.set(f.id, s);
+        accCnt.set(f.id, c);
+        st.pop();
+      }
+    }
+    const key = (id: string): number => {
+      const c = accCnt.get(id) ?? 0;
+      return c > 0 ? accSum.get(id)! / c : (angle.get(id) ?? 0);
+    };
+    for (const kids of children.values()) {
+      if (kids.length > 1) kids.sort((a, b) => key(a) - key(b));
+    }
+  };
+
+  const ORDER_PASSES = 4;
+  for (let i = 0; i < ORDER_PASSES; i++) reorderByBarycenter(buildAngles());
+  const angleRaw = buildAngles();
+
+  const totalLeaves = Math.max(1, leafN);
+  const is3D = nDim === 3;
+  // Outer radius the rim leaves sit at. 2D: leaves lie on one circle, so the
+  // circumference (leaves × arc) sets it — a proper wide sunburst/mind-map. 3D:
+  // leaves spread over a sphere, so the same count fits in far less radius
+  // (area 4πR² ≈ leaves × arc²); a separation factor keeps shells legible
+  // rather than a tight ball. Using the 2D formula in 3D blows it up ~20×.
+  const outerR = is3D
+    ? Math.max(
+        TREE_MIN_RADIUS,
+        TREE_LEAF_ARC * Math.sqrt(totalLeaves / (4 * Math.PI)) * 3,
+      )
+    : Math.max(TREE_MIN_RADIUS, (totalLeaves * TREE_LEAF_ARC) / (2 * Math.PI));
+  const ring = outerR / Math.max(1, maxDepth);
+
+  // Shell radius for a given containment depth. Linear up to the 90th-percentile
+  // depth, then compressed — so the rare very-deep chains (nested test fixtures,
+  // long call paths) ease toward the rim instead of shooting far past the dense
+  // canopy as lone "floating" dots. Still monotonic (no stacking).
+  const depthCounts: number[] = [];
+  for (const d of depth.values()) depthCounts[d] = (depthCounts[d] ?? 0) + 1;
+  let knee = maxDepth;
+  let cum = 0;
+  const total = Math.max(1, depth.size);
+  for (let d = 0; d <= maxDepth; d++) {
+    cum += depthCounts[d] ?? 0;
+    if (cum >= total * 0.9) {
+      knee = d;
+      break;
+    }
+  }
+  const SHELL_COMPRESS = 0.35; // each level beyond the knee adds 35% of a ring
+  const effDepth = (d: number) =>
+    d <= knee ? d : knee + (d - knee) * SHELL_COMPRESS;
+  const shellDenom = Math.max(1, effDepth(maxDepth));
+  const shellRadius = (d: number) => (effDepth(d) / shellDenom) * outerR;
+
+  const setPos = (s: SimNode, x: number, y: number, z: number) => {
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.vx = 0;
+    s.vy = 0;
+    s.vz = 0;
+    s.fx = null;
+    s.fy = null;
+    s.fz = null;
+  };
+  const nodeAt = (id: string): SimNode | undefined => {
+    const i = nodeIdToIndex.get(id);
+    return i === undefined ? undefined : simNodes[i];
+  };
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+
+  if (is3D) {
+    // Concentric-shell sphere. Radius = containment depth (repo at the centre →
+    // folders → files → functions on successive shells). Angle = containment:
+    // each subtree owns an equal-area patch of the sphere and a child stays
+    // inside its parent's patch, so a function sits in its file's wedge and
+    // parent→child edges are short. The sibling ORDER within each patch is set
+    // by connectivity (relational barycenter, computed above), so call-related
+    // branches sit adjacent and most call edges stay local too.
+    type Region = { p0: number; p1: number; u0: number; u1: number };
+    const FULL: Region = { p0: 0, p1: Math.PI * 2, u0: -1, u1: 1 };
+
+    // Split a region among weighted siblings (equal-area: φ spans ~π× the u
+    // band, so we cut the longer axis for squarish patches). Order preserved.
+    const splitRegion = <T>(
+      sibs: T[],
+      reg: Region,
+      weightOf: (s: T) => number,
+    ): { item: T; reg: Region }[] => {
+      let tw = 0;
+      for (const k of sibs) tw += weightOf(k) || 1;
+      tw = tw || 1;
+      const res: { item: T; reg: Region }[] = [];
+      const pSpan = reg.p1 - reg.p0;
+      const uSpan = reg.u1 - reg.u0;
+      if (pSpan >= uSpan * Math.PI) {
+        let p = reg.p0;
+        for (const k of sibs) {
+          const p1 = p + ((weightOf(k) || 1) / tw) * pSpan;
+          res.push({ item: k, reg: { p0: p, p1, u0: reg.u0, u1: reg.u1 } });
+          p = p1;
+        }
+      } else {
+        let uu = reg.u0;
+        for (const k of sibs) {
+          const u1 = uu + ((weightOf(k) || 1) / tw) * uSpan;
+          res.push({ item: k, reg: { p0: reg.p0, p1: reg.p1, u0: uu, u1 } });
+          uu = u1;
+        }
+      }
+      return res;
+    };
+
+    // Place a containment forest within a region: recursively slice the region
+    // by subtree leaf-weight (a child stays inside its parent's patch → folder
+    // structure preserved), radius = containment depth → concentric shells.
+    const placeForest = (
+      roots: string[],
+      region: Region,
+      childrenOf: (id: string) => string[],
+      leafW: (id: string) => number,
+    ): void => {
+      const stack = splitRegion(roots, region, leafW).map((e) => ({
+        id: e.item,
+        reg: e.reg,
+      }));
+      const seenLocal = new Set<string>();
+      while (stack.length) {
+        const { id, reg } = stack.pop()!;
+        if (seenLocal.has(id)) continue;
+        seenLocal.add(id);
+        const node = nodeAt(id);
+        const d = depth.get(id);
+        if (node && d !== undefined) {
+          const phi = (reg.p0 + reg.p1) / 2;
+          const u = (reg.u0 + reg.u1) / 2;
+          const lat = Math.sqrt(Math.max(0, 1 - u * u));
+          const radius = shellRadius(d);
+          setPos(
+            node,
+            lat * Math.cos(phi) * radius,
+            lat * Math.sin(phi) * radius,
+            u * radius,
+          );
+        }
+        const kids = childrenOf(id);
+        if (kids.length === 0) continue;
+        // If every child is a leaf (e.g. a file's functions — all same depth),
+        // splitting one axis lines them up. Instead fan them into a 2D sunflower
+        // disc filling the patch → a cone-shaped tuft at the branch tip.
+        const allLeaves = kids.every((k) => childrenOf(k).length === 0);
+        if (allLeaves && kids.length > 1) {
+          // Fan the leaves into a round, flat disc in the tangent plane at the
+          // patch centre — a true cone-tip pointing outward, round regardless of
+          // how thin the patch is. Sized to fit the patch so tufts don't collide.
+          const pc = (reg.p0 + reg.p1) / 2;
+          const uc = (reg.u0 + reg.u1) / 2;
+          const pHalf = (reg.p1 - reg.p0) / 2;
+          const uHalf = (reg.u1 - reg.u0) / 2;
+          const latc = Math.sqrt(Math.max(1e-6, 1 - uc * uc));
+          // Outward unit direction at the patch centre + two tangent unit axes.
+          const dx = latc * Math.cos(pc);
+          const dy = latc * Math.sin(pc);
+          const dz = uc;
+          const t1x = -Math.sin(pc); // azimuthal tangent (unit)
+          const t1y = Math.cos(pc);
+          const t1z = 0;
+          const t2x = dy * t1z - dz * t1y; // dir × t1 (unit, perpendicular)
+          const t2y = dz * t1x - dx * t1z;
+          const t2z = dx * t1y - dy * t1x;
+          for (let k = 0; k < kids.length; k++) {
+            const kn = nodeAt(kids[k]);
+            const kd = depth.get(kids[k]);
+            if (!kn || kd === undefined) continue;
+            const radius = shellRadius(kd);
+            // Disc radius that fits the (physical) patch at this shell.
+            const cap = Math.min(latc * pHalf, uHalf) * radius;
+            const rr = Math.sqrt((k + 0.5) / kids.length) * cap;
+            const ang = k * GOLDEN;
+            const ox = rr * Math.cos(ang);
+            const oy = rr * Math.sin(ang);
+            setPos(
+              kn,
+              dx * radius + t1x * ox + t2x * oy,
+              dy * radius + t1y * ox + t2y * oy,
+              dz * radius + t1z * ox + t2z * oy,
+            );
+          }
+        } else {
+          for (const c of splitRegion(kids, reg, leafW))
+            stack.push({ id: c.item, reg: c.reg });
+        }
+      }
+    };
+
+    // Lay out the whole primary tree by containment from the repo at the
+    // centre. `children` is already ordered by connectivity (the relational
+    // barycenter pass above), so call-related sibling branches sit angularly
+    // adjacent — related nodes near each other without breaking the containment
+    // that keeps parent→child (and most call) edges short.
+    placeForest(
+      [primary],
+      FULL,
+      (id) => children.get(id) ?? [],
+      (id) => leafWeight.get(id) ?? 1,
+    );
+
+    // Stragglers (nodes outside the repo's containment tree — mostly Dependency
+    // nodes). Park each one right next to the code that uses it: the centroid of
+    // its already-placed neighbours, nudged a little further out so it sits just
+    // beyond its importer's cluster. This keeps dependencies hugging the sphere
+    // near their consumers (short edges) instead of floating on a far shell.
+    const strag = simNodes.filter((s) => depth.get(s.id) === undefined);
+    const stragSet = new Set(strag.map((s) => s.id));
+    const nbr = new Map<string, string[]>();
+    for (const l of cachedLinks) {
+      const a = endId(l.source);
+      const b = endId(l.target);
+      const aS = stragSet.has(a);
+      const bS = stragSet.has(b);
+      if (aS && !bS) (nbr.get(a) ?? nbr.set(a, []).get(a)!).push(b);
+      if (bS && !aS) (nbr.get(b) ?? nbr.set(b, []).get(b)!).push(a);
+    }
+    const orphans: SimNode[] = [];
+    for (const s of strag) {
+      const ns = nbr.get(s.id);
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      let cnt = 0;
+      if (ns)
+        for (const m of ns) {
+          const i = nodeIdToIndex.get(m);
+          if (i === undefined || depth.get(m) === undefined) continue;
+          x += simNodes[i].x ?? 0;
+          y += simNodes[i].y ?? 0;
+          z += simNodes[i].z ?? 0;
+          cnt++;
+        }
+      if (cnt === 0) {
+        orphans.push(s);
+        continue;
+      }
+      x /= cnt;
+      y /= cnt;
+      z /= cnt;
+      const rr = Math.hypot(x, y, z) || 1;
+      const k = (rr + ring * 0.6) / rr; // nudge just outside the importer
+      setPos(s, x * k, y * k, z * k);
+    }
+    // Truly disconnected nodes have no anchor — tuck them on a modest inner
+    // shell (not the far rim) so they don't read as floating far out.
+    orphans.forEach((s, i) => {
+      const y = 1 - (2 * (i + 0.5)) / Math.max(1, orphans.length);
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const ph = i * GOLDEN;
+      const R = outerR * 0.5;
+      setPos(s, Math.cos(ph) * r * R, y * R, Math.sin(ph) * r * R);
+    });
+  } else {
+    // 2D — flat radial sunburst (depth → ring, leaf-order → angle).
+    for (const s of simNodes) {
+      const d = depth.get(s.id);
+      if (d === undefined) continue;
+      const theta = (angleRaw.get(s.id)! / totalLeaves) * Math.PI * 2;
+      const rad2d = shellRadius(d);
+      setPos(s, Math.cos(theta) * rad2d, Math.sin(theta) * rad2d, 0);
+    }
+    const out = simNodes.filter((s) => depth.get(s.id) === undefined);
+    out.forEach((s, i) => {
+      const theta = (i / Math.max(1, out.length)) * Math.PI * 2;
+      setPos(
+        s,
+        Math.cos(theta) * (outerR + ring),
+        Math.sin(theta) * (outerR + ring),
+        0,
+      );
+    });
+  }
+
+  // Capture the deterministic radial positions as the anchor target. Tree mode
+  // pins each node here (see makeTreeAnchorForce) so the layout stays the clean
+  // mind-map starburst instead of being scattered into a ball by the sim.
+  treeSeed = new Float64Array(simNodes.length * 3);
+  for (let i = 0; i < simNodes.length; i++) {
+    treeSeed[i * 3] = simNodes[i].x ?? 0;
+    treeSeed[i * 3 + 1] = simNodes[i].y ?? 0;
+    treeSeed[i * 3 + 2] = simNodes[i].z ?? 0;
+  }
+}
+
 // ─── Message handler ────────────────────────────────────────────────────
 
 self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
   const msg = e.data;
+
   switch (msg.type) {
     case 'init': {
       stopStreaming();
@@ -475,6 +1040,11 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         centerStrength: msg.config.centerStrength,
       };
 
+      // Tree mode is a force layout seeded from the radial tree, so the
+      // hierarchy relaxes into organic branches instead of converging from a
+      // tangle. Seed positions before building the sim.
+      if (currentMode === 'tree') computeRadialTree();
+
       sim = buildSimulation(simNodes, simLinks, cachedConfig, currentMode);
       sim.stop();
       const INITIAL_TICKS = currentMode === 'compact' ? 30 : 10;
@@ -493,9 +1063,25 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
     }
 
     case 'set-dimensions': {
-      if (!sim || !cachedConfig) break;
       if (msg.dimensions === nDim) break;
       nDim = msg.dimensions;
+      // Tree mode: re-seed from the radial tree for the new dimensionality
+      // (flat in 2D, spherical in 3D) and let the force tree relax again.
+      if (currentMode === 'tree') {
+        sim?.stop();
+        computeRadialTree();
+        sim = buildSimulation(
+          simNodes,
+          cachedLinks,
+          cachedConfig!,
+          currentMode,
+        );
+        sim.alpha(0.6).restart();
+        settled = false;
+        startStreaming();
+        break;
+      }
+      if (!sim || !cachedConfig) break;
       rebuild(0.6);
       break;
     }
@@ -658,6 +1244,16 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
     case 'set-communities': {
       communities = msg.communities;
+      // Tree mode's radial layout is driven by containment + connectivity
+      // ordering (relational edges, known at init) — it doesn't use Louvain
+      // communities, so nothing to recompute. Stay settled (and tell the main
+      // thread, which optimistically flips simRunning on this message).
+      if (currentMode === 'tree') {
+        (self as unknown as Worker).postMessage({
+          type: 'settled',
+        } satisfies Worker3DOutMessage);
+        break;
+      }
       if (!sim || !cachedConfig) break;
       sim.stop();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
@@ -670,11 +1266,14 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
     }
 
     case 'set-layout-mode': {
-      if (!sim || !cachedConfig) break;
+      if (!cachedConfig) break;
       currentMode = msg.mode;
-      sim.stop();
+      sim?.stop();
+      // Tree: re-seed from the radial tree so it relaxes into clean branches;
+      // spread/compact keep current positions and relax.
+      if (currentMode === 'tree') computeRadialTree();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      sim.alpha(0.5).restart();
+      sim.alpha(currentMode === 'tree' ? 0.6 : 0.5).restart();
       settled = false;
       startStreaming();
       break;

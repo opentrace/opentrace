@@ -18,7 +18,7 @@ import { PhysicsPanel, type GraphCanvasHandle } from '@opentrace/components';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 type ColorMode = 'type' | 'community';
-type LayoutMode = 'spread' | 'compact';
+type LayoutMode = 'spread' | 'compact' | 'tree';
 
 interface PhysicsPanelContainerProps {
   canvasRef: RefObject<GraphCanvasHandle | null>;

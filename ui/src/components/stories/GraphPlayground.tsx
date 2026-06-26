@@ -77,7 +77,9 @@ export default function GraphPlayground({
   const [linkDistance, setLinkDistance] = useState(200);
   const [centerStrength, setCenterStrength] = useState(0.3);
   const [edgesEnabled, setEdgesEnabled] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>('spread');
+  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact' | 'tree'>(
+    'spread',
+  );
   const [zoomSizeExponent, setZoomSizeExponent] = useState(0.8);
 
   // ── Filters ────────────────────────────────────────────────────────

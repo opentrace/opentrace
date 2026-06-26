@@ -233,7 +233,7 @@ export class ThreeRenderer {
   private showAllLabels = true;
   private labelScaleMultiplier = 1.0;
   private showCommunityLabels = true;
-  private currentLayoutMode: 'spread' | 'compact' = 'spread';
+  private currentLayoutMode: 'spread' | 'compact' | 'tree' = 'spread';
   /** Below this zoom (px/world) node labels hide so community wayfinders own
    *  the overview (matches the Pixi NODE_LABEL_MIN_VP_SCALE handoff). */
   private readonly NODE_LABEL_MIN_VP_SCALE = 0.6;
@@ -2121,7 +2121,7 @@ export class ThreeRenderer {
     this.runNodeLabelCull(); // LOD handoff depends on this flag
   }
 
-  setLayoutMode(mode: 'spread' | 'compact'): void {
+  setLayoutMode(mode: 'spread' | 'compact' | 'tree'): void {
     if (this.currentLayoutMode === mode) return;
     this.currentLayoutMode = mode;
     // Geometry changed — let the community cull re-decide.

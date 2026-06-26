@@ -17,7 +17,9 @@
 import type { GraphCanvasHandle } from '@opentrace/components';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 
-type LayoutMode = 'spread' | 'compact';
+type LayoutMode = 'spread' | 'compact' | 'tree';
+
+const LAYOUT_CYCLE: LayoutMode[] = ['tree', 'spread', 'compact'];
 
 const FullscreenEnterIcon = () => (
   <>
@@ -327,17 +329,20 @@ export const GraphControlsBar = ({
         </button>
 
         <button
-          className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
+          className={`graph-control-btn${layoutMode !== 'tree' ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
-            const next = layoutMode === 'spread' ? 'compact' : 'spread';
+            const next =
+              LAYOUT_CYCLE[
+                (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+              ];
             setLayoutMode(next);
             canvasRef.current?.setLayoutMode?.(next);
           }}
-          title={
-            layoutMode === 'compact'
-              ? 'Switch to spread layout'
-              : 'Switch to compact layout'
-          }
+          title={`Layout: ${layoutMode} — switch to ${
+            LAYOUT_CYCLE[
+              (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+            ]
+          }`}
         >
           <LayoutIcon compact={layoutMode === 'compact'} />
         </button>

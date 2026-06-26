@@ -43,8 +43,8 @@ interface PhysicsPanelProps {
   onCenterStrengthChange?: (value: number) => void;
   edgesEnabled?: boolean;
   onEdgesEnabledChange?: (enabled: boolean) => void;
-  layoutMode?: 'spread' | 'compact';
-  onLayoutModeChange?: (mode: 'spread' | 'compact') => void;
+  layoutMode?: 'spread' | 'compact' | 'tree';
+  onLayoutModeChange?: (mode: 'spread' | 'compact' | 'tree') => void;
   /** Whether community wayfinder labels are visible. Decoupled from
    *  layoutMode (Fix #52) — toggling visibility no longer reflows the
    *  graph, it just shows or hides the cluster labels in place. */

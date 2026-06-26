@@ -96,6 +96,10 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     const containerRef = useRef<HTMLDivElement>(null);
     const rendererRef = useRef<PixiRenderer | null>(null);
+    // The legacy Pixi renderer has no radial 'tree' layout — fall back to the
+    // force-directed 'spread' when the (Three-native) tree mode is selected.
+    const pixiLayoutMode: 'spread' | 'compact' =
+      layoutModeProp === 'tree' ? 'spread' : layoutModeProp;
     // Incremented when setData completes so dependent effects re-run
     const [dataVersion, setDataVersion] = useState(0);
     // Re-renders when data-theme or data-mode changes on <html>
@@ -218,7 +222,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       communityData,
       layoutConfig,
       onLayoutTick,
-      layoutModeProp,
+      pixiLayoutMode,
     );
 
     // ── Sync layout settled state to renderer for edge redraw gating ────
@@ -396,8 +400,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // changes after Louvain finishes (different rhythms).
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
-      rendererRef.current.setLayoutMode(layoutModeProp);
-    }, [dataVersion, layoutModeProp]);
+      rendererRef.current.setLayoutMode(pixiLayoutMode);
+    }, [dataVersion, pixiLayoutMode]);
 
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
@@ -654,7 +658,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         setZoomSizeExponent: (exponent: number) => {
           rendererRef.current?.setZoomSizeExponent(exponent);
         },
-        setLayoutMode,
+        // Pixi has no 'tree' layout — coerce to the force-directed 'spread'.
+        setLayoutMode: (mode: 'spread' | 'compact' | 'tree') =>
+          setLayoutMode(mode === 'tree' ? 'spread' : mode),
         updateCompactConfig,
         set3DMode: (enabled: boolean) => {
           rendererRef.current?.set3DMode(enabled, communityData.assignments);
