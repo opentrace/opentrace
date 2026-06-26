@@ -89,7 +89,6 @@ function stripLicenseHeader(css) {
     '',
   );
 }
-}
 
 // Indent every non-empty line one level, for nesting inside @layer { … }.
 function indent(css) {
