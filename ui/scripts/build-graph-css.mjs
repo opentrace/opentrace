@@ -85,9 +85,10 @@ const HEADER = `/*
 // a single header rather than one per source file.
 function stripLicenseHeader(css) {
   return css.replace(
-    /^\s*\/\*[\s\S]*?Copyright 2026 OpenTrace Contributors[\s\S]*?\*\/\s*/,
+    /^\s*\/\*[\s\S]*?Copyright \d{4} OpenTrace Contributors[\s\S]*?\*\/\s*/,
     '',
   );
+}
 }
 
 // Indent every non-empty line one level, for nesting inside @layer { … }.
