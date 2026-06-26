@@ -32,6 +32,7 @@
 
 import { LadybugGraphStore } from './ladybugStore';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
+import type { LbugEngine } from './lbugEngine';
 import type { ImportBatchRequest, SourceFile } from './types';
 
 type CallMessage = {
@@ -47,18 +48,44 @@ type EmbedReplyMessage = {
   vectors: number[][];
 };
 type EmbedErrorMessage = { seq: number; type: 'embed-error'; message: string };
+type EngineReplyMessage = {
+  seq: number;
+  type: 'engine-reply';
+  value: unknown;
+};
+type EngineErrorMessage = {
+  seq: number;
+  type: 'engine-error';
+  message: string;
+};
 
 type InMessage =
   | CallMessage
   | SetEmbedderMessage
   | EmbedReplyMessage
-  | EmbedErrorMessage;
+  | EmbedErrorMessage
+  | EngineReplyMessage
+  | EngineErrorMessage;
+
+type EngineMethod =
+  | 'init'
+  | 'query'
+  | 'exec'
+  | 'fsWrite'
+  | 'fsUnlink'
+  | 'close';
 
 type OutMessage =
   | { seq: number; type: 'result'; value: unknown }
   | { seq: number; type: 'error'; message: string }
   | { seq: number; type: 'progress'; value: string }
-  | { seq: number; type: 'embed-request'; texts: string[] };
+  | { seq: number; type: 'embed-request'; texts: string[] }
+  | {
+      seq: number;
+      type: 'engine-request';
+      method: EngineMethod;
+      args: unknown[];
+    };
 
 const post = (msg: OutMessage, transfer?: Transferable[]): void => {
   if (transfer && transfer.length > 0) {
@@ -68,7 +95,41 @@ const post = (msg: OutMessage, transfer?: Transferable[]): void => {
   }
 };
 
-const store = new LadybugGraphStore();
+// --- Engine shim ---
+// The LadybugDB engine runs on the MAIN thread (so its internal worker is a
+// top-level worker, never nested — see lbugEngine.ts). Each engine call posts
+// an `engine-request` to main, which runs it against the real engine and
+// replies `engine-reply` / `engine-error`. Mirrors the embedder shim below.
+let nextEngineSeq = 1;
+const pendingEngine = new Map<
+  number,
+  { resolve: (v: unknown) => void; reject: (err: Error) => void }
+>();
+function engineCall(
+  method: EngineMethod,
+  args: unknown[],
+  transfer?: Transferable[],
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const seq = nextEngineSeq++;
+    pendingEngine.set(seq, { resolve, reject });
+    post({ seq, type: 'engine-request', method, args }, transfer);
+  });
+}
+const engineShim: LbugEngine = {
+  init: () => engineCall('init', []) as Promise<void>,
+  query: (cypher) =>
+    engineCall('query', [cypher]) as Promise<Record<string, unknown>[]>,
+  exec: (cypher) => engineCall('exec', [cypher]) as Promise<void>,
+  // Transfer the CSV buffer zero-copy to main; the caller (flush/import) hands
+  // off a freshly-encoded array it never reads again.
+  fsWrite: (path, data) =>
+    engineCall('fsWrite', [path, data], [data.buffer]) as Promise<void>,
+  fsUnlink: (path) => engineCall('fsUnlink', [path]) as Promise<void>,
+  close: () => engineCall('close', []) as Promise<void>,
+};
+
+const store = new LadybugGraphStore(engineShim);
 
 // --- Embedder shim ---
 // When the main-thread proxy calls setEmbedder(), we install this shim
@@ -235,6 +296,22 @@ self.onmessage = (e: MessageEvent<InMessage>) => {
     const p = pendingEmbeds.get(msg.seq);
     if (p) {
       pendingEmbeds.delete(msg.seq);
+      p.reject(new Error(msg.message));
+    }
+    return;
+  }
+  if (msg.type === 'engine-reply') {
+    const p = pendingEngine.get(msg.seq);
+    if (p) {
+      pendingEngine.delete(msg.seq);
+      p.resolve(msg.value);
+    }
+    return;
+  }
+  if (msg.type === 'engine-error') {
+    const p = pendingEngine.get(msg.seq);
+    if (p) {
+      pendingEngine.delete(msg.seq);
       p.reject(new Error(msg.message));
     }
     return;
