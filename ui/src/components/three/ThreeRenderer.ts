@@ -116,11 +116,10 @@ interface BuildAnimState {
   birth: Float32Array;
   /** Per node index → its final (pre-animation) size, restored on completion. */
   targetSize: Float32Array;
-  /** Per node index → its final x,y,z (stride 3). Nodes fly out FROM their
-   *  parent's final position TO this on reveal; restored exactly on finish. */
-  truePos: Float32Array;
   /** Per node index → BFS parent index (the node it flies out from), or -1
-   *  for component seeds (they pop in place — the blast origins). */
+   *  for component seeds (they pop in place — the blast origins). The fly-out
+   *  targets are read LIVE from `layoutPos` each frame (the layout keeps
+   *  running during the build), not from a snapshot. */
   parent: Int32Array;
   /** Per node index → 1 once its birth spark has fired (debounce). */
   sparked: Uint8Array;
@@ -271,19 +270,21 @@ export class ThreeRenderer {
   // ── Build animation ────────────────────────────────────────────────
   private buildAnim: BuildAnimState | null = null;
   /** Set by armBuildAnimation(): the next setData() collapses the graph the
-   *  moment it's built (before first paint) so the finished graph never
-   *  flashes before the burst plays. */
+   *  moment it's built (before first paint) and starts the burst IMMEDIATELY,
+   *  so the finished graph never flashes AND there's no wait — the burst plays
+   *  while the layout is still settling, flying nodes toward the live (still
+   *  developing) positions. */
   private buildArmed = false;
-  /** True while the graph is held collapsed (armed-and-loaded), awaiting
-   *  playBuildAnimation(). */
+  /** True while the graph is held collapsed (armed-and-loaded). */
   private buildPrepared = false;
   /** Final node sizes captured at collapse time — restored as the burst's
    *  targets (sizeArray itself is zeroed while prepared). */
   private preparedSizes: Float32Array | null = null;
-  /** After an armed collapse, the burst auto-plays once the layout settles
-   *  (not on a fixed external timer) — robust to slow-to-lay-out graphs. */
-  private buildAutoPlayPending = false;
-  private buildAutoPlayTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Live layout positions (x,y,z stride 3). While a build is running the
+   *  layout streams here instead of into posArray, and the burst reads these
+   *  as its fly-out targets each frame, writing the interpolated render
+   *  positions into posArray. Outside a build it mirrors posArray. */
+  private layoutPos: Float32Array = new Float32Array(0);
 
   // ── Labels (HTML/CSS overlay) ──────────────────────────────────────
   private nodeLabelLayer: HTMLDivElement | null = null;
@@ -961,10 +962,6 @@ export class ThreeRenderer {
     this.destroyed = true;
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     this.rafHandle = 0;
-    if (this.buildAutoPlayTimer) {
-      clearTimeout(this.buildAutoPlayTimer);
-      this.buildAutoPlayTimer = null;
-    }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     this.autoFitTarget = null;
@@ -1051,11 +1048,6 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
-    this.buildAutoPlayPending = false;
-    if (this.buildAutoPlayTimer) {
-      clearTimeout(this.buildAutoPlayTimer);
-      this.buildAutoPlayTimer = null;
-    }
     this.disposeNodeObjects();
     this.disposeEdgeObjects();
     this.disposeSuperGraph();
@@ -1071,6 +1063,7 @@ export class ThreeRenderer {
 
     const n = graphNodes.length;
     this.posArray = new Float32Array(n * 3);
+    this.layoutPos = new Float32Array(n * 3);
     this.colorArray = new Float32Array(n * 3);
     this.sizeArray = new Float32Array(n);
     this.stateArray = new Float32Array(n);
@@ -1454,25 +1447,30 @@ export class ThreeRenderer {
    *  z is 0 in 2D mode. */
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const len = Math.min(this.nodeArray.length, Math.floor(buffer.length / 3));
-    const pos = this.posArray;
+    // During a build the layout streams into layoutPos (the burst's live fly-out
+    // targets); the burst writes the rendered posArray itself. Outside a build,
+    // it writes posArray directly.
+    const pos = this.buildAnim ? this.layoutPos : this.posArray;
     for (let i = 0; i < len; i++) {
       const o = i * 3;
       pos[o] = buffer[o];
       pos[o + 1] = buffer[o + 1];
       pos[o + 2] = buffer[o + 2];
     }
-    this.markPositionsDirty();
+    if (this.buildAnim) this.requestRender();
+    else this.markPositionsDirty();
   }
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    const pos = this.posArray;
+    const pos = this.buildAnim ? this.layoutPos : this.posArray;
     for (const [id, p] of positions) {
       const i = this.nodeIdToIndex.get(id);
       if (i === undefined) continue;
       pos[i * 3] = p.x;
       pos[i * 3 + 1] = p.y;
     }
-    this.markPositionsDirty();
+    if (this.buildAnim) this.requestRender();
+    else this.markPositionsDirty();
   }
 
   private markPositionsDirty(): void {
@@ -2491,8 +2489,6 @@ export class ThreeRenderer {
     }
     // Build the LOD super-graph from the now-stable centroids.
     if (settled && this.lodEnabled) this.maybeBuildSuperGraph();
-    // A collapse is waiting to play — the layout just settled, so go now.
-    if (settled && this.buildAutoPlayPending) this.maybeAutoPlayBuild();
   }
 
   setZoomSizeExponent(exponent: number): void {
@@ -2873,25 +2869,8 @@ export class ThreeRenderer {
       this.communityVisibilityFrozen = false;
       this.applyEdgeDepthMode();
       this.requestRender();
-
-      // 3D turned on while a build burst is mid-play or queued (common on large
-      // graphs: the layout settles flat in 2D, the burst plays, THEN 3D enables
-      // and z develops — reading as "2D plane expanding to 3D"). The layout now
-      // re-relaxes in 3D, so re-collapse and replay the burst on the upcoming
-      // 3D settle instead of the stale flat snapshot.
-      if (this.buildAnim || this.buildAutoPlayPending) {
-        if (this.buildAnim) this.stopBuildAnimation();
-        // The dimensionality change restarts the sim — treat as unsettled so
-        // the replay waits for the real 3D settle, not the prior 2D one.
-        this.layoutSettled = false;
-        if (this.buildPrepared) {
-          // Already collapsed & waiting — just defer the play to the 3D settle.
-          this.buildAutoPlayPending = true;
-          this.scheduleAutoPlayBuild(8000 + this.nodeArray.length * 1.5);
-        } else {
-          this.collapseForBuild();
-        }
-      }
+      // No build re-arm needed: the burst tracks the live layout (layoutPos),
+      // so a 2D→3D switch mid-build is followed naturally as z develops.
     } else {
       this.controls?.dispose();
       this.controls = null;
@@ -3028,54 +3007,22 @@ export class ThreeRenderer {
     // while prepared — node layer directly, community via its own path.
     this.requestRender();
 
-    // Auto-play once the layout settles. If it's already settled (sim didn't
-    // restart), play after a short beat; otherwise wait for setLayoutSettled,
-    // with a long fallback for graphs whose layout never fully settles. This
-    // replaces a fixed external timer that could fire BEFORE this collapse on a
-    // slow-to-lay-out graph, leaving it stuck hidden until manual replay.
-    this.buildAutoPlayPending = true;
-    // If already settled, play after a short beat; otherwise wait for the
-    // settle event, with a generous fallback that SCALES with node count so a
-    // large graph's slow (re-)settle wins over the fallback rather than firing
-    // the burst on a half-developed layout.
-    this.scheduleAutoPlayBuild(
-      this.layoutSettled ? 300 : 8000 + this.nodeArray.length * 1.5,
-    );
-  }
-
-  private scheduleAutoPlayBuild(ms: number): void {
-    if (this.buildAutoPlayTimer) clearTimeout(this.buildAutoPlayTimer);
-    this.buildAutoPlayTimer = setTimeout(() => this.maybeAutoPlayBuild(), ms);
-  }
-
-  /** Fire the pending auto-play (from collapseForBuild) exactly once. */
-  private maybeAutoPlayBuild(): void {
-    if (!this.buildAutoPlayPending) return;
-    this.buildAutoPlayPending = false;
-    if (this.buildAutoPlayTimer) {
-      clearTimeout(this.buildAutoPlayTimer);
-      this.buildAutoPlayTimer = null;
-    }
+    // Start the burst IMMEDIATELY — no waiting for the layout to settle. The
+    // burst flies nodes toward the live (still-developing) layout positions, so
+    // the graph "builds" from the instant indexing ends, with no black gap.
     this.playBuildAnimation();
   }
 
-  /** Replay the graph "building itself" as an outward burst: every node/edge
-   *  is hidden, then — in BFS order from the root — each node is flung out
-   *  FROM its parent's settled spot, overshooting into place with a pop while
-   *  a glow spark fires, and edges stretch to the flying nodes. Births are
-   *  jittered so siblings don't pop in lockstep. Cosmetic only; the final
-   *  state is identical to before playback. Positions must already be settled
-   *  (call after indexing completes). `rootIds` overrides the auto-detected
+  /** Play the graph "building itself" as an outward burst: every node/edge is
+   *  hidden, then — in BFS order from the root — each node is flung out from its
+   *  parent toward its position with a pop, a glow spark fires, and edges
+   *  stretch to the flying nodes. The fly-out TARGETS are read LIVE from the
+   *  layout each frame (layoutPos), so the burst runs WHILE the layout is still
+   *  settling — no waiting, no black gap. `rootIds` overrides the auto-detected
    *  root (Repository node, else highest-degree node). */
   playBuildAnimation(rootIds?: string[]): void {
     if (this.destroyed || !this.nodeGeometry || this.nodeArray.length === 0) {
       return;
-    }
-    // Consume any pending auto-play (we're playing now).
-    this.buildAutoPlayPending = false;
-    if (this.buildAutoPlayTimer) {
-      clearTimeout(this.buildAutoPlayTimer);
-      this.buildAutoPlayTimer = null;
     }
     // Restart cleanly if one is already running.
     if (this.buildAnim) this.stopBuildAnimation();
@@ -3097,7 +3044,9 @@ export class ThreeRenderer {
         : this.sizeArray.slice();
     this.buildPrepared = false;
     this.preparedSizes = null;
-    const truePos = this.posArray.slice();
+    // Seed the live-target buffer from the current positions (the layout keeps
+    // streaming updates into it during the build).
+    this.layoutPos.set(this.posArray);
 
     // Start fully collapsed: zero every node size (shader culls size~0) and
     // every edge alpha. updateBuildAnim() flies them back in per the schedule.
@@ -3116,13 +3065,10 @@ export class ThreeRenderer {
       duration,
       birth,
       targetSize,
-      truePos,
       parent,
       sparked: new Uint8Array(n),
       sparkStride: Math.max(1, Math.ceil(n / BUILD_SPARK_BUDGET)),
     };
-    // Frame the whole (final) graph so the burst stays in view.
-    this.zoomToFit(700);
     this.requestRender();
   }
 
@@ -3133,7 +3079,7 @@ export class ThreeRenderer {
     if (!anim) return;
     this.buildAnim = null;
     if (this.nodeGeometry) {
-      this.posArray.set(anim.truePos);
+      this.posArray.set(this.layoutPos);
       this.sizeArray.set(anim.targetSize);
       (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
         true;
@@ -3256,7 +3202,10 @@ export class ThreeRenderer {
     const pos = this.posArray;
     const sz = this.sizeArray;
     const tgt = anim.targetSize;
-    const tp = anim.truePos;
+    // Live layout targets — updated by the running simulation each frame, so
+    // the burst flies nodes toward where the layout currently has them and they
+    // keep tracking it as it settles (no stale snapshot).
+    const lp = this.layoutPos;
     const birth = anim.birth;
     const parent = anim.parent;
     const sparked = anim.sparked;
@@ -3264,11 +3213,11 @@ export class ThreeRenderer {
 
     for (let i = 0; i < n; i++) {
       const p = (t - birth[i]) / BUILD_NODE_REVEAL_MS;
-      // Origin to fly out from: the parent's settled spot (seeds pop in place).
+      // Origin to fly out from: the parent's CURRENT spot (seeds pop in place).
       const pa = parent[i];
-      const fx = pa >= 0 ? tp[pa * 3] : tp[i * 3];
-      const fy = pa >= 0 ? tp[pa * 3 + 1] : tp[i * 3 + 1];
-      const fz = pa >= 0 ? tp[pa * 3 + 2] : tp[i * 3 + 2];
+      const fx = pa >= 0 ? lp[pa * 3] : lp[i * 3];
+      const fy = pa >= 0 ? lp[pa * 3 + 1] : lp[i * 3 + 1];
+      const fz = pa >= 0 ? lp[pa * 3 + 2] : lp[i * 3 + 2];
       if (p <= 0) {
         // Parked at the parent, invisible (size 0 → shader-culled).
         sz[i] = 0;
@@ -3278,17 +3227,18 @@ export class ThreeRenderer {
         continue;
       }
       if (p >= 1) {
+        // Fully revealed → sit exactly at the live layout position (follows it).
         sz[i] = tgt[i];
-        pos[i * 3] = tp[i * 3];
-        pos[i * 3 + 1] = tp[i * 3 + 1];
-        pos[i * 3 + 2] = tp[i * 3 + 2];
+        pos[i * 3] = lp[i * 3];
+        pos[i * 3 + 1] = lp[i * 3 + 1];
+        pos[i * 3 + 2] = lp[i * 3 + 2];
         continue;
       }
       const e = backOut(p); // shared pop curve for travel + scale
       sz[i] = tgt[i] * e;
-      pos[i * 3] = fx + (tp[i * 3] - fx) * e;
-      pos[i * 3 + 1] = fy + (tp[i * 3 + 1] - fy) * e;
-      pos[i * 3 + 2] = fz + (tp[i * 3 + 2] - fz) * e;
+      pos[i * 3] = fx + (lp[i * 3] - fx) * e;
+      pos[i * 3 + 1] = fy + (lp[i * 3 + 1] - fy) * e;
+      pos[i * 3 + 2] = fz + (lp[i * 3 + 2] - fz) * e;
       // Spark once, the moment it's born (sampled on big graphs via the
       // stride; only for nodes that are actually drawn).
       if (
@@ -3351,9 +3301,9 @@ export class ThreeRenderer {
     }
 
     if (t >= anim.duration) {
-      // Done — restore the exact final positions, sizes, and edge state.
+      // Done — hand positions back to the live layout, restore sizes + edges.
       this.buildAnim = null;
-      this.posArray.set(tp);
+      this.posArray.set(this.layoutPos);
       this.sizeArray.set(tgt);
       (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
         true;
