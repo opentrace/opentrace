@@ -55,6 +55,7 @@ const VERTEX_SHADER = /* glsl */ `
 
   varying vec3 vColor;
   varying float vAlpha;
+  varying float vCull;
 
   void main() {
     int state = int(aState + 0.5);
@@ -85,7 +86,13 @@ const VERTEX_SHADER = /* glsl */ `
     } else {
       screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
     }
-    gl_PointSize = visible ? clamp(screenPx, 1.0, 128.0) : 0.0;
+    // base <= ~0 means the node is mid build-animation reveal (size driven to
+    // 0 before its "birth"); cull it. gl_PointSize 0.0 is NOT reliable — many
+    // GL/ANGLE backends still rasterize a 1px fragment for a zero-size point —
+    // so we also flag vCull and discard in the fragment shader.
+    bool cull = !(visible && base > 0.01);
+    vCull = cull ? 1.0 : 0.0;
+    gl_PointSize = cull ? 0.0 : clamp(screenPx, 1.0, 128.0);
   }
 `;
 
@@ -95,8 +102,10 @@ const FRAGMENT_SHADER = /* glsl */ `
 
   varying vec3 vColor;
   varying float vAlpha;
+  varying float vCull;
 
   void main() {
+    if (vCull > 0.5) discard; // culled point (e.g. size 0 mid build-anim)
     vec2 c = gl_PointCoord - vec2(0.5);
     float d = dot(c, c); // squared distance from center, [0, 0.5] inside disc
     if (d > 0.25) discard;
@@ -172,6 +181,7 @@ const PICK_VERTEX_SHADER = /* glsl */ `
   uniform float uDimScale;
 
   varying vec3 vPick;
+  varying float vCull;
 
   void main() {
     int state = int(aState + 0.5);
@@ -192,13 +202,19 @@ const PICK_VERTEX_SHADER = /* glsl */ `
     } else {
       screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
     }
-    gl_PointSize = visible ? clamp(screenPx, 1.0, 128.0) : 0.0;
+    // Mirror the display shader: a node mid-reveal (base ~0) isn't pickable,
+    // and discard in the fragment so a zero-size point can't leave a pick pixel.
+    bool cull = !(visible && base > 0.01);
+    vCull = cull ? 1.0 : 0.0;
+    gl_PointSize = cull ? 0.0 : clamp(screenPx, 1.0, 128.0);
   }
 `;
 
 const PICK_FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vPick;
+  varying float vCull;
   void main() {
+    if (vCull > 0.5) discard;
     vec2 c = gl_PointCoord - vec2(0.5);
     if (dot(c, c) > 0.25) discard;
     gl_FragColor = vec4(vPick, 1.0);

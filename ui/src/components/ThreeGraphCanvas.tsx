@@ -577,6 +577,17 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         triggerPing: (nodeIds: Iterable<string>) => {
           rendererRef.current?.triggerPing(nodeIds);
         },
+        armBuildAnimation: () => {
+          rendererRef.current?.armBuildAnimation();
+        },
+        playBuildAnimation: (rootIds?: string[]) => {
+          rendererRef.current?.playBuildAnimation(rootIds);
+        },
+        stopBuildAnimation: () => {
+          rendererRef.current?.stopBuildAnimation();
+        },
+        isBuildAnimating: () =>
+          rendererRef.current?.isBuildAnimating() ?? false,
       }),
       [
         onNodeClick,

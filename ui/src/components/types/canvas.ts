@@ -192,4 +192,16 @@ export interface GraphCanvasHandle {
   setEdgeOpacity?: (opacity: number) => void;
   /** Trigger a ping/glow animation on the given node IDs. */
   triggerPing?: (nodeIds: Iterable<string>) => void;
+  /** Arm the next data load to collapse immediately and hold hidden until
+   *  playBuildAnimation() fires — prevents the finished graph flashing before
+   *  the burst. Call as soon as an index completes. */
+  armBuildAnimation?: () => void;
+  /** Replay the graph "building itself" — reveal nodes/edges outward from the
+   *  root in BFS order. Cosmetic; the final state is unchanged. Three.js only;
+   *  optional so other renderers may omit it. */
+  playBuildAnimation?: (rootIds?: string[]) => void;
+  /** Abort an in-flight build replay and snap to the final state. */
+  stopBuildAnimation?: () => void;
+  /** Whether a build replay is currently running. */
+  isBuildAnimating?: () => boolean;
 }

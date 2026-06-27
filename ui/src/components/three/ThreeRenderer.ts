@@ -104,6 +104,31 @@ export interface ThreeEdge {
   color: string;
 }
 
+/** In-flight "watch the graph being built" replay state. Positions are read
+ *  Nodes are flung out from their parent's settled spot and overshoot into
+ *  place, so final positions + the BFS parent map are snapshotted too. */
+interface BuildAnimState {
+  /** performance.now() at playback start. */
+  start: number;
+  /** Total playback length (ms). */
+  duration: number;
+  /** Per node index → birth offset (ms after `start`) when its reveal begins. */
+  birth: Float32Array;
+  /** Per node index → its final (pre-animation) size, restored on completion. */
+  targetSize: Float32Array;
+  /** Per node index → its final x,y,z (stride 3). Nodes fly out FROM their
+   *  parent's final position TO this on reveal; restored exactly on finish. */
+  truePos: Float32Array;
+  /** Per node index → BFS parent index (the node it flies out from), or -1
+   *  for component seeds (they pop in place — the blast origins). */
+  parent: Int32Array;
+  /** Per node index → 1 once its birth spark has fired (debounce). */
+  sparked: Uint8Array;
+  /** Spark every Nth node (1 = every node; >1 samples big graphs to bound the
+   *  concurrent sprite count while still glowing across the whole graph). */
+  sparkStride: number;
+}
+
 interface InteractionCallbacks {
   onNodeClick?: (node: GraphNode) => void;
   onEdgeClick?: (edge: SelectedEdge) => void;
@@ -143,6 +168,23 @@ const LOD_UPDATE_INTERVAL = 80; // ms between LOD re-evaluations
 /** In 'auto' mode, only aggregate once the graph is too big to draw fully.
  *  Below this, full detail (the whole graph is visible at the overview). */
 const LOD_AUTO_THRESHOLD = 30_000;
+
+// ── Build animation ("watch the graph being built") ─────────────────────
+/** Per-node reveal window (ms): how long a node takes to fly out + pop in. */
+const BUILD_NODE_REVEAL_MS = 560;
+/** Adaptive total duration: floor, ceiling, and ms added per node. */
+const BUILD_MIN_MS = 3500;
+const BUILD_MAX_MS = 7500;
+const BUILD_MS_PER_NODE = 0.3;
+/** Birth-time jitter (± fraction of the reveal window) so same-depth siblings
+ *  don't pop in lockstep — reads as a chaotic burst, not a tidy sweep. */
+const BUILD_JITTER_FRAC = 0.55;
+/** Max total glow sparks fired across a whole build (caps sprite churn). On
+ *  graphs larger than this, sparks are SAMPLED (every Nth node) rather than
+ *  disabled — so big graphs still visibly glow, just not every single node. */
+const BUILD_SPARK_BUDGET = 3000;
+/** Overshoot strength for the fly-out "pop" (classic easeOutBack tuning). */
+const BUILD_BACK_C1 = 2.2;
 
 /** Strip control characters and truncate to LABEL_MAX_LENGTH. */
 function cleanLabel(raw: string): string {
@@ -225,6 +267,19 @@ export class ThreeRenderer {
     new Map();
   private glowTextures: Map<string, Texture> = new Map();
   private static readonly PING_DURATION = 1000;
+
+  // ── Build animation ────────────────────────────────────────────────
+  private buildAnim: BuildAnimState | null = null;
+  /** Set by armBuildAnimation(): the next setData() collapses the graph the
+   *  moment it's built (before first paint) so the finished graph never
+   *  flashes before the burst plays. */
+  private buildArmed = false;
+  /** True while the graph is held collapsed (armed-and-loaded), awaiting
+   *  playBuildAnimation(). */
+  private buildPrepared = false;
+  /** Final node sizes captured at collapse time — restored as the burst's
+   *  targets (sizeArray itself is zeroed while prepared). */
+  private preparedSizes: Float32Array | null = null;
 
   // ── Labels (HTML/CSS overlay) ──────────────────────────────────────
   private nodeLabelLayer: HTMLDivElement | null = null;
@@ -506,8 +561,14 @@ export class ThreeRenderer {
       // controls.update() emits 'change' (→ requestRender) while orbiting /
       // damping / auto-rotating; when fully idle it changes nothing.
       this.controls?.update();
-      if (!this.needsRender && this.pingSprites.size === 0) return;
+      if (
+        !this.needsRender &&
+        this.pingSprites.size === 0 &&
+        this.buildAnim === null
+      )
+        return;
       this.needsRender = false;
+      if (this.buildAnim) this.updateBuildAnim(performance.now());
       if (this.nodeMaterial) {
         const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
         u.uPerspective.value = 1;
@@ -536,7 +597,13 @@ export class ThreeRenderer {
     const easing =
       this.camAnim !== null ||
       (this.autoFitTarget !== null && !this.hasUserMovedCamera);
-    if (!this.needsRender && !easing && this.pingSprites.size === 0) return;
+    if (
+      !this.needsRender &&
+      !easing &&
+      this.pingSprites.size === 0 &&
+      this.buildAnim === null
+    )
+      return;
     this.needsRender = false;
 
     // Camera transition animation (zoomToFit/zoomIn/etc.)
@@ -571,6 +638,8 @@ export class ThreeRenderer {
       cam.updateProjectionMatrix();
     }
 
+    if (this.buildAnim) this.updateBuildAnim(performance.now());
+
     // Keep the shader's zoom uniform in sync (size attenuation).
     if (this.nodeMaterial) {
       const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
@@ -599,6 +668,21 @@ export class ThreeRenderer {
    *  debounced so it runs after the gesture settles (mirrors PixiRenderer). */
   private updateLabelsPerFrame(): void {
     if (!this.activeCamera) return;
+    // The HTML label overlay isn't tied to node size/edge alpha, so while the
+    // build animation holds the graph collapsed (or plays), labels would keep
+    // rendering over the empty canvas. Hide them until it's done. Node labels:
+    // hide the layer directly (it has no per-frame state). Community labels:
+    // let updateCommunityLabels() hide itself via its OWN display logic — never
+    // force its layer's display from here, or the zoom-fade / frozen-visibility
+    // state machine breaks. It recovers on its own once the build finishes.
+    if (this.buildPrepared || this.buildAnim) {
+      if (this.nodeLabelLayer) this.nodeLabelLayer.style.display = 'none';
+      this.updateCommunityLabels();
+      return;
+    }
+    if (this.nodeLabelLayer && this.nodeLabelLayer.style.display === 'none') {
+      this.nodeLabelLayer.style.display = '';
+    }
     const now = performance.now();
     const zoom = this.effectiveZoom();
     if (Math.abs(zoom - this.lastLabelCullZoom) > 1e-4) {
@@ -955,6 +1039,10 @@ export class ThreeRenderer {
   ): Promise<void> {
     if (this.destroyed || !this.scene) return;
 
+    // Any in-flight build replay refers to the old node/edge arrays.
+    this.buildAnim = null;
+    this.buildPrepared = false;
+    this.preparedSizes = null;
     this.disposeNodeObjects();
     this.disposeEdgeObjects();
     this.disposeSuperGraph();
@@ -1021,6 +1109,10 @@ export class ThreeRenderer {
     this.buildNodePoints();
     this.buildEdgeObjects();
     this.zoomToFit(0);
+    // If a build animation was armed (post-index), collapse the freshly-built
+    // graph NOW — before the first paint — so the finished graph never flashes
+    // before the burst. Held collapsed until playBuildAnimation() fires.
+    if (this.buildArmed) this.collapseForBuild();
   }
 
   private buildEdges(
@@ -1173,6 +1265,17 @@ export class ThreeRenderer {
    *  Endpoints whose node is hidden, or whose link type is hidden, get 0. */
   private updateEdgeAlpha(): void {
     if (!this.edgeGeometry) return;
+    // While the build animation is held-collapsed or playing, edge alpha is
+    // owned by that flow (0 when prepared, driven per-frame while animating).
+    // A stray prop-sync call here would otherwise re-show edges over the still
+    // hidden nodes — the "edges flash then disappear" bug. Keep them hidden.
+    if (this.buildPrepared || this.buildAnim) {
+      this.edgeAlphaArray.fill(0);
+      (
+        this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute
+      ).needsUpdate = true;
+      return;
+    }
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
@@ -2237,6 +2340,12 @@ export class ThreeRenderer {
   private updateCommunityLabels(): void {
     const layer = this.communityLabelLayer;
     if (!layer || !this.activeCamera) return;
+    // Held hidden while the build animation runs (the graph is empty); this is
+    // the community system's own hide path, so it recovers cleanly afterward.
+    if (this.buildPrepared || this.buildAnim) {
+      layer.style.display = 'none';
+      return;
+    }
     if (!this.showCommunityLabels || this.communityLabelEls.size === 0) {
       layer.style.display = 'none';
       return;
@@ -2843,6 +2952,356 @@ export class ThreeRenderer {
   }
 
   // ─── Ping / glow ───────────────────────────────────────────────────
+
+  // ─── Build animation ("watch the graph being built") ───────────────
+
+  /** True while a build replay is in flight. */
+  isBuildAnimating(): boolean {
+    return this.buildAnim !== null;
+  }
+
+  /** Arm the NEXT setData() to immediately collapse the graph (before first
+   *  paint) and hold it hidden until playBuildAnimation() fires. This is what
+   *  prevents the finished graph from flashing for a beat before the burst:
+   *  the caller arms this as soon as an index completes, then plays once the
+   *  layout has settled — the graph is hidden the whole time in between. */
+  armBuildAnimation(): void {
+    this.buildArmed = true;
+    // Data may already be loaded (manual arm, or arm after setData) — collapse
+    // right away so there's no flash either way.
+    if (this.nodeGeometry && this.nodeArray.length > 0) this.collapseForBuild();
+  }
+
+  /** Capture the final sizes, then zero node sizes + edge alpha so the graph
+   *  renders empty. Idempotent; consumes the armed flag. */
+  private collapseForBuild(): void {
+    if (!this.nodeGeometry || this.buildPrepared) {
+      this.buildArmed = false;
+      return;
+    }
+    this.preparedSizes = this.sizeArray.slice();
+    this.sizeArray.fill(0);
+    (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+      true;
+    if (this.edgeGeometry) {
+      this.edgeAlphaArray.fill(0);
+      (
+        this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute
+      ).needsUpdate = true;
+    }
+    this.buildPrepared = true;
+    this.buildArmed = false;
+    // Labels are hidden by updateLabelsPerFrame on the next (and every) frame
+    // while prepared — node layer directly, community via its own path.
+    this.requestRender();
+  }
+
+  /** Replay the graph "building itself" as an outward burst: every node/edge
+   *  is hidden, then — in BFS order from the root — each node is flung out
+   *  FROM its parent's settled spot, overshooting into place with a pop while
+   *  a glow spark fires, and edges stretch to the flying nodes. Births are
+   *  jittered so siblings don't pop in lockstep. Cosmetic only; the final
+   *  state is identical to before playback. Positions must already be settled
+   *  (call after indexing completes). `rootIds` overrides the auto-detected
+   *  root (Repository node, else highest-degree node). */
+  playBuildAnimation(rootIds?: string[]): void {
+    if (this.destroyed || !this.nodeGeometry || this.nodeArray.length === 0) {
+      return;
+    }
+    // Restart cleanly if one is already running.
+    if (this.buildAnim) this.stopBuildAnimation();
+
+    const n = this.nodeArray.length;
+    const duration = Math.min(
+      BUILD_MAX_MS,
+      Math.max(BUILD_MIN_MS, BUILD_MIN_MS + n * BUILD_MS_PER_NODE),
+    );
+    // Reserve the per-node reveal window at the tail so the last-born node
+    // still finishes by `duration` (plus the jitter headroom).
+    const spread = Math.max(1, duration - BUILD_NODE_REVEAL_MS);
+    const { birth, parent } = this.computeBuildOrder(rootIds, spread);
+    // When armed-and-prepared the live sizeArray is already zeroed, so the
+    // real targets come from the snapshot taken at collapse time.
+    const targetSize =
+      this.buildPrepared && this.preparedSizes
+        ? this.preparedSizes.slice()
+        : this.sizeArray.slice();
+    this.buildPrepared = false;
+    this.preparedSizes = null;
+    const truePos = this.posArray.slice();
+
+    // Start fully collapsed: zero every node size (shader culls size~0) and
+    // every edge alpha. updateBuildAnim() flies them back in per the schedule.
+    this.sizeArray.fill(0);
+    (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+      true;
+    if (this.edgeGeometry) {
+      this.edgeAlphaArray.fill(0);
+      (
+        this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute
+      ).needsUpdate = true;
+    }
+
+    this.buildAnim = {
+      start: performance.now(),
+      duration,
+      birth,
+      targetSize,
+      truePos,
+      parent,
+      sparked: new Uint8Array(n),
+      sparkStride: Math.max(1, Math.ceil(n / BUILD_SPARK_BUDGET)),
+    };
+    // Frame the whole (final) graph so the burst stays in view.
+    this.zoomToFit(700);
+    this.requestRender();
+  }
+
+  /** Abort an in-flight build replay and snap to the final state. No-op if
+   *  none is running. */
+  stopBuildAnimation(): void {
+    const anim = this.buildAnim;
+    if (!anim) return;
+    this.buildAnim = null;
+    if (this.nodeGeometry) {
+      this.posArray.set(anim.truePos);
+      this.sizeArray.set(anim.targetSize);
+      (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+        true;
+      (
+        this.nodeGeometry.getAttribute('position') as BufferAttribute
+      ).needsUpdate = true;
+    }
+    this.applyNodeStates();
+    this.updateEdgeAlpha();
+    this.updateEdgePositions();
+    if (this.nodeLabelLayer) this.nodeLabelLayer.style.display = '';
+    this.runNodeLabelCull();
+    this.requestRender();
+  }
+
+  /** BFS the graph from its root, returning per-node-index birth offsets (ms,
+   *  spread across `spread`, with jitter) and the BFS parent each node flies
+   *  out from (-1 for component seeds). Earlier ranks (closer to the root) are
+   *  born first; disconnected components are appended in index order. */
+  private computeBuildOrder(
+    rootIds: string[] | undefined,
+    spread: number,
+  ): { birth: Float32Array; parent: Int32Array } {
+    const n = this.nodeArray.length;
+    const birth = new Float32Array(n);
+    const parent = new Int32Array(n).fill(-1);
+    if (n === 0) return { birth, parent };
+
+    // Undirected adjacency over node indices.
+    const adj: number[][] = Array.from({ length: n }, () => []);
+    for (const e of this.edges) {
+      const s = this.nodeIdToIndex.get(e.sourceId);
+      const t = this.nodeIdToIndex.get(e.targetId);
+      if (s === undefined || t === undefined) continue;
+      adj[s].push(t);
+      adj[t].push(s);
+    }
+
+    const visited = new Uint8Array(n);
+    const queue = new Int32Array(n);
+    const order = new Int32Array(n);
+    let head = 0;
+    let tail = 0;
+    let produced = 0;
+    const enqueue = (i: number, from: number) => {
+      if (!visited[i]) {
+        visited[i] = 1;
+        parent[i] = from;
+        queue[tail++] = i;
+      }
+    };
+
+    // Seeds: explicit roots, else a Repository/Repo node, else highest degree.
+    const seeds: number[] = [];
+    if (rootIds && rootIds.length) {
+      for (const id of rootIds) {
+        const i = this.nodeIdToIndex.get(id);
+        if (i !== undefined) seeds.push(i);
+      }
+    }
+    if (seeds.length === 0) {
+      let repoIdx = -1;
+      let bestDeg = -1;
+      let bestIdx = 0;
+      for (let i = 0; i < n; i++) {
+        const type = this.nodeArray[i].graphNode.type;
+        if (repoIdx < 0 && (type === 'Repository' || type === 'Repo')) {
+          repoIdx = i;
+        }
+        if (adj[i].length > bestDeg) {
+          bestDeg = adj[i].length;
+          bestIdx = i;
+        }
+      }
+      seeds.push(repoIdx >= 0 ? repoIdx : bestIdx);
+    }
+    for (const s of seeds) enqueue(s, -1);
+
+    // BFS, restarting on disconnected components (scan pointer keeps it O(n)).
+    let scan = 0;
+    while (produced < n) {
+      if (head >= tail) {
+        while (scan < n && visited[scan]) scan++;
+        if (scan >= n) break;
+        enqueue(scan, -1);
+      }
+      const cur = queue[head++];
+      order[produced++] = cur;
+      for (const nb of adj[cur]) enqueue(nb, cur);
+    }
+
+    // Spread births by rank, then add a deterministic per-node jitter (hashed
+    // off the index, so no Math.random) so same-depth siblings scatter in time.
+    const denom = Math.max(1, produced - 1);
+    const jitterAmp = BUILD_NODE_REVEAL_MS * BUILD_JITTER_FRAC;
+    for (let rank = 0; rank < produced; rank++) {
+      const i = order[rank];
+      const h = ((i * 2654435761) >>> 0) / 4294967295; // [0,1)
+      const jitter = (h - 0.5) * jitterAmp;
+      birth[i] = Math.max(0, (rank / denom) * spread + jitter);
+    }
+    return { birth, parent };
+  }
+
+  /** Per-frame build-animation tick: fling each node out from its parent with
+   *  an overshoot "pop", spark a glow as it's born, stretch edges to the
+   *  flying nodes, then snap to the exact final state when complete. */
+  private updateBuildAnim(now: number): void {
+    const anim = this.buildAnim;
+    if (!anim || !this.nodeGeometry) return;
+    const t = now - anim.start;
+    // easeOutBack — overshoots past 1 then settles, giving the launch + pop.
+    const c1 = BUILD_BACK_C1;
+    const c3 = c1 + 1;
+    const backOut = (x: number) => {
+      const u = x - 1;
+      return 1 + c3 * u * u * u + c1 * u * u;
+    };
+
+    const pos = this.posArray;
+    const sz = this.sizeArray;
+    const tgt = anim.targetSize;
+    const tp = anim.truePos;
+    const birth = anim.birth;
+    const parent = anim.parent;
+    const sparked = anim.sparked;
+    const n = this.nodeArray.length;
+
+    for (let i = 0; i < n; i++) {
+      const p = (t - birth[i]) / BUILD_NODE_REVEAL_MS;
+      // Origin to fly out from: the parent's settled spot (seeds pop in place).
+      const pa = parent[i];
+      const fx = pa >= 0 ? tp[pa * 3] : tp[i * 3];
+      const fy = pa >= 0 ? tp[pa * 3 + 1] : tp[i * 3 + 1];
+      const fz = pa >= 0 ? tp[pa * 3 + 2] : tp[i * 3 + 2];
+      if (p <= 0) {
+        // Parked at the parent, invisible (size 0 → shader-culled).
+        sz[i] = 0;
+        pos[i * 3] = fx;
+        pos[i * 3 + 1] = fy;
+        pos[i * 3 + 2] = fz;
+        continue;
+      }
+      if (p >= 1) {
+        sz[i] = tgt[i];
+        pos[i * 3] = tp[i * 3];
+        pos[i * 3 + 1] = tp[i * 3 + 1];
+        pos[i * 3 + 2] = tp[i * 3 + 2];
+        continue;
+      }
+      const e = backOut(p); // shared pop curve for travel + scale
+      sz[i] = tgt[i] * e;
+      pos[i * 3] = fx + (tp[i * 3] - fx) * e;
+      pos[i * 3 + 1] = fy + (tp[i * 3 + 1] - fy) * e;
+      pos[i * 3 + 2] = fz + (tp[i * 3 + 2] - fz) * e;
+      // Spark once, the moment it's born (sampled on big graphs via the
+      // stride; only for nodes that are actually drawn).
+      if (
+        !sparked[i] &&
+        i % anim.sparkStride === 0 &&
+        this.nodeArray[i].visible
+      ) {
+        sparked[i] = 1;
+        this.triggerPing([this.nodeArray[i].id]);
+      }
+    }
+    (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+      true;
+    (
+      this.nodeGeometry.getAttribute('position') as BufferAttribute
+    ).needsUpdate = true;
+
+    // Edges connect the live (flying) node positions; alpha ramps in with the
+    // later-born endpoint so an edge fades in as its child node lands. Same
+    // filters as updateEdgeAlpha so the build matches the user's current view.
+    if (this.edgeGeometry) {
+      const ep = this.edgePosArray;
+      const ea = this.edgeAlphaArray;
+      const idx = this.nodeIdToIndex;
+      for (let k = 0; k < this.edges.length; k++) {
+        const e = this.edges[k];
+        const o = k * 6;
+        const k2 = k * 2;
+        const s = idx.get(e.sourceId);
+        const tt = idx.get(e.targetId);
+        if (
+          !this.edgesEnabled ||
+          this.hiddenLinkTypes.has(e.label) ||
+          s === undefined ||
+          tt === undefined ||
+          !this.nodeArray[s].visible ||
+          !this.nodeArray[tt].visible
+        ) {
+          ea[k2] = ea[k2 + 1] = 0;
+          continue;
+        }
+        const pLater =
+          (t - Math.max(birth[s], birth[tt])) / BUILD_NODE_REVEAL_MS;
+        const alpha =
+          pLater <= 0 ? 0 : Math.min(1, pLater) * EDGE_OPACITY_DEFAULT;
+        ep[o] = pos[s * 3];
+        ep[o + 1] = pos[s * 3 + 1];
+        ep[o + 2] = pos[s * 3 + 2];
+        ep[o + 3] = pos[tt * 3];
+        ep[o + 4] = pos[tt * 3 + 1];
+        ep[o + 5] = pos[tt * 3 + 2];
+        ea[k2] = ea[k2 + 1] = alpha;
+      }
+      (
+        this.edgeGeometry.getAttribute('position') as BufferAttribute
+      ).needsUpdate = true;
+      (
+        this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute
+      ).needsUpdate = true;
+    }
+
+    if (t >= anim.duration) {
+      // Done — restore the exact final positions, sizes, and edge state.
+      this.buildAnim = null;
+      this.posArray.set(tp);
+      this.sizeArray.set(tgt);
+      (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+        true;
+      (
+        this.nodeGeometry.getAttribute('position') as BufferAttribute
+      ).needsUpdate = true;
+      this.applyNodeStates();
+      this.updateEdgeAlpha();
+      this.updateEdgePositions();
+      // Node labels were hidden during the burst — re-cull so they reappear.
+      // Community labels recover on their own via updateCommunityLabels().
+      if (this.nodeLabelLayer) this.nodeLabelLayer.style.display = '';
+      this.runNodeLabelCull();
+    }
+    // Keep the loop alive for the next frame.
+    this.needsRender = true;
+  }
 
   triggerPing(nodeIds: Iterable<string>): void {
     if (!this.scene) return;

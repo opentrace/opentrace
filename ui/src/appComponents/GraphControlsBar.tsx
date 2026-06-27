@@ -179,6 +179,27 @@ const ResetIcon = () => (
   </svg>
 );
 
+const BuildAnimIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Three connected nodes "growing" out from a root — evokes the graph
+        assembling itself. */}
+    <circle cx="5" cy="19" r="2.2" />
+    <circle cx="18" cy="14" r="2.2" />
+    <circle cx="13" cy="5" r="2.2" />
+    <line x1="6.8" y1="17.7" x2="11.6" y2="6.4" />
+    <line x1="6.9" y1="18.4" x2="16" y2="14.6" />
+  </svg>
+);
+
 const DimensionIcon = ({ is3d }: { is3d: boolean }) => (
   <svg
     width="16"
@@ -219,6 +240,11 @@ interface GraphControlsBarProps {
   mode3d: boolean;
   setMode3d: Dispatch<SetStateAction<boolean>>;
 
+  /** When provided, renders a "Replay build animation" button that re-plays
+   *  the graph assembling itself. Omitted by renderers that don't support it
+   *  (Pixi), so the button only appears for the Three.js renderer. */
+  onReplayBuild?: () => void;
+
   /** Override for the "Reset graph" button click. When provided, replaces
    *  the default behaviour (reheat physics + reset camera) with a full
    *  settings-and-state reset — used by callers that wire it to
@@ -240,6 +266,7 @@ export const GraphControlsBar = ({
   setLayoutMode,
   mode3d,
   setMode3d,
+  onReplayBuild,
   onResetGraph,
 }: GraphControlsBarProps) => {
   return (
@@ -318,6 +345,16 @@ export const GraphControlsBar = ({
         >
           <ResetIcon />
         </button>
+
+        {onReplayBuild && (
+          <button
+            className="graph-control-btn"
+            onClick={onReplayBuild}
+            title="Replay build animation"
+          >
+            <BuildAnimIcon />
+          </button>
+        )}
 
         <button
           ref={physicsTriggerRef}

@@ -213,6 +213,15 @@ const GraphViewer = memo(
       // per-promise suppression tokens through useGraph.
       const suppressNextFitRef = useRef(false);
 
+      // Build-animation auto-play: armed when an index completes, fired once
+      // the freshly-loaded graph has nodes (and after a short settle so the
+      // initial force layout has mostly relaxed). The manual replay button in
+      // GraphControlsBar re-triggers it on demand.
+      const autoBuildPendingRef = useRef(false);
+      const buildPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+      );
+
       const v = useGraphViewer({
         chatHighlightNodes,
         suppressNextAutoFitRef: suppressNextFitRef,
@@ -336,15 +345,47 @@ const GraphViewer = memo(
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
         if (jobState.status === 'persisted') {
+          // Arm the build animation NOW, before the indexed graph reaches the
+          // canvas — the renderer then collapses it the instant it's built
+          // (before first paint) and holds it hidden, so the finished graph
+          // never flashes before the burst plays. (Three.js only — no-op on
+          // Pixi.)
+          v.canvasRef.current?.armBuildAnimation?.();
           loadGraph()
             .then(() => {
               pendingMinimize.current = true;
+              // Arm the build-animation auto-play for this completed index.
+              autoBuildPendingRef.current = true;
             })
             .catch(() => {
               // Graph load failed — don't set pendingMinimize
             });
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [jobState.status, loadGraph]);
+
+      // Play the (already-collapsed, hidden) build animation once the new graph
+      // is on screen and the layout has had a beat to settle. The graph is held
+      // hidden from arm until this fires, so there's no flash. The 'done'
+      // enriched reload reuses the same node ids, so the renderer skips a
+      // rebuild and the in-flight replay survives it.
+      const graphNodeCount = graphData.nodes.length;
+      useEffect(() => {
+        if (!autoBuildPendingRef.current || graphNodeCount === 0) return;
+        autoBuildPendingRef.current = false;
+        if (buildPlayTimerRef.current) clearTimeout(buildPlayTimerRef.current);
+        buildPlayTimerRef.current = setTimeout(() => {
+          buildPlayTimerRef.current = null;
+          v.canvasRef.current?.playBuildAnimation?.();
+        }, 1200);
+        return () => {
+          if (buildPlayTimerRef.current) {
+            clearTimeout(buildPlayTimerRef.current);
+            buildPlayTimerRef.current = null;
+          }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [graphNodeCount]);
 
       // React to done: final graph refresh with enriched data. Suppress the
       // auto-fit this reload would otherwise trigger — embeddings only add
@@ -701,6 +742,11 @@ const GraphViewer = memo(
 
           <GraphControlsBar
             canvasRef={v.canvasRef}
+            onReplayBuild={
+              GRAPH_RENDERER === 'three'
+                ? () => v.canvasRef.current?.playBuildAnimation?.()
+                : undefined
+            }
             graphFullscreen={graphFullscreen}
             onToggleGraphFullscreen={onToggleGraphFullscreen}
             zoomOnSelect={v.settings.zoomOnSelect}
