@@ -444,3 +444,146 @@ describe('LadybugGraphStore deleteRepo', () => {
     ).toBe(false);
   });
 });
+
+// Build a store whose mock conn routes each query() to caller-supplied rows
+// based on the Cypher text (no real WASM — asserts query construction).
+function makeStoreWithRows(
+  route: (cypher: string) => Record<string, unknown>[],
+) {
+  const store = new LadybugGraphStore();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const s = store as any;
+  s.ready = Promise.resolve();
+  const connQuery = vi.fn().mockImplementation(async (cypher: string) => ({
+    getAllObjects: async () => route(cypher),
+    close: async () => {},
+  }));
+  s.conn = { query: connQuery };
+  return { store, s, connQuery };
+}
+
+describe('LadybugGraphStore progressive loading', () => {
+  it('fetchGraphSkeleton fetches only real skeleton types + edges among them', async () => {
+    const { store, connQuery } = makeStoreWithRows((cypher) => {
+      if (cypher.includes('MATCH (n:Repository)'))
+        return [{ id: 'r1', type: 'Repository', name: 'repo' }];
+      if (cypher.includes('MATCH (n:Directory)'))
+        return [{ id: 'd1', type: 'Directory', name: 'dir' }];
+      if (cypher.includes('MATCH (n:File)'))
+        return [{ id: 'f1', type: 'File', name: 'file' }];
+      if (cypher.includes('RELATES'))
+        return [
+          { source: 'r1', target: 'd1', type: 'CONTAINS', properties: null },
+          { source: 'd1', target: 'f1', type: 'CONTAINS', properties: null },
+          // endpoint not in the skeleton set → must be dropped by the JS filter
+          { source: 'f1', target: 'fnX', type: 'DEFINES', properties: null },
+        ];
+      return [];
+    });
+
+    const data = await store.fetchGraphSkeleton([
+      'Repository',
+      'Directory',
+      'File',
+      'BogusType',
+    ]);
+
+    expect(data.nodes.map((n) => n.id).sort()).toEqual(['d1', 'f1', 'r1']);
+    // The f1→fnX edge is dropped (fnX not loaded); the two CONTAINS survive.
+    expect(data.links).toHaveLength(2);
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    expect(cyphers.some((c) => c.includes('MATCH (n:Repository)'))).toBe(true);
+    expect(cyphers.some((c) => c.includes('MATCH (n:File)'))).toBe(true);
+    // The bogus (non-table) type is filtered out, never queried.
+    expect(cyphers.some((c) => c.includes('MATCH (n:BogusType)'))).toBe(false);
+    // Exactly one RELATES (edge) query.
+    expect(cyphers.filter((c) => c.includes('RELATES')).length).toBe(1);
+  });
+
+  it('fetchGraphSkeleton returns empty for no real types', async () => {
+    const { store, connQuery } = makeStoreWithRows(() => []);
+    const data = await store.fetchGraphSkeleton(['Nope', 'AlsoNope']);
+    expect(data).toEqual({ nodes: [], links: [] });
+    expect(connQuery).not.toHaveBeenCalled();
+  });
+
+  it('fetchGraphPage uses SKIP/LIMIT and filters edges to the session set', async () => {
+    const { store, s, connQuery } = makeStoreWithRows((cypher) => {
+      if (cypher.includes('MATCH (n:Function)'))
+        return [
+          { id: 'fn1', type: 'Function', name: 'a' },
+          { id: 'fn2', type: 'Function', name: 'b' },
+        ];
+      if (cypher.includes('RELATES'))
+        return [
+          // source already loaded (in session set), target in page → kept
+          { source: 'f1', target: 'fn1', type: 'DEFINES', properties: null },
+          // both in page → kept
+          { source: 'fn1', target: 'fn2', type: 'CALLS', properties: null },
+          // target not yet loaded → dropped (surfaces on a later page)
+          { source: 'fn2', target: 'future', type: 'CALLS', properties: null },
+        ];
+      return [];
+    });
+    // Seed the accumulated session set as a prior skeleton/page would have.
+    s.progressiveIds = new Set<string>(['f1']);
+
+    const res = await store.fetchGraphPage({
+      type: 'Function',
+      offset: 0,
+      limit: 2,
+    });
+
+    expect(res.nodes.map((n) => n.id)).toEqual(['fn1', 'fn2']);
+    expect(res.exhausted).toBe(false); // full page (2 === limit)
+    expect(res.links).toHaveLength(2); // fn2→future dropped
+    // Page ids were folded into the session set.
+    expect(s.progressiveIds.has('fn1')).toBe(true);
+    expect(s.progressiveIds.has('fn2')).toBe(true);
+
+    const fnQuery = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .find((c) => c.includes('MATCH (n:Function)'));
+    expect(fnQuery).toContain('SKIP 0');
+    expect(fnQuery).toContain('LIMIT 2');
+  });
+
+  it('fetchGraphPage reports exhausted on a short page', async () => {
+    const { store } = makeStoreWithRows((cypher) =>
+      cypher.includes('MATCH (n:Variable)')
+        ? [{ id: 'v1', type: 'Variable', name: 'x' }]
+        : [],
+    );
+    const res = await store.fetchGraphPage({
+      type: 'Variable',
+      offset: 100,
+      limit: 50,
+    });
+    expect(res.nodes).toHaveLength(1);
+    expect(res.exhausted).toBe(true); // 1 < 50
+  });
+
+  it('fetchGraphPage no-ops for an unknown node type', async () => {
+    const { store, connQuery } = makeStoreWithRows(() => []);
+    const res = await store.fetchGraphPage({
+      type: 'Nope',
+      offset: 0,
+      limit: 10,
+    });
+    expect(res).toEqual({ nodes: [], links: [], exhausted: true });
+    expect(connQuery).not.toHaveBeenCalled();
+  });
+
+  it('fetchGraphSkeleton resets the session set', async () => {
+    const { store, s } = makeStoreWithRows((cypher) =>
+      cypher.includes('MATCH (n:File)')
+        ? [{ id: 'f1', type: 'File', name: 'file' }]
+        : [],
+    );
+    s.progressiveIds = new Set<string>(['stale1', 'stale2']);
+    await store.fetchGraphSkeleton(['File']);
+    expect(s.progressiveIds.has('stale1')).toBe(false);
+    expect(s.progressiveIds.has('f1')).toBe(true);
+  });
+});

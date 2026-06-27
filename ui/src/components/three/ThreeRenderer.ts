@@ -280,6 +280,10 @@ export class ThreeRenderer {
   /** Final node sizes captured at collapse time — restored as the burst's
    *  targets (sizeArray itself is zeroed while prepared). */
   private preparedSizes: Float32Array | null = null;
+  /** After an armed collapse, the burst auto-plays once the layout settles
+   *  (not on a fixed external timer) — robust to slow-to-lay-out graphs. */
+  private buildAutoPlayPending = false;
+  private buildAutoPlayTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Labels (HTML/CSS overlay) ──────────────────────────────────────
   private nodeLabelLayer: HTMLDivElement | null = null;
@@ -957,6 +961,10 @@ export class ThreeRenderer {
     this.destroyed = true;
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
     this.rafHandle = 0;
+    if (this.buildAutoPlayTimer) {
+      clearTimeout(this.buildAutoPlayTimer);
+      this.buildAutoPlayTimer = null;
+    }
     this.interactionAbort?.abort();
     this.interactionAbort = null;
     this.autoFitTarget = null;
@@ -1043,6 +1051,11 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
+    this.buildAutoPlayPending = false;
+    if (this.buildAutoPlayTimer) {
+      clearTimeout(this.buildAutoPlayTimer);
+      this.buildAutoPlayTimer = null;
+    }
     this.disposeNodeObjects();
     this.disposeEdgeObjects();
     this.disposeSuperGraph();
@@ -2478,6 +2491,8 @@ export class ThreeRenderer {
     }
     // Build the LOD super-graph from the now-stable centroids.
     if (settled && this.lodEnabled) this.maybeBuildSuperGraph();
+    // A collapse is waiting to play — the layout just settled, so go now.
+    if (settled && this.buildAutoPlayPending) this.maybeAutoPlayBuild();
   }
 
   setZoomSizeExponent(exponent: number): void {
@@ -2858,6 +2873,25 @@ export class ThreeRenderer {
       this.communityVisibilityFrozen = false;
       this.applyEdgeDepthMode();
       this.requestRender();
+
+      // 3D turned on while a build burst is mid-play or queued (common on large
+      // graphs: the layout settles flat in 2D, the burst plays, THEN 3D enables
+      // and z develops — reading as "2D plane expanding to 3D"). The layout now
+      // re-relaxes in 3D, so re-collapse and replay the burst on the upcoming
+      // 3D settle instead of the stale flat snapshot.
+      if (this.buildAnim || this.buildAutoPlayPending) {
+        if (this.buildAnim) this.stopBuildAnimation();
+        // The dimensionality change restarts the sim — treat as unsettled so
+        // the replay waits for the real 3D settle, not the prior 2D one.
+        this.layoutSettled = false;
+        if (this.buildPrepared) {
+          // Already collapsed & waiting — just defer the play to the 3D settle.
+          this.buildAutoPlayPending = true;
+          this.scheduleAutoPlayBuild(8000 + this.nodeArray.length * 1.5);
+        } else {
+          this.collapseForBuild();
+        }
+      }
     } else {
       this.controls?.dispose();
       this.controls = null;
@@ -2960,16 +2994,15 @@ export class ThreeRenderer {
     return this.buildAnim !== null;
   }
 
-  /** Arm the NEXT setData() to immediately collapse the graph (before first
-   *  paint) and hold it hidden until playBuildAnimation() fires. This is what
-   *  prevents the finished graph from flashing for a beat before the burst:
-   *  the caller arms this as soon as an index completes, then plays once the
-   *  layout has settled — the graph is hidden the whole time in between. */
+  /** Arm the NEXT setData() to collapse the graph (before first paint) and hold
+   *  it hidden until the layout settles, then auto-play the burst. The caller
+   *  arms this when an index completes (before the new data arrives), so the
+   *  finished graph never flashes. We deliberately do NOT collapse any
+   *  currently-shown graph here: on a re-index the old graph stays visible
+   *  until the new data's setData collapses it (no blank gap), and on a first
+   *  index there's nothing to collapse yet. */
   armBuildAnimation(): void {
     this.buildArmed = true;
-    // Data may already be loaded (manual arm, or arm after setData) — collapse
-    // right away so there's no flash either way.
-    if (this.nodeGeometry && this.nodeArray.length > 0) this.collapseForBuild();
   }
 
   /** Capture the final sizes, then zero node sizes + edge alpha so the graph
@@ -2994,6 +3027,36 @@ export class ThreeRenderer {
     // Labels are hidden by updateLabelsPerFrame on the next (and every) frame
     // while prepared — node layer directly, community via its own path.
     this.requestRender();
+
+    // Auto-play once the layout settles. If it's already settled (sim didn't
+    // restart), play after a short beat; otherwise wait for setLayoutSettled,
+    // with a long fallback for graphs whose layout never fully settles. This
+    // replaces a fixed external timer that could fire BEFORE this collapse on a
+    // slow-to-lay-out graph, leaving it stuck hidden until manual replay.
+    this.buildAutoPlayPending = true;
+    // If already settled, play after a short beat; otherwise wait for the
+    // settle event, with a generous fallback that SCALES with node count so a
+    // large graph's slow (re-)settle wins over the fallback rather than firing
+    // the burst on a half-developed layout.
+    this.scheduleAutoPlayBuild(
+      this.layoutSettled ? 300 : 8000 + this.nodeArray.length * 1.5,
+    );
+  }
+
+  private scheduleAutoPlayBuild(ms: number): void {
+    if (this.buildAutoPlayTimer) clearTimeout(this.buildAutoPlayTimer);
+    this.buildAutoPlayTimer = setTimeout(() => this.maybeAutoPlayBuild(), ms);
+  }
+
+  /** Fire the pending auto-play (from collapseForBuild) exactly once. */
+  private maybeAutoPlayBuild(): void {
+    if (!this.buildAutoPlayPending) return;
+    this.buildAutoPlayPending = false;
+    if (this.buildAutoPlayTimer) {
+      clearTimeout(this.buildAutoPlayTimer);
+      this.buildAutoPlayTimer = null;
+    }
+    this.playBuildAnimation();
   }
 
   /** Replay the graph "building itself" as an outward burst: every node/edge
@@ -3007,6 +3070,12 @@ export class ThreeRenderer {
   playBuildAnimation(rootIds?: string[]): void {
     if (this.destroyed || !this.nodeGeometry || this.nodeArray.length === 0) {
       return;
+    }
+    // Consume any pending auto-play (we're playing now).
+    this.buildAutoPlayPending = false;
+    if (this.buildAutoPlayTimer) {
+      clearTimeout(this.buildAutoPlayTimer);
+      this.buildAutoPlayTimer = null;
     }
     // Restart cleanly if one is already running.
     if (this.buildAnim) this.stopBuildAnimation();

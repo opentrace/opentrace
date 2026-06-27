@@ -36,6 +36,7 @@ import {
   useState,
 } from 'react';
 import { useGraph } from '../providers/GraphDataProvider';
+import { PROGRESSIVE_LOAD_ENABLED } from '../hooks/useGraphData';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
 import { getSubType } from '../providers/graphFilterUtils';
 import type { JobMessage, JobState } from '../job';
@@ -213,15 +214,6 @@ const GraphViewer = memo(
       // per-promise suppression tokens through useGraph.
       const suppressNextFitRef = useRef(false);
 
-      // Build-animation auto-play: armed when an index completes, fired once
-      // the freshly-loaded graph has nodes (and after a short settle so the
-      // initial force layout has mostly relaxed). The manual replay button in
-      // GraphControlsBar re-triggers it on demand.
-      const autoBuildPendingRef = useRef(false);
-      const buildPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-        null,
-      );
-
       const v = useGraphViewer({
         chatHighlightNodes,
         suppressNextAutoFitRef: suppressNextFitRef,
@@ -346,16 +338,21 @@ const GraphViewer = memo(
       useEffect(() => {
         if (jobState.status === 'persisted') {
           // Arm the build animation NOW, before the indexed graph reaches the
-          // canvas — the renderer then collapses it the instant it's built
-          // (before first paint) and holds it hidden, so the finished graph
-          // never flashes before the burst plays. (Three.js only — no-op on
-          // Pixi.)
-          v.canvasRef.current?.armBuildAnimation?.();
+          // canvas. The renderer collapses it the instant it's built (before
+          // first paint), holds it hidden, and AUTO-PLAYS itself once the
+          // layout settles — so there's no flash and no fragile external timer
+          // that could fire before the collapse on a slow-to-lay-out graph
+          // (which previously left it stuck hidden until manual replay).
+          // Three.js only — no-op on Pixi. Suppressed during progressive
+          // streaming: the burst would play on the skeleton, then the rest
+          // streams in + the 3D layout develops, reading as a 2D plane
+          // expanding to 3D. (Proper streaming+burst integration is deferred.)
+          if (!PROGRESSIVE_LOAD_ENABLED) {
+            v.canvasRef.current?.armBuildAnimation?.();
+          }
           loadGraph()
             .then(() => {
               pendingMinimize.current = true;
-              // Arm the build-animation auto-play for this completed index.
-              autoBuildPendingRef.current = true;
             })
             .catch(() => {
               // Graph load failed — don't set pendingMinimize
@@ -363,29 +360,6 @@ const GraphViewer = memo(
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [jobState.status, loadGraph]);
-
-      // Play the (already-collapsed, hidden) build animation once the new graph
-      // is on screen and the layout has had a beat to settle. The graph is held
-      // hidden from arm until this fires, so there's no flash. The 'done'
-      // enriched reload reuses the same node ids, so the renderer skips a
-      // rebuild and the in-flight replay survives it.
-      const graphNodeCount = graphData.nodes.length;
-      useEffect(() => {
-        if (!autoBuildPendingRef.current || graphNodeCount === 0) return;
-        autoBuildPendingRef.current = false;
-        if (buildPlayTimerRef.current) clearTimeout(buildPlayTimerRef.current);
-        buildPlayTimerRef.current = setTimeout(() => {
-          buildPlayTimerRef.current = null;
-          v.canvasRef.current?.playBuildAnimation?.();
-        }, 1200);
-        return () => {
-          if (buildPlayTimerRef.current) {
-            clearTimeout(buildPlayTimerRef.current);
-            buildPlayTimerRef.current = null;
-          }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [graphNodeCount]);
 
       // React to done: final graph refresh with enriched data. Suppress the
       // auto-fit this reload would otherwise trigger — embeddings only add

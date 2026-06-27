@@ -106,7 +106,15 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       [],
     );
 
-    const internalCommunityData = useCommunities(nodes, links, layoutConfig);
+    // Skip the internal Louvain pass when the parent already supplies community
+    // data (the app always does) — otherwise we'd run a second worker over the
+    // whole graph on every change, doubling the cost during streaming.
+    const internalCommunityData = useCommunities(
+      nodes,
+      links,
+      layoutConfig,
+      communityDataProp == null,
+    );
     const communityData = communityDataProp ?? internalCommunityData;
 
     const filterState = useMemo(

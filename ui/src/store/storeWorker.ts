@@ -102,6 +102,18 @@ async function dispatch(msg: CallMessage): Promise<void> {
       case 'fetchGraph':
         value = await store.fetchGraph(...(args as [string?, number?]));
         break;
+      case 'fetchGraphSkeleton':
+        value = await store.fetchGraphSkeleton(args[0] as string[]);
+        break;
+      case 'fetchGraphPage':
+        value = await store.fetchGraphPage(
+          args[0] as {
+            type: string;
+            offset: number;
+            limit: number;
+          },
+        );
+        break;
       case 'fetchStats':
         value = await store.fetchStats();
         break;

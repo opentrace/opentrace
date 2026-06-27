@@ -542,6 +542,12 @@ export class LadybugGraphStore implements GraphStore {
   private maxVisNodes = 50000;
   private maxVisEdges = 50000;
 
+  // Accumulated node-id set for the current progressive-load session. Seeded by
+  // fetchGraphSkeleton, extended by each fetchGraphPage, and used to decide
+  // which streamed edges have both endpoints loaded. Kept in the store (not
+  // passed per page) so we don't re-serialize a 50k-id array on every page.
+  private progressiveIds = new Set<string>();
+
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
 
@@ -1106,6 +1112,131 @@ export class LadybugGraphStore implements GraphStore {
     return { nodes, links };
   }
 
+  // ─── Progressive ("dynamic") loading ──────────────────────────────────
+  //
+  // For very large graphs, load a structural SKELETON first (Repo/Dir/File…)
+  // — small + fast to lay out — then STREAM the bulk (Function/Variable) in
+  // pages that the UI appends to the live graph. These two methods are the
+  // store half; useGraphData orchestrates the skeleton→stream sequence.
+
+  /** Structural skeleton: nodes of `types` (only those that have tables) plus
+   *  the RELATES edges among them. Bounded by maxVisNodes per type. */
+  async fetchGraphSkeleton(types: string[]): Promise<GraphData> {
+    // Start a fresh progressive-load session.
+    this.progressiveIds = new Set<string>();
+    const skeleton = types.filter((t) => NODE_TYPE_SET.has(t)) as NodeType[];
+    if (skeleton.length === 0) return { nodes: [], links: [] };
+
+    const nodes: GraphNode[] = [];
+    const idSet = this.progressiveIds;
+    for (const type of skeleton) {
+      const rows = await this.query(
+        `MATCH (n:${type}) RETURN ${typedReturnClause(type)} LIMIT ${this.maxVisNodes}`,
+      );
+      for (const r of rows as Record<string, unknown>[]) {
+        const id = String(r.id);
+        if (idSet.has(id)) continue;
+        idSet.add(id);
+        nodes.push({
+          id,
+          type: String(r.type),
+          name: String(r.name),
+          properties: rowToProperties(r),
+        });
+      }
+    }
+    // Skeleton edges = both endpoints in the skeleton set.
+    const links = await this.edgesTouching(idSet, idSet);
+    return { nodes, links };
+  }
+
+  /** One page of a single leaf type, plus the RELATES edges that connect the
+   *  page's nodes to the already-loaded set (`loadedIds` ∪ page). An edge to a
+   *  not-yet-loaded node is omitted now and surfaces when that node's page
+   *  arrives. `exhausted` is true once a short page signals the type is done. */
+  async fetchGraphPage(opts: {
+    type: string;
+    offset: number;
+    limit: number;
+  }): Promise<{ nodes: GraphNode[]; links: GraphLink[]; exhausted: boolean }> {
+    const { type, offset, limit } = opts;
+    if (!NODE_TYPE_SET.has(type)) {
+      return { nodes: [], links: [], exhausted: true };
+    }
+    const lim = Math.max(1, Math.floor(limit));
+    const rows = await this.query(
+      `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} ` +
+        `SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
+    );
+    const nodes: GraphNode[] = [];
+    const pageIds = new Set<string>();
+    for (const r of rows as Record<string, unknown>[]) {
+      const id = String(r.id);
+      pageIds.add(id);
+      this.progressiveIds.add(id);
+      nodes.push({
+        id,
+        type: String(r.type),
+        name: String(r.name),
+        properties: rowToProperties(r),
+      });
+    }
+    const exhausted = nodes.length < lim;
+
+    // Edges queried by the small page-id list (not the full loaded set), then
+    // filtered so both endpoints are in the accumulated session set — keeps the
+    // Cypher IN-list bounded by page size, and an edge to a not-yet-loaded node
+    // surfaces when that node's own page arrives.
+    const links = await this.edgesTouching(pageIds, this.progressiveIds);
+    return { nodes, links, exhausted };
+  }
+
+  /** RELATES edges with at least one endpoint in `seedIds` (the query's bounded
+   *  IN-list) and BOTH endpoints in `known` (the JS-side accepted set). Used by
+   *  both the skeleton (seed = known = skeleton) and each stream page. */
+  private async edgesTouching(
+    seedIds: Set<string>,
+    known: Set<string>,
+  ): Promise<GraphLink[]> {
+    if (seedIds.size === 0) return [];
+    // Chunk the IN-list so the Cypher string stays small even for a big page
+    // (a 4k-id literal is a ~120KB query to parse). Each chunk's edges are
+    // filtered to the accumulated `known` set; results merged + deduped.
+    const seeds = [...seedIds];
+    const CHUNK = 1000;
+    const links: GraphLink[] = [];
+    const seen = new Set<string>();
+    for (
+      let i = 0;
+      i < seeds.length && links.length < this.maxVisEdges;
+      i += CHUNK
+    ) {
+      const ids = seeds
+        .slice(i, i + CHUNK)
+        .map((id) => `'${esc(id)}'`)
+        .join(', ');
+      const rows = await this.query(
+        `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${ids}] OR b.id IN [${ids}] ` +
+          `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
+          `LIMIT ${this.maxVisEdges}`,
+      );
+      for (const r of rows as Record<string, string>[]) {
+        if (!known.has(r.source) || !known.has(r.target)) continue;
+        const key = `${r.source}|${r.type}|${r.target}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        links.push({
+          source: r.source,
+          target: r.target,
+          label: r.type,
+          properties: parseProps(r.properties),
+        });
+        if (links.length >= this.maxVisEdges) break;
+      }
+    }
+    return links;
+  }
+
   /**
    * Batched BFS neighbor expansion: groups frontier IDs by type from
    * nodeTypeMap and issues ONE query per type instead of per-node.
@@ -1560,6 +1691,7 @@ export class LadybugGraphStore implements GraphStore {
     // against state that's about to be torn down. Must happen before we
     // enqueue our own DDL below — execInternal bypasses the check.
     this.generation++;
+    this.progressiveIds = new Set<string>();
     // Drop REL TABLE GROUP first (references node tables)
     try {
       await this.execInternal(`DROP TABLE IF EXISTS RELATES`);
