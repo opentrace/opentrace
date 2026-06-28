@@ -63,7 +63,8 @@
       "import": "./dist/lib/app.js",
       "require": "./dist/lib/app.cjs"
     },
-    "./style.css": "./dist/lib/opentrace.css"
+    "./style.css": "./dist/lib/opentrace.css",
+    "./graph.css": "./dist/lib/graph.css"
   },
   "publishConfig": {
     "access": "public",
@@ -83,7 +84,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:lib": "vite build -c vite.config.lib.ts && tsc -p tsconfig.lib.json && tsc -p tsconfig.lib-app.json",
+    "build:lib": "vite build -c vite.config.lib.ts && node scripts/build-graph-css.mjs && tsc -p tsconfig.lib.json && tsc -p tsconfig.lib-app.json",
     "build:wasm": "bash scripts/build-wasm.sh",
     "fmt": "prettier --write .",
     "lint": "eslint . && prettier --check .",

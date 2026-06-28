@@ -30,24 +30,29 @@ describe('REL_PAIRS', () => {
   });
 });
 
-// Helper: build a store with WASM init bypassed and a mock conn that
-// resolves every query() call into a trivial result.
-function makeStoreWithMockConn() {
-  const store = new LadybugGraphStore();
+// Helper: build a store with WASM init bypassed and a mock engine whose
+// query()/exec() both funnel through one spy, so assertions can inspect every
+// Cypher statement the store dispatched (regardless of rows-vs-no-rows).
+function makeStoreWithMockEngine() {
+  const engineCall = vi.fn().mockResolvedValue([]);
+  const engine = {
+    init: vi.fn().mockResolvedValue(undefined),
+    query: (cypher: string) => engineCall(cypher),
+    exec: (cypher: string) => engineCall(cypher),
+    fsWrite: vi.fn().mockResolvedValue(undefined),
+    fsUnlink: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const store = new LadybugGraphStore(engine);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const s = store as any;
   s.ready = Promise.resolve();
-  const connQuery = vi.fn().mockImplementation(async () => ({
-    getAllObjects: async () => [],
-    close: async () => {},
-  }));
-  s.conn = { query: connQuery };
-  return { store, s, connQuery };
+  return { store, s, connQuery: engineCall };
 }
 
 describe('LadybugGraphStore clearGraph abort behavior', () => {
   it('aborts queued query()/exec() tasks when clearGraph fires', async () => {
-    const { store, s, connQuery } = makeStoreWithMockConn();
+    const { store, s, connQuery } = makeStoreWithMockEngine();
 
     // Hold the queue open so pending tasks can't run until we say so.
     let releaseGate: () => void = () => {};
@@ -82,7 +87,7 @@ describe('LadybugGraphStore clearGraph abort behavior', () => {
   });
 
   it('allows queries enqueued after clearGraph to run normally', async () => {
-    const { store, s, connQuery } = makeStoreWithMockConn();
+    const { store, s, connQuery } = makeStoreWithMockEngine();
 
     // Fire clearGraph first (bumps gen 0 → 1, completes its DDL).
     await store.clearGraph();
@@ -96,7 +101,7 @@ describe('LadybugGraphStore clearGraph abort behavior', () => {
   });
 
   it('bumps the generation counter on clearGraph', async () => {
-    const { store, s } = makeStoreWithMockConn();
+    const { store, s } = makeStoreWithMockEngine();
 
     expect(s.generation).toBe(0);
     await store.clearGraph();
@@ -108,7 +113,7 @@ describe('LadybugGraphStore clearGraph abort behavior', () => {
 
 describe('LadybugGraphStore deleteRepo', () => {
   it('issues scoped Cypher deletes (rels first, then each repo-scoped table)', async () => {
-    const { store, connQuery } = makeStoreWithMockConn();
+    const { store, connQuery } = makeStoreWithMockEngine();
 
     await store.deleteRepo('alice/foo');
 
@@ -176,21 +181,18 @@ describe('LadybugGraphStore deleteRepo', () => {
   });
 
   it('prunes in-memory state keyed by the repo but spares other repos', async () => {
-    const { store, s, connQuery } = makeStoreWithMockConn();
+    const { store, s, connQuery } = makeStoreWithMockEngine();
 
     // The post-delete pass runs two Dependency reads in order: the
     // orphan-sweep query (distinguished by `count(r)`) which should see
     // no orphans here because lodash is still referenced by bob/bar, and
     // the dedup-set rebuild which returns surviving rows.
-    connQuery.mockImplementation(async (cypher: string) => ({
-      getAllObjects: async () => {
-        if (!cypher.includes('(n:Dependency)')) return [];
-        if (cypher.includes('count(r)')) return []; // orphan sweep
-        if (cypher.includes('RETURN n.id')) return [{ id: 'pkg:npm:lodash' }];
-        return [];
-      },
-      close: async () => {},
-    }));
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (!cypher.includes('(n:Dependency)')) return [];
+      if (cypher.includes('count(r)')) return []; // orphan sweep
+      if (cypher.includes('RETURN n.id')) return [{ id: 'pkg:npm:lodash' }];
+      return [];
+    });
 
     // Seed state that would exist after an index run of two repos plus a
     // shared package.
@@ -298,7 +300,7 @@ describe('LadybugGraphStore deleteRepo', () => {
   });
 
   it('does not bump the generation counter', async () => {
-    const { store, s } = makeStoreWithMockConn();
+    const { store, s } = makeStoreWithMockEngine();
 
     expect(s.generation).toBe(0);
     await store.deleteRepo('alice/foo');
@@ -306,7 +308,7 @@ describe('LadybugGraphStore deleteRepo', () => {
   });
 
   it('is a no-op for an empty repoId', async () => {
-    const { store, connQuery } = makeStoreWithMockConn();
+    const { store, connQuery } = makeStoreWithMockEngine();
 
     await store.deleteRepo('');
     expect(connQuery).not.toHaveBeenCalled();
@@ -318,24 +320,21 @@ describe('LadybugGraphStore deleteRepo', () => {
     // repos), but the in-memory set may be stale if we were populated from
     // one subset of repos and a later reindex needs to see the full
     // ground truth. The guard only works if the set matches the DB.
-    const { store, s, connQuery } = makeStoreWithMockConn();
-    connQuery.mockImplementation(async (cypher: string) => ({
-      getAllObjects: async () => {
-        if (!cypher.includes('(n:Dependency)')) return [];
-        // Orphan sweep (distinguished by `count(r)`): none here — the
-        // focus of this test is the rebuild path, not the sweep.
-        if (cypher.includes('count(r)')) return [];
-        if (cypher.includes('RETURN n.id')) {
-          return [
-            { id: 'pkg:npm:lodash' },
-            { id: 'pkg:npm:react' },
-            { id: 'pkg:pypi:requests' },
-          ];
-        }
-        return [];
-      },
-      close: async () => {},
-    }));
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (!cypher.includes('(n:Dependency)')) return [];
+      // Orphan sweep (distinguished by `count(r)`): none here — the
+      // focus of this test is the rebuild path, not the sweep.
+      if (cypher.includes('count(r)')) return [];
+      if (cypher.includes('RETURN n.id')) {
+        return [
+          { id: 'pkg:npm:lodash' },
+          { id: 'pkg:npm:react' },
+          { id: 'pkg:pypi:requests' },
+        ];
+      }
+      return [];
+    });
 
     // Seed a stale set that disagrees with the DB (missing one entry,
     // with an extra ghost entry left over from a deleted repo).
@@ -359,22 +358,19 @@ describe('LadybugGraphStore deleteRepo', () => {
     // was exclusively owned by this repo (Dependencies are only ever
     // created paired with an edge) and is safe to delete. Shared
     // dependencies still have edges from other repos and must survive.
-    const { store, connQuery } = makeStoreWithMockConn();
-    connQuery.mockImplementation(async (cypher: string) => ({
-      getAllObjects: async () => {
-        if (!cypher.includes('(n:Dependency)')) return [];
-        // Orphan sweep: one package exclusively used by alice/foo.
-        if (cypher.includes('count(r)')) {
-          return [{ id: 'pkg:npm:only-used-by-alice' }];
-        }
-        // Dedup rebuild (runs after the sweep): the shared survivor.
-        if (cypher.includes('RETURN n.id')) {
-          return [{ id: 'pkg:npm:lodash' }];
-        }
-        return [];
-      },
-      close: async () => {},
-    }));
+    const { store, connQuery } = makeStoreWithMockEngine();
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (!cypher.includes('(n:Dependency)')) return [];
+      // Orphan sweep: one package exclusively used by alice/foo.
+      if (cypher.includes('count(r)')) {
+        return [{ id: 'pkg:npm:only-used-by-alice' }];
+      }
+      // Dedup rebuild (runs after the sweep): the shared survivor.
+      if (cypher.includes('RETURN n.id')) {
+        return [{ id: 'pkg:npm:lodash' }];
+      }
+      return [];
+    });
 
     await store.deleteRepo('alice/foo');
 
@@ -431,7 +427,7 @@ describe('LadybugGraphStore deleteRepo', () => {
     // returns early and never issues the DELETE. Guards against
     // accidentally running `DELETE n ... WHERE n.id IN []` which some
     // Cypher engines either reject or interpret unfavorably.
-    const { store, connQuery } = makeStoreWithMockConn();
+    const { store, connQuery } = makeStoreWithMockEngine();
 
     await store.deleteRepo('alice/foo');
 
@@ -450,15 +446,24 @@ describe('LadybugGraphStore deleteRepo', () => {
 function makeStoreWithRows(
   route: (cypher: string) => Record<string, unknown>[],
 ) {
-  const store = new LadybugGraphStore();
+  // Mirror makeStoreWithMockEngine: the store reads rows via engine.query()
+  // (which returns row objects directly — the engine shim owns the
+  // getAllObjects/close lifecycle).
+  const connQuery = vi
+    .fn()
+    .mockImplementation(async (cypher: string) => route(cypher));
+  const engine = {
+    init: vi.fn().mockResolvedValue(undefined),
+    query: (cypher: string) => connQuery(cypher),
+    exec: (cypher: string) => connQuery(cypher),
+    fsWrite: vi.fn().mockResolvedValue(undefined),
+    fsUnlink: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const store = new LadybugGraphStore(engine);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const s = store as any;
   s.ready = Promise.resolve();
-  const connQuery = vi.fn().mockImplementation(async (cypher: string) => ({
-    getAllObjects: async () => route(cypher),
-    close: async () => {},
-  }));
-  s.conn = { query: connQuery };
   return { store, s, connQuery };
 }
 

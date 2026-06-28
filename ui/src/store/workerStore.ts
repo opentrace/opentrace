@@ -34,6 +34,7 @@
 
 import type { GraphData, GraphStats } from '@opentrace/components/utils';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
+import { createLbugEngine, type LbugEngine } from './lbugEngine';
 import type {
   GraphStore,
   ImportBatchRequest,
@@ -45,11 +46,25 @@ import type {
   TraverseResult,
 } from './types';
 
+type EngineMethod =
+  | 'init'
+  | 'query'
+  | 'exec'
+  | 'fsWrite'
+  | 'fsUnlink'
+  | 'close';
+
 type InMessage =
   | { seq: number; type: 'result'; value: unknown }
   | { seq: number; type: 'error'; message: string }
   | { seq: number; type: 'progress'; value: string }
-  | { seq: number; type: 'embed-request'; texts: string[] };
+  | { seq: number; type: 'embed-request'; texts: string[] }
+  | {
+      seq: number;
+      type: 'engine-request';
+      method: EngineMethod;
+      args: unknown[];
+    };
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -62,6 +77,11 @@ export class WorkerGraphStore implements GraphStore {
   private pending = new Map<number, PendingRequest>();
   private nextSeq = 1;
   private embedder: Embedder | null = null;
+  // The LadybugDB engine is owned here, on the main thread, so its internal
+  // worker is a top-level worker rather than one nested inside storeWorker
+  // (which broke on browsers without worker-in-worker support — Sentry
+  // OSS-OPENTRACE-1G). storeWorker reaches it via `engine-request` messages.
+  private engine: LbugEngine = createLbugEngine();
   private nodesImportedSinceClear = 0;
 
   constructor() {
@@ -270,11 +290,21 @@ export class WorkerGraphStore implements GraphStore {
 
   async dispose(): Promise<void> {
     try {
+      // Drives ladybugStore.dispose() in the worker, which calls
+      // engine.close() back over RPC — closing the engine while the worker
+      // is still alive to relay the request.
       await this.call<void>('dispose', []);
     } catch {
       // ignore — worker may already be dead
     }
     this.worker.terminate();
+    // Belt-and-suspenders: if the RPC close didn't land (worker wedged),
+    // close the engine directly. engine.close() is idempotent.
+    try {
+      await this.engine.close();
+    } catch {
+      // ignore — engine may already be closed
+    }
     const err = new Error('WorkerGraphStore disposed');
     for (const req of this.pending.values()) req.reject(err);
     this.pending.clear();
@@ -307,6 +337,10 @@ export class WorkerGraphStore implements GraphStore {
   private onMessage(msg: InMessage): void {
     if (msg.type === 'embed-request') {
       void this.handleEmbedRequest(msg.seq, msg.texts);
+      return;
+    }
+    if (msg.type === 'engine-request') {
+      void this.handleEngineRequest(msg.seq, msg.method, msg.args);
       return;
     }
     const req = this.pending.get(msg.seq);
@@ -345,6 +379,48 @@ export class WorkerGraphStore implements GraphStore {
       this.worker.postMessage({
         seq,
         type: 'embed-error',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async handleEngineRequest(
+    seq: number,
+    method: EngineMethod,
+    args: unknown[],
+  ): Promise<void> {
+    try {
+      let value: unknown;
+      switch (method) {
+        case 'init':
+          value = await this.engine.init();
+          break;
+        case 'query':
+          value = await this.engine.query(args[0] as string);
+          break;
+        case 'exec':
+          value = await this.engine.exec(args[0] as string);
+          break;
+        case 'fsWrite':
+          value = await this.engine.fsWrite(
+            args[0] as string,
+            args[1] as Uint8Array,
+          );
+          break;
+        case 'fsUnlink':
+          value = await this.engine.fsUnlink(args[0] as string);
+          break;
+        case 'close':
+          value = await this.engine.close();
+          break;
+        default:
+          throw new Error(`unknown engine method '${method}'`);
+      }
+      this.worker.postMessage({ seq, type: 'engine-reply', value });
+    } catch (err) {
+      this.worker.postMessage({
+        seq,
+        type: 'engine-error',
         message: err instanceof Error ? err.message : String(err),
       });
     }
