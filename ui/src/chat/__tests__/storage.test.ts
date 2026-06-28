@@ -23,6 +23,7 @@ import {
   loadModelChoice,
   saveModelChoice,
 } from '../storage';
+import { DEFAULT_PROVIDER_ID } from '../providers';
 
 describe('storage', () => {
   describe('loadApiKey / saveApiKey', () => {
@@ -51,8 +52,8 @@ describe('storage', () => {
   });
 
   describe('loadProviderChoice / saveProviderChoice', () => {
-    it('defaults to gemini', () => {
-      expect(loadProviderChoice()).toBe('gemini');
+    it('defaults to the default provider', () => {
+      expect(loadProviderChoice()).toBe(DEFAULT_PROVIDER_ID);
     });
 
     it('saves and loads provider', () => {
