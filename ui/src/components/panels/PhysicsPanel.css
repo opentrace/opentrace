@@ -202,6 +202,82 @@
   border-color: color-mix(in oklch, var(--primary) 40%, transparent);
 }
 
+/* ── View presets ─────────────────────────────────────────────────── */
+.physics-preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.physics-preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  background: color-mix(in oklch, var(--card) 60%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 30%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  color: var(--foreground);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.physics-preset-btn:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 35%, transparent);
+}
+
+.physics-preset-btn.active {
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--primary) 40%, transparent);
+}
+
+.physics-preset-icon {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.physics-preset-label {
+  letter-spacing: 0.01em;
+}
+
+/* ── Advanced accordion ───────────────────────────────────────────── */
+.physics-advanced-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px;
+  margin-bottom: 4px;
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.physics-advanced-toggle:hover {
+  color: var(--foreground);
+}
+
+.physics-advanced-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.physics-advanced-toggle.open svg {
+  transform: rotate(180deg);
+}
+
 /* Divider */
 .physics-divider {
   height: 1px;

@@ -56,7 +56,10 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
   w?: number;
 }
 
-export type LayoutMode = 'spread' | 'compact' | 'tree';
+// 'nebula' is a worker-internal mode (a volumetric density cloud) toggled via
+// the `set-nebula` message, not part of the app-facing layout cycle. Kept here
+// so buildSimulation can branch on it without widening the app's LayoutMode union.
+export type LayoutMode = 'spread' | 'compact' | 'tree' | 'nebula';
 
 export type Worker3DInMessage =
   | {
@@ -98,6 +101,8 @@ export type Worker3DInMessage =
   | { type: 'fix-node'; nodeId: string; x: number; y: number }
   | { type: 'unfix-node'; nodeId: string }
   | { type: 'reheat' }
+  | { type: 'reseed' }
+  | { type: 'set-nebula'; enabled: boolean; baseMode: LayoutMode }
   | { type: 'stop' }
   | { type: 'start' }
   | { type: 'boost-theta' }
@@ -116,7 +121,13 @@ let sim: Simulation<SimNode, SimLink> | null = null;
 let simNodes: SimNode[] = [];
 let nodeIdToIndex: Map<string, number> = new Map();
 let communities: Record<string, number> | undefined;
+// `currentMode` is the EFFECTIVE mode buildSimulation uses. When the nebula
+// nebula is enabled it's 'nebula'; otherwise it mirrors `baseMode` (the
+// app-requested spread/compact/tree). Splitting them keeps nebula toggling
+// order-independent w.r.t. the prop-driven set-layout-mode message.
 let currentMode: LayoutMode = 'spread';
+let baseMode: LayoutMode = 'spread';
+let nebulaEnabled = false;
 let nDim: 2 | 3 = 2;
 let defaultTheta = 0.9;
 let dragTheta = 1.5;
@@ -140,6 +151,10 @@ let streamInterval: ReturnType<typeof setInterval> | null = null;
 // computeRadialTree(). The tree sim anchors each node here so the layout stays
 // the clean mind-map starburst rather than relaxing into a ball.
 let treeSeed = new Float64Array(0);
+
+// computeNebulaCloud() target positions; the nebula sim gently anchors each
+// node here (see makeNebulaAnchorForce) so the cloud's density gradient holds.
+let nebulaSeed = new Float64Array(0);
 
 const STREAM_INTERVAL = 66; // ~15fps
 // Declare the layout settled once alpha drops below this. The long tail from
@@ -168,6 +183,24 @@ const FAST_BARNES_HUT_THETA = 1.5;
 // Anchor strength: how firmly each node is held at its radial position. High so
 // the structure stays crisp; a little charge still declutters local overlaps.
 const TREE_ANCHOR_STRENGTH = 0.35;
+
+// ── Nebula layout ───────────────────────────────────────────────────────
+// A soft volumetric cloud: a dense bright core (high-degree hubs) fading to a
+// wispy sparse halo, with no geometric pattern so it reads as organic gas
+// rather than a stylized shape. Nodes are GENTLY anchored to their seeded
+// cloud position (much softer than the tree anchor) so the density
+// gradient holds while charge + ambient drift keep it alive and organic.
+/** Gentle anchor — holds the cloud's density envelope without feeling rigid. */
+const NEBULA_ANCHOR_STRENGTH = 0.22;
+/** Overall radius scale (× sqrt(nodeCount)). */
+const NEBULA_RADIUS_SCALE = 34;
+/** Radial concentration exponent (>1 biases nodes toward the core). Kept close
+ *  to linear so the cloud spreads out and the halo/edges stay populated rather
+ *  than everything bunching at the centre. */
+const NEBULA_CONCENTRATION = 1.12;
+/** Inner radius fraction — nodes start a little out from dead-centre so the
+ *  core is a soft glow rather than a single dense point. */
+const NEBULA_CORE_INSET = 0.14;
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -300,6 +333,34 @@ function makeTreeAnchorForce(
   return force as unknown as Parameters<typeof s.force>[1];
 }
 
+/**
+ * Nebula mode anchor force. Gently holds each node near its seeded cloud
+ * position (nebulaSeed) so the density gradient persists, while charge + ambient
+ * drift keep it organic. Mirrors makeTreeAnchorForce but much softer.
+ */
+function makeNebulaAnchorForce(
+  s: Simulation<SimNode, SimLink>,
+  nodes: SimNode[],
+  getStrength: () => number,
+): Parameters<typeof s.force>[1] {
+  const force = () => {
+    if (nebulaSeed.length < nodes.length * 3) return;
+    const is3D = nDim === 3;
+    const alpha = s.alpha();
+    const k = getStrength() * alpha;
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      node.vx = (node.vx ?? 0) + (nebulaSeed[i * 3] - (node.x ?? 0)) * k;
+      node.vy = (node.vy ?? 0) + (nebulaSeed[i * 3 + 1] - (node.y ?? 0)) * k;
+      if (is3D)
+        node.vz = (node.vz ?? 0) + (nebulaSeed[i * 3 + 2] - (node.z ?? 0)) * k;
+    }
+  };
+  (force as unknown as { initialize: (n: SimNode[]) => void }).initialize =
+    () => {};
+  return force as unknown as Parameters<typeof s.force>[1];
+}
+
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
@@ -342,6 +403,31 @@ function buildSimulation(
       makeTreeAnchorForce(s, nodes, () => TREE_ANCHOR_STRENGTH),
     );
     s.alphaDecay(0.03).velocityDecay(0.5);
+    return s;
+  }
+
+  if (mode === 'nebula') {
+    // Volumetric cloud: each node is gently held near its computeNebulaCloud()
+    // position so the dense-core→wispy-halo gradient persists. Relational links
+    // are inert (they don't reshape the cloud); a gentle charge separates
+    // locally-stacked nodes for soft organic texture.
+    s.force(
+      'link',
+      forceLink<SimNode, SimLink>(links)
+        .id((d: SimNode) => d.id)
+        .distance(config.linkDistance)
+        .strength(0),
+    ).force(
+      'charge',
+      forceManyBody()
+        .strength(config.chargeStrength * 0.12)
+        .theta(defaultTheta),
+    );
+    s.force(
+      'nebulaAnchor',
+      makeNebulaAnchorForce(s, nodes, () => NEBULA_ANCHOR_STRENGTH),
+    );
+    s.alphaDecay(0.02).velocityDecay(0.55);
     return s;
   }
 
@@ -998,6 +1084,78 @@ function computeRadialTree(): void {
   }
 }
 
+/**
+ * Seed a volumetric nebula cloud: high-degree hubs sit in a dense bright core,
+ * everything else thins out into a wispy halo. Nodes are placed at random
+ * directions (no geometric pattern — that's what made the old spiral arms read as
+ * fake) with a radial profile concentrated toward the centre. Positions are
+ * written to simNodes AND captured in nebulaSeed as a gentle anchor target so
+ * the density gradient holds while charge + ambient drift keep it organic.
+ */
+function computeNebulaCloud(): void {
+  const N = simNodes.length;
+  if (N === 0) return;
+
+  // Degree per node → densest (hub) nodes toward the core.
+  const degree = new Map<string, number>();
+  for (const l of cachedLinks) {
+    const a = endId(l.source);
+    const b = endId(l.target);
+    degree.set(a, (degree.get(a) ?? 0) + 1);
+    degree.set(b, (degree.get(b) ?? 0) + 1);
+  }
+  const order = simNodes
+    .map((_, i) => i)
+    .sort(
+      (a, b) =>
+        (degree.get(simNodes[b].id) ?? 0) - (degree.get(simNodes[a].id) ?? 0),
+    );
+
+  const maxR = Math.sqrt(N) * NEBULA_RADIUS_SCALE;
+  const is3D = nDim === 3;
+
+  nebulaSeed = new Float64Array(N * 3);
+
+  for (let rank = 0; rank < N; rank++) {
+    const nodeIdx = order[rank];
+    const t = rank / N; // 0 = core, 1 = halo
+    // Spread from a soft inner core out to the rim; gentle concentration keeps
+    // the core denser while leaving the halo/edges populated. Per-node jitter
+    // gives wispy, organic edges.
+    const profile =
+      NEBULA_CORE_INSET +
+      (1 - NEBULA_CORE_INSET) * Math.pow(t, NEBULA_CONCENTRATION);
+    const radius = maxR * profile * (0.82 + Math.random() * 0.45);
+    // Uniform random direction on a sphere (2D: on a circle). No pattern.
+    let x: number, y: number, z: number;
+    if (is3D) {
+      const u = Math.random() * 2 - 1; // cos(polar)
+      const phi = Math.random() * 2 * Math.PI;
+      const s = Math.sqrt(Math.max(0, 1 - u * u));
+      x = radius * s * Math.cos(phi);
+      z = radius * s * Math.sin(phi);
+      // Slightly flatten vertically so it reads as a billowing cloud rather
+      // than a perfect ball under the tilted camera.
+      y = radius * u * 0.7;
+    } else {
+      const ang = Math.random() * 2 * Math.PI;
+      x = Math.cos(ang) * radius;
+      y = Math.sin(ang) * radius;
+      z = 0;
+    }
+    const n = simNodes[nodeIdx];
+    n.x = x;
+    n.y = y;
+    n.z = z;
+    n.vx = 0;
+    n.vy = 0;
+    n.vz = 0;
+    nebulaSeed[nodeIdx * 3] = x;
+    nebulaSeed[nodeIdx * 3 + 1] = y;
+    nebulaSeed[nodeIdx * 3 + 2] = z;
+  }
+}
+
 // ─── Message handler ────────────────────────────────────────────────────
 
 self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
@@ -1013,7 +1171,9 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         FAST_BARNES_HUT_THETA,
       );
       dragTheta = Math.max(msg.config.dragTheta ?? 1.5, FAST_BARNES_HUT_THETA);
-      currentMode = msg.config.layoutMode ?? 'spread';
+      baseMode = msg.config.layoutMode ?? 'spread';
+      nebulaEnabled = false;
+      currentMode = baseMode;
       nDim = msg.dimensions ?? 2;
 
       simNodes = msg.nodeIds.map((id) => ({ id }));
@@ -1067,9 +1227,12 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       nDim = msg.dimensions;
       // Tree mode: re-seed from the radial tree for the new dimensionality
       // (flat in 2D, spherical in 3D) and let the force tree relax again.
-      if (currentMode === 'tree') {
+      if (currentMode === 'tree' || currentMode === 'nebula') {
         sim?.stop();
-        computeRadialTree();
+        // Re-seed the deterministic layout for the new dimensionality (flat in
+        // 2D, volumetric in 3D), then let it relax again.
+        if (currentMode === 'nebula') computeNebulaCloud();
+        else computeRadialTree();
         sim = buildSimulation(
           simNodes,
           cachedLinks,
@@ -1267,13 +1430,36 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
     case 'set-layout-mode': {
       if (!cachedConfig) break;
-      currentMode = msg.mode;
+      // Record the app-requested mode. While the nebula is enabled it
+      // keeps overriding (currentMode stays 'nebula'); this just remembers what
+      // to fall back to when nebula is turned off.
+      baseMode = msg.mode;
+      if (nebulaEnabled) break;
+      currentMode = baseMode;
       sim?.stop();
       // Tree: re-seed from the radial tree so it relaxes into clean branches;
       // spread/compact keep current positions and relax.
       if (currentMode === 'tree') computeRadialTree();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
       sim.alpha(currentMode === 'tree' ? 0.6 : 0.5).restart();
+      settled = false;
+      startStreaming();
+      break;
+    }
+
+    // Toggle the nebula cloud. `baseMode` is the layout to fall back to when
+    // disabling. Order-independent w.r.t. set-layout-mode: both recompute
+    // currentMode from (nebulaEnabled, baseMode).
+    case 'set-nebula': {
+      if (!cachedConfig) break;
+      nebulaEnabled = msg.enabled;
+      baseMode = msg.baseMode;
+      currentMode = nebulaEnabled ? 'nebula' : baseMode;
+      sim?.stop();
+      if (currentMode === 'nebula') computeNebulaCloud();
+      else if (currentMode === 'tree') computeRadialTree();
+      sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+      sim.alpha(0.9).restart();
       settled = false;
       startStreaming();
       break;
@@ -1306,6 +1492,49 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
     case 'reheat': {
       if (!sim) break;
+      sim.alpha(1).restart();
+      settled = false;
+      startStreaming();
+      break;
+    }
+
+    // Throw away the current arrangement and lay the graph out from scratch.
+    // Used when switching view presets so the result depends only on the
+    // preset's forces, not on whichever layout happened to be on screen
+    // before (otherwise the prior preset's shape bleeds into the new one).
+    case 'reseed': {
+      if (!sim || !cachedConfig) break;
+      sim.stop();
+      if (currentMode === 'nebula') {
+        // Re-lay the cloud from scratch.
+        computeNebulaCloud();
+        sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+      } else {
+        // Clearing x/y makes d3 re-seed them (phyllotaxis) when the sim is
+        // rebuilt; tree mode re-seeds from the radial hierarchy instead.
+        for (const n of simNodes) {
+          n.x = undefined;
+          n.y = undefined;
+          n.vx = 0;
+          n.vy = 0;
+          n.z = 0;
+          n.vz = 0;
+        }
+        if (currentMode === 'tree') computeRadialTree();
+        sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+        // Give 3D a real volume — phyllotaxis only seeds x/y, so spread z to a
+        // comparable extent (mirrors rebuild()).
+        if (nDim === 3) {
+          let ext = 0;
+          for (const n of simNodes) {
+            ext = Math.max(ext, Math.abs(n.x ?? 0), Math.abs(n.y ?? 0));
+          }
+          ext = ext || 500;
+          for (const n of simNodes) {
+            n.z = (Math.random() - 0.5) * ext;
+          }
+        }
+      }
       sim.alpha(1).restart();
       settled = false;
       startStreaming();

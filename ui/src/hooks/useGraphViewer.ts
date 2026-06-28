@@ -268,6 +268,8 @@ export interface PersistedSettings {
   setLabelScale: Dispatch<SetStateAction<number>>;
   edgeOpacity: number;
   setEdgeOpacity: Dispatch<SetStateAction<number>>;
+  ambientMotion: boolean;
+  setAmbientMotion: Dispatch<SetStateAction<boolean>>;
   rendererAutoRotate: boolean | null;
   setRendererAutoRotate: Dispatch<SetStateAction<boolean | null>>;
   physicsRunning: boolean;
@@ -376,6 +378,9 @@ export const GRAPH_SETTING_DEFAULTS = {
   labelScale: 100,
   edgeOpacity: 100,
   communitiesEnabled: true,
+  // Gentle perpetual node drift after the layout settles. On by default; users
+  // can disable it (and it auto-eases on very large graphs).
+  ambientMotion: true,
 };
 
 /**
@@ -580,6 +585,9 @@ export function useGraphViewer(
   const [edgeOpacity, setEdgeOpacity] = useState(() =>
     ps('edgeOpacity', D.edgeOpacity),
   );
+  const [ambientMotion, setAmbientMotion] = useState(() =>
+    ps('ambientMotion', D.ambientMotion),
+  );
 
   const [rendererAutoRotate, setRendererAutoRotate] = useState<boolean | null>(
     null,
@@ -605,6 +613,7 @@ export function useGraphViewer(
       mode3dTilt,
       labelScale,
       edgeOpacity,
+      ambientMotion,
     };
     // Merge into the existing entry rather than overwriting it — fields
     // owned by other writers of this shared key (e.g. `communitiesEnabled`
@@ -639,6 +648,7 @@ export function useGraphViewer(
     mode3dTilt,
     labelScale,
     edgeOpacity,
+    ambientMotion,
   ]);
 
   // ─── Search / reset / suggestions / filter ─────────────────────────────
@@ -712,6 +722,7 @@ export function useGraphViewer(
     setMode3dTilt(D.mode3dTilt);
     setLabelScale(D.labelScale);
     setEdgeOpacity(D.edgeOpacity);
+    setAmbientMotion(D.ambientMotion);
     setCommunitiesEnabled(D.communitiesEnabled);
     setRendererAutoRotate(null);
     try {
@@ -1136,6 +1147,8 @@ export function useGraphViewer(
       setLabelScale,
       edgeOpacity,
       setEdgeOpacity,
+      ambientMotion,
+      setAmbientMotion,
       rendererAutoRotate,
       setRendererAutoRotate,
       physicsRunning,
@@ -1163,6 +1176,7 @@ export function useGraphViewer(
       mode3dTilt,
       labelScale,
       edgeOpacity,
+      ambientMotion,
       rendererAutoRotate,
       physicsRunning,
       resetSettings,

@@ -190,8 +190,40 @@ function InternalGraphInteractionProvider({
   const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
   const [hiddenCommunities, setHiddenCommunities] = useState(new Set<number>());
 
-  // Color mode
-  const [colorMode, setColorMode] = useState<ColorMode>('type');
+  // Color mode — persisted alongside the other graph settings under the shared
+  // `graph-settings` key (same approach as `communitiesEnabled` below) so a
+  // chosen view preset's color mode survives a reload.
+  const [colorMode, setColorModeState] = useState<ColorMode>(() => {
+    try {
+      const stored = JSON.parse(
+        localStorage.getItem('graph-settings') ?? '{}',
+      ) as Record<string, unknown>;
+      return stored.colorMode === 'community' ? 'community' : 'type';
+    } catch {
+      return 'type';
+    }
+  });
+  const setColorMode: Dispatch<SetStateAction<ColorMode>> = useCallback(
+    (action) => {
+      setColorModeState((prev) => {
+        const next =
+          typeof action === 'function'
+            ? (action as (p: ColorMode) => ColorMode)(prev)
+            : action;
+        try {
+          const stored = JSON.parse(
+            localStorage.getItem('graph-settings') ?? '{}',
+          ) as Record<string, unknown>;
+          stored.colorMode = next;
+          localStorage.setItem('graph-settings', JSON.stringify(stored));
+        } catch {
+          // localStorage unavailable — in-memory state still updates.
+        }
+        return next;
+      });
+    },
+    [],
+  );
 
   // Search / hops
   const [searchQuery, setSearchQuery] = useState('');
@@ -518,6 +550,7 @@ function InternalGraphInteractionProvider({
       hiddenCommunities,
       filterState,
       colorMode,
+      setColorMode,
       searchQuery,
       hops,
       focusedCommunityNodes,

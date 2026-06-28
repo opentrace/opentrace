@@ -23,7 +23,12 @@ import {
   ThreeGraphCanvas,
   detectProvider,
   normalizeRepoUrl,
+  GRAPH_PRESETS,
+  DEFAULT_PRESET_ID,
+  CUSTOM_PRESET,
+  getPreset,
   type IndexingState,
+  type GraphPresetSettings,
 } from '@opentrace/components';
 import {
   forwardRef,
@@ -91,6 +96,9 @@ const GRAPH_RENDERER: 'three' | 'pixi' =
 
 const GraphCanvasImpl =
   GRAPH_RENDERER === 'three' ? ThreeGraphCanvas : PixiGraphCanvas;
+
+/** localStorage key for the last-applied view preset id (or 'custom'). */
+const PRESET_STORAGE_KEY = 'ot-active-preset';
 
 /** Map app-specific JobState to the generic IndexingState + title/message. */
 function toIndexingProps(job: JobState, repoUrl: string) {
@@ -239,6 +247,7 @@ const GraphViewer = memo(
 
       const {
         graphData,
+        graphVersion,
         loading,
         error,
         refreshError,
@@ -259,6 +268,198 @@ const GraphViewer = memo(
         availableSubTypes,
         communityData,
       } = useGraphInteraction();
+
+      // ── View presets ───────────────────────────────────────────────
+      const [activePresetId, setActivePresetId] = useState<string | null>(
+        () => {
+          try {
+            return localStorage.getItem(PRESET_STORAGE_KEY);
+          } catch {
+            return null;
+          }
+        },
+      );
+
+      /** Apply a preset's full settings to React state + the renderer. Mirrors
+       *  the reset handler's imperative push (prop effects only fire on a
+       *  *change*, so we also call the canvas API directly). `animate` reheats
+       *  + recenters for a live switch; skipped on first-load so it doesn't
+       *  fight the initial layout / build animation. */
+      const applyPresetSettings = useCallback(
+        (s: GraphPresetSettings, animate: boolean) => {
+          const set = v.settings;
+          // 1. React state — drives canvas props + persistence effects.
+          set.setLayoutMode(s.layoutMode);
+          set.setMode3d(s.mode3d);
+          set.setRendererAutoRotate(s.autoRotate);
+          setColorMode(s.colorMode);
+          set.setCommunitiesEnabled(s.communitiesEnabled);
+          set.setCommunityLabelsVisible(s.communityLabelsVisible);
+          set.setRepulsion(s.repulsion);
+          set.setPixiLinkDist(s.linkDistance);
+          set.setPixiCenter(s.centerStrength);
+          set.setCompactRadial(s.compactRadial);
+          set.setCompactCommunity(s.compactCommunity);
+          set.setCompactCentering(s.compactCentering);
+          set.setCompactRadius(s.compactRadius);
+          set.setEdgeOpacity(s.edgeOpacity);
+          set.setPixiZoomExponent(s.zoomSizeExponent);
+          set.setLabelScale(s.labelScale);
+          set.setMode3dSpeed(s.mode3dSpeed);
+          set.setMode3dTilt(s.mode3dTilt);
+          set.setLabelsVisible(s.labelsVisible);
+          set.setEdgesVisible(s.edgesVisible);
+          // 2. Push to the renderer imperatively.
+          const c = v.canvasRef.current;
+          c?.setLayoutMode?.(s.layoutMode);
+          c?.set3DMode?.(s.mode3d);
+          c?.set3DAutoRotate?.(s.autoRotate);
+          c?.set3DSpeed?.(s.mode3dSpeed / 10000);
+          c?.set3DTilt?.(s.mode3dTilt / 100);
+          c?.setChargeStrength?.(-s.repulsion);
+          c?.setLinkDistance?.(s.linkDistance);
+          c?.setCenterStrength?.(s.centerStrength);
+          c?.updateCompactConfig?.({
+            radialStrength: s.compactRadial / 100,
+            communityPull: s.compactCommunity / 100,
+            centeringStrength: s.compactCentering / 100,
+            radiusScale: s.compactRadius,
+          });
+          c?.setEdgeOpacity?.(s.edgeOpacity / 100);
+          c?.setZoomSizeExponent?.(s.zoomSizeExponent);
+          c?.setLabelScale?.(s.labelScale / 100);
+          c?.setShowLabels?.(s.labelsVisible);
+          c?.setEdgesEnabled?.(s.edgesVisible);
+          c?.setShowCommunityLabels?.(s.communityLabelsVisible);
+          // 3. Nebula is a worker-internal layout toggled separately;
+          //    enabling it seeds + restarts the sim itself.
+          c?.setNebulaLayout?.(s.nebula, s.layoutMode);
+          // 4. On a live switch, re-lay-out from a fresh seed so the result is
+          //    independent of the layout that was on screen — otherwise the
+          //    previous preset's shape bleeds into the new one. The nebula does
+          //    its own seeding, so skip reseed there. Skipped on first-load (the
+          //    graph is already laying out fresh) and during a build animation.
+          if (animate && !c?.isBuildAnimating?.()) {
+            if (!s.nebula) {
+              if (c?.reseedLayout) c.reseedLayout();
+              else c?.reheat?.();
+            }
+            if (c?.scheduleAutoFit) c.scheduleAutoFit(800);
+            else c?.zoomToFit?.(800);
+          }
+        },
+        [v.settings, v.canvasRef, setColorMode],
+      );
+
+      /** Apply a preset by id and remember the choice. */
+      const handleSelectPreset = useCallback(
+        (id: string) => {
+          const preset = getPreset(id);
+          if (!preset) return;
+          setActivePresetId(id);
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, id);
+          } catch {
+            // ignore
+          }
+          applyPresetSettings(preset.settings, true);
+        },
+        [applyPresetSettings],
+      );
+
+      /** Drop the active-preset highlight when the user hand-tweaks a control —
+       *  the look no longer matches a named preset. */
+      const handleUserAdjust = useCallback(() => {
+        setActivePresetId((prev) => {
+          if (prev === CUSTOM_PRESET) return prev;
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, CUSTOM_PRESET);
+          } catch {
+            // ignore
+          }
+          return CUSTOM_PRESET;
+        });
+      }, []);
+
+      // On the first graph load, restore the remembered preset (re-applied in
+      // full so options that don't persist — autorotate, color mode — are
+      // honored), or apply the default on a user's very first load. Runs once
+      // per mount; 'custom' means the user is hand-driving, so we leave the
+      // individually-persisted settings alone.
+      const presetAppliedRef = useRef(false);
+      useEffect(() => {
+        if (presetAppliedRef.current) return;
+        if (graphVersion === 0 || graphData.nodes.length === 0) return;
+        presetAppliedRef.current = true;
+        let stored: string | null = null;
+        try {
+          stored = localStorage.getItem(PRESET_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        if (stored === CUSTOM_PRESET) return;
+        const id = stored ?? DEFAULT_PRESET_ID;
+        const preset = getPreset(id);
+        if (!preset) return;
+        setActivePresetId(id);
+        if (stored === null) {
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, id);
+          } catch {
+            // ignore
+          }
+        }
+        applyPresetSettings(preset.settings, false);
+      }, [graphVersion, graphData.nodes.length, applyPresetSettings]);
+
+      // Sync ambient motion (gentle perpetual drift) to the renderer. Re-applied
+      // on each graph load (graphVersion) since a fresh layout resets the worker.
+      useEffect(() => {
+        v.canvasRef.current?.setAmbientMotion?.(v.settings.ambientMotion);
+      }, [v.canvasRef, v.settings.ambientMotion, graphVersion]);
+
+      // Auto fit-to-screen whenever a setting changes the graph's layout or
+      // extent, so the user never has to manually reframe after a tweak.
+      // Debounced so a slider drag fits once on release (after the layout has
+      // begun reacting). Visual-only settings (colors) are intentionally not
+      // included — they don't move the graph.
+      const s = v.settings;
+      const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const firstFitSyncRef = useRef(true);
+      useEffect(() => {
+        if (graphVersion === 0) return;
+        // Skip the initial mount — the graphVersion auto-fit already frames the
+        // first load; this effect only fits on subsequent setting changes.
+        if (firstFitSyncRef.current) {
+          firstFitSyncRef.current = false;
+          return;
+        }
+        if (fitTimerRef.current) clearTimeout(fitTimerRef.current);
+        fitTimerRef.current = setTimeout(() => {
+          v.canvasRef.current?.fitToScreen?.();
+        }, 450);
+        return () => {
+          if (fitTimerRef.current) clearTimeout(fitTimerRef.current);
+        };
+      }, [
+        v.canvasRef,
+        graphVersion,
+        s.repulsion,
+        s.pixiLinkDist,
+        s.pixiCenter,
+        s.pixiZoomExponent,
+        s.layoutMode,
+        s.compactRadial,
+        s.compactCommunity,
+        s.compactCentering,
+        s.compactRadius,
+        s.mode3d,
+        s.mode3dTilt,
+        s.labelsVisible,
+        s.edgesVisible,
+        s.communityLabelsVisible,
+        s.ambientMotion,
+      ]);
 
       // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
       interface IndexedRepo {
@@ -669,6 +870,10 @@ const GraphViewer = memo(
           {showPhysicsPanel && (
             <PhysicsPanelContainer
               canvasRef={v.canvasRef}
+              presets={GRAPH_PRESETS}
+              activePresetId={activePresetId}
+              onSelectPreset={handleSelectPreset}
+              onUserAdjust={handleUserAdjust}
               repulsion={v.settings.repulsion}
               setRepulsion={v.settings.setRepulsion}
               labelsVisible={v.settings.labelsVisible}
@@ -711,6 +916,8 @@ const GraphViewer = memo(
               setLabelScale={v.settings.setLabelScale}
               edgeOpacity={v.settings.edgeOpacity}
               setEdgeOpacity={v.settings.setEdgeOpacity}
+              ambientMotion={v.settings.ambientMotion}
+              setAmbientMotion={v.settings.setAmbientMotion}
             />
           )}
 
@@ -734,6 +941,14 @@ const GraphViewer = memo(
             setMode3d={v.settings.setMode3d}
             onResetGraph={() => {
               const D = GRAPH_SETTING_DEFAULTS;
+              // 0. Drop the active-preset highlight — reset returns to the bare
+              //    defaults, which aren't one of the named presets.
+              setActivePresetId(null);
+              try {
+                localStorage.removeItem(PRESET_STORAGE_KEY);
+              } catch {
+                // ignore
+              }
               // 1. Reset React state + clear localStorage.
               v.settings.resetSettings();
               // 2. Push EVERY setting to the renderer/layout-worker.

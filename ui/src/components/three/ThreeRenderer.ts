@@ -413,6 +413,19 @@ export class ThreeRenderer {
   private interactionResumeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastEdgeRedraw = 0;
   private layoutSettled = false;
+  /** Ambient motion runs renderer-side (60fps, continuous sine offsets) rather
+   *  than in the worker, so the drift is buttery rather than stepping at the
+   *  worker's ~22fps post rate. `ambientEnabled` is the user toggle;
+   *  `ambientActive` is true only while it's actually animating (enabled AND the
+   *  layout has settled — we don't drift on top of an in-flight layout). */
+  private ambientEnabled = false;
+  private ambientActive = false;
+  /** Settled positions each node oscillates around (captured on settle). */
+  private ambientHome: Float32Array | null = null;
+  /** performance.now() when the current ambient run started. */
+  private ambientStart = 0;
+  /** Per-axis drift amplitude in world units (scaled to the graph's extent). */
+  private ambientAmplitude = 0;
 
   // Data
   private nodes: Map<string, ThreeNode> = new Map();
@@ -638,12 +651,14 @@ export class ThreeRenderer {
         !this.needsRender &&
         this.pingSprites.size === 0 &&
         this.buildAnim === null &&
-        this.traversalAnim === null
+        this.traversalAnim === null &&
+        !this.ambientActive
       )
         return;
       this.needsRender = false;
       if (this.buildAnim) this.updateBuildAnim(performance.now());
       if (this.traversalAnim) this.updateTraversalAnim(performance.now());
+      if (this.ambientActive) this.updateAmbient(performance.now());
       if (this.nodeMaterial) {
         const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
         u.uPerspective.value = 1;
@@ -677,7 +692,8 @@ export class ThreeRenderer {
       !easing &&
       this.pingSprites.size === 0 &&
       this.buildAnim === null &&
-      this.traversalAnim === null
+      this.traversalAnim === null &&
+      !this.ambientActive
     )
       return;
     this.needsRender = false;
@@ -716,6 +732,7 @@ export class ThreeRenderer {
 
     if (this.buildAnim) this.updateBuildAnim(performance.now());
     if (this.traversalAnim) this.updateTraversalAnim(performance.now());
+    if (this.ambientActive) this.updateAmbient(performance.now());
 
     // Keep the shader's zoom uniform in sync (size attenuation).
     if (this.nodeMaterial) {
@@ -1576,7 +1593,8 @@ export class ThreeRenderer {
     // Throttled edge-endpoint refresh (mirrors PixiRenderer's edge throttle).
     // Skip entirely when the layout has settled and the tier alpha-gates edges.
     if (this.edgeLines && !this.edgesHiddenForInteraction) {
-      const skipForSettle = this.bp.edgeAlphaGate && this.layoutSettled;
+      const skipForSettle =
+        this.bp.edgeAlphaGate && this.layoutSettled && !this.ambientActive;
       const now = performance.now();
       if (
         !skipForSettle &&
@@ -2589,6 +2607,13 @@ export class ThreeRenderer {
     this.updateEdgeAlpha();
   }
 
+  /** Toggle ambient motion on/off (the user setting). Actual animation only
+   *  runs once the layout has also settled — see refreshAmbient. */
+  setAmbientActive(enabled: boolean): void {
+    this.ambientEnabled = enabled;
+    this.refreshAmbient();
+  }
+
   setLayoutSettled(settled: boolean): void {
     this.layoutSettled = settled;
     // Refresh once on the transition so endpoints aren't left stale after the
@@ -2598,6 +2623,84 @@ export class ThreeRenderer {
     }
     // Build the LOD super-graph from the now-stable centroids.
     if (settled && this.lodEnabled) this.maybeBuildSuperGraph();
+    // Start/stop the ambient drift around the freshly-settled positions.
+    this.refreshAmbient();
+  }
+
+  /** Start or stop the ambient drift based on (enabled AND settled). On start,
+   *  snapshot the current positions as the oscillation centre and size the
+   *  amplitude to the graph's extent; on stop, restore those centre positions
+   *  so toggling off doesn't leave the graph frozen mid-wobble. */
+  private refreshAmbient(): void {
+    const shouldRun =
+      this.ambientEnabled && this.layoutSettled && this.nodeArray.length > 0;
+    if (shouldRun === this.ambientActive) return;
+    if (shouldRun) {
+      const n = this.nodeArray.length;
+      this.ambientHome = this.posArray.slice(0, n * 3);
+      this.ambientStart = performance.now();
+      let ext = 0;
+      for (let i = 0; i < n * 3; i++) {
+        const v = Math.abs(this.ambientHome[i]);
+        if (v > ext) ext = v;
+      }
+      // Visible-but-gentle drift: a few percent of the graph's half-extent,
+      // clamped, eased on big graphs.
+      const scale = n > 8000 ? 0.6 : 1;
+      this.ambientAmplitude = Math.max(8, Math.min(44, ext * 0.04)) * scale;
+      this.ambientActive = true;
+      this.requestRender();
+    } else {
+      // Snap back to the captured centre so we don't freeze at a drifted offset.
+      if (this.ambientHome && this.nodeGeometry) {
+        this.posArray.set(this.ambientHome);
+        (
+          this.nodeGeometry.getAttribute('position') as BufferAttribute
+        ).needsUpdate = true;
+        if (this.edgeLines && !this.edgesHiddenForInteraction) {
+          this.updateEdgePositions();
+        }
+      }
+      this.ambientActive = false;
+      this.ambientHome = null;
+      this.requestRender();
+    }
+  }
+
+  /** Per-frame ambient drift: offset every node from its home by a sum of two
+   *  slow, incommensurate sines per axis (with a per-node phase), so the whole
+   *  graph breathes organically — continuous and bounded, never jumpy. Edges
+   *  are rebuilt every frame so they stay glued to the nodes. */
+  private updateAmbient(now: number): void {
+    const home = this.ambientHome;
+    if (!home || !this.nodeGeometry) return;
+    const pos = this.posArray;
+    const t = (now - this.ambientStart) * 0.001; // seconds
+    const A = this.ambientAmplitude;
+    const is3D = this.mode3d;
+    const n = this.nodeArray.length;
+    for (let i = 0; i < n; i++) {
+      const o = i * 3;
+      const p = i * 0.7; // per-node phase offset
+      pos[o] =
+        home[o] +
+        A * (Math.sin(t * 1.1 + p) + 0.6 * Math.sin(t * 0.67 + p * 1.7));
+      pos[o + 1] =
+        home[o + 1] +
+        A * (Math.sin(t * 0.95 + p * 1.3) + 0.6 * Math.sin(t * 0.78 + p * 0.5));
+      if (is3D) {
+        pos[o + 2] =
+          home[o + 2] +
+          A *
+            (Math.sin(t * 1.02 + p * 0.8) + 0.6 * Math.sin(t * 0.61 + p * 2.1));
+      }
+    }
+    (
+      this.nodeGeometry.getAttribute('position') as BufferAttribute
+    ).needsUpdate = true;
+    if (this.edgeLines && !this.edgesHiddenForInteraction) {
+      this.updateEdgePositions();
+    }
   }
 
   setZoomSizeExponent(exponent: number): void {

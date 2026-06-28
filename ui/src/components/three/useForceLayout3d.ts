@@ -49,6 +49,8 @@ export interface UseForceLayout3dResult {
   nodeSizes: Map<string, number>;
   simRunning: boolean;
   reheat: () => void;
+  reseed: () => void;
+  setNebula: (enabled: boolean, baseMode: LayoutMode) => void;
   restart: () => void;
   toggleSim: () => void;
   stopSim: () => void;
@@ -351,6 +353,25 @@ export function useForceLayout3d(
     setSimRunning(true);
   }, [postToWorker]);
 
+  /** Re-lay-out the graph from scratch (fresh seed) — used on preset switches
+   *  so the result is independent of the layout currently on screen. */
+  const reseed = useCallback(() => {
+    postToWorker({ type: 'reseed' });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
+  /** Toggle the nebula cloud layout. `baseMode` is the layout to fall back to
+   *  when disabling (the app's current layout mode). */
+  const setNebula = useCallback(
+    (enabled: boolean, baseMode: LayoutMode) => {
+      postToWorker({ type: 'set-nebula', enabled, baseMode });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
+
   const toggleSim = useCallback(() => {
     if (simRunningRef.current) {
       postToWorker({ type: 'stop' });
@@ -477,6 +498,8 @@ export function useForceLayout3d(
     nodeSizes: nodeSizesRef.current,
     simRunning,
     reheat,
+    reseed,
+    setNebula,
     restart,
     toggleSim,
     stopSim,

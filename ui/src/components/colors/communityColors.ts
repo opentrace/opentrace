@@ -17,26 +17,30 @@
 /**
  * Community detection color palette and mapping utilities.
  * Separate from the type palette in nodeColors.ts to avoid confusion when toggling.
- * Uses warm/cool alternation for maximum perceptual distance on dark backgrounds.
+ *
+ * Vibrant "jewel tone" palette — saturated 500/600-level hues rather than the
+ * old washed-out 300-level pastels. Ordered to alternate warm/cool/neutral so
+ * adjacent communities stay perceptually distinct, and tuned to stay rich and
+ * legible against the dark canvas background.
  */
 
 const COMMUNITY_PALETTE = [
-  '#f9a8d4', // Pink (300-level, brighter)
-  '#7dd3fc', // Sky (300-level)
-  '#fdba74', // Orange (300-level)
-  '#86efac', // Green (300-level)
-  '#d8b4fe', // Purple (300-level)
-  '#fcd34d', // Amber (300-level)
-  '#67e8f9', // Cyan (300-level)
-  '#fca5a5', // Red (300-level)
-  '#bef264', // Lime (300-level)
-  '#a5b4fc', // Indigo (300-level)
-  '#fda4af', // Rose (300-level)
-  '#5eead4', // Teal (300-level)
-  '#f0abfc', // Fuchsia (300-level)
-  '#7dd3fc', // Blue (300-level)
-  '#fde047', // Yellow (300-level)
-  '#6ee7b7', // Emerald (300-level)
+  '#06b6d4', // Cyan 500
+  '#e11d48', // Rose 600
+  '#22c55e', // Green 500
+  '#8b5cf6', // Violet 500
+  '#f59e0b', // Amber 500
+  '#3b82f6', // Blue 500
+  '#ec4899', // Pink 500
+  '#84cc16', // Lime 500
+  '#d946ef', // Fuchsia 500
+  '#14b8a6', // Teal 500
+  '#f97316', // Orange 500
+  '#6366f1', // Indigo 500
+  '#10b981', // Emerald 500
+  '#ef4444', // Red 500
+  '#a855f7', // Purple 500
+  '#eab308', // Yellow 500
 ];
 
 const FALLBACK_COLOR = '#64748b'; // Slate grey

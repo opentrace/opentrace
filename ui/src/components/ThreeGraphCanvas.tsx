@@ -195,6 +195,8 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       nodeSizes,
       simRunning,
       reheat,
+      reseed,
+      setNebula,
       restart,
       toggleSim,
       stopSim,
@@ -602,6 +604,18 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         clearTraversal: () => {
           rendererRef.current?.clearTraversal();
         },
+        reseedLayout: () => {
+          reseed();
+        },
+        setNebulaLayout: (enabled: boolean, baseMode = 'spread') => {
+          setNebula(enabled, baseMode as 'spread' | 'compact' | 'tree');
+        },
+        setAmbientMotion: (enabled: boolean) => {
+          // Ambient drift runs renderer-side (60fps, smooth) — see
+          // ThreeRenderer.updateAmbient. The worker-side ambient is intentionally
+          // left dormant (it posted at ~22fps, which looked jumpy).
+          rendererRef.current?.setAmbientActive(enabled);
+        },
       }),
       [
         onNodeClick,
@@ -611,6 +625,8 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         toggleSim,
         simRunning,
         reheat,
+        reseed,
+        setNebula,
         setChargeStrength,
         setLinkDistance,
         setCenterStrength,

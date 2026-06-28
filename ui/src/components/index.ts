@@ -80,6 +80,19 @@ export type {
 // ─── Configuration & defaults ───────────────────────────────────────────
 export { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
 
+// Graph view presets (Galaxy / Planet / Bundled / Flat)
+export {
+  GRAPH_PRESETS,
+  DEFAULT_PRESET_ID,
+  CUSTOM_PRESET,
+  getPreset,
+} from './config/graphPresets';
+export type {
+  GraphPreset,
+  GraphPresetId,
+  GraphPresetSettings,
+} from './config/graphPresets';
+
 export {
   NODE_SIZE_MIN,
   NODE_SIZE_MAX,
@@ -163,4 +176,5 @@ export type {
   DiscoverDataProvider,
   UseDiscoverTreeOptions,
   UseDiscoverTreeResult,
+  PhysicsPanelPreset,
 } from './panels';

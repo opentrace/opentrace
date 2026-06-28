@@ -216,4 +216,17 @@ export interface GraphCanvasHandle {
   ) => void;
   /** Clear the traversal walk and its lit trail (new question / highlights off). */
   clearTraversal?: () => void;
+  /** Re-lay-out the graph from a fresh seed — used on view-preset switches so
+   *  the result depends only on the preset's forces, not the prior layout.
+   *  Three.js only; optional so other renderers may omit it. */
+  reseedLayout?: () => void;
+  /** Toggle the nebula cloud layout (the Nebula preset). `baseMode` is the
+   *  layout to fall back to when disabling. Three.js only. */
+  setNebulaLayout?: (
+    enabled: boolean,
+    baseMode?: 'spread' | 'compact' | 'tree',
+  ) => void;
+  /** Toggle ambient motion — a gentle perpetual wander after the layout settles
+   *  so the graph stays alive instead of freezing. Three.js only. */
+  setAmbientMotion?: (enabled: boolean) => void;
 }
