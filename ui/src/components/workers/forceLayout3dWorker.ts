@@ -267,33 +267,62 @@ function makeCommunityForce(
   comms: Record<string, number>,
   getStrength: () => number,
 ): Parameters<typeof s.force>[1] {
+  // Precompute once — the force is recreated (via buildSimulation) whenever the
+  // node set or community assignments change, so this stays valid for its
+  // lifetime. Map each node to a DENSE community index and pre-size reusable
+  // centroid accumulators + member counts, so the per-tick loop does no Map ops
+  // and zero allocation (the old version `new Map()`×4 every tick → heavy GC on
+  // large graphs).
+  const n = nodes.length;
+  const commIdx = new Int32Array(n).fill(-1);
+  const denseOf = new Map<number, number>();
+  let numComm = 0;
+  for (let i = 0; i < n; i++) {
+    const c = comms[nodes[i].id];
+    if (c === undefined) continue;
+    let di = denseOf.get(c);
+    if (di === undefined) {
+      di = numComm++;
+      denseOf.set(c, di);
+    }
+    commIdx[i] = di;
+  }
+  const count = new Int32Array(numComm);
+  for (let i = 0; i < n; i++) {
+    const di = commIdx[i];
+    if (di >= 0) count[di]++;
+  }
+  const sumX = new Float64Array(numComm);
+  const sumY = new Float64Array(numComm);
+  const sumZ = new Float64Array(numComm);
+
   const force = () => {
     const is3D = nDim === 3;
-    const cx = new Map<number, number>();
-    const cy = new Map<number, number>();
-    const cz = new Map<number, number>();
-    const count = new Map<number, number>();
-    for (const node of nodes) {
-      const c = comms[node.id];
-      if (c === undefined) continue;
-      cx.set(c, (cx.get(c) ?? 0) + (node.x ?? 0));
-      cy.set(c, (cy.get(c) ?? 0) + (node.y ?? 0));
-      if (is3D) cz.set(c, (cz.get(c) ?? 0) + (node.z ?? 0));
-      count.set(c, (count.get(c) ?? 0) + 1);
+    sumX.fill(0);
+    sumY.fill(0);
+    if (is3D) sumZ.fill(0);
+    for (let i = 0; i < n; i++) {
+      const di = commIdx[i];
+      if (di < 0) continue;
+      const node = nodes[i];
+      sumX[di] += node.x ?? 0;
+      sumY[di] += node.y ?? 0;
+      if (is3D) sumZ[di] += node.z ?? 0;
     }
     const alpha = s.alpha();
     const strength = getStrength();
-    for (const node of nodes) {
-      const c = comms[node.id];
-      if (c === undefined) continue;
-      const n = count.get(c)!;
-      if (n < 2) continue;
-      const targetX = cx.get(c)! / n;
-      const targetY = cy.get(c)! / n;
+    for (let i = 0; i < n; i++) {
+      const di = commIdx[i];
+      if (di < 0) continue;
+      const cnt = count[di];
+      if (cnt < 2) continue;
+      const node = nodes[i];
+      const targetX = sumX[di] / cnt;
+      const targetY = sumY[di] / cnt;
       node.vx = (node.vx ?? 0) + (targetX - (node.x ?? 0)) * strength * alpha;
       node.vy = (node.vy ?? 0) + (targetY - (node.y ?? 0)) * strength * alpha;
       if (is3D) {
-        const targetZ = cz.get(c)! / n;
+        const targetZ = sumZ[di] / cnt;
         node.vz = (node.vz ?? 0) + (targetZ - (node.z ?? 0)) * strength * alpha;
       }
     }

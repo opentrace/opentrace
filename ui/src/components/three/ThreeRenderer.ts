@@ -99,6 +99,10 @@ export interface ThreeNode {
 export interface ThreeEdge {
   sourceId: string;
   targetId: string;
+  /** Node-array indices of the endpoints, resolved once at build time so the
+   *  per-frame edge hot loops avoid a `nodeIdToIndex.get()` per edge. */
+  sourceIdx: number;
+  targetIdx: number;
   label: string;
   graphLink: GraphLink;
   color: string;
@@ -1236,13 +1240,17 @@ export class ThreeRenderer {
         typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
       const targetId =
         typeof gl.target === 'string' ? gl.target : (gl.target as GraphNode).id;
-      if (!this.nodes.has(sourceId) || !this.nodes.has(targetId)) continue;
+      const sourceIdx = this.nodeIdToIndex.get(sourceId);
+      const targetIdx = this.nodeIdToIndex.get(targetId);
+      if (sourceIdx === undefined || targetIdx === undefined) continue;
       const key = `${sourceId}-${gl.label}-${targetId}`;
       if (seen.has(key)) continue;
       seen.add(key);
       this.edges.push({
         sourceId,
         targetId,
+        sourceIdx,
+        targetIdx,
         label: gl.label,
         graphLink: gl,
         color: linkColors.get(gl.label) ?? '#3b4048',
@@ -1351,18 +1359,11 @@ export class ThreeRenderer {
     if (!this.edgeGeometry) return;
     const pos = this.posArray;
     const ep = this.edgePosArray;
-    const idx = this.nodeIdToIndex;
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
-      const s = idx.get(e.sourceId);
-      const t = idx.get(e.targetId);
+      const s = e.sourceIdx;
+      const t = e.targetIdx;
       const o = i * 6;
-      if (s === undefined || t === undefined) {
-        // Degenerate (shouldn't happen — edges are filtered at build time).
-        ep[o] = ep[o + 1] = ep[o + 2] = 0;
-        ep[o + 3] = ep[o + 4] = ep[o + 5] = 0;
-        continue;
-      }
       ep[o] = pos[s * 3];
       ep[o + 1] = pos[s * 3 + 1];
       ep[o + 2] = pos[s * 3 + 2];
@@ -1401,8 +1402,8 @@ export class ThreeRenderer {
       if (!enabled || this.hiddenLinkTypes.has(e.label)) {
         alpha = 0;
       } else {
-        const sVis = this.nodes.get(e.sourceId)?.visible ?? true;
-        const tVis = this.nodes.get(e.targetId)?.visible ?? true;
+        const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
+        const tVis = this.nodeArray[e.targetIdx]?.visible ?? true;
         // Under LOD a detail edge only draws when BOTH endpoints' communities
         // are expanded; otherwise a super-edge represents the relationship.
         const lodHidden =
@@ -1464,19 +1465,14 @@ export class ThreeRenderer {
     const cull = this.bp.edgeViewportCulling && this.activeCamera != null;
     const mx = this.width * 0.25;
     const my = this.height * 0.25;
-    const idx = this.nodeIdToIndex;
     let ec = 0;
     for (let i = 0; i < this.edges.length; i++) {
       if (a[i * 2] <= 0) continue;
       if (cull) {
         const e = this.edges[i];
-        const s = idx.get(e.sourceId);
-        const t = idx.get(e.targetId);
         if (
-          s !== undefined &&
-          t !== undefined &&
-          !this.nodeInView(s, mx, my) &&
-          !this.nodeInView(t, mx, my)
+          !this.nodeInView(e.sourceIdx, mx, my) &&
+          !this.nodeInView(e.targetIdx, mx, my)
         ) {
           continue; // both endpoints off-screen → don't draw
         }
@@ -1973,14 +1969,12 @@ export class ThreeRenderer {
   ): ThreeEdge | null {
     if (this.edges.length === 0 || !this.edgesEnabled) return null;
     const pos = this.posArray;
-    const idx = this.nodeIdToIndex;
     let best: ThreeEdge | null = null;
     let bestDist = maxDist;
     for (const e of this.edges) {
       if (this.hiddenLinkTypes.has(e.label)) continue;
-      const s = idx.get(e.sourceId);
-      const t = idx.get(e.targetId);
-      if (s === undefined || t === undefined) continue;
+      const s = e.sourceIdx;
+      const t = e.targetIdx;
       if (!this.nodeArray[s].visible || !this.nodeArray[t].visible) continue;
       const sx = pos[s * 3];
       const sy = pos[s * 3 + 1];
@@ -3323,11 +3317,8 @@ export class ThreeRenderer {
     // Undirected adjacency over node indices.
     const adj: number[][] = Array.from({ length: n }, () => []);
     for (const e of this.edges) {
-      const s = this.nodeIdToIndex.get(e.sourceId);
-      const t = this.nodeIdToIndex.get(e.targetId);
-      if (s === undefined || t === undefined) continue;
-      adj[s].push(t);
-      adj[t].push(s);
+      adj[e.sourceIdx].push(e.targetIdx);
+      adj[e.targetIdx].push(e.sourceIdx);
     }
 
     const visited = new Uint8Array(n);
@@ -3474,18 +3465,15 @@ export class ThreeRenderer {
     if (this.edgeGeometry) {
       const ep = this.edgePosArray;
       const ea = this.edgeAlphaArray;
-      const idx = this.nodeIdToIndex;
       for (let k = 0; k < this.edges.length; k++) {
         const e = this.edges[k];
         const o = k * 6;
         const k2 = k * 2;
-        const s = idx.get(e.sourceId);
-        const tt = idx.get(e.targetId);
+        const s = e.sourceIdx;
+        const tt = e.targetIdx;
         if (
           !this.edgesEnabled ||
           this.hiddenLinkTypes.has(e.label) ||
-          s === undefined ||
-          tt === undefined ||
           !this.nodeArray[s].visible ||
           !this.nodeArray[tt].visible
         ) {
