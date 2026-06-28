@@ -22,12 +22,11 @@
  *   import '@opentrace/components/style.css'; // optional base styles
  */
 
-// ─── Main component (Pixi.js renderer) ──────────────────────────────────
-export { default as Graph } from './PixiGraphCanvas';
-export { default as GraphCanvas } from './PixiGraphCanvas';
-export { default as PixiGraphCanvas } from './PixiGraphCanvas';
-// Three.js renderer — drop-in peer (same GraphCanvasProps / GraphCanvasHandle).
-// Selected at the call site via the `?renderer=three` flag.
+// ─── Main component (Three.js renderer) ─────────────────────────────────
+// `Graph` / `GraphCanvas` are the stable public names; both resolve to the
+// Three.js renderer (the former Pixi renderer has been removed).
+export { default as Graph } from './ThreeGraphCanvas';
+export { default as GraphCanvas } from './ThreeGraphCanvas';
 export { default as ThreeGraphCanvas } from './ThreeGraphCanvas';
 export type {
   GraphCanvasProps,
@@ -38,8 +37,8 @@ export {
   type PixiScaleBreakpoint,
   DEFAULT_BREAKPOINTS,
   selectBreakpoint,
-} from './pixi/scaleBreakpoints';
-export type { LayoutMode } from './workers/pixiLayoutWorker';
+} from './three/scaleBreakpoints';
+export type { LayoutMode } from './workers/forceLayout3dWorker';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';

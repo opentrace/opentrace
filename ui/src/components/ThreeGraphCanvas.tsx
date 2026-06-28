@@ -15,15 +15,10 @@
  */
 
 /**
- * ThreeGraphCanvas — Three.js + d3-force graph renderer.
- *
- * Drop-in peer of PixiGraphCanvas: same GraphCanvasProps / GraphCanvasHandle
- * contract, same prop→imperative effect orchestration. Only the renderer class
- * differs (ThreeRenderer vs PixiRenderer). Selected via the `?renderer=three`
- * flag at the GraphViewer call site so both can be A/B'd at runtime.
- *
- * Phases 1–4 reuse the existing 2D layout worker (usePixiLayout, stride-2
- * Float64Array); the d3-force-3d worker arrives in phase 5.
+ * ThreeGraphCanvas — the Three.js + d3-force graph renderer (the sole graph
+ * canvas). Implements the `GraphCanvasProps` / `GraphCanvasHandle` contract via
+ * a prop→imperative-effect orchestration over `ThreeRenderer`, and runs its
+ * layout in the 2D/3D-capable `forceLayout3dWorker` (see `useForceLayout3d`).
  */
 
 import {

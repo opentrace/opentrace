@@ -19,7 +19,6 @@ import {
   GraphLegend,
   GraphToolbar,
   IndexingProgress,
-  PixiGraphCanvas,
   ThreeGraphCanvas,
   detectProvider,
   normalizeRepoUrl,
@@ -81,21 +80,9 @@ const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
 ];
 
-/**
- * Renderer selection via the `?renderer=three|pixi` query flag. The Three.js
- * renderer is the default (real 3D + 100k-node headroom); `?renderer=pixi` is
- * the escape hatch back to the legacy Pixi renderer. Both implement the
- * identical GraphCanvasProps / GraphCanvasHandle contract, so the rest of
- * GraphViewer is unchanged regardless of which is chosen.
- */
-const GRAPH_RENDERER: 'three' | 'pixi' =
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).get('renderer') === 'pixi'
-    ? 'pixi'
-    : 'three';
-
-const GraphCanvasImpl =
-  GRAPH_RENDERER === 'three' ? ThreeGraphCanvas : PixiGraphCanvas;
+/** The Three.js renderer (real 3D + 100k-node headroom) is the sole graph
+ *  canvas; the legacy Pixi renderer has been removed. */
+const GraphCanvasImpl = ThreeGraphCanvas;
 
 /** localStorage key for the last-applied view preset id (or 'custom'). */
 const PRESET_STORAGE_KEY = 'ot-active-preset';
@@ -544,7 +531,7 @@ const GraphViewer = memo(
           // layout settles — so there's no flash and no fragile external timer
           // that could fire before the collapse on a slow-to-lay-out graph
           // (which previously left it stuck hidden until manual replay).
-          // Three.js only — no-op on Pixi. Suppressed during progressive
+          // Suppressed during progressive
           // streaming: the burst would play on the skeleton, then the rest
           // streams in + the 3D layout develops, reading as a 2D plane
           // expanding to 3D. (Proper streaming+burst integration is deferred.)
@@ -923,11 +910,7 @@ const GraphViewer = memo(
 
           <GraphControlsBar
             canvasRef={v.canvasRef}
-            onReplayBuild={
-              GRAPH_RENDERER === 'three'
-                ? () => v.canvasRef.current?.playBuildAnimation?.()
-                : undefined
-            }
+            onReplayBuild={() => v.canvasRef.current?.playBuildAnimation?.()}
             graphFullscreen={graphFullscreen}
             onToggleGraphFullscreen={onToggleGraphFullscreen}
             zoomOnSelect={v.settings.zoomOnSelect}
@@ -952,8 +935,8 @@ const GraphViewer = memo(
               // 1. Reset React state + clear localStorage.
               v.settings.resetSettings();
               // 2. Push EVERY setting to the renderer/layout-worker.
-              //    We do this even for settings that PixiGraphCanvas
-              //    already re-syncs via prop-driven useEffects, because
+              //    We do this even for settings the canvas already re-syncs
+              //    via prop-driven useEffects, because
               //    those effects only fire when the prop *changes*. If
               //    the React state already matched the default before
               //    reset (e.g. layoutMode was 'compact' and the new

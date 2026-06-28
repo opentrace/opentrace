@@ -19,7 +19,7 @@
  * PixiRenderer: same public surface, consumed through the same
  * GraphCanvasProps / GraphCanvasHandle contract.
  *
- * Architecture for 100k+ (see ui/src/components/pixi/PixiRenderer.ts for the
+ * Architecture for 100k+
  * behavior this matches):
  *   • Nodes   — one THREE.Points + ShaderMaterial. One draw call. Size + the
  *               highlight dim/enlarge happen in the vertex shader, so there is
@@ -62,8 +62,8 @@ import {
   type PixiScaleBreakpoint,
   selectBreakpoint,
   DEFAULT_BREAKPOINTS,
-} from '../pixi/scaleBreakpoints';
-import { computeBounds, type Viewport } from '../pixi/viewport';
+} from './scaleBreakpoints';
+import { computeBounds, type Viewport } from './viewport';
 import {
   NODE_OPACITY_DIMMED,
   NODE_SIZE_DIMMED_SCALE,

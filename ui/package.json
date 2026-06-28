@@ -2,7 +2,7 @@
   "name": "@opentrace/opentrace",
   "version": "0.5.0",
   "type": "module",
-  "description": "React components for graph visualization — powered by Pixi.js and Graphology",
+  "description": "React components for graph visualization — powered by Three.js and Graphology",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -131,7 +131,6 @@
     "idb": "^8.0.3",
     "mermaid": "^11.6.0",
     "parquet-wasm": "^0.7.1",
-    "pixi.js": "^8.17.1",
     "prism-react-renderer": "^2.4.1",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",

@@ -29,7 +29,7 @@ import type {
   LayoutConfig,
 } from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
-import { selectBreakpoint } from '../pixi/scaleBreakpoints';
+import { selectBreakpoint } from './scaleBreakpoints';
 import type {
   Worker3DInMessage,
   Worker3DOutMessage,

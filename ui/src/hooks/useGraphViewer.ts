@@ -286,7 +286,7 @@ export interface LegendItem {
 }
 
 export interface UseGraphViewerResult {
-  /** Wire to `<PixiGraphCanvas ref={canvasRef} />`. */
+  /** Wire to `<GraphCanvas ref={canvasRef} />`. */
   canvasRef: RefObject<GraphCanvasHandle | null>;
   /** Stable pointer to the latest graphData. Read inside callbacks/effects
    *  to avoid re-firing on data change. */
@@ -306,7 +306,7 @@ export interface UseGraphViewerResult {
   onStageClick: () => void;
 
   /**
-   * Pre-computed highlight props ready to spread into `<PixiGraphCanvas>`.
+   * Pre-computed highlight props ready to spread into `<GraphCanvas>`.
    *
    * Precedence (highest first):
    *   1. selectedLink → edge endpoints + the edge itself
@@ -385,7 +385,7 @@ export const GRAPH_SETTING_DEFAULTS = {
 
 /**
  * Orchestration hook for a graph viewer shell. Owns the state, effects,
- * and memoized computations that every consumer of `<PixiGraphCanvas>` ends
+ * and memoized computations that every consumer of `<GraphCanvas>` ends
  * up writing — search/filter/highlight wiring, persisted physics & layout
  * settings, edge-click highlight overlay, community focus zoom, search
  * suggestions, and the standard imperative handle.
