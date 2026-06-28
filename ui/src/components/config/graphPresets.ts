@@ -77,7 +77,7 @@ export interface GraphPreset {
 }
 
 /** Default applied on a user's first-ever graph load (no stored preset yet). */
-export const DEFAULT_PRESET_ID: GraphPresetId = 'bundled';
+export const DEFAULT_PRESET_ID: GraphPresetId = 'planet';
 
 export const GRAPH_PRESETS: GraphPreset[] = [
   {
