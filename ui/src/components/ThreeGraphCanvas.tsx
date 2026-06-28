@@ -596,6 +596,12 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         },
         isBuildAnimating: () =>
           rendererRef.current?.isBuildAnimating() ?? false,
+        animateTraversal: (legs, orphanIds) => {
+          rendererRef.current?.animateTraversal(legs, orphanIds);
+        },
+        clearTraversal: () => {
+          rendererRef.current?.clearTraversal();
+        },
       }),
       [
         onNodeClick,

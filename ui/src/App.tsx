@@ -374,8 +374,14 @@ function AppInner({
               }}
               onChatHighlight={(allIds, newIds) => {
                 setChatHighlightNodes(allIds);
-                if (newIds.length > 0) {
-                  graphViewerRef.current?.triggerPing(newIds);
+                const viewer = graphViewerRef.current;
+                if (allIds.size === 0) {
+                  // Highlights cleared (turn end / toggle off / convo switch) —
+                  // drop the traversal walk + lit trail so the graph un-dims.
+                  viewer?.clearChatTraversal();
+                } else if (newIds.length > 0) {
+                  // Animate the agent walking the graph to the newly-found nodes.
+                  viewer?.animateChatTraversal(newIds, allIds);
                 }
               }}
               onQuestionSubmit={() => {

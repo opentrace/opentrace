@@ -839,11 +839,9 @@ export default function ChatPanel({
           modelId,
           Array.from(chatFoundNodesRef.current),
         );
-        // Turn off graph highlights now that the full answer has arrived —
-        // the sync effect on `highlightEnabled` clears chatHighlightNodes in
-        // App, so the whole graph becomes visible again. Skipped on abort so
-        // a partial response doesn't dim-and-clear unexpectedly.
-        setHighlightEnabled(false);
+        // Keep the traversed nodes/edges lit after the answer arrives so the
+        // user can study the path the agent walked. The highlight toggle (or
+        // the next question) clears it; we no longer auto-disable on stream end.
       }
     }
   };

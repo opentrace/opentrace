@@ -41,6 +41,103 @@ import { useGraphInteraction } from '../providers/GraphInteractionProvider';
 // the empty default for highlight props. Never mutate.
 const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
 
+/** Max edges the BFS will walk from a found node before giving up (orphan). */
+const TRAVERSAL_MAX_HOPS = 8;
+
+/** Normalize a link endpoint (string | number | {id}) to a string id. */
+function endpointKey(ep: unknown): string {
+  if (typeof ep === 'string') return ep;
+  if (typeof ep === 'number') return String(ep);
+  if (ep && typeof ep === 'object' && 'id' in ep) {
+    return String((ep as { id: unknown }).id);
+  }
+  return String(ep);
+}
+
+interface TraversalLeg {
+  edges: { sourceId: string; targetId: string }[];
+  destId: string;
+}
+
+/**
+ * Plan an agent "walk": for each newly-found node, BFS over the visible-graph
+ * adjacency to the nearest already-discovered node, returning the path as
+ * travel-ordered edges (anchor → … → found). Nodes with no path within
+ * `TRAVERSAL_MAX_HOPS` become orphans (a plain ping). The discovered set grows
+ * as nodes are reached, so successive finds anchor to earlier ones — producing
+ * one continuous walk rather than disjoint hops.
+ */
+function computeTraversalLegs(
+  adjacency: Map<string, { neighbor: string }[]>,
+  newIds: string[],
+  priorIds: Set<string>,
+): { legs: TraversalLeg[]; orphans: string[] } {
+  const legs: TraversalLeg[] = [];
+  const orphans: string[] = [];
+  // Discovered anchors the walk can start from. Seed with the prior set; if the
+  // turn is fresh (nothing discovered yet) the first found node becomes the seed.
+  const discovered = new Set(priorIds);
+  for (const id of newIds) {
+    if (discovered.has(id)) continue;
+    if (!adjacency.has(id)) {
+      // Not a visible node (filtered out / unknown) — nothing to walk to.
+      orphans.push(id);
+      continue;
+    }
+    if (discovered.size === 0) {
+      // First node of a fresh walk: it IS the starting anchor, no edge to draw.
+      discovered.add(id);
+      continue;
+    }
+    // BFS from the found node outward to the nearest discovered anchor.
+    const parent = new Map<string, string>();
+    const visited = new Set<string>([id]);
+    let frontier = [id];
+    let anchor: string | null = null;
+    for (let hop = 0; hop < TRAVERSAL_MAX_HOPS && !anchor; hop++) {
+      const next: string[] = [];
+      for (const u of frontier) {
+        for (const { neighbor } of adjacency.get(u) ?? []) {
+          if (visited.has(neighbor)) continue;
+          visited.add(neighbor);
+          parent.set(neighbor, u);
+          if (discovered.has(neighbor)) {
+            anchor = neighbor;
+            break;
+          }
+          next.push(neighbor);
+        }
+        if (anchor) break;
+      }
+      frontier = next;
+    }
+    if (!anchor) {
+      orphans.push(id);
+      discovered.add(id);
+      continue;
+    }
+    // Reconstruct anchor → … → found (parent chain runs found → anchor).
+    const chain: string[] = [];
+    for (
+      let cur: string | undefined = anchor;
+      cur !== undefined;
+      cur = parent.get(cur)
+    ) {
+      chain.push(cur);
+      if (cur === id) break;
+    }
+    // chain is anchor … found already (parent walk from anchor toward id).
+    const edges: { sourceId: string; targetId: string }[] = [];
+    for (let k = 0; k < chain.length - 1; k++) {
+      edges.push({ sourceId: chain[k], targetId: chain[k + 1] });
+      discovered.add(chain[k + 1]);
+    }
+    discovered.add(id);
+    if (edges.length > 0) legs.push({ edges, destId: id });
+  }
+  return { legs, orphans };
+}
+
 /**
  * Additional highlight contribution from the consumer (e.g. Playground's
  * repo-id scoping). Composed at lower precedence than selection, community
@@ -88,6 +185,16 @@ export interface UseGraphViewerOptions {
 export interface GraphViewerImperativeHandle {
   selectNode: (nodeId: string, hops?: number) => void;
   triggerPing: (nodeIds: Iterable<string>) => void;
+  /**
+   * Animate the agent "walking" the graph to newly-found nodes: for each new
+   * id, walk real edges from the nearest already-discovered node and light the
+   * path edge-by-edge (pulse + node pings), leaving the trail lit. `allIds` is
+   * the full accumulated chat highlight set (discovered = allIds − newIds).
+   * Falls back to a plain ping when the renderer can't animate (e.g. Pixi).
+   */
+  animateChatTraversal: (newIds: string[], allIds: Set<string>) => void;
+  /** Clear any chat-traversal walk + lit trail (new question / highlights off). */
+  clearChatTraversal: () => void;
   resetCamera: () => void;
   zoomToFit: (duration?: number) => void;
   /** Re-fetch the graph from the store. Thin wrapper around `loadGraph`. */
@@ -329,6 +436,14 @@ export function useGraphViewer(
   useEffect(() => {
     graphDataRef.current = graphData;
   }, [graphData]);
+
+  // Stable pointer to the latest *visible* graph (filtered). The chat-traversal
+  // pathfinder walks only visible edges so the pulse never routes through nodes
+  // the user has filtered out.
+  const filteredGraphDataRef = useRef(filteredGraphData);
+  useEffect(() => {
+    filteredGraphDataRef.current = filteredGraphData;
+  }, [filteredGraphData]);
 
   // ─── Auto-fit on graphVersion bump ──────────────────────────────────────
   // Mode is consumer-selected via `options.autoFitMode`:
@@ -1067,6 +1182,36 @@ export function useGraphViewer(
       },
       triggerPing: (nodeIds: Iterable<string>) => {
         canvasRef.current?.triggerPing?.(nodeIds);
+      },
+      animateChatTraversal: (newIds: string[], allIds: Set<string>) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        // Renderer can't animate (e.g. Pixi) — fall back to the plain ping.
+        if (!canvas.animateTraversal) {
+          canvas.triggerPing?.(newIds);
+          return;
+        }
+        // Adjacency over the *visible* graph, both directions.
+        const adjacency = new Map<string, { neighbor: string }[]>();
+        for (const link of filteredGraphDataRef.current.links) {
+          const s = endpointKey(link.source);
+          const t = endpointKey(link.target);
+          if (!adjacency.has(s)) adjacency.set(s, []);
+          if (!adjacency.has(t)) adjacency.set(t, []);
+          adjacency.get(s)!.push({ neighbor: t });
+          adjacency.get(t)!.push({ neighbor: s });
+        }
+        const priorIds = new Set(allIds);
+        for (const id of newIds) priorIds.delete(id);
+        const { legs, orphans } = computeTraversalLegs(
+          adjacency,
+          newIds,
+          priorIds,
+        );
+        canvas.animateTraversal(legs, orphans);
+      },
+      clearChatTraversal: () => {
+        canvasRef.current?.clearTraversal?.();
       },
       resetCamera: () => {
         canvasRef.current?.resetCamera();

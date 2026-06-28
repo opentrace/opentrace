@@ -204,4 +204,16 @@ export interface GraphCanvasHandle {
   stopBuildAnimation?: () => void;
   /** Whether a build replay is currently running. */
   isBuildAnimating?: () => boolean;
+  /** Animate the agent "walking" the graph: a glow pulse glides edge-by-edge
+   *  through each leg (an ordered real-edge path from the already-discovered
+   *  set to a newly-found node), lighting edges and pinging nodes as reached.
+   *  `orphanIds` are finds with no path — they just ping. Reached nodes/edges
+   *  stay lit until `clearTraversal()`. Successive calls append to the walk.
+   *  Three.js only; optional so other renderers may omit it. */
+  animateTraversal?: (
+    legs: { edges: { sourceId: string; targetId: string }[]; destId: string }[],
+    orphanIds?: string[],
+  ) => void;
+  /** Clear the traversal walk and its lit trail (new question / highlights off). */
+  clearTraversal?: () => void;
 }

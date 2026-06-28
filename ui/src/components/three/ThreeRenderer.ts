@@ -128,6 +128,42 @@ interface BuildAnimState {
   sparkStride: number;
 }
 
+/** One edge the traversal pulse crosses, in playback order. */
+interface TraversalEdge {
+  /** Node-array index of the edge's start. */
+  sourceIdx: number;
+  /** Node-array index of the edge's end (the node "reached"). */
+  targetIdx: number;
+  /** Lit-set keys for both orientations (`a-b` and `b-a`) — added once crossed.
+   *  The pulse may cross an edge opposite to its stored orientation, so both
+   *  are lit to guarantee the stored-orientation lookup in updateEdgeAlpha hits. */
+  edgeKey: string;
+  edgeKeyRev: string;
+  /** Node id reached at the far end — pinged + lit when the pulse arrives. */
+  destId: string;
+  /** ms after the anim's `start` when the pulse enters this edge. */
+  startMs: number;
+  /** How long the pulse takes to cross this edge (ms) — adaptive per batch. */
+  durMs: number;
+  /** 1 once the arrival ping/light has fired (debounce). */
+  arrived: number;
+}
+
+/** In-flight chat-traversal replay: a single glow pulse glides edge-by-edge
+ *  through `edges` (ordered), lighting each edge + its far node as it lands.
+ *  Newly streamed legs are appended after the current tail so consecutive tool
+ *  results chain into one continuous walk. */
+interface TraversalAnimState {
+  /** performance.now() at playback start. */
+  start: number;
+  /** Total playback length (ms); grows as legs are appended. */
+  duration: number;
+  /** Ordered edges to cross. */
+  edges: TraversalEdge[];
+  /** The travelling glow pulse. */
+  sprite: Sprite;
+}
+
 interface InteractionCallbacks {
   onNodeClick?: (node: GraphNode) => void;
   onEdgeClick?: (edge: SelectedEdge) => void;
@@ -184,6 +220,31 @@ const BUILD_JITTER_FRAC = 0.55;
 const BUILD_SPARK_BUDGET = 3000;
 /** Overshoot strength for the fly-out "pop" (classic easeOutBack tuning). */
 const BUILD_BACK_C1 = 2.2;
+
+// ── Chat traversal animation ("watch the agent walk the graph") ─────────
+/** Target wall-clock for one batch's walk (ms). Per-edge time is derived from
+ *  this and the edge count so a batch always finishes quickly — a 30-node
+ *  result doesn't animate for ten seconds. */
+const TRAVERSAL_BUDGET_MS = 1100;
+/** Per-edge crossing time is clamped to this range (ms). */
+const TRAVERSAL_MIN_EDGE_MS = 55;
+const TRAVERSAL_MAX_EDGE_MS = 180;
+/** Inter-leg pause as a fraction of the per-edge time. */
+const TRAVERSAL_GAP_FRAC = 0.25;
+/** When a new batch arrives and the queued walk still has more than this left
+ *  to play, fast-forward the backlog (light it instantly) and animate only the
+ *  new batch — keeps the pulse within ~1s of the real tool-call progress. */
+const TRAVERSAL_MAX_BACKLOG_MS = 700;
+/** Above this many edges in one call we light them instantly (skip the pulse)
+ *  — keeps a giant tool result from animating for minutes. */
+const TRAVERSAL_MAX_EDGES = 160;
+/** Travelling-pulse glow color (the "agent" walking the graph). */
+const TRAVERSAL_PULSE_COLOR = '#bae6fd';
+/** Lit-trail edge color — a vivid cyan so the walked path pops on big graphs. */
+const TRAVERSAL_TRAIL_COLOR = '#38bdf8';
+/** Floor on the pulse's on-screen radius (px) so it stays visible when the
+ *  graph is zoomed way out and individual nodes are sub-pixel. */
+const TRAVERSAL_MIN_PULSE_PX = 22;
 
 /** Strip control characters and truncate to LABEL_MAX_LENGTH. */
 function cleanLabel(raw: string): string {
@@ -266,6 +327,13 @@ export class ThreeRenderer {
     new Map();
   private glowTextures: Map<string, Texture> = new Map();
   private static readonly PING_DURATION = 1000;
+
+  // ── Chat traversal ("watch the agent walk the graph") ──────────────
+  private traversalAnim: TraversalAnimState | null = null;
+  /** Nodes the traversal has reached — kept lit (hot) until cleared. */
+  private traversalLitNodes: Set<string> = new Set();
+  /** Edges the traversal has crossed — kept lit (hot) until cleared. */
+  private traversalLitEdges: Set<string> = new Set();
 
   // ── Build animation ────────────────────────────────────────────────
   private buildAnim: BuildAnimState | null = null;
@@ -569,11 +637,13 @@ export class ThreeRenderer {
       if (
         !this.needsRender &&
         this.pingSprites.size === 0 &&
-        this.buildAnim === null
+        this.buildAnim === null &&
+        this.traversalAnim === null
       )
         return;
       this.needsRender = false;
       if (this.buildAnim) this.updateBuildAnim(performance.now());
+      if (this.traversalAnim) this.updateTraversalAnim(performance.now());
       if (this.nodeMaterial) {
         const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
         u.uPerspective.value = 1;
@@ -606,7 +676,8 @@ export class ThreeRenderer {
       !this.needsRender &&
       !easing &&
       this.pingSprites.size === 0 &&
-      this.buildAnim === null
+      this.buildAnim === null &&
+      this.traversalAnim === null
     )
       return;
     this.needsRender = false;
@@ -644,6 +715,7 @@ export class ThreeRenderer {
     }
 
     if (this.buildAnim) this.updateBuildAnim(performance.now());
+    if (this.traversalAnim) this.updateTraversalAnim(performance.now());
 
     // Keep the shader's zoom uniform in sync (size attenuation).
     if (this.nodeMaterial) {
@@ -793,7 +865,7 @@ export class ThreeRenderer {
     for (let i = 0; i < this.nodeArray.length; i++) {
       const node = this.nodeArray[i];
       if (!node.visible) continue;
-      if (this.hasHighlight && !this.highlightNodes.has(node.id)) continue;
+      if (this.hasHighlight && !this.nodeIsHot(node.id)) continue;
       candidates.push(i);
     }
     // Largest (highest-degree) nodes win label slots.
@@ -1002,6 +1074,13 @@ export class ThreeRenderer {
       sprite.material.dispose();
     }
     this.pingSprites.clear();
+    if (this.traversalAnim) {
+      this.scene?.remove(this.traversalAnim.sprite);
+      this.traversalAnim.sprite.material.dispose();
+      this.traversalAnim = null;
+    }
+    this.traversalLitNodes.clear();
+    this.traversalLitEdges.clear();
     for (const tex of this.glowTextures.values()) tex.dispose();
     this.glowTextures.clear();
 
@@ -1048,6 +1127,14 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
+    // Drop any traversal walk + lit trail — the node/edge ids are about to change.
+    if (this.traversalAnim) {
+      this.scene.remove(this.traversalAnim.sprite);
+      this.traversalAnim.sprite.material.dispose();
+      this.traversalAnim = null;
+    }
+    this.traversalLitNodes.clear();
+    this.traversalLitEdges.clear();
     this.disposeNodeObjects();
     this.disposeEdgeObjects();
     this.disposeSuperGraph();
@@ -1214,11 +1301,17 @@ export class ThreeRenderer {
     this.requestRender();
   }
 
-  /** Write per-vertex edge colors from each edge's resolved link color. */
+  /** Write per-vertex edge colors from each edge's resolved link color —
+   *  except edges the chat traversal has walked, which are painted in the
+   *  vivid trail color so the path pops even on large, zoomed-out graphs. */
   private fillEdgeColors(): void {
     const col = this.edgeColorArray;
+    const hasTrail = this.traversalLitEdges.size > 0;
     for (let i = 0; i < this.edges.length; i++) {
-      hexToRgb(this.edges[i].color, this.tmpColor);
+      const e = this.edges[i];
+      const lit =
+        hasTrail && this.traversalLitEdges.has(`${e.sourceId}-${e.targetId}`);
+      hexToRgb(lit ? TRAVERSAL_TRAIL_COLOR : e.color, this.tmpColor);
       const o = i * 6;
       col[o] = this.tmpColor.r;
       col[o + 1] = this.tmpColor.g;
@@ -1302,7 +1395,7 @@ export class ThreeRenderer {
         if (!sVis || !tVis || lodHidden) {
           alpha = 0;
         } else if (this.hasHighlight) {
-          const hot = this.highlightLinks.has(`${e.sourceId}-${e.targetId}`);
+          const hot = this.edgeIsHot(`${e.sourceId}-${e.targetId}`);
           alpha = hot ? EDGE_OPACITY_HIGHLIGHTED : EDGE_OPACITY_DIMMED;
         } else {
           alpha = EDGE_OPACITY_DEFAULT;
@@ -2113,10 +2206,26 @@ export class ThreeRenderer {
   setHighlight(highlightNodes: Set<string>, highlightLinks: Set<string>): void {
     this.highlightNodes = highlightNodes;
     this.highlightLinks = highlightLinks;
-    this.hasHighlight = highlightNodes.size > 0;
+    this.hasHighlight = this.computeHasHighlight();
     this.applyNodeStates();
     this.updateEdgeAlpha();
     this.runNodeLabelCull();
+  }
+
+  /** A highlight is active when search/selection/chat lit any node OR the chat
+   *  traversal has reached any node — both dim the rest of the graph. */
+  private computeHasHighlight(): boolean {
+    return this.highlightNodes.size > 0 || this.traversalLitNodes.size > 0;
+  }
+
+  /** True if a node is "hot" — directly highlighted or reached by traversal. */
+  private nodeIsHot(id: string): boolean {
+    return this.highlightNodes.has(id) || this.traversalLitNodes.has(id);
+  }
+
+  /** True if an edge is "hot" — highlighted or crossed by the traversal. */
+  private edgeIsHot(key: string): boolean {
+    return this.highlightLinks.has(key) || this.traversalLitEdges.has(key);
   }
 
   /** Repack the per-node `aState` attribute from current visibility +
@@ -2135,12 +2244,12 @@ export class ThreeRenderer {
       const node = this.nodeArray[i];
       // Under LOD, a node only draws when its community is expanded — except
       // highlighted nodes, which always show so search/chat focus survives.
-      const highlighted = this.hasHighlight && this.highlightNodes.has(node.id);
+      const highlighted = this.hasHighlight && this.nodeIsHot(node.id);
       const visible =
         node.visible && (!lod || highlighted || this.nodeLodVisible(node.id));
       let s = visible ? NODE_STATE_VISIBLE : 0;
       if (this.hasHighlight && visible) {
-        s |= this.highlightNodes.has(node.id)
+        s |= this.nodeIsHot(node.id)
           ? NODE_STATE_HIGHLIGHTED
           : NODE_STATE_DIMMED;
       }
@@ -3421,6 +3530,245 @@ export class ThreeRenderer {
     const tex = new CanvasTexture(canvas);
     this.glowTextures.set(color, tex);
     return tex;
+  }
+
+  // ─── Chat traversal ("watch the agent walk the graph") ─────────────
+
+  /** Animate the agent traversing the graph: a glow pulse glides edge-by-edge
+   *  through each leg, lighting the edge and pinging the node it reaches. Legs
+   *  are ordered paths of real edges (discovered → newly-found node). `orphanIds`
+   *  are newly-found nodes with no path to the discovered set — they just ping.
+   *  Reached nodes/edges stay lit (hot) until `clearTraversal()`. Successive
+   *  calls (per streamed tool result) append to the running walk.
+   *  No-op cosmetic overlay — the persistent highlight set is unchanged. */
+  animateTraversal(
+    legs: { edges: { sourceId: string; targetId: string }[]; destId: string }[],
+    orphanIds: string[] = [],
+  ): void {
+    if (this.destroyed || !this.scene || !this.nodeGeometry) return;
+
+    // Orphans (disconnected finds) just flash where they are.
+    if (orphanIds.length > 0) this.triggerPing(orphanIds);
+
+    // Count resolvable edges first so the per-edge time can be derived from the
+    // batch budget — many edges → quick crossings, few edges → leisurely.
+    let edgeCount = 0;
+    for (const leg of legs) {
+      for (const e of leg.edges) {
+        if (
+          this.nodeIdToIndex.has(e.sourceId) &&
+          this.nodeIdToIndex.has(e.targetId)
+        ) {
+          edgeCount++;
+        }
+      }
+    }
+    if (edgeCount === 0) return;
+
+    // Big result — light everything at once rather than animate for ages.
+    if (edgeCount > TRAVERSAL_MAX_EDGES) {
+      for (const leg of legs) {
+        for (const e of leg.edges) {
+          this.traversalLitEdges.add(`${e.sourceId}-${e.targetId}`);
+          this.traversalLitEdges.add(`${e.targetId}-${e.sourceId}`);
+          this.traversalLitNodes.add(e.sourceId);
+          this.traversalLitNodes.add(e.targetId);
+        }
+      }
+      this.refreshHotState();
+      this.triggerPing(legs.map((l) => l.destId));
+      return;
+    }
+
+    const perEdge = Math.max(
+      TRAVERSAL_MIN_EDGE_MS,
+      Math.min(TRAVERSAL_MAX_EDGE_MS, TRAVERSAL_BUDGET_MS / edgeCount),
+    );
+    const gap = perEdge * TRAVERSAL_GAP_FRAC;
+
+    // Build the ordered edge list with cumulative entry times. Seed nodes (each
+    // leg's first source — an already-discovered anchor) light immediately.
+    const newEdges: TraversalEdge[] = [];
+    let cursor = 0;
+    let seededAny = false;
+    for (const leg of legs) {
+      if (leg.edges.length === 0) continue;
+      const seedId = leg.edges[0].sourceId;
+      if (
+        this.nodeIdToIndex.has(seedId) &&
+        !this.traversalLitNodes.has(seedId)
+      ) {
+        this.traversalLitNodes.add(seedId);
+        seededAny = true;
+      }
+      for (let j = 0; j < leg.edges.length; j++) {
+        const e = leg.edges[j];
+        const s = this.nodeIdToIndex.get(e.sourceId);
+        const t = this.nodeIdToIndex.get(e.targetId);
+        if (s === undefined || t === undefined) continue;
+        const isLast = j === leg.edges.length - 1;
+        newEdges.push({
+          sourceIdx: s,
+          targetIdx: t,
+          edgeKey: `${e.sourceId}-${e.targetId}`,
+          edgeKeyRev: `${e.targetId}-${e.sourceId}`,
+          destId: e.targetId,
+          startMs: cursor,
+          durMs: perEdge,
+          arrived: 0,
+        });
+        cursor += perEdge + (isLast ? gap : 0);
+      }
+    }
+
+    if (newEdges.length === 0) {
+      if (seededAny) this.refreshHotState();
+      return;
+    }
+
+    const now = performance.now();
+    const anim = this.traversalAnim;
+    if (anim) {
+      const remaining = anim.duration - (now - anim.start);
+      if (remaining > TRAVERSAL_MAX_BACKLOG_MS) {
+        // Backlog is lagging the real tool-call progress — fast-forward it:
+        // instantly light every still-pending edge, then restart the timeline
+        // so only the fresh batch animates.
+        for (const e of anim.edges) {
+          if (e.arrived) continue;
+          this.traversalLitEdges.add(e.edgeKey);
+          this.traversalLitEdges.add(e.edgeKeyRev);
+          this.traversalLitNodes.add(e.destId);
+        }
+        anim.start = now;
+        anim.edges = newEdges;
+        anim.duration = cursor;
+        this.refreshHotState();
+      } else {
+        // Chain after the current walk so streamed legs play continuously.
+        const base = anim.duration;
+        for (const e of newEdges) e.startMs += base;
+        anim.edges.push(...newEdges);
+        anim.duration = base + cursor;
+        if (seededAny) this.refreshHotState();
+      }
+    } else {
+      const sprite = new Sprite(
+        new SpriteMaterial({
+          map: this.getGlowTexture(TRAVERSAL_PULSE_COLOR),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+          blending: AdditiveBlending,
+        }),
+      );
+      sprite.renderOrder = 3;
+      sprite.visible = false;
+      this.scene.add(sprite);
+      this.traversalAnim = {
+        start: now,
+        duration: cursor,
+        edges: newEdges,
+        sprite,
+      };
+      // Light the seed anchors right away so the walk starts from a lit node.
+      if (seededAny) this.refreshHotState();
+    }
+    this.requestRender();
+  }
+
+  /** Per-frame driver for the traversal pulse: positions the glow on the active
+   *  edge, and as each edge completes, lights it + pings the node reached. */
+  private updateTraversalAnim(now: number): void {
+    const anim = this.traversalAnim;
+    if (!anim || !this.scene) return;
+    const elapsed = now - anim.start;
+
+    let dirty = false;
+    let active: TraversalEdge | null = null;
+    for (const e of anim.edges) {
+      if (elapsed >= e.startMs && elapsed < e.startMs + e.durMs) {
+        active = e;
+      }
+      if (!e.arrived && elapsed >= e.startMs + e.durMs) {
+        e.arrived = 1;
+        this.traversalLitEdges.add(e.edgeKey);
+        this.traversalLitEdges.add(e.edgeKeyRev);
+        this.traversalLitNodes.add(e.destId);
+        this.triggerPing([e.destId]);
+        dirty = true;
+      }
+    }
+    if (dirty) this.refreshHotState();
+
+    if (active) {
+      const t = (elapsed - active.startMs) / active.durMs;
+      // Smoothstep so the pulse eases out of one node and into the next.
+      const ease = t * t * (3 - 2 * t);
+      const si = active.sourceIdx * 3;
+      const ti = active.targetIdx * 3;
+      const x =
+        this.posArray[si] + (this.posArray[ti] - this.posArray[si]) * ease;
+      const y =
+        this.posArray[si + 1] +
+        (this.posArray[ti + 1] - this.posArray[si + 1]) * ease;
+      const z =
+        this.posArray[si + 2] +
+        (this.posArray[ti + 2] - this.posArray[si + 2]) * ease;
+      anim.sprite.position.set(x, y, z);
+      anim.sprite.visible = true;
+      // Size off the node being approached, but enforce a screen-space floor so
+      // the pulse stays visible on big graphs where nodes are sub-pixel. A gentle
+      // throb (sin over the crossing) draws the eye to the moving head.
+      const zoom = this.effectiveZoom();
+      const node = this.nodeArray[active.targetIdx];
+      const screenR = node.size * Math.pow(zoom, 1 - this.zoomSizeExponent);
+      const screen = Math.max(screenR * 8, TRAVERSAL_MIN_PULSE_PX);
+      const world = screen / Math.max(zoom, 1e-4);
+      const throb = 1 + 0.18 * Math.sin(Math.PI * t);
+      const s = world * throb;
+      anim.sprite.scale.set(s, s, 1);
+      anim.sprite.material.opacity = 1;
+    } else {
+      anim.sprite.visible = false;
+    }
+
+    if (elapsed >= anim.duration) {
+      this.scene.remove(anim.sprite);
+      anim.sprite.material.dispose();
+      this.traversalAnim = null;
+    }
+    this.requestRender();
+  }
+
+  /** Clear the traversal walk + its lit trail (a new question / highlights-off).
+   *  Falls back through to the standard highlight state so the graph un-dims. */
+  clearTraversal(): void {
+    if (this.traversalAnim) {
+      this.scene?.remove(this.traversalAnim.sprite);
+      this.traversalAnim.sprite.material.dispose();
+      this.traversalAnim = null;
+    }
+    if (
+      this.traversalLitNodes.size === 0 &&
+      this.traversalLitEdges.size === 0
+    ) {
+      return;
+    }
+    this.traversalLitNodes.clear();
+    this.traversalLitEdges.clear();
+    this.refreshHotState();
+    this.requestRender();
+  }
+
+  /** Re-derive `hasHighlight` from the current highlight + traversal sets and
+   *  repaint node states + edge alpha + edge colors so the hot trail shows /
+   *  clears. */
+  private refreshHotState(): void {
+    this.hasHighlight = this.computeHasHighlight();
+    this.applyNodeStates();
+    this.updateEdgeAlpha();
+    this.fillEdgeColors();
   }
 
   // ─── Node access ──────────────────────────────────────────────────
