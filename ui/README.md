@@ -61,7 +61,7 @@ The package provides multiple entry points for tree-shaking:
 | `@opentrace/opentrace/job`        | Job execution and streaming for async indexing operations     |
 | `@opentrace/opentrace/app-components` | Full app panels (GraphViewer, NodeDetailsPanel, ChatPanel) |
 | `@opentrace/opentrace/app`        | Drop-in `OpenTraceApp` component with all providers          |
-| `@opentrace/opentrace/utils`      | Shared utility functions                                     |
+| `@opentrace/opentrace/utils`      | Shared utility functions and store-free constants (e.g. `GRAPH_SETTING_DEFAULTS`) |
 | `@opentrace/opentrace/style.css`  | Full design system — tokens, themes, resets, and all component styles |
 | `@opentrace/opentrace/graph.css`  | Graph component styles only — token-driven, no global selectors |
 

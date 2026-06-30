@@ -27,6 +27,13 @@ import { getLinkColor } from '../colors/linkColors';
 import type { FilterItem, LegendItem } from '../panels/types';
 import type { Dataset } from './datasets';
 import { DATASETS } from './datasets';
+import { GRAPH_SETTING_DEFAULTS } from '../../config/graphSettingDefaults';
+
+// Seed the prop-driven panel + canvas from the shared OpenTrace viewer preset
+// instead of hardcoding copies, so this story tracks the package defaults on
+// version bumps. Field names map preset key -> component prop, e.g.
+// `pixiLinkDist` -> `linkDistance`, `pixiZoomExponent` -> `zoomSizeExponent`.
+const D = GRAPH_SETTING_DEFAULTS;
 
 export interface GraphPlaygroundProps {
   /** Initial dataset to display */
@@ -70,15 +77,17 @@ export default function GraphPlayground({
   const [labelsVisible, setLabelsVisible] = useState(true);
 
   // ── Physics ────────────────────────────────────────────────────────
-  const [repulsion, setRepulsion] = useState(100);
+  const [repulsion, setRepulsion] = useState(D.repulsion);
   const [isPhysicsRunning, setIsPhysicsRunning] = useState(true);
 
   // ── Pixi-specific ──────────────────────────────────────────────────
-  const [linkDistance, setLinkDistance] = useState(200);
-  const [centerStrength, setCenterStrength] = useState(0.3);
-  const [edgesEnabled, setEdgesEnabled] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>('spread');
-  const [zoomSizeExponent, setZoomSizeExponent] = useState(0.8);
+  const [linkDistance, setLinkDistance] = useState(D.pixiLinkDist);
+  const [centerStrength, setCenterStrength] = useState(D.pixiCenter);
+  const [edgesEnabled, setEdgesEnabled] = useState(D.edgesVisible);
+  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>(
+    D.layoutMode,
+  );
+  const [zoomSizeExponent, setZoomSizeExponent] = useState(D.pixiZoomExponent);
 
   // ── Filters ────────────────────────────────────────────────────────
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(
@@ -419,6 +428,8 @@ export default function GraphPlayground({
             selectedNodeId={selectedNodeId}
             hops={hops}
             labelsVisible={labelsVisible}
+            layoutMode={layoutMode}
+            zoomSizeExponent={zoomSizeExponent}
             zIndex
             onNodeClick={handleNodeClick}
             onStageClick={handleStageClick}

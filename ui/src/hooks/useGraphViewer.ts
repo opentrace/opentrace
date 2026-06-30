@@ -36,6 +36,10 @@ import type { GraphLink, GraphNode, SelectedEdge } from '../components/utils';
 import type { HistoryEntry } from '../appComponents/historyTypes';
 import { useGraph } from '../providers/GraphDataProvider';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
+import {
+  GRAPH_SETTING_DEFAULTS,
+  type GraphSettingDefaults,
+} from '../config/graphSettingDefaults';
 
 // Module-level frozen empty Set — shared across renders to avoid re-creating
 // the empty default for highlight props. Never mutate.
@@ -237,29 +241,12 @@ function readPersistedSettings(): Record<string, unknown> {
 }
 
 /** Single source of truth for the default values of every persisted
- *  panel setting. Used to initialize state and to power the "Reset
- *  graph" button — keep these in sync with the literal defaults that
- *  the renderer / physics layout ships with. */
-export const GRAPH_SETTING_DEFAULTS = {
-  zoomOnSelect: false,
-  repulsion: 120,
-  labelsVisible: true,
-  edgesVisible: true,
-  communityLabelsVisible: true,
-  pixiLinkDist: 200,
-  pixiCenter: 0.3,
-  pixiZoomExponent: 0.25,
-  layoutMode: 'compact' as 'spread' | 'compact',
-  compactRadial: 8,
-  compactCommunity: 10,
-  compactCentering: 5,
-  compactRadius: 32,
-  mode3d: true,
-  mode3dSpeed: 30,
-  mode3dTilt: 35,
-  labelScale: 100,
-  communitiesEnabled: true,
-};
+ *  panel setting. Re-exported here for backward compatibility; the
+ *  canonical declaration lives in the store-free
+ *  `../config/graphSettingDefaults` module so it can also be exposed via
+ *  the public `./components/utils` entry point. */
+export { GRAPH_SETTING_DEFAULTS };
+export type { GraphSettingDefaults };
 
 /**
  * Orchestration hook for a graph viewer shell. Owns the state, effects,
