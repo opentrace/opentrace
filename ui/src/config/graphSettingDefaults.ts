@@ -15,17 +15,36 @@
  */
 
 /**
- * Single source of truth for the default values of every persisted panel
- * setting. Used to initialize state and to power the "Reset graph" button —
- * keep these in sync with the literal defaults that the renderer / physics
- * layout ships with.
+ * The OpenTrace graph viewer's **initial / reset preset** — the values the
+ * app seeds its persisted panel state with and restores on "Reset graph".
+ * This is the single source of truth consumed by `useGraphViewer`.
  *
- * This is a plain object literal with NO runtime dependencies (no store,
- * providers, pixi, or `useGraphViewer`). It lives in its own module so that
- * prop-driven consumers of `PixiGraphCanvas` + `PhysicsPanel` (without the
- * store/providers) can import the defaults from the store-free, WebGL-free
- * `./utils` entry point and track them on version bumps instead of hardcoding
- * copies.
+ * IMPORTANT — this is the *viewer preset*, NOT the bare fallback props of
+ * `PixiGraphCanvas` / `PhysicsPanel`. Most fields match those components'
+ * defaults, but three intentionally diverge because the OpenTrace viewer
+ * ships a more opinionated initial view than a bare-mounted component:
+ *
+ *   | field              | this preset | component fallback |
+ *   | ------------------ | ----------- | ------------------ |
+ *   | `layoutMode`       | `'compact'` | `'spread'`         |
+ *   | `mode3d`           | `true`      | `false`            |
+ *   | `pixiZoomExponent` | `0.25`      | `0.8`              |
+ *
+ * Prop-driven consumers of `PixiGraphCanvas` + `PhysicsPanel` (without the
+ * store/providers) can import this from the store-free, WebGL-free `./utils`
+ * entry point to initialize a controlled panel with the *same preset the
+ * OpenTrace viewer uses* and track it on version bumps — just know that doing
+ * so reproduces the viewer's opinionated defaults, not the components' bare
+ * fallbacks. The contract (which fields match the component fallbacks and
+ * which deliberately differ) is pinned by
+ * `__tests__/graphSettingDefaults.test.ts`.
+ *
+ * Field names here are the viewer's persisted keys; consumers map them onto
+ * the components' prop names, e.g. `pixiLinkDist` → `linkDistance`,
+ * `compactRadial` → `radialStrength`, `pixiZoomExponent` → `zoomSizeExponent`.
+ *
+ * Plain object literal with NO runtime dependencies (no store, providers,
+ * pixi, or `useGraphViewer`), so importing it never pulls in WebGL.
  */
 export const GRAPH_SETTING_DEFAULTS = {
   zoomOnSelect: false,
