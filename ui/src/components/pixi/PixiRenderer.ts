@@ -1959,6 +1959,10 @@ export class PixiRenderer {
   private applyCommunityLabelVisibility(): void {
     if (this.communityLabels.size === 0) return;
     if (!this.communityAssignments) return;
+    // When the label layer is off the container is hidden regardless, so
+    // the per-label visibility writes below would be wasted; the layer is
+    // refreshed on toggle-on via `setShowCommunityLabels`.
+    if (!this.showCommunityLabels) return;
     const visibleCommunities = new Set<number>();
     for (const node of this.nodes.values()) {
       if (!node.visible) continue;
