@@ -1957,8 +1957,7 @@ export class PixiRenderer {
     }
     for (const [cid, text] of this.communityLabels) {
       text.visible =
-        this.currentlyShownCommunities.has(cid) &&
-        visibleCommunities.has(cid);
+        this.currentlyShownCommunities.has(cid) && visibleCommunities.has(cid);
     }
   }
 
