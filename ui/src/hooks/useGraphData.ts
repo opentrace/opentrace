@@ -20,7 +20,24 @@ import type {
   GraphLink,
   GraphStats,
 } from '@opentrace/components/utils';
+import type {
+  IndexedNode,
+  IndexedRelationship,
+} from '../gen/opentrace/v1/agent_service';
 import { useStore } from '../store';
+
+// ─── Live-build streaming ──────────────────────────────────────────────────
+// During browser indexing the pipeline streams node/relationship batches as
+// they're produced. We buffer + flush them to React state so the graph grows
+// during indexing; the renderer's live-build mode animates each batch in (new
+// nodes fly out from their parent) without restarting. Flush eagerly on a node
+// count threshold — the timer alone is starved by the main-thread pipeline.
+// The renderer APPENDS each batch in place (no geometry rebuild), so we METER
+// big incoming deltas into small chunks across ticks for a continuous,
+// fine-grained build wave (the pipeline delivers nodes in big bursts).
+const LIVE_FLUSH_MS = 70;
+/** Max nodes revealed per flush — small = a finer, more continuous wave. */
+const LIVE_FLUSH_CHUNK = 220;
 
 // ─── Progressive ("dynamic") loading ──────────────────────────────────────
 // For large browser-indexed graphs, load a structural skeleton first (fast to
@@ -121,6 +138,19 @@ export interface GraphDataState {
   loadGraph: (query?: string, hops?: number) => Promise<void>;
   setError: (error: string | null) => void;
   setRefreshError: (error: string | null) => void;
+  /** True while the graph is building live from an in-progress index job. Drives
+   *  the renderer's live-build mode + defers per-batch community recompute. */
+  isStreaming: boolean;
+  /** Begin live-build: clear the graph and start accepting streamed batches. */
+  startLiveStream: () => void;
+  /** Append a streamed batch of nodes/relationships to the building graph. */
+  pushLiveBatch: (
+    nodes: IndexedNode[],
+    relationships: IndexedRelationship[],
+  ) => void;
+  /** End live-build. Keeps the built graph (authoritative load takes over in
+   *  place); pass `{ clear: true }` to wipe it (job cancelled). */
+  endLiveStream: (opts?: { clear?: boolean }) => void;
 }
 
 export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
@@ -140,9 +170,177 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [lastSearchQuery, setLastApiQuery] = useState('');
   const [graphVersion, setGraphVersion] = useState(0);
+  const [isStreaming, setIsStreaming] = useState(false);
 
   // Monotonic counter to discard stale overlapping loadGraph results.
   const loadSeqRef = useRef(0);
+
+  // ── Live-build streaming buffers ──────────────────────────────────────────
+  const liveActiveRef = useRef(false);
+  const liveSeenNodes = useRef<Set<string>>(new Set());
+  const liveSeenLinks = useRef<Set<string>>(new Set());
+  const livePendNodes = useRef<GraphNode[]>([]);
+  const livePendLinks = useRef<GraphLink[]>([]);
+  // Edges whose endpoints haven't both arrived — held back (a dangling edge
+  // crashes d3-force-3d), promoted once both ends exist.
+  const liveDeferredLinks = useRef<GraphLink[]>([]);
+  const liveFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushLive = useCallback(() => {
+    const pn = livePendNodes.current;
+    const pl = livePendLinks.current;
+    if (!pn.length && !pl.length) return;
+    // Meter: reveal a chunk of nodes per flush so a big burst ripples in as a
+    // continuous wave. Each flush triggers a layout rebuild in the worker, so
+    // the chunk grows with the graph — keeping the TOTAL number of flushes
+    // (hence worker rebuilds) bounded (~20) on huge repos like Grafana, instead
+    // of hundreds of tiny flushes that tank indexing. Flush ALL pending links —
+    // the renderer's append picks up any with not-yet-present endpoints later.
+    const chunk = Math.max(
+      LIVE_FLUSH_CHUNK,
+      Math.floor(liveSeenNodes.current.size * 0.05),
+    );
+    const ns = pn.splice(0, chunk);
+    const ls = pl.splice(0, pl.length);
+    setGraphData((prev) => ({
+      nodes: ns.length ? prev.nodes.concat(ns) : prev.nodes,
+      links: ls.length ? prev.links.concat(ls) : prev.links,
+    }));
+    // More buffered? keep the wave going. EACH flush costs O(total nodes) on
+    // the main thread (React reconcile + the interaction provider's per-type /
+    // filtered-graph recomputes + the canvas's id-diff), so on a big graph
+    // flushing every 70ms starves the parse-worker dispatch and throughput
+    // collapses as the graph grows. Scale the interval up with graph size:
+    // small graphs stay a fine 70ms wave; huge ones (Grafana) flush ~3×/s so
+    // the main thread stays free for parsing. (The chunk grows too, so the
+    // graph still keeps up — just in fewer, larger, cheaper-per-node batches.)
+    if (pn.length && !liveFlushTimer.current) {
+      const interval = Math.min(
+        350,
+        LIVE_FLUSH_MS + liveSeenNodes.current.size * 0.005,
+      );
+      liveFlushTimer.current = setTimeout(() => {
+        liveFlushTimer.current = null;
+        flushLive();
+      }, interval);
+    }
+  }, []);
+
+  const startLiveStream = useCallback(() => {
+    loadSeqRef.current++; // invalidate any in-flight loadGraph
+    liveActiveRef.current = true;
+    liveSeenNodes.current = new Set();
+    liveSeenLinks.current = new Set();
+    livePendNodes.current = [];
+    livePendLinks.current = [];
+    liveDeferredLinks.current = [];
+    setError(null);
+    setRefreshError(null);
+    setGraphData({ nodes: [], links: [] });
+    setLoading(false);
+    setIsStreaming(true);
+  }, []);
+
+  const pushLiveBatch = useCallback(
+    (nodes: IndexedNode[], relationships: IndexedRelationship[]) => {
+      if (!liveActiveRef.current) return;
+      const seen = liveSeenNodes.current;
+      let addedNode = false;
+      for (const n of nodes) {
+        if (seen.has(n.id)) continue;
+        seen.add(n.id);
+        addedNode = true;
+        // Properties are intentionally omitted from the live stream (perf) —
+        // restored by the authoritative loadGraph at the end.
+        livePendNodes.current.push({ id: n.id, name: n.name, type: n.type });
+      }
+      for (const r of relationships) {
+        const key = `${r.sourceId}|${r.type}|${r.targetId}`;
+        if (liveSeenLinks.current.has(key)) continue;
+        liveSeenLinks.current.add(key);
+        const link: GraphLink = {
+          source: r.sourceId,
+          target: r.targetId,
+          label: r.type,
+        };
+        if (seen.has(r.sourceId) && seen.has(r.targetId)) {
+          livePendLinks.current.push(link);
+        } else {
+          liveDeferredLinks.current.push(link);
+        }
+      }
+      if (addedNode && liveDeferredLinks.current.length) {
+        const stillDeferred: GraphLink[] = [];
+        for (const l of liveDeferredLinks.current) {
+          if (seen.has(l.source) && seen.has(l.target)) {
+            livePendLinks.current.push(l);
+          } else {
+            stillDeferred.push(l);
+          }
+        }
+        liveDeferredLinks.current = stillDeferred;
+      }
+      if (!liveFlushTimer.current) {
+        liveFlushTimer.current = setTimeout(() => {
+          liveFlushTimer.current = null;
+          flushLive();
+        }, LIVE_FLUSH_MS);
+      }
+    },
+    [flushLive],
+  );
+
+  const endLiveStream = useCallback(
+    (opts?: { clear?: boolean }) => {
+      if (!liveActiveRef.current) return;
+      liveActiveRef.current = false;
+      if (liveFlushTimer.current) {
+        clearTimeout(liveFlushTimer.current);
+        liveFlushTimer.current = null;
+      }
+      if (opts?.clear) {
+        livePendNodes.current = [];
+        livePendLinks.current = [];
+        setGraphData({ nodes: [], links: [] });
+      } else {
+        // Flush ALL remaining (bypass metering) so the final graph is complete.
+        const ns = livePendNodes.current;
+        const ls = livePendLinks.current;
+        livePendNodes.current = [];
+        livePendLinks.current = [];
+        if (ns.length || ls.length) {
+          setGraphData((prev) => ({
+            nodes: ns.length ? prev.nodes.concat(ns) : prev.nodes,
+            links: ls.length ? prev.links.concat(ls) : prev.links,
+          }));
+        }
+        // The live-built graph IS the authoritative graph (same store) — bump
+        // the version so presets apply + load stats, WITHOUT a loadGraph that
+        // would replace graphData and reshuffle the layout the user just
+        // watched build. (GraphViewer skips its post-index loadGraph for these.)
+        //
+        // graphData is deliberately kept LEAN — the live stream carries only
+        // id/name/type for nodes and source/target/label for links, NOT the
+        // property blobs. On a huge repo (e.g. Grafana, ~50k nodes / 100k+
+        // edges) holding every property blob in the JS heap — on top of the
+        // WASM DB, the force-layout worker, and the renderer buffers — is what
+        // OOM-crashes the tab (it self-reloads). Properties are fetched on
+        // demand (per selected node, via the store's LRU-cached getNode) in
+        // SidePanel instead, so we render EVERY node without ever materializing
+        // the full property set in memory.
+        setGraphVersion((v) => v + 1);
+        store
+          .fetchStats()
+          .then(setStats)
+          .catch(() => {});
+      }
+      liveDeferredLinks.current = [];
+      liveSeenNodes.current = new Set();
+      liveSeenLinks.current = new Set();
+      setIsStreaming(false);
+    },
+    [store],
+  );
 
   // Use a ref so loadGraph's identity doesn't depend on the callback
   const onGraphLoadedRef = useRef(onGraphLoaded);
@@ -359,6 +557,14 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     }
   }, [loadGraph, store]);
 
+  // Clear any pending live-flush timer on unmount.
+  useEffect(
+    () => () => {
+      if (liveFlushTimer.current) clearTimeout(liveFlushTimer.current);
+    },
+    [],
+  );
+
   // Memoize the returned state so context consumers (and downstream
   // memoized components) don't re-render every commit just because the
   // wrapping object changed identity. `loadGraph`/`setError` are already
@@ -376,6 +582,10 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       loadGraph,
       setError,
       setRefreshError,
+      isStreaming,
+      startLiveStream,
+      pushLiveBatch,
+      endLiveStream,
     }),
     [
       graphData,
@@ -386,6 +596,10 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       lastSearchQuery,
       graphVersion,
       loadGraph,
+      isStreaming,
+      startLiveStream,
+      pushLiveBatch,
+      endLiveStream,
     ],
   );
 }

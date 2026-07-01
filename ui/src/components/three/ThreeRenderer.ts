@@ -225,6 +225,43 @@ const BUILD_SPARK_BUDGET = 3000;
 /** Overshoot strength for the fly-out "pop" (classic easeOutBack tuning). */
 const BUILD_BACK_C1 = 2.2;
 
+// ── Live-build ("watch the graph build itself WHILE indexing") ───────────
+/** Per-frame ease for a settled node following its layout target. Kept GENTLE
+ *  (vs the burst) so settled nodes drift toward their moving target smoothly
+ *  instead of snapping — the streaming force layout is still settling, so a
+ *  stiff follow reads as jitter. */
+const GROW_FOLLOW_ALPHA = 0.08;
+/** Per-node grow-in window (ms): a freshly-indexed node eases out from its
+ *  parent + scales 0→full over this long. Slower than the burst for a calm,
+ *  controlled reveal (the user's "slow and smooth", not jumpy). */
+const GROW_REVEAL_MS = 1000;
+/** Birth sentinel for nodes that are already fully grown (settled). */
+const GROW_BORN = -1e12;
+/** Spread a batch's node births over this window (ms) so they ripple in
+ *  gradually instead of popping in lockstep. */
+const GROW_STAGGER_MS = 850;
+/** Overshoot for the live grow-in. Much softer than the burst's BUILD_BACK_C1
+ *  (2.2): during live build the layout target is still MOVING, so a strong
+ *  overshoot on top of a moving target reads as a jumpy bounce. A near-zero
+ *  overshoot gives a clean eased settle. */
+const GROW_BACK_C1 = 0.4;
+/** Live-build camera. The graph grows the whole time, so the framing distance
+ *  must too. We ease toward a MONOTONIC, low-pass-smoothed target radius so the
+ *  camera never lurches (raw settled-bounds jump every batch) or pumps in/out. */
+const LIVE_CAM_DIST_MULT = 3.3; // camera distance = target radius × this
+// (~2.6 fills the frame edge-to-edge; >2.6 leaves comfortable margin so the
+//  finished graph doesn't sit zoomed-in against the edges.)
+const LIVE_CAM_RADIUS_SMOOTH = 0.06; // low-pass factor for the target radius
+const LIVE_CAM_FOLLOW = 0.045; // per-frame ease of camera dist/target
+/** Predicted radius ≈ this × sqrt(nodeCount) — the force layout seeds new nodes
+ *  within sqrt(N)·spread, so the settled extent grows ~like sqrt(N). Using this
+ *  as a floor lets the camera pull back SMOOTHLY (sqrt is continuous) ahead of
+ *  the jumpy actual bounds, instead of chasing each batch. */
+const LIVE_CAM_RADIUS_PER_SQRT = 22;
+/** Start the camera this much beyond the first framing so early growth barely
+ *  moves it (the user's "start further out"). */
+const LIVE_CAM_START_FACTOR = 1.4;
+
 // ── Chat traversal animation ("watch the agent walk the graph") ─────────
 /** Target wall-clock for one batch's walk (ms). Per-edge time is derived from
  *  this and the edge count so a batch always finishes quickly — a 30-node
@@ -357,6 +394,48 @@ export class ThreeRenderer {
    *  as its fly-out targets each frame, writing the interpolated render
    *  positions into posArray. Outside a build it mirrors posArray. */
   private layoutPos: Float32Array = new Float32Array(0);
+
+  // ── Live-build state (continuous "build while indexing") ───────────
+  /** While true, layout output streams into `layoutPos`; the render loop eases
+   *  posArray toward it (settled nodes — kept stable by worker-side pinning)
+   *  and flies newly-added nodes out from their parent. */
+  private liveGrowActive = false;
+  private growBirth: Float32Array = new Float32Array(0);
+  private growParent: Int32Array = new Int32Array(0);
+  private growTargetSize: Float32Array = new Float32Array(0);
+  /** Rendered positions by id, snapshotted before a live-build rebuild so eased
+   *  positions survive the setData() that addData() triggers. */
+  private liveGrowPrevPos: Map<string, [number, number, number]> | null = null;
+  private liveGrowLastBirth = 0;
+  /** Set by endLiveGrow(): wall-clock at which the last grow-in completes. */
+  private liveGrowFinishAt: number | null = null;
+  /** Frame counter for throttling per-frame edge/camera work during the build. */
+  private liveGrowFrame = 0;
+  /** Monotonic, low-pass-smoothed framing radius the live camera eases toward.
+   *  0 = not yet initialized (first follow snaps the camera out to it). */
+  private liveCamRadius = 0;
+  /** Active animated 3D reframe, driven by the render loop. Re-reads the graph
+   *  bounds every frame and eases toward them, staying active until the layout
+   *  stops expanding — the end-of-build full settle (release-pins) keeps
+   *  spreading the graph AFTER the build finalizes, so a one-shot fit to the
+   *  pre-settle bounds would leave a big graph zoomed-in. null when idle. */
+  private fit3D: {
+    smoothR: number;
+    cx: number;
+    cy: number;
+    cz: number;
+    init: boolean;
+    stableFrames: number;
+    lastRadius: number;
+  } | null = null;
+  /** Allocated capacity (in nodes / edges) of the GPU buffers. During live-build
+   *  the buffers are over-allocated so streamed batches append in place instead
+   *  of rebuilding all geometry — keeps the build continuous + high-FPS. */
+  private nodeCapacity = 0;
+  private edgeCapacity = 0;
+  /** Edge keys (`src-label-tgt`) currently held — lets the live-build append
+   *  dedup streamed links (incl. ones whose endpoints arrived earlier). */
+  private edgeKeySet: Set<string> = new Set();
 
   // ── Labels (HTML/CSS overlay) ──────────────────────────────────────
   private nodeLabelLayer: HTMLDivElement | null = null;
@@ -656,11 +735,17 @@ export class ThreeRenderer {
         this.pingSprites.size === 0 &&
         this.buildAnim === null &&
         this.traversalAnim === null &&
-        !this.ambientActive
+        !this.ambientActive &&
+        !this.liveGrowActive &&
+        this.fit3D === null
       )
         return;
       this.needsRender = false;
       if (this.buildAnim) this.updateBuildAnim(performance.now());
+      if (this.liveGrowActive) this.updateLiveGrow(performance.now());
+      // Animated final fit (smooth end-of-build reframe). Keep drawing while
+      // it eases; it clears itself when it reaches the goal.
+      if (this.fit3D && this.stepFit3D()) this.needsRender = true;
       if (this.traversalAnim) this.updateTraversalAnim(performance.now());
       if (this.ambientActive) this.updateAmbient(performance.now());
       if (this.nodeMaterial) {
@@ -697,7 +782,8 @@ export class ThreeRenderer {
       this.pingSprites.size === 0 &&
       this.buildAnim === null &&
       this.traversalAnim === null &&
-      !this.ambientActive
+      !this.ambientActive &&
+      !this.liveGrowActive
     )
       return;
     this.needsRender = false;
@@ -735,6 +821,7 @@ export class ThreeRenderer {
     }
 
     if (this.buildAnim) this.updateBuildAnim(performance.now());
+    if (this.liveGrowActive) this.updateLiveGrow(performance.now());
     if (this.traversalAnim) this.updateTraversalAnim(performance.now());
     if (this.ambientActive) this.updateAmbient(performance.now());
 
@@ -1170,12 +1257,17 @@ export class ThreeRenderer {
     this.layoutSettled = false;
 
     const n = graphNodes.length;
-    this.posArray = new Float32Array(n * 3);
-    this.layoutPos = new Float32Array(n * 3);
-    this.colorArray = new Float32Array(n * 3);
-    this.sizeArray = new Float32Array(n);
-    this.stateArray = new Float32Array(n);
-    this.pickColorArray = new Float32Array(n * 3);
+    // During live-build, over-allocate so streamed batches append in place
+    // (no per-batch geometry rebuild). Buffers hold `nodeCapacity` nodes; only
+    // the first `n` are used now, and drawRange limits what's rendered.
+    const cap = this.liveGrowActive ? Math.max(n, 4096) : n;
+    this.nodeCapacity = cap;
+    this.posArray = new Float32Array(cap * 3);
+    this.layoutPos = new Float32Array(cap * 3);
+    this.colorArray = new Float32Array(cap * 3);
+    this.sizeArray = new Float32Array(cap);
+    this.stateArray = new Float32Array(cap);
+    this.pickColorArray = new Float32Array(cap * 3);
 
     for (let i = 0; i < n; i++) {
       const gn = graphNodes[i];
@@ -1222,7 +1314,11 @@ export class ThreeRenderer {
           : n > LOD_AUTO_THRESHOLD;
     this.buildNodePoints();
     this.buildEdgeObjects();
-    this.zoomToFit(0);
+    if (this.liveGrowActive) {
+      this.applyLiveGrowAfterRebuild();
+    } else {
+      this.zoomToFit(0);
+    }
     // If a build animation was armed (post-index), collapse the freshly-built
     // graph NOW — before the first paint — so the finished graph never flashes
     // before the burst. Held collapsed until playBuildAnimation() fires.
@@ -1234,7 +1330,9 @@ export class ThreeRenderer {
     linkColors: Map<string, string>,
   ): void {
     this.edges = [];
-    const seen = new Set<string>();
+    // Reuse the persisted key set so live-build appends can dedup against it.
+    this.edgeKeySet = new Set<string>();
+    const seen = this.edgeKeySet;
     for (const gl of graphLinks) {
       const sourceId =
         typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
@@ -1266,6 +1364,8 @@ export class ThreeRenderer {
     geo.setAttribute('aSize', new BufferAttribute(this.sizeArray, 1));
     geo.setAttribute('aState', new BufferAttribute(this.stateArray, 1));
     geo.setAttribute('aPickColor', new BufferAttribute(this.pickColorArray, 3));
+    // Buffers may be over-allocated (live-build) — only draw the real nodes.
+    geo.setDrawRange(0, this.nodeArray.length);
     const points = new Points(geo, this.nodeMaterial);
     points.frustumCulled = false; // we manage culling; bounds change every tick
     points.renderOrder = 1; // draw nodes on top of edges
@@ -1281,13 +1381,17 @@ export class ThreeRenderer {
   private buildEdgeObjects(): void {
     if (!this.scene || !this.edgeMaterial) return;
     const m = this.edges.length;
-    this.edgePosArray = new Float32Array(m * 2 * 3);
-    this.edgeColorArray = new Float32Array(m * 2 * 3);
-    this.edgeAlphaArray = new Float32Array(m * 2);
+    // Over-allocate during live-build so appended edges don't rebuild geometry.
+    const cap = this.liveGrowActive ? Math.max(m, 8192) : m;
+    this.edgeCapacity = cap;
+    this.edgePosArray = new Float32Array(cap * 2 * 3);
+    this.edgeColorArray = new Float32Array(cap * 2 * 3);
+    this.edgeAlphaArray = new Float32Array(cap * 2);
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(this.edgePosArray, 3));
     geo.setAttribute('aColor', new BufferAttribute(this.edgeColorArray, 3));
     geo.setAttribute('aAlpha', new BufferAttribute(this.edgeAlphaArray, 1));
+    geo.setDrawRange(0, m * 2);
     const lines = new LineSegments(geo, this.edgeMaterial);
     lines.frustumCulled = false;
     this.edgeGeometry = geo;
@@ -1526,6 +1630,20 @@ export class ThreeRenderer {
     linkColors: Map<string, string>,
   ): Promise<void> {
     if (this.destroyed) return;
+    // Live-build: snapshot current rendered (eased) positions by id so they
+    // survive the full setData() rebuild below.
+    if (this.liveGrowActive) {
+      const snap = new Map<string, [number, number, number]>();
+      for (let i = 0; i < this.nodeArray.length; i++) {
+        const i3 = i * 3;
+        snap.set(this.nodeArray[i].id, [
+          this.posArray[i3],
+          this.posArray[i3 + 1],
+          this.posArray[i3 + 2],
+        ]);
+      }
+      this.liveGrowPrevPos = snap;
+    }
     // Merge into existing graphNode/link lists, then rebuild.
     const mergedNodes = this.nodeArray.map((n) => n.graphNode);
     for (const gn of newNodes) {
@@ -1553,29 +1671,31 @@ export class ThreeRenderer {
    *  z is 0 in 2D mode. */
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const len = Math.min(this.nodeArray.length, Math.floor(buffer.length / 3));
-    // During a build the layout streams into layoutPos (the burst's live fly-out
-    // targets); the burst writes the rendered posArray itself. Outside a build,
-    // it writes posArray directly.
-    const pos = this.buildAnim ? this.layoutPos : this.posArray;
+    // During a build OR live-build the layout streams into layoutPos (the
+    // animation's fly-out / follow targets) and the animation writes the
+    // rendered posArray itself. Outside both, it writes posArray directly.
+    const toTargets = this.buildAnim !== null || this.liveGrowActive;
+    const pos = toTargets ? this.layoutPos : this.posArray;
     for (let i = 0; i < len; i++) {
       const o = i * 3;
       pos[o] = buffer[o];
       pos[o + 1] = buffer[o + 1];
       pos[o + 2] = buffer[o + 2];
     }
-    if (this.buildAnim) this.requestRender();
+    if (toTargets) this.requestRender();
     else this.markPositionsDirty();
   }
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    const pos = this.buildAnim ? this.layoutPos : this.posArray;
+    const toTargets = this.buildAnim !== null || this.liveGrowActive;
+    const pos = toTargets ? this.layoutPos : this.posArray;
     for (const [id, p] of positions) {
       const i = this.nodeIdToIndex.get(id);
       if (i === undefined) continue;
       pos[i * 3] = p.x;
       pos[i * 3 + 1] = p.y;
     }
-    if (this.buildAnim) this.requestRender();
+    if (toTargets) this.requestRender();
     else this.markPositionsDirty();
   }
 
@@ -2645,8 +2765,18 @@ export class ThreeRenderer {
       this.ambientActive = true;
       this.requestRender();
     } else {
-      // Snap back to the captured centre so we don't freeze at a drifted offset.
-      if (this.ambientHome && this.nodeGeometry) {
+      // Snap back to the captured centre so we don't freeze at a drifted
+      // offset — but ONLY if the snapshot still matches the current node count.
+      // The graph can grow or shrink while ambient is active (e.g. live-build
+      // indexing streams nodes in, or switching repos resets the graph), which
+      // makes `ambientHome` a different length than `posArray`; restoring it
+      // then would either corrupt positions or throw `offset is out of bounds`.
+      if (
+        this.ambientHome &&
+        this.nodeGeometry &&
+        this.ambientHome.length === this.nodeArray.length * 3 &&
+        this.ambientHome.length <= this.posArray.length
+      ) {
         this.posArray.set(this.ambientHome);
         (
           this.nodeGeometry.getAttribute('position') as BufferAttribute
@@ -2672,7 +2802,10 @@ export class ThreeRenderer {
     const t = (now - this.ambientStart) * 0.001; // seconds
     const A = this.ambientAmplitude;
     const is3D = this.mode3d;
-    const n = this.nodeArray.length;
+    // Bound by the snapshot length too: if the graph grew since ambient
+    // started, the extra nodes have no `home` entry — skip them rather than
+    // read past the end (which would write NaN positions).
+    const n = Math.min(this.nodeArray.length, (home.length / 3) | 0);
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       const p = i * 0.7; // per-node phase offset
@@ -3119,6 +3252,180 @@ export class ThreeRenderer {
     return { center, radius };
   }
 
+  /** Smooth 3D camera follow for live-build: eases the orbit distance + target
+   *  toward the LAYOUT-TARGET bounds (stable — not the animating render
+   *  positions, which oscillate from the fly-out pop and would make the camera
+   *  pulse). Keeps the view direction + auto-rotate; low alpha = gentle pull
+   *  back as the graph grows, no per-frame snapping. */
+  private liveCameraFollow(): void {
+    if (!this.controls || !this.perspCamera) return;
+    const n = this.nodeArray.length;
+    if (n === 0) return;
+    const lp = this.layoutPos;
+    let minX = Infinity,
+      minY = Infinity,
+      minZ = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity,
+      maxZ = -Infinity;
+    // Frame ALL nodes against their layout target (not just "settled" ones).
+    // The old settled-only gate meant that when parsing is fast — the whole
+    // graph arrives before any node crosses GROW_REVEAL_MS — the camera sat at
+    // its start distance, then SNAPPED out the instant nodes settled. Framing
+    // every node's (stable) layoutPos, with the monotonic+smoothed radius
+    // below, gives a continuous pull-back with no snap and no pulse.
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      if (!this.nodeArray[i].visible) continue;
+      const o = i * 3;
+      const x = lp[o],
+        y = lp[o + 1],
+        z = lp[o + 2];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+      count++;
+    }
+    if (minX === Infinity) return;
+    const cx = (minX + maxX) / 2,
+      cy = (minY + maxY) / 2,
+      cz = (minZ + maxZ) / 2;
+    const boundsRadius =
+      0.5 * Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+    // Predicted radius from node count grows CONTINUOUSLY (sqrt), so the camera
+    // can pull back ahead of — and smoother than — the jumpy actual bounds.
+    const predicted = Math.sqrt(count) * LIVE_CAM_RADIUS_PER_SQRT;
+    const rawTarget = Math.max(boundsRadius, predicted);
+
+    if (this.liveCamRadius === 0) {
+      // First frame with settled nodes: snap the camera OUT to a generous
+      // distance so subsequent growth barely moves it (smooth from the start).
+      this.liveCamRadius = rawTarget;
+      const startDist = Math.max(
+        rawTarget * LIVE_CAM_DIST_MULT * LIVE_CAM_START_FACTOR,
+        10,
+      );
+      const tgt0 = this.controls.target;
+      tgt0.set(cx, cy, cz);
+      const dir0 = new Vector3().subVectors(this.perspCamera.position, tgt0);
+      if (dir0.lengthSq() < 1e-6) dir0.set(0, 0, 1);
+      dir0.normalize().multiplyScalar(startDist);
+      this.perspCamera.position.copy(tgt0).add(dir0);
+      this.controls.update();
+      return;
+    }
+
+    // Low-pass toward the raw target, but MONOTONIC — never let the framing
+    // radius shrink mid-build (that pumps the camera in/out). The final fit
+    // at end-of-build tightens the framing once.
+    const smoothed =
+      this.liveCamRadius +
+      (rawTarget - this.liveCamRadius) * LIVE_CAM_RADIUS_SMOOTH;
+    this.liveCamRadius = Math.max(this.liveCamRadius, smoothed);
+    const desiredDist = Math.max(this.liveCamRadius * LIVE_CAM_DIST_MULT, 10);
+
+    const a = LIVE_CAM_FOLLOW;
+    const tgt = this.controls.target;
+    tgt.x += (cx - tgt.x) * a;
+    tgt.y += (cy - tgt.y) * a;
+    tgt.z += (cz - tgt.z) * a;
+    const dir = new Vector3().subVectors(this.perspCamera.position, tgt);
+    let curDist = dir.length();
+    if (curDist < 1e-6) {
+      dir.set(0, 0, 1);
+      curDist = 1;
+    }
+    const newDist = curDist + (desiredDist - curDist) * a;
+    dir.normalize().multiplyScalar(newDist);
+    this.perspCamera.position.copy(tgt).add(dir);
+    this.controls.update();
+  }
+
+  /** Begin an animated 3D reframe that TRACKS the graph bounds as they change
+   *  (the post-build full settle keeps expanding the layout). Driven by the
+   *  render loop via {@link stepFit3D}; ends once the layout stabilizes + the
+   *  camera has caught up. */
+  private animateReframe3D(): void {
+    if (!this.controls || !this.perspCamera || this.hasUserMovedCamera) return;
+    this.fit3D = {
+      smoothR: 0,
+      cx: 0,
+      cy: 0,
+      cz: 0,
+      init: false,
+      stableFrames: 0,
+      lastRadius: 0,
+    };
+    this.requestRender();
+  }
+
+  /** One eased step of the tracking reframe. Re-reads bounds each frame, eases
+   *  toward radius × LIVE_CAM_DIST_MULT, and stays active until the required
+   *  distance has held steady for ~0.5s AND the camera has converged. Returns
+   *  true while still animating (so the render loop keeps drawing). */
+  private stepFit3D(): boolean {
+    const f = this.fit3D;
+    if (!f || !this.controls || !this.perspCamera) return false;
+    if (this.hasUserMovedCamera) {
+      this.fit3D = null;
+      return false;
+    }
+    const b = this.computeBounds3D();
+    // Low-pass BOTH the radius and the center: during the settle the positions
+    // jitter frame to frame (a single flung node spikes the extent, and the
+    // min/max midpoint swings as different nodes become the extremes), so
+    // easing straight at the raw bounds looks choppy. Smoothing gives the
+    // camera a calm target for both distance and orbit center.
+    const rl = 0.1;
+    if (!f.init) {
+      f.init = true;
+      f.smoothR = b.radius;
+      f.cx = b.center.x;
+      f.cy = b.center.y;
+      f.cz = b.center.z;
+    } else {
+      f.smoothR += (b.radius - f.smoothR) * rl;
+      f.cx += (b.center.x - f.cx) * rl;
+      f.cy += (b.center.y - f.cy) * rl;
+      f.cz += (b.center.z - f.cz) * rl;
+    }
+    const desiredDist = Math.max(f.smoothR * LIVE_CAM_DIST_MULT, 10);
+    const a = 0.06;
+    const tgt = this.controls.target;
+    tgt.x += (f.cx - tgt.x) * a;
+    tgt.y += (f.cy - tgt.y) * a;
+    tgt.z += (f.cz - tgt.z) * a;
+    const dir = new Vector3().subVectors(this.perspCamera.position, tgt);
+    let cur = dir.length();
+    if (cur < 1e-6) {
+      dir.set(0, 0, 1);
+      cur = 1;
+    }
+    const nd = cur + (desiredDist - cur) * a;
+    dir.normalize().multiplyScalar(nd);
+    this.perspCamera.position.copy(tgt).add(dir);
+    this.controls.update();
+    // End only once the RAW bounds have stopped changing for a while AND the
+    // smoothed radius has caught up to the CURRENT bounds AND the camera has
+    // converged. Keying "stable" off the raw radius (not the smoothed one) +
+    // requiring catch-up means a transient extent spike during the settle
+    // (a node briefly flung far) can't freeze the camera zoomed too far out —
+    // the smoothed radius decays back to the real bounds before we stop.
+    if (Math.abs(b.radius - f.lastRadius) < b.radius * 0.01) f.stableFrames++;
+    else f.stableFrames = 0;
+    f.lastRadius = b.radius;
+    const caughtUp = Math.abs(f.smoothR - b.radius) < b.radius * 0.05;
+    const converged = Math.abs(nd - desiredDist) < desiredDist * 0.02;
+    if (caughtUp && converged && f.stableFrames > 30) {
+      this.fit3D = null;
+      return false;
+    }
+    return true;
+  }
+
   /** Reposition the orbit camera to frame the given bounds, keeping the
    *  current view direction. */
   private reframe3D(b: { center: Vector3; radius: number }): void {
@@ -3177,6 +3484,494 @@ export class ThreeRenderer {
   /** True while a build replay is in flight. */
   isBuildAnimating(): boolean {
     return this.buildAnim !== null;
+  }
+
+  // ─── Live-build ("build the graph while indexing") ────────────────────
+
+  /** Enter continuous live-build mode: incremental data updates animate in —
+   *  newly-added nodes fly out from their parent + scale up (the build-burst
+   *  pop), already-placed nodes stay put (kept stable by worker-side pinning).
+   *  Does NOT restart on each add. Camera follows the growing graph. */
+  beginLiveGrow(): void {
+    if (this.liveGrowActive) return;
+    this.liveGrowActive = true;
+    this.liveGrowFinishAt = null;
+    this.liveGrowLastBirth = 0;
+    this.liveGrowPrevPos = null;
+    this.liveCamRadius = 0;
+    const n = this.nodeArray.length;
+    this.growBirth = new Float32Array(n).fill(GROW_BORN);
+    this.growParent = new Int32Array(n).fill(-1);
+    this.growTargetSize = this.sizeArray.slice();
+    this.requestRender();
+  }
+
+  /** Begin leaving live-build GRACEFULLY: stop accepting new nodes but keep
+   *  animating so in-flight grow-ins finish, then finalize. */
+  endLiveGrow(): void {
+    if (!this.liveGrowActive || this.liveGrowFinishAt !== null) return;
+    this.liveGrowFinishAt = Math.max(
+      performance.now(),
+      this.liveGrowLastBirth + GROW_REVEAL_MS,
+    );
+    this.requestRender();
+  }
+
+  private finalizeLiveGrow(): void {
+    this.liveGrowActive = false;
+    this.liveGrowFinishAt = null;
+    this.liveGrowPrevPos = null;
+    if (this.nodeGeometry && this.nodeArray.length > 0) {
+      const n = this.nodeArray.length;
+      for (let i = 0; i < n; i++) {
+        this.posArray[i * 3] = this.layoutPos[i * 3];
+        this.posArray[i * 3 + 1] = this.layoutPos[i * 3 + 1];
+        this.posArray[i * 3 + 2] = this.layoutPos[i * 3 + 2];
+        this.sizeArray[i] = this.growTargetSize[i] ?? this.sizeArray[i];
+      }
+      (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+        true;
+      (
+        this.nodeGeometry.getAttribute('position') as BufferAttribute
+      ).needsUpdate = true;
+      this.updateEdgePositions();
+      this.updateEdgeAlpha();
+    }
+    // Smoothly settle into the final framing (3D animates the reframe; 2D uses
+    // the eased zoomToFit). This catches up any zoom the live follow didn't
+    // finish when parsing was fast — no end snap.
+    if (!this.hasUserMovedCamera) {
+      if (this.mode3d) this.animateReframe3D();
+      else this.zoomToFit(800);
+    }
+    this.requestRender();
+  }
+
+  /** Reconcile render state after a live-build rebuild: existing nodes keep
+   *  their eased positions + stay settled; new nodes start collapsed at an
+   *  existing neighbour and are scheduled to grow in. */
+  private applyLiveGrowAfterRebuild(): void {
+    const n = this.nodeArray.length;
+    if (n === 0 || !this.nodeGeometry) {
+      this.liveGrowPrevPos = null;
+      return;
+    }
+    const prev = this.liveGrowPrevPos ?? new Map();
+    this.layoutPos.set(this.posArray); // setData filled posArray = layout targets
+    // Allocate grow arrays at the buffer CAPACITY (not n) so later appends past
+    // n stay in-bounds.
+    const cap = Math.max(this.nodeCapacity, n);
+    this.growTargetSize = this.sizeArray.slice(0, cap);
+    this.growBirth = new Float32Array(cap).fill(GROW_BORN);
+    this.growParent = new Int32Array(cap).fill(-1);
+
+    const adj: number[][] = Array.from({ length: n }, () => []);
+    for (const e of this.edges) {
+      adj[e.sourceIdx].push(e.targetIdx);
+      adj[e.targetIdx].push(e.sourceIdx);
+    }
+
+    const now = performance.now();
+    for (let i = 0; i < n; i++) {
+      const p = prev.get(this.nodeArray[i].id);
+      if (p) {
+        this.posArray[i * 3] = p[0];
+        this.posArray[i * 3 + 1] = p[1];
+        this.posArray[i * 3 + 2] = p[2];
+      }
+    }
+    // BFS the NEW nodes outward from the existing frontier so each flies out
+    // from a parent that's already on screen (or an earlier-born sibling), and
+    // stagger their births by BFS rank — an organic ripple, like the burst,
+    // instead of the whole batch popping at once.
+    const isNew = (i: number) => !prev.has(this.nodeArray[i].id);
+    const visited = new Uint8Array(n);
+    const order: number[] = [];
+    const queue: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (!isNew(i) || visited[i]) continue;
+      let existingParent = -1;
+      for (const nb of adj[i]) {
+        if (!isNew(nb)) {
+          existingParent = nb;
+          break;
+        }
+      }
+      if (existingParent >= 0) {
+        visited[i] = 1;
+        this.growParent[i] = existingParent;
+        queue.push(i);
+        order.push(i);
+      }
+    }
+    for (let head = 0; head < queue.length; head++) {
+      const cur = queue[head];
+      for (const nb of adj[cur]) {
+        if (isNew(nb) && !visited[nb]) {
+          visited[nb] = 1;
+          this.growParent[nb] = cur;
+          queue.push(nb);
+          order.push(nb);
+        }
+      }
+    }
+    // New nodes disconnected from the existing frontier (rare) — append last.
+    for (let i = 0; i < n; i++) {
+      if (isNew(i) && !visited[i]) {
+        this.growParent[i] = adj[i].length ? adj[i][0] : -1;
+        order.push(i);
+      }
+    }
+    const total = Math.max(1, order.length);
+    for (let r = 0; r < order.length; r++) {
+      const i = order[r];
+      const h = ((i * 2654435761) >>> 0) / 4294967295; // deterministic jitter
+      const birth = now + (r / total) * GROW_STAGGER_MS + (h - 0.5) * 140;
+      this.growBirth[i] = birth;
+      if (birth > this.liveGrowLastBirth) this.liveGrowLastBirth = birth;
+      this.sizeArray[i] = 0;
+      const pa = this.growParent[i];
+      if (pa >= 0) {
+        this.posArray[i * 3] = this.posArray[pa * 3];
+        this.posArray[i * 3 + 1] = this.posArray[pa * 3 + 1];
+        this.posArray[i * 3 + 2] = this.posArray[pa * 3 + 2];
+      }
+    }
+    (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+      true;
+    (
+      this.nodeGeometry.getAttribute('position') as BufferAttribute
+    ).needsUpdate = true;
+    this.liveGrowPrevPos = null;
+    this.requestRender();
+  }
+
+  /** Per-frame live-build tick: settled nodes glide toward their (pinned-stable)
+   *  layout target; freshly-born nodes fly out from their parent's current spot
+   *  with the easeOutBack pop; camera tracks the growing graph. */
+  private updateLiveGrow(now: number): void {
+    if (!this.nodeGeometry || this.nodeArray.length === 0) {
+      if (this.liveGrowFinishAt !== null && now >= this.liveGrowFinishAt)
+        this.finalizeLiveGrow();
+      return;
+    }
+    // Soft overshoot (near-eased) — see GROW_BACK_C1. The burst uses a stronger
+    // pop, but that's on a settled graph; here the target is still moving.
+    const c1 = GROW_BACK_C1;
+    const c3 = c1 + 1;
+    const backOut = (x: number) => {
+      const u = x - 1;
+      return 1 + c3 * u * u * u + c1 * u * u;
+    };
+    const pos = this.posArray;
+    const sz = this.sizeArray;
+    const lp = this.layoutPos;
+    const tgt = this.growTargetSize;
+    const birth = this.growBirth;
+    const parent = this.growParent;
+    const a = GROW_FOLLOW_ALPHA;
+    const n = this.nodeArray.length;
+    for (let i = 0; i < n; i++) {
+      const o = i * 3;
+      const p = (now - birth[i]) / GROW_REVEAL_MS;
+      if (p >= 1) {
+        sz[i] = tgt[i];
+        pos[o] += (lp[o] - pos[o]) * a;
+        pos[o + 1] += (lp[o + 1] - pos[o + 1]) * a;
+        pos[o + 2] += (lp[o + 2] - pos[o + 2]) * a;
+        continue;
+      }
+      const pa = parent[i];
+      const fx = pa >= 0 ? pos[pa * 3] : lp[o];
+      const fy = pa >= 0 ? pos[pa * 3 + 1] : lp[o + 1];
+      const fz = pa >= 0 ? pos[pa * 3 + 2] : lp[o + 2];
+      if (p <= 0) {
+        sz[i] = 0;
+        pos[o] = fx;
+        pos[o + 1] = fy;
+        pos[o + 2] = fz;
+        continue;
+      }
+      const e = backOut(p);
+      sz[i] = tgt[i] * e;
+      pos[o] = fx + (lp[o] - fx) * e;
+      pos[o + 1] = fy + (lp[o + 1] - fy) * e;
+      pos[o + 2] = fz + (lp[o + 2] - fz) * e;
+    }
+    (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
+      true;
+    (
+      this.nodeGeometry.getAttribute('position') as BufferAttribute
+    ).needsUpdate = true;
+    // Per-frame edge + camera work is O(edges)/O(n) — throttle on big graphs so
+    // the build stays smooth (positions still update every frame; only the edge
+    // redraw + camera ease are skipped on intervening frames).
+    const f = ++this.liveGrowFrame;
+    const heavy = n > 4000;
+    if (
+      this.edgeLines &&
+      !this.edgesHiddenForInteraction &&
+      (!heavy || f % 2 === 0)
+    ) {
+      this.updateEdgePositions();
+    }
+    // Keep the growing graph framed with a GENTLE eased follow (no per-frame
+    // snap — that pulsed the camera). Backs off once the user moves it.
+    if (!this.hasUserMovedCamera && (!heavy || f % 3 === 0)) {
+      if (this.mode3d) this.liveCameraFollow();
+      else this.scheduleAutoFit();
+    }
+    if (this.liveGrowFinishAt !== null && now >= this.liveGrowFinishAt)
+      this.finalizeLiveGrow();
+    else this.requestRender();
+  }
+
+  /** Append a streamed batch into the pre-allocated live-build buffers WITHOUT
+   *  rebuilding geometry. Receives the FULL current graph and diffs against what
+   *  it already holds, so it also catches edges whose endpoints arrived earlier.
+   *  New nodes are scheduled to grow in (BFS-staggered fly-out). This is what
+   *  makes the live build continuous + high-FPS (vs a full rebuild per batch). */
+  appendLiveData(
+    allNodes: GraphNode[],
+    allLinks: GraphLink[],
+    positions: Map<string, { x: number; y: number }>,
+    nodeColors: Map<string, string>,
+    nodeSizes: Map<string, number>,
+    linkColors: Map<string, string>,
+  ): void {
+    if (this.destroyed || !this.nodeGeometry || !this.liveGrowActive) return;
+    const oldN = this.nodeArray.length;
+    const fresh: GraphNode[] = [];
+    for (const gn of allNodes) if (!this.nodes.has(gn.id)) fresh.push(gn);
+
+    if (fresh.length > 0) {
+      const newN = oldN + fresh.length;
+      if (newN > this.nodeCapacity) this.growNodeBuffers(newN);
+      for (let k = 0; k < fresh.length; k++) {
+        const i = oldN + k;
+        const gn = fresh[k];
+        const pos = positions.get(gn.id) ?? { x: 0, y: 0 };
+        const color = nodeColors.get(gn.id) ?? FALLBACK_COLOR;
+        const size = nodeSizes.get(gn.id) ?? 4;
+        const o = i * 3;
+        this.layoutPos[o] = pos.x;
+        this.layoutPos[o + 1] = pos.y;
+        this.layoutPos[o + 2] = 0;
+        this.posArray[o] = pos.x;
+        this.posArray[o + 1] = pos.y;
+        this.posArray[o + 2] = 0;
+        hexToRgb(color, this.tmpColor);
+        this.colorArray[o] = this.tmpColor.r;
+        this.colorArray[o + 1] = this.tmpColor.g;
+        this.colorArray[o + 2] = this.tmpColor.b;
+        this.sizeArray[i] = 0; // grows in
+        this.growTargetSize[i] = size;
+        this.stateArray[i] = NODE_STATE_VISIBLE;
+        const id = i + 1;
+        this.pickColorArray[o] = (id & 255) / 255;
+        this.pickColorArray[o + 1] = ((id >> 8) & 255) / 255;
+        this.pickColorArray[o + 2] = ((id >> 16) & 255) / 255;
+        this.growBirth[i] = GROW_BORN;
+        this.growParent[i] = -1;
+        const node: ThreeNode = {
+          id: gn.id,
+          graphNode: gn,
+          size,
+          color,
+          visible: true,
+        };
+        this.nodeIdToIndex.set(gn.id, i);
+        this.nodeArray.push(node);
+        this.nodes.set(gn.id, node);
+      }
+    }
+
+    const startM = this.edges.length;
+    this.appendLiveEdges(allLinks, linkColors);
+
+    if (fresh.length > 0) {
+      this.scheduleGrowIn(oldN, startM);
+      this.nodeGeometry.setDrawRange(0, this.nodeArray.length);
+      for (const a of ['position', 'aColor', 'aSize', 'aState', 'aPickColor']) {
+        (this.nodeGeometry.getAttribute(a) as BufferAttribute).needsUpdate =
+          true;
+      }
+    }
+    this.requestRender();
+  }
+
+  /** Append links not yet held (dedup by key) into the edge buffers in place. */
+  private appendLiveEdges(
+    allLinks: GraphLink[],
+    linkColors: Map<string, string>,
+  ): void {
+    if (!this.edgeGeometry) return;
+    const startM = this.edges.length;
+    for (const gl of allLinks) {
+      const sId =
+        typeof gl.source === 'string' ? gl.source : (gl.source as GraphNode).id;
+      const tId =
+        typeof gl.target === 'string' ? gl.target : (gl.target as GraphNode).id;
+      const key = `${sId}-${gl.label}-${tId}`;
+      if (this.edgeKeySet.has(key)) continue;
+      const si = this.nodeIdToIndex.get(sId);
+      const ti = this.nodeIdToIndex.get(tId);
+      if (si === undefined || ti === undefined) continue; // endpoint not in yet
+      this.edgeKeySet.add(key);
+      const m = this.edges.length;
+      if (m + 1 > this.edgeCapacity) this.growEdgeBuffers(m + 1);
+      this.edges.push({
+        sourceId: sId,
+        targetId: tId,
+        sourceIdx: si,
+        targetIdx: ti,
+        label: gl.label,
+        graphLink: gl,
+        color: linkColors.get(gl.label) ?? '#3b4048',
+      });
+    }
+    if (this.edges.length === startM) return;
+    const col = this.edgeColorArray;
+    for (let i = startM; i < this.edges.length; i++) {
+      hexToRgb(this.edges[i].color, this.tmpColor);
+      const o = i * 6;
+      col[o] = col[o + 3] = this.tmpColor.r;
+      col[o + 1] = col[o + 4] = this.tmpColor.g;
+      col[o + 2] = col[o + 5] = this.tmpColor.b;
+    }
+    this.edgeGeometry.setDrawRange(0, this.edges.length * 2);
+    (this.edgeGeometry.getAttribute('aColor') as BufferAttribute).needsUpdate =
+      true;
+  }
+
+  /** Schedule grow-in for the appended nodes [oldN, n): BFS outward from the
+   *  existing frontier (using the just-appended edges [startM, …]) and stagger
+   *  births so the batch ripples in rather than popping at once. */
+  private scheduleGrowIn(oldN: number, startM: number): void {
+    const n = this.nodeArray.length;
+    // Adjacency only over edges that touch a new node (the appended ones).
+    const adj = new Map<number, number[]>();
+    for (let e = startM; e < this.edges.length; e++) {
+      const { sourceIdx: s, targetIdx: t } = this.edges[e];
+      (adj.get(s) ?? adj.set(s, []).get(s)!).push(t);
+      (adj.get(t) ?? adj.set(t, []).get(t)!).push(s);
+    }
+    const isNew = (i: number) => i >= oldN;
+    const visited = new Uint8Array(n - oldN);
+    const order: number[] = [];
+    const queue: number[] = [];
+    for (let i = oldN; i < n; i++) {
+      const nbrs = adj.get(i);
+      if (!nbrs) continue;
+      let existingParent = -1;
+      for (const nb of nbrs)
+        if (!isNew(nb)) {
+          existingParent = nb;
+          break;
+        }
+      if (existingParent >= 0 && !visited[i - oldN]) {
+        visited[i - oldN] = 1;
+        this.growParent[i] = existingParent;
+        queue.push(i);
+        order.push(i);
+      }
+    }
+    for (let head = 0; head < queue.length; head++) {
+      const cur = queue[head];
+      for (const nb of adj.get(cur) ?? []) {
+        if (isNew(nb) && !visited[nb - oldN]) {
+          visited[nb - oldN] = 1;
+          this.growParent[nb] = cur;
+          queue.push(nb);
+          order.push(nb);
+        }
+      }
+    }
+    // New nodes with no edge to the existing frontier — append last, pop in place.
+    for (let i = oldN; i < n; i++) {
+      if (!visited[i - oldN]) {
+        const nbrs = adj.get(i);
+        this.growParent[i] = nbrs && nbrs.length ? nbrs[0] : -1;
+        order.push(i);
+      }
+    }
+    const now = performance.now();
+    const total = Math.max(1, order.length);
+    for (let r = 0; r < order.length; r++) {
+      const i = order[r];
+      const h = ((i * 2654435761) >>> 0) / 4294967295;
+      const birth = now + (r / total) * GROW_STAGGER_MS + (h - 0.5) * 140;
+      this.growBirth[i] = birth;
+      if (birth > this.liveGrowLastBirth) this.liveGrowLastBirth = birth;
+      const pa = this.growParent[i];
+      if (pa >= 0) {
+        this.posArray[i * 3] = this.posArray[pa * 3];
+        this.posArray[i * 3 + 1] = this.posArray[pa * 3 + 1];
+        this.posArray[i * 3 + 2] = this.posArray[pa * 3 + 2];
+      }
+    }
+  }
+
+  /** Grow node buffers (capacity doubling) + recreate node geometry. Rare. */
+  private growNodeBuffers(needed: number): void {
+    let cap = Math.max(this.nodeCapacity, 1);
+    while (cap < needed) cap *= 2;
+    const used = this.nodeArray.length;
+    const f3 = (old: Float32Array) => {
+      const a = new Float32Array(cap * 3);
+      a.set(old.subarray(0, used * 3));
+      return a;
+    };
+    const f1 = (old: Float32Array) => {
+      const a = new Float32Array(cap);
+      a.set(old.subarray(0, used));
+      return a;
+    };
+    this.posArray = f3(this.posArray);
+    this.layoutPos = f3(this.layoutPos);
+    this.colorArray = f3(this.colorArray);
+    this.pickColorArray = f3(this.pickColorArray);
+    this.sizeArray = f1(this.sizeArray);
+    this.stateArray = f1(this.stateArray);
+    this.growTargetSize = f1(this.growTargetSize);
+    const gb = new Float32Array(cap).fill(GROW_BORN);
+    gb.set(this.growBirth.subarray(0, used));
+    this.growBirth = gb;
+    const gp = new Int32Array(cap).fill(-1);
+    gp.set(this.growParent.subarray(0, used));
+    this.growParent = gp;
+    this.nodeCapacity = cap;
+    this.disposeNodeObjects();
+    this.buildNodePoints();
+  }
+
+  /** Grow edge buffers (capacity doubling) + recreate edge geometry over them. */
+  private growEdgeBuffers(needed: number): void {
+    if (!this.scene || !this.edgeMaterial) return;
+    let cap = Math.max(this.edgeCapacity, 1);
+    while (cap < needed) cap *= 2;
+    const used = this.edges.length;
+    const fp = (old: Float32Array, stride: number) => {
+      const a = new Float32Array(cap * stride);
+      a.set(old.subarray(0, used * stride));
+      return a;
+    };
+    this.edgePosArray = fp(this.edgePosArray, 6);
+    this.edgeColorArray = fp(this.edgeColorArray, 6);
+    this.edgeAlphaArray = fp(this.edgeAlphaArray, 2);
+    this.edgeCapacity = cap;
+    this.disposeEdgeObjects();
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(this.edgePosArray, 3));
+    geo.setAttribute('aColor', new BufferAttribute(this.edgeColorArray, 3));
+    geo.setAttribute('aAlpha', new BufferAttribute(this.edgeAlphaArray, 1));
+    geo.setDrawRange(0, used * 2);
+    const lines = new LineSegments(geo, this.edgeMaterial);
+    lines.frustumCulled = false;
+    this.edgeGeometry = geo;
+    this.edgeLines = lines;
+    this.scene.add(lines);
+    this.applyEdgeDepthMode();
   }
 
   /** Arm the NEXT setData() to collapse the graph (before first paint) and hold

@@ -72,6 +72,8 @@ export interface UseForceLayout3dResult {
   }) => void;
   /** Switch the running simulation between 2D and 3D. */
   setDimensions: (dimensions: 2 | 3) => void;
+  /** Live-build: release all pinned nodes (gentle relax) when the build ends. */
+  releasePins: () => void;
 }
 
 export function useForceLayout3d(
@@ -85,8 +87,18 @@ export function useForceLayout3d(
   ) => void,
   initialLayoutMode: LayoutMode = 'spread',
   initialDimensions: 2 | 3 = 2,
+  growBuild = false,
 ): UseForceLayout3dResult {
   const [layoutReady, setLayoutReady] = useState(false);
+  // Live-build: when true, incremental adds pin existing nodes so only the new
+  // ones settle (no choppy whole-graph reshuffle). Read via ref so the add
+  // effect sees the current value without re-subscribing.
+  const growBuildRef = useRef(growBuild);
+  growBuildRef.current = growBuild;
+  // Latched true once a live-build has added nodes; suppresses the end-of-build
+  // community-cluster reheat (which would reshuffle the graph). Reset on a full
+  // rebuild (fresh graph).
+  const liveBuiltRef = useRef(false);
   const [simRunning, setSimRunning] = useState(true);
   const simRunningRef = useRef(true);
   const workerRef = useRef<Worker | null>(null);
@@ -192,6 +204,9 @@ export function useForceLayout3d(
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
 
     if (isSameNodes && workerRef.current) {
+      // When Louvain (re)computes — including at the end of a live build — let
+      // the layout cluster into communities so the result matches the finished
+      // graph's shape.
       if (communityData.assignments) {
         workerRef.current.postMessage({
           type: 'set-communities',
@@ -209,6 +224,7 @@ export function useForceLayout3d(
     }
 
     if (isIncremental) {
+      if (growBuildRef.current) liveBuiltRef.current = true;
       const newNodeIds = nodeIds.filter((id) => !prevIds.has(id));
       const links = buildLayoutLinks(nodeIdSet, allLinks);
       const newLinks = links.filter(
@@ -250,6 +266,7 @@ export function useForceLayout3d(
         nodeIds: newNodeIds,
         links: newLinks,
         communities: communityData.assignments,
+        pinExisting: growBuildRef.current,
       } satisfies Worker3DInMessage);
 
       simRunningRef.current = true;
@@ -260,6 +277,7 @@ export function useForceLayout3d(
     workerRef.current?.terminate();
     workerRef.current = null;
     setLayoutReady(false);
+    liveBuiltRef.current = false; // fresh graph — community reheat allowed again
 
     if (allNodes.length === 0) {
       prevNodeIdsRef.current = new Set();
@@ -349,6 +367,12 @@ export function useForceLayout3d(
 
   const reheat = useCallback(() => {
     postToWorker({ type: 'reheat' });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
+  const releasePins = useCallback(() => {
+    postToWorker({ type: 'release-pins' });
     simRunningRef.current = true;
     setSimRunning(true);
   }, [postToWorker]);
@@ -515,5 +539,6 @@ export function useForceLayout3d(
     setLayoutMode,
     updateCompactConfig,
     setDimensions,
+    releasePins,
   };
 }

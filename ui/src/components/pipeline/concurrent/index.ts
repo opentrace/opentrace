@@ -30,11 +30,17 @@ export {
   SummarizeStage,
   StoreStage,
   EmbedStage,
+  createExtractionState,
+  extractFile,
+  mergeExtraction,
 } from './stages';
 export type {
   FileCacheStageConfig,
   ExtractStageConfig,
   EmbedStageConfig,
+  ExtractionState,
 } from './stages';
+export { ExtractPool, defaultPoolSize } from './extractPool';
+export type { ExtractPoolResult, ExtractFileRef } from './extractPool';
 export { PipelineDebugLog } from './debug';
 export type { DebugEntry } from './debug';

@@ -57,7 +57,8 @@ function AppInner({
   onConnectServer,
 }: AppProps) {
   const { store } = useStore();
-  const { loadGraph } = useGraph();
+  const { loadGraph, startLiveStream, pushLiveBatch, endLiveStream } =
+    useGraph();
   const jobService = useJobService();
   const {
     state: jobState,
@@ -66,7 +67,10 @@ function AppInner({
     cancel: cancelJob,
     minimize: minimizeJob,
     reset: resetJob,
-  } = useJobStream(jobService);
+  } = useJobStream(jobService, {
+    onGraphDelta: pushLiveBatch,
+    onLiveEnd: endLiveStream,
+  });
 
   // Fix #14 — after a page reload, if the agent is still running an
   // index job, attach to it so the user sees the progress indicator
@@ -111,23 +115,11 @@ function AppInner({
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
-  // `true` while the IndexingProgress modal should be on top; `false`
-  // when the user has minimized it (JobMinimizedBar takes over).
-  // Default `false` preserves the existing enriching/done flow (bar
-  // takes over automatically after persist). For the new server-mode
-  // running case (Fix #13) we re-expand below via an effect whenever
-  // the job transitions idle → running so the modal surfaces by
-  // default for new submissions.
+  // `true` only when the user explicitly expands the compact LiveIndexingPanel
+  // into the full-screen IndexingProgress modal. Defaults `false`: a new job
+  // shows the bottom-left panel and the graph builds live behind it, rather
+  // than the modal taking over the screen.
   const [jobExpanded, setJobExpanded] = useState(false);
-  /** Previous job status, used by the effect below to detect
-   *  idle → running transitions for the auto-expand. */
-  const prevJobStatus = useRef<typeof jobState.status>(jobState.status);
-  useEffect(() => {
-    if (prevJobStatus.current === 'idle' && jobState.status === 'running') {
-      setJobExpanded(true);
-    }
-    prevJobStatus.current = jobState.status;
-  }, [jobState.status]);
   const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
     null,
   );
@@ -163,9 +155,15 @@ function AppInner({
       }
       setShowAddRepo(false);
       setJobExpanded(false);
+      const isBrowserPipelineJob =
+        !(store instanceof ServerGraphStore) &&
+        (message.type === 'index-repo' ||
+          message.type === 'reindex-repo' ||
+          message.type === 'index-directory');
+      if (isBrowserPipelineJob) startLiveStream();
       startJob(message);
     },
-    [startJob, onConnectServer],
+    [startJob, onConnectServer, store, startLiveStream],
   );
 
   // Index or navigate to a repo by URL — shared by ?repo= param and postMessage

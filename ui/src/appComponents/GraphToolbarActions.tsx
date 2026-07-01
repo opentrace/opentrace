@@ -217,17 +217,11 @@ export const GraphToolbarActionButtons = ({
   showSettings,
   onToggleSettings,
 }: GraphToolbarActionButtonsProps) => {
-  // 'running' is included so the JobMinimizedBar surfaces as the
-  // persistent indicator after the user clicks the new Minimize
-  // button on the IndexingProgress modal (Fix #13). Previously the
-  // bar only appeared post-persist; server-mode jobs spend most of
-  // their time in 'running', so an indicator was missing during the
-  // bulk of the work.
-  const showJobMinimized =
-    (jobState.status === 'running' ||
-      jobState.status === 'enriching' ||
-      jobState.status === 'done') &&
-    !jobExpanded;
+  // Running / enriching / persisted now surface in the bottom-left
+  // LiveIndexingPanel (the graph builds live behind it), so the toolbar bar is
+  // only the post-completion "Complete" pill — shown alongside Add Repository
+  // so the user can index another graph without dismissing it first.
+  const showJobMinimized = jobState.status === 'done' && !jobExpanded;
 
   // The Add Repository button is only hidden while a job is actively
   // in progress — once the job is 'done', show it alongside the

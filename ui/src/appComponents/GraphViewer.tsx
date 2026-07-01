@@ -67,6 +67,7 @@ import {
 } from './GraphToolbarActions';
 import { PhysicsPanelContainer } from './PhysicsPanelContainer';
 import { GitHubIcon, GitLabIcon } from './providerIcons';
+import LiveIndexingPanel from './LiveIndexingPanel';
 import ResetConfirmModal from './ResetConfirmModal';
 import type { SidePanelTab } from './SidePanel';
 
@@ -209,6 +210,11 @@ const GraphViewer = memo(
       // per-promise suppression tokens through useGraph.
       const suppressNextFitRef = useRef(false);
 
+      // True once a live-build has run for the current job — the graph built
+      // itself during indexing, so the post-index build burst is suppressed
+      // (it would re-collapse + re-burst = "starting over").
+      const liveGrewRef = useRef(false);
+
       const v = useGraphViewer({
         chatHighlightNodes,
         suppressNextAutoFitRef: suppressNextFitRef,
@@ -242,6 +248,7 @@ const GraphViewer = memo(
         loadGraph,
         setError,
         setRefreshError,
+        isStreaming,
       } = useGraph();
 
       const {
@@ -522,6 +529,13 @@ const GraphViewer = memo(
         null,
       );
 
+      // Track whether the current job built live (drives build-burst suppression
+      // below). The actual begin/end is driven by the canvas `liveGrow` prop.
+      useEffect(() => {
+        if (isStreaming) liveGrewRef.current = true;
+        else if (jobState.status === 'idle') liveGrewRef.current = false;
+      }, [isStreaming, jobState.status]);
+
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
         if (jobState.status === 'persisted') {
@@ -535,6 +549,16 @@ const GraphViewer = memo(
           // streaming: the burst would play on the skeleton, then the rest
           // streams in + the 3D layout develops, reading as a 2D plane
           // expanding to 3D. (Proper streaming+burst integration is deferred.)
+          // A live-built graph is already on screen and IS authoritative — skip
+          // both the build-animation burst AND a full loadGraph, either of which
+          // would reshuffle / "start over". endLiveStream already bumped the
+          // version, loaded stats, and restored node/edge properties in place
+          // (omitted from the live stream for indexing speed) WITHOUT changing
+          // the node set, so the renderer never relayouts.
+          if (liveGrewRef.current) {
+            pendingMinimize.current = true;
+            return;
+          }
           if (!PROGRESSIVE_LOAD_ENABLED) {
             v.canvasRef.current?.armBuildAnimation?.();
           }
@@ -554,6 +578,10 @@ const GraphViewer = memo(
       // vector properties to existing nodes, so the view should not re-animate.
       useEffect(() => {
         if (jobState.status === 'done') {
+          // Skip for live-built graphs — reloading would replace the graph the
+          // user watched build and reshuffle it. (Enrichment only adds vector
+          // properties used by search, not the on-screen structure.)
+          if (liveGrewRef.current) return;
           suppressNextFitRef.current = true;
           loadGraph().finally(() => {
             // Defensive reset: if loadGraph failed or was aborted, the
@@ -567,20 +595,23 @@ const GraphViewer = memo(
       // Expose imperative handle for parent/sibling access
       useImperativeHandle(ref, () => v.buildImperativeHandle(), [v]);
 
-      // Determine whether to show the full indexing progress modal.
-      // 'running' used to always show the modal; now it respects
-      // `jobExpanded` so the user can minimize and keep working
-      // while the agent indexes in the background (Fix #13). App
-      // auto-sets `jobExpanded=true` on every idle → running
-      // transition so the modal still surfaces by default for new
-      // jobs.
-      const showFullModal =
-        ((jobState.status === 'running' ||
-          jobState.status === 'enriching' ||
-          jobState.status === 'done') &&
-          (jobExpanded || (loading && v.isEmpty))) ||
+      // A browser index job is actively producing the graph. While active, the
+      // compact LiveIndexingPanel (bottom-left) is the default surface and the
+      // graph builds live behind it — the full-screen modal is opt-in.
+      const jobActive =
+        jobState.status === 'running' ||
         jobState.status === 'persisted' ||
-        jobState.status === 'error';
+        jobState.status === 'enriching';
+
+      // The full-screen indexing modal is now opt-in: it shows only when the
+      // user explicitly expands the live panel, or on error (which needs the
+      // detailed failure view). Everything else stays in the live panel so the
+      // graph remains visible building in front of the user.
+      const showFullModal = jobExpanded || jobState.status === 'error';
+
+      // The compact live panel owns the running / building / enriching states
+      // whenever the user hasn't expanded to the full modal.
+      const showLivePanel = jobActive && !jobExpanded;
 
       const graphWidth = showChat || showHelp ? width - chatWidth : width;
 
@@ -618,7 +649,13 @@ const GraphViewer = memo(
 
       // --- Early returns for loading/error/empty states ---
 
-      if (loading && v.isEmpty && !showAddRepo && !showFullModal) {
+      if (
+        loading &&
+        v.isEmpty &&
+        !showAddRepo &&
+        !showFullModal &&
+        !jobActive
+      ) {
         return <GraphLoadingState />;
       }
 
@@ -643,7 +680,7 @@ const GraphViewer = memo(
         );
       }
 
-      if (v.isEmpty && !showFullModal) {
+      if (v.isEmpty && !showFullModal && !jobActive) {
         return (
           <GraphInitialEmpty
             showAddRepo={showAddRepo}
@@ -779,11 +816,32 @@ const GraphViewer = memo(
               stages={INDEXING_STAGES}
               onClose={onJobClose}
               onMinimize={
-                jobState.status === 'running' || jobState.status === 'enriching'
+                jobState.status === 'running' ||
+                jobState.status === 'enriching' ||
+                jobState.status === 'persisted'
                   ? onJobMinimize
                   : undefined
               }
             />
+          )}
+
+          {showLivePanel && (
+            <LiveIndexingPanel
+              state={jobState}
+              stages={INDEXING_STAGES}
+              icon={toIndexingProps(jobState, activeRepoUrl).icon}
+              onExpand={onJobExpand}
+              onCancel={onJobCancel}
+            />
+          )}
+
+          {/* While fetching/parsing there's no graph yet — show a calm centered
+              loader (not a black void). The build animation reveals the real
+              graph the moment it's ready. */}
+          {jobActive && v.isEmpty && (
+            <div className="graph-build-loader" aria-hidden>
+              <span className="graph-build-loader__spinner" />
+            </div>
           )}
 
           <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
@@ -815,6 +873,7 @@ const GraphViewer = memo(
             ref={v.canvasRef}
             nodes={graphData.nodes}
             links={graphData.links}
+            liveGrow={isStreaming}
             width={graphWidth}
             height={height}
             layoutConfig={v.layoutConfig}

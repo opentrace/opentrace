@@ -19,8 +19,20 @@ import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
 import type {
   JobResult,
   ProgressDetail,
+  IndexedNode,
+  IndexedRelationship,
 } from '../gen/opentrace/v1/agent_service';
 import type { JobMessage, JobService, JobStream } from './types';
+
+/** Hooks for the live-build graph stream — the browser pipeline emits node /
+ *  relationship batches inline with progress so the graph builds during index. */
+export interface JobStreamHandlers {
+  onGraphDelta?: (
+    nodes: IndexedNode[],
+    relationships: IndexedRelationship[],
+  ) => void;
+  onLiveEnd?: (opts?: { clear?: boolean }) => void;
+}
 
 export type StageStatus = 'pending' | 'active' | 'completed';
 
@@ -65,9 +77,16 @@ const INITIAL_STATE: JobState = {
   stages: {},
 };
 
-export function useJobStream(jobService: JobService) {
+export function useJobStream(
+  jobService: JobService,
+  handlers?: JobStreamHandlers,
+) {
   const [state, setState] = useState<JobState>(INITIAL_STATE);
   const streamRef = useRef<JobStream | null>(null);
+  const handlersRef = useRef(handlers);
+  useEffect(() => {
+    handlersRef.current = handlers;
+  });
 
   /** Consume a JobStream: drive the React state machine from its
    *  events. Shared by `start` (new submissions) and `attach`
@@ -77,6 +96,21 @@ export function useJobStream(jobService: JobService) {
     (async () => {
       try {
         for await (const event of stream) {
+          // Live-build: events carrying node/relationship batches feed the
+          // building graph. A pure batch event (PROGRESS, no detail) has no
+          // stage semantics — forward it and skip the switch.
+          if (event.nodes.length || event.relationships.length) {
+            handlersRef.current?.onGraphDelta?.(
+              event.nodes,
+              event.relationships,
+            );
+            if (
+              event.kind === JobEventKind.JOB_EVENT_KIND_PROGRESS &&
+              !event.detail
+            ) {
+              continue;
+            }
+          }
           switch (event.kind) {
             case JobEventKind.JOB_EVENT_KIND_PROGRESS: {
               const d = event.detail ?? EMPTY_DETAIL;
@@ -131,6 +165,7 @@ export function useJobStream(jobService: JobService) {
               }));
               break;
             case JobEventKind.JOB_EVENT_KIND_GRAPH_READY:
+              handlersRef.current?.onLiveEnd?.();
               setState((s) => ({
                 ...s,
                 status: 'persisted',
@@ -168,6 +203,7 @@ export function useJobStream(jobService: JobService) {
               });
               break;
             case JobEventKind.JOB_EVENT_KIND_ERROR:
+              handlersRef.current?.onLiveEnd?.();
               setState((s) => {
                 // Mark all remaining active stages as completed to stop spinners
                 const finalStages = { ...s.stages };
@@ -252,6 +288,7 @@ export function useJobStream(jobService: JobService) {
   const cancel = useCallback(() => {
     streamRef.current?.cancel();
     streamRef.current = null;
+    handlersRef.current?.onLiveEnd?.({ clear: true });
     setState(INITIAL_STATE);
   }, []);
 
@@ -266,6 +303,7 @@ export function useJobStream(jobService: JobService) {
   const reset = useCallback(() => {
     streamRef.current?.cancel();
     streamRef.current = null;
+    handlersRef.current?.onLiveEnd?.({ clear: true });
     setState(INITIAL_STATE);
   }, []);
 

@@ -123,6 +123,11 @@ export interface GraphCanvasProps {
   cameraTilt?: number;
   /** Called when auto-rotation state changes (e.g. paused on node click). */
   on3DAutoRotateChange?: (autoRotate: boolean) => void;
+  /** When true, the canvas is in continuous live-build mode: incremental data
+   *  updates animate in (new nodes fly out from their parent + scale up; placed
+   *  nodes stay put, pinned in the layout) instead of teleporting/reshuffling.
+   *  Used while indexing so the graph visibly builds itself in real time. */
+  liveGrow?: boolean;
   /** CSS class name for the container div. */
   className?: string;
   /** Inline styles for the container div. */

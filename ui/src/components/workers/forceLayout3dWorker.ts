@@ -82,7 +82,12 @@ export type Worker3DInMessage =
       nodeIds: string[];
       links: { source: string; target: string; w?: number }[];
       communities?: Record<string, number>;
+      /** Live-build: pin all already-present nodes in place so adding new ones
+       *  only solves for the new nodes — existing nodes don't reshuffle (which
+       *  read as choppy). New nodes are seeded next to a connected neighbour. */
+      pinExisting?: boolean;
     }
+  | { type: 'release-pins' }
   | {
       type: 'update-config';
       chargeStrength?: number;
@@ -227,6 +232,13 @@ function startStreaming(): void {
   if (streaming) return;
   streaming = true;
   settled = false;
+  // Each posted frame is an O(n) buffer that the main thread copies in (O(n)).
+  // On a big graph, streaming every 66ms floods the main thread and starves
+  // the parse-worker dispatch → indexing slows as the graph grows. Scale the
+  // interval up with node count (small graphs stay smooth at 66ms; huge ones
+  // stream ~4×/s). buildSimulation is stop/started on every add, so this is
+  // recomputed with the current size each time.
+  const interval = Math.min(240, STREAM_INTERVAL + simNodes.length * 0.0025);
   streamInterval = setInterval(() => {
     if (!sim) return;
     if (sim.alpha() < SETTLE_ALPHA) {
@@ -239,7 +251,7 @@ function startStreaming(): void {
       return;
     }
     postPositions();
-  }, STREAM_INTERVAL);
+  }, interval);
 }
 
 function stopStreaming(): void {
@@ -1283,6 +1295,7 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       if (msg.communities) communities = { ...communities, ...msg.communities };
 
       const existingIds = new Set(simNodes.map((n) => n.id));
+      const posById = new Map<string, { x: number; y: number; z: number }>();
       let cx = 0,
         cy = 0,
         cz = 0;
@@ -1290,6 +1303,7 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         cx += n.x ?? 0;
         cy += n.y ?? 0;
         cz += n.z ?? 0;
+        posById.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
       }
       if (simNodes.length > 0) {
         cx /= simNodes.length;
@@ -1298,16 +1312,40 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       }
       const spread = Math.sqrt(simNodes.length) * 10;
 
+      // Live-build: seed each new node next to a connected EXISTING neighbour
+      // (so it appears near where it belongs), falling back to the centroid.
+      // We deliberately do NOT pin existing nodes — the whole graph keeps
+      // force-settling so the live build CONVERGES to the real final layout
+      // (the finished-graph shape), not a frozen incremental approximation.
+      const neighbourOf = new Map<string, string>();
+      if (msg.pinExisting) {
+        for (const link of msg.links) {
+          if (existingIds.has(link.source) && !existingIds.has(link.target))
+            if (!neighbourOf.has(link.target))
+              neighbourOf.set(link.target, link.source);
+          if (existingIds.has(link.target) && !existingIds.has(link.source))
+            if (!neighbourOf.has(link.source))
+              neighbourOf.set(link.source, link.target);
+        }
+      }
+
       let added = 0;
       for (const id of msg.nodeIds) {
         if (existingIds.has(id)) continue;
+        const anchor = msg.pinExisting
+          ? posById.get(neighbourOf.get(id) ?? '')
+          : undefined;
+        const ax = anchor?.x ?? cx;
+        const ay = anchor?.y ?? cy;
+        const az = anchor?.z ?? cz;
+        const localSpread = anchor ? 30 : spread;
         const angle = Math.random() * Math.PI * 2;
-        const r = Math.random() * spread;
+        const r = Math.random() * localSpread;
         const node: SimNode = {
           id,
-          x: cx + Math.cos(angle) * r,
-          y: cy + Math.sin(angle) * r,
-          z: nDim === 3 ? cz + (Math.random() - 0.5) * spread : 0,
+          x: ax + Math.cos(angle) * r,
+          y: ay + Math.sin(angle) * r,
+          z: nDim === 3 ? az + (Math.random() - 0.5) * localSpread : 0,
         };
         simNodes.push(node);
         nodeIdToIndex.set(id, simNodes.length - 1);
@@ -1329,7 +1367,35 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       sim.stop();
       stopStreaming();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      sim.alpha(0.3).restart();
+      // Live-build adds: a VERY gentle warm-up so each streaming batch barely
+      // nudges the existing layout — settled nodes stay put, so the grow-in
+      // reveal isn't chasing a jumping target (reads as smooth, not jittery).
+      // The final full settle happens once at end-of-build (release-pins).
+      // Non-live adds reheat normally.
+      sim.alpha(msg.pinExisting ? 0.12 : 0.3).restart();
+      settled = false;
+      startStreaming();
+      postPositions();
+      break;
+    }
+
+    case 'release-pins': {
+      if (!sim) break;
+      // Live-build finished — run a FULL settle so the incrementally-built graph
+      // converges into the real finished layout (incremental settling reaches a
+      // looser equilibrium than a from-scratch one; this tightens it into the
+      // end-product shape). Community clustering (set-communities) runs too.
+      for (const n of simNodes) {
+        n.fx = null;
+        n.fy = null;
+        if (nDim === 3) n.fz = null;
+      }
+      // Moderate (not full) reheat: the graph is already partly settled from the
+      // gentle live adds, so alpha 0.55 converges to nearly the same finished
+      // shape with SMALLER steps — much less overshoot / flinging than alpha 1.
+      // That kills the end-of-build "thrash" (choppy) and the transient extent
+      // spikes that were destabilizing the camera fit.
+      sim.alpha(0.55).restart();
       settled = false;
       startStreaming();
       postPositions();

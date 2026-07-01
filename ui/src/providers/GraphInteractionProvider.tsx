@@ -175,7 +175,7 @@ function InternalGraphInteractionProvider({
 }: {
   children: ReactNode;
 }) {
-  const { graphData, graphVersion } = useGraph();
+  const { graphData, graphVersion, isStreaming } = useGraph();
 
   // Selection
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -348,11 +348,13 @@ function InternalGraphInteractionProvider({
   }, [graphVersion, availableSubTypes]);
 
   // ─── Derived: communities (Louvain) ──────────────────────────────────
+  // Suppressed while live-building (per-batch Louvain is the dominant cost);
+  // recomputes once when streaming ends and the authoritative graph loads.
   const communityData = useCommunities(
     graphData.nodes,
     graphData.links,
     DEFAULT_LAYOUT_CONFIG,
-    communitiesEnabled,
+    communitiesEnabled && !isStreaming,
   );
 
   const availableCommunities = useMemo<AvailableCommunity[]>(() => {

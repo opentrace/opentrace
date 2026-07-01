@@ -88,6 +88,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rotationSpeed: rotationSpeedProp,
       cameraTilt: cameraTiltProp,
       on3DAutoRotateChange,
+      liveGrow = false,
       className,
       style,
     } = props;
@@ -207,6 +208,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       setLayoutMode,
       updateCompactConfig,
       setDimensions,
+      releasePins,
     } = useForceLayout3d(
       nodes,
       links,
@@ -215,6 +217,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onLayoutTick,
       layoutModeProp,
       mode3dProp ? 3 : 2,
+      liveGrow,
     );
 
     useEffect(() => {
@@ -250,6 +253,20 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       rendererRef.current?.resize(width, height);
     }, [width, height]);
 
+    // Drive continuous live-build mode. Gated on `layoutReady` so it (re)applies
+    // once the renderer exists — robust to mount ordering. On exit, release the
+    // worker-side node pins so the graph is interactive/re-layoutable again.
+    useEffect(() => {
+      const r = rendererRef.current;
+      if (!r) return;
+      if (liveGrow) {
+        r.beginLiveGrow();
+      } else {
+        r.endLiveGrow();
+        releasePins();
+      }
+    }, [liveGrow, layoutReady, releasePins]);
+
     // ── Set data when layout is ready ───────────────────────────────────
     const prevNodeIdsRef = useRef<Set<string>>(new Set());
     useEffect(() => {
@@ -263,10 +280,26 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       const isSameNodes = allPrevPresent && currentIds.size === prevIds.size;
 
       prevNodeIdsRef.current = currentIds;
-      if (isSameNodes) return;
 
       const posSnapshot = new Map(positions);
       let cancelled = false;
+
+      // Live-build: once the first batch has built the (over-allocated) geometry,
+      // every subsequent change appends the delta in place — no geometry rebuild,
+      // so the build stays continuous + high-FPS. Pass the FULL graph; the
+      // renderer diffs against what it holds (also catching late-arriving edges).
+      if (liveGrow && allPrevPresent && prevIds.size > 0) {
+        rendererRef.current.appendLiveData(
+          nodes,
+          links,
+          posSnapshot,
+          nodeColors,
+          nodeSizes,
+          linkColors,
+        );
+        return;
+      }
+      if (isSameNodes) return;
 
       if (isIncremental) {
         const newNodes = nodes.filter((n) => !prevIds.has(n.id));
@@ -304,7 +337,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         cancelled = true;
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [layoutReady, nodes, links, positions, nodeSizes]);
+    }, [layoutReady, nodes, links, positions, nodeSizes, liveGrow]);
 
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
