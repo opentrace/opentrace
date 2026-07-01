@@ -1154,6 +1154,15 @@ export class PixiRenderer {
       }
       this.applyLabelCulling(wantLabel, lblInv);
     }
+    // A real visibility change (e.g. hiding/un-hiding a community via
+    // `hiddenCommunities`) can leave a wayfinder label floating over a
+    // now-empty community. Mask the labels to the current node
+    // visibility so a fully-hidden community's label drops out — and
+    // reappears when un-hidden. This deliberately does NOT re-run the
+    // overlap cull: the cull decision depends only on geometry, and
+    // re-packing here would let a neighbour steal the freed slot (or
+    // evict several unrelated labels), none of which return on un-hide.
+    this.applyCommunityLabelVisibility();
     if (!this.mode3d) {
       this.redrawAllEdges();
     }
@@ -1875,7 +1884,11 @@ export class PixiRenderer {
     // Sticky-first ordering (Fix #35) is still useful when the cull
     // *does* re-run (e.g. user toggles compact mode off and on, or
     // data refreshes) — keeps the previous decision when nothing
-    // about the geometry forces a change.
+    // about the geometry forces a change. NOTE: this greedy pack is
+    // only run for geometry changes, never for community hide/un-hide
+    // (those go through `applyCommunityLabelVisibility`, which masks the
+    // decided set without re-packing) — re-packing on hide could evict
+    // several unrelated labels that then never return.
     const shown = this.currentlyShownCommunities;
     positioned.sort((a, b) => {
       const aSticky = shown.has(a.cid) ? 1 : 0;
@@ -1921,6 +1934,32 @@ export class PixiRenderer {
       }
     }
     this.currentlyShownCommunities = new Set(accepted);
+  }
+
+  /** Mask community-label visibility to the current node visibility
+   *  without re-running the overlap cull. The cull (`recullCommunity
+   *  Labels`) decides *which* communities get a wayfinder label based
+   *  purely on geometry, and that decision is cached in
+   *  `currentlyShownCommunities`. Hiding / un-hiding a community must
+   *  not disturb that decision — it should only reveal or hide the
+   *  already-decided labels — so a label shows iff its community was
+   *  chosen by the cull AND still has at least one visible node. This
+   *  keeps hide/un-hide fully symmetric and never evicts an unrelated
+   *  community's label. */
+  private applyCommunityLabelVisibility(): void {
+    if (this.communityLabels.size === 0) return;
+    if (!this.communityAssignments) return;
+    const visibleCommunities = new Set<number>();
+    for (const node of this.nodes.values()) {
+      if (!node.visible) continue;
+      const cid = this.communityAssignments[node.id];
+      if (cid !== undefined) visibleCommunities.add(cid);
+    }
+    for (const [cid, text] of this.communityLabels) {
+      text.visible =
+        this.currentlyShownCommunities.has(cid) &&
+        visibleCommunities.has(cid);
+    }
   }
 
   /** Counter-scale community labels and fade them by zoom (Fix #32).
