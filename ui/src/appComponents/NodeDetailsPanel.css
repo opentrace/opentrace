@@ -326,33 +326,9 @@
   border-bottom-color: var(--primary);
 }
 
-/* ── Rendered markdown / PR-body container ──
- * The node detail panel renders PR bodies and markdown source inside
- * `.pr-body-content > .message-content > .markdown-body`. This wrapper box is
- * mirrored from PRDetailPanel.css (which uses the same class); it lives here
- * too so NodeDetailsPanel — and the published detail-panels.css bundle — styles
- * it standalone rather than depending on PRDetailPanel.css being loaded. The
- * inner `.message-content .markdown-body` rules live in
- * src/components/chat/markdown.css, which is also bundled into detail-panels.css. */
-.pr-body-content {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--card-foreground);
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 12px;
-  background: color-mix(in oklch, var(--accent) 25%, transparent);
-  border-radius: var(--radius);
-}
-
-.pr-body-content > :first-child {
-  margin-top: 0;
-}
-
-.pr-body-content > :last-child {
-  margin-bottom: 0;
-}
+/* The `.pr-body-content` wrapper box for PR-body / markdown-source views lives
+ * in src/components/chat/markdown.css alongside the `.markdown-body` rules it
+ * wraps — shared with PRDetailPanel and bundled into detail-panels.css. */
 
 /* ── Node Edges section ── */
 .node-edges-section {

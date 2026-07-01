@@ -15,9 +15,37 @@
  */
 
 /*
- * Chat markdown styles — dark mode only.
- * Compact subset of insight-ui's react-markdown.css for chat context.
+ * Shared react-markdown styles for `.message-content .markdown-body`.
+ * Compact subset of insight-ui's react-markdown.css. Fully token-driven (no
+ * hardcoded colors), so it themes with whatever tokens the consumer supplies.
+ * Used by the chat panel and by the detail panels (NodeDetailsPanel /
+ * PRDetailPanel) for PR-body and markdown-source rendering; ships in both the
+ * batteries-included style.css and the standalone detail-panels.css bundle.
  */
+
+/* Boxed container for PR-body / markdown-source views, shared by
+ * NodeDetailsPanel and PRDetailPanel. Co-located here (rather than in either
+ * panel's CSS) so the two panels can't drift and so it travels with the
+ * `.markdown-body` rules it wraps into the detail-panels.css bundle. */
+.pr-body-content {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--card-foreground);
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px;
+  background: color-mix(in oklch, var(--accent) 25%, transparent);
+  border-radius: var(--radius);
+}
+
+.pr-body-content > :first-child {
+  margin-top: 0;
+}
+
+.pr-body-content > :last-child {
+  margin-bottom: 0;
+}
 
 .message-content .markdown-body {
   color: inherit;
