@@ -32,8 +32,14 @@
  * GraphViewer, etc., whose CSS must NOT be included here.
  *
  * Unlike build-graph-css.mjs (which globs src/components/panels/*.css), this
- * uses an explicit file list: the app-components directory holds unrelated
- * app-shell CSS (SidePanel.css, SettingsDrawer.css, …) that must never flow in.
+ * uses an explicit file list: the source directories hold unrelated CSS
+ * (SidePanel.css, SettingsDrawer.css, the rest of the chat styles, …) that must
+ * never flow in. The list also reaches beyond the panels' own two files to pull
+ * in the shared markdown styles NodeDetailsPanel needs: it renders PR bodies and
+ * markdown source through react-markdown as `.message-content .markdown-body`,
+ * whose rules live in src/components/chat/markdown.css. Without those, a
+ * standalone consumer would get styled panel chrome but a raw, unstyled markdown
+ * body. (The `.pr-body-content` wrapper box is co-located in NodeDetailsPanel.css.)
  *
  * Those rules are token-driven (var(--primary), var(--border), …) and carry no
  * global selectors of their own, so a consumer with its own design system can
@@ -73,19 +79,26 @@ const HEADER = `/*
  * scripts/build-detail-panels-css.mjs. Do not edit by hand; edit the source CSS
  * in src/appComponents/NodeDetailsPanel.css and EdgeDetailsPanel.css.
  *
- * NodeDetailsPanel / EdgeDetailsPanel styles only. Token-driven — supply your
- * own design tokens (--primary, --border, --radius, --foreground,
- * --muted-foreground, --card, --accent, --background, …). For the
- * batteries-included design system (tokens, themes, resets), import
+ * NodeDetailsPanel / EdgeDetailsPanel styles — panel chrome plus the shared
+ * react-markdown styling their PR-body / markdown-source views need. Token-driven
+ * — supply your own design tokens (--primary, --border, --radius, --foreground,
+ * --muted-foreground, --card, --card-foreground, --accent, --background, …). For
+ * the batteries-included design system (tokens, themes, resets), import
  * "@opentrace/opentrace/style.css" instead.
  */
 `;
 
 bundleCss({
-  srcDir: join(ROOT, 'src', 'appComponents'),
-  // Explicit file list — do NOT glob src/appComponents/, which also contains
-  // app-shell CSS (SidePanel.css, SettingsDrawer.css, …) that must not ship here.
-  files: ['NodeDetailsPanel.css', 'EdgeDetailsPanel.css'],
+  srcDir: join(ROOT, 'src'),
+  // Explicit file list — do NOT glob these directories, which also hold CSS that
+  // must not ship here (SidePanel.css, SettingsDrawer.css, the rest of the chat
+  // styles, …). markdown.css supplies `.message-content .markdown-body`, which
+  // NodeDetailsPanel renders for PR-body / markdown-source views.
+  files: [
+    'appComponents/NodeDetailsPanel.css',
+    'appComponents/EdgeDetailsPanel.css',
+    'components/chat/markdown.css',
+  ],
   outFile: join(ROOT, 'dist', 'lib', 'detail-panels.css'),
   header: HEADER,
   tag: 'build-detail-panels-css',
