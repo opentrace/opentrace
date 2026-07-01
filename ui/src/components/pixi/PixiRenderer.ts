@@ -1658,6 +1658,12 @@ export class PixiRenderer {
     }
     if (show) {
       this.updateCommunityLabelPositions();
+      // Re-apply the node-visibility mask: while the layer was off,
+      // `applyCommunityLabelVisibility` early-returns, so a community
+      // hidden during that window still has `text.visible = true` from
+      // its last cull. Without this, toggling the layer back on would
+      // float that stale label over an empty region.
+      this.applyCommunityLabelVisibility();
       // Counter-scale is only applied to *visible* labels (see
       // applyCommunityLabelCounterScale), so flipping the layer back on
       // would leave each Text at whatever scale it had when last seen.
