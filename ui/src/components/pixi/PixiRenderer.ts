@@ -1662,16 +1662,11 @@ export class PixiRenderer {
       // `applyCommunityLabelVisibility` early-returns, so a community
       // hidden during that window still has `text.visible = true` from
       // its last cull. Without this, toggling the layer back on would
-      // float that stale label over an empty region.
+      // float that stale label over an empty region. It also refreshes
+      // the zoom counter-scale for the now-visible labels — otherwise a
+      // Text never counter-scaled (e.g. graph opened with labels off)
+      // would show at its tiny base font size until the next zoom.
       this.applyCommunityLabelVisibility();
-      // Counter-scale is only applied to *visible* labels (see
-      // applyCommunityLabelCounterScale), so flipping the layer back on
-      // would leave each Text at whatever scale it had when last seen.
-      // For labels that had never been counter-scaled (e.g. opened on a
-      // graph that started with labels off), that's the base font size
-      // — tiny at the current zoom. Apply now so the first frame after
-      // toggling matches what the user will see after the next zoom.
-      this.applyCommunityLabelCounterScale();
     }
   }
 
