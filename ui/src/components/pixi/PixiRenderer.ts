@@ -1943,9 +1943,19 @@ export class PixiRenderer {
    *  `currentlyShownCommunities`. Hiding / un-hiding a community must
    *  not disturb that decision — it should only reveal or hide the
    *  already-decided labels — so a label shows iff its community was
-   *  chosen by the cull AND still has at least one visible node. This
-   *  keeps hide/un-hide fully symmetric and never evicts an unrelated
-   *  community's label. */
+   *  chosen by the cull AND still has at least one visible node. As long
+   *  as the cached decision holds, hide/un-hide is symmetric and never
+   *  evicts an unrelated community's label.
+   *
+   *  Caveat: a real cull *can* re-run between a hide and its un-hide —
+   *  e.g. a layout-mode toggle (`setLayoutMode`) or a community-data
+   *  rebuild resets `communityVisibilityFrozen`. Because a hidden
+   *  community contributes no centroid, that cull drops it from
+   *  `currentlyShownCommunities` and a neighbour may take its slot, so
+   *  its label won't return on un-hide until the next cull re-decides.
+   *  That's intended — those events are meant to re-pick the label set —
+   *  it just means the symmetry guarantee only spans a hide/un-hide pair
+   *  with no intervening cull. */
   private applyCommunityLabelVisibility(): void {
     if (this.communityLabels.size === 0) return;
     if (!this.communityAssignments) return;
