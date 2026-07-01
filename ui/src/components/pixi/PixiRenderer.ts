@@ -1969,6 +1969,13 @@ export class PixiRenderer {
       text.visible =
         this.currentlyShownCommunities.has(cid) && visibleCommunities.has(cid);
     }
+    // Refresh the zoom counter-scale now. A label's scale is only
+    // maintained by `applyCommunityLabelCounterScale`, which skips
+    // invisible labels and otherwise only fires on a zoom change — so a
+    // community un-hidden while the layout is settled would otherwise
+    // reappear at whatever scale was in effect when it was hidden, until
+    // the next pan/zoom nudged the pass.
+    this.applyCommunityLabelCounterScale();
   }
 
   /** Counter-scale community labels and fade them by zoom (Fix #32).
