@@ -305,25 +305,9 @@
   border-bottom: 1px solid color-mix(in oklch, var(--border) 20%, transparent);
 }
 
-.pr-body-content {
-  margin: 0;
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--card-foreground);
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 12px;
-  background: color-mix(in oklch, var(--accent) 25%, transparent);
-  border-radius: var(--radius);
-}
-
-.pr-body-content > :first-child {
-  margin-top: 0;
-}
-
-.pr-body-content > :last-child {
-  margin-bottom: 0;
-}
+/* `.pr-body-content` (the boxed markdown container shared with NodeDetailsPanel)
+ * lives in src/components/chat/markdown.css, next to the `.markdown-body` rules
+ * it wraps. */
 
 .pr-detail-files {
   flex: 1;

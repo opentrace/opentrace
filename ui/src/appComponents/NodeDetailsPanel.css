@@ -326,6 +326,10 @@
   border-bottom-color: var(--primary);
 }
 
+/* The `.pr-body-content` wrapper box for PR-body / markdown-source views lives
+ * in src/components/chat/markdown.css alongside the `.markdown-body` rules it
+ * wraps — shared with PRDetailPanel and bundled into detail-panels.css. */
+
 /* ── Node Edges section ── */
 .node-edges-section {
   margin-top: 24px;
