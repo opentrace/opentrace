@@ -1154,6 +1154,15 @@ export class PixiRenderer {
       }
       this.applyLabelCulling(wantLabel, lblInv);
     }
+    // A real visibility change (e.g. hiding/un-hiding a community via
+    // `hiddenCommunities`) can leave a wayfinder label floating over a
+    // now-empty community. Mask the labels to the current node
+    // visibility so a fully-hidden community's label drops out — and
+    // reappears when un-hidden. This deliberately does NOT re-run the
+    // overlap cull: the cull decision depends only on geometry, and
+    // re-packing here would let a neighbour steal the freed slot (or
+    // evict several unrelated labels), none of which return on un-hide.
+    this.applyCommunityLabelVisibility();
     if (!this.mode3d) {
       this.redrawAllEdges();
     }
@@ -1649,14 +1658,15 @@ export class PixiRenderer {
     }
     if (show) {
       this.updateCommunityLabelPositions();
-      // Counter-scale is only applied to *visible* labels (see
-      // applyCommunityLabelCounterScale), so flipping the layer back on
-      // would leave each Text at whatever scale it had when last seen.
-      // For labels that had never been counter-scaled (e.g. opened on a
-      // graph that started with labels off), that's the base font size
-      // — tiny at the current zoom. Apply now so the first frame after
-      // toggling matches what the user will see after the next zoom.
-      this.applyCommunityLabelCounterScale();
+      // Re-apply the node-visibility mask: while the layer was off,
+      // `applyCommunityLabelVisibility` early-returns, so a community
+      // hidden during that window still has `text.visible = true` from
+      // its last cull. Without this, toggling the layer back on would
+      // float that stale label over an empty region. It also refreshes
+      // the zoom counter-scale for the now-visible labels — otherwise a
+      // Text never counter-scaled (e.g. graph opened with labels off)
+      // would show at its tiny base font size until the next zoom.
+      this.applyCommunityLabelVisibility();
     }
   }
 
@@ -1875,7 +1885,11 @@ export class PixiRenderer {
     // Sticky-first ordering (Fix #35) is still useful when the cull
     // *does* re-run (e.g. user toggles compact mode off and on, or
     // data refreshes) — keeps the previous decision when nothing
-    // about the geometry forces a change.
+    // about the geometry forces a change. NOTE: this greedy pack is
+    // only run for geometry changes, never for community hide/un-hide
+    // (those go through `applyCommunityLabelVisibility`, which masks the
+    // decided set without re-packing) — re-packing on hide could evict
+    // several unrelated labels that then never return.
     const shown = this.currentlyShownCommunities;
     positioned.sort((a, b) => {
       const aSticky = shown.has(a.cid) ? 1 : 0;
@@ -1921,6 +1935,52 @@ export class PixiRenderer {
       }
     }
     this.currentlyShownCommunities = new Set(accepted);
+  }
+
+  /** Mask community-label visibility to the current node visibility
+   *  without re-running the overlap cull. The cull (`recullCommunity
+   *  Labels`) decides *which* communities get a wayfinder label based
+   *  purely on geometry, and that decision is cached in
+   *  `currentlyShownCommunities`. Hiding / un-hiding a community must
+   *  not disturb that decision — it should only reveal or hide the
+   *  already-decided labels — so a label shows iff its community was
+   *  chosen by the cull AND still has at least one visible node. As long
+   *  as the cached decision holds, hide/un-hide is symmetric and never
+   *  evicts an unrelated community's label.
+   *
+   *  Caveat: a real cull *can* re-run between a hide and its un-hide —
+   *  e.g. a layout-mode toggle (`setLayoutMode`) or a community-data
+   *  rebuild resets `communityVisibilityFrozen`. Because a hidden
+   *  community contributes no centroid, that cull drops it from
+   *  `currentlyShownCommunities` and a neighbour may take its slot, so
+   *  its label won't return on un-hide until the next cull re-decides.
+   *  That's intended — those events are meant to re-pick the label set —
+   *  it just means the symmetry guarantee only spans a hide/un-hide pair
+   *  with no intervening cull. */
+  private applyCommunityLabelVisibility(): void {
+    if (this.communityLabels.size === 0) return;
+    if (!this.communityAssignments) return;
+    // When the label layer is off the container is hidden regardless, so
+    // the per-label visibility writes below would be wasted; the layer is
+    // refreshed on toggle-on via `setShowCommunityLabels`.
+    if (!this.showCommunityLabels) return;
+    const visibleCommunities = new Set<number>();
+    for (const node of this.nodes.values()) {
+      if (!node.visible) continue;
+      const cid = this.communityAssignments[node.id];
+      if (cid !== undefined) visibleCommunities.add(cid);
+    }
+    for (const [cid, text] of this.communityLabels) {
+      text.visible =
+        this.currentlyShownCommunities.has(cid) && visibleCommunities.has(cid);
+    }
+    // Refresh the zoom counter-scale now. A label's scale is only
+    // maintained by `applyCommunityLabelCounterScale`, which skips
+    // invisible labels and otherwise only fires on a zoom change — so a
+    // community un-hidden while the layout is settled would otherwise
+    // reappear at whatever scale was in effect when it was hidden, until
+    // the next pan/zoom nudged the pass.
+    this.applyCommunityLabelCounterScale();
   }
 
   /** Counter-scale community labels and fade them by zoom (Fix #32).
