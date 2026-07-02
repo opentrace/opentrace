@@ -59,7 +59,7 @@ interface SimLink extends SimulationLinkDatum<SimNode> {
 // 'nebula' is a worker-internal mode (a volumetric density cloud) toggled via
 // the `set-nebula` message, not part of the app-facing layout cycle. Kept here
 // so buildSimulation can branch on it without widening the app's LayoutMode union.
-export type LayoutMode = 'spread' | 'compact' | 'tree' | 'nebula';
+export type LayoutMode = 'spread' | 'compact' | 'tree' | 'nebula' | 'onion';
 
 export type Worker3DInMessage =
   | {
@@ -67,6 +67,8 @@ export type Worker3DInMessage =
       nodeIds: string[];
       links: { source: string; target: string; w?: number }[];
       communities?: Record<string, number>;
+      /** id → node type. Used by the onion layout (shells by type). */
+      nodeTypes?: Record<string, string>;
       dimensions?: 2 | 3;
       config: {
         chargeStrength: number;
@@ -82,6 +84,8 @@ export type Worker3DInMessage =
       nodeIds: string[];
       links: { source: string; target: string; w?: number }[];
       communities?: Record<string, number>;
+      /** id → node type for the newly-added nodes (onion layout). */
+      nodeTypes?: Record<string, string>;
       /** Live-build: pin all already-present nodes in place so adding new ones
        *  only solves for the new nodes — existing nodes don't reshuffle (which
        *  read as choppy). New nodes are seeded next to a connected neighbour. */
@@ -161,6 +165,13 @@ let treeSeed = new Float64Array(0);
 // node here (see makeNebulaAnchorForce) so the cloud's density gradient holds.
 let nebulaSeed = new Float64Array(0);
 
+// Onion mode: computeOnion() target positions (concentric shells by node type).
+// The onion sim firmly anchors each node here so it holds a clean layered ball.
+let onionSeed = new Float64Array(0);
+// id → node type, sent from the app (init + add-nodes). Only the onion layout
+// needs it; other layouts derive structure from the containment links.
+const nodeTypeById = new Map<string, string>();
+
 const STREAM_INTERVAL = 66; // ~15fps
 // Declare the layout settled once alpha drops below this. The long tail from
 // ~0.02 → 0.005 is ~50 extra ticks of sub-pixel drift that's invisible but
@@ -188,6 +199,54 @@ const FAST_BARNES_HUT_THETA = 1.5;
 // Anchor strength: how firmly each node is held at its radial position. High so
 // the structure stays crisp; a little charge still declutters local overlaps.
 const TREE_ANCHOR_STRENGTH = 0.35;
+
+// ── Onion layout ────────────────────────────────────────────────────────
+// Concentric spherical shells, one per NODE TYPE, ordered core→out by the
+// containment hierarchy (Repository at the centre → … → Function/Variable /
+// Dependency on the outer shells). Each shell's nodes are spread evenly with a
+// Fibonacci (golden-spiral) distribution so neighbours are ~equidistant, and
+// shells are equally spaced → a clean layered ball. Deterministic; nodes are
+// firmly anchored to their shell position and edges exert NO pull (they'd
+// distort the even shells), so the ball stays perfect.
+const ONION_ANCHOR_STRENGTH = 0.55;
+// Target world-units between adjacent nodes on a shell (sizes the ball).
+const ONION_ARC = 34;
+// Minimum outer radius so tiny graphs still form a visible ball.
+const ONION_MIN_RADIUS = 180;
+// Core→out type order. Types not listed fall just inside Dependency (the rim).
+const ONION_TYPE_ORDER = [
+  'Repository',
+  'Repo',
+  'Service',
+  'InstrumentedService',
+  'Deployment',
+  'Namespace',
+  'Cluster',
+  'Directory',
+  'Module',
+  'Package',
+  'File',
+  'Class',
+  'Interface',
+  'Struct',
+  'Enum',
+  'Function',
+  'Method',
+  'Variable',
+  'Field',
+  'Endpoint',
+  'Database',
+  'DBTable',
+  'Span',
+  'Log',
+  'Metric',
+  'Dependency',
+];
+function onionTypeRank(t: string): number {
+  const i = ONION_TYPE_ORDER.indexOf(t);
+  // Unknown types sit just inside the Dependency rim.
+  return i === -1 ? ONION_TYPE_ORDER.length - 0.5 : i;
+}
 
 // ── Nebula layout ───────────────────────────────────────────────────────
 // A soft volumetric cloud: a dense bright core (high-degree hubs) fading to a
@@ -402,6 +461,34 @@ function makeNebulaAnchorForce(
   return force as unknown as Parameters<typeof s.force>[1];
 }
 
+/**
+ * Onion mode anchor force. Firmly pulls each node toward its concentric-shell
+ * position (onionSeed) so the layered ball holds its clean even shells.
+ * Mirrors makeTreeAnchorForce (by index — onionSeed is built in simNodes order).
+ */
+function makeOnionAnchorForce(
+  s: Simulation<SimNode, SimLink>,
+  nodes: SimNode[],
+  getStrength: () => number,
+): Parameters<typeof s.force>[1] {
+  const force = () => {
+    if (onionSeed.length < nodes.length * 3) return;
+    const is3D = nDim === 3;
+    const alpha = s.alpha();
+    const k = getStrength() * alpha;
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      node.vx = (node.vx ?? 0) + (onionSeed[i * 3] - (node.x ?? 0)) * k;
+      node.vy = (node.vy ?? 0) + (onionSeed[i * 3 + 1] - (node.y ?? 0)) * k;
+      if (is3D)
+        node.vz = (node.vz ?? 0) + (onionSeed[i * 3 + 2] - (node.z ?? 0)) * k;
+    }
+  };
+  (force as unknown as { initialize: (n: SimNode[]) => void }).initialize =
+    () => {};
+  return force as unknown as Parameters<typeof s.force>[1];
+}
+
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
@@ -469,6 +556,26 @@ function buildSimulation(
       makeNebulaAnchorForce(s, nodes, () => NEBULA_ANCHOR_STRENGTH),
     );
     s.alphaDecay(0.02).velocityDecay(0.55);
+    return s;
+  }
+
+  if (mode === 'onion') {
+    // Concentric shells by node type (computeOnion). Each node is FIRMLY held
+    // at its shell position and edges exert NO pull — so the layered ball stays
+    // a clean, even set of spheres rather than relaxing into a blob. No charge:
+    // the Fibonacci placement is already collision-free.
+    s.force(
+      'link',
+      forceLink<SimNode, SimLink>(links)
+        .id((d: SimNode) => d.id)
+        .distance(config.linkDistance)
+        .strength(0),
+    );
+    s.force(
+      'onionAnchor',
+      makeOnionAnchorForce(s, nodes, () => ONION_ANCHOR_STRENGTH),
+    );
+    s.alphaDecay(0.03).velocityDecay(0.5);
     return s;
   }
 
@@ -1126,6 +1233,86 @@ function computeRadialTree(): void {
 }
 
 /**
+ * Seed the "onion": concentric spherical shells, one per node type, ordered
+ * core→out by containment (Repository at the centre → … → Function/Variable /
+ * Dependency on the outer shells). Each shell's nodes are spread evenly with a
+ * Fibonacci (golden-spiral) distribution; shells are equally spaced. Only
+ * onionSeed is written (positions aren't snapped) so the anchor force eases
+ * nodes from wherever they are into the layered ball — a smooth reveal.
+ */
+function computeOnion(): void {
+  const n = simNodes.length;
+  onionSeed = new Float64Array(n * 3);
+  if (n === 0) return;
+
+  // Group node indices by type.
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < n; i++) {
+    const t = nodeTypeById.get(simNodes[i].id) ?? 'Unknown';
+    let arr = groups.get(t);
+    if (!arr) groups.set(t, (arr = []));
+    arr.push(i);
+  }
+
+  // Order the type-shells core→out (unknown types near the rim).
+  const types = [...groups.keys()].sort(
+    (a, b) => onionTypeRank(a) - onionTypeRank(b) || a.localeCompare(b),
+  );
+  const shells = Math.max(1, types.length);
+
+  // The shell needing the most room (usually the big outer one) sets the outer
+  // radius; shells are then equally spaced out to it.
+  let maxNeed = ONION_MIN_RADIUS;
+  for (const t of types) {
+    const c = groups.get(t)!.length;
+    const need = ONION_ARC * Math.sqrt(c / (4 * Math.PI));
+    if (need > maxNeed) maxNeed = need;
+  }
+  const gap = maxNeed / shells;
+  const GOLD = Math.PI * (3 - Math.sqrt(5));
+
+  for (let si = 0; si < shells; si++) {
+    const idxs = groups.get(types[si])!;
+    const r = (si + 1) * gap;
+    const cnt = idxs.length;
+    if (cnt === 1) {
+      // Lone node (e.g. the Repository core): centre it if innermost, else
+      // park it on the shell's pole.
+      const o = idxs[0] * 3;
+      onionSeed[o] = 0;
+      onionSeed[o + 1] = si === 0 ? 0 : r;
+      onionSeed[o + 2] = 0;
+      continue;
+    }
+    for (let k = 0; k < cnt; k++) {
+      const yy = 1 - (2 * (k + 0.5)) / cnt; // -1..1
+      const lat = Math.sqrt(Math.max(0, 1 - yy * yy));
+      const ph = k * GOLD;
+      const o = idxs[k] * 3;
+      onionSeed[o] = Math.cos(ph) * lat * r;
+      onionSeed[o + 1] = yy * r;
+      onionSeed[o + 2] = Math.sin(ph) * lat * r;
+    }
+  }
+
+  // Snap positions straight onto the shells so the layered ball forms exactly
+  // (the anchor then just holds it). Easing from the previous layout's far
+  // positions wouldn't converge within the settle window → smeared shells.
+  for (let i = 0; i < n; i++) {
+    const nd = simNodes[i];
+    nd.x = onionSeed[i * 3];
+    nd.y = onionSeed[i * 3 + 1];
+    nd.z = onionSeed[i * 3 + 2];
+    nd.vx = 0;
+    nd.vy = 0;
+    nd.vz = 0;
+    nd.fx = null;
+    nd.fy = null;
+    nd.fz = null;
+  }
+}
+
+/**
  * Seed a volumetric nebula cloud: high-degree hubs sit in a dense bright core,
  * everything else thins out into a wispy halo. Nodes are placed at random
  * directions (no geometric pattern — that's what made the old spiral arms read as
@@ -1222,6 +1409,9 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       for (let i = 0; i < msg.nodeIds.length; i++) {
         nodeIdToIndex.set(msg.nodeIds[i], i);
       }
+      nodeTypeById.clear();
+      if (msg.nodeTypes)
+        for (const id in msg.nodeTypes) nodeTypeById.set(id, msg.nodeTypes[id]);
 
       const nodeIdSet = new Set(msg.nodeIds);
       const simLinks: SimLink[] = [];
@@ -1243,8 +1433,9 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
       // Tree mode is a force layout seeded from the radial tree, so the
       // hierarchy relaxes into organic branches instead of converging from a
-      // tangle. Seed positions before building the sim.
+      // tangle. Seed positions before building the sim. Onion seeds its shells.
       if (currentMode === 'tree') computeRadialTree();
+      else if (currentMode === 'onion') computeOnion();
 
       sim = buildSimulation(simNodes, simLinks, cachedConfig, currentMode);
       sim.stop();
@@ -1268,11 +1459,16 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       nDim = msg.dimensions;
       // Tree mode: re-seed from the radial tree for the new dimensionality
       // (flat in 2D, spherical in 3D) and let the force tree relax again.
-      if (currentMode === 'tree' || currentMode === 'nebula') {
+      if (
+        currentMode === 'tree' ||
+        currentMode === 'nebula' ||
+        currentMode === 'onion'
+      ) {
         sim?.stop();
         // Re-seed the deterministic layout for the new dimensionality (flat in
         // 2D, volumetric in 3D), then let it relax again.
         if (currentMode === 'nebula') computeNebulaCloud();
+        else if (currentMode === 'onion') computeOnion();
         else computeRadialTree();
         sim = buildSimulation(
           simNodes,
@@ -1293,6 +1489,8 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
     case 'add-nodes': {
       if (!sim || !cachedConfig) break;
       if (msg.communities) communities = { ...communities, ...msg.communities };
+      if (msg.nodeTypes)
+        for (const id in msg.nodeTypes) nodeTypeById.set(id, msg.nodeTypes[id]);
 
       const existingIds = new Set(simNodes.map((n) => n.id));
       const posById = new Map<string, { x: number; y: number; z: number }>();
@@ -1366,6 +1564,11 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
       sim.stop();
       stopStreaming();
+      // Deterministic layouts must re-seed so the newly-added nodes get a
+      // shell/tree position (only fires when that mode is active — normal
+      // live-build runs in compact/spread, so this is a no-op there).
+      if (currentMode === 'onion') computeOnion();
+      else if (currentMode === 'tree') computeRadialTree();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
       // Live-build adds: a VERY gentle warm-up so each streaming batch barely
       // nudges the existing layout — settled nodes stay put, so the grow-in
@@ -1502,14 +1705,19 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
     case 'set-communities': {
       communities = msg.communities;
-      // Tree mode's radial layout is driven by containment + connectivity
-      // ordering (relational edges, known at init) — it doesn't use Louvain
-      // communities, so nothing to recompute. Stay settled (and tell the main
-      // thread, which optimistically flips simRunning on this message).
-      if (currentMode === 'tree') {
-        (self as unknown as Worker).postMessage({
-          type: 'settled',
-        } satisfies Worker3DOutMessage);
+      // Tree & onion are deterministic (containment / node type) — they don't
+      // use Louvain communities, so nothing to recompute. Report 'settled' to
+      // reset the main thread's optimistic simRunning — but ONLY if we're
+      // actually settled. If a re-layout is in flight (e.g. this fired right
+      // after a preset switch reseeded the onion), reporting 'settled' now would
+      // make the renderer snapshot the still-mid-transition positions as the
+      // ambient home → the onion "click twice" bug. Let the real settle report.
+      if (currentMode === 'tree' || currentMode === 'onion') {
+        if (settled) {
+          (self as unknown as Worker).postMessage({
+            type: 'settled',
+          } satisfies Worker3DOutMessage);
+        }
         break;
       }
       if (!sim || !cachedConfig) break;
@@ -1532,11 +1740,14 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       if (nebulaEnabled) break;
       currentMode = baseMode;
       sim?.stop();
-      // Tree: re-seed from the radial tree so it relaxes into clean branches;
+      // Tree / onion: re-seed the deterministic layout so nodes ease into it;
       // spread/compact keep current positions and relax.
       if (currentMode === 'tree') computeRadialTree();
+      else if (currentMode === 'onion') computeOnion();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      sim.alpha(currentMode === 'tree' ? 0.6 : 0.5).restart();
+      sim
+        .alpha(currentMode === 'tree' || currentMode === 'onion' ? 0.6 : 0.5)
+        .restart();
       settled = false;
       startStreaming();
       break;
@@ -1553,6 +1764,7 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       sim?.stop();
       if (currentMode === 'nebula') computeNebulaCloud();
       else if (currentMode === 'tree') computeRadialTree();
+      else if (currentMode === 'onion') computeOnion();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
       sim.alpha(0.9).restart();
       settled = false;
@@ -1600,13 +1812,19 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
     case 'reseed': {
       if (!sim || !cachedConfig) break;
       sim.stop();
-      if (currentMode === 'nebula') {
-        // Re-lay the cloud from scratch.
-        computeNebulaCloud();
-        sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-      } else {
-        // Clearing x/y makes d3 re-seed them (phyllotaxis) when the sim is
-        // rebuilt; tree mode re-seeds from the radial hierarchy instead.
+      // Deterministic layouts (nebula/tree/onion) re-derive their positions from
+      // scratch — they IGNORE the prior arrangement, so reseeding = recompute.
+      // Force layouts (spread/compact) clear x/y so d3 re-seeds (phyllotaxis)
+      // and get a random z below. NOTE: onion/tree must NOT be randomized —
+      // that smeared the onion shells and forced a "click twice" to recover.
+      const deterministic =
+        currentMode === 'nebula' ||
+        currentMode === 'tree' ||
+        currentMode === 'onion';
+      if (currentMode === 'nebula') computeNebulaCloud();
+      else if (currentMode === 'tree') computeRadialTree();
+      else if (currentMode === 'onion') computeOnion();
+      else {
         for (const n of simNodes) {
           n.x = undefined;
           n.y = undefined;
@@ -1615,19 +1833,19 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
           n.z = 0;
           n.vz = 0;
         }
-        if (currentMode === 'tree') computeRadialTree();
-        sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
-        // Give 3D a real volume — phyllotaxis only seeds x/y, so spread z to a
-        // comparable extent (mirrors rebuild()).
-        if (nDim === 3) {
-          let ext = 0;
-          for (const n of simNodes) {
-            ext = Math.max(ext, Math.abs(n.x ?? 0), Math.abs(n.y ?? 0));
-          }
-          ext = ext || 500;
-          for (const n of simNodes) {
-            n.z = (Math.random() - 0.5) * ext;
-          }
+      }
+      sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
+      // Give 3D force layouts a real volume — phyllotaxis only seeds x/y, so
+      // spread z to a comparable extent (mirrors rebuild()). Skip for the
+      // deterministic layouts, whose compute* already set z.
+      if (!deterministic && nDim === 3) {
+        let ext = 0;
+        for (const n of simNodes) {
+          ext = Math.max(ext, Math.abs(n.x ?? 0), Math.abs(n.y ?? 0));
+        }
+        ext = ext || 500;
+        for (const n of simNodes) {
+          n.z = (Math.random() - 0.5) * ext;
         }
       }
       sim.alpha(1).restart();

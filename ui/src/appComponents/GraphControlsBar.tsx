@@ -17,8 +17,9 @@
 import type { GraphCanvasHandle } from '@opentrace/components';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 
-type LayoutMode = 'spread' | 'compact' | 'tree';
+type LayoutMode = 'spread' | 'compact' | 'tree' | 'onion';
 
+// The manual layout toggle cycles these three; 'onion' is a preset-only view.
 const LAYOUT_CYCLE: LayoutMode[] = ['tree', 'spread', 'compact'];
 
 const FullscreenEnterIcon = () => (

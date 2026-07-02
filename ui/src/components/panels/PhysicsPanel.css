@@ -239,8 +239,11 @@
 }
 
 .physics-preset-icon {
-  font-size: 1.15rem;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* SVG stroke uses currentColor, so it inherits the chip's color — including
+     the active state's accent. */
 }
 
 .physics-preset-label {

@@ -25,14 +25,14 @@
  * pushes them into both React state and the renderer's imperative API.
  */
 
-export type GraphPresetId = 'flat' | 'bundled' | 'planet' | 'nebula';
+export type GraphPresetId = 'flat' | 'bundled' | 'planet' | 'onion';
 
 /** Sentinel stored when the user hand-tweaks a control, so no preset chip
  *  shows as active. Not a real preset. */
 export const CUSTOM_PRESET = 'custom';
 
 export interface GraphPresetSettings {
-  layoutMode: 'spread' | 'compact' | 'tree';
+  layoutMode: 'spread' | 'compact' | 'tree' | 'onion';
   mode3d: boolean;
   autoRotate: boolean;
   colorMode: 'type' | 'community';
@@ -69,7 +69,7 @@ export interface GraphPresetSettings {
 export interface GraphPreset {
   id: GraphPresetId;
   label: string;
-  /** Emoji glyph shown on the preset button. */
+  /** Icon key — resolved to a flat SVG in PhysicsPanel's PRESET_ICONS map. */
   icon: string;
   /** One-line tooltip. */
   description: string;
@@ -77,13 +77,13 @@ export interface GraphPreset {
 }
 
 /** Default applied on a user's first-ever graph load (no stored preset yet). */
-export const DEFAULT_PRESET_ID: GraphPresetId = 'planet';
+export const DEFAULT_PRESET_ID: GraphPresetId = 'onion';
 
 export const GRAPH_PRESETS: GraphPreset[] = [
   {
     id: 'bundled',
     label: 'Bundled',
-    icon: '🔮',
+    icon: 'clusters',
     description:
       'Tight, jewel-colored community clusters in 3D with cluster labels — the modular structure balled up into distinct clumps.',
     settings: {
@@ -111,41 +111,42 @@ export const GRAPH_PRESETS: GraphPreset[] = [
     },
   },
   {
-    id: 'nebula',
-    label: 'Nebula',
-    icon: '🌌',
+    id: 'onion',
+    label: 'Onion',
+    icon: 'onion',
     description:
-      'A soft, slowly drifting 3D cloud — a dense glowing core of hubs fading into a wispy halo, colored by node type.',
+      'A layered ball — every node type forms its own evenly-spread spherical shell, nested core-to-rim (repo at the center, functions & dependencies on the outer layers). Colored by node type.',
     settings: {
-      layoutMode: 'spread',
+      layoutMode: 'onion',
       mode3d: true,
-      autoRotate: true,
+      autoRotate: false,
       colorMode: 'type',
       communitiesEnabled: false,
       communityLabelsVisible: false,
-      repulsion: 80,
-      linkDistance: 200,
-      centerStrength: 0.18,
+      repulsion: 250,
+      linkDistance: 120,
+      centerStrength: 0.3,
       compactRadial: 8,
       compactCommunity: 10,
       compactCentering: 5,
       compactRadius: 16,
-      // Faint edges showing as nebula filaments — present but not a hairball.
-      edgeOpacity: 12,
-      zoomSizeExponent: 0.35,
+      // Cross-shell edges crisscross the ball and clutter it — hide them (and
+      // labels) so the clean layered shells read on their own.
+      edgeOpacity: 0,
+      // Higher exponent = smaller nodes; keep the shells reading as a clean ball.
+      zoomSizeExponent: 0.5,
       labelScale: 90,
-      // Slow drift, not a spin — the cloud breathes rather than whirls.
-      mode3dSpeed: 7,
-      mode3dTilt: 65,
+      mode3dSpeed: 15,
+      mode3dTilt: 35,
       labelsVisible: false,
       edgesVisible: true,
-      nebula: true,
+      nebula: false,
     },
   },
   {
     id: 'planet',
     label: 'Planet',
-    icon: '🪐',
+    icon: 'sphere',
     description:
       'A free-floating 3D sphere of the whole graph — spacious and slowly explorable, colored by node type.',
     settings: {
@@ -175,7 +176,7 @@ export const GRAPH_PRESETS: GraphPreset[] = [
   {
     id: 'flat',
     label: 'Flat',
-    icon: '🕸️',
+    icon: 'network',
     description:
       'A clean 2D force-directed view colored by node type — the neutral baseline.',
     settings: {

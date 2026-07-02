@@ -194,6 +194,9 @@ export function useForceLayout3d(
     const nodeIds = allNodes.map((n) => n.id);
     const nodeIdSet = new Set(nodeIds);
     const prevIds = prevNodeIdsRef.current;
+    // id → node type, for the worker's onion layout (shells by type).
+    const typeById: Record<string, string> = {};
+    for (const n of allNodes) typeById[n.id] = n.type;
 
     const allPrevPresent =
       prevIds.size > 0 && [...prevIds].every((id) => nodeIdSet.has(id));
@@ -261,11 +264,14 @@ export function useForceLayout3d(
       }
 
       prevNodeIdsRef.current = nodeIdSet;
+      const newTypes: Record<string, string> = {};
+      for (const id of newNodeIds) newTypes[id] = typeById[id];
       workerRef.current!.postMessage({
         type: 'add-nodes',
         nodeIds: newNodeIds,
         links: newLinks,
         communities: communityData.assignments,
+        nodeTypes: newTypes,
         pinExisting: growBuildRef.current,
       } satisfies Worker3DInMessage);
 
@@ -332,6 +338,7 @@ export function useForceLayout3d(
       nodeIds,
       links,
       communities: communityData.assignments,
+      nodeTypes: typeById,
       dimensions: dimensionsRef.current,
       config: {
         chargeStrength: layoutConfig.chargeStrength,

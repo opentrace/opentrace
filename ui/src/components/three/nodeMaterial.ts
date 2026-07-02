@@ -77,12 +77,17 @@ const VERTEX_SHADER = /* glsl */ `
     // Diameter in device pixels.
     float screenPx;
     if (uPerspective > 0.5) {
-      // Perspective: blend between depth-attenuated (sizeExp 0 → near nodes
-      // big, far small) and constant screen size (sizeExp 1). uZoom/depth is
-      // ~1 at a typical view distance, so the blend stays well-scaled across
-      // the whole slider range (no ballooning at high sizeExp).
+      // Perspective (3D). A mild always-on depth cue keeps near nodes a touch
+      // bigger so the scene still reads as 3D. The slider (uSizeExp) then scales
+      // node size across a wide geometric range — 0 → large, 1 → small — so it
+      // spans a visible tiny↔huge even in views like Onion where every node
+      // sits at nearly the same depth (there, uZoom/depth ≈ 1.9, so the old
+      // mix(persp,1) only gave a weak ~2:1 range). Anchored so the ~0.2 preset
+      // default keeps the previous look.
       float persp = uZoom / max(-mv.z, 0.001);
-      screenPx = base * 2.0 * uPixelRatio * mix(persp, 1.0, uSizeExp);
+      float depthCue = mix(1.0, persp, 0.5);
+      float sizeGain = pow(12.0, 0.3 - uSizeExp);
+      screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
       screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
     }
@@ -197,8 +202,12 @@ const PICK_VERTEX_SHADER = /* glsl */ `
     float base = aSize * sizeMul;
     float screenPx;
     if (uPerspective > 0.5) {
+      // Match the display shader's perspective sizing (see VERTEX_SHADER) so the
+      // pick target stays aligned with what's drawn.
       float persp = uZoom / max(-mv.z, 0.001);
-      screenPx = base * 2.0 * uPixelRatio * mix(persp, 1.0, uSizeExp);
+      float depthCue = mix(1.0, persp, 0.5);
+      float sizeGain = pow(12.0, 0.3 - uSizeExp);
+      screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
       screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
     }

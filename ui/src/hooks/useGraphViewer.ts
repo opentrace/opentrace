@@ -248,8 +248,10 @@ export interface PersistedSettings {
   setPixiCenter: Dispatch<SetStateAction<number>>;
   pixiZoomExponent: number;
   setPixiZoomExponent: Dispatch<SetStateAction<number>>;
-  layoutMode: 'spread' | 'compact' | 'tree';
-  setLayoutMode: Dispatch<SetStateAction<'spread' | 'compact' | 'tree'>>;
+  layoutMode: 'spread' | 'compact' | 'tree' | 'onion';
+  setLayoutMode: Dispatch<
+    SetStateAction<'spread' | 'compact' | 'tree' | 'onion'>
+  >;
   compactRadial: number;
   setCompactRadial: Dispatch<SetStateAction<number>>;
   compactCommunity: number;
@@ -367,7 +369,7 @@ export const GRAPH_SETTING_DEFAULTS = {
   // containment hierarchy (Repository → Directory → File → Class → Function) —
   // organised branches, not a force-relaxed blob. 'spread'/'compact' are the
   // force-directed alternates.
-  layoutMode: 'tree' as 'spread' | 'compact' | 'tree',
+  layoutMode: 'tree' as 'spread' | 'compact' | 'tree' | 'onion',
   compactRadial: 8,
   compactCommunity: 10,
   compactCentering: 5,
@@ -556,9 +558,9 @@ export function useGraphViewer(
     ps('pixiZoomExponent', D.pixiZoomExponent),
   );
 
-  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact' | 'tree'>(
-    () => ps('layoutMode', D.layoutMode),
-  );
+  const [layoutMode, setLayoutMode] = useState<
+    'spread' | 'compact' | 'tree' | 'onion'
+  >(() => ps('layoutMode', D.layoutMode));
   const [compactRadial, setCompactRadial] = useState(() =>
     ps('compactRadial', D.compactRadial),
   );

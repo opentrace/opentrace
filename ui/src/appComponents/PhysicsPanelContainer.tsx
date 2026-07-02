@@ -22,7 +22,7 @@ import {
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 type ColorMode = 'type' | 'community';
-type LayoutMode = 'spread' | 'compact' | 'tree';
+type LayoutMode = 'spread' | 'compact' | 'tree' | 'onion';
 
 interface PhysicsPanelContainerProps {
   canvasRef: RefObject<GraphCanvasHandle | null>;

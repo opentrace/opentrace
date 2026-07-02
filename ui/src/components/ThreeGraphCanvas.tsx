@@ -636,7 +636,10 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           reseed();
         },
         setNebulaLayout: (enabled: boolean, baseMode = 'spread') => {
-          setNebula(enabled, baseMode as 'spread' | 'compact' | 'tree');
+          setNebula(
+            enabled,
+            baseMode as 'spread' | 'compact' | 'tree' | 'onion',
+          );
         },
         setAmbientMotion: (enabled: boolean) => {
           // Ambient drift runs renderer-side (60fps, smooth) — see

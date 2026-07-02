@@ -444,7 +444,7 @@ export class ThreeRenderer {
   private showAllLabels = true;
   private labelScaleMultiplier = 1.0;
   private showCommunityLabels = true;
-  private currentLayoutMode: 'spread' | 'compact' | 'tree' = 'spread';
+  private currentLayoutMode: 'spread' | 'compact' | 'tree' | 'onion' = 'spread';
   /** Below this zoom (px/world) node labels hide so community wayfinders own
    *  the overview (matches the Pixi NODE_LABEL_MIN_VP_SCALE handoff). */
   private readonly NODE_LABEL_MIN_VP_SCALE = 0.6;
@@ -2476,7 +2476,7 @@ export class ThreeRenderer {
     this.runNodeLabelCull(); // LOD handoff depends on this flag
   }
 
-  setLayoutMode(mode: 'spread' | 'compact' | 'tree'): void {
+  setLayoutMode(mode: 'spread' | 'compact' | 'tree' | 'onion'): void {
     if (this.currentLayoutMode === mode) return;
     this.currentLayoutMode = mode;
     // Geometry changed — let the community cull re-decide.
@@ -2737,31 +2737,53 @@ export class ThreeRenderer {
     }
     // Build the LOD super-graph from the now-stable centroids.
     if (settled && this.lodEnabled) this.maybeBuildSuperGraph();
-    // Start/stop the ambient drift around the freshly-settled positions.
-    this.refreshAmbient();
+    // Ambient drift bobs around the SETTLED positions. Re-capture the home on
+    // EVERY settle so it tracks the current layout — e.g. after a preset switch
+    // the positions changed, and a stale home would drift/clobber the new
+    // layout. On un-settle (a re-layout is starting) just PAUSE; do NOT restore
+    // the now-stale home into posArray — that overwrote the incoming layout and
+    // caused the onion "have to click twice" bug when switching from Bundled.
+    if (settled) {
+      if (this.ambientEnabled && this.nodeArray.length > 0) {
+        this.captureAmbientHome();
+        this.ambientActive = true;
+      } else {
+        this.ambientActive = false;
+        this.ambientHome = null;
+      }
+    } else {
+      this.ambientActive = false;
+    }
+    this.requestRender();
   }
 
-  /** Start or stop the ambient drift based on (enabled AND settled). On start,
-   *  snapshot the current positions as the oscillation centre and size the
-   *  amplitude to the graph's extent; on stop, restore those centre positions
-   *  so toggling off doesn't leave the graph frozen mid-wobble. */
+  /** Snapshot the current positions as the ambient oscillation centre and size
+   *  the amplitude to the graph's extent. */
+  private captureAmbientHome(): void {
+    const n = this.nodeArray.length;
+    this.ambientHome = this.posArray.slice(0, n * 3);
+    this.ambientStart = performance.now();
+    let ext = 0;
+    for (let i = 0; i < n * 3; i++) {
+      const v = Math.abs(this.ambientHome[i]);
+      if (v > ext) ext = v;
+    }
+    // Visible-but-gentle drift: a few percent of the graph's half-extent,
+    // clamped, eased on big graphs.
+    const scale = n > 8000 ? 0.6 : 1;
+    this.ambientAmplitude = Math.max(8, Math.min(44, ext * 0.04)) * scale;
+  }
+
+  /** Start or stop ambient drift for the USER toggle (setAmbientActive). On
+   *  start, snapshot the centre; on stop, restore it so toggling off doesn't
+   *  leave the graph frozen mid-wobble. (Layout-driven start/stop is handled in
+   *  setLayoutSettled, which must NOT restore — see there.) */
   private refreshAmbient(): void {
     const shouldRun =
       this.ambientEnabled && this.layoutSettled && this.nodeArray.length > 0;
     if (shouldRun === this.ambientActive) return;
     if (shouldRun) {
-      const n = this.nodeArray.length;
-      this.ambientHome = this.posArray.slice(0, n * 3);
-      this.ambientStart = performance.now();
-      let ext = 0;
-      for (let i = 0; i < n * 3; i++) {
-        const v = Math.abs(this.ambientHome[i]);
-        if (v > ext) ext = v;
-      }
-      // Visible-but-gentle drift: a few percent of the graph's half-extent,
-      // clamped, eased on big graphs.
-      const scale = n > 8000 ? 0.6 : 1;
-      this.ambientAmplitude = Math.max(8, Math.min(44, ext * 0.04)) * scale;
+      this.captureAmbientHome();
       this.ambientActive = true;
       this.requestRender();
     } else {
@@ -2806,6 +2828,33 @@ export class ThreeRenderer {
     // started, the extra nodes have no `home` entry — skip them rather than
     // read past the end (which would write NaN positions).
     const n = Math.min(this.nodeArray.length, (home.length / 3) | 0);
+
+    // Onion: keep the layered shells intact — nodes may only bob gently ALONG
+    // THEIR OWN RADIUS (in/out from the centre), never drift laterally (which
+    // would smear the shells). Small amplitude so shells stay distinct.
+    if (this.currentLayoutMode === 'onion') {
+      const Ar = A * 0.3;
+      for (let i = 0; i < n; i++) {
+        const o = i * 3;
+        const hx = home[o];
+        const hy = home[o + 1];
+        const hz = home[o + 2];
+        const r = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
+        const bob = Ar * Math.sin(t * 0.9 + i * 0.7);
+        const k = (r + bob) / r; // move along the radial line only
+        pos[o] = hx * k;
+        pos[o + 1] = hy * k;
+        pos[o + 2] = hz * k;
+      }
+      (
+        this.nodeGeometry.getAttribute('position') as BufferAttribute
+      ).needsUpdate = true;
+      if (this.edgeLines && !this.edgesHiddenForInteraction) {
+        this.updateEdgePositions();
+      }
+      return;
+    }
+
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       const p = i * 0.7; // per-node phase offset
