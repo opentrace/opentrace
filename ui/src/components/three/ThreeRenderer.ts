@@ -1601,9 +1601,12 @@ export class ThreeRenderer {
   private applyEdgeDepthMode(): void {
     const d = this.mode3d;
     const order = d ? 2 : 0;
-    // Push edges slightly deeper in 3D so a line ending AT a node's center
-    // doesn't paint across its disc (see edgeMaterial's uDepthBias comment).
-    const bias = d ? 0.0015 : 0;
+    // Push edges slightly away from the camera in 3D (VIEW-SPACE world
+    // units — see edgeMaterial's uDepthBias comment) so a line ending AT a
+    // node's center doesn't paint across its disc. Comparable to a node
+    // radius; a clip-space offset here previously clipped all edges past
+    // the far plane (the "no edges in Planet/Bundled" bug).
+    const bias = d ? 2.0 : 0;
     if (this.edgeMaterial) {
       this.edgeMaterial.depthTest = d;
       this.edgeMaterial.uniforms.uDepthBias.value = bias;

@@ -40,12 +40,16 @@ const VERTEX_SHADER = /* glsl */ `
   void main() {
     vColor = aColor;
     vAlpha = aAlpha;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     // 3D: edge endpoints sit exactly AT node centers, so with LessEqual depth
     // the line paints across the node disc ("edges shining through nodes").
-    // Nudge edges slightly deeper so the disc wins at its own depth while
-    // genuinely-in-front edges still draw. 0 in 2D (depth test is off there).
-    gl_Position.z += uDepthBias * gl_Position.w;
+    // Push edges slightly away from the camera IN VIEW SPACE (world units) so
+    // the disc wins at its own depth while genuinely-in-front edges still
+    // draw. Must NOT be a clip-space offset: perspective NDC depth is so
+    // nonlinear that even a tiny clip-space bias shoves most edges past the
+    // far plane and they vanish. 0 in 2D (depth test is off there).
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    mv.z -= uDepthBias;
+    gl_Position = projectionMatrix * mv;
   }
 `;
 
