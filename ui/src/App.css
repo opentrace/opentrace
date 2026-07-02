@@ -358,24 +358,37 @@
   }
 }
 
-/* View-preset chip row floating over the graph's top-right corner.
-   Top offset clears the toolbar header, which lives inside the same
-   viewport container (same trick as .refresh-error-banner) — the desktop
-   header is ~32px tall; the ≤1024px header is taller (see media query). */
+/* View-preset chips pinned to the graph's top-right edge. The vertical
+   offset is set inline by ViewPresetBar (it measures the toolbar's right-side
+   content). As the window narrows the bar RESHAPES instead of dropping:
+   4-chip row → 2×2 grid → vertical column → only then below the toolbar
+   (the --under mode, whose offset clears the whole toolbar box). */
 .view-preset-bar {
   position: absolute;
-  top: 40px;
   right: 12px;
-  z-index: 12;
+  /* Above the fixed toolbar (z 20) so the chips receive clicks while sharing
+     its row; below dropdown menus (z 50). */
+  z-index: 30;
   display: flex;
   gap: 6px;
 }
 
-@media (max-width: 1024px) {
-  .view-preset-bar {
-    top: 68px;
-  }
+.view-preset-bar--grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.view-preset-bar--grid .view-preset-chip {
+  justify-content: flex-start;
+}
+
+.view-preset-bar--column {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Every shape keeps the chip labels visible (user preference) — compaction
+   changes the ARRANGEMENT, never the text. */
 
 .view-preset-chip {
   display: flex;
@@ -403,17 +416,6 @@
   color: var(--primary);
   border-color: color-mix(in oklch, var(--primary) 55%, transparent);
   background: color-mix(in oklch, var(--primary) 12%, var(--background));
-}
-
-/* Narrow screens: keep the chips but drop the labels (icons + tooltips). */
-@media (max-width: 640px) {
-  .view-preset-chip-label {
-    display: none;
-  }
-
-  .view-preset-chip {
-    padding: 0 8px;
-  }
 }
 
 .graph-control-btn:hover {

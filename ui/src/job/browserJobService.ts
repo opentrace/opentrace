@@ -684,6 +684,15 @@ export class BrowserJobService implements JobService {
       flushLiveBatch(); // push whatever's left below the chunk threshold
       fileContentMap.clear();
       emitParseProgress(true);
+      // Parsing runs through the worker pool, not the concurrent scheduler,
+      // so no flush_end ever completes its stage row — without this the
+      // "Files & symbols" row sat ACTIVE at n/n for the rest of the job.
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+        phase: JobPhase.JOB_PHASE_PARSING,
+        message: `Parsed ${extractedCount} files`,
+      });
 
       if (cancelled) return;
 
@@ -848,6 +857,18 @@ export class BrowserJobService implements JobService {
               });
               stageLastYield[event.stage] = now;
 
+              // Extract is the only stage with a real total and it has no
+              // flush_end — without this, "Files & symbols" sat ACTIVE at
+              // n/n for the whole indexing tail (looked hung to users).
+              if (isLast) {
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase,
+                  message: `Completed ${event.stage}`,
+                });
+              }
+
               // Yield to UI periodically (not on every event — batch up)
               if (now - lastYieldTime >= 100) {
                 await new Promise((r) => setTimeout(r, 0));
@@ -931,7 +952,12 @@ export class BrowserJobService implements JobService {
                 continue;
               }
 
-              if (phase) {
+              // Embed's flush_end fires when the ENQUEUE side finishes — the
+              // actual embedding continues in embedStage.settle(), which
+              // pushes the real STAGE_COMPLETE. Marking it done here made the
+              // panel show "Generating embeddings ✓" while counts still
+              // climbed, so the whole tail read as hung.
+              if (phase && event.stage !== 'embed') {
                 channel.push({
                   ...emptyEvent(),
                   kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,

@@ -925,11 +925,18 @@ const GraphViewer = memo(
             style={{ isolation: 'isolate' }}
           />
 
-          <ViewPresetBar
-            presets={GRAPH_PRESETS}
-            activePresetId={activePresetId}
-            onSelectPreset={handleSelectPreset}
-          />
+          {/* Hidden only when the graph strip is genuinely tiny (the
+              bottom-anchored legend wraps upward there and collides with any
+              top-anchored row). Above that, the bar rearranges itself instead:
+              it measures the toolbar and hangs below it, goes icon-only at
+              ≤900px, and wraps to a second line rather than underflowing. */}
+          {height >= 220 && (
+            <ViewPresetBar
+              presets={GRAPH_PRESETS}
+              activePresetId={activePresetId}
+              onSelectPreset={handleSelectPreset}
+            />
+          )}
 
           <NodeHoverCard info={hoverInfo} />
 

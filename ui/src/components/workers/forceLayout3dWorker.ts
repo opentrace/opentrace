@@ -505,25 +505,31 @@ function buildSimulation(
     // Deterministic radial mind-map. Each node is ANCHORED to its
     // computeRadialTree() position (root/repo centre → folders branch out in
     // clean spokes → leaves on the rim), so the layout stays an organised
-    // starburst rather than relaxing into a ball. A light charge declutters
-    // locally-overlapping siblings; firm DEFINES links keep parent→child
-    // spacing crisp along the spokes. Relational (call/import) links exert NO
-    // pull — they're drawn over the tree (some long, accepted) but must not
-    // distort it. See TREE_ANCHOR_STRENGTH.
+    // starburst rather than relaxing into a ball. The relax exists ONLY to
+    // declutter locally-overlapping siblings — and it must weaken as graphs
+    // grow: on a real repo (thousands of packed leaf functions) the same
+    // charge/link strengths that polish a 400-node tree tear the seeded
+    // rings apart into a lumpy blob. Relational (call/import) links exert NO
+    // pull — they're drawn over the tree but must not distort it.
+    const n = Math.max(1, nodes.length);
+    // ~full strength below ~600 nodes, fading toward near-zero at 5k+.
+    const relax = Math.min(1, 600 / n);
     s.force(
       'link',
       forceLink<SimNode, SimLink>(links)
         .id((d: SimNode) => d.id)
         .distance(config.linkDistance)
         // Only the containment backbone constrains spacing; relational links
-        // are inert in the layout (strength 0) so the tree stays tidy.
-        .strength((l: SimLink) => ((l.w ?? 1) >= 1 ? 0.6 : 0)),
+        // are inert in the layout (strength 0) so the tree stays tidy. The
+        // DEFINES pull also fades with size — its preset link distance bears
+        // no relation to the seeded ring gaps and drags fans off their rings.
+        .strength((l: SimLink) => ((l.w ?? 1) >= 1 ? 0.6 * relax : 0)),
     ).force(
       'charge',
-      // Gentle repulsion — just enough to separate overlapping siblings without
-      // fighting the anchor and fanning the tree into a ball.
+      // Gentle repulsion — just enough to separate overlapping siblings
+      // without fighting the anchor and fanning the tree into a ball.
       forceManyBody()
-        .strength(config.chargeStrength * 0.4)
+        .strength(config.chargeStrength * 0.4 * relax)
         .theta(defaultTheta),
     );
     s.force(
@@ -1472,8 +1478,14 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       // Tree mode is a force layout seeded from the radial tree, so the
       // hierarchy relaxes into organic branches instead of converging from a
       // tangle. Seed positions before building the sim. Onion seeds its shells.
-      if (currentMode === 'tree') computeRadialTree();
-      else if (currentMode === 'onion') computeOnion();
+      // SPREAD also seeds from the radial tree: starting the free force
+      // layout from the containment hierarchy keeps related code spatially
+      // together as it relaxes — organic clusters with SHORT edges — where a
+      // phyllotaxis start settles into one dense interleaved blob on big
+      // repos. (No tree anchor is added; the seed only picks the basin.)
+      if (currentMode === 'tree' || currentMode === 'spread') {
+        computeRadialTree();
+      } else if (currentMode === 'onion') computeOnion();
 
       sim = buildSimulation(simNodes, simLinks, cachedConfig, currentMode);
       sim.stop();
@@ -1858,10 +1870,15 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       const deterministic =
         currentMode === 'nebula' ||
         currentMode === 'tree' ||
-        currentMode === 'onion';
+        currentMode === 'onion' ||
+        currentMode === 'spread';
       if (currentMode === 'nebula') computeNebulaCloud();
-      else if (currentMode === 'tree') computeRadialTree();
-      else if (currentMode === 'onion') computeOnion();
+      else if (currentMode === 'tree' || currentMode === 'spread') {
+        // Spread relaxes FROM the containment tree (see the init-time seed
+        // comment) — the deterministic seed picks the organic-clusters basin
+        // instead of the dense phyllotaxis blob.
+        computeRadialTree();
+      } else if (currentMode === 'onion') computeOnion();
       else {
         for (const n of simNodes) {
           n.x = undefined;

@@ -179,12 +179,12 @@ export const GRAPH_PRESETS: GraphPreset[] = [
     label: 'Flat',
     icon: 'network',
     description:
-      'A clean 2D force-directed view colored by node type — the neutral baseline.',
+      'A 2D map of organic clusters — related code pulls together so edges stay short. Colored by community.',
     settings: {
       layoutMode: 'spread',
       mode3d: false,
       autoRotate: false,
-      colorMode: 'type',
+      colorMode: 'community',
       communitiesEnabled: true,
       communityLabelsVisible: false,
       repulsion: 200,
@@ -194,7 +194,9 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCommunity: 10,
       compactCentering: 5,
       compactRadius: 16,
-      edgeOpacity: 100,
+      // Kept low: thousands of intra-cluster edges read as noise at full
+      // strength — the clusters themselves carry the structure.
+      edgeOpacity: 35,
       // 2D attenuation exponent (0 = big/screen-fixed, 1 = small/world-scale);
       // 0.75 preserves the look this preset was tuned with before the slider
       // direction fix (formerly stored as 0.25 under the inverse convention).

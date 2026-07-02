@@ -1716,6 +1716,10 @@ export class LadybugGraphStore implements GraphStore {
    *  repos' in-flight queries remain valid. The store's serialization queue
    *  ensures our deletes run between neighboring queries. */
   async deleteRepo(repoId: string): Promise<void> {
+    return this.chainWrite(() => this.deleteRepoInner(repoId));
+  }
+
+  private async deleteRepoInner(repoId: string): Promise<void> {
     if (!repoId) return;
     await this.ensureReady();
 
@@ -1723,6 +1727,14 @@ export class LadybugGraphStore implements GraphStore {
     const metaId = `_meta:index:${repoId}`;
     const matches = (id: string): boolean =>
       id === repoId || id.startsWith(prefix) || id === metaId;
+
+    // Progressive-load bookkeeping may reference this repo's node ids —
+    // drop them so a later fetchGraphPage doesn't treat deleted nodes as
+    // already-streamed. (Latent today — overwritten by fetchGraphSkeleton —
+    // but cheap to keep correct.)
+    for (const id of this.progressiveIds) {
+      if (matches(id)) this.progressiveIds.delete(id);
+    }
 
     // Drop any buffered writes that would re-create this repo's rows on the
     // next flush — they'd collide with the deletions we're about to do.
@@ -2332,6 +2344,27 @@ export class LadybugGraphStore implements GraphStore {
    * using the same chunked approach.
    */
   async flush(): Promise<void> {
+    return this.chainWrite(() => this.flushInner());
+  }
+
+  /** Serializes the writes whose awaits can interleave: flush COPYs rows in
+   *  chunks with awaits between them, so an unserialized deleteRepo could run
+   *  its DELETEs BETWEEN chunks — the trailing chunks would then resurrect
+   *  just-deleted rows. (importBatch appends synchronously and needs no
+   *  chaining; concurrent flush() calls also conflict per the store contract,
+   *  and this makes that safe too.) */
+  private writeChain: Promise<void> = Promise.resolve();
+
+  private chainWrite<T>(work: () => Promise<T>): Promise<T> {
+    const p = this.writeChain.then(work, work);
+    this.writeChain = p.then(
+      () => undefined,
+      () => undefined,
+    );
+    return p;
+  }
+
+  private async flushInner(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
     await this.ensureReady();
 

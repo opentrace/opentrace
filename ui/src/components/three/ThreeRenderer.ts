@@ -49,6 +49,7 @@ import {
   Color,
   Vector2,
   Vector3,
+  Quaternion,
   Spherical,
   NearestFilter,
   AdditiveBlending,
@@ -204,6 +205,22 @@ const LABEL_GATE_MIN_3D = 5.4;
 // slider value, so the slider can't re-clutter the overview.
 const LABEL_GATE_2D_REF_EXP = 0.75;
 const LABEL_GATE_MIN_2D = 2;
+// 2D labels only exist once the user has zoomed in past this multiple of the
+// whole-graph fit zoom. Unlike the size gate (which depends on absolute zoom
+// and therefore on viewport size), this is viewport-independent: the fitted
+// overview NEVER shows labels, on any screen.
+const LABEL_2D_MIN_FIT_RATIO = 1.35;
+// Breathing room enforced between 2D labels (px per side, x/y). Without it
+// the overlap cull packs labels wall-to-wall once the zoom gate opens — a
+// solid page of text. (3D keeps tight packing: per-node depth already
+// staggers arrival there.)
+const LABEL_2D_BOX_PAD_X = 22;
+const LABEL_2D_BOX_PAD_Y = 14;
+// Hard ceiling on simultaneous 2D labels — spacing alone still admits a wall
+// of text on big viewports. Candidates are size-sorted, so the most important
+// nodes keep their names; zooming further in shrinks the on-screen set below
+// the cap naturally. (Highlights are exempt: search/chat label what they hit.)
+const LABEL_2D_MAX = 28;
 // The label gate judges every node as if it were at most this base size, so
 // proximity — not hub size — decides who gets a name: a big hub across the
 // cloud stays quiet while the ordinary nodes you're approaching light up.
@@ -218,6 +235,12 @@ const AMBIENT_FREEZE_OUTER_PX = 150;
 // Per-frame easing toward the freeze target (~0.12 ≈ nodes settle/resume over
 // a couple hundred ms at 60fps — no snapping when the cursor jumps).
 const AMBIENT_FREEZE_EASE = 0.12;
+// Per-frame rate at which a node chases its live drift target when fully
+// un-frozen (damp 1). High enough that tracking the slow ambient sines is
+// visually exact (~70ms time constant); the damp factor scales it to 0 near
+// the cursor, freezing the node AT ITS CURRENT SPOT rather than walking it
+// back to its home position.
+const AMBIENT_TRACK_RATE = 0.22;
 const FALLBACK_COLOR = '#888888';
 /** Upper bound on the WebGL backing-store pixel ratio (perf vs sharpness). */
 const MAX_PIXEL_RATIO = 1.5;
@@ -676,6 +699,26 @@ export class ThreeRenderer {
       alpha: false,
       powerPreference: 'high-performance',
     });
+    // The node/pick shaders decode the packed state attribute with GLSL ES 3
+    // integer ops — under a WebGL1 fallback they fail to COMPILE and the
+    // whole graph silently renders blank. Fail loudly and readably instead.
+    if (!renderer.capabilities.isWebGL2) {
+      renderer.forceContextLoss();
+      renderer.dispose();
+      const msg = document.createElement('div');
+      msg.style.cssText =
+        'display:flex;align-items:center;justify-content:center;height:100%;' +
+        'padding:24px;text-align:center;color:var(--muted-foreground);font-size:0.9rem;';
+      msg.textContent =
+        'This graph view requires WebGL2, which your browser or GPU driver ' +
+        'does not provide. Try a current Chrome/Firefox/Safari, or check that ' +
+        'hardware acceleration is enabled.';
+      container.appendChild(msg);
+      console.error('OpenTrace graph renderer requires WebGL2 — not available');
+      // Leave this.renderer null: every public method already no-ops without
+      // it, so the app keeps working minus the canvas.
+      return Promise.resolve();
+    }
     renderer.setPixelRatio(this.pixelRatio);
     renderer.setSize(width, height, false);
     this.bgColor.set(themeColors.bg);
@@ -1017,6 +1060,18 @@ export class ThreeRenderer {
       return;
     }
 
+    // 2D: the fitted overview never shows labels (viewport-independent, unlike
+    // the absolute-zoom size gate) — names only exist once the user zooms in.
+    // Highlights are exempt: search/chat labels must show at any zoom.
+    if (
+      !this.mode3d &&
+      !this.hasHighlight &&
+      zoom < this.lastFitZoom * LABEL_2D_MIN_FIT_RATIO
+    ) {
+      this.clearNodeLabels();
+      return;
+    }
+
     // Candidate set: highlighted-only when a highlight is active, else all visible.
     const candidates: number[] = [];
     for (let i = 0; i < this.nodeArray.length; i++) {
@@ -1040,7 +1095,17 @@ export class ThreeRenderer {
     // 2D display factor (real rendered size, for the label gap only).
     const spriteRadiusFactor = is3D ? 0 : this.labelSpriteRadiusFactor(zoom);
     // 2D gate factor: fixed reference attenuation, slider-independent.
-    const gate2dFactor = is3D ? 0 : Math.pow(zoom, LABEL_GATE_2D_REF_EXP);
+    // Normalized to the whole-graph fit zoom: on a big repo the fit zoom is
+    // tiny (~0.02) and an absolute-zoom gate would keep labels away until an
+    // extreme ~20× zoom. Relative to the fit, label onset scales with graph
+    // size — crossing the fit-ratio gate above starts revealing the largest
+    // nodes' names (the spacing pad + LABEL_2D_MAX keep density in check).
+    const gate2dFactor = is3D
+      ? 0
+      : Math.pow(
+          zoom / Math.max(this.lastFitZoom * LABEL_2D_MIN_FIT_RATIO, 1e-6),
+          LABEL_GATE_2D_REF_EXP,
+        );
     // 3D display gain (real rendered size, for the label gap only).
     const sizeGain3d = Math.pow(12, 0.3 - this.zoomSizeExponent);
     const unitZoom = this.height / (2 * Math.tan((this.fov * Math.PI) / 360));
@@ -1107,17 +1172,34 @@ export class ThreeRenderer {
       const x = s.x + gapPx;
       const y = s.y - labelH / 2;
 
+      // 2D boxes carry a spacing margin so labels stay sparse instead of
+      // tiling the screen edge-to-edge (see LABEL_2D_BOX_PAD_*).
+      const padX = is3D ? 0 : LABEL_2D_BOX_PAD_X;
+      const padY = is3D ? 0 : LABEL_2D_BOX_PAD_Y;
+      const bx = x - padX;
+      const by = y - padY;
+      const bw = w + padX * 2;
+      const bh = labelH + padY * 2;
+
       let overlap = false;
       for (const b of boxes) {
-        if (x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + labelH > b.y) {
+        if (
+          bx < b.x + b.w &&
+          bx + bw > b.x &&
+          by < b.y + b.h &&
+          by + bh > b.y
+        ) {
           overlap = true;
           break;
         }
       }
       if (overlap) continue;
-      boxes.push({ x, y, w, h: labelH });
+      boxes.push({ x: bx, y: by, w: bw, h: bh });
       keep.add(node.id);
       this.ensureNodeLabel(node.id, text, x, s.y);
+      // Density ceiling (2D, non-highlight): the size-sorted scan means the
+      // biggest nodes claimed the slots — stop before it becomes a text wall.
+      if (!is3D && !this.hasHighlight && keep.size >= LABEL_2D_MAX) break;
     }
 
     // Remove labels no longer kept.
@@ -1293,6 +1375,10 @@ export class ThreeRenderer {
 
     const dom = this.renderer?.domElement;
     this.renderer?.dispose();
+    // dispose() frees caches but NOT the GL context; browsers cap live
+    // contexts (~16 in Chrome) and every repo switch mounts a fresh renderer,
+    // so without an explicit loss the oldest canvas eventually goes blank.
+    this.renderer?.forceContextLoss();
     this.renderer = null;
     this.scene = null;
     this.camera = null;
@@ -1371,8 +1457,10 @@ export class ThreeRenderer {
       const color = nodeColors.get(gn.id) ?? FALLBACK_COLOR;
       const size = nodeSizes.get(gn.id) ?? 4;
 
-      this.posArray[i * 3] = pos.x;
-      this.posArray[i * 3 + 1] = pos.y;
+      // Mirror updatePositionsFromBuffer's finite guard: one NaN coordinate
+      // poisons bounds/fit math for the whole graph.
+      this.posArray[i * 3] = Number.isFinite(pos.x) ? pos.x : 0;
+      this.posArray[i * 3 + 1] = Number.isFinite(pos.y) ? pos.y : 0;
       this.posArray[i * 3 + 2] = 0;
       hexToRgb(color, this.tmpColor);
       this.colorArray[i * 3] = this.tmpColor.r;
@@ -1513,12 +1601,17 @@ export class ThreeRenderer {
   private applyEdgeDepthMode(): void {
     const d = this.mode3d;
     const order = d ? 2 : 0;
+    // Push edges slightly deeper in 3D so a line ending AT a node's center
+    // doesn't paint across its disc (see edgeMaterial's uDepthBias comment).
+    const bias = d ? 0.0015 : 0;
     if (this.edgeMaterial) {
       this.edgeMaterial.depthTest = d;
+      this.edgeMaterial.uniforms.uDepthBias.value = bias;
       this.edgeMaterial.needsUpdate = true;
     }
     if (this.superEdgeMaterial) {
       this.superEdgeMaterial.depthTest = d;
+      this.superEdgeMaterial.uniforms.uDepthBias.value = bias;
       this.superEdgeMaterial.needsUpdate = true;
     }
     if (this.edgeLines) this.edgeLines.renderOrder = order;
@@ -1622,6 +1715,13 @@ export class ThreeRenderer {
           alpha = hot ? EDGE_OPACITY_HIGHLIGHTED : EDGE_OPACITY_DIMMED;
         } else {
           alpha = EDGE_OPACITY_DEFAULT;
+          // The radial tree reads through its DEFINES skeleton. Relational
+          // chords (calls/imports) cross the whole map — on a real repo
+          // (thousands of them) they drown the structure into a solid web,
+          // so keep them faint until a highlight makes them relevant.
+          if (this.currentLayoutMode === 'tree' && e.label !== 'DEFINES') {
+            alpha *= 0.1;
+          }
         }
       }
       a[i * 2] = alpha;
@@ -1779,9 +1879,18 @@ export class ThreeRenderer {
     const pos = toTargets ? this.layoutPos : this.posArray;
     for (let i = 0; i < len; i++) {
       const o = i * 3;
-      pos[o] = buffer[o];
-      pos[o + 1] = buffer[o + 1];
-      pos[o + 2] = buffer[o + 2];
+      const x = buffer[o];
+      const y = buffer[o + 1];
+      const z = buffer[o + 2];
+      // A degenerate force step (coincident nodes → zero-distance repulsion)
+      // can emit NaN; writing it into the bound attribute vanishes the point
+      // and poisons the fit/bounds math. Keep the node's last good position.
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        continue;
+      }
+      pos[o] = x;
+      pos[o + 1] = y;
+      pos[o + 2] = z;
     }
     if (toTargets) this.requestRender();
     else this.markPositionsDirty();
@@ -1871,7 +1980,11 @@ export class ThreeRenderer {
     if (this.mode3d) return 0.85;
     // Ratio of current zoom to the whole-graph fit zoom: 1 = full overview.
     const ratio = (this.camera?.zoom ?? 1) / Math.max(this.lastFitZoom, 1e-6);
-    const MIN = 0.12; // overview — barely-there web
+    // Overview floor: a force hairball reads better with a barely-there web,
+    // but the radial TREE is its spokes — fading them to 0.12 turned the
+    // organized layout into an apparent random scatter. Keep the skeleton
+    // visible at the fit.
+    const MIN = this.currentLayoutMode === 'tree' ? 0.5 : 0.12;
     const MAX = 0.85; // zoomed into a region — readable
     // Reach MAX once zoomed ~6× past the overview fit.
     const t = Math.min(1, Math.max(0, (ratio - 1) / 5));
@@ -2325,7 +2438,13 @@ export class ThreeRenderer {
         downPos = { x: e.clientX, y: e.clientY };
         this.pendingDragIndex = -1;
         this.dragNodeIndex = -1;
-        // Node drag is a 2D affordance; in 3D OrbitControls owns left-drag.
+        // 3D left-drag rotates the graph about its center — snapshot the
+        // pivot now so layout ticks mid-drag can't wobble it.
+        if (e.button === 0 && this.mode3d) {
+          this.rotatePivot =
+            this.nodeArray.length > 0 ? this.computeBounds3D().center : null;
+        }
+        // Node drag is a 2D affordance; in 3D left-drag rotates.
         if (e.button === 0 && !this.mode3d) {
           const rect = canvas.getBoundingClientRect();
           const idx = this.pickNodeIndexAt(
@@ -2425,8 +2544,14 @@ export class ThreeRenderer {
         const dy = e.clientY - downPos.y;
         moved = Math.sqrt(dx * dx + dy * dy);
 
-        // In 3D, OrbitControls handles rotate/pan/dolly itself.
+        // 3D: OrbitControls handles pan (right-drag) and dolly (wheel/pinch),
+        // but LEFT-DRAG rotation is ours — it spins the GRAPH around its own
+        // center rather than orbiting the (possibly panned-away) target, so
+        // panning the graph off-center never changes the rotation pivot.
         if (this.mode3d) {
+          if (button === 0 && moved > CLICK_THRESHOLD) {
+            this.rotateGraphBy(e.clientX - lastX, e.clientY - lastY);
+          }
           lastX = e.clientX;
           lastY = e.clientY;
           return;
@@ -2579,6 +2704,55 @@ export class ThreeRenderer {
   /** Current px-per-world-unit, for converting a pixel hit radius to world. */
   private zoomForHit(): number {
     return this.camera?.zoom ?? 1;
+  }
+
+  /** Pivot for the current 3D rotate gesture — the graph's own center,
+   *  captured at pointer-down so a mid-drag layout tick can't wobble it. */
+  private rotatePivot: Vector3 | null = null;
+
+  /** 3D left-drag: rotate the GRAPH about its own center — camera and orbit
+   *  target swing together around the pivot, so a prior pan (which offsets
+   *  the target) never becomes the rotation axis. Replaces OrbitControls'
+   *  rotate (enableRotate=false), which always orbits the target. */
+  private rotateGraphBy(dxPx: number, dyPx: number): void {
+    const cam = this.perspCamera;
+    const controls = this.controls;
+    if (!cam || !controls || (dxPx === 0 && dyPx === 0)) return;
+    const pivot =
+      this.rotatePivot ??
+      (this.nodeArray.length > 0 ? this.computeBounds3D().center : null);
+    if (!pivot) return;
+
+    // Manual rotation = user camera takeover. (The controls 'start' hook
+    // that normally sets this no longer fires for rotation.)
+    this.hasUserMovedCamera = true;
+    this.autoFitTarget = null;
+    if (this.mode3dAutoRotate) this.set3DAutoRotate(false, true);
+
+    const ROT_SPEED = 0.005; // rad per dragged px, ≈ OrbitControls' feel
+    const yawAngle = -dxPx * ROT_SPEED;
+    const pitchAngle = -dyPx * ROT_SPEED;
+
+    const up = cam.up;
+    const camOff = cam.position.clone().sub(pivot);
+    const qYaw = new Quaternion().setFromAxisAngle(up, yawAngle);
+    const right = new Vector3().setFromMatrixColumn(cam.matrix, 0).normalize();
+    const qPitch = new Quaternion().setFromAxisAngle(right, pitchAngle);
+    // Drop the pitch component when it would carry the camera over a pole
+    // (lookAt degenerates there) — yaw alone still applies.
+    const POLE_EPS = 0.08;
+    const pitched = camOff.clone().applyQuaternion(qPitch);
+    const polar = pitched.angleTo(up);
+    const q =
+      polar > POLE_EPS && polar < Math.PI - POLE_EPS
+        ? qYaw.multiply(qPitch)
+        : qYaw;
+
+    cam.position.copy(camOff.applyQuaternion(q).add(pivot));
+    controls.target.sub(pivot).applyQuaternion(q).add(pivot);
+    controls.update();
+    this.requestRender();
+    this.hideEdgesForInteraction();
   }
 
   /** Mark `idx` as the hovered node (grow it via NODE_STATE_HOVERED) and tell
@@ -2759,6 +2933,8 @@ export class ThreeRenderer {
     this.currentLayoutMode = mode;
     // Geometry changed — let the community cull re-decide.
     this.communityVisibilityFrozen = false;
+    // Tree mode re-weights per-edge alpha (skeleton vs relational chords).
+    this.updateEdgeAlpha();
   }
 
   setCommunityData(
@@ -3187,6 +3363,13 @@ export class ThreeRenderer {
       return u * u * (3 - 2 * u);
     };
 
+    // Freeze model: each node CHASES its live drift target at a rate scaled
+    // by its damp factor. Far from the cursor the chase is fast (tracks the
+    // sines with imperceptible lag); near the cursor the rate reaches zero so
+    // the node stops EXACTLY where it currently is — it must never walk back
+    // to its home position (that read as a "jump" when the cursor arrived).
+    // When the cursor leaves, the node glides back onto the moving target.
+
     // Onion: keep the layered shells intact — nodes may only bob gently ALONG
     // THEIR OWN RADIUS (in/out from the centre), never drift laterally (which
     // would smear the shells). Small amplitude so shells stay distinct.
@@ -3200,11 +3383,12 @@ export class ThreeRenderer {
         const target = freeze ? dampTargetAt(hx, hy, hz) : 1;
         const f = (damp[i] += (target - damp[i]) * AMBIENT_FREEZE_EASE);
         const r = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
-        const bob = Ar * Math.sin(t * 0.9 + i * 0.7) * f;
+        const bob = Ar * Math.sin(t * 0.9 + i * 0.7);
         const k = (r + bob) / r; // move along the radial line only
-        pos[o] = hx * k;
-        pos[o + 1] = hy * k;
-        pos[o + 2] = hz * k;
+        const rate = AMBIENT_TRACK_RATE * f;
+        pos[o] += (hx * k - pos[o]) * rate;
+        pos[o + 1] += (hy * k - pos[o + 1]) * rate;
+        pos[o + 2] += (hz * k - pos[o + 2]) * rate;
       }
       (
         this.nodeGeometry.getAttribute('position') as BufferAttribute
@@ -3222,19 +3406,21 @@ export class ThreeRenderer {
         ? dampTargetAt(home[o], home[o + 1], home[o + 2])
         : 1;
       const f = (damp[i] += (target - damp[i]) * AMBIENT_FREEZE_EASE);
-      const fA = A * f;
-      pos[o] =
+      const rate = AMBIENT_TRACK_RATE * f;
+      const tx =
         home[o] +
-        fA * (Math.sin(t * 1.1 + p) + 0.6 * Math.sin(t * 0.67 + p * 1.7));
-      pos[o + 1] =
+        A * (Math.sin(t * 1.1 + p) + 0.6 * Math.sin(t * 0.67 + p * 1.7));
+      const ty =
         home[o + 1] +
-        fA *
-          (Math.sin(t * 0.95 + p * 1.3) + 0.6 * Math.sin(t * 0.78 + p * 0.5));
+        A * (Math.sin(t * 0.95 + p * 1.3) + 0.6 * Math.sin(t * 0.78 + p * 0.5));
+      pos[o] += (tx - pos[o]) * rate;
+      pos[o + 1] += (ty - pos[o + 1]) * rate;
       if (is3D) {
-        pos[o + 2] =
+        const tz =
           home[o + 2] +
-          fA *
+          A *
             (Math.sin(t * 1.02 + p * 0.8) + 0.6 * Math.sin(t * 0.61 + p * 2.1));
+        pos[o + 2] += (tz - pos[o + 2]) * rate;
       }
     }
     (
@@ -3605,6 +3791,9 @@ export class ThreeRenderer {
       const controls = new OrbitControls(this.perspCamera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.12;
+      // Rotation is implemented by rotateGraphBy (graph-centered pivot);
+      // OrbitControls keeps pan + dolly only.
+      controls.enableRotate = false;
       controls.target.copy(center);
       controls.autoRotate = this.mode3dAutoRotate;
       controls.autoRotateSpeed = this.autoRotateSpeedFromRadians(
@@ -4175,11 +4364,14 @@ export class ThreeRenderer {
         const color = nodeColors.get(gn.id) ?? FALLBACK_COLOR;
         const size = nodeSizes.get(gn.id) ?? 4;
         const o = i * 3;
-        this.layoutPos[o] = pos.x;
-        this.layoutPos[o + 1] = pos.y;
+        // Same finite guard as setData/updatePositionsFromBuffer.
+        const px = Number.isFinite(pos.x) ? pos.x : 0;
+        const py = Number.isFinite(pos.y) ? pos.y : 0;
+        this.layoutPos[o] = px;
+        this.layoutPos[o + 1] = py;
         this.layoutPos[o + 2] = 0;
-        this.posArray[o] = pos.x;
-        this.posArray[o + 1] = pos.y;
+        this.posArray[o] = px;
+        this.posArray[o + 1] = py;
         this.posArray[o + 2] = 0;
         hexToRgb(color, this.tmpColor);
         this.colorArray[o] = this.tmpColor.r;
@@ -4993,6 +5185,7 @@ export class ThreeRenderer {
 
     let dirty = false;
     let active: TraversalEdge | null = null;
+    let anyPending = false;
     for (const e of anim.edges) {
       if (elapsed >= e.startMs && elapsed < e.startMs + e.durMs) {
         active = e;
@@ -5005,8 +5198,15 @@ export class ThreeRenderer {
         this.triggerPing([e.destId]);
         dirty = true;
       }
+      if (!e.arrived) anyPending = true;
     }
     if (dirty) this.refreshHotState();
+    // Chained chat traversals keep appending to this timeline within one
+    // session; once everything so far has arrived, drop the scanned-per-frame
+    // backlog (the lit state lives in traversalLit*, not here).
+    if (!anyPending && anim.edges.length > 0 && !active) {
+      anim.edges.length = 0;
+    }
 
     if (active) {
       const t = (elapsed - active.startMs) / active.durMs;

@@ -130,10 +130,37 @@ export class ExtractPool {
         return;
       }
 
+      // Crash accounting: a worker that OOMs on a huge file fires 'error'
+      // (never a 'message'), which previously left `active` stuck and hung
+      // the whole indexing run on its last in-flight job. Track each
+      // worker's in-flight job so a crash can fail it, retire the dead
+      // worker, and let the surviving workers drain the queue.
+      const dead = new Set<Worker>();
+      const inFlight = new Map<
+        Worker,
+        {
+          fileId: string;
+          handler: (ev: MessageEvent<ExtractWorkerOut>) => void;
+        }
+      >();
+      const crashHandlers = new Map<Worker, (ev: Event) => void>();
+
+      let finished = false;
+      const finish = (): void => {
+        if (finished) return;
+        finished = true;
+        for (const [worker, onCrash] of crashHandlers) {
+          worker.removeEventListener('error', onCrash);
+          worker.removeEventListener('messageerror', onCrash);
+        }
+        resolve();
+      };
+
       const pump = (worker: Worker): void => {
+        if (dead.has(worker)) return;
         // Skip remaining work on cancellation; resolve once everything drains.
         if (cb.isCancelled?.() || next >= total) {
-          if (active === 0) resolve();
+          if (active === 0) finish();
           return;
         }
 
@@ -153,6 +180,7 @@ export class ExtractPool {
           const m = ev.data;
           if (m.type === 'ready' || m.jobId !== jobId) return;
           worker.removeEventListener('message', handler);
+          inFlight.delete(worker);
           active--;
 
           // Dispatch this worker's NEXT file BEFORE processing the result, so
@@ -176,6 +204,7 @@ export class ExtractPool {
         };
 
         worker.addEventListener('message', handler);
+        inFlight.set(worker, { fileId: file.fileId, handler });
         worker.postMessage({
           type: 'extract',
           jobId,
@@ -184,6 +213,41 @@ export class ExtractPool {
           content,
         } satisfies ExtractWorkerIn);
       };
+
+      for (const worker of this.workers) {
+        const onCrash = (ev: Event): void => {
+          if (dead.has(worker) || finished) return;
+          dead.add(worker);
+          const evMsg = (ev as { message?: unknown }).message;
+          const reason =
+            typeof evMsg === 'string' && evMsg
+              ? `extract worker crashed: ${evMsg}`
+              : 'extract worker crashed';
+          const job = inFlight.get(worker);
+          if (job) {
+            worker.removeEventListener('message', job.handler);
+            inFlight.delete(worker);
+            active--;
+            cb.onError?.(job.fileId, reason);
+          }
+          const anyAlive = this.workers.some((w) => !dead.has(w));
+          if (!anyAlive) {
+            // Last worker down: fail whatever's left so callers see every
+            // file accounted for, then resolve instead of hanging.
+            while (next < total) {
+              cb.onError?.(files[next++].fileId, reason);
+            }
+            finish();
+            return;
+          }
+          // Surviving (busy) workers keep pumping the queue as they finish;
+          // we only need to resolve if this crash ended the final job.
+          if (active === 0 && next >= total) finish();
+        };
+        crashHandlers.set(worker, onCrash);
+        worker.addEventListener('error', onCrash);
+        worker.addEventListener('messageerror', onCrash);
+      }
 
       for (const worker of this.workers) pump(worker);
     });

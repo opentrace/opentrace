@@ -145,6 +145,10 @@ const FRAGMENT_SHADER = /* glsl */ `
       alpha = max(core, halo * halo * 0.65) * vAlpha;
       color = min(vColor * (1.0 + 0.65 * core), vec3(1.0));
     }
+    // Nearly-invisible fragments must not WRITE DEPTH: the glow halo (and the
+    // AA rim) tapers to ~0 alpha, and with depthWrite on those pixels blanked
+    // everything behind them — a black orb around highlighted/hovered nodes.
+    if (alpha < 0.03) discard;
     if (uUseTexture > 0.5) {
       vec4 tex = texture2D(uTexture, gl_PointCoord);
       gl_FragColor = vec4(color * tex.rgb, alpha * tex.a);

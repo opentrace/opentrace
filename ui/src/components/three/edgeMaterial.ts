@@ -34,12 +34,18 @@ import { ShaderMaterial, NormalBlending } from 'three';
 const VERTEX_SHADER = /* glsl */ `
   attribute vec3 aColor;
   attribute float aAlpha;
+  uniform float uDepthBias;
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
     vColor = aColor;
     vAlpha = aAlpha;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    // 3D: edge endpoints sit exactly AT node centers, so with LessEqual depth
+    // the line paints across the node disc ("edges shining through nodes").
+    // Nudge edges slightly deeper so the disc wins at its own depth while
+    // genuinely-in-front edges still draw. 0 in 2D (depth test is off there).
+    gl_Position.z += uDepthBias * gl_Position.w;
   }
 `;
 
@@ -58,7 +64,8 @@ export function createEdgeMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     // uOpacity is a global multiplier the renderer drives by zoom: faint at the
     // overview (clusters read clearly), opaque when zoomed into a region.
-    uniforms: { uOpacity: { value: 1 } },
+    // uDepthBias is set by applyEdgeDepthMode: ~1.5e-3 in 3D, 0 in 2D.
+    uniforms: { uOpacity: { value: 1 }, uDepthBias: { value: 0 } },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     transparent: true,

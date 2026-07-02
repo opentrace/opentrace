@@ -103,6 +103,10 @@ export function useCommunities(
       workerRef.current = worker;
 
       worker.onerror = (err) => {
+        // Terminate unconditionally — a stale/errored worker must not
+        // linger (the success path already does this symmetrically).
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
         if (reqId !== requestIdRef.current || unmountedRef.current) return;
         console.error('[graph] community worker failed:', err);
         setCommunityData(EMPTY_COMMUNITY);
