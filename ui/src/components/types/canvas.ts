@@ -79,6 +79,9 @@ export interface GraphCanvasProps {
   onEdgeClick?: (edge: SelectedEdge) => void;
   /** Called when the background (stage) is clicked. */
   onStageClick?: () => void;
+  /** Called when the cursor enters a node (canvas-local px) or leaves one
+   *  (`null` node). Hosts use it for hover tooltips. */
+  onNodeHover?: (node: GraphNode | null, x: number, y: number) => void;
   /** Called when the optimize status changes. */
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
   /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */

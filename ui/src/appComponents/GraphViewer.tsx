@@ -68,6 +68,9 @@ import {
 import { PhysicsPanelContainer } from './PhysicsPanelContainer';
 import { GitHubIcon, GitLabIcon } from './providerIcons';
 import LiveIndexingPanel from './LiveIndexingPanel';
+import ViewPresetBar from './ViewPresetBar';
+import NodeHoverCard, { type HoverInfo } from './NodeHoverCard';
+import type { GraphNode } from '../components/graph/types';
 import ResetConfirmModal from './ResetConfirmModal';
 import type { SidePanelTab } from './SidePanel';
 
@@ -272,6 +275,16 @@ const GraphViewer = memo(
             return null;
           }
         },
+      );
+
+      // ── Node hover tooltip (renderer reports enter/leave; the card itself
+      //    applies the show delay + lazy summary fetch) ─────────────────
+      const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+      const onNodeHover = useCallback(
+        (node: GraphNode | null, x: number, y: number) => {
+          setHoverInfo(node ? { node, x, y } : null);
+        },
+        [],
       );
 
       /** Apply a preset's full settings to React state + the renderer. Mirrors
@@ -742,8 +755,6 @@ const GraphViewer = memo(
                 toolbarActions={toolbarActions}
                 jobState={jobState}
                 jobExpanded={jobExpanded}
-                onJobExpand={onJobExpand}
-                onJobCancel={onJobCancel}
                 onAddRepoOpen={onAddRepoOpen}
                 hasGraphData={graphData.nodes.length > 0}
                 canExport={!!store.exportDatabase}
@@ -895,6 +906,7 @@ const GraphViewer = memo(
             onNodeClick={v.onNodeClick}
             onEdgeClick={v.onLinkClick}
             onStageClick={v.onStageClick}
+            onNodeHover={onNodeHover}
             labelsVisible={v.settings.labelsVisible}
             edgesEnabled={v.settings.edgesVisible}
             communityLabelsVisible={v.settings.communityLabelsVisible}
@@ -913,12 +925,42 @@ const GraphViewer = memo(
             style={{ isolation: 'isolate' }}
           />
 
+          <ViewPresetBar
+            presets={GRAPH_PRESETS}
+            activePresetId={activePresetId}
+            onSelectPreset={handleSelectPreset}
+          />
+
+          <NodeHoverCard info={hoverInfo} />
+
+          {/* Fetch-phase placeholder: a job is running but nothing has streamed
+              into the canvas yet (initializing / fetching the archive), so the
+              viewport would otherwise be a black void. */}
+          {jobActive && graphData.nodes.length === 0 && (
+            <div className="graph-fetching-overlay" aria-live="polite">
+              <img
+                src="/opentrace-logo.svg"
+                alt=""
+                className="graph-fetching-overlay__logo"
+              />
+              <span className="graph-fetching-overlay__text">
+                {(() => {
+                  const stages = jobState.stages as Record<
+                    string,
+                    { status: string }
+                  >;
+                  const active = INDEXING_STAGES.find(
+                    (s) => stages[s.key]?.status === 'active',
+                  );
+                  return active ? `${active.label}…` : 'Preparing…';
+                })()}
+              </span>
+            </div>
+          )}
+
           {showPhysicsPanel && (
             <PhysicsPanelContainer
               canvasRef={v.canvasRef}
-              presets={GRAPH_PRESETS}
-              activePresetId={activePresetId}
-              onSelectPreset={handleSelectPreset}
               onUserAdjust={handleUserAdjust}
               repulsion={v.settings.repulsion}
               setRepulsion={v.settings.setRepulsion}

@@ -28,7 +28,7 @@
  *   | ------------------ | ----------- | ------------------ |
  *   | `layoutMode`       | `'compact'` | `'spread'`         |
  *   | `mode3d`           | `true`      | `false`            |
- *   | `pixiZoomExponent` | `0.25`      | `0.8`              |
+ *   | `pixiZoomExponent` | `0.25`      | `0.2`              |
  *
  * Prop-driven consumers of `PixiGraphCanvas` + `PhysicsPanel` (without the
  * store/providers) can import this from the store-free, WebGL-free `./utils`

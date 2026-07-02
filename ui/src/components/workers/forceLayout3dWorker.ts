@@ -1259,39 +1259,77 @@ function computeOnion(): void {
     (a, b) => onionTypeRank(a) - onionTypeRank(b) || a.localeCompare(b),
   );
   const shells = Math.max(1, types.length);
-
-  // The shell needing the most room (usually the big outer one) sets the outer
-  // radius; shells are then equally spaced out to it.
-  let maxNeed = ONION_MIN_RADIUS;
-  for (const t of types) {
-    const c = groups.get(t)!.length;
-    const need = ONION_ARC * Math.sqrt(c / (4 * Math.PI));
-    if (need > maxNeed) maxNeed = need;
-  }
-  const gap = maxNeed / shells;
   const GOLD = Math.PI * (3 - Math.sqrt(5));
 
-  for (let si = 0; si < shells; si++) {
-    const idxs = groups.get(types[si])!;
-    const r = (si + 1) * gap;
-    const cnt = idxs.length;
-    if (cnt === 1) {
-      // Lone node (e.g. the Repository core): centre it if innermost, else
-      // park it on the shell's pole.
-      const o = idxs[0] * 3;
-      onionSeed[o] = 0;
-      onionSeed[o + 1] = si === 0 ? 0 : r;
-      onionSeed[o + 2] = 0;
-      continue;
+  if (nDim === 2) {
+    // 2D — an onion CROSS-SECTION: concentric annular bands, one per type,
+    // core→rim. Projecting the 3D spheres flat instead would stack every
+    // shell into overlapping filled discs (an unreadable blob). Each band's
+    // area is its node count × ONION_ARC² so density stays uniform; within a
+    // band, nodes fill a golden-angle (sunflower) spiral.
+    const AREA = ONION_ARC * ONION_ARC;
+    const BAND_GAP = ONION_ARC * 1.5;
+    let rIn = 0;
+    for (let si = 0; si < shells; si++) {
+      const idxs = groups.get(types[si])!;
+      const cnt = idxs.length;
+      if (cnt === 1 && si === 0) {
+        // Lone core node (e.g. the Repository): centre it.
+        const o = idxs[0] * 3;
+        onionSeed[o] = 0;
+        onionSeed[o + 1] = 0;
+        onionSeed[o + 2] = 0;
+        rIn = ONION_ARC * 3;
+        continue;
+      }
+      const rOut = Math.sqrt(rIn * rIn + (cnt * AREA) / Math.PI);
+      const rIn2 = rIn * rIn;
+      const span2 = rOut * rOut - rIn2;
+      for (let k = 0; k < cnt; k++) {
+        // sqrt-interpolated radius → uniform area density across the band.
+        const rr = Math.sqrt(rIn2 + (span2 * (k + 0.5)) / cnt);
+        const ang = k * GOLD;
+        const o = idxs[k] * 3;
+        onionSeed[o] = Math.cos(ang) * rr;
+        onionSeed[o + 1] = Math.sin(ang) * rr;
+        onionSeed[o + 2] = 0;
+      }
+      rIn = rOut + BAND_GAP;
     }
-    for (let k = 0; k < cnt; k++) {
-      const yy = 1 - (2 * (k + 0.5)) / cnt; // -1..1
-      const lat = Math.sqrt(Math.max(0, 1 - yy * yy));
-      const ph = k * GOLD;
-      const o = idxs[k] * 3;
-      onionSeed[o] = Math.cos(ph) * lat * r;
-      onionSeed[o + 1] = yy * r;
-      onionSeed[o + 2] = Math.sin(ph) * lat * r;
+  } else {
+    // 3D — nested Fibonacci-sphere shells. The shell needing the most room
+    // (usually the big outer one) sets the outer radius; shells are then
+    // equally spaced out to it.
+    let maxNeed = ONION_MIN_RADIUS;
+    for (const t of types) {
+      const c = groups.get(t)!.length;
+      const need = ONION_ARC * Math.sqrt(c / (4 * Math.PI));
+      if (need > maxNeed) maxNeed = need;
+    }
+    const gap = maxNeed / shells;
+
+    for (let si = 0; si < shells; si++) {
+      const idxs = groups.get(types[si])!;
+      const r = (si + 1) * gap;
+      const cnt = idxs.length;
+      if (cnt === 1) {
+        // Lone node (e.g. the Repository core): centre it if innermost, else
+        // park it on the shell's pole.
+        const o = idxs[0] * 3;
+        onionSeed[o] = 0;
+        onionSeed[o + 1] = si === 0 ? 0 : r;
+        onionSeed[o + 2] = 0;
+        continue;
+      }
+      for (let k = 0; k < cnt; k++) {
+        const yy = 1 - (2 * (k + 0.5)) / cnt; // -1..1
+        const lat = Math.sqrt(Math.max(0, 1 - yy * yy));
+        const ph = k * GOLD;
+        const o = idxs[k] * 3;
+        onionSeed[o] = Math.cos(ph) * lat * r;
+        onionSeed[o + 1] = yy * r;
+        onionSeed[o + 2] = Math.sin(ph) * lat * r;
+      }
     }
   }
 

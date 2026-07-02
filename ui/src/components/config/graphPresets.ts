@@ -77,7 +77,7 @@ export interface GraphPreset {
 }
 
 /** Default applied on a user's first-ever graph load (no stored preset yet). */
-export const DEFAULT_PRESET_ID: GraphPresetId = 'onion';
+export const DEFAULT_PRESET_ID: GraphPresetId = 'planet';
 
 export const GRAPH_PRESETS: GraphPreset[] = [
   {
@@ -164,7 +164,8 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCentering: 0,
       compactRadius: 39,
       edgeOpacity: 15,
-      zoomSizeExponent: 0.12,
+      // Displays as 50% on the "Zoom scaling" slider (0 = big, 1 = small).
+      zoomSizeExponent: 0.5,
       labelScale: 72,
       mode3dSpeed: 15,
       mode3dTilt: 35,
@@ -194,7 +195,10 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCentering: 5,
       compactRadius: 16,
       edgeOpacity: 100,
-      zoomSizeExponent: 0.25,
+      // 2D attenuation exponent (0 = big/screen-fixed, 1 = small/world-scale);
+      // 0.75 preserves the look this preset was tuned with before the slider
+      // direction fix (formerly stored as 0.25 under the inverse convention).
+      zoomSizeExponent: 0.75,
       labelScale: 100,
       mode3dSpeed: 15,
       mode3dTilt: 35,

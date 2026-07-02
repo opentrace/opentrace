@@ -17,7 +17,9 @@
 .live-indexing-panel {
   position: absolute;
   left: 16px;
-  bottom: 16px;
+  /* Anchored ABOVE the bottom-left legend (.legend: bottom 20px, ~1 row tall)
+     so the panel never covers the node-type legend while indexing. */
+  bottom: 84px;
   z-index: 150;
   width: 268px;
   max-width: calc(100vw - 32px);

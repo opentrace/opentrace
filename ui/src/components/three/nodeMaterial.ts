@@ -22,9 +22,11 @@
  * "state" float; the GPU does size attenuation and the highlight dim/enlarge,
  * so there is NO per-frame JS loop over nodes (the Pixi bottleneck at scale).
  *
- * Sizing matches the Pixi renderer's model:
- *   on-screen radius (px) = baseSize * zoom^(1 - sizeExponent)
- * where `zoom` is the orthographic camera's px-per-world-unit. In perspective
+ * Sizing model (2D):
+ *   on-screen radius (px) = baseSize * zoom^sizeExponent
+ * where `zoom` is the orthographic camera's px-per-world-unit — so exponent 0
+ * = fixed screen size (big at overview) and 1 = world-tracking (small at
+ * overview), matching the 3D branch's "0 = big, 1 = small". In perspective
  * (3D) mode the camera distance handles attenuation instead (uPerspective=1).
  */
 
@@ -39,6 +41,10 @@ import {
 export const NODE_STATE_VISIBLE = 1; // bit 0 — node is visible at all
 export const NODE_STATE_HIGHLIGHTED = 2; // bit 1 — part of the active highlight set
 export const NODE_STATE_DIMMED = 4; // bit 2 — dimmed by another node's highlight
+export const NODE_STATE_HOVERED = 8; // bit 3 — under the cursor (grows slightly)
+
+/** Size multiplier for the node under the cursor. */
+export const NODE_HOVER_SCALE = 1.3;
 
 const VERTEX_SHADER = /* glsl */ `
   attribute vec3 aColor;
@@ -56,15 +62,23 @@ const VERTEX_SHADER = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
   varying float vCull;
+  varying float vGlow;
 
   void main() {
     int state = int(aState + 0.5);
     bool visible = (state & 1) == 1;
     bool highlighted = (state & 2) == 2;
     bool dimmed = (state & 4) == 4;
+    bool hovered = (state & 8) == 8;
 
     vColor = aColor;
+    // Highlighted nodes (chat traversal / search / selection) render as a
+    // bright core + soft halo in the fragment shader.
+    vGlow = highlighted ? 1.0 : 0.0;
     float sizeMul = highlighted ? uHlScale : (dimmed ? uDimScale : 1.0);
+    // Hover grows the node a touch so the click target is obvious. 1.3 must
+    // match NODE_HOVER_SCALE.
+    if (hovered) sizeMul *= 1.3;
     // Solid nodes (only dimmed nodes are translucent). 0.9 used to make every
     // node 10% see-through, which — combined with depthTest off — let nodes
     // behind show through nodes in front.
@@ -89,7 +103,11 @@ const VERTEX_SHADER = /* glsl */ `
       float sizeGain = pow(12.0, 0.3 - uSizeExp);
       screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
-      screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
+      // Ortho (2D): uSizeExp is the zoom-attenuation exponent — 0 keeps nodes
+      // at fixed screen size (reads BIG at overview), 1 makes them track the
+      // world scale (shrink fully when zoomed out). Matches the 3D branch's
+      // "0 = big, 1 = small" so the UI slider moves both modes the same way.
+      screenPx = base * 2.0 * pow(uZoom, uSizeExp) * uPixelRatio;
     }
     // base <= ~0 means the node is mid build-animation reveal (size driven to
     // 0 before its "birth"); cull it. gl_PointSize 0.0 is NOT reliable — many
@@ -108,6 +126,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
   varying float vCull;
+  varying float vGlow;
 
   void main() {
     if (vCull > 0.5) discard; // culled point (e.g. size 0 mid build-anim)
@@ -116,11 +135,21 @@ const FRAGMENT_SHADER = /* glsl */ `
     if (d > 0.25) discard;
     // Anti-aliased edge over the outer ~4% of the radius.
     float alpha = smoothstep(0.25, 0.2304, d) * vAlpha;
+    vec3 color = vColor;
+    if (vGlow > 0.5) {
+      // Highlighted (chat/search): brightened solid core + a soft halo that
+      // fills the enlarged point (NODE_SIZE_HIGHLIGHTED_SCALE gives it room),
+      // so highlights read as glowing beacons instead of flat discs.
+      float core = 1.0 - smoothstep(0.055, 0.1, d); // solid center ~2/3 radius
+      float halo = 1.0 - smoothstep(0.0, 0.25, d); // falloff to the rim
+      alpha = max(core, halo * halo * 0.65) * vAlpha;
+      color = min(vColor * (1.0 + 0.65 * core), vec3(1.0));
+    }
     if (uUseTexture > 0.5) {
       vec4 tex = texture2D(uTexture, gl_PointCoord);
-      gl_FragColor = vec4(vColor * tex.rgb, alpha * tex.a);
+      gl_FragColor = vec4(color * tex.rgb, alpha * tex.a);
     } else {
-      gl_FragColor = vec4(vColor, alpha);
+      gl_FragColor = vec4(color, alpha);
     }
   }
 `;
@@ -145,7 +174,7 @@ export function createNodeMaterial(
     uniforms: {
       uZoom: { value: 1 },
       uPixelRatio: { value: pixelRatio },
-      uSizeExp: { value: 0.8 },
+      uSizeExp: { value: 0.2 },
       uPerspective: { value: 0 },
       uHlScale: { value: opts.hlScale },
       uDimScale: { value: opts.dimScale },
@@ -193,12 +222,16 @@ const PICK_VERTEX_SHADER = /* glsl */ `
     bool visible = (state & 1) == 1;
     bool highlighted = (state & 2) == 2;
     bool dimmed = (state & 4) == 4;
+    bool hovered = (state & 8) == 8;
     vPick = aPickColor;
 
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mv;
 
     float sizeMul = highlighted ? uHlScale : (dimmed ? uDimScale : 1.0);
+    // Mirror the display shader's hover growth so the grown disc stays
+    // clickable across its whole visible area (1.3 = NODE_HOVER_SCALE).
+    if (hovered) sizeMul *= 1.3;
     float base = aSize * sizeMul;
     float screenPx;
     if (uPerspective > 0.5) {
@@ -209,7 +242,8 @@ const PICK_VERTEX_SHADER = /* glsl */ `
       float sizeGain = pow(12.0, 0.3 - uSizeExp);
       screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
-      screenPx = base * 2.0 * pow(uZoom, 1.0 - uSizeExp) * uPixelRatio;
+      // Keep in lockstep with the display shader's 2D sizing (see above).
+      screenPx = base * 2.0 * pow(uZoom, uSizeExp) * uPixelRatio;
     }
     // Mirror the display shader: a node mid-reveal (base ~0) isn't pickable,
     // and discard in the fragment so a zero-size point can't leave a pick pixel.
@@ -238,7 +272,7 @@ export function createNodePickingMaterial(
     uniforms: {
       uZoom: { value: 1 },
       uPixelRatio: { value: pixelRatio },
-      uSizeExp: { value: 0.8 },
+      uSizeExp: { value: 0.2 },
       uPerspective: { value: 0 },
       uHlScale: { value: opts.hlScale },
       uDimScale: { value: opts.dimScale },

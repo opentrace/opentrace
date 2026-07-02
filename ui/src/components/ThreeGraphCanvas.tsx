@@ -73,6 +73,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onNodeClick,
       onEdgeClick,
       onStageClick,
+      onNodeHover,
       onOptimizeStatus,
       labelsVisible: labelsVisibleProp = true,
       edgesEnabled: edgesEnabledProp = true,
@@ -143,8 +144,14 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const nodeColors = useMemo(() => {
       const colors = new Map<string, string>();
       const { assignments, colorMap } = communityData;
+      // Community colors need community data: with communities toggled OFF
+      // (or not yet computed) the assignments are empty and every node would
+      // hit the gray fallback — fall back to TYPE colors instead of a gray
+      // graph. Flipping communities back on restores community colors.
+      const byCommunity =
+        colorMode === 'community' && Object.keys(assignments).length > 0;
       for (const node of nodes) {
-        if (colorMode === 'community') {
+        if (byCommunity) {
           colors.set(
             node.id,
             layoutConfig.getCommunityColor(assignments, colorMap, node.id),
@@ -508,6 +515,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         onNodeClick,
         onEdgeClick,
         onStageClick,
+        onNodeHover,
         onNodeDragStart: (nodeId) => {
           fixNode(nodeId, 0, 0);
           boostTheta();
@@ -524,6 +532,7 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onNodeClick,
       onEdgeClick,
       onStageClick,
+      onNodeHover,
       fixNode,
       unfixNode,
       boostTheta,

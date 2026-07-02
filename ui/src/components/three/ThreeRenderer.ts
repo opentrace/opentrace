@@ -82,6 +82,7 @@ import {
   NODE_STATE_VISIBLE,
   NODE_STATE_HIGHLIGHTED,
   NODE_STATE_DIMMED,
+  NODE_STATE_HOVERED,
   type NodeMaterialUniforms,
 } from './nodeMaterial';
 import { createEdgeMaterial } from './edgeMaterial';
@@ -176,11 +177,47 @@ interface InteractionCallbacks {
   onNodeDragMove?: (nodeId: string, x: number, y: number) => void;
   onNodeDragEnd?: (nodeId: string) => void;
   on3DAutoRotateChange?: (autoRotate: boolean) => void;
+  /** Cursor entered a node (canvas-local px) or left one (`null`). The host
+   *  decides what to do with it (e.g. show an info tooltip after a delay). */
+  onNodeHover?: (
+    node: GraphNode | null,
+    screenX: number,
+    screenY: number,
+  ) => void;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
 const CLICK_THRESHOLD = 5; // px — distinguish click from drag
+
+// The label gate is PROXIMITY-ONLY: a full-graph overview shows NO labels and
+// names appear only as the camera closes in on nodes, regardless of how big
+// the "Zoom scaling" slider renders them (cranking node size must not flood
+// the screen with labels). Distant nodes never label.
+//
+// 3D: label when min(size, CAP) · (0.5 + 0.5·persp) clears this bar, where
+// persp is the node's own perspective factor (px/world at its depth).
+// Calibrated to match the tuned Planet-default onset (2 / 12^(0.3−0.7)).
+const LABEL_GATE_MIN_3D = 5.4;
+// 2D: label when min(size, CAP) · zoom^REF clears the bar — REF is a fixed
+// reference attenuation (the Flat preset's tuned exponent), NOT the live
+// slider value, so the slider can't re-clutter the overview.
+const LABEL_GATE_2D_REF_EXP = 0.75;
+const LABEL_GATE_MIN_2D = 2;
+// The label gate judges every node as if it were at most this base size, so
+// proximity — not hub size — decides who gets a name: a big hub across the
+// cloud stays quiet while the ordinary nodes you're approaching light up.
+// (Display sizing/gaps still use the real size.)
+const LABEL_GATE_SIZE_CAP = 6;
+
+// Cursor-freeze zone for ambient drift: nodes within INNER px of the pointer
+// hold still (so a click target doesn't float away), ramping smoothly back to
+// full drift at OUTER px.
+const AMBIENT_FREEZE_INNER_PX = 70;
+const AMBIENT_FREEZE_OUTER_PX = 150;
+// Per-frame easing toward the freeze target (~0.12 ≈ nodes settle/resume over
+// a couple hundred ms at 60fps — no snapping when the cursor jumps).
+const AMBIENT_FREEZE_EASE = 0.12;
 const FALLBACK_COLOR = '#888888';
 /** Upper bound on the WebGL backing-store pixel ratio (perf vs sharpness). */
 const MAX_PIXEL_RATIO = 1.5;
@@ -507,6 +544,13 @@ export class ThreeRenderer {
   private ambientHome: Float32Array | null = null;
   /** performance.now() when the current ambient run started. */
   private ambientStart = 0;
+  /** Latest pointer position in canvas-local px, or null when the pointer is
+   *  off-canvas (or mid-pinch). Nodes near it get their ambient drift damped
+   *  so the node a user is aiming at doesn't float away. */
+  private cursorScreen: { x: number; y: number } | null = null;
+  /** Per-node ambient damping (0 = held at home near the cursor, 1 = full
+   *  drift), eased per frame so nodes glide to rest instead of snapping. */
+  private ambientDamp: Float32Array | null = null;
   /** Per-axis drift amplitude in world units (scaled to the graph's extent). */
   private ambientAmplitude = 0;
 
@@ -526,13 +570,18 @@ export class ThreeRenderer {
   private autoFitTarget: { x: number; y: number; zoom: number } | null = null;
   private readonly AUTO_FIT_FOLLOW_ALPHA = 0.15;
   private autoFitSuspended = false;
-  private zoomSizeExponent = 0.8;
+  // 0 = nodes hold their screen size (big at overview), 1 = nodes track the
+  // world scale (small at overview) — same direction as the 3D size gain.
+  private zoomSizeExponent = 0.2;
   /** Reference zoom that frames the whole graph — updated whenever a fit is
    *  computed. Used to scale edge opacity by how far the user has zoomed in
    *  relative to the overview. */
   private lastFitZoom = 1;
   /** Currently selected node id (for zoom-to-selection), or null. */
   private selectedNodeId: string | null = null;
+  /** Index of the node under the cursor (grows via NODE_STATE_HOVERED), -1
+   *  when none. */
+  private hoveredNodeIndex = -1;
 
   // Animation (camera transitions)
   private camAnim: {
@@ -982,11 +1031,19 @@ export class ThreeRenderer {
     const lm = this.labelScaleMultiplier;
     const labelH = (LABEL_SIZE + 4) * lm;
     const MARGIN = 80;
-    const MIN_SPRITE_SCREEN_RADIUS = 2.5;
-    const spriteRadiusFactor = Math.pow(
-      zoom,
-      Math.max(0, 1 - this.zoomSizeExponent),
-    );
+    // Labels belong to nodes the camera is CLOSE to, never to distant dots.
+    // The gate is PROXIMITY-ONLY — deliberately independent of the "Zoom
+    // scaling" slider (zoomSizeExponent): making nodes render bigger must
+    // change their size, not flood the overview with labels. In 3D each
+    // node's own camera distance decides; in 2D the ortho zoom decides.
+    const is3D = this.mode3d && !!this.perspCamera && !!this.controls;
+    // 2D display factor (real rendered size, for the label gap only).
+    const spriteRadiusFactor = is3D ? 0 : this.labelSpriteRadiusFactor(zoom);
+    // 2D gate factor: fixed reference attenuation, slider-independent.
+    const gate2dFactor = is3D ? 0 : Math.pow(zoom, LABEL_GATE_2D_REF_EXP);
+    // 3D display gain (real rendered size, for the label gap only).
+    const sizeGain3d = Math.pow(12, 0.3 - this.zoomSizeExponent);
+    const unitZoom = this.height / (2 * Math.tan((this.fov * Math.PI) / 360));
 
     // In 3D, only label nodes within a sphere around the camera. A label is an
     // HTML overlay with no depth, so a back-facing node's label would draw on
@@ -996,7 +1053,6 @@ export class ThreeRenderer {
     // the cloud radius so zooming in — where the orbit distance shrinks toward
     // zero — doesn't collapse the labeled shell and strip labels off the very
     // nodes you're moving toward.
-    const is3D = this.mode3d && !!this.perspCamera && !!this.controls;
     const camPos = this.activeCamera.position;
     let frontDistSq = 0;
     if (is3D) {
@@ -1013,12 +1069,23 @@ export class ThreeRenderer {
 
     for (const i of candidates) {
       const node = this.nodeArray[i];
-      if (node.size * spriteRadiusFactor < MIN_SPRITE_SCREEN_RADIUS) continue;
+      // gateSize: capped so proximity beats hub size (see LABEL_GATE_SIZE_CAP);
+      // screenR: the node's REAL rendered radius, for the label gap.
+      const gateSize = Math.min(node.size, LABEL_GATE_SIZE_CAP);
+      let screenR: number;
       if (is3D) {
         const dx = this.posArray[i * 3] - camPos.x;
         const dy = this.posArray[i * 3 + 1] - camPos.y;
         const dz = this.posArray[i * 3 + 2] - camPos.z;
-        if (dx * dx + dy * dy + dz * dz > frontDistSq) continue;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > frontDistSq) continue;
+        const persp = unitZoom / Math.max(Math.sqrt(distSq), 1e-3);
+        const cue = 0.5 + 0.5 * persp;
+        if (gateSize * cue < LABEL_GATE_MIN_3D) continue;
+        screenR = node.size * cue * sizeGain3d;
+      } else {
+        if (gateSize * gate2dFactor < LABEL_GATE_MIN_2D) continue;
+        screenR = node.size * spriteRadiusFactor;
       }
       const s = this.worldToScreen(
         this.posArray[i * 3],
@@ -1035,7 +1102,7 @@ export class ThreeRenderer {
         continue;
       }
       const text = cleanLabel(node.graphNode.name || node.id);
-      const gapPx = node.size * spriteRadiusFactor + 4;
+      const gapPx = screenR + 4;
       const w = text.length * LABEL_SIZE * 0.6 * lm;
       const x = s.x + gapPx;
       const y = s.y - labelH / 2;
@@ -1087,14 +1154,30 @@ export class ThreeRenderer {
     return el;
   }
 
+  /** Screen-size multiplier for a node's base size, mirroring the ACTUAL
+   *  per-mode shader sizing (nodeMaterial vertex shader) so the label cull
+   *  judges what's really on screen. 2D: ortho attenuation `zoom^exp`. 3D:
+   *  depth cue at the orbit-target distance × the slider's size gain —
+   *  `effectiveZoom()` is exactly the shader's `persp` for a node at the
+   *  target depth, so `mix(1, persp, 0.5) = (1 + zoom) / 2`. */
+  private labelSpriteRadiusFactor(zoom: number): number {
+    if (this.mode3d) {
+      return ((1 + zoom) / 2) * Math.pow(12, 0.3 - this.zoomSizeExponent);
+    }
+    return Math.pow(zoom, this.zoomSizeExponent);
+  }
+
   /** Lightweight per-frame reposition of the already-chosen label set. */
   private syncNodeLabelPositions(): void {
     if (this.nodeLabelEls.size === 0 || !this.activeCamera) return;
     const zoom = this.effectiveZoom();
-    const spriteRadiusFactor = Math.pow(
-      zoom,
-      Math.max(0, 1 - this.zoomSizeExponent),
-    );
+    const is3D = this.mode3d && !!this.perspCamera;
+    const spriteRadiusFactor = is3D ? 0 : this.labelSpriteRadiusFactor(zoom);
+    // Per-node depth sizing in 3D — must match runNodeLabelCull's estimate so
+    // the gap tracks the node's real rendered radius.
+    const sizeGain3d = Math.pow(12, 0.3 - this.zoomSizeExponent);
+    const unitZoom = this.height / (2 * Math.tan((this.fov * Math.PI) / 360));
+    const camPos = this.activeCamera.position;
     const lm = this.labelScaleMultiplier;
     for (const [id, el] of this.nodeLabelEls) {
       const i = this.nodeIdToIndex.get(id);
@@ -1105,7 +1188,18 @@ export class ThreeRenderer {
         this.posArray[i * 3 + 1],
         this.posArray[i * 3 + 2],
       );
-      const gapPx = node.size * spriteRadiusFactor + 4;
+      let screenR: number;
+      if (is3D) {
+        const dx = this.posArray[i * 3] - camPos.x;
+        const dy = this.posArray[i * 3 + 1] - camPos.y;
+        const dz = this.posArray[i * 3 + 2] - camPos.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const persp = unitZoom / Math.max(dist, 1e-3);
+        screenR = node.size * (0.5 + 0.5 * persp) * sizeGain3d;
+      } else {
+        screenR = node.size * spriteRadiusFactor;
+      }
+      const gapPx = screenR + 4;
       el.style.transform = `translate(${s.x + gapPx}px,${s.y}px) translateY(-50%) scale(${lm})`;
     }
   }
@@ -1235,6 +1329,8 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
+    // The hovered index refers to the old node array.
+    this.hoveredNodeIndex = -1;
     // Drop any traversal walk + lit trail — the node/edge ids are about to change.
     if (this.traversalAnim) {
       this.scene.remove(this.traversalAnim.sprite);
@@ -1502,8 +1598,14 @@ export class ThreeRenderer {
     const lod = this.lodEnabled && this.superList.length > 0;
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
+      // Hot edges (chat traversal trail / highlight neighborhood) stay
+      // visible even when the edge layer is off, the link type is hidden, or
+      // LOD collapsed the region — "show me the path" beats the hide toggles
+      // (highlighted NODES already get the same override in applyNodeStates).
+      const hot =
+        this.hasHighlight && this.edgeIsHot(`${e.sourceId}-${e.targetId}`);
       let alpha: number;
-      if (!enabled || this.hiddenLinkTypes.has(e.label)) {
+      if ((!enabled || this.hiddenLinkTypes.has(e.label)) && !hot) {
         alpha = 0;
       } else {
         const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
@@ -1514,10 +1616,9 @@ export class ThreeRenderer {
           lod &&
           (!this.nodeLodVisible(e.sourceId) ||
             !this.nodeLodVisible(e.targetId));
-        if (!sVis || !tVis || lodHidden) {
+        if (!sVis || !tVis || (lodHidden && !hot)) {
           alpha = 0;
         } else if (this.hasHighlight) {
-          const hot = this.edgeIsHot(`${e.sourceId}-${e.targetId}`);
           alpha = hot ? EDGE_OPACITY_HIGHLIGHTED : EDGE_OPACITY_DIMMED;
         } else {
           alpha = EDGE_OPACITY_DEFAULT;
@@ -1755,7 +1856,13 @@ export class ThreeRenderer {
    *  selected neighborhood always stands out, and 3D stays opaque (depth
    *  already separates crossings). */
   private edgeOpacity(): number {
-    return this.edgeBaseOpacity() * this.edgeOpacityMultiplier;
+    // While a highlight/traversal is active, don't let a low user opacity
+    // (e.g. Onion's 0%, Planet's 15%) kill the lit path — the per-edge alpha
+    // already dims everything that isn't part of the highlight.
+    const mult = this.hasHighlight
+      ? Math.max(this.edgeOpacityMultiplier, 1)
+      : this.edgeOpacityMultiplier;
+    return this.edgeBaseOpacity() * mult;
   }
 
   /** The zoom/highlight-driven base opacity, before the user multiplier. */
@@ -2130,6 +2237,10 @@ export class ThreeRenderer {
     canvas: HTMLCanvasElement,
     signal: AbortSignal,
   ): void {
+    // Suppress native touch gestures (scroll/double-tap-zoom) so pointer
+    // events arrive uninterrupted — the app CSS sets this on the viewport,
+    // but the renderer shouldn't depend on its host container for that.
+    canvas.style.touchAction = 'none';
     canvas.addEventListener(
       'wheel',
       (e) => {
@@ -2163,6 +2274,12 @@ export class ThreeRenderer {
     let downPos: { x: number; y: number } | null = null;
     let lastX = 0;
     let lastY = 0;
+    // Multi-touch state for 2D pinch-zoom / two-finger pan. (In 3D,
+    // OrbitControls owns touch gestures, so the pinch path never engages.)
+    const activePointers = new Map<number, { x: number; y: number }>();
+    let primaryPointerId: number | null = null;
+    let pinch: { dist: number; mx: number; my: number } | null = null;
+    let pinchedThisGesture = false;
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault(), {
       signal,
@@ -2171,7 +2288,36 @@ export class ThreeRenderer {
     canvas.addEventListener(
       'pointerdown',
       (e) => {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (!this.mode3d && activePointers.size === 2) {
+          // Second finger down → the gesture becomes a pinch. Abort any
+          // in-progress node drag and suppress the click on release.
+          const [a, b] = [...activePointers.values()];
+          pinch = {
+            dist: Math.hypot(b.x - a.x, b.y - a.y),
+            mx: (a.x + b.x) / 2,
+            my: (a.y + b.y) / 2,
+          };
+          pinchedThisGesture = true;
+          // Two fingers down → there's no meaningful "cursor" to freeze around.
+          this.cursorScreen = null;
+          if (this.dragNodeIndex >= 0) {
+            this.callbacks.onNodeDragEnd?.(
+              this.nodeArray[this.dragNodeIndex].id,
+            );
+            this.dragNodeIndex = -1;
+            canvas.style.cursor = 'default';
+          }
+          this.pendingDragIndex = -1;
+          return;
+        }
+        if (activePointers.size > 1) return; // 3rd+ finger: ignore
+        primaryPointerId = e.pointerId;
+        pinchedThisGesture = false;
         pointerDown = true;
+        // A press ends the hover affordance (tooltip/growth) until the next
+        // hover pick after release.
+        this.setHoveredNode(-1, 0, 0);
         button = e.button;
         moved = 0;
         lastX = e.clientX;
@@ -2197,16 +2343,67 @@ export class ThreeRenderer {
     canvas.addEventListener(
       'pointermove',
       (e) => {
+        const tracked = activePointers.get(e.pointerId);
+        if (tracked) {
+          tracked.x = e.clientX;
+          tracked.y = e.clientY;
+        }
+
+        // Pinch: zoom about the finger midpoint + pan with it (2D only).
+        if (pinch && !this.mode3d && activePointers.size >= 2) {
+          const cam = this.camera;
+          if (!cam) return;
+          const [a, b] = [...activePointers.values()];
+          const dist = Math.hypot(b.x - a.x, b.y - a.y);
+          const mx = (a.x + b.x) / 2;
+          const my = (a.y + b.y) / 2;
+          const prect = canvas.getBoundingClientRect();
+          const cx = mx - prect.left;
+          const cy = my - prect.top;
+          // Same anchored-zoom math as the wheel handler.
+          const before = this.screenToWorld(cx, cy);
+          const factor = pinch.dist > 0 ? dist / pinch.dist : 1;
+          cam.zoom = Math.max(cam.zoom * factor, 0.00001);
+          cam.updateProjectionMatrix();
+          const after = this.screenToWorld(cx, cy);
+          cam.position.x += before.x - after.x;
+          cam.position.y += before.y - after.y;
+          // Two-finger pan: the world point under the midpoint follows it.
+          cam.position.x -= (mx - pinch.mx) / cam.zoom;
+          cam.position.y += (my - pinch.my) / cam.zoom;
+          cam.updateProjectionMatrix();
+          pinch = { dist, mx, my };
+          this.hasUserMovedCamera = true;
+          this.autoFitTarget = null;
+          this.camAnim = null;
+          this.requestRender();
+          this.hideEdgesForInteraction();
+          return;
+        }
+
+        // Only the first-placed pointer pans/drags — a stray second finger
+        // (e.g. in 3D, where OrbitControls owns it) must not yank lastX/lastY.
+        if (primaryPointerId !== null && e.pointerId !== primaryPointerId) {
+          return;
+        }
+
         const rect = canvas.getBoundingClientRect();
+        // Feed the ambient cursor-freeze zone (converted to world per frame in
+        // updateAmbient, so pan/zoom between move events can't stale it).
+        this.cursorScreen = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
         // Hover cursor (only when not dragging/panning) — throttled.
         if (!pointerDown) {
           const now = performance.now();
           if (now - lastHover < 50) return;
           lastHover = now;
-          const idx = this.pickNodeIndexAt(
-            e.clientX - rect.left,
-            e.clientY - rect.top,
-          );
+          const hx = e.clientX - rect.left;
+          const hy = e.clientY - rect.top;
+          const idx = this.pickNodeIndexAt(hx, hy);
+          // Real nodes grow on hover (+ host tooltip); super-nodes don't.
+          this.setHoveredNode(idx >= 0 ? idx : -1, hx, hy);
           if (idx !== -1) {
             // Node (idx >= 0) or super-node (idx <= -2) — both clickable.
             canvas.style.cursor = 'pointer';
@@ -2279,6 +2476,49 @@ export class ThreeRenderer {
     );
 
     const onUp = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+
+      // A lifted finger or a departed mouse leaves no cursor to freeze around
+      // (nor a node to hover); a mouse button release does (still hovering).
+      if (
+        e.type === 'pointerleave' ||
+        e.type === 'pointercancel' ||
+        e.pointerType === 'touch'
+      ) {
+        this.cursorScreen = null;
+        this.setHoveredNode(-1, 0, 0);
+      }
+
+      if (pinch) {
+        if (activePointers.size >= 2) {
+          // A finger of a 3+-touch pinch lifted: rebase on the remaining two
+          // so the zoom doesn't jump.
+          const [a, b] = [...activePointers.values()];
+          pinch = {
+            dist: Math.hypot(b.x - a.x, b.y - a.y),
+            mx: (a.x + b.x) / 2,
+            my: (a.y + b.y) / 2,
+          };
+          return;
+        }
+        // Pinch over — hand off to a single-finger pan from the survivor,
+        // rebasing the pan anchors so the camera doesn't jump.
+        pinch = null;
+        const rest = activePointers.entries().next().value as
+          | [number, { x: number; y: number }]
+          | undefined;
+        if (rest) {
+          primaryPointerId = rest[0];
+          lastX = rest[1].x;
+          lastY = rest[1].y;
+          downPos = { x: rest[1].x, y: rest[1].y };
+          return;
+        }
+      }
+      // Ignore a secondary finger lifting; the gesture ends with the last one.
+      if (activePointers.size > 0) return;
+
+      primaryPointerId = null;
       if (!pointerDown) return;
       pointerDown = false;
       const rect = canvas.getBoundingClientRect();
@@ -2287,7 +2527,11 @@ export class ThreeRenderer {
         this.callbacks.onNodeDragEnd?.(this.nodeArray[this.dragNodeIndex].id);
         this.dragNodeIndex = -1;
         canvas.style.cursor = 'default';
-      } else if (button === 0 && moved <= CLICK_THRESHOLD) {
+      } else if (
+        button === 0 &&
+        moved <= CLICK_THRESHOLD &&
+        !pinchedThisGesture
+      ) {
         const sx = e.clientX - rect.left;
         const sy = e.clientY - rect.top;
         const idx = this.pickNodeIndexAt(sx, sy);
@@ -2315,8 +2559,9 @@ export class ThreeRenderer {
           if (edge) {
             this.callbacks.onEdgeClick?.(this.buildSelectedEdge(edge));
           } else {
-            if (this.mode3d && !this.mode3dAutoRotate)
-              this.set3DAutoRotate(true);
+            // Deliberately does NOT restart 3D auto-rotation: a click in the
+            // void is how users dismiss a selection, and having the scene
+            // start spinning on it read as a bug.
             this.callbacks.onStageClick?.();
           }
         }
@@ -2326,11 +2571,42 @@ export class ThreeRenderer {
     };
     canvas.addEventListener('pointerup', onUp, { signal });
     canvas.addEventListener('pointerleave', onUp, { signal });
+    // iOS Safari cancels pointers when the OS takes over a gesture — treat it
+    // as a lift so pinch/pan state can't get stuck.
+    canvas.addEventListener('pointercancel', onUp, { signal });
   }
 
   /** Current px-per-world-unit, for converting a pixel hit radius to world. */
   private zoomForHit(): number {
     return this.camera?.zoom ?? 1;
+  }
+
+  /** Mark `idx` as the hovered node (grow it via NODE_STATE_HOVERED) and tell
+   *  the host. -1 clears. Cheap: flips one state bit per change, no O(n). */
+  private setHoveredNode(idx: number, sx: number, sy: number): void {
+    if (idx === this.hoveredNodeIndex) return;
+    const st = this.stateArray;
+    const prev = this.hoveredNodeIndex;
+    if (prev >= 0 && prev < this.nodeArray.length) {
+      st[prev] = Number(st[prev]) & ~NODE_STATE_HOVERED;
+    }
+    this.hoveredNodeIndex = idx;
+    if (idx >= 0 && idx < this.nodeArray.length) {
+      st[idx] = Number(st[idx]) | NODE_STATE_HOVERED;
+    }
+    if (this.nodeGeometry) {
+      (
+        this.nodeGeometry.getAttribute('aState') as BufferAttribute
+      ).needsUpdate = true;
+    }
+    this.requestRender();
+    this.callbacks.onNodeHover?.(
+      idx >= 0 && idx < this.nodeArray.length
+        ? this.nodeArray[idx].graphNode
+        : null,
+      sx,
+      sy,
+    );
   }
 
   // ─── Visual state (filled across later phases) ────────────────────
@@ -2385,6 +2661,8 @@ export class ThreeRenderer {
           ? NODE_STATE_HIGHLIGHTED
           : NODE_STATE_DIMMED;
       }
+      // Repacking must not drop the transient hover bit mid-hover.
+      if (i === this.hoveredNodeIndex) s |= NODE_STATE_HOVERED;
       st[i] = s;
       if (visible) drawIdx[dc++] = i;
     }
@@ -2760,6 +3038,9 @@ export class ThreeRenderer {
   /** Snapshot the current positions as the ambient oscillation centre and size
    *  the amplitude to the graph's extent. */
   private captureAmbientHome(): void {
+    // Fresh run, fresh damping — stale freeze factors from a previous run
+    // would make some nodes start half-frozen.
+    this.ambientDamp = null;
     const n = this.nodeArray.length;
     this.ambientHome = this.posArray.slice(0, n * 3);
     this.ambientStart = performance.now();
@@ -2829,6 +3110,83 @@ export class ThreeRenderer {
     // read past the end (which would write NaN positions).
     const n = Math.min(this.nodeArray.length, (home.length / 3) | 0);
 
+    // Cursor freeze: nodes near the pointer ease to a stop so the node a user
+    // is aiming at doesn't float away. Each node's damp factor chases a target
+    // (0 inside the freeze radius → 1 past the falloff band) every frame.
+    let damp = this.ambientDamp;
+    if (!damp || damp.length < n) {
+      damp = new Float32Array(n).fill(1);
+      this.ambientDamp = damp;
+    }
+    const cs = this.cursorScreen;
+    let freeze = false;
+    // 2D: cursor point in world space. 3D: cursor ray (origin + unit dir).
+    let cwx = 0;
+    let cwy = 0;
+    let ox = 0;
+    let oy = 0;
+    let oz = 0;
+    let dirx = 0;
+    let diry = 0;
+    let dirz = 0;
+    let innerW = 0;
+    let invBand = 0;
+    if (cs) {
+      const pxPerWorld = this.effectiveZoom();
+      if (pxPerWorld > 0) {
+        innerW = AMBIENT_FREEZE_INNER_PX / pxPerWorld;
+        const outerW = AMBIENT_FREEZE_OUTER_PX / pxPerWorld;
+        invBand = 1 / (outerW - innerW);
+        if (!is3D) {
+          const w = this.screenToWorld(cs.x, cs.y);
+          cwx = w.x;
+          cwy = w.y;
+          freeze = true;
+        } else if (this.perspCamera) {
+          const cam = this.perspCamera;
+          this.tmpVec
+            .set(
+              (cs.x / this.width) * 2 - 1,
+              -((cs.y / this.height) * 2 - 1),
+              0.5,
+            )
+            .unproject(cam);
+          ox = cam.position.x;
+          oy = cam.position.y;
+          oz = cam.position.z;
+          dirx = this.tmpVec.x - ox;
+          diry = this.tmpVec.y - oy;
+          dirz = this.tmpVec.z - oz;
+          const len = Math.sqrt(dirx * dirx + diry * diry + dirz * dirz) || 1;
+          dirx /= len;
+          diry /= len;
+          dirz /= len;
+          freeze = true;
+        }
+      }
+    }
+    /** Smoothstepped drift factor by distance from the cursor (2D: point
+     *  distance in the plane; 3D: distance from the cursor's view ray). */
+    const dampTargetAt = (hx: number, hy: number, hz: number): number => {
+      let d: number;
+      if (!is3D) {
+        const ex = hx - cwx;
+        const ey = hy - cwy;
+        d = Math.sqrt(ex * ex + ey * ey);
+      } else {
+        const vx = hx - ox;
+        const vy = hy - oy;
+        const vz = hz - oz;
+        const along = vx * dirx + vy * diry + vz * dirz;
+        const px = vx - along * dirx;
+        const py = vy - along * diry;
+        const pz = vz - along * dirz;
+        d = Math.sqrt(px * px + py * py + pz * pz);
+      }
+      const u = Math.min(Math.max((d - innerW) * invBand, 0), 1);
+      return u * u * (3 - 2 * u);
+    };
+
     // Onion: keep the layered shells intact — nodes may only bob gently ALONG
     // THEIR OWN RADIUS (in/out from the centre), never drift laterally (which
     // would smear the shells). Small amplitude so shells stay distinct.
@@ -2839,8 +3197,10 @@ export class ThreeRenderer {
         const hx = home[o];
         const hy = home[o + 1];
         const hz = home[o + 2];
+        const target = freeze ? dampTargetAt(hx, hy, hz) : 1;
+        const f = (damp[i] += (target - damp[i]) * AMBIENT_FREEZE_EASE);
         const r = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
-        const bob = Ar * Math.sin(t * 0.9 + i * 0.7);
+        const bob = Ar * Math.sin(t * 0.9 + i * 0.7) * f;
         const k = (r + bob) / r; // move along the radial line only
         pos[o] = hx * k;
         pos[o + 1] = hy * k;
@@ -2858,16 +3218,22 @@ export class ThreeRenderer {
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       const p = i * 0.7; // per-node phase offset
+      const target = freeze
+        ? dampTargetAt(home[o], home[o + 1], home[o + 2])
+        : 1;
+      const f = (damp[i] += (target - damp[i]) * AMBIENT_FREEZE_EASE);
+      const fA = A * f;
       pos[o] =
         home[o] +
-        A * (Math.sin(t * 1.1 + p) + 0.6 * Math.sin(t * 0.67 + p * 1.7));
+        fA * (Math.sin(t * 1.1 + p) + 0.6 * Math.sin(t * 0.67 + p * 1.7));
       pos[o + 1] =
         home[o + 1] +
-        A * (Math.sin(t * 0.95 + p * 1.3) + 0.6 * Math.sin(t * 0.78 + p * 0.5));
+        fA *
+          (Math.sin(t * 0.95 + p * 1.3) + 0.6 * Math.sin(t * 0.78 + p * 0.5));
       if (is3D) {
         pos[o + 2] =
           home[o + 2] +
-          A *
+          fA *
             (Math.sin(t * 1.02 + p * 0.8) + 0.6 * Math.sin(t * 0.61 + p * 2.1));
       }
     }
@@ -3244,8 +3610,14 @@ export class ThreeRenderer {
       controls.autoRotateSpeed = this.autoRotateSpeedFromRadians(
         this.mode3dSpeed,
       );
-      // Any manual orbit pauses auto-rotation (mirrors Pixi).
+      // Any manual orbit pauses auto-rotation (mirrors Pixi) AND hands the
+      // camera to the user: without the flag, the live-build follow /
+      // auto-fit kept zooming out against the user's own zoom during
+      // indexing (OrbitControls owns 3D input, so the 2D pointer handlers
+      // that normally set this never fire).
       controls.addEventListener('start', () => {
+        this.hasUserMovedCamera = true;
+        this.autoFitTarget = null;
         if (this.mode3dAutoRotate) this.set3DAutoRotate(false, true);
       });
       // Any camera change (orbit, damping step, auto-rotate) requests a frame.
@@ -4423,7 +4795,7 @@ export class ThreeRenderer {
         this.posArray[i * 3 + 2],
       );
       // Glow diameter in world units ~ several × the node's on-screen size.
-      const screenR = node.size * Math.pow(zoom, 1 - this.zoomSizeExponent);
+      const screenR = node.size * this.labelSpriteRadiusFactor(zoom);
       const world = (screenR * 7) / Math.max(zoom, 1e-4);
       const s = world * (1 + 0.3 * pulse);
       ping.sprite.scale.set(s, s, 1);
@@ -4657,7 +5029,7 @@ export class ThreeRenderer {
       // throb (sin over the crossing) draws the eye to the moving head.
       const zoom = this.effectiveZoom();
       const node = this.nodeArray[active.targetIdx];
-      const screenR = node.size * Math.pow(zoom, 1 - this.zoomSizeExponent);
+      const screenR = node.size * this.labelSpriteRadiusFactor(zoom);
       const screen = Math.max(screenR * 8, TRAVERSAL_MIN_PULSE_PX);
       const world = screen / Math.max(zoom, 1e-4);
       const throb = 1 + 0.18 * Math.sin(Math.PI * t);

@@ -57,7 +57,7 @@ export const EDGE_OPACITY_DIMMED = 0.08; // when another node is selected
 
 export const NODE_OPACITY_DIMMED = 0.22; // when another node is selected
 export const NODE_SIZE_DIMMED_SCALE = 0.35; // shrink non-highlighted nodes so edges show through
-export const NODE_SIZE_HIGHLIGHTED_SCALE = 1.3; // enlarge highlighted nodes so they pop (chat/search highlights)
+export const NODE_SIZE_HIGHLIGHTED_SCALE = 1.6; // enlarge highlighted nodes so they pop (chat/search highlights); the extra room hosts the glow halo
 
 // ─── Zoom Scaling ───────────────────────────────────────────────────────
 // Controls how node sizes scale when zooming out.
