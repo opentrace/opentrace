@@ -109,6 +109,222 @@ NO_INDEX_MSG = json.dumps(
     }
 )
 
+# Source/page bodies legitimately exceed the 4 KB tool-response cap that
+# ``_json_response`` applies to structured results. We still bound them so a
+# pathological multi-MB file can't blow the response budget; an agent that
+# needs more should request a narrower line range.
+MAX_SOURCE_BODY_CHARS = 200_000
+
+
+def _props(node: dict[str, Any]) -> dict[str, Any]:
+    """Return a node's properties as a dict, tolerating a JSON-string column."""
+    p = node.get("properties") or {}
+    if isinstance(p, str):
+        try:
+            return json.loads(p)
+        except Exception:
+            return {}
+    return p
+
+
+def _to_int(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dump_body_result(result: dict[str, Any]) -> str:
+    """JSON-encode a read result, soft-capping an oversized ``body``.
+
+    Bypasses ``_json_response``'s 4 KB truncation (page/source bodies run
+    larger by design) but still bounds the payload.
+    """
+    body = result.get("body")
+    if isinstance(body, str) and len(body) > MAX_SOURCE_BODY_CHARS:
+        result = {
+            **result,
+            "body": body[:MAX_SOURCE_BODY_CHARS],
+            "truncated": True,
+            "totalChars": len(body),
+        }
+    return json.dumps(result, default=str)
+
+
+def _resolve_repo_file(store: GraphStore, file_path: str):
+    """Resolve a (possibly repo-relative) file path to an existing path on disk.
+
+    Mirrors the CLI ``source-read`` resolution: absolute first, then each
+    indexed repo's ``repoPath``, then cwd. Returns ``None`` if not found.
+    """
+    from pathlib import Path
+
+    p = Path(file_path)
+    if p.is_absolute() and p.exists():
+        return p
+    for entry in store.get_metadata():
+        repo_path = entry.get("repoPath")
+        if repo_path:
+            candidate = Path(repo_path) / file_path
+            if candidate.exists():
+                return candidate
+    cwd_candidate = Path.cwd() / file_path
+    if cwd_candidate.exists():
+        return cwd_candidate
+    return None
+
+
+def _read_file_slice(abs_path, start_line: int | None, end_line: int | None) -> dict[str, Any]:
+    """Read a whole file or a 1-based inclusive line slice into a result dict."""
+    from pathlib import Path
+
+    path = Path(abs_path)
+    if start_line is None:
+        return {"path": str(abs_path), "body": path.read_text()}
+
+    start_idx = max(1, start_line)
+    selected: list[str] = []
+    total = 0
+    with path.open() as f:
+        for lineno, raw in enumerate(f, start=1):
+            total = lineno
+            if lineno < start_idx:
+                continue
+            if end_line is not None and lineno > end_line:
+                break
+            selected.append(raw.rstrip("\n"))
+    resolved_end = end_line if end_line is not None else total
+    return {
+        "path": str(abs_path),
+        "lineRange": f"{start_idx}-{resolved_end}",
+        "body": "\n".join(selected),
+    }
+
+
+def _parse_line_range(spec: str) -> tuple[int | None, int | None]:
+    """Parse ``"10-25"`` / ``"10-"`` / ``"10"`` into ``(start, end)``."""
+    spec = (spec or "").strip()
+    if not spec:
+        return None, None
+    if "-" in spec:
+        a, _, b = spec.partition("-")
+        return (_to_int(a.strip()), _to_int(b.strip()))
+    n = _to_int(spec)
+    return n, n
+
+
+def _load_code_source(
+    store: GraphStore,
+    node: dict[str, Any],
+    node_id: str,
+    start_line: int | None,
+    end_line: int | None,
+) -> dict[str, Any]:
+    """Read source for a code-layer node from the repo checkout on disk."""
+    props = _props(node)
+    file_path = props.get("path")
+    # Fall back to the node's own recorded range when no explicit range given.
+    if start_line is None and end_line is None:
+        start_line = _to_int(props.get("start_line") or props.get("startLine"))
+        end_line = _to_int(props.get("end_line") or props.get("endLine"))
+
+    # A symbol node (Function/Class/...) may carry no path itself; it's
+    # DEFINED in a File node that does.
+    if not file_path:
+        try:
+            for nb_node, _nb_rel in store._get_neighbors(node_id, "outgoing"):
+                if nb_node.get("type") == "File":
+                    fp = _props(nb_node).get("path")
+                    if fp:
+                        file_path = fp
+                        break
+        except Exception:
+            pass
+
+    # Last resort: the path is encoded in the node id (``repo/path::Symbol``).
+    if not file_path and "::" in node_id:
+        from opentrace_agent.cli.source_search import strip_repo_prefix
+
+        candidate = node_id.split("::", 1)[0]
+        repo_ids = sorted(store.list_repository_ids(), key=len, reverse=True)
+        stripped = strip_repo_prefix(candidate, repo_ids)
+        if stripped:
+            file_path = stripped
+
+    if not file_path:
+        return {"error": f"node {node_id} (type={node.get('type')}) has no resolvable file path"}
+
+    abs_path = _resolve_repo_file(store, file_path)
+    if abs_path is None:
+        return {"error": f"source file not found on disk: {file_path}"}
+
+    result = _read_file_slice(abs_path, start_line, end_line)
+    return {"nodeId": node_id, "type": node.get("type"), **result}
+
+
+def _load_corpus_source(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """Read a ``Source`` node's body from the content-addressed corpus snapshot."""
+    from pathlib import Path
+
+    props = _props(node)
+    corpus_rel = props.get("corpus_path")
+    if not corpus_rel:
+        return {"error": f"Source {node_id} has no corpus_path"}
+    # corpus_path is always a repo-relative ``corpus/<sha>.md`` — reject anything
+    # that tries to escape the DB directory.
+    if ".." in corpus_rel or corpus_rel.startswith("/"):
+        return {"error": f"invalid corpus_path: {corpus_rel}"}
+    db_path = getattr(store, "db_path", None)
+    if not db_path:
+        return {"error": "store has no db_path; cannot locate corpus"}
+    body_path = Path(str(db_path)).parent / corpus_rel
+    if not body_path.exists():
+        return {"error": f"corpus file not found: {body_path}"}
+    return {
+        "nodeId": node_id,
+        "type": "Source",
+        "filename": props.get("filename"),
+        "sha256": props.get("sha256"),
+        "contentType": props.get("content_type"),
+        "body": body_path.read_text(encoding="utf-8"),
+    }
+
+
+def _read_wiki_page_body(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """Resolve and read a ``WikiPage`` node's markdown body from disk."""
+    from pathlib import Path
+
+    from opentrace_agent.wiki.paths import resolve_vault_scope
+
+    props = _props(node)
+    vault = props.get("vault")
+    slug = props.get("slug")
+    if not vault or not slug:
+        return {"error": f"WikiPage {node_id} missing vault/slug properties"}
+    # Slug is "<kind_dir>/<base>"; reject any traversal nonsense.
+    if ".." in slug or slug.startswith(".") or slug.startswith("/") or slug.endswith("/") or slug.count("/") > 1:
+        return {"error": f"invalid slug: {slug}"}
+
+    db_path = Path(str(getattr(store, "db_path", "")))
+    project_root = db_path.parent.parent if db_path.parent.name == ".opentrace" else None
+    resolved = resolve_vault_scope(vault, project_root=project_root)
+    if resolved is None:
+        return {"error": f"vault '{vault}' not found on disk (local or global)"}
+    scope, vault_dir_path = resolved
+    page_path = vault_dir_path / "pages" / f"{slug}.md"
+    if not page_path.exists():
+        return {"error": f"page file not found: {page_path}"}
+    return {
+        "nodeId": node_id,
+        "type": "WikiPage",
+        "vault": vault,
+        "slug": slug,
+        "scope": scope,
+        "body": page_path.read_text(),
+    }
+
 
 def create_mcp_server(store: GraphStore | None) -> FastMCP:
     """Create a FastMCP server with graph query tools backed by *store*.
@@ -578,57 +794,52 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         if not store:
             return NO_INDEX_MSG
         try:
-            from pathlib import Path
-
-            from opentrace_agent.wiki.paths import resolve_vault_scope
-
             node = store.get_node(nodeId)
             if not node:
                 return json.dumps({"error": f"node not found: {nodeId}"})
             if node.get("type") != "WikiPage":
                 return json.dumps({"error": f"node {nodeId} is not a WikiPage (type={node.get('type')})"})
-            props = node.get("properties") or {}
-            vault = props.get("vault")
-            slug = props.get("slug")
-            if not vault or not slug:
-                return json.dumps({"error": f"WikiPage {nodeId} missing vault/slug properties"})
-            # Slug is "<kind_dir>/<base>"; reject any traversal nonsense.
-            if (
-                ".." in slug
-                or slug.startswith(".")
-                or slug.startswith("/")
-                or slug.endswith("/")
-                or slug.count("/") > 1
-            ):
-                return json.dumps({"error": f"invalid slug: {slug}"})
-
-            # Project root = parent of the ``.opentrace`` dir holding the DB.
-            db_path = Path(str(getattr(store, "db_path", "")))
-            project_root = db_path.parent.parent if db_path.parent.name == ".opentrace" else None
-
-            resolved = resolve_vault_scope(vault, project_root=project_root)
-            if resolved is None:
-                return json.dumps({"error": f"vault '{vault}' not found on disk (local or global)"})
-            scope, vault_dir_path = resolved
-            page_path = vault_dir_path / "pages" / f"{slug}.md"
-            if not page_path.exists():
-                return json.dumps({"error": f"page file not found: {page_path}"})
-            body = page_path.read_text()
             # Wiki page bodies are 5–20 KB by design; bypass the 4 KB
-            # truncation in ``_json_response`` that's appropriate for other
-            # tools but would chop a page body mid-stream.
-            return json.dumps(
-                {
-                    "nodeId": nodeId,
-                    "vault": vault,
-                    "slug": slug,
-                    "scope": scope,
-                    "body": body,
-                },
-                default=str,
-            )
+            # truncation in ``_json_response`` that would chop a page body.
+            return _dump_body_result(_read_wiki_page_body(store, node, nodeId))
         except Exception as e:
             return _error_response("read_vault_page", e)
+
+    @server.tool()
+    def load_source(nodeId: str, lineRange: str = "") -> str:
+        """Read the underlying content for a graph node, dispatching by type.
+
+        One read primitive across every content layer — the node is the
+        pointer, this tool returns the bytes:
+
+        - **Code** nodes (``Function`` / ``Class`` / ``File`` / ``Variable`` /
+          …) → source read from the indexed repo checkout. Defaults to the
+          node's own recorded line range; pass ``lineRange`` (``"10-25"``,
+          ``"10-"``, or ``"10"``) to override, or read a whole ``File``.
+        - **Source** nodes (ingested docs) → the document body from the
+          content-addressed corpus snapshot (``corpus/<sha>.md``), independent
+          of the working tree.
+        - **WikiPage** nodes → the compiled markdown page body (same as
+          ``read_vault_page``).
+
+        Returns ``{nodeId, type, body, …}``; ``body`` is soft-capped and
+        flagged with ``truncated``/``totalChars`` when very large.
+        """
+        if not store:
+            return NO_INDEX_MSG
+        try:
+            node = store.get_node(nodeId)
+            if not node:
+                return json.dumps({"error": f"node not found: {nodeId}"})
+            node_type = node.get("type")
+            if node_type == "Source":
+                return _dump_body_result(_load_corpus_source(store, node, nodeId))
+            if node_type == "WikiPage":
+                return _dump_body_result(_read_wiki_page_body(store, node, nodeId))
+            start_line, end_line = _parse_line_range(lineRange)
+            return _dump_body_result(_load_code_source(store, node, nodeId, start_line, end_line))
+        except Exception as e:
+            return _error_response("load_source", e)
 
     @server.tool()
     def find_pages_mentioning(entityId: str) -> str:

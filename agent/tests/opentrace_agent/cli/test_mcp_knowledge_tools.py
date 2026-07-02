@@ -22,6 +22,7 @@ Exercises ``get_communities``, ``get_god_nodes``, ``get_bridges``, and
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -142,5 +143,57 @@ class TestToolsRegistered:
     def test_tools_present(self, store):
         server = create_mcp_server(store)
         names = set(server._tool_manager._tools.keys())
-        for expected in ("get_communities", "get_god_nodes", "get_bridges", "find_path"):
+        for expected in ("get_communities", "get_god_nodes", "get_bridges", "find_path", "load_source"):
             assert expected in names
+
+
+class TestLoadSource:
+    def test_no_index_message(self):
+        assert _call(None, "load_source", nodeId="x").get("status") == "ok"
+
+    def test_missing_node(self, store):
+        assert "error" in _call(store, "load_source", nodeId="nope")
+
+    def test_code_node_reads_file_slice(self, tmp_path, store):
+        # A File node whose path resolves via the indexed repo's repoPath.
+        src = tmp_path / "repo" / "mod.py"
+        src.parent.mkdir(parents=True)
+        src.write_text("line1\nline2\nline3\nline4\n")
+        store.save_metadata({"repoId": "r", "repoPath": str(tmp_path / "repo")})
+        store.add_node("r/mod.py", "File", "mod.py", {"path": "mod.py"})
+
+        res = _call(store, "load_source", nodeId="r/mod.py", lineRange="2-3")
+        assert res["type"] == "File"
+        assert res["body"] == "line2\nline3"
+        assert res["lineRange"] == "2-3"
+
+    def test_code_node_defaults_to_node_line_range(self, tmp_path, store):
+        src = tmp_path / "repo2" / "mod.py"
+        src.parent.mkdir(parents=True)
+        src.write_text("a\nb\nc\nd\ne\n")
+        store.save_metadata({"repoId": "r2", "repoPath": str(tmp_path / "repo2")})
+        store.add_node("r2/mod.py::fn", "Function", "fn", {"path": "mod.py", "start_line": 2, "end_line": 4})
+
+        res = _call(store, "load_source", nodeId="r2/mod.py::fn")
+        assert res["body"] == "b\nc\nd"
+
+    def test_source_node_reads_corpus(self, tmp_path, store):
+        # ``Source`` body lives at <db_dir>/corpus/<sha>.md, db_dir = parent of db.
+        db_dir = Path(store.db_path).parent
+        (db_dir / "corpus").mkdir(parents=True, exist_ok=True)
+        (db_dir / "corpus" / "abc.md").write_text("# Doc\nbody text")
+        store.add_node(
+            "source::abc",
+            "Source",
+            "doc.md",
+            {"sha256": "abc", "filename": "doc.md", "corpus_path": "corpus/abc.md"},
+        )
+
+        res = _call(store, "load_source", nodeId="source::abc")
+        assert res["type"] == "Source"
+        assert res["body"] == "# Doc\nbody text"
+        assert res["filename"] == "doc.md"
+
+    def test_source_node_rejects_path_traversal(self, store):
+        store.add_node("source::evil", "Source", "x", {"corpus_path": "../../etc/passwd"})
+        assert "error" in _call(store, "load_source", nodeId="source::evil")
