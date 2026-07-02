@@ -35,24 +35,18 @@
  * automatically. The rules are wrapped in `@layer opentrace` so they sit below
  * a consumer's unlayered styles in the cascade (defensively safe).
  *
+ * The concatenation machinery is shared with build-detail-panels-css.mjs; see
+ * scripts/lib/bundle-css.mjs.
+ *
  * Usage: node scripts/build-graph-css.mjs  (runs as part of `npm run build:lib`)
  */
 
-import {
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  mkdirSync,
-  existsSync,
-} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bundleCss } from './lib/bundle-css.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(__dirname, '..');
-const PANELS_DIR = join(ROOT, 'src', 'components', 'panels');
-const OUT_DIR = join(ROOT, 'dist', 'lib');
-const OUT_FILE = join(OUT_DIR, 'graph.css');
 
 const HEADER = `/*
  * Copyright 2026 OpenTrace Contributors
@@ -81,47 +75,10 @@ const HEADER = `/*
  */
 `;
 
-// Strip the leading Apache license block comment so the generated file carries
-// a single header rather than one per source file.
-function stripLicenseHeader(css) {
-  return css.replace(
-    /^\s*\/\*[\s\S]*?Copyright \d{4} OpenTrace Contributors[\s\S]*?\*\/\s*/,
-    '',
-  );
-}
-
-// Indent every non-empty line one level, for nesting inside @layer { … }.
-function indent(css) {
-  return css
-    .split('\n')
-    .map((line) => (line.length ? `  ${line}` : line))
-    .join('\n');
-}
-
-if (!existsSync(PANELS_DIR)) {
-  console.error(`[build-graph-css] missing panels dir: ${PANELS_DIR}`);
-  process.exit(1);
-}
-
-const files = readdirSync(PANELS_DIR)
-  .filter((f) => f.endsWith('.css'))
-  .sort();
-
-if (files.length === 0) {
-  console.error(`[build-graph-css] no .css files found in ${PANELS_DIR}`);
-  process.exit(1);
-}
-
-const sections = files.map((file) => {
-  const css = stripLicenseHeader(readFileSync(join(PANELS_DIR, file), 'utf-8'));
-  return `  /* ── ${file} ─────────────────────────────── */\n${indent(css.trim())}\n`;
+bundleCss({
+  srcDir: join(ROOT, 'src', 'components', 'panels'),
+  glob: true,
+  outFile: join(ROOT, 'dist', 'lib', 'graph.css'),
+  header: HEADER,
+  tag: 'build-graph-css',
 });
-
-const body = `@layer opentrace {\n${sections.join('\n')}}\n`;
-
-mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(OUT_FILE, `${HEADER}\n${body}`, 'utf-8');
-
-console.log(
-  `[build-graph-css] wrote ${OUT_FILE} from ${files.length} panel stylesheet(s): ${files.join(', ')}`,
-);
