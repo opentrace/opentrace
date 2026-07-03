@@ -262,16 +262,30 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // Drive continuous live-build mode. Gated on `layoutReady` so it (re)applies
     // once the renderer exists — robust to mount ordering. On exit, release the
     // worker-side node pins so the graph is interactive/re-layoutable again.
+    const didLiveGrowRef = useRef(false);
     useEffect(() => {
       const r = rendererRef.current;
       if (!r) return;
       if (liveGrow) {
+        didLiveGrowRef.current = true;
         r.beginLiveGrow();
       } else {
         r.endLiveGrow();
         releasePins();
+        // A live build grows the layout path-dependently: each batch seeds new
+        // nodes next to already-placed neighbours while existing ones are
+        // pinned, so the settled result depends on arrival order — visibly
+        // different from the fresh-seed layout the same preset produces on a
+        // chip click. Re-lay-out from scratch once the build ends (pins just
+        // released, order matters) so "indexed in Planet" and "switched to
+        // Planet" converge to the same canonical shape.
+        if (didLiveGrowRef.current) {
+          didLiveGrowRef.current = false;
+          reseed();
+          r.scheduleAutoFit(800);
+        }
       }
-    }, [liveGrow, layoutReady, releasePins]);
+    }, [liveGrow, layoutReady, releasePins, reseed]);
 
     // ── Set data when layout is ready ───────────────────────────────────
     const prevNodeIdsRef = useRef<Set<string>>(new Set());

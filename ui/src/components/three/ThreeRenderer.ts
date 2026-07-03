@@ -43,6 +43,7 @@ import {
   BufferAttribute,
   Points,
   LineSegments,
+  LineBasicMaterial,
   Sprite,
   SpriteMaterial,
   CanvasTexture,
@@ -153,6 +154,10 @@ interface TraversalEdge {
   durMs: number;
   /** 1 once the arrival ping/light has fired (debounce). */
   arrived: number;
+  /** Fire a node ping on arrival. Every edge in a normal batch; only leg-final
+   *  edges in a big (chain-lightning) batch, where per-edge pings would spawn
+   *  hundreds of sprites per frame. */
+  ping: number;
 }
 
 /** In-flight chat-traversal replay: a single glow pulse glides edge-by-edge
@@ -333,12 +338,23 @@ const TRAVERSAL_MAX_EDGE_MS = 180;
 /** Inter-leg pause as a fraction of the per-edge time. */
 const TRAVERSAL_GAP_FRAC = 0.25;
 /** When a new batch arrives and the queued walk still has more than this left
- *  to play, fast-forward the backlog (light it instantly) and animate only the
- *  new batch — keeps the pulse within ~1s of the real tool-call progress. */
+ *  to play, compress the backlog into a quick catch-up burst before the new
+ *  batch — keeps the pulse within ~1s of the real tool-call progress. */
 const TRAVERSAL_MAX_BACKLOG_MS = 700;
-/** Above this many edges in one call we light them instantly (skip the pulse)
- *  — keeps a giant tool result from animating for minutes. */
+/** The compressed backlog plays in this window (ms) — fast, but every edge
+ *  still visibly builds instead of popping in. */
+const TRAVERSAL_CATCHUP_MS = 320;
+/** Above this many edges in one call we switch to "chain-lightning" pacing:
+ *  still drawn progressively (the connections visibly build), but on a bigger
+ *  fixed budget with a near-zero per-edge floor so a giant tool result never
+ *  animates for minutes. Node pings are then fired per LEG (not per edge) to
+ *  bound sprite churn. */
 const TRAVERSAL_MAX_EDGES = 160;
+/** Wall-clock target for one BIG batch's walk (ms). */
+const TRAVERSAL_BIG_BUDGET_MS = 2800;
+/** Per-edge floor for big batches (ms) — caps truly huge results at
+ *  edgeCount × this. */
+const TRAVERSAL_BIG_MIN_EDGE_MS = 0.6;
 /** Travelling-pulse glow color (the "agent" walking the graph). */
 const TRAVERSAL_PULSE_COLOR = '#bae6fd';
 /** Lit-trail edge color — a vivid cyan so the walked path pops on big graphs. */
@@ -435,6 +451,17 @@ export class ThreeRenderer {
   private traversalLitNodes: Set<string> = new Set();
   /** Edges the traversal has crossed — kept lit (hot) until cleared. */
   private traversalLitEdges: Set<string> = new Set();
+  /** Edges queued in the walk but not yet crossed — kept INVISIBLE (alpha 0,
+   *  overriding even the app-side highlight that pre-marks the whole result
+   *  neighborhood hot) so each connection appears only as the pulse builds it.
+   *  Keys in both orientations, removed on arrival. */
+  private traversalPendingEdges: Set<string> = new Set();
+  /** Partial-trail overlay: one trail-colored segment from the active edge's
+   *  start to the pulse's current position, so the connection visibly DRAWS
+   *  itself behind the pulse (the full edge flips lit only on arrival).
+   *  Lazily created, reused across walks; hidden when no edge is mid-cross. */
+  private traversalHeadLine: LineSegments | null = null;
+  private traversalHeadPos: Float32Array = new Float32Array(6);
 
   // ── Build animation ────────────────────────────────────────────────
   private buildAnim: BuildAnimState | null = null;
@@ -528,6 +555,12 @@ export class ThreeRenderer {
   private nodeGeometry: BufferGeometry | null = null;
   private nodeMaterial: ShaderMaterial | null = null;
   private nodePoints: Points | null = null;
+  // Highlighted-node halo overlay (shares the node attributes, own index —
+  // drawn after edges without depth writes; see createNodeMaterial haloPass).
+  private nodeHaloGeometry: BufferGeometry | null = null;
+  private nodeHaloMaterial: ShaderMaterial | null = null;
+  private nodeHaloPoints: Points | null = null;
+  private nodeHaloDrawIndex: Uint32Array = new Uint32Array(0);
   private posArray: Float32Array = new Float32Array(0); // x,y,z per node (stride 3)
   private colorArray: Float32Array = new Float32Array(0);
   private sizeArray: Float32Array = new Float32Array(0);
@@ -763,6 +796,14 @@ export class ThreeRenderer {
       dimScale: NODE_SIZE_DIMMED_SCALE,
       dimAlpha: NODE_OPACITY_DIMMED,
     });
+    // Second pass for highlighted nodes: the soft halo, drawn after edges
+    // with no depth write so it blends over them (see createNodeMaterial).
+    this.nodeHaloMaterial = createNodeMaterial(this.pixelRatio, {
+      hlScale: NODE_SIZE_HIGHLIGHTED_SCALE,
+      dimScale: NODE_SIZE_DIMMED_SCALE,
+      dimAlpha: NODE_OPACITY_DIMMED,
+      haloPass: true,
+    });
     this.edgeMaterial = createEdgeMaterial();
     this.superEdgeMaterial = createEdgeMaterial(); // independent opacity
     // LOD mode: `?lod=1` forces on, `?lod=0` forces off, otherwise 'auto' —
@@ -840,8 +881,9 @@ export class ThreeRenderer {
       if (this.fit3D && this.stepFit3D()) this.needsRender = true;
       if (this.traversalAnim) this.updateTraversalAnim(performance.now());
       if (this.ambientActive) this.updateAmbient(performance.now());
-      if (this.nodeMaterial) {
-        const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
+      for (const mat of [this.nodeMaterial, this.nodeHaloMaterial]) {
+        if (!mat) continue;
+        const u = mat.uniforms as unknown as NodeMaterialUniforms;
         u.uPerspective.value = 1;
         // px-per-world-unit at unit depth for the point-size shader.
         u.uZoom.value =
@@ -918,8 +960,9 @@ export class ThreeRenderer {
     if (this.ambientActive) this.updateAmbient(performance.now());
 
     // Keep the shader's zoom uniform in sync (size attenuation).
-    if (this.nodeMaterial) {
-      const u = this.nodeMaterial.uniforms as unknown as NodeMaterialUniforms;
+    for (const mat of [this.nodeMaterial, this.nodeHaloMaterial]) {
+      if (!mat) continue;
+      const u = mat.uniforms as unknown as NodeMaterialUniforms;
       u.uPerspective.value = 0;
       u.uZoom.value = cam.zoom;
       u.uSizeExp.value = this.zoomSizeExponent;
@@ -1327,6 +1370,8 @@ export class ThreeRenderer {
     this.disposeEdgeObjects();
     this.nodeMaterial?.dispose();
     this.nodeMaterial = null;
+    this.nodeHaloMaterial?.dispose();
+    this.nodeHaloMaterial = null;
     this.edgeMaterial?.dispose();
     this.edgeMaterial = null;
     this.pickingMaterial?.dispose();
@@ -1365,6 +1410,13 @@ export class ThreeRenderer {
     }
     this.traversalLitNodes.clear();
     this.traversalLitEdges.clear();
+    this.traversalPendingEdges.clear();
+    if (this.traversalHeadLine) {
+      this.scene?.remove(this.traversalHeadLine);
+      this.traversalHeadLine.geometry.dispose();
+      (this.traversalHeadLine.material as LineBasicMaterial).dispose();
+      this.traversalHeadLine = null;
+    }
     for (const tex of this.glowTextures.values()) tex.dispose();
     this.glowTextures.clear();
 
@@ -1390,6 +1442,11 @@ export class ThreeRenderer {
     this.nodeGeometry?.dispose();
     this.nodeGeometry = null;
     this.nodePoints = null;
+    if (this.nodeHaloPoints && this.scene)
+      this.scene.remove(this.nodeHaloPoints);
+    this.nodeHaloGeometry?.dispose();
+    this.nodeHaloGeometry = null;
+    this.nodeHaloPoints = null;
   }
 
   private disposeEdgeObjects(): void {
@@ -1423,8 +1480,10 @@ export class ThreeRenderer {
       this.traversalAnim.sprite.material.dispose();
       this.traversalAnim = null;
     }
+    if (this.traversalHeadLine) this.traversalHeadLine.visible = false;
     this.traversalLitNodes.clear();
     this.traversalLitEdges.clear();
+    this.traversalPendingEdges.clear();
     this.disposeNodeObjects();
     this.disposeEdgeObjects();
     this.disposeSuperGraph();
@@ -1556,6 +1615,24 @@ export class ThreeRenderer {
     this.nodeGeometry = geo;
     this.nodePoints = points;
     this.scene.add(points);
+
+    // Halo overlay for highlighted nodes: SHARES the attribute instances (one
+    // upload serves both passes), draws only the hot subset via its own index
+    // (filled in applyNodeStates), after edges (renderOrder 3 > edges' 2).
+    if (this.nodeHaloMaterial) {
+      const haloGeo = new BufferGeometry();
+      haloGeo.setAttribute('position', geo.getAttribute('position'));
+      haloGeo.setAttribute('aColor', geo.getAttribute('aColor'));
+      haloGeo.setAttribute('aSize', geo.getAttribute('aSize'));
+      haloGeo.setAttribute('aState', geo.getAttribute('aState'));
+      haloGeo.setDrawRange(0, 0); // nothing highlighted yet
+      const halo = new Points(haloGeo, this.nodeHaloMaterial);
+      halo.frustumCulled = false;
+      halo.renderOrder = 3;
+      this.nodeHaloGeometry = haloGeo;
+      this.nodeHaloPoints = halo;
+      this.scene.add(halo);
+    }
     this.requestRender();
   }
 
@@ -1692,16 +1769,25 @@ export class ThreeRenderer {
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
+    // While a chat walk is in play (or its lit trail persists), the graph's
+    // OTHER edges hide completely instead of dimming — every visible edge is
+    // one the agent actually built, so the connections read as appearing from
+    // nothing ("watch it build") rather than recoloring an existing web.
+    const traversalActive = this.traversalActive();
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
+      const key = `${e.sourceId}-${e.targetId}`;
       // Hot edges (chat traversal trail / highlight neighborhood) stay
       // visible even when the edge layer is off, the link type is hidden, or
       // LOD collapsed the region — "show me the path" beats the hide toggles
       // (highlighted NODES already get the same override in applyNodeStates).
-      const hot =
-        this.hasHighlight && this.edgeIsHot(`${e.sourceId}-${e.targetId}`);
+      const hot = this.hasHighlight && this.edgeIsHot(key);
       let alpha: number;
-      if ((!enabled || this.hiddenLinkTypes.has(e.label)) && !hot) {
+      if (this.traversalPendingEdges.has(key)) {
+        // Queued in the walk but not yet crossed — invisible until the pulse
+        // builds it, even if the app-side highlight already marked it hot.
+        alpha = 0;
+      } else if ((!enabled || this.hiddenLinkTypes.has(e.label)) && !hot) {
         alpha = 0;
       } else {
         const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
@@ -1715,7 +1801,16 @@ export class ThreeRenderer {
         if (!sVis || !tVis || (lodHidden && !hot)) {
           alpha = 0;
         } else if (this.hasHighlight) {
-          alpha = hot ? EDGE_OPACITY_HIGHLIGHTED : EDGE_OPACITY_DIMMED;
+          // Hot edges use the shader's ABSOLUTE encoding (1 + alpha) so the
+          // lit path renders fully opaque regardless of the preset's edge
+          // opacity. Everything else keeps its normal global multiplier and
+          // is dimmed relative to it — a preset that hides edges (Onion 0%,
+          // Planet 15%) keeps them hidden while the walked path lights up.
+          alpha = hot
+            ? 1 + EDGE_OPACITY_HIGHLIGHTED
+            : traversalActive
+              ? 0
+              : EDGE_OPACITY_DIMMED;
         } else {
           alpha = EDGE_OPACITY_DEFAULT;
           // The radial tree reads through its DEFINES skeleton. Relational
@@ -1964,22 +2059,17 @@ export class ThreeRenderer {
   /** Global edge-opacity multiplier driven by zoom (the readability fix for
    *  the 2D hairball). At the overview edges are faint so clusters/nodes read
    *  clearly; as the user zooms into a region (fewer edges on screen) they
-   *  become opaque enough to trace. A highlight forces full opacity so the
-   *  selected neighborhood always stands out, and 3D stays opaque (depth
-   *  already separates crossings). */
+   *  become opaque enough to trace. Hot (highlight/traversal) edges bypass
+   *  this entirely via the shader's absolute-alpha encoding — see
+   *  updateEdgeAlpha — so a highlight no longer lifts the whole edge layer
+   *  (which used to flash every edge on Planet/Onion where the preset keeps
+   *  edges faint or off). */
   private edgeOpacity(): number {
-    // While a highlight/traversal is active, don't let a low user opacity
-    // (e.g. Onion's 0%, Planet's 15%) kill the lit path — the per-edge alpha
-    // already dims everything that isn't part of the highlight.
-    const mult = this.hasHighlight
-      ? Math.max(this.edgeOpacityMultiplier, 1)
-      : this.edgeOpacityMultiplier;
-    return this.edgeBaseOpacity() * mult;
+    return this.edgeBaseOpacity() * this.edgeOpacityMultiplier;
   }
 
-  /** The zoom/highlight-driven base opacity, before the user multiplier. */
+  /** The zoom-driven base opacity, before the user multiplier. */
   private edgeBaseOpacity(): number {
-    if (this.hasHighlight) return 1;
     if (this.mode3d) return 0.85;
     // Ratio of current zoom to the whole-graph fit zoom: 1 = full overview.
     const ratio = (this.camera?.zoom ?? 1) / Math.max(this.lastFitZoom, 1e-6);
@@ -2261,11 +2351,15 @@ export class ThreeRenderer {
     const prevSuperMat = this.superNodePoints?.material;
     const edgeWasVisible = this.edgeLines?.visible ?? false;
     const superEdgeWasVisible = this.superEdgeLines?.visible ?? false;
+    const haloWasVisible = this.nodeHaloPoints?.visible ?? false;
     points.material = this.pickingMaterial;
     if (this.superNodePoints)
       this.superNodePoints.material = this.pickingMaterial;
     if (this.edgeLines) this.edgeLines.visible = false;
     if (this.superEdgeLines) this.superEdgeLines.visible = false;
+    // The halo overlay would write its glow colors into the id buffer; the
+    // highlighted nodes are already pickable via the main pass's index.
+    if (this.nodeHaloPoints) this.nodeHaloPoints.visible = false;
 
     const dpr = renderer.getPixelRatio();
     const buf = renderer.getDrawingBufferSize(this.tmpVec2);
@@ -2293,6 +2387,7 @@ export class ThreeRenderer {
       this.superNodePoints.material = prevSuperMat;
     if (this.edgeLines) this.edgeLines.visible = edgeWasVisible;
     if (this.superEdgeLines) this.superEdgeLines.visible = superEdgeWasVisible;
+    if (this.nodeHaloPoints) this.nodeHaloPoints.visible = haloWasVisible;
     renderer.setClearColor(this.bgColor, 1);
 
     const id =
@@ -2803,13 +2898,34 @@ export class ThreeRenderer {
     return this.highlightNodes.size > 0 || this.traversalLitNodes.size > 0;
   }
 
-  /** True if a node is "hot" — directly highlighted or reached by traversal. */
+  /** True while a chat walk exists — animating, queued, or its lit trail
+   *  still on screen. While active, hotness comes ONLY from the traversal
+   *  sets: the app-side chat highlight pre-marks the whole result
+   *  neighborhood (every node + every edge between result nodes, in their
+   *  raw label colors), which would pop in at once and clog the walk. Ends on
+   *  clearTraversal (next question / highlights off) or a data reload. */
+  private traversalActive(): boolean {
+    return (
+      this.traversalAnim !== null ||
+      this.traversalLitNodes.size > 0 ||
+      this.traversalLitEdges.size > 0 ||
+      this.traversalPendingEdges.size > 0
+    );
+  }
+
+  /** True if a node is "hot" — directly highlighted or reached by traversal.
+   *  During a walk, only nodes the traversal actually reached count, so each
+   *  node lights up when its edge finishes building, not when the app's
+   *  highlight lands. */
   private nodeIsHot(id: string): boolean {
+    if (this.traversalActive()) return this.traversalLitNodes.has(id);
     return this.highlightNodes.has(id) || this.traversalLitNodes.has(id);
   }
 
-  /** True if an edge is "hot" — highlighted or crossed by the traversal. */
+  /** True if an edge is "hot" — highlighted or crossed by the traversal.
+   *  During a walk, only built edges count (see traversalActive). */
   private edgeIsHot(key: string): boolean {
+    if (this.traversalActive()) return this.traversalLitEdges.has(key);
     return this.highlightLinks.has(key) || this.traversalLitEdges.has(key);
   }
 
@@ -2823,8 +2939,13 @@ export class ThreeRenderer {
     if (this.nodeDrawIndex.length !== this.nodeArray.length) {
       this.nodeDrawIndex = new Uint32Array(this.nodeArray.length);
     }
+    if (this.nodeHaloDrawIndex.length !== this.nodeArray.length) {
+      this.nodeHaloDrawIndex = new Uint32Array(this.nodeArray.length);
+    }
     const drawIdx = this.nodeDrawIndex;
+    const haloIdx = this.nodeHaloDrawIndex;
     let dc = 0;
+    let hc = 0;
     for (let i = 0; i < this.nodeArray.length; i++) {
       const node = this.nodeArray[i];
       // Under LOD, a node only draws when its community is expanded — except
@@ -2842,11 +2963,17 @@ export class ThreeRenderer {
       if (i === this.hoveredNodeIndex) s |= NODE_STATE_HOVERED;
       st[i] = s;
       if (visible) drawIdx[dc++] = i;
+      // Highlighted nodes also draw in the halo overlay pass (soft glow over
+      // edges, no depth write — see buildNodePoints).
+      if (visible && highlighted) haloIdx[hc++] = i;
     }
     (this.nodeGeometry.getAttribute('aState') as BufferAttribute).needsUpdate =
       true;
     // Only submit the visible nodes to the GPU.
     this.setGeometryDrawIndex(this.nodeGeometry, drawIdx, dc);
+    if (this.nodeHaloGeometry) {
+      this.setGeometryDrawIndex(this.nodeHaloGeometry, haloIdx, hc);
+    }
     this.requestRender();
   }
 
@@ -5049,8 +5176,20 @@ export class ThreeRenderer {
   ): void {
     if (this.destroyed || !this.scene || !this.nodeGeometry) return;
 
-    // Orphans (disconnected finds) just flash where they are.
-    if (orphanIds.length > 0) this.triggerPing(orphanIds);
+    // Orphans (disconnected finds) flash where they are AND join the lit set —
+    // during a walk, highlightNodes are ignored (see traversalActive), so
+    // without this they'd never light at all.
+    if (orphanIds.length > 0) {
+      this.triggerPing(orphanIds);
+      let litAny = false;
+      for (const id of orphanIds) {
+        if (this.nodeIdToIndex.has(id)) {
+          this.traversalLitNodes.add(id);
+          litAny = true;
+        }
+      }
+      if (litAny) this.refreshHotState();
+    }
 
     // Count resolvable edges first so the per-edge time can be derived from the
     // batch budget — many edges → quick crossings, few edges → leisurely.
@@ -5067,25 +5206,17 @@ export class ThreeRenderer {
     }
     if (edgeCount === 0) return;
 
-    // Big result — light everything at once rather than animate for ages.
-    if (edgeCount > TRAVERSAL_MAX_EDGES) {
-      for (const leg of legs) {
-        for (const e of leg.edges) {
-          this.traversalLitEdges.add(`${e.sourceId}-${e.targetId}`);
-          this.traversalLitEdges.add(`${e.targetId}-${e.sourceId}`);
-          this.traversalLitNodes.add(e.sourceId);
-          this.traversalLitNodes.add(e.targetId);
-        }
-      }
-      this.refreshHotState();
-      this.triggerPing(legs.map((l) => l.destId));
-      return;
-    }
-
-    const perEdge = Math.max(
-      TRAVERSAL_MIN_EDGE_MS,
-      Math.min(TRAVERSAL_MAX_EDGE_MS, TRAVERSAL_BUDGET_MS / edgeCount),
-    );
+    // Big result — keep the progressive draw ("see the connections build") but
+    // switch to chain-lightning pacing: bigger budget, near-zero per-edge
+    // floor, pings only at leg ends. A giant result plays in seconds, never
+    // instantly floods.
+    const big = edgeCount > TRAVERSAL_MAX_EDGES;
+    const perEdge = big
+      ? Math.max(TRAVERSAL_BIG_MIN_EDGE_MS, TRAVERSAL_BIG_BUDGET_MS / edgeCount)
+      : Math.max(
+          TRAVERSAL_MIN_EDGE_MS,
+          Math.min(TRAVERSAL_MAX_EDGE_MS, TRAVERSAL_BUDGET_MS / edgeCount),
+        );
     const gap = perEdge * TRAVERSAL_GAP_FRAC;
 
     // Build the ordered edge list with cumulative entry times. Seed nodes (each
@@ -5109,16 +5240,25 @@ export class ThreeRenderer {
         const t = this.nodeIdToIndex.get(e.targetId);
         if (s === undefined || t === undefined) continue;
         const isLast = j === leg.edges.length - 1;
+        const edgeKey = `${e.sourceId}-${e.targetId}`;
+        const edgeKeyRev = `${e.targetId}-${e.sourceId}`;
         newEdges.push({
           sourceIdx: s,
           targetIdx: t,
-          edgeKey: `${e.sourceId}-${e.targetId}`,
-          edgeKeyRev: `${e.targetId}-${e.sourceId}`,
+          edgeKey,
+          edgeKeyRev,
           destId: e.targetId,
           startMs: cursor,
           durMs: perEdge,
           arrived: 0,
+          ping: big ? (isLast ? 1 : 0) : 1,
         });
+        // Hide the queued edge until the pulse builds it — unless an earlier
+        // leg already lit it (a re-crossed edge must not flicker off).
+        if (!this.traversalLitEdges.has(edgeKey)) {
+          this.traversalPendingEdges.add(edgeKey);
+          this.traversalPendingEdges.add(edgeKeyRev);
+        }
         cursor += perEdge + (isLast ? gap : 0);
       }
     }
@@ -5133,18 +5273,22 @@ export class ThreeRenderer {
     if (anim) {
       const remaining = anim.duration - (now - anim.start);
       if (remaining > TRAVERSAL_MAX_BACKLOG_MS) {
-        // Backlog is lagging the real tool-call progress — fast-forward it:
-        // instantly light every still-pending edge, then restart the timeline
-        // so only the fresh batch animates.
-        for (const e of anim.edges) {
-          if (e.arrived) continue;
-          this.traversalLitEdges.add(e.edgeKey);
-          this.traversalLitEdges.add(e.edgeKeyRev);
-          this.traversalLitNodes.add(e.destId);
+        // Backlog is lagging the real tool-call progress — COMPRESS it into a
+        // short catch-up burst rather than flash-lighting it: every edge must
+        // visibly build (never pop in), but the walk also can't fall minutes
+        // behind streamed tool results.
+        const backlog = anim.edges.filter((e) => !e.arrived);
+        const per = TRAVERSAL_CATCHUP_MS / Math.max(backlog.length, 1);
+        let catchUp = 0;
+        for (const e of backlog) {
+          e.startMs = catchUp;
+          e.durMs = per;
+          catchUp += per;
         }
+        for (const e of newEdges) e.startMs += catchUp;
         anim.start = now;
-        anim.edges = newEdges;
-        anim.duration = cursor;
+        anim.edges = [...backlog, ...newEdges];
+        anim.duration = catchUp + cursor;
         this.refreshHotState();
       } else {
         // Chain after the current walk so streamed legs play continuously.
@@ -5152,7 +5296,9 @@ export class ThreeRenderer {
         for (const e of newEdges) e.startMs += base;
         anim.edges.push(...newEdges);
         anim.duration = base + cursor;
-        if (seededAny) this.refreshHotState();
+        // Always repaint: the freshly-QUEUED edges must hide now (pending),
+        // not just when a seed node lit.
+        this.refreshHotState();
       }
     } else {
       const sprite = new Sprite(
@@ -5173,14 +5319,40 @@ export class ThreeRenderer {
         edges: newEdges,
         sprite,
       };
-      // Light the seed anchors right away so the walk starts from a lit node.
-      if (seededAny) this.refreshHotState();
+      // Repaint now: seed anchors light up AND the queued (pending) edges —
+      // plus the rest of the graph's web — hide so the walk builds from
+      // nothing.
+      this.refreshHotState();
     }
     this.requestRender();
   }
 
+  /** Lazily create the partial-trail overlay segment (see traversalHeadLine).
+   *  Reused across walks; only destroy() disposes it. */
+  private ensureTraversalHead(): LineSegments | null {
+    if (this.traversalHeadLine || !this.scene) return this.traversalHeadLine;
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(this.traversalHeadPos, 3));
+    const line = new LineSegments(
+      geo,
+      new LineBasicMaterial({
+        color: TRAVERSAL_TRAIL_COLOR,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    line.frustumCulled = false;
+    line.renderOrder = 3; // over edges + nodes, like the pulse sprite
+    line.visible = false;
+    this.traversalHeadLine = line;
+    this.scene.add(line);
+    return line;
+  }
+
   /** Per-frame driver for the traversal pulse: positions the glow on the active
-   *  edge, and as each edge completes, lights it + pings the node reached. */
+   *  edge, fills the trail segment behind it (the connection visibly draws
+   *  itself), and as each edge completes, lights it + pings the node reached. */
   private updateTraversalAnim(now: number): void {
     const anim = this.traversalAnim;
     if (!anim || !this.scene) return;
@@ -5189,6 +5361,9 @@ export class ThreeRenderer {
     let dirty = false;
     let active: TraversalEdge | null = null;
     let anyPending = false;
+    // Batched — a big (chain-lightning) walk completes many edges per frame,
+    // and one triggerPing call per frame beats hundreds.
+    let pings: string[] | null = null;
     for (const e of anim.edges) {
       if (elapsed >= e.startMs && elapsed < e.startMs + e.durMs) {
         active = e;
@@ -5198,11 +5373,14 @@ export class ThreeRenderer {
         this.traversalLitEdges.add(e.edgeKey);
         this.traversalLitEdges.add(e.edgeKeyRev);
         this.traversalLitNodes.add(e.destId);
-        this.triggerPing([e.destId]);
+        this.traversalPendingEdges.delete(e.edgeKey);
+        this.traversalPendingEdges.delete(e.edgeKeyRev);
+        if (e.ping) (pings ??= []).push(e.destId);
         dirty = true;
       }
       if (!e.arrived) anyPending = true;
     }
+    if (pings) this.triggerPing(pings);
     if (dirty) this.refreshHotState();
     // Chained chat traversals keep appending to this timeline within one
     // session; once everything so far has arrived, drop the scanned-per-frame
@@ -5227,6 +5405,23 @@ export class ThreeRenderer {
         (this.posArray[ti + 2] - this.posArray[si + 2]) * ease;
       anim.sprite.position.set(x, y, z);
       anim.sprite.visible = true;
+      // Fill the already-crossed part of the edge in the trail color so the
+      // connection builds behind the pulse (the full edge only flips lit in
+      // the buffers on arrival).
+      const head = this.ensureTraversalHead();
+      if (head) {
+        const hp = this.traversalHeadPos;
+        hp[0] = this.posArray[si];
+        hp[1] = this.posArray[si + 1];
+        hp[2] = this.posArray[si + 2];
+        hp[3] = x;
+        hp[4] = y;
+        hp[5] = z;
+        (
+          head.geometry.getAttribute('position') as BufferAttribute
+        ).needsUpdate = true;
+        head.visible = true;
+      }
       // Size off the node being approached, but enforce a screen-space floor so
       // the pulse stays visible on big graphs where nodes are sub-pixel. A gentle
       // throb (sin over the crossing) draws the eye to the moving head.
@@ -5241,12 +5436,14 @@ export class ThreeRenderer {
       anim.sprite.material.opacity = 1;
     } else {
       anim.sprite.visible = false;
+      if (this.traversalHeadLine) this.traversalHeadLine.visible = false;
     }
 
     if (elapsed >= anim.duration) {
       this.scene.remove(anim.sprite);
       anim.sprite.material.dispose();
       this.traversalAnim = null;
+      if (this.traversalHeadLine) this.traversalHeadLine.visible = false;
     }
     this.requestRender();
   }
@@ -5259,14 +5456,17 @@ export class ThreeRenderer {
       this.traversalAnim.sprite.material.dispose();
       this.traversalAnim = null;
     }
+    if (this.traversalHeadLine) this.traversalHeadLine.visible = false;
     if (
       this.traversalLitNodes.size === 0 &&
-      this.traversalLitEdges.size === 0
+      this.traversalLitEdges.size === 0 &&
+      this.traversalPendingEdges.size === 0
     ) {
       return;
     }
     this.traversalLitNodes.clear();
     this.traversalLitEdges.clear();
+    this.traversalPendingEdges.clear();
     this.refreshHotState();
     this.requestRender();
   }

@@ -122,6 +122,7 @@ const VERTEX_SHADER = /* glsl */ `
 const FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D uTexture;
   uniform float uUseTexture;
+  uniform float uHaloPass;
 
   varying vec3 vColor;
   varying float vAlpha;
@@ -140,12 +141,26 @@ const FRAGMENT_SHADER = /* glsl */ `
       // Highlighted (chat/search): brightened solid core + a soft halo that
       // fills the enlarged point (NODE_SIZE_HIGHLIGHTED_SCALE gives it room),
       // so highlights read as glowing beacons instead of flat discs.
+      //
+      // The two parts render in SEPARATE passes. The main pass (uHaloPass=0,
+      // depthWrite ON) draws only the solid core: a translucent halo that
+      // writes depth blanks every edge behind it — the "dark ring around
+      // glowing nodes over edges" bug. The halo pass (uHaloPass=1, depthWrite
+      // OFF, drawn after edges) blends the soft glow over whatever is behind.
       float core = 1.0 - smoothstep(0.055, 0.1, d); // solid center ~2/3 radius
       float halo = 1.0 - smoothstep(0.0, 0.25, d); // falloff to the rim
-      alpha = max(core, halo * halo * 0.65) * vAlpha;
       color = min(vColor * (1.0 + 0.65 * core), vec3(1.0));
+      if (uHaloPass > 0.5) {
+        // Halo only — exclude the core so an edge passing in FRONT of the
+        // node (drawn before this pass) isn't painted over by a second core.
+        alpha = halo * halo * 0.65 * (1.0 - core) * vAlpha;
+      } else {
+        alpha = core * vAlpha;
+      }
+    } else if (uHaloPass > 0.5) {
+      discard; // halo pass draws highlighted nodes only
     }
-    // Nearly-invisible fragments must not WRITE DEPTH: the glow halo (and the
+    // Nearly-invisible fragments must not WRITE DEPTH: the core edge (and the
     // AA rim) tapers to ~0 alpha, and with depthWrite on those pixels blanked
     // everything behind them — a black orb around highlighted/hovered nodes.
     if (alpha < 0.03) discard;
@@ -168,12 +183,22 @@ export interface NodeMaterialUniforms {
   uDimAlpha: { value: number };
   uTexture: { value: Texture | null };
   uUseTexture: { value: number };
+  uHaloPass: { value: number };
 }
 
 export function createNodeMaterial(
   pixelRatio: number,
-  opts: { hlScale: number; dimScale: number; dimAlpha: number },
+  opts: {
+    hlScale: number;
+    dimScale: number;
+    dimAlpha: number;
+    /** Halo overlay pass for highlighted nodes: no depth write, drawn after
+     *  edges so the translucent glow blends over them instead of depth-killing
+     *  them (the "dark ring over edges" bug). */
+    haloPass?: boolean;
+  },
 ): ShaderMaterial {
+  const haloPass = opts.haloPass ?? false;
   return new ShaderMaterial({
     uniforms: {
       uZoom: { value: 1 },
@@ -185,6 +210,7 @@ export function createNodeMaterial(
       uDimAlpha: { value: opts.dimAlpha },
       uTexture: { value: null },
       uUseTexture: { value: 0 },
+      uHaloPass: { value: haloPass ? 1 : 0 },
     } satisfies NodeMaterialUniforms,
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
@@ -192,9 +218,10 @@ export function createNodeMaterial(
     // test + write are on so a nearer node properly occludes a farther one in
     // 3D (the "see-through" report). Node bodies are opaque (alpha 1.0), so the
     // only blended pixels are the ~1px rim — the depth halo there is negligible.
+    // The halo pass must NOT write depth: its whole output is translucent.
     transparent: true,
     depthTest: true,
-    depthWrite: true,
+    depthWrite: !haloPass,
     blending: NormalBlending,
   });
 }

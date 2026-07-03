@@ -58,7 +58,12 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
-    float a = vAlpha * uOpacity;
+    // aAlpha in (1, 2] is ABSOLUTE: alpha = value - 1, bypassing the global
+    // zoom/user opacity. Used for hot edges (chat-traversal trail / highlight
+    // neighborhood) so the lit path stays fully visible even when the preset
+    // keeps the edge layer faint or off (Planet 15%, Onion 0%) — WITHOUT
+    // raising the global opacity, which used to flash every edge on screen.
+    float a = vAlpha > 1.0 ? min(vAlpha - 1.0, 1.0) : vAlpha * uOpacity;
     if (a <= 0.0) discard;
     gl_FragColor = vec4(vColor, a);
   }
