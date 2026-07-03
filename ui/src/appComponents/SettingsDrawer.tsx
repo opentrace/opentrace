@@ -32,8 +32,12 @@ import { useStore } from '../store';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import './SettingsDrawer.css';
 
-const DEFAULT_MAX_NODES = 20000;
-const DEFAULT_MAX_EDGES = 20000;
+// Visualization load caps. Kept well above typical indexed graph sizes so a
+// graph isn't silently truncated (which orphans the nodes whose edges get cut
+// and makes "indexed > shown"). The renderer is built for 100k+; users with
+// pathologically large graphs can lower these here.
+const DEFAULT_MAX_NODES = 50000;
+const DEFAULT_MAX_EDGES = 50000;
 const LS_KEY_NODES = 'ot:maxVisNodes';
 const LS_KEY_EDGES = 'ot:maxVisEdges';
 

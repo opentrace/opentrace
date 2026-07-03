@@ -14,14 +14,24 @@
  * limitations under the License.
  */
 
-import { PhysicsPanel, type GraphCanvasHandle } from '@opentrace/components';
+import {
+  PhysicsPanel,
+  type GraphCanvasHandle,
+  type PhysicsPanelPreset,
+} from '@opentrace/components';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 
 type ColorMode = 'type' | 'community';
-type LayoutMode = 'spread' | 'compact';
+type LayoutMode = 'spread' | 'compact' | 'tree' | 'onion';
 
 interface PhysicsPanelContainerProps {
   canvasRef: RefObject<GraphCanvasHandle | null>;
+
+  // View presets
+  presets?: PhysicsPanelPreset[];
+  activePresetId?: string | null;
+  onSelectPreset?: (id: string) => void;
+  onUserAdjust?: () => void;
 
   repulsion: number;
   setRepulsion: Dispatch<SetStateAction<number>>;
@@ -73,11 +83,19 @@ interface PhysicsPanelContainerProps {
 
   labelScale: number;
   setLabelScale: Dispatch<SetStateAction<number>>;
+  edgeOpacity: number;
+  setEdgeOpacity: Dispatch<SetStateAction<number>>;
+  ambientMotion: boolean;
+  setAmbientMotion: Dispatch<SetStateAction<boolean>>;
 }
 
 /** Wires PhysicsPanel state changes to the canvas's imperative API. */
 export const PhysicsPanelContainer = ({
   canvasRef,
+  presets,
+  activePresetId,
+  onSelectPreset,
+  onUserAdjust,
   repulsion,
   setRepulsion,
   labelsVisible,
@@ -118,8 +136,16 @@ export const PhysicsPanelContainer = ({
   setRendererAutoRotate,
   labelScale,
   setLabelScale,
+  edgeOpacity,
+  setEdgeOpacity,
+  ambientMotion,
+  setAmbientMotion,
 }: PhysicsPanelContainerProps) => (
   <PhysicsPanel
+    presets={presets}
+    activePresetId={activePresetId}
+    onSelectPreset={onSelectPreset}
+    onUserAdjust={onUserAdjust}
     repulsion={repulsion}
     onRepulsionChange={(v) => {
       setRepulsion(v);
@@ -220,6 +246,16 @@ export const PhysicsPanelContainer = ({
     onLabelScaleChange={(v) => {
       setLabelScale(v);
       canvasRef.current?.setLabelScale?.(v / 100);
+    }}
+    edgeOpacity={edgeOpacity}
+    onEdgeOpacityChange={(v) => {
+      setEdgeOpacity(v);
+      canvasRef.current?.setEdgeOpacity?.(v / 100);
+    }}
+    ambientMotion={ambientMotion}
+    onAmbientMotionChange={(v) => {
+      setAmbientMotion(v);
+      canvasRef.current?.setAmbientMotion?.(v);
     }}
   />
 );

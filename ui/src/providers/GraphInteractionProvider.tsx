@@ -175,7 +175,7 @@ function InternalGraphInteractionProvider({
 }: {
   children: ReactNode;
 }) {
-  const { graphData, graphVersion } = useGraph();
+  const { graphData, graphVersion, isStreaming, lastSearchQuery } = useGraph();
 
   // Selection
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -190,8 +190,40 @@ function InternalGraphInteractionProvider({
   const [hiddenSubTypes, setHiddenSubTypes] = useState(new Set<string>());
   const [hiddenCommunities, setHiddenCommunities] = useState(new Set<number>());
 
-  // Color mode
-  const [colorMode, setColorMode] = useState<ColorMode>('type');
+  // Color mode — persisted alongside the other graph settings under the shared
+  // `graph-settings` key (same approach as `communitiesEnabled` below) so a
+  // chosen view preset's color mode survives a reload.
+  const [colorMode, setColorModeState] = useState<ColorMode>(() => {
+    try {
+      const stored = JSON.parse(
+        localStorage.getItem('graph-settings') ?? '{}',
+      ) as Record<string, unknown>;
+      return stored.colorMode === 'community' ? 'community' : 'type';
+    } catch {
+      return 'type';
+    }
+  });
+  const setColorMode: Dispatch<SetStateAction<ColorMode>> = useCallback(
+    (action) => {
+      setColorModeState((prev) => {
+        const next =
+          typeof action === 'function'
+            ? (action as (p: ColorMode) => ColorMode)(prev)
+            : action;
+        try {
+          const stored = JSON.parse(
+            localStorage.getItem('graph-settings') ?? '{}',
+          ) as Record<string, unknown>;
+          stored.colorMode = next;
+          localStorage.setItem('graph-settings', JSON.stringify(stored));
+        } catch {
+          // localStorage unavailable — in-memory state still updates.
+        }
+        return next;
+      });
+    },
+    [],
+  );
 
   // Search / hops
   const [searchQuery, setSearchQuery] = useState('');
@@ -284,31 +316,49 @@ function InternalGraphInteractionProvider({
   }, [graphData.nodes]);
 
   // ─── First-load defaults: hide Dependency sub-types ──────────────────
-  // Runs once per successful graph load (graphVersion bump). Tracks the
-  // last applied version so re-loads (e.g. switching repositories or
-  // re-indexing) re-apply the defaults — the original ref-only flag was
-  // session-scoped, which broke for the second repo a user opened.
+  // Runs once per successful FULL graph load (graphVersion bump with no
+  // query). Tracks the last applied version so re-loads (e.g. switching
+  // repositories or re-indexing) re-apply the defaults — the original
+  // ref-only flag was session-scoped, which broke for the second repo a
+  // user opened. Search / hop refinements (query set) are skipped: they bump
+  // graphVersion too, and re-hiding Variables the user just unhid on every
+  // search would fight their explicit choice.
   const lastDefaultsVersion = useRef(0);
   useEffect(() => {
     if (graphVersion === 0) return;
     if (lastDefaultsVersion.current === graphVersion) return;
-    const depSubs = availableSubTypes.get('Dependency');
-    if (!depSubs || depSubs.length === 0) return;
     lastDefaultsVersion.current = graphVersion;
+    if (lastSearchQuery) return;
+    // Hide Variables and Dependencies by default — Variables are the bulk of
+    // the nodes (often >half) and aren't part of the structural view people
+    // normally look at (files/classes/functions); Dependencies are registry
+    // noise. Both have sub-types, and in `shouldHideNode` sub-type visibility
+    // takes precedence over the whole-type flag — so they must be hidden at the
+    // sub-type level (the type flag alone is ignored for sub-typed nodes). We
+    // still add the type flag too, as a fallback for nodes that have no sub-type.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
+    setHiddenNodeTypes((prev) =>
+      prev.has('Variable') ? prev : new Set(prev).add('Variable'),
+    );
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
     setHiddenSubTypes((prev) => {
       const next = new Set(prev);
-      depSubs.forEach((s) => next.add(`Dependency:${s.subType}`));
+      for (const type of ['Variable', 'Dependency']) {
+        const subs = availableSubTypes.get(type);
+        if (subs) subs.forEach((s) => next.add(`${type}:${s.subType}`));
+      }
       return next;
     });
-  }, [graphVersion, availableSubTypes]);
+  }, [graphVersion, availableSubTypes, lastSearchQuery]);
 
   // ─── Derived: communities (Louvain) ──────────────────────────────────
+  // Suppressed while live-building (per-batch Louvain is the dominant cost);
+  // recomputes once when streaming ends and the authoritative graph loads.
   const communityData = useCommunities(
     graphData.nodes,
     graphData.links,
     DEFAULT_LAYOUT_CONFIG,
-    communitiesEnabled,
+    communitiesEnabled && !isStreaming,
   );
 
   const availableCommunities = useMemo<AvailableCommunity[]>(() => {
@@ -506,6 +556,7 @@ function InternalGraphInteractionProvider({
       hiddenCommunities,
       filterState,
       colorMode,
+      setColorMode,
       searchQuery,
       hops,
       focusedCommunityNodes,

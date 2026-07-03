@@ -38,37 +38,51 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
 
+  # oss.opentrace.ai is a STATIC Firebase-hosted SPA (browser-side indexing —
+  # there is no server API). The old /api/health and /api/stats checks probed
+  # endpoints that don't exist in this architecture, so every deploy since the
+  # move to static hosting reported failure while the site was actually fine.
+  # These checks assert what the static site really contracts to serve.
   post-deploy-check:
     name: Post-Deploy Health Check
     needs: trigger-deploy
     runs-on: ubuntu-latest
     steps:
-      - name: Check /api/health
+      - name: Check app shell serves (HTML + root marker)
         run: |
           for i in $(seq 1 10); do
-            STATUS=$(curl -sf "https://oss.opentrace.ai/api/health" \
-              | jq -r '.status' 2>/dev/null || true)
-            if [ "$STATUS" = "ok" ]; then
-              echo "Health check passed"
+            BODY=$(curl -sf "https://oss.opentrace.ai" || true)
+            if echo "$BODY" | grep -q 'id="root"'; then
+              echo "App shell check passed"
               exit 0
             fi
             echo "Attempt $i/10 failed, retrying in $((i * 5))s..."
             sleep $((i * 5))
           done
-          echo "::error::Health check failed after 10 attempts"
+          echo "::error::App shell missing or malformed after 10 attempts"
           exit 1
 
-      - name: Check /api/stats returns valid JSON
+      - name: Check hashed JS bundle is served
         run: |
-          curl -sf "https://oss.opentrace.ai/api/stats" | jq . > /dev/null
-          echo "Stats endpoint returned valid JSON"
+          ASSET=$(curl -sf "https://oss.opentrace.ai" \
+            | grep -oE '/assets/[^"]+\.js' | head -1)
+          [ -n "$ASSET" ] || { echo "::error::No JS bundle referenced by index.html"; exit 1; }
+          echo "Checking $ASSET"
+          curl -sf -o /dev/null "https://oss.opentrace.ai$ASSET" \
+            || { echo "::error::Bundle $ASSET did not serve"; exit 1; }
+          echo "Bundle check passed"
 
-      - name: Check UI serves HTML
+      # SharedArrayBuffer (required by the in-browser LadybugDB/tree-sitter
+      # indexer) only exists under cross-origin isolation — a silent header
+      # regression would break indexing for every visitor.
+      - name: Check COOP/COEP isolation headers
         run: |
-          CONTENT_TYPE=$(curl -sI "https://oss.opentrace.ai" | grep -i content-type | head -1)
-          echo "$CONTENT_TYPE"
-          echo "$CONTENT_TYPE" | grep -qi "text/html" \
-            || { echo "::error::UI did not return HTML"; exit 1; }
+          HEADERS=$(curl -sI "https://oss.opentrace.ai")
+          echo "$HEADERS" | grep -qi "cross-origin-opener-policy: same-origin" \
+            || { echo "::error::Missing COOP header"; exit 1; }
+          echo "$HEADERS" | grep -qi "cross-origin-embedder-policy: require-corp" \
+            || { echo "::error::Missing COEP header"; exit 1; }
+          echo "Isolation headers check passed"
 
   e2e:
     name: Playwright Smoke

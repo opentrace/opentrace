@@ -15,10 +15,10 @@
  */
 
 /**
- * PixiGraphCanvas — Pixi.js v8 + d3-force graph renderer.
- *
- * Primary graph visualization component using Pixi.js for WebGL rendering
- * and d3-force for layout simulation.
+ * ThreeGraphCanvas — the Three.js + d3-force graph renderer (the sole graph
+ * canvas). Implements the `GraphCanvasProps` / `GraphCanvasHandle` contract via
+ * a prop→imperative-effect orchestration over `ThreeRenderer`, and runs its
+ * layout in the 2D/3D-capable `forceLayout3dWorker` (see `useForceLayout3d`).
  */
 
 import {
@@ -39,21 +39,18 @@ import { useHighlights } from './graph/useHighlights';
 import { shouldHideNode } from './graph/useGraphFilters';
 import { useThemeKey } from './graph/useThemeKey';
 import { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
-import { PixiRenderer } from './pixi/PixiRenderer';
-import { usePixiLayout } from './pixi/usePixiLayout';
+import { ThreeRenderer } from './three/ThreeRenderer';
+import { useForceLayout3d } from './three/useForceLayout3d';
 
-// Dummy Graphology graph for useHighlights (it needs the type but doesn't use it for BFS)
 import Graph from 'graphology';
-
-// ─── Component ──────────────────────────────────────────────────────────
 
 const EMPTY_SET_STR = new Set<string>();
 const EMPTY_SET_NUM = new Set<number>();
 const EMPTY_MAP = new Map<string, { subType: string; count: number }[]>();
 const DEFAULT_GET_SUB_TYPE: GetSubTypeFn = () => null;
 
-const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
-  function PixiGraphCanvas(props, ref) {
+const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
+  function ThreeGraphCanvas(props, ref) {
     const {
       nodes,
       links,
@@ -76,6 +73,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onNodeClick,
       onEdgeClick,
       onStageClick,
+      onNodeHover,
       onOptimizeStatus,
       labelsVisible: labelsVisibleProp = true,
       edgesEnabled: edgesEnabledProp = true,
@@ -83,28 +81,39 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       layoutMode: layoutModeProp = 'spread',
       zoomSizeExponent: zoomSizeExponentProp,
       labelScale: labelScaleProp,
+      edgeOpacity: edgeOpacityProp,
+      chargeStrength: chargeStrengthProp,
+      linkDistance: linkDistanceProp,
+      compactConfig: compactConfigProp,
       mode3d: mode3dProp = false,
+      rotationSpeed: rotationSpeedProp,
+      cameraTilt: cameraTiltProp,
       on3DAutoRotateChange,
+      liveGrow = false,
       className,
       style,
     } = props;
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const rendererRef = useRef<PixiRenderer | null>(null);
-    // Incremented when setData completes so dependent effects re-run
+    const rendererRef = useRef<ThreeRenderer | null>(null);
     const [dataVersion, setDataVersion] = useState(0);
-    // Re-renders when data-theme or data-mode changes on <html>
     const themeKey = useThemeKey();
     const dummyGraph = useMemo(
       () => new Graph({ multi: true, type: 'directed' }),
       [],
     );
 
-    // ── Community detection (reuse existing hook or accept from props) ──
-    const internalCommunityData = useCommunities(nodes, links, layoutConfig);
+    // Skip the internal Louvain pass when the parent already supplies community
+    // data (the app always does) — otherwise we'd run a second worker over the
+    // whole graph on every change, doubling the cost during streaming.
+    const internalCommunityData = useCommunities(
+      nodes,
+      links,
+      layoutConfig,
+      communityDataProp == null,
+    );
     const communityData = communityDataProp ?? internalCommunityData;
 
-    // ── Filter state (for useHighlights) ────────────────────────────────
     const filterState = useMemo(
       () => ({
         hiddenNodeTypes,
@@ -115,7 +124,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       [hiddenNodeTypes, hiddenLinkTypes, hiddenSubTypes, hiddenCommunities],
     );
 
-    // ── Highlights (BFS from selected node + search) ────────────────────
     const {
       highlightNodes: computedHighlightNodes,
       highlightLinks: computedHighlightLinks,
@@ -133,12 +141,17 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const activeHighlightNodes = highlightNodesProp ?? computedHighlightNodes;
     const activeHighlightLinks = highlightLinksProp ?? computedHighlightLinks;
 
-    // ── Node colors ─────────────────────────────────────────────────────
     const nodeColors = useMemo(() => {
       const colors = new Map<string, string>();
       const { assignments, colorMap } = communityData;
+      // Community colors need community data: with communities toggled OFF
+      // (or not yet computed) the assignments are empty and every node would
+      // hit the gray fallback — fall back to TYPE colors instead of a gray
+      // graph. Flipping communities back on restores community colors.
+      const byCommunity =
+        colorMode === 'community' && Object.keys(assignments).length > 0;
       for (const node of nodes) {
-        if (colorMode === 'community') {
+        if (byCommunity) {
           colors.set(
             node.id,
             layoutConfig.getCommunityColor(assignments, colorMap, node.id),
@@ -148,12 +161,9 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         }
       }
       return colors;
-      // themeKey triggers recomputation when theme/mode changes — getNodeColor
-      // reads CSS variables whose values depend on the active theme.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [nodes, colorMode, communityData, layoutConfig, themeKey]);
 
-    // ── Link colors ─────────────────────────────────────────────────────
     const linkColors = useMemo(() => {
       const colors = new Map<string, string>();
       for (const link of links) {
@@ -165,7 +175,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [links, layoutConfig, themeKey]);
 
-    // ── Layout (d3-force simulation) ────────────────────────────────────
     const onLayoutTick = useCallback(
       (
         positions: Map<string, { x: number; y: number }>,
@@ -173,15 +182,11 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       ) => {
         const renderer = rendererRef.current;
         if (!renderer) return;
-        // Fast path: use indexed Float64Array (avoids 20k Map lookups per tick)
         if (buffer) {
           renderer.updatePositionsFromBuffer(buffer);
         } else {
           renderer.updatePositions(positions);
         }
-        // Keep the view framed while the simulation is settling — gated by
-        // the renderer's `hasUserMovedCamera` flag and internally throttled,
-        // so manual pans stick and bursty ticks collapse to ~5 fits/sec.
         renderer.scheduleAutoFit();
       },
       [],
@@ -193,6 +198,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       nodeSizes,
       simRunning,
       reheat,
+      reseed,
+      setNebula,
       restart,
       stopSim,
       startSim,
@@ -206,58 +213,81 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       setCommunityGravity,
       setLayoutMode,
       updateCompactConfig,
-    } = usePixiLayout(
+      setDimensions,
+      releasePins,
+    } = useForceLayout3d(
       nodes,
       links,
       communityData,
       layoutConfig,
       onLayoutTick,
       layoutModeProp,
+      mode3dProp ? 3 : 2,
+      liveGrow,
     );
 
-    // ── Sync layout settled state to renderer for edge redraw gating ────
     useEffect(() => {
       rendererRef.current?.setLayoutSettled(!simRunning);
-      // Notify consumer of physics status (replaces Sigma's LayoutPipeline callback)
       onOptimizeStatus?.(simRunning ? { phase: 'fa2' } : { phase: 'done' });
     }, [simRunning, onOptimizeStatus]);
 
-    // ── Initialize Pixi renderer ────────────────────────────────────────
+    // ── Initialize renderer ─────────────────────────────────────────────
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
-
-      // Clear any leftover canvases from previous mounts (strict mode / HMR)
       while (container.firstChild) container.removeChild(container.firstChild);
 
-      const renderer = new PixiRenderer();
+      const renderer = new ThreeRenderer();
       rendererRef.current = renderer;
-      // init() is async but setData() internally awaits it, so no race
       renderer.init(container, width, height);
+      if (import.meta.env.DEV) {
+        (
+          window as unknown as { __threeRenderer?: ThreeRenderer }
+        ).__threeRenderer = renderer;
+      }
 
       return () => {
         rendererRef.current = null;
         renderer.destroy();
-        // Ensure canvas is removed from DOM (Pixi v8 destroy may not do this)
         while (container.firstChild)
           container.removeChild(container.firstChild);
       };
-      // Only init once — resize handled separately
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // ── Resize ──────────────────────────────────────────────────────────
     useEffect(() => {
       rendererRef.current?.resize(width, height);
     }, [width, height]);
 
+    // Drive continuous live-build mode. Gated on `layoutReady` so it (re)applies
+    // once the renderer exists — robust to mount ordering. On exit, release the
+    // worker-side node pins so the graph is interactive/re-layoutable again.
+    const didLiveGrowRef = useRef(false);
+    useEffect(() => {
+      const r = rendererRef.current;
+      if (!r) return;
+      if (liveGrow) {
+        didLiveGrowRef.current = true;
+        r.beginLiveGrow();
+      } else {
+        r.endLiveGrow();
+        releasePins();
+        // A live build grows the layout path-dependently: each batch seeds new
+        // nodes next to already-placed neighbours while existing ones are
+        // pinned, so the settled result depends on arrival order — visibly
+        // different from the fresh-seed layout the same preset produces on a
+        // chip click. Re-lay-out from scratch once the build ends (pins just
+        // released, order matters) so "indexed in Planet" and "switched to
+        // Planet" converge to the same canonical shape.
+        if (didLiveGrowRef.current) {
+          didLiveGrowRef.current = false;
+          reseed();
+          r.scheduleAutoFit(800);
+        }
+      }
+    }, [liveGrow, layoutReady, releasePins, reseed]);
+
     // ── Set data when layout is ready ───────────────────────────────────
-    // setData is async — it awaits the Pixi init promise internally.
-    // Snapshot positions because the worker may update entries in-place
-    // during the async gap.
-    //
-    // For incremental updates (nodes only added), use addData to append
-    // new sprites without destroying existing ones.
     const prevNodeIdsRef = useRef<Set<string>>(new Set());
     useEffect(() => {
       if (!layoutReady || !rendererRef.current) return;
@@ -271,11 +301,25 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
       prevNodeIdsRef.current = currentIds;
 
-      // Same nodes, only metadata changed — other effects handle colors etc.
-      if (isSameNodes) return;
-
       const posSnapshot = new Map(positions);
       let cancelled = false;
+
+      // Live-build: once the first batch has built the (over-allocated) geometry,
+      // every subsequent change appends the delta in place — no geometry rebuild,
+      // so the build stays continuous + high-FPS. Pass the FULL graph; the
+      // renderer diffs against what it holds (also catching late-arriving edges).
+      if (liveGrow && allPrevPresent && prevIds.size > 0) {
+        rendererRef.current.appendLiveData(
+          nodes,
+          links,
+          posSnapshot,
+          nodeColors,
+          nodeSizes,
+          linkColors,
+        );
+        return;
+      }
+      if (isSameNodes) return;
 
       if (isIncremental) {
         const newNodes = nodes.filter((n) => !prevIds.has(n.id));
@@ -312,62 +356,39 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       return () => {
         cancelled = true;
       };
-      // `positions` is a stable Map ref from usePixiLayout (positionsRef.current).
-      // It never changes identity — the effect re-runs via `layoutReady` or when
-      // nodes/links change. nodeColors and linkColors are intentionally excluded:
-      // color-only changes (e.g. theme switch) are handled by the dedicated
-      // updateNodeColors / updateLinkColors effects below, avoiding an expensive
-      // setData() call. The effect closure still captures the latest colors from
-      // the current render, so setData receives correct values when it does run.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [layoutReady, nodes, links, positions, nodeSizes]);
+    }, [layoutReady, nodes, links, positions, nodeSizes, liveGrow]);
 
-    // ── Update node colors when colorMode or theme changes ────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.updateNodeColors(nodeColors);
     }, [dataVersion, nodeColors]);
 
-    // ── Update link colors when theme changes ─────────────────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.updateLinkColors(linkColors);
     }, [dataVersion, linkColors]);
 
-    // ── Update canvas background + label colors when theme changes ──────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setThemeColors();
     }, [dataVersion, themeKey]);
 
-    // ── Apply labels visibility when data is ready or prop changes ─────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setShowAllLabels(labelsVisibleProp);
     }, [dataVersion, labelsVisibleProp]);
 
-    // ── Apply edges visibility (Fix #7) ───────────────────────────────
-    // Re-runs on every graph refresh so the persisted preference
-    // survives data reloads — the renderer's own edgesEnabled default
-    // (true) would otherwise reset it.
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setEdgesEnabled(edgesEnabledProp);
     }, [dataVersion, edgesEnabledProp]);
 
-    // ── Apply community label visibility (Fix #52) ────────────────────
-    // Independent from `labelsVisible` — node labels and community
-    // wayfinder labels are two separate features with their own toggles.
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setShowCommunityLabels(communityLabelsVisibleProp);
     }, [dataVersion, communityLabelsVisibleProp]);
 
-    // ── Apply zoom/label scaling on mount (Fix #22) ───────────────────
-    // The renderer constructs with hard-coded defaults (zoomSizeExponent
-    // 0.8, labelScale 1.0). Persisted values from `useGraphViewer`
-    // weren't pushed in until the user touched the slider — the panel
-    // would display "32%" while the renderer was actually at 80%.
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       if (zoomSizeExponentProp !== undefined) {
@@ -382,12 +403,13 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       }
     }, [dataVersion, labelScaleProp]);
 
-    // ── Community wayfinder labels in compact mode (Fix #32) ────────
-    // Push the layoutMode + community data into the renderer so it can
-    // draw community names at cluster centroids when the user has the
-    // "Community clusters" toggle on. Two separate effects because the
-    // mode prop changes on user toggle while the community data
-    // changes after Louvain finishes (different rhythms).
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      if (edgeOpacityProp !== undefined) {
+        rendererRef.current.setEdgeOpacity(edgeOpacityProp);
+      }
+    }, [dataVersion, edgeOpacityProp]);
+
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setLayoutMode(layoutModeProp);
@@ -407,80 +429,57 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       communityData.colorMap,
     ]);
 
-    // ── Apply 3D mode when data is ready or prop changes ──────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
-      // Always re-initialize when mode3d is active so new data gets fresh nodeDepthT
+      // Switch the simulation's dimensionality, then the renderer's camera.
+      setDimensions(mode3dProp ? 3 : 2);
       if (mode3dProp) {
         rendererRef.current.set3DMode(true, communityData.assignments);
       } else if (rendererRef.current.is3DMode()) {
         rendererRef.current.set3DMode(false);
       }
-    }, [dataVersion, mode3dProp, communityData.assignments]);
+    }, [dataVersion, mode3dProp, communityData.assignments, setDimensions]);
 
-    // Fix #8 + Fix #9 — react to layoutMode changes.
-    //
-    // Without intervention, switching compact ↔ spread does two bad
-    // things at once:
-    //   • In 3D, mode3dRadius stays stuck at the previous layout's
-    //     extent because `recomputeMode3DExtents` only grows, leaving
-    //     a vertical cylinder until the user manually toggles 3D.
-    //   • The worker streams positions every ~66 ms; each tick calls
-    //     `scheduleAutoFit()` which animates the camera over 200 ms.
-    //     New fits cancel in-progress animations — the user sees
-    //     jitter and unwanted zoom changes during the transition.
-    //
-    // Both fix together: suspend auto-fit immediately, then ~3 s
-    // later (long enough for typical compact pack-in / spread
-    // expansion) reset 3D state and re-enable + retrigger auto-fit.
-    //
-    // The deferred work reads `communityData.assignments` via a ref
-    // so that a Louvain recompute during the 3 s window doesn't
-    // re-fire this effect (Fix #19). Listing it in the dep array
-    // caused the cleanup to clear the timer; the rerun early-returned
-    // because layoutMode hadn't changed, so the deferred `set3DMode`
-    // / `scheduleAutoFit` was silently dropped — symptom: switching
-    // community clusters on/off looked like it did nothing in 3D mode
-    // and produced a missed auto-fit in 2D.
-    const previousLayoutMode = useRef(layoutModeProp);
-    const communityAssignmentsRef = useRef(communityData.assignments);
+    // Re-apply persisted physics settings on mount and change, so saved values
+    // take effect on load (not just on a live slider drag). These post to the
+    // layout worker, which no-ops when the value already matches — so a default
+    // load isn't reheated. (charge/link/compact live on the worker, not the
+    // renderer, so they go through the layout hook rather than rendererRef.)
     useEffect(() => {
-      communityAssignmentsRef.current = communityData.assignments;
-    });
-    useEffect(() => {
-      if (previousLayoutMode.current === layoutModeProp) return;
-      previousLayoutMode.current = layoutModeProp;
-      const renderer = rendererRef.current;
-      if (!renderer) return;
-      // Suspend auto-fit briefly so the follower doesn't chase the
-      // worker through the first chaotic frames of reheat (Fix #41
-      // / #42 follow-up). The gentle alpha(0.5) reheat from Fix #31
-      // means there's no longer a violent "explode" to fight; we
-      // just keep the camera steady for ~3 s while physics finds the
-      // new equilibrium, then let the auto-fit follower frame the
-      // result. Releasing camera ownership ensures the refit
-      // actually runs — the follower no-ops when
-      // `hasUserMovedCamera` is true.
-      renderer.setAutoFitSuspended(true);
-      const handle = setTimeout(() => {
-        const r = rendererRef.current;
-        if (!r) return;
-        if (mode3dProp) {
-          // Reassigns nodeDepthT to current community assignments and
-          // recomputes mode3dRadius from settled positions.
-          r.set3DMode(true, communityAssignmentsRef.current);
-        }
-        r.setHasUserMovedCamera(false);
-        r.setAutoFitSuspended(false);
-        r.scheduleAutoFit();
-      }, 3000);
-      return () => {
-        clearTimeout(handle);
-        rendererRef.current?.setAutoFitSuspended(false);
-      };
-    }, [layoutModeProp, mode3dProp]);
+      if (!dataVersion) return;
+      if (chargeStrengthProp !== undefined)
+        setChargeStrength(chargeStrengthProp);
+    }, [dataVersion, chargeStrengthProp, setChargeStrength]);
 
-    // ── Apply highlights ────────────────────────────────────────────────
+    useEffect(() => {
+      if (!dataVersion) return;
+      if (linkDistanceProp !== undefined) setLinkDistance(linkDistanceProp);
+    }, [dataVersion, linkDistanceProp, setLinkDistance]);
+
+    useEffect(() => {
+      if (!dataVersion) return;
+      if (compactConfigProp !== undefined)
+        updateCompactConfig(compactConfigProp);
+    }, [dataVersion, compactConfigProp, updateCompactConfig]);
+
+    // Re-apply persisted 3D rotation speed / camera tilt on mount and on
+    // change. These are prop-driven (like zoomSizeExponent/labelScale) so a
+    // saved value actually takes effect on load — the imperative handle alone
+    // only fired on a live slider drag, leaving the renderer at its default.
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      if (rotationSpeedProp !== undefined) {
+        rendererRef.current.set3DSpeed(rotationSpeedProp);
+      }
+    }, [dataVersion, rotationSpeedProp]);
+
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      if (cameraTiltProp !== undefined) {
+        rendererRef.current.set3DTilt(cameraTiltProp);
+      }
+    }, [dataVersion, cameraTiltProp]);
+
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setHighlight(
@@ -489,13 +488,18 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       );
     }, [dataVersion, activeHighlightNodes, activeHighlightLinks]);
 
-    // ── Apply link type filtering ──────────────────────────────────────
+    // Keep the renderer's selected node in sync so the +/- zoom buttons
+    // target it.
+    useEffect(() => {
+      if (!dataVersion || !rendererRef.current) return;
+      rendererRef.current.setSelectedNode(selectedNodeId ?? null);
+    }, [dataVersion, selectedNodeId]);
+
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       rendererRef.current.setHiddenLinkTypes(hiddenLinkTypes);
     }, [dataVersion, hiddenLinkTypes]);
 
-    // ── Apply filters (node visibility) ─────────────────────────────────
     useEffect(() => {
       if (!dataVersion || !rendererRef.current) return;
       const visibleIds = new Set<string>();
@@ -519,23 +523,22 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       getSubType,
     ]);
 
-    // ── Interaction callbacks ───────────────────────────────────────────
     useEffect(() => {
       if (!rendererRef.current) return;
       rendererRef.current.setCallbacks({
         onNodeClick,
         onEdgeClick,
         onStageClick,
+        onNodeHover,
         onNodeDragStart: (nodeId) => {
-          fixNode(nodeId, 0, 0); // will be updated on move
-          boostTheta(); // faster Barnes-Hut during drag
+          fixNode(nodeId, 0, 0);
+          boostTheta();
         },
         onNodeDragMove: (nodeId, x, y) => {
           fixNode(nodeId, x, y);
         },
         onNodeDragEnd: () => {
-          // Keep pinned (like reference implementation)
-          resetTheta(); // restore accuracy
+          resetTheta();
         },
         on3DAutoRotateChange,
       });
@@ -543,6 +546,7 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       onNodeClick,
       onEdgeClick,
       onStageClick,
+      onNodeHover,
       fixNode,
       unfixNode,
       boostTheta,
@@ -550,7 +554,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       on3DAutoRotateChange,
     ]);
 
-    // ── Imperative handle (same as GraphCanvas) ─────────────────────────
     useImperativeHandle(
       ref,
       () => ({
@@ -591,7 +594,6 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           startSim();
         },
         isPhysicsRunning: () => simRunning,
-        // Pixi-specific
         setEdgesEnabled: (enabled: boolean) => {
           rendererRef.current?.setEdgesEnabled(enabled);
         },
@@ -629,8 +631,43 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         setLabelScale: (scale: number) => {
           rendererRef.current?.setLabelScale(scale);
         },
+        setEdgeOpacity: (opacity: number) => {
+          rendererRef.current?.setEdgeOpacity(opacity);
+        },
         triggerPing: (nodeIds: Iterable<string>) => {
           rendererRef.current?.triggerPing(nodeIds);
+        },
+        armBuildAnimation: () => {
+          rendererRef.current?.armBuildAnimation();
+        },
+        playBuildAnimation: (rootIds?: string[]) => {
+          rendererRef.current?.playBuildAnimation(rootIds);
+        },
+        stopBuildAnimation: () => {
+          rendererRef.current?.stopBuildAnimation();
+        },
+        isBuildAnimating: () =>
+          rendererRef.current?.isBuildAnimating() ?? false,
+        animateTraversal: (legs, orphanIds) => {
+          rendererRef.current?.animateTraversal(legs, orphanIds);
+        },
+        clearTraversal: () => {
+          rendererRef.current?.clearTraversal();
+        },
+        reseedLayout: () => {
+          reseed();
+        },
+        setNebulaLayout: (enabled: boolean, baseMode = 'spread') => {
+          setNebula(
+            enabled,
+            baseMode as 'spread' | 'compact' | 'tree' | 'onion',
+          );
+        },
+        setAmbientMotion: (enabled: boolean) => {
+          // Ambient drift runs renderer-side (60fps, smooth) — see
+          // ThreeRenderer.updateAmbient. The worker-side ambient is intentionally
+          // left dormant (it posted at ~22fps, which looked jumpy).
+          rendererRef.current?.setAmbientActive(enabled);
         },
       }),
       [
@@ -640,6 +677,8 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         startSim,
         simRunning,
         reheat,
+        reseed,
+        setNebula,
         setChargeStrength,
         setLinkDistance,
         setCenterStrength,
@@ -666,4 +705,4 @@ const PixiGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
   },
 );
 
-export default memo(PixiGraphCanvasInner);
+export default memo(ThreeGraphCanvasInner);

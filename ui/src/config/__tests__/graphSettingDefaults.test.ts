@@ -49,10 +49,10 @@ const COMPONENT_FALLBACKS = {
   communityPull: 10,
   centeringStrength: 5,
   circleRadius: 32,
-  zoomSizeExponent: 0.8,
+  zoomSizeExponent: 0.2,
   labelScale: 100,
   mode3d: false,
-  mode3dSpeed: 30,
+  mode3dSpeed: 15,
   mode3dTilt: 35,
 };
 

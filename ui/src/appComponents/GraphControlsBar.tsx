@@ -17,7 +17,10 @@
 import type { GraphCanvasHandle } from '@opentrace/components';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 
-type LayoutMode = 'spread' | 'compact';
+type LayoutMode = 'spread' | 'compact' | 'tree' | 'onion';
+
+// The manual layout toggle cycles these three; 'onion' is a preset-only view.
+const LAYOUT_CYCLE: LayoutMode[] = ['tree', 'spread', 'compact'];
 
 const FullscreenEnterIcon = () => (
   <>
@@ -177,6 +180,27 @@ const ResetIcon = () => (
   </svg>
 );
 
+const BuildAnimIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Three connected nodes "growing" out from a root — evokes the graph
+        assembling itself. */}
+    <circle cx="5" cy="19" r="2.2" />
+    <circle cx="18" cy="14" r="2.2" />
+    <circle cx="13" cy="5" r="2.2" />
+    <line x1="6.8" y1="17.7" x2="11.6" y2="6.4" />
+    <line x1="6.9" y1="18.4" x2="16" y2="14.6" />
+  </svg>
+);
+
 const DimensionIcon = ({ is3d }: { is3d: boolean }) => (
   <svg
     width="16"
@@ -217,11 +241,22 @@ interface GraphControlsBarProps {
   mode3d: boolean;
   setMode3d: Dispatch<SetStateAction<boolean>>;
 
+  /** When provided, renders a "Replay build animation" button that re-plays
+   *  the graph assembling itself. Omitted by renderers that don't support it
+   *  (Pixi), so the button only appears for the Three.js renderer. */
+  onReplayBuild?: () => void;
+
   /** Override for the "Reset graph" button click. When provided, replaces
    *  the default behaviour (reheat physics + reset camera) with a full
    *  settings-and-state reset — used by callers that wire it to
    *  `settings.resetSettings`. */
   onResetGraph?: () => void;
+
+  /** Called when the user hand-adjusts a persisted view setting (layout
+   *  cycle, 2D/3D). Callers use it to drop the active-preset highlight —
+   *  otherwise the stored preset re-applies on the next load and silently
+   *  reverts the user's choice. */
+  onUserAdjust?: () => void;
 }
 
 /** Bottom-right control bar with mobile toggle and zoom/layout/3D buttons. */
@@ -238,7 +273,9 @@ export const GraphControlsBar = ({
   setLayoutMode,
   mode3d,
   setMode3d,
+  onReplayBuild,
   onResetGraph,
+  onUserAdjust,
 }: GraphControlsBarProps) => {
   return (
     <div className="graph-controls">
@@ -317,6 +354,16 @@ export const GraphControlsBar = ({
           <ResetIcon />
         </button>
 
+        {onReplayBuild && (
+          <button
+            className="graph-control-btn"
+            onClick={onReplayBuild}
+            title="Replay build animation"
+          >
+            <BuildAnimIcon />
+          </button>
+        )}
+
         <button
           ref={physicsTriggerRef}
           className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
@@ -327,17 +374,21 @@ export const GraphControlsBar = ({
         </button>
 
         <button
-          className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
+          className={`graph-control-btn${layoutMode !== 'tree' ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
-            const next = layoutMode === 'spread' ? 'compact' : 'spread';
+            const next =
+              LAYOUT_CYCLE[
+                (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+              ];
+            onUserAdjust?.();
             setLayoutMode(next);
             canvasRef.current?.setLayoutMode?.(next);
           }}
-          title={
-            layoutMode === 'compact'
-              ? 'Switch to spread layout'
-              : 'Switch to compact layout'
-          }
+          title={`Layout: ${layoutMode} — switch to ${
+            LAYOUT_CYCLE[
+              (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+            ]
+          }`}
         >
           <LayoutIcon compact={layoutMode === 'compact'} />
         </button>
@@ -346,6 +397,7 @@ export const GraphControlsBar = ({
           className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
             const next = !mode3d;
+            onUserAdjust?.();
             setMode3d(next);
             canvasRef.current?.set3DMode?.(next);
           }}

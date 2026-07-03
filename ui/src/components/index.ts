@@ -22,10 +22,12 @@
  *   import '@opentrace/components/style.css'; // optional base styles
  */
 
-// ─── Main component (Pixi.js renderer) ──────────────────────────────────
-export { default as Graph } from './PixiGraphCanvas';
-export { default as GraphCanvas } from './PixiGraphCanvas';
-export { default as PixiGraphCanvas } from './PixiGraphCanvas';
+// ─── Main component (Three.js renderer) ─────────────────────────────────
+// `Graph` / `GraphCanvas` are the stable public names; both resolve to the
+// Three.js renderer (the former Pixi renderer has been removed).
+export { default as Graph } from './ThreeGraphCanvas';
+export { default as GraphCanvas } from './ThreeGraphCanvas';
+export { default as ThreeGraphCanvas } from './ThreeGraphCanvas';
 export type {
   GraphCanvasProps,
   GraphCanvasHandle,
@@ -35,8 +37,8 @@ export {
   type PixiScaleBreakpoint,
   DEFAULT_BREAKPOINTS,
   selectBreakpoint,
-} from './pixi/scaleBreakpoints';
-export type { LayoutMode } from './workers/pixiLayoutWorker';
+} from './three/scaleBreakpoints';
+export type { LayoutMode } from './workers/forceLayout3dWorker';
 
 // ─── Graph hooks (for custom composition) ───────────────────────────────
 export { useGraphInstance } from './graph/useGraphInstance';
@@ -76,6 +78,19 @@ export type {
 
 // ─── Configuration & defaults ───────────────────────────────────────────
 export { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
+
+// Graph view presets (Galaxy / Planet / Bundled / Flat)
+export {
+  GRAPH_PRESETS,
+  DEFAULT_PRESET_ID,
+  CUSTOM_PRESET,
+  getPreset,
+} from './config/graphPresets';
+export type {
+  GraphPreset,
+  GraphPresetId,
+  GraphPresetSettings,
+} from './config/graphPresets';
 
 export {
   NODE_SIZE_MIN,
@@ -160,4 +175,5 @@ export type {
   DiscoverDataProvider,
   UseDiscoverTreeOptions,
   UseDiscoverTreeResult,
+  PhysicsPanelPreset,
 } from './panels';

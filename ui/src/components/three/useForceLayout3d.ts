@@ -15,12 +15,10 @@
  */
 
 /**
- * Hook that runs d3-force simulation in a Web Worker for the Pixi renderer.
- *
- * The worker streams position snapshots at ~15fps via transferable Float64Array.
- * The main thread reads positions and updates sprites, keeping the render loop
- * free from simulation computation. At 20k nodes, this moves ~50-200ms/tick of
- * d3-force work off the main thread entirely.
+ * React bridge to forceLayout3dWorker — the Three.js renderer's d3-force-3d
+ * layout. Mirrors usePixiLayout, but decodes stride-3 position buffers
+ * [x,y,z,...] and exposes `setDimensions` so the renderer can switch the
+ * simulation between 2D and 3D when the user toggles 3D mode.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -31,64 +29,79 @@ import type {
   LayoutConfig,
 } from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
+import { selectBreakpoint } from './scaleBreakpoints';
 import type {
-  WorkerInMessage,
-  WorkerOutMessage,
+  Worker3DInMessage,
+  Worker3DOutMessage,
   LayoutMode,
-} from '../workers/pixiLayoutWorker';
-import { type PixiScaleBreakpoint, selectBreakpoint } from './scaleBreakpoints';
+} from '../workers/forceLayout3dWorker';
 
-// ─── Types ──────────────────────────────────────────────────────────────
+/** Layout pull of relational edges (calls/imports/…) relative to the structural
+ *  DEFINES tree (1.0). Kept low so the tree/branch structure stays clean: just
+ *  enough to gently shorten call/import edges into logical branches, not so much
+ *  that the hierarchy collapses into a ball. Higher = tighter/more interconnected,
+ *  lower = more tree-like. */
+const RELATIONAL_LINK_WEIGHT = 0.05;
 
-export interface UsePixiLayoutResult {
-  /** True once the initial layout pass has completed. */
+/** Multiset diff of layout links against what the worker was already sent,
+ *  keyed source|target (weight excluded — a flat-mode / layout-edge-type
+ *  change reclassifies weights without adding edges and must not re-send the
+ *  whole graph). Returns the not-yet-sent links and records them in `sent`.
+ *  "Touches a new node" is NOT a reliable new-link test: the pipeline's
+ *  resolve stage emits CALLS/IMPORTS edges between nodes that both streamed
+ *  in earlier batches. */
+function takeUnsentLinks(
+  links: { source: string; target: string; w: number }[],
+  sent: Map<string, number>,
+): { source: string; target: string; w: number }[] {
+  const counts = new Map<string, number>();
+  const out: { source: string; target: string; w: number }[] = [];
+  for (const l of links) {
+    const key = `${l.source}|${l.target}`;
+    const c = (counts.get(key) ?? 0) + 1;
+    counts.set(key, c);
+    if (c > (sent.get(key) ?? 0)) {
+      out.push(l);
+      sent.set(key, c);
+    }
+  }
+  return out;
+}
+
+export interface UseForceLayout3dResult {
   layoutReady: boolean;
-  /** Map of node positions, updated every tick. */
   positions: Map<string, { x: number; y: number }>;
-  /** Map of computed node sizes. */
   nodeSizes: Map<string, number>;
-  /** Whether the simulation is currently running. */
   simRunning: boolean;
-  /** Restart the simulation with full alpha (reheat). */
   reheat: () => void;
-  /** Restart the simulation (e.g. for optimize button). */
+  reseed: () => void;
+  setNebula: (enabled: boolean, baseMode: LayoutMode) => void;
   restart: () => void;
-  /** Stop or resume the simulation. */
   toggleSim: () => void;
-  /** Unconditionally stop the simulation. */
   stopSim: () => void;
-  /** Unconditionally start the simulation. */
   startSim: () => void;
-  /** Pin a node to a fixed position (for dragging). */
   fixNode: (nodeId: string, x: number, y: number) => void;
-  /** Unpin a node (after drag ends). */
   unfixNode: (nodeId: string) => void;
-  /** Update charge (repulsion) strength at runtime. */
   setChargeStrength: (strength: number) => void;
-  /** Update link distance at runtime. */
   setLinkDistance: (distance: number) => void;
-  /** Update center force strength at runtime. */
   setCenterStrength: (strength: number) => void;
-  /** Enable/disable community cluster gravity force. */
   setCommunityGravity: (enabled: boolean, strength?: number) => void;
-  /** Increase Barnes-Hut theta for faster (less accurate) charge computation during drag. */
   boostTheta: () => void;
-  /** Restore default Barnes-Hut theta after drag. */
   resetTheta: () => void;
-  /** Switch layout mode ('spread' = standard force-directed, 'compact' = radial/circular). */
   setLayoutMode: (mode: LayoutMode) => void;
-  /** Update compact-mode-specific config (radial strength, community pull, centering). */
   updateCompactConfig: (config: {
     radialStrength?: number;
     communityPull?: number;
     centeringStrength?: number;
     radiusScale?: number;
   }) => void;
+  /** Switch the running simulation between 2D and 3D. */
+  setDimensions: (dimensions: 2 | 3) => void;
+  /** Live-build: release all pinned nodes (gentle relax) when the build ends. */
+  releasePins: () => void;
 }
 
-// ─── Hook ───────────────────────────────────────────────────────────────
-
-export function usePixiLayout(
+export function useForceLayout3d(
   allNodes: GraphNode[],
   allLinks: GraphLink[],
   communityData: CommunityData,
@@ -98,26 +111,36 @@ export function usePixiLayout(
     buffer?: Float64Array,
   ) => void,
   initialLayoutMode: LayoutMode = 'spread',
-): UsePixiLayoutResult {
+  initialDimensions: 2 | 3 = 2,
+  growBuild = false,
+): UseForceLayout3dResult {
   const [layoutReady, setLayoutReady] = useState(false);
+  // Live-build: when true, incremental adds pin existing nodes so only the new
+  // ones settle (no choppy whole-graph reshuffle). Read via ref so the add
+  // effect sees the current value without re-subscribing.
+  const growBuildRef = useRef(growBuild);
+  growBuildRef.current = growBuild;
+  // Latched true once a live-build has added nodes; suppresses the end-of-build
+  // community-cluster reheat (which would reshuffle the graph). Reset on a full
+  // rebuild (fresh graph).
+  const liveBuiltRef = useRef(false);
   const [simRunning, setSimRunning] = useState(true);
   const simRunningRef = useRef(true);
   const workerRef = useRef<Worker | null>(null);
   const unmountedRef = useRef(false);
   const requestIdRef = useRef(0);
 
-  // Stable refs for node order (set during init, used to decode Float64Array)
   const nodeOrderRef = useRef<string[]>([]);
-  const breakpointRef = useRef<PixiScaleBreakpoint | null>(null);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const nodeSizesRef = useRef<Map<string, number>>(new Map());
   const onTickRef = useRef(onTick);
   onTickRef.current = onTick;
+  // Dimensions are applied at init; later changes go via setDimensions.
+  const dimensionsRef = useRef<2 | 3>(initialDimensions);
 
   const flatMode = layoutConfig.flatMode ?? false;
   const structuralTypes = new Set(flatMode ? [] : layoutConfig.structuralTypes);
 
-  // Cleanup on unmount
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
@@ -127,7 +150,6 @@ export function usePixiLayout(
     };
   }, []);
 
-  // Compute node sizes
   useEffect(() => {
     const degreeMap = new Map<string, number>();
     for (const link of allLinks) {
@@ -147,53 +169,63 @@ export function usePixiLayout(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks]);
 
-  // Apply Float64Array positions to the position map (in-place update, no allocation).
-  // Guards against buffer/nodeOrder length mismatches during incremental updates.
+  // Stride-3 buffer → positions map (x,y only; z lives in the buffer the
+  // renderer reads directly).
   const applyPositionBuffer = useCallback((buffer: Float64Array) => {
     const nodeOrder = nodeOrderRef.current;
     const pos = positionsRef.current;
-    const count = Math.min(nodeOrder.length, buffer.length / 2);
+    const count = Math.min(nodeOrder.length, Math.floor(buffer.length / 3));
     for (let i = 0; i < count; i++) {
       const id = nodeOrder[i];
       const existing = pos.get(id);
       if (existing) {
-        existing.x = buffer[i * 2];
-        existing.y = buffer[i * 2 + 1];
+        existing.x = buffer[i * 3];
+        existing.y = buffer[i * 3 + 1];
       } else {
-        pos.set(id, { x: buffer[i * 2], y: buffer[i * 2 + 1] });
+        pos.set(id, { x: buffer[i * 3], y: buffer[i * 3 + 1] });
       }
     }
   }, []);
 
-  // Track previous node IDs to detect incremental additions
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
+  // source|target → count of links already sent to the live worker (init +
+  // add-nodes). Diffing against this is what catches resolve-stage edges that
+  // arrive after both endpoints (see takeUnsentLinks). Reset on full rebuild.
+  const sentLinkCountsRef = useRef<Map<string, number>>(new Map());
 
-  // Build layout-only links helper
   const buildLayoutLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
-      const out: { source: string; target: string }[] = [];
+      const out: { source: string; target: string; w: number }[] = [];
       for (const link of linkArray) {
-        if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
         const source = endpointId(link.source);
         const target = endpointId(link.target);
-        if (nodeIdSet.has(source) && nodeIdSet.has(target)) {
-          out.push({ source, target });
-        }
+        if (source === target) continue; // self-loops don't shape layout
+        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+        // Structural edges (the DEFINES containment tree) drive the layout at
+        // full strength → the tree/flower shape. Relational edges (calls,
+        // imports, …) are included at a weak weight so call/import neighbours
+        // drift closer — shortening those long cross-graph edges into logical
+        // branches — without collapsing the structure into a hairball.
+        const structural =
+          flatMode || link.label === layoutConfig.layoutEdgeType;
+        out.push({
+          source,
+          target,
+          w: structural ? 1 : RELATIONAL_LINK_WEIGHT,
+        });
       }
       return out;
     },
     [flatMode, layoutConfig.layoutEdgeType],
   );
 
-  // Single effect: handles full init, incremental add-nodes, and same-nodes skip.
-  // Worker lifecycle is managed explicitly (terminate at start of full-init),
-  // NOT via effect cleanup — this avoids React's cleanup-runs-before-next-effect
-  // timing issue that would kill the worker before add-nodes can reuse it.
-  // The unmount effect above (line ~104) handles final cleanup.
   useEffect(() => {
     const nodeIds = allNodes.map((n) => n.id);
     const nodeIdSet = new Set(nodeIds);
     const prevIds = prevNodeIdsRef.current;
+    // id → node type, for the worker's onion layout (shells by type).
+    const typeById: Record<string, string> = {};
+    for (const n of allNodes) typeById[n.id] = n.type;
 
     const allPrevPresent =
       prevIds.size > 0 && [...prevIds].every((id) => nodeIdSet.has(id));
@@ -203,39 +235,55 @@ export function usePixiLayout(
       workerRef.current !== null;
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
 
-    // ── Same nodes (metadata change like communityData) — push updated
-    //    community map to the worker, then skip the rebuild ──
-    // Without this, when Louvain finishes asynchronously the worker is
-    // never told about the new community assignments — `buildSimulation`
-    // already ran with an empty `{}`, so the custom community-gravity
-    // force was never installed and the slider does nothing (Fix #20
-    // follow-up).
-    //
-    // Guard on workerRef: if the worker was killed (e.g. by React
-    // StrictMode's cleanup cycle), fall through to full-init to recreate
-    // it.
     if (isSameNodes && workerRef.current) {
+      // Links can still be new with an unchanged node set: during a live
+      // build the resolve stage emits relational edges between
+      // already-streamed nodes, and a flush can carry ONLY those. They must
+      // reach the worker, or the layout — and the end-of-build reseed, which
+      // replays the worker's cached links — permanently lacks their pull.
+      const sameNodeLinks = buildLayoutLinks(nodeIdSet, allLinks);
+      const lateLinks = takeUnsentLinks(
+        sameNodeLinks,
+        sentLinkCountsRef.current,
+      );
+      if (lateLinks.length > 0) {
+        workerRef.current.postMessage({
+          type: 'add-nodes',
+          nodeIds: [],
+          links: lateLinks,
+          communities: communityData.assignments,
+          nodeTypes: {},
+          pinExisting: growBuildRef.current,
+        } satisfies Worker3DInMessage);
+        simRunningRef.current = true;
+        setSimRunning(true);
+      }
+      // When Louvain (re)computes — including at the end of a live build — let
+      // the layout cluster into communities so the result matches the finished
+      // graph's shape.
       if (communityData.assignments) {
         workerRef.current.postMessage({
           type: 'set-communities',
           communities: communityData.assignments,
-        } satisfies WorkerInMessage);
+        } satisfies Worker3DInMessage);
+        // set-communities reheats the worker (alpha 0.7) and reshuffles nodes
+        // into their community clusters — a real layout move. Flag the sim as
+        // running so the renderer drops `layoutSettled` and keeps edge endpoints
+        // following the nodes; otherwise edges freeze at the pre-cluster
+        // positions and look detached until the next reheat.
+        simRunningRef.current = true;
+        setSimRunning(true);
       }
       return;
     }
 
-    // ── Incremental: send add-nodes to existing worker ──
     if (isIncremental) {
+      if (growBuildRef.current) liveBuiltRef.current = true;
       const newNodeIds = nodeIds.filter((id) => !prevIds.has(id));
       const links = buildLayoutLinks(nodeIdSet, allLinks);
-      const newLinks = links.filter(
-        (l) => !prevIds.has(l.source) || !prevIds.has(l.target),
-      );
-
-      // Update node order: existing + new appended (matches worker's internal order)
+      const newLinks = takeUnsentLinks(links, sentLinkCountsRef.current);
       nodeOrderRef.current = [...nodeOrderRef.current, ...newNodeIds];
 
-      // Seed position map for new nodes near centroid of existing
       const pos = positionsRef.current;
       let cx = 0,
         cy = 0,
@@ -265,26 +313,30 @@ export function usePixiLayout(
       }
 
       prevNodeIdsRef.current = nodeIdSet;
-
+      const newTypes: Record<string, string> = {};
+      for (const id of newNodeIds) newTypes[id] = typeById[id];
       workerRef.current!.postMessage({
         type: 'add-nodes',
         nodeIds: newNodeIds,
         links: newLinks,
         communities: communityData.assignments,
-      } satisfies WorkerInMessage);
+        nodeTypes: newTypes,
+        pinExisting: growBuildRef.current,
+      } satisfies Worker3DInMessage);
 
       simRunningRef.current = true;
       setSimRunning(true);
       return;
     }
 
-    // ── Full init: terminate old worker, create new one ──
     workerRef.current?.terminate();
     workerRef.current = null;
     setLayoutReady(false);
+    liveBuiltRef.current = false; // fresh graph — community reheat allowed again
 
     if (allNodes.length === 0) {
       prevNodeIdsRef.current = new Set();
+      sentLinkCountsRef.current = new Map();
       return;
     }
 
@@ -293,14 +345,15 @@ export function usePixiLayout(
 
     const pos = positionsRef.current;
     pos.clear();
-    for (const id of nodeIds) {
-      pos.set(id, { x: 0, y: 0 });
-    }
+    for (const id of nodeIds) pos.set(id, { x: 0, y: 0 });
 
     const links = buildLayoutLinks(nodeIdSet, allLinks);
+    // Fresh worker → fresh sent-set, seeded with the init payload.
+    sentLinkCountsRef.current = new Map();
+    takeUnsentLinks(links, sentLinkCountsRef.current);
 
     const worker = new Worker(
-      new URL('../workers/pixiLayoutWorker.ts', import.meta.url),
+      new URL('../workers/forceLayout3dWorker.ts', import.meta.url),
       { type: 'module' },
     );
     workerRef.current = worker;
@@ -308,27 +361,23 @@ export function usePixiLayout(
     worker.onerror = (err) => {
       if (reqId !== requestIdRef.current || unmountedRef.current) return;
       console.error(
-        '[pixi] layout worker failed — nodes will be placed at (0,0).',
-        'The graph will render but without force-directed layout.',
+        '[three] layout worker failed — nodes will be placed at (0,0).',
         err,
       );
       setLayoutReady(true);
     };
 
-    worker.onmessage = (e: MessageEvent<WorkerOutMessage>) => {
+    worker.onmessage = (e: MessageEvent<Worker3DOutMessage>) => {
       if (reqId !== requestIdRef.current || unmountedRef.current) return;
-
       switch (e.data.type) {
         case 'ready':
           applyPositionBuffer(e.data.buffer);
           setLayoutReady(true);
           break;
-
         case 'positions':
           applyPositionBuffer(e.data.buffer);
           onTickRef.current(positionsRef.current, e.data.buffer);
           break;
-
         case 'settled':
           simRunningRef.current = false;
           setSimRunning(false);
@@ -337,13 +386,13 @@ export function usePixiLayout(
     };
 
     const bp = selectBreakpoint(allNodes.length);
-    breakpointRef.current = bp;
-
     worker.postMessage({
       type: 'init',
       nodeIds,
       links,
       communities: communityData.assignments,
+      nodeTypes: typeById,
+      dimensions: dimensionsRef.current,
       config: {
         chargeStrength: layoutConfig.chargeStrength,
         linkDistance: layoutConfig.linkDistance,
@@ -351,13 +400,11 @@ export function usePixiLayout(
         dragTheta: bp.dragTheta,
         layoutMode: initialLayoutMode,
       },
-    } satisfies WorkerInMessage);
+    } satisfies Worker3DInMessage);
 
     prevNodeIdsRef.current = nodeIdSet;
     simRunningRef.current = true;
     setSimRunning(true);
-    // No cleanup — worker is terminated at the START of the next full-init,
-    // and on unmount via the separate cleanup effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     allNodes,
@@ -368,9 +415,7 @@ export function usePixiLayout(
     buildLayoutLinks,
   ]);
 
-  // ── Control callbacks (all just postMessage to worker) ────────────────
-
-  const postToWorker = useCallback((msg: WorkerInMessage) => {
+  const postToWorker = useCallback((msg: Worker3DInMessage) => {
     workerRef.current?.postMessage(msg);
   }, []);
 
@@ -385,6 +430,31 @@ export function usePixiLayout(
     simRunningRef.current = true;
     setSimRunning(true);
   }, [postToWorker]);
+
+  const releasePins = useCallback(() => {
+    postToWorker({ type: 'release-pins' });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
+  /** Re-lay-out the graph from scratch (fresh seed) — used on preset switches
+   *  so the result is independent of the layout currently on screen. */
+  const reseed = useCallback(() => {
+    postToWorker({ type: 'reseed' });
+    simRunningRef.current = true;
+    setSimRunning(true);
+  }, [postToWorker]);
+
+  /** Toggle the nebula cloud layout. `baseMode` is the layout to fall back to
+   *  when disabling (the app's current layout mode). */
+  const setNebula = useCallback(
+    (enabled: boolean, baseMode: LayoutMode) => {
+      postToWorker({ type: 'set-nebula', enabled, baseMode });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
 
   const toggleSim = useCallback(() => {
     if (simRunningRef.current) {
@@ -495,12 +565,25 @@ export function usePixiLayout(
     [postToWorker],
   );
 
+  const setDimensions = useCallback(
+    (dimensions: 2 | 3) => {
+      if (dimensionsRef.current === dimensions) return;
+      dimensionsRef.current = dimensions;
+      postToWorker({ type: 'set-dimensions', dimensions });
+      simRunningRef.current = true;
+      setSimRunning(true);
+    },
+    [postToWorker],
+  );
+
   return {
     layoutReady,
     positions: positionsRef.current,
     nodeSizes: nodeSizesRef.current,
     simRunning,
     reheat,
+    reseed,
+    setNebula,
     restart,
     toggleSim,
     stopSim,
@@ -515,5 +598,7 @@ export function usePixiLayout(
     resetTheta,
     setLayoutMode,
     updateCompactConfig,
+    setDimensions,
+    releasePins,
   };
 }

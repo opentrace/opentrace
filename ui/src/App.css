@@ -319,6 +319,105 @@
   transition: all 0.15s;
 }
 
+/* Fetch-phase placeholder: pulsing logo + stage text centered in the viewport
+   while an index job runs but no nodes have streamed in yet. */
+.graph-fetching-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.graph-fetching-overlay__logo {
+  width: 72px;
+  height: 72px;
+  animation: fetching-logo-pulse 1.8s ease-in-out infinite;
+}
+
+.graph-fetching-overlay__text {
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+@keyframes fetching-logo-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+/* View-preset chips pinned to the graph's top-right edge. The vertical
+   offset is set inline by ViewPresetBar (it measures the toolbar's right-side
+   content). As the window narrows the bar RESHAPES instead of dropping:
+   4-chip row → 2×2 grid → vertical column → only then below the toolbar
+   (the --under mode, whose offset clears the whole toolbar box). */
+.view-preset-bar {
+  position: absolute;
+  right: 12px;
+  /* Above the fixed toolbar (z 20) so the chips receive clicks while sharing
+     its row; below dropdown menus (z 50). */
+  z-index: 30;
+  display: flex;
+  gap: 6px;
+}
+
+.view-preset-bar--grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.view-preset-bar--grid .view-preset-chip {
+  justify-content: flex-start;
+}
+
+.view-preset-bar--column {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Every shape keeps the chip labels visible (user preference) — compaction
+   changes the ARRANGEMENT, never the text. */
+
+.view-preset-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  background: color-mix(in oklch, var(--background) 85%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+  border-radius: calc(var(--radius) + 2px);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.view-preset-chip:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--border) 60%, transparent);
+}
+
+.view-preset-chip.active {
+  color: var(--primary);
+  border-color: color-mix(in oklch, var(--primary) 55%, transparent);
+  background: color-mix(in oklch, var(--primary) 12%, var(--background));
+}
+
 .graph-control-btn:hover {
   background: color-mix(in oklch, var(--primary) 10%, transparent);
   color: var(--primary);

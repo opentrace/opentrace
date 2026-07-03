@@ -27,7 +27,7 @@
       "@opentrace/components/indexing": ["./src/components/indexing/index.ts"]
     }
   },
-  "include": ["src/components"],
+  "include": ["src/components", "src/types/d3-force-3d.d.ts"],
   "exclude": [
     "src/components/**/__tests__",
     "src/components/**/*.test.*",

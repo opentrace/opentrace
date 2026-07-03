@@ -57,7 +57,8 @@ function AppInner({
   onConnectServer,
 }: AppProps) {
   const { store } = useStore();
-  const { loadGraph } = useGraph();
+  const { loadGraph, startLiveStream, pushLiveBatch, endLiveStream } =
+    useGraph();
   const jobService = useJobService();
   const {
     state: jobState,
@@ -66,7 +67,10 @@ function AppInner({
     cancel: cancelJob,
     minimize: minimizeJob,
     reset: resetJob,
-  } = useJobStream(jobService);
+  } = useJobStream(jobService, {
+    onGraphDelta: pushLiveBatch,
+    onLiveEnd: endLiveStream,
+  });
 
   // Fix #14 — after a page reload, if the agent is still running an
   // index job, attach to it so the user sees the progress indicator
@@ -111,23 +115,11 @@ function AppInner({
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
-  // `true` while the IndexingProgress modal should be on top; `false`
-  // when the user has minimized it (JobMinimizedBar takes over).
-  // Default `false` preserves the existing enriching/done flow (bar
-  // takes over automatically after persist). For the new server-mode
-  // running case (Fix #13) we re-expand below via an effect whenever
-  // the job transitions idle → running so the modal surfaces by
-  // default for new submissions.
+  // `true` only when the user explicitly expands the compact LiveIndexingPanel
+  // into the full-screen IndexingProgress modal. Defaults `false`: a new job
+  // shows the bottom-left panel and the graph builds live behind it, rather
+  // than the modal taking over the screen.
   const [jobExpanded, setJobExpanded] = useState(false);
-  /** Previous job status, used by the effect below to detect
-   *  idle → running transitions for the auto-expand. */
-  const prevJobStatus = useRef<typeof jobState.status>(jobState.status);
-  useEffect(() => {
-    if (prevJobStatus.current === 'idle' && jobState.status === 'running') {
-      setJobExpanded(true);
-    }
-    prevJobStatus.current = jobState.status;
-  }, [jobState.status]);
   const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
     null,
   );
@@ -163,9 +155,15 @@ function AppInner({
       }
       setShowAddRepo(false);
       setJobExpanded(false);
+      const isBrowserPipelineJob =
+        !(store instanceof ServerGraphStore) &&
+        (message.type === 'index-repo' ||
+          message.type === 'reindex-repo' ||
+          message.type === 'index-directory');
+      if (isBrowserPipelineJob) startLiveStream();
       startJob(message);
     },
-    [startJob, onConnectServer],
+    [startJob, onConnectServer, store, startLiveStream],
   );
 
   // Index or navigate to a repo by URL — shared by ?repo= param and postMessage
@@ -253,8 +251,15 @@ function AppInner({
   const handleJobExpand = useCallback(() => setJobExpanded(true), []);
   const handleAddRepoOpen = useCallback(() => {
     if (hasRepoParam.current) return; // suppress while deep link is being handled
+    // A finished job leaves status at 'done' (the "Complete" bar). The
+    // AddRepoModal only renders while status is 'idle', so clear the
+    // done job first — otherwise opening it from the toolbar would no-op
+    // until the user manually dismisses the completion indicator.
+    if (jobState.status === 'done') {
+      resetJob();
+    }
     setShowAddRepo(true);
-  }, []);
+  }, [jobState.status, resetJob]);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
   const handleToggleChat = useCallback(() => {
     setShowChat((v) => {
@@ -367,8 +372,14 @@ function AppInner({
               }}
               onChatHighlight={(allIds, newIds) => {
                 setChatHighlightNodes(allIds);
-                if (newIds.length > 0) {
-                  graphViewerRef.current?.triggerPing(newIds);
+                const viewer = graphViewerRef.current;
+                if (allIds.size === 0) {
+                  // Highlights cleared (turn end / toggle off / convo switch) —
+                  // drop the traversal walk + lit trail so the graph un-dims.
+                  viewer?.clearChatTraversal();
+                } else if (newIds.length > 0) {
+                  // Animate the agent walking the graph to the newly-found nodes.
+                  viewer?.animateChatTraversal(newIds, allIds);
                 }
               }}
               onQuestionSubmit={() => {

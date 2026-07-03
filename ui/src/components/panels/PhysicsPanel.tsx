@@ -20,9 +20,28 @@ import {
   useResizablePanelHeight,
 } from '../../hooks/useResizablePanel';
 import PanelResizeHandle from './PanelResizeHandle';
+import { PresetIcon } from './PresetIcon';
 import './PhysicsPanel.css';
 
+/** A view preset shown as a clickable button at the top of the panel. */
+export interface PhysicsPanelPreset {
+  id: string;
+  label: string;
+  icon: string;
+  description: string;
+}
+
 interface PhysicsPanelProps {
+  /** View presets rendered as a button grid above the fine controls. */
+  presets?: PhysicsPanelPreset[];
+  /** Currently-applied preset id, or null/'custom' when hand-tweaked. */
+  activePresetId?: string | null;
+  /** Apply a preset by id. */
+  onSelectPreset?: (id: string) => void;
+  /** Called whenever the user nudges a fine control, so the caller can drop
+   *  the active-preset highlight (the look no longer matches a named preset). */
+  onUserAdjust?: () => void;
+
   repulsion: number;
   onRepulsionChange: (value: number) => void;
   labelsVisible: boolean;
@@ -43,8 +62,8 @@ interface PhysicsPanelProps {
   onCenterStrengthChange?: (value: number) => void;
   edgesEnabled?: boolean;
   onEdgesEnabledChange?: (enabled: boolean) => void;
-  layoutMode?: 'spread' | 'compact';
-  onLayoutModeChange?: (mode: 'spread' | 'compact') => void;
+  layoutMode?: 'spread' | 'compact' | 'tree' | 'onion';
+  onLayoutModeChange?: (mode: 'spread' | 'compact' | 'tree' | 'onion') => void;
   /** Whether community wayfinder labels are visible. Decoupled from
    *  layoutMode (Fix #52) — toggling visibility no longer reflows the
    *  graph, it just shows or hides the cluster labels in place. */
@@ -68,6 +87,12 @@ interface PhysicsPanelProps {
   onZoomSizeExponentChange?: (value: number) => void;
   labelScale?: number;
   onLabelScaleChange?: (value: number) => void;
+  /** Edge-opacity multiplier as a percentage (100 = default). */
+  edgeOpacity?: number;
+  onEdgeOpacityChange?: (value: number) => void;
+  /** Ambient motion — gentle perpetual node drift once the layout settles. */
+  ambientMotion?: boolean;
+  onAmbientMotionChange?: (enabled: boolean) => void;
   onReheat?: () => void;
   onFitToScreen?: () => void;
   // 3D mode
@@ -82,6 +107,10 @@ interface PhysicsPanelProps {
 }
 
 export default function PhysicsPanel({
+  presets,
+  activePresetId,
+  onSelectPreset,
+  onUserAdjust,
   repulsion,
   onRepulsionChange,
   labelsVisible,
@@ -113,17 +142,21 @@ export default function PhysicsPanel({
   onCenteringStrengthChange,
   circleRadius = 32,
   onCircleRadiusChange,
-  zoomSizeExponent = 0.8,
+  zoomSizeExponent = 0.2,
   onZoomSizeExponentChange,
   labelScale = 100,
   onLabelScaleChange,
+  edgeOpacity = 100,
+  onEdgeOpacityChange,
+  ambientMotion = true,
+  onAmbientMotionChange,
   onReheat,
   onFitToScreen,
   mode3d = false,
   onMode3dChange,
   mode3dAutoRotate = true,
   onMode3dAutoRotateChange,
-  mode3dSpeed = 30,
+  mode3dSpeed = 15,
   onMode3dSpeedChange,
   mode3dTilt = 35,
   onMode3dTiltChange,
@@ -151,6 +184,10 @@ export default function PhysicsPanel({
   // changes to the `repulsion` prop (e.g. a reset).
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localRepulsion, setLocalRepulsion] = useState(repulsion);
+
+  // The fine controls are tucked behind an "Advanced" accordion (closed by
+  // default) so the panel reads as just the preset picker at a glance.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     setLocalRepulsion(repulsion);
@@ -198,350 +235,464 @@ export default function PhysicsPanel({
         }}
       />
       <div className="physics-panel-scroll">
-        <h4 className="physics-panel-title">Display</h4>
+        {/* ── View presets ─────────────────────────────────────────────
+            Named bundles of layout + physics + color. One click snaps the
+            graph into a recognizable look; the fine controls live under the
+            "Advanced" accordion below. */}
+        {presets && presets.length > 0 && onSelectPreset && (
+          <>
+            <h4 className="physics-panel-title">Views</h4>
+            <div className="physics-preset-grid">
+              {presets.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`physics-preset-btn${activePresetId === p.id ? ' active' : ''}`}
+                  title={p.description}
+                  onClick={() => onSelectPreset(p.id)}
+                >
+                  <span className="physics-preset-icon">
+                    <PresetIcon name={p.icon} />
+                  </span>
+                  <span className="physics-preset-label">{p.label}</span>
+                </button>
+              ))}
+            </div>
 
-        {/* Master switch — when off, Louvain doesn't run and the
+            <button
+              type="button"
+              className={`physics-advanced-toggle${advancedOpen ? ' open' : ''}`}
+              onClick={() => setAdvancedOpen((o) => !o)}
+              aria-expanded={advancedOpen}
+            >
+              <span>Advanced</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M6 9l6 6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </>
+        )}
+
+        {/* When presets are supplied, the fine controls collapse under the
+            accordion; otherwise (legacy callers) they always render. Manual
+            tweaks inside this body drop the active-preset highlight. */}
+        {(!presets || advancedOpen) && (
+          <div
+            className="physics-advanced-body"
+            onInput={() => onUserAdjust?.()}
+            onClick={() => onUserAdjust?.()}
+          >
+            <h4 className="physics-panel-title">Display</h4>
+
+            {/* Master switch — when off, Louvain doesn't run and the
             community-derived controls below become no-ops. Mounted only
             when the consumer supplied a handler so older callers keep
             their existing controls. */}
-        {onCommunitiesEnabledChange && (
-          <div
-            className="physics-toggle-row"
-            onClick={() => onCommunitiesEnabledChange(!communitiesEnabled)}
-          >
-            <span className="physics-toggle-label">Communities</span>
-            <div
-              className={`physics-toggle-track${communitiesEnabled ? ' on' : ''}`}
-            >
-              <div className="physics-toggle-thumb" />
-            </div>
-          </div>
-        )}
-
-        <div
-          className="physics-toggle-row"
-          onClick={() => {
-            if (!communitiesEnabled) return;
-            onColorModeChange(colorMode === 'type' ? 'community' : 'type');
-          }}
-          style={
-            communitiesEnabled
-              ? undefined
-              : { opacity: 0.4, cursor: 'not-allowed' }
-          }
-        >
-          <span className="physics-toggle-label">Community colors</span>
-          <div
-            className={`physics-toggle-track${colorMode === 'community' && communitiesEnabled ? ' on' : ''}`}
-          >
-            <div className="physics-toggle-thumb" />
-          </div>
-        </div>
-
-        {/* Community wayfinder labels — show/hide only, no layout
-            reflow (Fix #52). Adjacent to "Community colors" since
-            both are visual-only community controls. The compact ↔
-            spread layout toggle lives separately in the bottom
-            controls bar. */}
-        {pixiMode && onCommunityLabelsVisibleChange && (
-          <div
-            className="physics-toggle-row"
-            onClick={() => {
-              if (!communitiesEnabled) return;
-              onCommunityLabelsVisibleChange(!communityLabelsVisible);
-            }}
-            style={
-              communitiesEnabled
-                ? undefined
-                : { opacity: 0.4, cursor: 'not-allowed' }
-            }
-          >
-            <span className="physics-toggle-label">Community labels</span>
-            <div
-              className={`physics-toggle-track${communityLabelsVisible && communitiesEnabled ? ' on' : ''}`}
-            >
-              <div className="physics-toggle-thumb" />
-            </div>
-          </div>
-        )}
-
-        <div
-          className="physics-toggle-row"
-          onClick={() => onLabelsVisibleChange(!labelsVisible)}
-        >
-          <span className="physics-toggle-label">Show labels</span>
-          <div className={`physics-toggle-track${labelsVisible ? ' on' : ''}`}>
-            <div className="physics-toggle-thumb" />
-          </div>
-        </div>
-
-        {/* Pixi: edges visibility toggle (Fix #7). Hides the edge
-            layer at the renderer level — node positions are preserved
-            and edges reappear on re-enable without a relayout. Useful
-            on hub-heavy graphs where the edge draw dominates each
-            frame (>3000 edges around a single node) and the canvas
-            becomes unresponsive. */}
-        {pixiMode && onEdgesEnabledChange && (
-          <div
-            className="physics-toggle-row"
-            onClick={() => onEdgesEnabledChange(!edgesEnabled)}
-          >
-            <span className="physics-toggle-label">Show edges</span>
-            <div className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}>
-              <div className="physics-toggle-thumb" />
-            </div>
-          </div>
-        )}
-
-        {/* Layout mode is controlled via the bottom-right "Switch
-            to compact/spread layout" button (Fix #52) — keeping it
-            here as well used to share a single toggle with the
-            community-clusters label visibility, which conflated two
-            different concerns. */}
-
-        {/* Pixi: 3D rotation toggle + controls */}
-        {pixiMode && onMode3dChange && (
-          <>
-            <div
-              className="physics-toggle-row"
-              onClick={() => onMode3dChange(!mode3d)}
-            >
-              <span className="physics-toggle-label">3D rotation</span>
-              <div className={`physics-toggle-track${mode3d ? ' on' : ''}`}>
-                <div className="physics-toggle-thumb" />
-              </div>
-            </div>
-            {mode3d && onMode3dAutoRotateChange && (
+            {onCommunitiesEnabledChange && (
               <div
                 className="physics-toggle-row"
-                onClick={() => onMode3dAutoRotateChange(!mode3dAutoRotate)}
-                style={{ paddingLeft: 8 }}
+                onClick={() => onCommunitiesEnabledChange(!communitiesEnabled)}
               >
-                <span className="physics-toggle-label">Auto-rotate</span>
+                <span className="physics-toggle-label">Communities</span>
                 <div
-                  className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}
+                  className={`physics-toggle-track${communitiesEnabled ? ' on' : ''}`}
                 >
                   <div className="physics-toggle-thumb" />
                 </div>
               </div>
             )}
-            {mode3d && onMode3dSpeedChange && (
+
+            <div
+              className="physics-toggle-row"
+              onClick={() => {
+                if (!communitiesEnabled) return;
+                onColorModeChange(colorMode === 'type' ? 'community' : 'type');
+              }}
+              style={
+                communitiesEnabled
+                  ? undefined
+                  : { opacity: 0.4, cursor: 'not-allowed' }
+              }
+            >
+              <span className="physics-toggle-label">Community colors</span>
+              <div
+                className={`physics-toggle-track${colorMode === 'community' && communitiesEnabled ? ' on' : ''}`}
+              >
+                <div className="physics-toggle-thumb" />
+              </div>
+            </div>
+
+            {/* Community wayfinder labels — show/hide only, no layout
+            reflow (Fix #52). Adjacent to "Community colors" since
+            both are visual-only community controls. The compact ↔
+            spread layout toggle lives separately in the bottom
+            controls bar. */}
+            {pixiMode && onCommunityLabelsVisibleChange && (
+              <div
+                className="physics-toggle-row"
+                onClick={() => {
+                  if (!communitiesEnabled) return;
+                  onCommunityLabelsVisibleChange(!communityLabelsVisible);
+                }}
+                style={
+                  communitiesEnabled
+                    ? undefined
+                    : { opacity: 0.4, cursor: 'not-allowed' }
+                }
+              >
+                <span className="physics-toggle-label">Community labels</span>
+                <div
+                  className={`physics-toggle-track${communityLabelsVisible && communitiesEnabled ? ' on' : ''}`}
+                >
+                  <div className="physics-toggle-thumb" />
+                </div>
+              </div>
+            )}
+
+            <div
+              className="physics-toggle-row"
+              onClick={() => onLabelsVisibleChange(!labelsVisible)}
+            >
+              <span className="physics-toggle-label">Show labels</span>
+              <div
+                className={`physics-toggle-track${labelsVisible ? ' on' : ''}`}
+              >
+                <div className="physics-toggle-thumb" />
+              </div>
+            </div>
+
+            {/* Ambient motion is a global vibe control, independent of the
+                active preset — stopPropagation so toggling it doesn't drop the
+                preset highlight (which the body's onClick→onUserAdjust does). */}
+            {onAmbientMotionChange && (
+              <div
+                className="physics-toggle-row"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAmbientMotionChange(!ambientMotion);
+                }}
+              >
+                <span className="physics-toggle-label">Ambient motion</span>
+                <div
+                  className={`physics-toggle-track${ambientMotion ? ' on' : ''}`}
+                >
+                  <div className="physics-toggle-thumb" />
+                </div>
+              </div>
+            )}
+
+            {/* Pixi: edges visibility toggle (Fix #7). Hides the edge
+            layer at the renderer level — node positions are preserved
+            and edges reappear on re-enable without a relayout. Useful
+            on hub-heavy graphs where the edge draw dominates each
+            frame (>3000 edges around a single node) and the canvas
+            becomes unresponsive. */}
+            {pixiMode && onEdgesEnabledChange && (
+              <div
+                className="physics-toggle-row"
+                onClick={() => onEdgesEnabledChange(!edgesEnabled)}
+              >
+                <span className="physics-toggle-label">Show edges</span>
+                <div
+                  className={`physics-toggle-track${edgesEnabled ? ' on' : ''}`}
+                >
+                  <div className="physics-toggle-thumb" />
+                </div>
+              </div>
+            )}
+
+            {/* Layout mode is controlled via the bottom-right "Switch
+            to compact/spread layout" button (Fix #52) — keeping it
+            here as well used to share a single toggle with the
+            community-clusters label visibility, which conflated two
+            different concerns. */}
+
+            {/* Pixi: 3D rotation toggle + controls */}
+            {pixiMode && onMode3dChange && (
+              <>
+                <div
+                  className="physics-toggle-row"
+                  onClick={() => onMode3dChange(!mode3d)}
+                >
+                  <span className="physics-toggle-label">3D rotation</span>
+                  <div className={`physics-toggle-track${mode3d ? ' on' : ''}`}>
+                    <div className="physics-toggle-thumb" />
+                  </div>
+                </div>
+                {mode3d && onMode3dAutoRotateChange && (
+                  <div
+                    className="physics-toggle-row"
+                    onClick={() => onMode3dAutoRotateChange(!mode3dAutoRotate)}
+                    style={{ paddingLeft: 8 }}
+                  >
+                    <span className="physics-toggle-label">Auto-rotate</span>
+                    <div
+                      className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}
+                    >
+                      <div className="physics-toggle-thumb" />
+                    </div>
+                  </div>
+                )}
+                {mode3d && onMode3dSpeedChange && (
+                  <div className="physics-slider-row">
+                    <div className="physics-slider-label">
+                      <span>Rotation speed</span>
+                      <span className="physics-slider-value">
+                        {mode3dSpeed}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={mode3dSpeed}
+                      onInput={(e) =>
+                        onMode3dSpeedChange(Number(e.currentTarget.value))
+                      }
+                    />
+                  </div>
+                )}
+                {mode3d && onMode3dTiltChange && (
+                  <div className="physics-slider-row">
+                    <div className="physics-slider-label">
+                      <span>Camera tilt</span>
+                      <span className="physics-slider-value">
+                        {mode3dTilt}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={mode3dTilt}
+                      onInput={(e) =>
+                        onMode3dTiltChange(Number(e.currentTarget.value))
+                      }
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="physics-divider" />
+
+            <h4 className="physics-panel-title">Physics</h4>
+
+            <div className="physics-slider-row">
+              <div className="physics-slider-label">
+                <span>Repulsion</span>
+                <span className="physics-slider-value">{localRepulsion}</span>
+              </div>
+              <input
+                type="range"
+                min={10}
+                max={500}
+                step={10}
+                value={localRepulsion}
+                onInput={handleRepulsionInput}
+              />
+            </div>
+
+            {/* Link distance — both modes */}
+            {pixiMode && onLinkDistanceChange && (
               <div className="physics-slider-row">
                 <div className="physics-slider-label">
-                  <span>Rotation speed</span>
-                  <span className="physics-slider-value">{mode3dSpeed}%</span>
+                  <span>Link distance</span>
+                  <span className="physics-slider-value">{linkDistance}</span>
                 </div>
                 <input
                   type="range"
-                  min={0}
-                  max={100}
-                  value={mode3dSpeed}
+                  min={5}
+                  max={500}
+                  value={linkDistance}
                   onInput={(e) =>
-                    onMode3dSpeedChange(Number(e.currentTarget.value))
+                    onLinkDistanceChange(Number(e.currentTarget.value))
                   }
                 />
               </div>
             )}
-            {mode3d && onMode3dTiltChange && (
+
+            {/* Spread-only: center pull */}
+            {pixiMode && layoutMode === 'spread' && onCenterStrengthChange && (
               <div className="physics-slider-row">
                 <div className="physics-slider-label">
-                  <span>Camera tilt</span>
-                  <span className="physics-slider-value">{mode3dTilt}%</span>
+                  <span>Center pull</span>
+                  <span className="physics-slider-value">
+                    {Math.round(centerStrength * 100)}%
+                  </span>
                 </div>
                 <input
                   type="range"
-                  min={0}
+                  min={1}
                   max={100}
-                  value={mode3dTilt}
+                  value={Math.round(centerStrength * 100)}
                   onInput={(e) =>
-                    onMode3dTiltChange(Number(e.currentTarget.value))
+                    onCenterStrengthChange(Number(e.currentTarget.value) / 100)
                   }
                 />
               </div>
             )}
-          </>
-        )}
 
-        <div className="physics-divider" />
+            {/* Compact-only: radial pull */}
+            {pixiMode && layoutMode === 'compact' && onRadialStrengthChange && (
+              <div className="physics-slider-row">
+                <div className="physics-slider-label">
+                  <span>Radial pull</span>
+                  <span className="physics-slider-value">
+                    {radialStrength}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={50}
+                  value={radialStrength}
+                  onInput={(e) =>
+                    onRadialStrengthChange(Number(e.currentTarget.value))
+                  }
+                />
+              </div>
+            )}
 
-        <h4 className="physics-panel-title">Physics</h4>
-
-        <div className="physics-slider-row">
-          <div className="physics-slider-label">
-            <span>Repulsion</span>
-            <span className="physics-slider-value">{localRepulsion}</span>
-          </div>
-          <input
-            type="range"
-            min={10}
-            max={500}
-            step={10}
-            value={localRepulsion}
-            onInput={handleRepulsionInput}
-          />
-        </div>
-
-        {/* Link distance — both modes */}
-        {pixiMode && onLinkDistanceChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Link distance</span>
-              <span className="physics-slider-value">{linkDistance}</span>
-            </div>
-            <input
-              type="range"
-              min={5}
-              max={500}
-              value={linkDistance}
-              onInput={(e) =>
-                onLinkDistanceChange(Number(e.currentTarget.value))
-              }
-            />
-          </div>
-        )}
-
-        {/* Spread-only: center pull */}
-        {pixiMode && layoutMode === 'spread' && onCenterStrengthChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Center pull</span>
-              <span className="physics-slider-value">
-                {Math.round(centerStrength * 100)}%
-              </span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={100}
-              value={Math.round(centerStrength * 100)}
-              onInput={(e) =>
-                onCenterStrengthChange(Number(e.currentTarget.value) / 100)
-              }
-            />
-          </div>
-        )}
-
-        {/* Compact-only: radial pull */}
-        {pixiMode && layoutMode === 'compact' && onRadialStrengthChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Radial pull</span>
-              <span className="physics-slider-value">{radialStrength}%</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={50}
-              value={radialStrength}
-              onInput={(e) =>
-                onRadialStrengthChange(Number(e.currentTarget.value))
-              }
-            />
-          </div>
-        )}
-
-        {/* Compact-only: community pull. Disabled when communities are
+            {/* Compact-only: community pull. Disabled when communities are
             off — the underlying force needs community assignments which
             Louvain produces. */}
-        {pixiMode && layoutMode === 'compact' && onCommunityPullChange && (
-          <div
-            className="physics-slider-row"
-            style={
-              communitiesEnabled
-                ? undefined
-                : { opacity: 0.4, pointerEvents: 'none' }
-            }
-          >
-            <div className="physics-slider-label">
-              <span>Community pull</span>
-              <span className="physics-slider-value">{communityPull}%</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={50}
-              value={communityPull}
-              disabled={!communitiesEnabled}
-              onInput={(e) =>
-                onCommunityPullChange(Number(e.currentTarget.value))
-              }
-            />
-          </div>
-        )}
+            {pixiMode && layoutMode === 'compact' && onCommunityPullChange && (
+              <div
+                className="physics-slider-row"
+                style={
+                  communitiesEnabled
+                    ? undefined
+                    : { opacity: 0.4, pointerEvents: 'none' }
+                }
+              >
+                <div className="physics-slider-label">
+                  <span>Community pull</span>
+                  <span className="physics-slider-value">{communityPull}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={50}
+                  value={communityPull}
+                  disabled={!communitiesEnabled}
+                  onInput={(e) =>
+                    onCommunityPullChange(Number(e.currentTarget.value))
+                  }
+                />
+              </div>
+            )}
 
-        {/* Compact-only: circle radius */}
-        {pixiMode && layoutMode === 'compact' && onCircleRadiusChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Circle size</span>
-              <span className="physics-slider-value">{circleRadius}</span>
-            </div>
-            <input
-              type="range"
-              min={8}
-              max={80}
-              value={circleRadius}
-              onInput={(e) =>
-                onCircleRadiusChange(Number(e.currentTarget.value))
-              }
-            />
-          </div>
-        )}
+            {/* Compact-only: circle radius */}
+            {pixiMode && layoutMode === 'compact' && onCircleRadiusChange && (
+              <div className="physics-slider-row">
+                <div className="physics-slider-label">
+                  <span>Circle size</span>
+                  <span className="physics-slider-value">{circleRadius}</span>
+                </div>
+                <input
+                  type="range"
+                  min={8}
+                  max={80}
+                  value={circleRadius}
+                  onInput={(e) =>
+                    onCircleRadiusChange(Number(e.currentTarget.value))
+                  }
+                />
+              </div>
+            )}
 
-        {/* Compact-only: centering strength */}
-        {pixiMode && layoutMode === 'compact' && onCenteringStrengthChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Centering</span>
-              <span className="physics-slider-value">{centeringStrength}%</span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={30}
-              value={centeringStrength}
-              onInput={(e) =>
-                onCenteringStrengthChange(Number(e.currentTarget.value))
-              }
-            />
-          </div>
-        )}
+            {/* Compact-only: centering strength */}
+            {pixiMode &&
+              layoutMode === 'compact' &&
+              onCenteringStrengthChange && (
+                <div className="physics-slider-row">
+                  <div className="physics-slider-label">
+                    <span>Centering</span>
+                    <span className="physics-slider-value">
+                      {centeringStrength}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={30}
+                    value={centeringStrength}
+                    onInput={(e) =>
+                      onCenteringStrengthChange(Number(e.currentTarget.value))
+                    }
+                  />
+                </div>
+              )}
 
-        {/* Pixi: zoom-size exponent slider */}
-        {pixiMode && onZoomSizeExponentChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Zoom scaling</span>
-              <span className="physics-slider-value">
-                {Math.round(zoomSizeExponent * 100)}%
-              </span>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round(zoomSizeExponent * 100)}
-              onInput={(e) =>
-                onZoomSizeExponentChange(Number(e.currentTarget.value) / 100)
-              }
-            />
-          </div>
-        )}
+            {/* Zoom scaling slider. Displayed inverted so it reads naturally:
+                right = bigger nodes, left = smaller. The stored exponent is the
+                inverse (0 = big, 1 = small), which is what presets/shader use. */}
+            {pixiMode && onZoomSizeExponentChange && (
+              <div className="physics-slider-row">
+                <div className="physics-slider-label">
+                  <span>Zoom scaling</span>
+                  <span className="physics-slider-value">
+                    {100 - Math.round(zoomSizeExponent * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={100 - Math.round(zoomSizeExponent * 100)}
+                  onInput={(e) =>
+                    onZoomSizeExponentChange(
+                      (100 - Number(e.currentTarget.value)) / 100,
+                    )
+                  }
+                />
+              </div>
+            )}
 
-        {/* Label scale — independent of node size */}
-        {pixiMode && onLabelScaleChange && (
-          <div className="physics-slider-row">
-            <div className="physics-slider-label">
-              <span>Label size</span>
-              <span className="physics-slider-value">{labelScale}%</span>
-            </div>
-            <input
-              type="range"
-              min={10}
-              max={300}
-              value={labelScale}
-              onInput={(e) => onLabelScaleChange(Number(e.currentTarget.value))}
-            />
+            {/* Label scale — independent of node size */}
+            {pixiMode && onLabelScaleChange && (
+              <div className="physics-slider-row">
+                <div className="physics-slider-label">
+                  <span>Label size</span>
+                  <span className="physics-slider-value">{labelScale}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={300}
+                  value={labelScale}
+                  onInput={(e) =>
+                    onLabelScaleChange(Number(e.currentTarget.value))
+                  }
+                />
+              </div>
+            )}
+
+            {/* Edge opacity — user multiplier on top of the zoom-driven fade */}
+            {pixiMode && onEdgeOpacityChange && (
+              <div className="physics-slider-row">
+                <div className="physics-slider-label">
+                  <span>Edge opacity</span>
+                  <span className="physics-slider-value">{edgeOpacity}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={200}
+                  value={edgeOpacity}
+                  onInput={(e) =>
+                    onEdgeOpacityChange(Number(e.currentTarget.value))
+                  }
+                />
+              </div>
+            )}
           </div>
         )}
 

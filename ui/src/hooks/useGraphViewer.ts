@@ -45,6 +45,103 @@ import {
 // the empty default for highlight props. Never mutate.
 const EMPTY_SET: Set<string> = Object.freeze(new Set<string>()) as Set<string>;
 
+/** Max edges the BFS will walk from a found node before giving up (orphan). */
+const TRAVERSAL_MAX_HOPS = 8;
+
+/** Normalize a link endpoint (string | number | {id}) to a string id. */
+function endpointKey(ep: unknown): string {
+  if (typeof ep === 'string') return ep;
+  if (typeof ep === 'number') return String(ep);
+  if (ep && typeof ep === 'object' && 'id' in ep) {
+    return String((ep as { id: unknown }).id);
+  }
+  return String(ep);
+}
+
+interface TraversalLeg {
+  edges: { sourceId: string; targetId: string }[];
+  destId: string;
+}
+
+/**
+ * Plan an agent "walk": for each newly-found node, BFS over the visible-graph
+ * adjacency to the nearest already-discovered node, returning the path as
+ * travel-ordered edges (anchor → … → found). Nodes with no path within
+ * `TRAVERSAL_MAX_HOPS` become orphans (a plain ping). The discovered set grows
+ * as nodes are reached, so successive finds anchor to earlier ones — producing
+ * one continuous walk rather than disjoint hops.
+ */
+function computeTraversalLegs(
+  adjacency: Map<string, { neighbor: string }[]>,
+  newIds: string[],
+  priorIds: Set<string>,
+): { legs: TraversalLeg[]; orphans: string[] } {
+  const legs: TraversalLeg[] = [];
+  const orphans: string[] = [];
+  // Discovered anchors the walk can start from. Seed with the prior set; if the
+  // turn is fresh (nothing discovered yet) the first found node becomes the seed.
+  const discovered = new Set(priorIds);
+  for (const id of newIds) {
+    if (discovered.has(id)) continue;
+    if (!adjacency.has(id)) {
+      // Not a visible node (filtered out / unknown) — nothing to walk to.
+      orphans.push(id);
+      continue;
+    }
+    if (discovered.size === 0) {
+      // First node of a fresh walk: it IS the starting anchor, no edge to draw.
+      discovered.add(id);
+      continue;
+    }
+    // BFS from the found node outward to the nearest discovered anchor.
+    const parent = new Map<string, string>();
+    const visited = new Set<string>([id]);
+    let frontier = [id];
+    let anchor: string | null = null;
+    for (let hop = 0; hop < TRAVERSAL_MAX_HOPS && !anchor; hop++) {
+      const next: string[] = [];
+      for (const u of frontier) {
+        for (const { neighbor } of adjacency.get(u) ?? []) {
+          if (visited.has(neighbor)) continue;
+          visited.add(neighbor);
+          parent.set(neighbor, u);
+          if (discovered.has(neighbor)) {
+            anchor = neighbor;
+            break;
+          }
+          next.push(neighbor);
+        }
+        if (anchor) break;
+      }
+      frontier = next;
+    }
+    if (!anchor) {
+      orphans.push(id);
+      discovered.add(id);
+      continue;
+    }
+    // Reconstruct anchor → … → found (parent chain runs found → anchor).
+    const chain: string[] = [];
+    for (
+      let cur: string | undefined = anchor;
+      cur !== undefined;
+      cur = parent.get(cur)
+    ) {
+      chain.push(cur);
+      if (cur === id) break;
+    }
+    // chain is anchor … found already (parent walk from anchor toward id).
+    const edges: { sourceId: string; targetId: string }[] = [];
+    for (let k = 0; k < chain.length - 1; k++) {
+      edges.push({ sourceId: chain[k], targetId: chain[k + 1] });
+      discovered.add(chain[k + 1]);
+    }
+    discovered.add(id);
+    if (edges.length > 0) legs.push({ edges, destId: id });
+  }
+  return { legs, orphans };
+}
+
 /**
  * Additional highlight contribution from the consumer (e.g. Playground's
  * repo-id scoping). Composed at lower precedence than selection, community
@@ -92,6 +189,16 @@ export interface UseGraphViewerOptions {
 export interface GraphViewerImperativeHandle {
   selectNode: (nodeId: string, hops?: number) => void;
   triggerPing: (nodeIds: Iterable<string>) => void;
+  /**
+   * Animate the agent "walking" the graph to newly-found nodes: for each new
+   * id, walk real edges from the nearest already-discovered node and light the
+   * path edge-by-edge (pulse + node pings), leaving the trail lit. `allIds` is
+   * the full accumulated chat highlight set (discovered = allIds − newIds).
+   * Falls back to a plain ping when the renderer can't animate (e.g. Pixi).
+   */
+  animateChatTraversal: (newIds: string[], allIds: Set<string>) => void;
+  /** Clear any chat-traversal walk + lit trail (new question / highlights off). */
+  clearChatTraversal: () => void;
   resetCamera: () => void;
   zoomToFit: (duration?: number) => void;
   /** Re-fetch the graph from the store. Thin wrapper around `loadGraph`. */
@@ -145,8 +252,10 @@ export interface PersistedSettings {
   setPixiCenter: Dispatch<SetStateAction<number>>;
   pixiZoomExponent: number;
   setPixiZoomExponent: Dispatch<SetStateAction<number>>;
-  layoutMode: 'spread' | 'compact';
-  setLayoutMode: Dispatch<SetStateAction<'spread' | 'compact'>>;
+  layoutMode: 'spread' | 'compact' | 'tree' | 'onion';
+  setLayoutMode: Dispatch<
+    SetStateAction<'spread' | 'compact' | 'tree' | 'onion'>
+  >;
   compactRadial: number;
   setCompactRadial: Dispatch<SetStateAction<number>>;
   compactCommunity: number;
@@ -163,6 +272,10 @@ export interface PersistedSettings {
   setMode3dTilt: Dispatch<SetStateAction<number>>;
   labelScale: number;
   setLabelScale: Dispatch<SetStateAction<number>>;
+  edgeOpacity: number;
+  setEdgeOpacity: Dispatch<SetStateAction<number>>;
+  ambientMotion: boolean;
+  setAmbientMotion: Dispatch<SetStateAction<boolean>>;
   rendererAutoRotate: boolean | null;
   setRendererAutoRotate: Dispatch<SetStateAction<boolean | null>>;
   physicsRunning: boolean;
@@ -179,7 +292,7 @@ export interface LegendItem {
 }
 
 export interface UseGraphViewerResult {
-  /** Wire to `<PixiGraphCanvas ref={canvasRef} />`. */
+  /** Wire to `<GraphCanvas ref={canvasRef} />`. */
   canvasRef: RefObject<GraphCanvasHandle | null>;
   /** Stable pointer to the latest graphData. Read inside callbacks/effects
    *  to avoid re-firing on data change. */
@@ -199,7 +312,7 @@ export interface UseGraphViewerResult {
   onStageClick: () => void;
 
   /**
-   * Pre-computed highlight props ready to spread into `<PixiGraphCanvas>`.
+   * Pre-computed highlight props ready to spread into `<GraphCanvas>`.
    *
    * Precedence (highest first):
    *   1. selectedLink → edge endpoints + the edge itself
@@ -250,7 +363,7 @@ export type { GraphSettingDefaults };
 
 /**
  * Orchestration hook for a graph viewer shell. Owns the state, effects,
- * and memoized computations that every consumer of `<PixiGraphCanvas>` ends
+ * and memoized computations that every consumer of `<GraphCanvas>` ends
  * up writing — search/filter/highlight wiring, persisted physics & layout
  * settings, edge-click highlight overlay, community focus zoom, search
  * suggestions, and the standard imperative handle.
@@ -306,6 +419,14 @@ export function useGraphViewer(
   useEffect(() => {
     graphDataRef.current = graphData;
   }, [graphData]);
+
+  // Stable pointer to the latest *visible* graph (filtered). The chat-traversal
+  // pathfinder walks only visible edges so the pulse never routes through nodes
+  // the user has filtered out.
+  const filteredGraphDataRef = useRef(filteredGraphData);
+  useEffect(() => {
+    filteredGraphDataRef.current = filteredGraphData;
+  }, [filteredGraphData]);
 
   // ─── Auto-fit on graphVersion bump ──────────────────────────────────────
   // Mode is consumer-selected via `options.autoFitMode`:
@@ -413,9 +534,9 @@ export function useGraphViewer(
     ps('pixiZoomExponent', D.pixiZoomExponent),
   );
 
-  const [layoutMode, setLayoutMode] = useState<'spread' | 'compact'>(() =>
-    ps('layoutMode', D.layoutMode),
-  );
+  const [layoutMode, setLayoutMode] = useState<
+    'spread' | 'compact' | 'tree' | 'onion'
+  >(() => ps('layoutMode', D.layoutMode));
   const [compactRadial, setCompactRadial] = useState(() =>
     ps('compactRadial', D.compactRadial),
   );
@@ -438,6 +559,12 @@ export function useGraphViewer(
   );
   const [labelScale, setLabelScale] = useState(() =>
     ps('labelScale', D.labelScale),
+  );
+  const [edgeOpacity, setEdgeOpacity] = useState(() =>
+    ps('edgeOpacity', D.edgeOpacity),
+  );
+  const [ambientMotion, setAmbientMotion] = useState(() =>
+    ps('ambientMotion', D.ambientMotion),
   );
 
   const [rendererAutoRotate, setRendererAutoRotate] = useState<boolean | null>(
@@ -463,6 +590,8 @@ export function useGraphViewer(
       mode3dSpeed,
       mode3dTilt,
       labelScale,
+      edgeOpacity,
+      ambientMotion,
     };
     // Merge into the existing entry rather than overwriting it — fields
     // owned by other writers of this shared key (e.g. `communitiesEnabled`
@@ -496,6 +625,8 @@ export function useGraphViewer(
     mode3dSpeed,
     mode3dTilt,
     labelScale,
+    edgeOpacity,
+    ambientMotion,
   ]);
 
   // ─── Search / reset / suggestions / filter ─────────────────────────────
@@ -504,6 +635,21 @@ export function useGraphViewer(
       loadGraph(searchQuery.trim(), hops);
     }
   }, [searchQuery, hops, loadGraph]);
+
+  // Re-run the active search when the hop depth changes so the neighborhood
+  // visibly grows/shrinks instead of waiting for the next manual search.
+  // Guarded on a ref so it fires only on a real hops change (not when
+  // `lastSearchQuery` updates after a search, which already loaded). When no
+  // search is active, hops only drives the selection highlight, which
+  // `useHighlights` recomputes reactively — nothing to reload here.
+  const prevHopsRef = useRef(hops);
+  useEffect(() => {
+    if (prevHopsRef.current === hops) return;
+    prevHopsRef.current = hops;
+    if (lastSearchQuery) {
+      loadGraph(lastSearchQuery, hops);
+    }
+  }, [hops, lastSearchQuery, loadGraph]);
 
   const handleReset = useCallback(() => {
     setSearchQuery('');
@@ -553,6 +699,8 @@ export function useGraphViewer(
     setMode3dSpeed(D.mode3dSpeed);
     setMode3dTilt(D.mode3dTilt);
     setLabelScale(D.labelScale);
+    setEdgeOpacity(D.edgeOpacity);
+    setAmbientMotion(D.ambientMotion);
     setCommunitiesEnabled(D.communitiesEnabled);
     setRendererAutoRotate(null);
     try {
@@ -659,9 +807,18 @@ export function useGraphViewer(
               );
               if (node) {
                 onNodeClick(node);
+                // Zoom to the node AND its immediate neighbors. Fitting a
+                // single node maxes out the zoom (it fills the screen);
+                // including neighbors gives the bounding box room so the
+                // camera lands at a sane, context-preserving zoom.
+                const focusIds = new Set<string>([targetId]);
+                for (const link of graphDataRef.current.links) {
+                  if (link.source === targetId) focusIds.add(link.target);
+                  else if (link.target === targetId) focusIds.add(link.source);
+                }
                 // Layout-settle delay before zooming to the freshly selected node
                 setTimeout(() => {
-                  canvasRef.current?.zoomToNodes(new Set([targetId]), 600);
+                  canvasRef.current?.zoomToNodes(focusIds, 600);
                 }, 100);
               }
             }
@@ -966,6 +1123,10 @@ export function useGraphViewer(
       setMode3dTilt,
       labelScale,
       setLabelScale,
+      edgeOpacity,
+      setEdgeOpacity,
+      ambientMotion,
+      setAmbientMotion,
       rendererAutoRotate,
       setRendererAutoRotate,
       physicsRunning,
@@ -992,6 +1153,8 @@ export function useGraphViewer(
       mode3dSpeed,
       mode3dTilt,
       labelScale,
+      edgeOpacity,
+      ambientMotion,
       rendererAutoRotate,
       physicsRunning,
       resetSettings,
@@ -1011,6 +1174,36 @@ export function useGraphViewer(
       },
       triggerPing: (nodeIds: Iterable<string>) => {
         canvasRef.current?.triggerPing?.(nodeIds);
+      },
+      animateChatTraversal: (newIds: string[], allIds: Set<string>) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        // Renderer can't animate (e.g. Pixi) — fall back to the plain ping.
+        if (!canvas.animateTraversal) {
+          canvas.triggerPing?.(newIds);
+          return;
+        }
+        // Adjacency over the *visible* graph, both directions.
+        const adjacency = new Map<string, { neighbor: string }[]>();
+        for (const link of filteredGraphDataRef.current.links) {
+          const s = endpointKey(link.source);
+          const t = endpointKey(link.target);
+          if (!adjacency.has(s)) adjacency.set(s, []);
+          if (!adjacency.has(t)) adjacency.set(t, []);
+          adjacency.get(s)!.push({ neighbor: t });
+          adjacency.get(t)!.push({ neighbor: s });
+        }
+        const priorIds = new Set(allIds);
+        for (const id of newIds) priorIds.delete(id);
+        const { legs, orphans } = computeTraversalLegs(
+          adjacency,
+          newIds,
+          priorIds,
+        );
+        canvas.animateTraversal(legs, orphans);
+      },
+      clearChatTraversal: () => {
+        canvasRef.current?.clearTraversal?.();
       },
       resetCamera: () => {
         canvasRef.current?.resetCamera();

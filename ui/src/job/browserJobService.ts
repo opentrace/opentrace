@@ -41,13 +41,18 @@ import {
   initParsers,
   executeScanning,
   runNodePipeline,
-  FileCacheStage,
-  ExtractStage,
   ResolveStage,
   SummarizeStage,
   StoreStage,
   EmbedStage,
   PipelineDebugLog,
+  ExtractPool,
+  defaultPoolSize,
+  createExtractionState,
+  extractFile,
+  mergeExtraction,
+  detectLanguage,
+  getExtension,
 } from '@opentrace/components/pipeline';
 import type {
   PipelinePhase,
@@ -55,6 +60,9 @@ import type {
   ScanResult,
   PipelineEvent,
   GraphNode,
+  GraphRelationship,
+  CodeSymbol,
+  ImportAnalysisResult,
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 import { loadEmbedderConfig } from '../config/embedding';
@@ -180,6 +188,46 @@ function emptyEvent(): JobEvent {
   };
 }
 
+/** Append every element of `src` to `dst` without spreading (a spread of a
+ *  50k-element array overflows the call stack). */
+function pushAll<T>(dst: T[], src: readonly T[]): void {
+  for (let i = 0; i < src.length; i++) dst.push(src[i]);
+}
+
+/** The sub-type fields carried on the live stream (see pushGraphDelta) —
+ *  everything the filter chips / default-hide read (graphFilterUtils
+ *  getSubType), and nothing else. */
+const LIVE_STREAM_PROP_KEYS = ['language', 'kind', 'registry'] as const;
+
+/** Serialize just the sub-type fields of a node's properties (empty string
+ *  when it has none) — the live stream stays lean, the filter UI stays real. */
+function leanPropertiesJson(
+  properties: Record<string, unknown> | undefined,
+): string {
+  if (!properties) return '';
+  let lean: Record<string, string> | null = null;
+  for (const key of LIVE_STREAM_PROP_KEYS) {
+    const value = properties[key];
+    if (typeof value === 'string' && value) (lean ??= {})[key] = value;
+  }
+  return lean ? JSON.stringify(lean) : '';
+}
+
+/** Prefix of the user-facing message for a fatal WASM out-of-memory failure.
+ *  Exposed (via isOomJobError) so consumers know the store must NOT be
+ *  queried again after this error — the WASM instance is likely corrupted
+ *  and another query would crash the tab. */
+const OOM_ERROR_MESSAGE_PREFIX = 'Repository too large for browser memory';
+
+/** Whether a job error message is the fatal browser-OOM failure. */
+export function isOomJobError(message: string | null | undefined): boolean {
+  return !!message && message.startsWith(OOM_ERROR_MESSAGE_PREFIX);
+}
+
+/** Repos below this file count parse on the main thread — spinning up a
+ *  worker pool would cost more than it saves. Above it, parse in parallel. */
+const PARALLEL_EXTRACT_MIN_FILES = 40;
+
 export class BrowserJobService implements JobService {
   private store: GraphStore;
 
@@ -226,6 +274,48 @@ export class BrowserJobService implements JobService {
     const channel = new EventChannel<JobEvent>();
     const abortController = new AbortController();
     let cancelled = false;
+
+    // Live-build: push node/relationship batches as produced so the UI builds
+    // the graph during indexing. We send id/type/name plus ONLY the small
+    // sub-type fields (language/kind/registry) — the filter chips and the
+    // Variable/Dependency default-hide need those, and there is no
+    // authoritative full reload after a live build (holding every property
+    // blob in the JS heap is what OOM-crashed the tab on Grafana-scale repos).
+    // Full properties are fetched on demand per node (SidePanel).
+    const pushGraphDelta = (
+      nodes: {
+        id: string;
+        type: string;
+        name: string;
+        properties?: Record<string, unknown>;
+      }[],
+      rels: {
+        id: string;
+        type: string;
+        source_id: string;
+        target_id: string;
+        properties?: Record<string, unknown>;
+      }[],
+    ) => {
+      if (!nodes.length && !rels.length) return;
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          type: n.type,
+          name: n.name,
+          propertiesJson: leanPropertiesJson(n.properties),
+        })),
+        relationships: rels.map((r) => ({
+          id: r.id,
+          type: r.type,
+          sourceId: r.source_id,
+          targetId: r.target_id,
+          propertiesJson: '',
+        })),
+      });
+    };
 
     // Debug log — attached to window for console access
     const debug = new PipelineDebugLog({ enabled: true });
@@ -408,59 +498,267 @@ export class BrowserJobService implements JobService {
 
       if (cancelled || !scanResult) return;
 
-      // 4. Build concurrent pipeline stages
-      debug.log('pipeline', 'building stages');
+      // 4. Parse + extract every file — in PARALLEL, OFF the main thread.
+      //    Tree-sitter parsing is the indexing bottleneck; a worker pool keeps
+      //    the main thread free so indexing is fast AND the live build stays
+      //    smooth even on huge repos (Grafana-scale). Each worker result is
+      //    merged into the shared registries here on the main thread (cheap),
+      //    producing symbol nodes that flow through resolve/summarize/store.
+      debug.log('pipeline', 'parallel extract');
 
+      // fileId → raw content, consumed (and freed) during extraction.
       const fileContentMap = new Map<string, string>();
       for (const file of scanResult.parseableFiles) {
         fileContentMap.set(`${scanResult.repoId}/${file.path}`, file.content);
       }
-
-      // Release raw file strings — source is now compressed in the store's
-      // sourceCache, and parseable content is in fileContentMap (consumed
-      // below by FileCacheStage, then cleared).
+      // Release raw file strings — source is compressed in the store's
+      // sourceCache; parseable content now lives in fileContentMap.
       repoTree.files.length = 0;
       scanResult.parseableFiles.length = 0;
 
       const embedderConfig = loadEmbedderConfig();
-      const fileCacheStage = new FileCacheStage({ fileContentMap });
+      const extractionState = createExtractionState(scanResult);
 
-      // fileContentMap has been consumed by FileCacheStage — clear it so
-      // the raw strings can be GC'd once the cache holds them.
+      // Reveal the structural skeleton (repo → dirs → files + scanned deps)
+      // to the live build IMMEDIATELY, before parsing starts — so the user
+      // sees the repo/dirs/files first and symbols fill in as they parse.
+      const structuralSeeds: GraphNode[] = [scanResult.repoNode];
+      for (const dir of scanResult.dirNodes.values()) structuralSeeds.push(dir);
+      for (const file of scanResult.fileNodes) structuralSeeds.push(file);
+      for (const pkg of scanResult.packageNodes.values())
+        structuralSeeds.push(pkg);
+      pushGraphDelta(structuralSeeds, scanningRels);
+
+      // Files to parse: File nodes with a path + cached content.
+      const extractRefs: { fileId: string; filePath: string }[] = [];
+      for (const fileNode of scanResult.fileNodes) {
+        const filePath = fileNode.properties?.path as string | undefined;
+        if (filePath && fileContentMap.has(fileNode.id)) {
+          extractRefs.push({ fileId: fileNode.id, filePath });
+        }
+      }
+
+      const symbolNodes: GraphNode[] = [];
+      const symbolRels: GraphRelationship[] = [];
+      let extractedCount = 0;
+      let lastParseYield = 0;
+
+      // Read a file's content and free it immediately (bounds peak memory —
+      // the worker gets a structured-clone copy on postMessage).
+      const takeContent = (fileId: string): string | undefined => {
+        const c = fileContentMap.get(fileId);
+        fileContentMap.delete(fileId);
+        return c;
+      };
+
+      const emitParseProgress = (force?: boolean) => {
+        const now = performance.now();
+        if (!force && now - lastParseYield < 100) return;
+        lastParseYield = now;
+        channel.push({
+          ...emptyEvent(),
+          kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+          phase: JobPhase.JOB_PHASE_PARSING,
+          message: `Parsing ${extractedCount}/${extractRefs.length} files`,
+          detail: {
+            current: extractedCount,
+            total: extractRefs.length,
+            fileName: '',
+            nodesCreated: 0,
+            relationshipsCreated: 0,
+          },
+        });
+      };
+
+      // Live-build streaming is BATCHED: pushing per file meant thousands of
+      // tiny pushGraphDelta calls (channel events + React pressure) competing
+      // with the worker dispatch on the main thread — starving the parse pool.
+      // We accumulate merged nodes/rels and flush in chunks instead.
+      const liveBatchNodes: GraphNode[] = [];
+      const liveBatchRels: GraphRelationship[] = [];
+      const LIVE_STREAM_CHUNK = 600;
+      const flushLiveBatch = () => {
+        if (liveBatchNodes.length === 0 && liveBatchRels.length === 0) return;
+        pushGraphDelta(liveBatchNodes.splice(0), liveBatchRels.splice(0));
+      };
+
+      const onExtracted = (
+        fileId: string,
+        language: string,
+        symbols: CodeSymbol[],
+        importResult: ImportAnalysisResult,
+      ) => {
+        const prevPkgCount = extractionState.pendingPackageNodes.length;
+        const merged = mergeExtraction(
+          fileId,
+          language,
+          symbols,
+          importResult,
+          extractionState,
+        );
+        pushAll(symbolNodes, merged.nodes);
+        pushAll(symbolRels, merged.relationships);
+        // Queue this file's symbols for the live build, plus any brand-new
+        // Dependency nodes it discovered (so IMPORTS edges to them resolve
+        // instead of sitting deferred). Deps are seeded to the store
+        // separately via pendingPackageNodes, so keep them out of symbolNodes.
+        pushAll(liveBatchNodes, merged.nodes);
+        if (extractionState.pendingPackageNodes.length > prevPkgCount) {
+          pushAll(
+            liveBatchNodes,
+            extractionState.pendingPackageNodes.slice(prevPkgCount),
+          );
+        }
+        pushAll(liveBatchRels, merged.relationships);
+        if (liveBatchNodes.length >= LIVE_STREAM_CHUNK) flushLiveBatch();
+        extractedCount++;
+        emitParseProgress();
+      };
+
+      if (extractRefs.length >= PARALLEL_EXTRACT_MIN_FILES) {
+        const poolSize = Math.min(
+          defaultPoolSize(),
+          Math.max(2, Math.ceil(extractRefs.length / 128)),
+        );
+        debug.log(
+          'pipeline',
+          `parallel extract: ${extractRefs.length} files, ${poolSize} workers`,
+        );
+        // Only load the grammars this repo actually uses — loading all 14 in
+        // every worker cost ~6s of startup on an 8-worker pool.
+        const neededKeys = new Set<string>();
+        for (const fileNode of scanResult.fileNodes) {
+          const p = fileNode.properties?.path as string | undefined;
+          if (!p) continue;
+          const lang = detectLanguage(getExtension(p));
+          if (!lang) continue;
+          if (lang === 'typescript') {
+            neededKeys.add('typescript');
+            neededKeys.add('tsx');
+          } else if (lang === 'javascript') {
+            neededKeys.add('javascript');
+          } else {
+            neededKeys.add(lang);
+          }
+        }
+
+        const pool = new ExtractPool(poolSize);
+        try {
+          const tInit = performance.now();
+          await pool.init(
+            scanResult.knownPaths,
+            scanResult.goModulePath,
+            neededKeys.size ? [...neededKeys] : undefined,
+          );
+          const tRun = performance.now();
+          debug.log(
+            'pipeline',
+            `pool.init ${poolSize} workers (${neededKeys.size} grammars): ${Math.round(tRun - tInit)}ms`,
+          );
+          await pool.run(extractRefs, takeContent, {
+            onResult: (r) =>
+              onExtracted(r.fileId, r.language, r.symbols, r.importResult),
+            onSkip: () => {
+              extractedCount++;
+              emitParseProgress();
+            },
+            onError: (fileId, error) => {
+              extractedCount++;
+              debug.log('error', `extract ${fileId}: ${error}`);
+              emitParseProgress();
+            },
+            isCancelled: () => cancelled,
+          });
+          const tDone = performance.now();
+          debug.log(
+            'pipeline',
+            `parsed ${extractRefs.length} files in ${Math.round(tDone - tRun)}ms (${Math.round((extractRefs.length / (tDone - tRun)) * 1000)} files/s)`,
+          );
+        } finally {
+          pool.terminate();
+        }
+      } else {
+        // Tiny repo — parse on the main thread (avoids worker spin-up cost).
+        for (const ref of extractRefs) {
+          if (cancelled) break;
+          const content = takeContent(ref.fileId);
+          if (content === undefined) {
+            extractedCount++;
+            continue;
+          }
+          let extracted: ReturnType<typeof extractFile> = null;
+          try {
+            extracted = extractFile(
+              ref.filePath,
+              content,
+              extractionState.knownPaths,
+              extractionState.goModulePath,
+            );
+          } catch {
+            extracted = null;
+          }
+          if (extracted) {
+            onExtracted(
+              ref.fileId,
+              extracted.language,
+              extracted.symbols,
+              extracted.importResult,
+            );
+          } else {
+            extractedCount++;
+          }
+          if (extractedCount % 25 === 0) {
+            emitParseProgress();
+            await new Promise((r) => setTimeout(r, 0));
+          }
+        }
+      }
+      flushLiveBatch(); // push whatever's left below the chunk threshold
       fileContentMap.clear();
-      const extractStage = new ExtractStage({
-        scanResult,
-        getContent: (fileId) => fileCacheStage.getContent(fileId),
+      emitParseProgress(true);
+      // Parsing runs through the worker pool, not the concurrent scheduler,
+      // so no flush_end ever completes its stage row — without this the
+      // "Files & symbols" row sat ACTIVE at n/n for the rest of the job.
+      channel.push({
+        ...emptyEvent(),
+        kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+        phase: JobPhase.JOB_PHASE_PARSING,
+        message: `Parsed ${extractedCount} files`,
       });
-      const resolveStage = new ResolveStage(extractStage);
+
+      if (cancelled) return;
+
+      // 5. Build the rest of the pipeline — extraction is already done, so no
+      //    FileCacheStage / ExtractStage. Symbol nodes are fed as seeds.
+      const resolveStage = new ResolveStage(extractionState);
       const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
       const embedStage = embedderConfig.enabled
         ? new EmbedStage({ config: embedderConfig, store: this.store })
         : null;
 
-      // Pre-feed scanning rels into the store stage
+      // Pre-feed scanning + symbol (DEFINES/IMPORTS) rels into the store stage.
       storeStage.addRelationships(scanningRels);
+      storeStage.addRelationships(symbolRels);
 
-      // Seed nodes: all structural nodes from scanning
-      const seeds: GraphNode[] = [scanResult.repoNode];
-      for (const dir of scanResult.dirNodes.values()) seeds.push(dir);
-      for (const file of scanResult.fileNodes) seeds.push(file);
-      for (const pkg of scanResult.packageNodes.values()) seeds.push(pkg);
+      // Seeds for PERSISTENCE: the structural skeleton (streamed to the live
+      // build up front) + external Dependency nodes discovered during import
+      // analysis (streamed as they were found) + the extracted symbol nodes
+      // (streamed as they were parsed). Everything is already on screen; the
+      // pipeline below just persists it + resolves calls.
+      const seeds: GraphNode[] = structuralSeeds.slice();
+      pushAll(seeds, extractionState.pendingPackageNodes);
+      pushAll(seeds, symbolNodes);
 
       debug.log(
         'pipeline',
-        `${seeds.length} seed nodes, ${scanningRels.length} scanning rels`,
-      );
-      debug.log(
-        'pipeline',
-        `file cache limit: ${(fileCacheStage.stats().byteLimit / 1024 / 1024).toFixed(0)} MB`,
+        `${seeds.length} seeds (${symbolNodes.length} symbols), ${
+          scanningRels.length + symbolRels.length
+        } rels`,
       );
 
-      // 5. Run concurrent pipeline
+      // 6. Run concurrent pipeline (resolve → summarize → store → embed)
       const stages = [
-        fileCacheStage,
-        extractStage,
         resolveStage,
         summarizeStage,
         storeStage,
@@ -506,6 +804,7 @@ export class BrowserJobService implements JobService {
         });
         await this.store.flush();
         persistedNodes += nodes.length;
+        pushGraphDelta(nodes, []);
       };
 
       /** Drain buffered relationships from the store stage and persist them. */
@@ -544,12 +843,7 @@ export class BrowserJobService implements JobService {
               event.stage !== 'store'
             ) {
               storeStage.addRelationships(mutation.relationships);
-            }
-
-            // After extraction, evict the raw file content from the cache —
-            // the compressed copy in sourceCache is the long-lived version.
-            if (event.stage === 'extract') {
-              fileCacheStage.evict(event.node);
+              pushGraphDelta([], mutation.relationships);
             }
 
             // Incrementally persist nodes when the store stage buffer fills
@@ -595,6 +889,18 @@ export class BrowserJobService implements JobService {
               });
               stageLastYield[event.stage] = now;
 
+              // Extract is the only stage with a real total and it has no
+              // flush_end — without this, "Files & symbols" sat ACTIVE at
+              // n/n for the whole indexing tail (looked hung to users).
+              if (isLast) {
+                channel.push({
+                  ...emptyEvent(),
+                  kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
+                  phase,
+                  message: `Completed ${event.stage}`,
+                });
+              }
+
               // Yield to UI periodically (not on every event — batch up)
               if (now - lastYieldTime >= 100) {
                 await new Promise((r) => setTimeout(r, 0));
@@ -627,6 +933,7 @@ export class BrowserJobService implements JobService {
                 event.stage !== 'store'
               ) {
                 storeStage.addRelationships(event.mutation.relationships);
+                pushGraphDelta([], event.mutation.relationships);
               }
 
               // When the store stage flushes, persist remaining nodes then rels
@@ -677,7 +984,12 @@ export class BrowserJobService implements JobService {
                 continue;
               }
 
-              if (phase) {
+              // Embed's flush_end fires when the ENQUEUE side finishes — the
+              // actual embedding continues in embedStage.settle(), which
+              // pushes the real STAGE_COMPLETE. Marking it done here made the
+              // panel show "Generating embeddings ✓" while counts still
+              // climbed, so the whole tail read as hung.
+              if (phase && event.stage !== 'embed') {
                 channel.push({
                   ...emptyEvent(),
                   kind: JobEventKind.JOB_EVENT_KIND_STAGE_COMPLETE,
@@ -711,16 +1023,11 @@ export class BrowserJobService implements JobService {
               return;
 
             case 'pipeline_done': {
-              const cacheStats = fileCacheStage.stats();
               const durationSeconds =
                 Math.round((performance.now() - pipelineStartTime) / 10) / 100;
               debug.log(
                 'pipeline',
                 `done — persisted: ${persistedNodes} nodes, ${persistedRels} rels`,
-              );
-              debug.log(
-                'pipeline',
-                `cache: ${cacheStats.cached} cached, ${cacheStats.skipped} skipped, ${(cacheStats.bytesUsed / 1024 / 1024).toFixed(1)} MB used`,
               );
 
               // Persist index metadata
@@ -822,7 +1129,7 @@ export class BrowserJobService implements JobService {
           typeof err === 'number'; // WASM abort codes are thrown as raw numbers
         const totalStats = storeStage?.stats();
         const userMessage = isOOM
-          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
+          ? `${OOM_ERROR_MESSAGE_PREFIX}. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
           : errMsg;
 
         // Don't emit GRAPH_READY on OOM — the WASM instance is likely

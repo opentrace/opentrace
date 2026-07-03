@@ -127,6 +127,22 @@ export class WorkerGraphStore implements GraphStore {
     return this.call<GraphData>('fetchGraph', [query, hops]);
   }
 
+  fetchGraphSkeleton(types: string[]): Promise<GraphData> {
+    return this.call<GraphData>('fetchGraphSkeleton', [types]);
+  }
+
+  fetchGraphPage(opts: {
+    type: string;
+    offset: number;
+    limit: number;
+  }): Promise<{
+    nodes: GraphData['nodes'];
+    links: GraphData['links'];
+    exhausted: boolean;
+  }> {
+    return this.call('fetchGraphPage', [opts]);
+  }
+
   fetchStats(): Promise<GraphStats> {
     return this.call<GraphStats>('fetchStats', []);
   }

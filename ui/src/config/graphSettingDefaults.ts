@@ -28,7 +28,7 @@
  *   | ------------------ | ----------- | ------------------ |
  *   | `layoutMode`       | `'compact'` | `'spread'`         |
  *   | `mode3d`           | `true`      | `false`            |
- *   | `pixiZoomExponent` | `0.25`      | `0.8`              |
+ *   | `pixiZoomExponent` | `0.25`      | `0.2`              |
  *
  * Prop-driven consumers of `PixiGraphCanvas` + `PhysicsPanel` (without the
  * store/providers) can import this from the store-free, WebGL-free `./utils`
@@ -48,23 +48,30 @@
  */
 export const GRAPH_SETTING_DEFAULTS = {
   zoomOnSelect: false,
-  repulsion: 120,
+  // Charge magnitude — matches the renderer's FORCE_CHARGE_STRENGTH (-200) so
+  // the slider value is the actual repulsion the worker initializes with. (Was
+  // 120, which silently disagreed with the -200 the layout really used.)
+  repulsion: 200,
   labelsVisible: true,
   edgesVisible: true,
   communityLabelsVisible: true,
   pixiLinkDist: 200,
   pixiCenter: 0.3,
   pixiZoomExponent: 0.25,
-  layoutMode: 'compact' as 'spread' | 'compact',
+  layoutMode: 'compact' as 'spread' | 'compact' | 'tree' | 'onion',
   compactRadial: 8,
   compactCommunity: 10,
   compactCentering: 5,
   compactRadius: 32,
   mode3d: true,
-  mode3dSpeed: 30,
+  mode3dSpeed: 15,
   mode3dTilt: 35,
   labelScale: 100,
+  edgeOpacity: 100,
   communitiesEnabled: true,
+  // Gentle perpetual node drift after the layout settles. On by default; users
+  // can disable it (and it auto-eases on very large graphs).
+  ambientMotion: true,
 };
 
 /** Shape of {@link GRAPH_SETTING_DEFAULTS}. */

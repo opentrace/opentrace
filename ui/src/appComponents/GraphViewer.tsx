@@ -19,10 +19,15 @@ import {
   GraphLegend,
   GraphToolbar,
   IndexingProgress,
-  PixiGraphCanvas,
+  ThreeGraphCanvas,
   detectProvider,
   normalizeRepoUrl,
+  GRAPH_PRESETS,
+  DEFAULT_PRESET_ID,
+  CUSTOM_PRESET,
+  getPreset,
   type IndexingState,
+  type GraphPresetSettings,
 } from '@opentrace/components';
 import {
   forwardRef,
@@ -35,6 +40,7 @@ import {
   useState,
 } from 'react';
 import { useGraph } from '../providers/GraphDataProvider';
+import { PROGRESSIVE_LOAD_ENABLED } from '../hooks/useGraphData';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
 import { getSubType } from '../providers/graphFilterUtils';
 import type { JobMessage, JobState } from '../job';
@@ -61,6 +67,10 @@ import {
 } from './GraphToolbarActions';
 import { PhysicsPanelContainer } from './PhysicsPanelContainer';
 import { GitHubIcon, GitLabIcon } from './providerIcons';
+import LiveIndexingPanel from './LiveIndexingPanel';
+import ViewPresetBar from './ViewPresetBar';
+import NodeHoverCard, { type HoverInfo } from './NodeHoverCard';
+import type { GraphNode } from '../components/graph/types';
 import ResetConfirmModal from './ResetConfirmModal';
 import type { SidePanelTab } from './SidePanel';
 
@@ -73,6 +83,13 @@ const INDEXING_STAGES = [
   { key: String(JobPhase.JOB_PHASE_SUBMITTING), label: 'Persisting graph' },
   { key: String(JobPhase.JOB_PHASE_EMBEDDING), label: 'Generating embeddings' },
 ];
+
+/** The Three.js renderer (real 3D + 100k-node headroom) is the sole graph
+ *  canvas; the legacy Pixi renderer has been removed. */
+const GraphCanvasImpl = ThreeGraphCanvas;
+
+/** localStorage key for the last-applied view preset id (or 'custom'). */
+const PRESET_STORAGE_KEY = 'ot-active-preset';
 
 /** Map app-specific JobState to the generic IndexingState + title/message. */
 function toIndexingProps(job: JobState, repoUrl: string) {
@@ -196,13 +213,37 @@ const GraphViewer = memo(
       // per-promise suppression tokens through useGraph.
       const suppressNextFitRef = useRef(false);
 
+      // True once a live-build has run for the current job — the graph built
+      // itself during indexing, so the post-index build burst is suppressed
+      // (it would re-collapse + re-burst = "starting over").
+      const liveGrewRef = useRef(false);
+
       const v = useGraphViewer({
         chatHighlightNodes,
         suppressNextAutoFitRef: suppressNextFitRef,
       });
 
+      // Already-scaled compact-layout config for the canvas. Memoized so the
+      // canvas's "apply on load / change" effect only fires when a value
+      // actually changes (a fresh object every render would re-run it).
+      const compactConfigProp = useMemo(
+        () => ({
+          radialStrength: v.settings.compactRadial / 100,
+          communityPull: v.settings.compactCommunity / 100,
+          centeringStrength: v.settings.compactCentering / 100,
+          radiusScale: v.settings.compactRadius,
+        }),
+        [
+          v.settings.compactRadial,
+          v.settings.compactCommunity,
+          v.settings.compactCentering,
+          v.settings.compactRadius,
+        ],
+      );
+
       const {
         graphData,
+        graphVersion,
         loading,
         error,
         refreshError,
@@ -210,6 +251,7 @@ const GraphViewer = memo(
         loadGraph,
         setError,
         setRefreshError,
+        isStreaming,
       } = useGraph();
 
       const {
@@ -223,6 +265,208 @@ const GraphViewer = memo(
         availableSubTypes,
         communityData,
       } = useGraphInteraction();
+
+      // ── View presets ───────────────────────────────────────────────
+      const [activePresetId, setActivePresetId] = useState<string | null>(
+        () => {
+          try {
+            return localStorage.getItem(PRESET_STORAGE_KEY);
+          } catch {
+            return null;
+          }
+        },
+      );
+
+      // ── Node hover tooltip (renderer reports enter/leave; the card itself
+      //    applies the show delay + lazy summary fetch) ─────────────────
+      const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+      const onNodeHover = useCallback(
+        (node: GraphNode | null, x: number, y: number) => {
+          setHoverInfo(node ? { node, x, y } : null);
+        },
+        [],
+      );
+
+      /** Apply a preset's full settings to React state + the renderer. Mirrors
+       *  the reset handler's imperative push (prop effects only fire on a
+       *  *change*, so we also call the canvas API directly). `animate` reheats
+       *  + recenters for a live switch; skipped on first-load so it doesn't
+       *  fight the initial layout / build animation. */
+      const applyPresetSettings = useCallback(
+        (s: GraphPresetSettings, animate: boolean) => {
+          const set = v.settings;
+          // 1. React state — drives canvas props + persistence effects.
+          set.setLayoutMode(s.layoutMode);
+          set.setMode3d(s.mode3d);
+          set.setRendererAutoRotate(s.autoRotate);
+          setColorMode(s.colorMode);
+          set.setCommunitiesEnabled(s.communitiesEnabled);
+          set.setCommunityLabelsVisible(s.communityLabelsVisible);
+          set.setRepulsion(s.repulsion);
+          set.setPixiLinkDist(s.linkDistance);
+          set.setPixiCenter(s.centerStrength);
+          set.setCompactRadial(s.compactRadial);
+          set.setCompactCommunity(s.compactCommunity);
+          set.setCompactCentering(s.compactCentering);
+          set.setCompactRadius(s.compactRadius);
+          set.setEdgeOpacity(s.edgeOpacity);
+          set.setPixiZoomExponent(s.zoomSizeExponent);
+          set.setLabelScale(s.labelScale);
+          set.setMode3dSpeed(s.mode3dSpeed);
+          set.setMode3dTilt(s.mode3dTilt);
+          set.setLabelsVisible(s.labelsVisible);
+          set.setEdgesVisible(s.edgesVisible);
+          // 2. Push to the renderer imperatively.
+          const c = v.canvasRef.current;
+          c?.setLayoutMode?.(s.layoutMode);
+          c?.set3DMode?.(s.mode3d);
+          c?.set3DAutoRotate?.(s.autoRotate);
+          c?.set3DSpeed?.(s.mode3dSpeed / 10000);
+          c?.set3DTilt?.(s.mode3dTilt / 100);
+          c?.setChargeStrength?.(-s.repulsion);
+          c?.setLinkDistance?.(s.linkDistance);
+          c?.setCenterStrength?.(s.centerStrength);
+          c?.updateCompactConfig?.({
+            radialStrength: s.compactRadial / 100,
+            communityPull: s.compactCommunity / 100,
+            centeringStrength: s.compactCentering / 100,
+            radiusScale: s.compactRadius,
+          });
+          c?.setEdgeOpacity?.(s.edgeOpacity / 100);
+          c?.setZoomSizeExponent?.(s.zoomSizeExponent);
+          c?.setLabelScale?.(s.labelScale / 100);
+          c?.setShowLabels?.(s.labelsVisible);
+          c?.setEdgesEnabled?.(s.edgesVisible);
+          c?.setShowCommunityLabels?.(s.communityLabelsVisible);
+          // 3. Nebula is a worker-internal layout toggled separately;
+          //    enabling it seeds + restarts the sim itself.
+          c?.setNebulaLayout?.(s.nebula, s.layoutMode);
+          // 4. On a live switch, re-lay-out from a fresh seed so the result is
+          //    independent of the layout that was on screen — otherwise the
+          //    previous preset's shape bleeds into the new one. The nebula does
+          //    its own seeding, so skip reseed there. Skipped on first-load (the
+          //    graph is already laying out fresh) and during a build animation.
+          if (animate && !c?.isBuildAnimating?.()) {
+            if (!s.nebula) {
+              if (c?.reseedLayout) c.reseedLayout();
+              else c?.reheat?.();
+            }
+            if (c?.scheduleAutoFit) c.scheduleAutoFit(800);
+            else c?.zoomToFit?.(800);
+          }
+        },
+        [v.settings, v.canvasRef, setColorMode],
+      );
+
+      /** Apply a preset by id and remember the choice. */
+      const handleSelectPreset = useCallback(
+        (id: string) => {
+          const preset = getPreset(id);
+          if (!preset) return;
+          setActivePresetId(id);
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, id);
+          } catch {
+            // ignore
+          }
+          applyPresetSettings(preset.settings, true);
+        },
+        [applyPresetSettings],
+      );
+
+      /** Drop the active-preset highlight when the user hand-tweaks a control —
+       *  the look no longer matches a named preset. */
+      const handleUserAdjust = useCallback(() => {
+        setActivePresetId((prev) => {
+          if (prev === CUSTOM_PRESET) return prev;
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, CUSTOM_PRESET);
+          } catch {
+            // ignore
+          }
+          return CUSTOM_PRESET;
+        });
+      }, []);
+
+      // On the first graph load, restore the remembered preset (re-applied in
+      // full so options that don't persist — autorotate, color mode — are
+      // honored), or apply the default on a user's very first load. Runs once
+      // per mount; 'custom' means the user is hand-driving, so we leave the
+      // individually-persisted settings alone.
+      const presetAppliedRef = useRef(false);
+      useEffect(() => {
+        if (presetAppliedRef.current) return;
+        if (graphVersion === 0 || graphData.nodes.length === 0) return;
+        presetAppliedRef.current = true;
+        let stored: string | null = null;
+        try {
+          stored = localStorage.getItem(PRESET_STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+        if (stored === CUSTOM_PRESET) return;
+        const id = stored ?? DEFAULT_PRESET_ID;
+        const preset = getPreset(id);
+        if (!preset) return;
+        setActivePresetId(id);
+        if (stored === null) {
+          try {
+            localStorage.setItem(PRESET_STORAGE_KEY, id);
+          } catch {
+            // ignore
+          }
+        }
+        applyPresetSettings(preset.settings, false);
+      }, [graphVersion, graphData.nodes.length, applyPresetSettings]);
+
+      // Sync ambient motion (gentle perpetual drift) to the renderer. Re-applied
+      // on each graph load (graphVersion) since a fresh layout resets the worker.
+      useEffect(() => {
+        v.canvasRef.current?.setAmbientMotion?.(v.settings.ambientMotion);
+      }, [v.canvasRef, v.settings.ambientMotion, graphVersion]);
+
+      // Auto fit-to-screen whenever a setting changes the graph's layout or
+      // extent, so the user never has to manually reframe after a tweak.
+      // Debounced so a slider drag fits once on release (after the layout has
+      // begun reacting). Visual-only settings (colors) are intentionally not
+      // included — they don't move the graph.
+      const s = v.settings;
+      const fitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const firstFitSyncRef = useRef(true);
+      useEffect(() => {
+        if (graphVersion === 0) return;
+        // Skip the initial mount — the graphVersion auto-fit already frames the
+        // first load; this effect only fits on subsequent setting changes.
+        if (firstFitSyncRef.current) {
+          firstFitSyncRef.current = false;
+          return;
+        }
+        if (fitTimerRef.current) clearTimeout(fitTimerRef.current);
+        fitTimerRef.current = setTimeout(() => {
+          v.canvasRef.current?.fitToScreen?.();
+        }, 450);
+        return () => {
+          if (fitTimerRef.current) clearTimeout(fitTimerRef.current);
+        };
+      }, [
+        v.canvasRef,
+        graphVersion,
+        s.repulsion,
+        s.pixiLinkDist,
+        s.pixiCenter,
+        s.pixiZoomExponent,
+        s.layoutMode,
+        s.compactRadial,
+        s.compactCommunity,
+        s.compactCentering,
+        s.compactRadius,
+        s.mode3d,
+        s.mode3dTilt,
+        s.labelsVisible,
+        s.edgesVisible,
+        s.communityLabelsVisible,
+        s.ambientMotion,
+      ]);
 
       // Fetch indexed repos when the add-repo modal opens (for duplicate detection)
       interface IndexedRepo {
@@ -298,9 +542,39 @@ const GraphViewer = memo(
         null,
       );
 
+      // Track whether the current job built live (drives build-burst suppression
+      // below). The actual begin/end is driven by the canvas `liveGrow` prop.
+      useEffect(() => {
+        if (isStreaming) liveGrewRef.current = true;
+        else if (jobState.status === 'idle') liveGrewRef.current = false;
+      }, [isStreaming, jobState.status]);
+
       // React to persisted: load the graph, then auto-minimize after a brief delay
       useEffect(() => {
         if (jobState.status === 'persisted') {
+          // Arm the build animation NOW, before the indexed graph reaches the
+          // canvas. The renderer collapses it the instant it's built (before
+          // first paint), holds it hidden, and AUTO-PLAYS itself once the
+          // layout settles — so there's no flash and no fragile external timer
+          // that could fire before the collapse on a slow-to-lay-out graph
+          // (which previously left it stuck hidden until manual replay).
+          // Suppressed during progressive
+          // streaming: the burst would play on the skeleton, then the rest
+          // streams in + the 3D layout develops, reading as a 2D plane
+          // expanding to 3D. (Proper streaming+burst integration is deferred.)
+          // A live-built graph is already on screen — skip both the
+          // build-animation burst AND the loadGraph here, either of which
+          // would reshuffle / "start over". endLiveStream already bumped the
+          // version + loaded stats, and itself reloads from the store in the
+          // cases where the live graph is NOT authoritative (the store held
+          // other repos before this job, cancel, recoverable error).
+          if (liveGrewRef.current) {
+            pendingMinimize.current = true;
+            return;
+          }
+          if (!PROGRESSIVE_LOAD_ENABLED) {
+            v.canvasRef.current?.armBuildAnimation?.();
+          }
           loadGraph()
             .then(() => {
               pendingMinimize.current = true;
@@ -309,6 +583,7 @@ const GraphViewer = memo(
               // Graph load failed — don't set pendingMinimize
             });
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [jobState.status, loadGraph]);
 
       // React to done: final graph refresh with enriched data. Suppress the
@@ -316,6 +591,10 @@ const GraphViewer = memo(
       // vector properties to existing nodes, so the view should not re-animate.
       useEffect(() => {
         if (jobState.status === 'done') {
+          // Skip for live-built graphs — reloading would replace the graph the
+          // user watched build and reshuffle it. (Enrichment only adds vector
+          // properties used by search, not the on-screen structure.)
+          if (liveGrewRef.current) return;
           suppressNextFitRef.current = true;
           loadGraph().finally(() => {
             // Defensive reset: if loadGraph failed or was aborted, the
@@ -329,20 +608,23 @@ const GraphViewer = memo(
       // Expose imperative handle for parent/sibling access
       useImperativeHandle(ref, () => v.buildImperativeHandle(), [v]);
 
-      // Determine whether to show the full indexing progress modal.
-      // 'running' used to always show the modal; now it respects
-      // `jobExpanded` so the user can minimize and keep working
-      // while the agent indexes in the background (Fix #13). App
-      // auto-sets `jobExpanded=true` on every idle → running
-      // transition so the modal still surfaces by default for new
-      // jobs.
-      const showFullModal =
-        ((jobState.status === 'running' ||
-          jobState.status === 'enriching' ||
-          jobState.status === 'done') &&
-          (jobExpanded || (loading && v.isEmpty))) ||
+      // A browser index job is actively producing the graph. While active, the
+      // compact LiveIndexingPanel (bottom-left) is the default surface and the
+      // graph builds live behind it — the full-screen modal is opt-in.
+      const jobActive =
+        jobState.status === 'running' ||
         jobState.status === 'persisted' ||
-        jobState.status === 'error';
+        jobState.status === 'enriching';
+
+      // The full-screen indexing modal is now opt-in: it shows only when the
+      // user explicitly expands the live panel, or on error (which needs the
+      // detailed failure view). Everything else stays in the live panel so the
+      // graph remains visible building in front of the user.
+      const showFullModal = jobExpanded || jobState.status === 'error';
+
+      // The compact live panel owns the running / building / enriching states
+      // whenever the user hasn't expanded to the full modal.
+      const showLivePanel = jobActive && !jobExpanded;
 
       const graphWidth = showChat || showHelp ? width - chatWidth : width;
 
@@ -380,7 +662,13 @@ const GraphViewer = memo(
 
       // --- Early returns for loading/error/empty states ---
 
-      if (loading && v.isEmpty && !showAddRepo && !showFullModal) {
+      if (
+        loading &&
+        v.isEmpty &&
+        !showAddRepo &&
+        !showFullModal &&
+        !jobActive
+      ) {
         return <GraphLoadingState />;
       }
 
@@ -405,7 +693,7 @@ const GraphViewer = memo(
         );
       }
 
-      if (v.isEmpty && !showFullModal) {
+      if (v.isEmpty && !showFullModal && !jobActive) {
         return (
           <GraphInitialEmpty
             showAddRepo={showAddRepo}
@@ -467,8 +755,6 @@ const GraphViewer = memo(
                 toolbarActions={toolbarActions}
                 jobState={jobState}
                 jobExpanded={jobExpanded}
-                onJobExpand={onJobExpand}
-                onJobCancel={onJobCancel}
                 onAddRepoOpen={onAddRepoOpen}
                 hasGraphData={graphData.nodes.length > 0}
                 canExport={!!store.exportDatabase}
@@ -541,11 +827,32 @@ const GraphViewer = memo(
               stages={INDEXING_STAGES}
               onClose={onJobClose}
               onMinimize={
-                jobState.status === 'running' || jobState.status === 'enriching'
+                jobState.status === 'running' ||
+                jobState.status === 'enriching' ||
+                jobState.status === 'persisted'
                   ? onJobMinimize
                   : undefined
               }
             />
+          )}
+
+          {showLivePanel && (
+            <LiveIndexingPanel
+              state={jobState}
+              stages={INDEXING_STAGES}
+              icon={toIndexingProps(jobState, activeRepoUrl).icon}
+              onExpand={onJobExpand}
+              onCancel={onJobCancel}
+            />
+          )}
+
+          {/* While fetching/parsing there's no graph yet — show a calm centered
+              loader (not a black void). The build animation reveals the real
+              graph the moment it's ready. */}
+          {jobActive && v.isEmpty && (
+            <div className="graph-build-loader" aria-hidden>
+              <span className="graph-build-loader__spinner" />
+            </div>
           )}
 
           <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
@@ -573,10 +880,11 @@ const GraphViewer = memo(
             </div>
           )}
 
-          <PixiGraphCanvas
+          <GraphCanvasImpl
             ref={v.canvasRef}
             nodes={graphData.nodes}
             links={graphData.links}
+            liveGrow={isStreaming}
             width={graphWidth}
             height={height}
             layoutConfig={v.layoutConfig}
@@ -598,21 +906,69 @@ const GraphViewer = memo(
             onNodeClick={v.onNodeClick}
             onEdgeClick={v.onLinkClick}
             onStageClick={v.onStageClick}
+            onNodeHover={onNodeHover}
             labelsVisible={v.settings.labelsVisible}
             edgesEnabled={v.settings.edgesVisible}
             communityLabelsVisible={v.settings.communityLabelsVisible}
             layoutMode={v.settings.layoutMode}
             zoomSizeExponent={v.settings.pixiZoomExponent}
             labelScale={v.settings.labelScale / 100}
+            edgeOpacity={v.settings.edgeOpacity / 100}
+            chargeStrength={-v.settings.repulsion}
+            linkDistance={v.settings.pixiLinkDist}
+            compactConfig={compactConfigProp}
             mode3d={v.settings.mode3d}
+            rotationSpeed={v.settings.mode3dSpeed / 10000}
+            cameraTilt={v.settings.mode3dTilt / 100}
             on3DAutoRotateChange={v.settings.setRendererAutoRotate}
             animationSettings={animationSettings}
             style={{ isolation: 'isolate' }}
           />
 
+          {/* Hidden only when the graph strip is genuinely tiny (the
+              bottom-anchored legend wraps upward there and collides with any
+              top-anchored row). Above that, the bar rearranges itself instead:
+              it measures the toolbar and hangs below it, goes icon-only at
+              ≤900px, and wraps to a second line rather than underflowing. */}
+          {height >= 220 && (
+            <ViewPresetBar
+              presets={GRAPH_PRESETS}
+              activePresetId={activePresetId}
+              onSelectPreset={handleSelectPreset}
+            />
+          )}
+
+          <NodeHoverCard info={hoverInfo} />
+
+          {/* Fetch-phase placeholder: a job is running but nothing has streamed
+              into the canvas yet (initializing / fetching the archive), so the
+              viewport would otherwise be a black void. */}
+          {jobActive && graphData.nodes.length === 0 && (
+            <div className="graph-fetching-overlay" aria-live="polite">
+              <img
+                src="/opentrace-logo.svg"
+                alt=""
+                className="graph-fetching-overlay__logo"
+              />
+              <span className="graph-fetching-overlay__text">
+                {(() => {
+                  const stages = jobState.stages as Record<
+                    string,
+                    { status: string }
+                  >;
+                  const active = INDEXING_STAGES.find(
+                    (s) => stages[s.key]?.status === 'active',
+                  );
+                  return active ? `${active.label}…` : 'Preparing…';
+                })()}
+              </span>
+            </div>
+          )}
+
           {showPhysicsPanel && (
             <PhysicsPanelContainer
               canvasRef={v.canvasRef}
+              onUserAdjust={handleUserAdjust}
               repulsion={v.settings.repulsion}
               setRepulsion={v.settings.setRepulsion}
               labelsVisible={v.settings.labelsVisible}
@@ -653,11 +1009,16 @@ const GraphViewer = memo(
               setRendererAutoRotate={v.settings.setRendererAutoRotate}
               labelScale={v.settings.labelScale}
               setLabelScale={v.settings.setLabelScale}
+              edgeOpacity={v.settings.edgeOpacity}
+              setEdgeOpacity={v.settings.setEdgeOpacity}
+              ambientMotion={v.settings.ambientMotion}
+              setAmbientMotion={v.settings.setAmbientMotion}
             />
           )}
 
           <GraphControlsBar
             canvasRef={v.canvasRef}
+            onReplayBuild={() => v.canvasRef.current?.playBuildAnimation?.()}
             graphFullscreen={graphFullscreen}
             onToggleGraphFullscreen={onToggleGraphFullscreen}
             zoomOnSelect={v.settings.zoomOnSelect}
@@ -669,13 +1030,22 @@ const GraphViewer = memo(
             setLayoutMode={v.settings.setLayoutMode}
             mode3d={v.settings.mode3d}
             setMode3d={v.settings.setMode3d}
+            onUserAdjust={handleUserAdjust}
             onResetGraph={() => {
               const D = GRAPH_SETTING_DEFAULTS;
+              // 0. Drop the active-preset highlight — reset returns to the bare
+              //    defaults, which aren't one of the named presets.
+              setActivePresetId(null);
+              try {
+                localStorage.removeItem(PRESET_STORAGE_KEY);
+              } catch {
+                // ignore
+              }
               // 1. Reset React state + clear localStorage.
               v.settings.resetSettings();
               // 2. Push EVERY setting to the renderer/layout-worker.
-              //    We do this even for settings that PixiGraphCanvas
-              //    already re-syncs via prop-driven useEffects, because
+              //    We do this even for settings the canvas already re-syncs
+              //    via prop-driven useEffects, because
               //    those effects only fire when the prop *changes*. If
               //    the React state already matched the default before
               //    reset (e.g. layoutMode was 'compact' and the new
@@ -694,6 +1064,7 @@ const GraphViewer = memo(
               });
               c?.setZoomSizeExponent?.(D.pixiZoomExponent);
               c?.setLabelScale?.(D.labelScale / 100);
+              c?.setEdgeOpacity?.(D.edgeOpacity / 100);
               c?.set3DMode?.(D.mode3d);
               c?.set3DSpeed?.(D.mode3dSpeed / 10000);
               c?.set3DTilt?.(D.mode3dTilt / 100);

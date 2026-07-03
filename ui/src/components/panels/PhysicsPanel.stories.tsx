@@ -82,7 +82,7 @@ export const PixiMode: Story = {
     onEdgesEnabledChange: fn(),
     layoutMode: 'spread' as const,
     onLayoutModeChange: fn(),
-    zoomSizeExponent: 0.8,
+    zoomSizeExponent: 0.2,
     onZoomSizeExponentChange: fn(),
     onReheat: fn(),
     onFitToScreen: fn(),
