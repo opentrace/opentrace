@@ -406,20 +406,47 @@ function rowToProperties(
   return hasProps ? props : undefined;
 }
 
-// TODO: UNION ALL returns only common columns (id, type, name) because typed
-// tables have different column counts. Callers needing full properties should
-// use fetchNodesByIds() or the node cache. Fix before merge — consider whether
-// LadybugDB supports a way to return heterogeneous columns in UNION ALL, or
-// pad with NULLs for the superset of all columns.
+// NOTE: UNION ALL can't return each type's full property set (typed tables
+// have different column counts), so these queries return id/type/name plus a
+// single per-type `subtype` column — the one property the filter UI actually
+// needs (see SUBTYPE_COLUMNS). Callers needing full properties should use
+// fetchNodesByIds() or the node cache.
+
+/** The property column that drives each type's filter sub-chips (mirrors the
+ *  UI's getSubType). Carried through UNION ALL queries as `subtype` so filter
+ *  chips and the Variable/Dependency default-hide work without materializing
+ *  full property blobs for every node. */
+const SUBTYPE_COLUMNS: Readonly<Record<string, string>> = {
+  Function: 'language',
+  Class: 'language',
+  Variable: 'kind',
+  Dependency: 'registry',
+};
+
+/** Rebuild a node's lean properties from the UNION ALL `subtype` column —
+ *  `{ language: 'go' }`, `{ kind: 'const' }`, … — or undefined when the type
+ *  has no sub-type or the value is empty. */
+function subtypeProperties(
+  type: string,
+  subtype: unknown,
+): Record<string, unknown> | undefined {
+  const column = SUBTYPE_COLUMNS[type];
+  if (!column) return undefined;
+  const v = unbox(subtype);
+  return typeof v === 'string' && v !== '' ? { [column]: v } : undefined;
+}
 
 /** Build a UNION ALL query across all typed node tables.
- *  Returns only id, type, name — use node cache for properties. */
+ *  Returns id, type, name, subtype — use node cache for full properties. */
 function unionAllNodes(where?: string, suffix?: string): string {
   return (
     GRAPH_NODE_TYPES.map((t) => {
+      const subtypeCol = SUBTYPE_COLUMNS[t];
       let q = `MATCH (n:${t})`;
       if (where) q += ` WHERE ${where}`;
-      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name`;
+      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name, ${
+        subtypeCol ? `n.${subtypeCol}` : `''`
+      } AS subtype`;
       return q;
     }).join(' UNION ALL ') + (suffix ?? '')
   );
@@ -1031,12 +1058,14 @@ export class LadybugGraphStore implements GraphStore {
       const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
         (r) => {
           const id = String(r.id);
+          const type = String(r.type);
           const cached = this.nodeCache.get(id);
           return {
             id,
-            type: String(r.type),
+            type,
             name: String(r.name),
-            properties: cached?.properties,
+            properties:
+              cached?.properties ?? subtypeProperties(type, r.subtype),
           };
         },
       );
@@ -1058,18 +1087,19 @@ export class LadybugGraphStore implements GraphStore {
       return { nodes, links };
     }
 
-    // Small graph — fetch everything via UNION ALL (returns id/type/name only,
-    // properties come from the JS-side node cache)
+    // Small graph — fetch everything via UNION ALL (id/type/name/subtype;
+    // full properties come from the JS-side node cache when present)
     const nodeRows = await this.query(unionAllNodes());
     const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
       (r) => {
         const id = String(r.id);
+        const type = String(r.type);
         const cached = this.nodeCache.get(id);
         return {
           id,
-          type: String(r.type),
+          type,
           name: String(r.name),
-          properties: cached?.properties,
+          properties: cached?.properties ?? subtypeProperties(type, r.subtype),
         };
       },
     );
@@ -1149,6 +1179,10 @@ export class LadybugGraphStore implements GraphStore {
     const pageIds = new Set<string>();
     for (const r of rows as Record<string, unknown>[]) {
       const id = String(r.id);
+      // SKIP/LIMIT paging has no ORDER BY, so an interleaved write can shift
+      // rows between pages — skip anything already streamed this session
+      // rather than hand the UI a ghost duplicate.
+      if (this.progressiveIds.has(id)) continue;
       pageIds.add(id);
       this.progressiveIds.add(id);
       nodes.push({
@@ -1158,7 +1192,9 @@ export class LadybugGraphStore implements GraphStore {
         properties: rowToProperties(r),
       });
     }
-    const exhausted = nodes.length < lim;
+    // Judge exhaustion by the RAW page size — after dedup `nodes` can come up
+    // short on a page that still has more rows behind it.
+    const exhausted = rows.length < lim;
 
     // Edges queried by the small page-id list (not the full loaded set), then
     // filtered so both endpoints are in the accumulated session set — keeps the
@@ -1424,11 +1460,19 @@ export class LadybugGraphStore implements GraphStore {
       allRows.push(...(rows as Record<string, unknown>[]));
     }
 
-    // Fallback for IDs with unknown type — UNION ALL returns id/type/name only
+    // Fallback for IDs with unknown type — UNION ALL returns id/type/name
+    // plus the `subtype` marker column, remapped here to its real property
+    // name (language/kind/registry) so these rows match typed-table rows.
     if (unknownIds.length > 0) {
       const idList = unknownIds.map((i) => `'${esc(i)}'`).join(', ');
       const rows = await this.query(unionAllNodes(`n.id IN [${idList}]`));
-      allRows.push(...(rows as Record<string, unknown>[]));
+      for (const row of rows as Record<string, unknown>[]) {
+        const { subtype, ...rest } = row;
+        allRows.push({
+          ...rest,
+          ...subtypeProperties(String(row.type), subtype),
+        });
+      }
     }
 
     return allRows as Record<string, string>[];

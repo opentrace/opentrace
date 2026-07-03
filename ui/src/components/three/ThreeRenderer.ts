@@ -232,6 +232,11 @@ const LABEL_2D_MAX = 28;
 // (Display sizing/gaps still use the real size.)
 const LABEL_GATE_SIZE_CAP = 6;
 
+// Ambient drift touches every node and edge each frame (O(N+E) CPU plus a
+// full position-buffer GPU upload) — it permanently defeats the static-frame
+// skip that keeps huge graphs cheap. Above this node count the per-node
+// wobble is sub-pixel anyway, so ambient stays off.
+const AMBIENT_MAX_NODES = 20_000;
 // Cursor-freeze zone for ambient drift: nodes within INNER px of the pointer
 // hold still (so a click target doesn't float away), ramping smoothly back to
 // full drift at OUTER px.
@@ -362,6 +367,13 @@ const TRAVERSAL_TRAIL_COLOR = '#38bdf8';
 /** Floor on the pulse's on-screen radius (px) so it stays visible when the
  *  graph is zoomed way out and individual nodes are sub-pixel. */
 const TRAVERSAL_MIN_PULSE_PX = 22;
+/** Above this many nodes+edges, arrivals repaint the hot state at most every
+ *  TRAVERSAL_REPAINT_MS instead of every frame — refreshHotState touches
+ *  EVERY node and edge, and a chain-lightning walk completes edges nearly
+ *  every frame, which at 50k nodes turns the whole walk into seconds of
+ *  full-graph repaints. Small graphs keep the per-arrival repaint. */
+const TRAVERSAL_REPAINT_THROTTLE_SCALE = 20_000;
+const TRAVERSAL_REPAINT_MS = 120;
 
 /** Strip control characters and truncate to LABEL_MAX_LENGTH. */
 function cleanLabel(raw: string): string {
@@ -462,6 +474,9 @@ export class ThreeRenderer {
    *  Lazily created, reused across walks; hidden when no edge is mid-cross. */
   private traversalHeadLine: LineSegments | null = null;
   private traversalHeadPos: Float32Array = new Float32Array(6);
+  /** Arrival repaint batching on big graphs (see TRAVERSAL_REPAINT_MS). */
+  private traversalRepaintPending = false;
+  private traversalLastRepaint = 0;
 
   // ── Build animation ────────────────────────────────────────────────
   private buildAnim: BuildAnimState | null = null;
@@ -3367,7 +3382,10 @@ export class ThreeRenderer {
    *  setLayoutSettled, which must NOT restore — see there.) */
   private refreshAmbient(): void {
     const shouldRun =
-      this.ambientEnabled && this.layoutSettled && this.nodeArray.length > 0;
+      this.ambientEnabled &&
+      this.layoutSettled &&
+      this.nodeArray.length > 0 &&
+      this.nodeArray.length <= AMBIENT_MAX_NODES;
     if (shouldRun === this.ambientActive) return;
     if (shouldRun) {
       this.captureAmbientHome();
@@ -5381,7 +5399,22 @@ export class ThreeRenderer {
       if (!e.arrived) anyPending = true;
     }
     if (pings) this.triggerPing(pings);
-    if (dirty) this.refreshHotState();
+    // Repaint on arrival — but on big graphs batch arrivals to at most one
+    // full-graph repaint per TRAVERSAL_REPAINT_MS (refreshHotState is
+    // O(nodes+edges)); the final flush fires as soon as nothing is pending.
+    if (dirty) this.traversalRepaintPending = true;
+    if (this.traversalRepaintPending) {
+      const throttle =
+        this.nodeArray.length + this.edges.length >
+        TRAVERSAL_REPAINT_THROTTLE_SCALE
+          ? TRAVERSAL_REPAINT_MS
+          : 0;
+      if (!anyPending || now - this.traversalLastRepaint >= throttle) {
+        this.traversalRepaintPending = false;
+        this.traversalLastRepaint = now;
+        this.refreshHotState();
+      }
+    }
     // Chained chat traversals keep appending to this timeline within one
     // session; once everything so far has arrived, drop the scanned-per-frame
     // backlog (the lit state lives in traversalLit*, not here).
@@ -5467,6 +5500,7 @@ export class ThreeRenderer {
     this.traversalLitNodes.clear();
     this.traversalLitEdges.clear();
     this.traversalPendingEdges.clear();
+    this.traversalRepaintPending = false;
     this.refreshHotState();
     this.requestRender();
   }

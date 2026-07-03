@@ -43,6 +43,31 @@ import type {
  *  lower = more tree-like. */
 const RELATIONAL_LINK_WEIGHT = 0.05;
 
+/** Multiset diff of layout links against what the worker was already sent,
+ *  keyed source|target (weight excluded — a flat-mode / layout-edge-type
+ *  change reclassifies weights without adding edges and must not re-send the
+ *  whole graph). Returns the not-yet-sent links and records them in `sent`.
+ *  "Touches a new node" is NOT a reliable new-link test: the pipeline's
+ *  resolve stage emits CALLS/IMPORTS edges between nodes that both streamed
+ *  in earlier batches. */
+function takeUnsentLinks(
+  links: { source: string; target: string; w: number }[],
+  sent: Map<string, number>,
+): { source: string; target: string; w: number }[] {
+  const counts = new Map<string, number>();
+  const out: { source: string; target: string; w: number }[] = [];
+  for (const l of links) {
+    const key = `${l.source}|${l.target}`;
+    const c = (counts.get(key) ?? 0) + 1;
+    counts.set(key, c);
+    if (c > (sent.get(key) ?? 0)) {
+      out.push(l);
+      sent.set(key, c);
+    }
+  }
+  return out;
+}
+
 export interface UseForceLayout3dResult {
   layoutReady: boolean;
   positions: Map<string, { x: number; y: number }>;
@@ -163,6 +188,10 @@ export function useForceLayout3d(
   }, []);
 
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
+  // source|target → count of links already sent to the live worker (init +
+  // add-nodes). Diffing against this is what catches resolve-stage edges that
+  // arrive after both endpoints (see takeUnsentLinks). Reset on full rebuild.
+  const sentLinkCountsRef = useRef<Map<string, number>>(new Map());
 
   const buildLayoutLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
@@ -207,6 +236,28 @@ export function useForceLayout3d(
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
 
     if (isSameNodes && workerRef.current) {
+      // Links can still be new with an unchanged node set: during a live
+      // build the resolve stage emits relational edges between
+      // already-streamed nodes, and a flush can carry ONLY those. They must
+      // reach the worker, or the layout — and the end-of-build reseed, which
+      // replays the worker's cached links — permanently lacks their pull.
+      const sameNodeLinks = buildLayoutLinks(nodeIdSet, allLinks);
+      const lateLinks = takeUnsentLinks(
+        sameNodeLinks,
+        sentLinkCountsRef.current,
+      );
+      if (lateLinks.length > 0) {
+        workerRef.current.postMessage({
+          type: 'add-nodes',
+          nodeIds: [],
+          links: lateLinks,
+          communities: communityData.assignments,
+          nodeTypes: {},
+          pinExisting: growBuildRef.current,
+        } satisfies Worker3DInMessage);
+        simRunningRef.current = true;
+        setSimRunning(true);
+      }
       // When Louvain (re)computes — including at the end of a live build — let
       // the layout cluster into communities so the result matches the finished
       // graph's shape.
@@ -230,9 +281,7 @@ export function useForceLayout3d(
       if (growBuildRef.current) liveBuiltRef.current = true;
       const newNodeIds = nodeIds.filter((id) => !prevIds.has(id));
       const links = buildLayoutLinks(nodeIdSet, allLinks);
-      const newLinks = links.filter(
-        (l) => !prevIds.has(l.source) || !prevIds.has(l.target),
-      );
+      const newLinks = takeUnsentLinks(links, sentLinkCountsRef.current);
       nodeOrderRef.current = [...nodeOrderRef.current, ...newNodeIds];
 
       const pos = positionsRef.current;
@@ -287,6 +336,7 @@ export function useForceLayout3d(
 
     if (allNodes.length === 0) {
       prevNodeIdsRef.current = new Set();
+      sentLinkCountsRef.current = new Map();
       return;
     }
 
@@ -298,6 +348,9 @@ export function useForceLayout3d(
     for (const id of nodeIds) pos.set(id, { x: 0, y: 0 });
 
     const links = buildLayoutLinks(nodeIdSet, allLinks);
+    // Fresh worker → fresh sent-set, seeded with the init payload.
+    sentLinkCountsRef.current = new Map();
+    takeUnsentLinks(links, sentLinkCountsRef.current);
 
     const worker = new Worker(
       new URL('../workers/forceLayout3dWorker.ts', import.meta.url),

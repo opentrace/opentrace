@@ -194,6 +194,36 @@ function pushAll<T>(dst: T[], src: readonly T[]): void {
   for (let i = 0; i < src.length; i++) dst.push(src[i]);
 }
 
+/** The sub-type fields carried on the live stream (see pushGraphDelta) —
+ *  everything the filter chips / default-hide read (graphFilterUtils
+ *  getSubType), and nothing else. */
+const LIVE_STREAM_PROP_KEYS = ['language', 'kind', 'registry'] as const;
+
+/** Serialize just the sub-type fields of a node's properties (empty string
+ *  when it has none) — the live stream stays lean, the filter UI stays real. */
+function leanPropertiesJson(
+  properties: Record<string, unknown> | undefined,
+): string {
+  if (!properties) return '';
+  let lean: Record<string, string> | null = null;
+  for (const key of LIVE_STREAM_PROP_KEYS) {
+    const value = properties[key];
+    if (typeof value === 'string' && value) (lean ??= {})[key] = value;
+  }
+  return lean ? JSON.stringify(lean) : '';
+}
+
+/** Prefix of the user-facing message for a fatal WASM out-of-memory failure.
+ *  Exposed (via isOomJobError) so consumers know the store must NOT be
+ *  queried again after this error — the WASM instance is likely corrupted
+ *  and another query would crash the tab. */
+const OOM_ERROR_MESSAGE_PREFIX = 'Repository too large for browser memory';
+
+/** Whether a job error message is the fatal browser-OOM failure. */
+export function isOomJobError(message: string | null | undefined): boolean {
+  return !!message && message.startsWith(OOM_ERROR_MESSAGE_PREFIX);
+}
+
 /** Repos below this file count parse on the main thread — spinning up a
  *  worker pool would cost more than it saves. Above it, parse in parallel. */
 const PARALLEL_EXTRACT_MIN_FILES = 40;
@@ -246,10 +276,12 @@ export class BrowserJobService implements JobService {
     let cancelled = false;
 
     // Live-build: push node/relationship batches as produced so the UI builds
-    // the graph during indexing. We send only id/type/name (NOT the properties
-    // blob) — the live view colours by type + labels by name and never reads
-    // properties, so serializing them here is pure indexing overhead. The full
-    // properties are restored by the authoritative loadGraph at GRAPH_READY.
+    // the graph during indexing. We send id/type/name plus ONLY the small
+    // sub-type fields (language/kind/registry) — the filter chips and the
+    // Variable/Dependency default-hide need those, and there is no
+    // authoritative full reload after a live build (holding every property
+    // blob in the JS heap is what OOM-crashed the tab on Grafana-scale repos).
+    // Full properties are fetched on demand per node (SidePanel).
     const pushGraphDelta = (
       nodes: {
         id: string;
@@ -273,7 +305,7 @@ export class BrowserJobService implements JobService {
           id: n.id,
           type: n.type,
           name: n.name,
-          propertiesJson: '', // omitted — restored by the authoritative load
+          propertiesJson: leanPropertiesJson(n.properties),
         })),
         relationships: rels.map((r) => ({
           id: r.id,
@@ -1097,7 +1129,7 @@ export class BrowserJobService implements JobService {
           typeof err === 'number'; // WASM abort codes are thrown as raw numbers
         const totalStats = storeStage?.stats();
         const userMessage = isOOM
-          ? `Repository too large for browser memory. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
+          ? `${OOM_ERROR_MESSAGE_PREFIX}. Indexed ${persistedNodes} of ${totalStats?.nodes ?? '?'} nodes. Try a smaller repository or use the CLI agent for large codebases.`
           : errMsg;
 
         // Don't emit GRAPH_READY on OOM — the WASM instance is likely

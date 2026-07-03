@@ -562,12 +562,12 @@ const GraphViewer = memo(
           // streaming: the burst would play on the skeleton, then the rest
           // streams in + the 3D layout develops, reading as a 2D plane
           // expanding to 3D. (Proper streaming+burst integration is deferred.)
-          // A live-built graph is already on screen and IS authoritative — skip
-          // both the build-animation burst AND a full loadGraph, either of which
+          // A live-built graph is already on screen — skip both the
+          // build-animation burst AND the loadGraph here, either of which
           // would reshuffle / "start over". endLiveStream already bumped the
-          // version, loaded stats, and restored node/edge properties in place
-          // (omitted from the live stream for indexing speed) WITHOUT changing
-          // the node set, so the renderer never relayouts.
+          // version + loaded stats, and itself reloads from the store in the
+          // cases where the live graph is NOT authoritative (the store held
+          // other repos before this job, cancel, recoverable error).
           if (liveGrewRef.current) {
             pendingMinimize.current = true;
             return;
@@ -1030,6 +1030,7 @@ const GraphViewer = memo(
             setLayoutMode={v.settings.setLayoutMode}
             mode3d={v.settings.mode3d}
             setMode3d={v.settings.setMode3d}
+            onUserAdjust={handleUserAdjust}
             onResetGraph={() => {
               const D = GRAPH_SETTING_DEFAULTS;
               // 0. Drop the active-preset highlight — reset returns to the bare

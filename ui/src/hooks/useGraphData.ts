@@ -148,9 +148,13 @@ export interface GraphDataState {
     nodes: IndexedNode[],
     relationships: IndexedRelationship[],
   ) => void;
-  /** End live-build. Keeps the built graph (authoritative load takes over in
-   *  place); pass `{ clear: true }` to wipe it (job cancelled). */
-  endLiveStream: (opts?: { clear?: boolean }) => void;
+  /** End live-build. Keeps the built graph; pass `{ clear: true }` to wipe it
+   *  (job cancelled). `reload` controls the follow-up load from the store:
+   *  `true` forces it (cancel / recoverable error — the store is intact and
+   *  authoritative), `false` forbids it (OOM — another store query would
+   *  crash the tab), and unset reloads only when the store already held data
+   *  before this job (so a second repo doesn't leave the first off screen). */
+  endLiveStream: (opts?: { clear?: boolean; reload?: boolean }) => void;
 }
 
 export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
@@ -177,6 +181,11 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
 
   // ── Live-build streaming buffers ──────────────────────────────────────────
   const liveActiveRef = useRef(false);
+  // Whether the store already held data when the live stream started — a live
+  // stream only carries the CURRENT job's nodes, so ending on a pre-populated
+  // store means the on-screen graph is a subset and needs an authoritative
+  // reload (see endLiveStream).
+  const hadPriorDataRef = useRef(false);
   const liveSeenNodes = useRef<Set<string>>(new Set());
   const liveSeenLinks = useRef<Set<string>>(new Set());
   const livePendNodes = useRef<GraphNode[]>([]);
@@ -229,6 +238,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   const startLiveStream = useCallback(() => {
     loadSeqRef.current++; // invalidate any in-flight loadGraph
     liveActiveRef.current = true;
+    hadPriorDataRef.current = store.hasData();
     liveSeenNodes.current = new Set();
     liveSeenLinks.current = new Set();
     livePendNodes.current = [];
@@ -239,7 +249,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     setGraphData({ nodes: [], links: [] });
     setLoading(false);
     setIsStreaming(true);
-  }, []);
+  }, [store]);
 
   const pushLiveBatch = useCallback(
     (nodes: IndexedNode[], relationships: IndexedRelationship[]) => {
@@ -250,9 +260,22 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
         if (seen.has(n.id)) continue;
         seen.add(n.id);
         addedNode = true;
-        // Properties are intentionally omitted from the live stream (perf) —
-        // restored by the authoritative loadGraph at the end.
-        livePendNodes.current.push({ id: n.id, name: n.name, type: n.type });
+        // The stream carries only the lean sub-type fields (language / kind /
+        // registry — what the filter chips and default-hide read); the full
+        // property blobs stay out of the JS heap (they OOM the tab on huge
+        // repos) and are fetched on demand per node instead.
+        const node: GraphNode = { id: n.id, name: n.name, type: n.type };
+        if (n.propertiesJson) {
+          try {
+            node.properties = JSON.parse(n.propertiesJson) as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            // lean stream — a malformed blob just means no sub-type chips
+          }
+        }
+        livePendNodes.current.push(node);
       }
       for (const r of relationships) {
         const key = `${r.sourceId}|${r.type}|${r.targetId}`;
@@ -290,8 +313,13 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     [flushLive],
   );
 
+  // loadGraph is declared below (it needs the error/success plumbing defined
+  // around it); the live-stream callbacks above/below only ever call it after
+  // mount, so a ref bridges the ordering.
+  const loadGraphRef = useRef<GraphDataState['loadGraph'] | null>(null);
+
   const endLiveStream = useCallback(
-    (opts?: { clear?: boolean }) => {
+    (opts?: { clear?: boolean; reload?: boolean }) => {
       if (!liveActiveRef.current) return;
       liveActiveRef.current = false;
       if (liveFlushTimer.current) {
@@ -302,6 +330,12 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
         livePendNodes.current = [];
         livePendLinks.current = [];
         setGraphData({ nodes: [], links: [] });
+        // A cancelled job leaves the store intact (batches were flushed as
+        // they were produced) — reload it so the canvas doesn't blank out and
+        // bounce the user to the Add Repo modal over a perfectly good graph.
+        if (opts.reload !== false && store.hasData()) {
+          loadGraphRef.current?.();
+        }
       } else {
         // Flush ALL remaining (bypass metering) so the final graph is complete.
         const ns = livePendNodes.current;
@@ -314,25 +348,40 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
             links: ls.length ? prev.links.concat(ls) : prev.links,
           }));
         }
-        // The live-built graph IS the authoritative graph (same store) — bump
-        // the version so presets apply + load stats, WITHOUT a loadGraph that
-        // would replace graphData and reshuffle the layout the user just
-        // watched build. (GraphViewer skips its post-index loadGraph for these.)
+        // The live-built graph IS the authoritative graph when this job was
+        // the only content (the common single-repo case) — bump the version so
+        // presets apply + load stats, WITHOUT a loadGraph that would replace
+        // graphData and reshuffle the layout the user just watched build.
+        // (GraphViewer skips its post-index loadGraph for these.)
         //
         // graphData is deliberately kept LEAN — the live stream carries only
-        // id/name/type for nodes and source/target/label for links, NOT the
-        // property blobs. On a huge repo (e.g. Grafana, ~50k nodes / 100k+
-        // edges) holding every property blob in the JS heap — on top of the
-        // WASM DB, the force-layout worker, and the renderer buffers — is what
-        // OOM-crashes the tab (it self-reloads). Properties are fetched on
-        // demand (per selected node, via the store's LRU-cached getNode) in
-        // SidePanel instead, so we render EVERY node without ever materializing
-        // the full property set in memory.
+        // id/name/type + the small sub-type fields for nodes and
+        // source/target/label for links, NOT the property blobs. On a huge
+        // repo (e.g. Grafana, ~50k nodes / 100k+ edges) holding every property
+        // blob in the JS heap — on top of the WASM DB, the force-layout
+        // worker, and the renderer buffers — is what OOM-crashes the tab (it
+        // self-reloads). Properties are fetched on demand (per selected node,
+        // via the store's LRU-cached getNode) in SidePanel instead, so we
+        // render EVERY node without ever materializing the full property set
+        // in memory.
         setGraphVersion((v) => v + 1);
         store
           .fetchStats()
           .then(setStats)
           .catch(() => {});
+        // BUT: the stream only carried THIS job's nodes. If the store held
+        // other data before the job (a second repo, a re-index over existing
+        // content) or the caller demands it (recoverable job error — the
+        // stream may have died mid-graph), the on-screen graph is a subset;
+        // reload the authoritative store graph, accepting the relayout.
+        // reload === false (OOM) forbids touching the store again.
+        if (
+          opts?.reload !== false &&
+          (opts?.reload || hadPriorDataRef.current) &&
+          store.hasData()
+        ) {
+          loadGraphRef.current?.();
+        }
       }
       liveDeferredLinks.current = [];
       liveSeenNodes.current = new Set();
@@ -524,6 +573,10 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     },
     [store],
   );
+
+  useEffect(() => {
+    loadGraphRef.current = loadGraph;
+  }, [loadGraph]);
 
   useEffect(() => {
     // Only fetch on mount if the DB has been initialized (i.e. data has been

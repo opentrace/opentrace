@@ -251,6 +251,12 @@ interface GraphControlsBarProps {
    *  settings-and-state reset — used by callers that wire it to
    *  `settings.resetSettings`. */
   onResetGraph?: () => void;
+
+  /** Called when the user hand-adjusts a persisted view setting (layout
+   *  cycle, 2D/3D). Callers use it to drop the active-preset highlight —
+   *  otherwise the stored preset re-applies on the next load and silently
+   *  reverts the user's choice. */
+  onUserAdjust?: () => void;
 }
 
 /** Bottom-right control bar with mobile toggle and zoom/layout/3D buttons. */
@@ -269,6 +275,7 @@ export const GraphControlsBar = ({
   setMode3d,
   onReplayBuild,
   onResetGraph,
+  onUserAdjust,
 }: GraphControlsBarProps) => {
   return (
     <div className="graph-controls">
@@ -373,6 +380,7 @@ export const GraphControlsBar = ({
               LAYOUT_CYCLE[
                 (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
               ];
+            onUserAdjust?.();
             setLayoutMode(next);
             canvasRef.current?.setLayoutMode?.(next);
           }}
@@ -389,6 +397,7 @@ export const GraphControlsBar = ({
           className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
             const next = !mode3d;
+            onUserAdjust?.();
             setMode3d(next);
             canvasRef.current?.set3DMode?.(next);
           }}

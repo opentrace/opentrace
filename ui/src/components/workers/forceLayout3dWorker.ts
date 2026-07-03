@@ -1599,9 +1599,9 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         nodeIdToIndex.set(id, simNodes.length - 1);
         added++;
       }
-      if (added === 0) break;
 
       const updatedIds = new Set(simNodes.map((n) => n.id));
+      let linksAdded = 0;
       for (const link of msg.links) {
         if (updatedIds.has(link.source) && updatedIds.has(link.target)) {
           cachedLinks.push({
@@ -1609,8 +1609,14 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
             target: link.target,
             w: link.w,
           });
+          linksAdded++;
         }
       }
+      // Link-only messages are real work too: the pipeline's resolve stage
+      // emits CALLS/IMPORTS edges between already-added nodes, and dropping
+      // them here would leave cachedLinks (which the end-of-build reseed
+      // replays) permanently missing their relational pull.
+      if (added === 0 && linksAdded === 0) break;
 
       sim.stop();
       stopStreaming();

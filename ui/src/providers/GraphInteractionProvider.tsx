@@ -175,7 +175,7 @@ function InternalGraphInteractionProvider({
 }: {
   children: ReactNode;
 }) {
-  const { graphData, graphVersion, isStreaming } = useGraph();
+  const { graphData, graphVersion, isStreaming, lastSearchQuery } = useGraph();
 
   // Selection
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -316,15 +316,19 @@ function InternalGraphInteractionProvider({
   }, [graphData.nodes]);
 
   // ─── First-load defaults: hide Dependency sub-types ──────────────────
-  // Runs once per successful graph load (graphVersion bump). Tracks the
-  // last applied version so re-loads (e.g. switching repositories or
-  // re-indexing) re-apply the defaults — the original ref-only flag was
-  // session-scoped, which broke for the second repo a user opened.
+  // Runs once per successful FULL graph load (graphVersion bump with no
+  // query). Tracks the last applied version so re-loads (e.g. switching
+  // repositories or re-indexing) re-apply the defaults — the original
+  // ref-only flag was session-scoped, which broke for the second repo a
+  // user opened. Search / hop refinements (query set) are skipped: they bump
+  // graphVersion too, and re-hiding Variables the user just unhid on every
+  // search would fight their explicit choice.
   const lastDefaultsVersion = useRef(0);
   useEffect(() => {
     if (graphVersion === 0) return;
     if (lastDefaultsVersion.current === graphVersion) return;
     lastDefaultsVersion.current = graphVersion;
+    if (lastSearchQuery) return;
     // Hide Variables and Dependencies by default — Variables are the bulk of
     // the nodes (often >half) and aren't part of the structural view people
     // normally look at (files/classes/functions); Dependencies are registry
@@ -345,7 +349,7 @@ function InternalGraphInteractionProvider({
       }
       return next;
     });
-  }, [graphVersion, availableSubTypes]);
+  }, [graphVersion, availableSubTypes, lastSearchQuery]);
 
   // ─── Derived: communities (Louvain) ──────────────────────────────────
   // Suppressed while live-building (per-batch Louvain is the dominant cost);

@@ -23,6 +23,7 @@ import type {
   IndexedRelationship,
 } from '../gen/opentrace/v1/agent_service';
 import type { JobMessage, JobService, JobStream } from './types';
+import { isOomJobError } from './browserJobService';
 
 /** Hooks for the live-build graph stream — the browser pipeline emits node /
  *  relationship batches inline with progress so the graph builds during index. */
@@ -31,7 +32,7 @@ export interface JobStreamHandlers {
     nodes: IndexedNode[],
     relationships: IndexedRelationship[],
   ) => void;
-  onLiveEnd?: (opts?: { clear?: boolean }) => void;
+  onLiveEnd?: (opts?: { clear?: boolean; reload?: boolean }) => void;
 }
 
 export type StageStatus = 'pending' | 'active' | 'completed';
@@ -203,7 +204,14 @@ export function useJobStream(
               });
               break;
             case JobEventKind.JOB_EVENT_KIND_ERROR:
-              handlersRef.current?.onLiveEnd?.();
+              // A failed job may have persisted a partial graph before dying —
+              // reload from the store so the canvas shows the authoritative
+              // state rather than a stranded live fragment. EXCEPT on OOM:
+              // the WASM instance is likely corrupted and another store query
+              // would crash the tab again.
+              handlersRef.current?.onLiveEnd?.({
+                reload: !isOomJobError(event.message),
+              });
               setState((s) => {
                 // Mark all remaining active stages as completed to stop spinners
                 const finalStages = { ...s.stages };
