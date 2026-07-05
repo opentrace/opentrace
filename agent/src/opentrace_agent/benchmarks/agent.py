@@ -972,3 +972,5 @@ def run_swe_bench_cli(
         if verbose:
             click.echo()
         click.echo(report.summary(verbose=verbose))
+
+# codehub-agent blast-radius smoke test (PR will be closed)
