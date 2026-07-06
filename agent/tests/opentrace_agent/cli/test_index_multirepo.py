@@ -265,6 +265,49 @@ class TestMultiRepoIndexing:
             f"the second index appears to have replaced rather than appended."
         )
 
+    def test_reindex_updates_symbols_and_drops_ghosts(self, tmp_path: Path) -> None:
+        """Regression: staging is seeded from the live DB and the bulk-import
+        path drops nodes whose id already exists, so re-indexing a changed
+        repo kept stale line numbers and deleted symbols persisted as
+        ghosts. The repo's rows must be wiped in staging before the run."""
+        db_path = tmp_path / "index.db"
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "keep.py").write_text("def keep():\n    return 1\n")
+        (src / "gone.py").write_text("def gone():\n    return 2\n")
+
+        _run_indexing_pipeline(
+            source_path=src,
+            repo_id="repo-x",
+            db_path=str(db_path),
+            batch_size=200,
+            verbose=False,
+        )
+
+        # Delete one file and shift the other's function down two lines.
+        (src / "gone.py").unlink()
+        (src / "keep.py").write_text("\n\ndef keep():\n    return 1\n")
+
+        _run_indexing_pipeline(
+            source_path=src,
+            repo_id="repo-x",
+            db_path=str(db_path),
+            batch_size=200,
+            verbose=False,
+        )
+
+        with GraphStore(str(db_path), read_only=True) as gs:
+            # Ghost rows from the deleted file are gone.
+            assert gs.get_node("repo-x/gone.py") is None
+            functions = gs.list_nodes("Function", limit=100)
+            ghost_fns = [n for n in functions if n["id"].startswith("repo-x/gone.py")]
+            assert ghost_fns == [], f"Deleted file's symbols persisted: {ghost_fns}"
+
+            # The surviving function's properties were updated, not kept stale.
+            keep_fns = [n for n in functions if n["id"].startswith("repo-x/keep.py")]
+            assert len(keep_fns) == 1
+            assert keep_fns[0]["properties"]["start_line"] == 3
+
     def test_reindex_same_repo_does_not_duplicate(self, tmp_path: Path) -> None:
         db_path = tmp_path / "index.db"
         repo = FIXTURE_DIR / "level1"

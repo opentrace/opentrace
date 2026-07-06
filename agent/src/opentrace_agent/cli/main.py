@@ -398,6 +398,15 @@ def _run_indexing_pipeline(
             _seed_staging_from_live(db_path, staging_db)
 
             with GraphStore(staging_db) as graph_store:
+                # Staging is seeded from the live DB, so a re-index of an
+                # already-indexed repo would otherwise append into stale rows:
+                # the bulk-import path drops nodes whose id already exists
+                # (never updating line numbers/signatures) and deleted symbols
+                # would persist as ghosts. Wipe this repo's rows first —
+                # other repos and shared pkg:* Dependency nodes are untouched.
+                deleted = graph_store.delete_repo(repo_id)
+                if deleted.get("nodes_deleted"):
+                    click.echo(f"Re-index: cleared {deleted['nodes_deleted']} existing nodes for '{repo_id}'")
                 store = GraphStoreAdapter(graph_store, batch_size=batch_size)
 
                 click.echo(f"Indexing {source_path} ...")
