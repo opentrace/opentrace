@@ -39,20 +39,20 @@ class TestBuildEntities:
                 }
             ],
         }
-        nodes, edges = build_entities(result, original_name="doc.md", source_id="source::abc", vault="v")
+        nodes, edges = build_entities(result, original_name="doc.md", source_id="corpus::abc", vault="v")
 
         by_id = {n.id: n for n in nodes}
         vid = make_entity_id("doc", "Validation")
         kid = make_entity_id("doc", "Karen")
         assert by_id[vid].type == "Idea"
         assert by_id[vid].properties["description"] == "checking inputs"
-        assert by_id[vid].properties["derived_from"] == "source::abc"
+        assert by_id[vid].properties["derived_from"] == "corpus::abc"
         assert by_id[vid].properties["vault"] == "v"
         assert by_id[kid].type == "Person"
 
         derived = [e for e in edges if e.type == "DERIVED_FROM"]
         assert {e.source_id for e in derived} == {vid, kid}
-        assert all(e.target_id == "source::abc" for e in derived)
+        assert all(e.target_id == "corpus::abc" for e in derived)
 
         semantic = [e for e in edges if e.type == "SEMANTIC_EDGE"]
         assert len(semantic) == 1
@@ -61,8 +61,8 @@ class TestBuildEntities:
         assert semantic[0].properties["relation"] == "wrote"
 
     def test_no_entities_yields_nothing(self):
-        assert build_entities({}, original_name="x.md", source_id="source::s", vault=None) == ([], [])
-        assert build_entities({"entities": []}, original_name="x.md", source_id="source::s", vault=None) == ([], [])
+        assert build_entities({}, original_name="x.md", source_id="corpus::s", vault=None) == ([], [])
+        assert build_entities({"entities": []}, original_name="x.md", source_id="corpus::s", vault=None) == ([], [])
 
 
 class TestParseEntities:

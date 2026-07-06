@@ -13,7 +13,7 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
     "CREATE NODE TABLE IF NOT EXISTS WikiVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING)",
     "CREATE NODE TABLE IF NOT EXISTS WikiPage(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS Source(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS CorpusDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)",
     "CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)",
     "CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)",
@@ -29,12 +29,12 @@ NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
 NODE_TYPE_VARIABLE: Final[str] = "Variable"
 NODE_TYPE_WIKI_VAULT: Final[str] = "WikiVault"
 NODE_TYPE_WIKI_PAGE: Final[str] = "WikiPage"
-NODE_TYPE_SOURCE: Final[str] = "Source"
+NODE_TYPE_CORPUS_DOC: Final[str] = "CorpusDoc"
 NODE_TYPE_COMMUNITY: Final[str] = "Community"
 NODE_TYPE_HYPEREDGE: Final[str] = "Hyperedge"
 NODE_TYPE_INDEX_METADATA: Final[str] = "IndexMetadata"
 
-NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["WikiVault"] | Literal["WikiPage"] | Literal["Source"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
+NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["WikiVault"] | Literal["WikiPage"] | Literal["CorpusDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
 
 NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_REPOSITORY,
@@ -47,7 +47,7 @@ NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_VARIABLE,
     NODE_TYPE_WIKI_VAULT,
     NODE_TYPE_WIKI_PAGE,
-    NODE_TYPE_SOURCE,
+    NODE_TYPE_CORPUS_DOC,
     NODE_TYPE_COMMUNITY,
     NODE_TYPE_HYPEREDGE,
     NODE_TYPE_INDEX_METADATA,
@@ -157,7 +157,7 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("confidence", "FLOAT"),
         ("staleSince", "STRING"),
     ],
-    "Source": [
+    "CorpusDoc": [
         ("id", "STRING"),
         ("name", "STRING"),
         ("sha256", "STRING"),
@@ -165,6 +165,11 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("contentType", "STRING"),
         ("sizeBytes", "INT64"),
         ("acquiredAt", "STRING"),
+        ("corpusPath", "STRING"),
+        ("title", "STRING"),
+        ("oneLineSummary", "STRING"),
+        ("summary", "STRING"),
+        ("path", "STRING"),
     ],
     "Community": [
         ("id", "STRING"),
@@ -306,7 +311,7 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "confidence",
         "staleSince",
     ],
-    "Source": [
+    "CorpusDoc": [
         "id",
         "name",
         "sha256",
@@ -314,6 +319,11 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "contentType",
         "sizeBytes",
         "acquiredAt",
+        "corpusPath",
+        "title",
+        "oneLineSummary",
+        "summary",
+        "path",
     ],
     "Community": [
         "id",
@@ -455,6 +465,15 @@ def rel_schema_cites(pairs: list[RelPair]) -> str:
     return f"CREATE REL TABLE IF NOT EXISTS CITES({_join_rel_pairs(pairs)}, id STRING)"
 
 
+def rel_schema_mirrors(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Mirrors relationships.
+
+    Pass every (from, to) pair the MIRRORS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS MIRRORS({_join_rel_pairs(pairs)}, id STRING)"
+
+
 def rel_schema_mentions(pairs: list[RelPair]) -> str:
     """Return the CREATE REL TABLE DDL for Mentions relationships.
 
@@ -483,10 +502,11 @@ REL_TYPE_DEPENDS_ON: Final[str] = "DEPENDS_ON"
 REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
 REL_TYPE_LINKS_TO: Final[str] = "LINKS_TO"
 REL_TYPE_CITES: Final[str] = "CITES"
+REL_TYPE_MIRRORS: Final[str] = "MIRRORS"
 REL_TYPE_MENTIONS: Final[str] = "MENTIONS"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
-RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["CITES"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
+RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["CITES"] | Literal["MIRRORS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
 
 REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_SEMANTIC_EDGE,
@@ -499,6 +519,7 @@ REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_DERIVED_FROM,
     REL_TYPE_LINKS_TO,
     REL_TYPE_CITES,
+    REL_TYPE_MIRRORS,
     REL_TYPE_MENTIONS,
     REL_TYPE_TARGETS_REPO,
 ]
@@ -542,6 +563,9 @@ REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
         ("id", "STRING"),
     ],
     "CITES": [
+        ("id", "STRING"),
+    ],
+    "MIRRORS": [
         ("id", "STRING"),
     ],
     "MENTIONS": [
@@ -593,6 +617,9 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
     "CITES": [
         "id",
     ],
+    "MIRRORS": [
+        "id",
+    ],
     "MENTIONS": [
         "id",
     ],
@@ -611,7 +638,7 @@ _COLUMN_TO_PROTO: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Variable": {"startLine": "start_line", "endLine": "end_line", "typeAnnotation": "type_annotation"},
     "WikiVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at"},
     "WikiPage": {"oneLineSummary": "one_line_summary", "lastUpdated": "last_updated", "staleSince": "stale_since"},
-    "Source": {"contentType": "content_type", "sizeBytes": "size_bytes", "acquiredAt": "acquired_at"},
+    "CorpusDoc": {"contentType": "content_type", "sizeBytes": "size_bytes", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
     "Community": {"communityId": "community_id", "isGod": "is_god"},
     "Hyperedge": {"confidenceScore": "confidence_score", "sourceFile": "source_file"},
     "IndexMetadata": {"indexedAt": "indexed_at", "durationSeconds": "duration_seconds", "repoId": "repo_id", "repoPath": "repo_path", "commitSha": "commit_sha", "commitMessage": "commit_message", "sourceUri": "source_uri", "opentraceaiVersion": "opentraceai_version", "nodesCreated": "nodes_created", "relationshipsCreated": "relationships_created", "filesProcessed": "files_processed", "classesExtracted": "classes_extracted", "functionsExtracted": "functions_extracted"},
@@ -627,7 +654,7 @@ _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Variable": {"start_line": "startLine", "end_line": "endLine", "type_annotation": "typeAnnotation"},
     "WikiVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt"},
     "WikiPage": {"one_line_summary": "oneLineSummary", "last_updated": "lastUpdated", "stale_since": "staleSince"},
-    "Source": {"content_type": "contentType", "size_bytes": "sizeBytes", "acquired_at": "acquiredAt"},
+    "CorpusDoc": {"content_type": "contentType", "size_bytes": "sizeBytes", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
     "Community": {"community_id": "communityId", "is_god": "isGod"},
     "Hyperedge": {"confidence_score": "confidenceScore", "source_file": "sourceFile"},
     "IndexMetadata": {"indexed_at": "indexedAt", "duration_seconds": "durationSeconds", "repo_id": "repoId", "repo_path": "repoPath", "commit_sha": "commitSha", "commit_message": "commitMessage", "source_uri": "sourceUri", "opentraceai_version": "opentraceaiVersion", "nodes_created": "nodesCreated", "relationships_created": "relationshipsCreated", "files_processed": "filesProcessed", "classes_extracted": "classesExtracted", "functions_extracted": "functionsExtracted"},

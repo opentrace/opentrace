@@ -15,9 +15,9 @@
 """Deterministic salience extraction from raw markdown.
 
 Used by the Plan stage in two-tier mode as a cheap belt-and-braces against
-LLM summarizer drift. The Plan prompt receives the file-summary body
-(clean structured content) plus the output of this extractor (long-tail
-entities the summarizer may have compressed away).
+LLM extraction drift. The Plan prompt receives the raw source markdown plus
+the output of this extractor (long-tail entities the LLM inventory may have
+compressed away).
 
 Pure function, no LLM. Runs in ~milliseconds on document-sized inputs.
 """

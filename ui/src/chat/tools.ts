@@ -332,7 +332,7 @@ const EXPLORE_DESC =
 const PROVENANCE_DESC =
   'Return the trust chain for a node. For wiki pages: agent / model / ' +
   'session / confidence stamped at compile time, plus the citation chain ' +
-  'back through file-summary pages to the original Source artefacts. ' +
+  'back to the original Source artefacts. ' +
   'For code nodes: commit_sha + indexer_version from the per-repo metadata, ' +
   'plus file_path and line_range from the node itself.';
 
@@ -358,7 +358,7 @@ const FIND_VIA_DESC =
   'Find all (A, B) pairs where A is startType, B is targetType, and a ' +
   'relationship of edgeType points from A to B. Examples: ' +
   '("Function","CALLS","Endpoint") for "what hits the API"; ' +
-  '("WikiPage","CITES","Source") for "what wiki pages cite real sources." ' +
+  '("WikiPage","CITES","CorpusDoc") for "what wiki pages cite real documents." ' +
   'Cheaper than calling traverse_graph once per source node.';
 
 const COUNT_BY_DESC =

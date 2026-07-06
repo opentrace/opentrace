@@ -37,8 +37,8 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 
 ### OT-1732 additions
 
-- Node types: `WikiVault`, `WikiPage`, `Source` (vault domain — see `wiki/CLAUDE.md`)
-- Rel types: `LINKS_TO` (wiki-link), `CITES` (wiki provenance)
+- Node types: `WikiVault`, `WikiPage`, `CorpusDoc` (vault domain — see `wiki/CLAUDE.md`)
+- Rel types: `LINKS_TO` (wiki-link), `CITES` (wiki provenance), `MIRRORS` (CorpusDoc → File twin)
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
 
 ## Property Marshalling
@@ -64,7 +64,7 @@ semantic / vector search at this layer — that's handled in the UI's
 - `relationship_types: list[str] | None` — allowlist set; supersedes the singular
 - `vault_scope: str | None` — when set, neighbours are kept only when their
   `vault` property matches (Phase 4 stamps `vault` on every WikiVault/
-  WikiPage/Source)
+  WikiPage; CorpusDocs are vault-scoped via CONTAINS edges)
 - `confidence_threshold: float | None` — when >0, rel `properties.confidence`
   below this is filtered out (matches the resolver-stamped `CALLS` confidence
   today; wiki-side `confidence` is currently a placeholder per OT-1744)

@@ -25,11 +25,10 @@ export interface VaultEntry {
   attached: boolean;
 }
 
-/** ``"source"`` and ``"source_summary"`` are legacy values for what we now
- *  call ``"file_summary"``; the backend migrates legacy vaults transparently
- *  on read but the UI keeps them in the union so an unmigrated payload (e.g.
- *  a stale graph mirror) still type-checks if encountered. */
-export type VaultPageKind = 'file_summary' | 'source_summary' | 'source' | 'concept';
+/** Concept pages are the only page kind. Legacy vaults may carry other
+ *  values (``"file_summary"``, ``"source_summary"``, ``"source"``) but the
+ *  UI treats every page as a concept regardless. */
+export type VaultPageKind = 'concept';
 
 export interface VaultPageMeta {
   slug: string;
@@ -37,8 +36,7 @@ export interface VaultPageMeta {
   one_line_summary: string;
   revision: number;
   last_updated: string;
-  /** Old vaults compiled before the source/concept split lack this field;
-   *  treat absent as "concept". */
+  /** Old vaults may lack this field; treat absent as "concept". */
   kind?: VaultPageKind;
 }
 

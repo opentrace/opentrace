@@ -94,7 +94,7 @@ class TestWriteAndLoadRoundTrip:
         rel = write_source_markdown(db, "src:abc", original)
         node = {
             "id": "src:abc",
-            "type": "Source",
+            "type": "CorpusDoc",
             "name": "Topic",
             "properties": {
                 "source_uri": original.source_uri,

@@ -9,8 +9,8 @@ The graph organises into three domains:
 | Domain | What lives there | Produced by |
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
-| **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --extract-entities` (LLM) |
-| **page** | `WikiVault`, `WikiPage`, `Source` | `opentraceai index --build-pages` (Plan + Execute) |
+| **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
+| **page** | `WikiVault`, `WikiPage`, `CorpusDoc` | `opentraceai index --wiki` (Plan + Execute) |
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -82,9 +82,9 @@ All entity-type nodes share the same shape:
 
 - `id` — `<source-stem>_<entity-slug>` (lowercased, [a-z0-9_])
 - `name` — human-readable label
-- `derived_from` — id of the source File or Source the entity came from
-- `source_uri` — copied from the source for quick reference
-- `vault` — vault name when produced via `--build-pages`
+- `derived_from` — id of the `CorpusDoc` the entity came from
+- `source_uri` — copied from the originating doc for quick reference
+- `vault` — vault name when produced via `--wiki`
 
 The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) is the node type itself.
 
@@ -105,28 +105,31 @@ A named collection of compiled pages (one per disk vault dir).
 
 #### `WikiPage`
 
-A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — `concept/usage.md` or `file-summary/usage.md`. The kind folder is the namespace: a concept and a file-summary page can share a title without colliding.
+A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `CorpusDoc` node (see below) with the raw body in the corpus.
 
 - `id` — `<vault>::<slug>` (e.g. `kb::concept/revenue`)
 - `name` — page title
-- `slug` — `<kind_dir>/<base>` (e.g. `concept/revenue`, `file-summary/q4-report`)
-- `kind` (`"file_summary"` | `"concept"`), `one_line_summary`, `revision`, `last_updated`
+- `slug` — `<kind_dir>/<base>` (e.g. `concept/revenue`)
+- `kind` (`"concept"`), `one_line_summary`, `revision`, `last_updated`
 - `vault` — owning vault name
 - Provenance (stamped at compile time): `agent`, `model`, `session`, `confidence` (0.0–1.0), `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- `stale_since` — ISO-8601 timestamp set by autoprune when a cited Source was removed but the page still has other citations
+- `stale_since` — ISO-8601 timestamp set by autoprune when a cited CorpusDoc was removed but the page still has other citations
 
-`file_summary` pages get `EXTRACTED` / 1.0 confidence (restatement of source bytes). `concept` pages default to `INFERRED` / 0.75 (LLM synthesis across sources). The Execute prompt can self-rate; future work may surface `AMBIGUOUS` results.
+`concept` pages default to `INFERRED` / 0.75 confidence (LLM synthesis across sources). The Execute prompt can self-rate; future work may surface `AMBIGUOUS` results.
 
-#### `Source`
+#### `CorpusDoc`
 
-A raw ingested artifact — both wiki uploads and `index --extract-entities` use this shape.
+A raw ingested artifact — every doc ingested by `index --wiki` (wiki uploads included) uses this shape.
 
-- `id` — `source::<sha256-of-raw-bytes>`
+- `id` — `corpus::<sha256-of-raw-bytes>`
 - `name` — original filename or title
+- `title` — navigation label derived from the filename (set by the per-doc DocExtraction call)
+- `one_line_summary` — LLM-written one-liner; `summary` carries a copy so the label feeds FTS via `search_text`
 - `sha256`, `filename`, `content_type` (MIME), `size_bytes`, `acquired_at`
-- `corpus_path` — relative path to the body file in `.opentrace/corpus/`
+- `corpus_path` — relative path to the body file in `.opentrace/corpus/` (readable via the `load_source` tool)
+- `path` — repo-relative path, stamped (alongside the `MIRRORS` edge) when the doc came from a repo walk
 - `source_uri` — original URL when ingested from web; file path when from disk
-- `vault` — owning vault name (set when produced via `--build-pages`)
+- `vault` — owning vault name (set when produced via `--wiki`)
 
 ### Auxiliary
 
@@ -157,7 +160,7 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `WikiVault → WikiPage/Source` |
+| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `WikiVault → WikiPage/CorpusDoc` |
 | `DEFINES` | container → symbol | `File → Class/Function`, `Class → Function`, `Class → Variable` |
 | `CALLS` | `Function → Function` | Resolved call via 7-strategy resolver |
 | `IMPORTS` | `File → Dependency` | Resolved import |
@@ -167,21 +170,24 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `DERIVED_FROM` | entity → Source/File | Entity came from analyzing this artifact. Carries `transform="llm_extraction"`. Walked by `retrieval.provenance` for the derived branch |
+| `DERIVED_FROM` | entity → CorpusDoc | Entity came from analyzing this doc. Carries `transform="llm_extraction"`. Walked by `retrieval.provenance` for the derived branch |
 | `SEMANTIC_EDGE` | entity → entity | LLM-proposed relationship. Carries `relation`, `confidence` tier, `confidence_score`, `source_file`, optional `source_location`, optional `weight` |
+
+Entities derive from CorpusDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
 
 ### Page provenance
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CITES` | concept → file_summary, file_summary → Source | Provenance chain. `retrieval.provenance` walks this for wiki nodes |
+| `CITES` | concept page → CorpusDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes |
 | `LINKS_TO` | WikiPage → WikiPage | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
 
 ### Cross-layer
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | WikiPage → entity | Page body contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-page-build via name match |
+| `MENTIONS` | WikiPage/CorpusDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match |
+| `MIRRORS` | CorpusDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the CorpusDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
 
 ### Auxiliary
 
@@ -196,7 +202,7 @@ All confidence values snap to the discrete rubric, never the soft 0.5 default:
 
 | Tier | Score set | When |
 |---|---|---|
-| `EXTRACTED` | `{1.0}` | The source states the relationship itself — a reader could point at the line that asserts it. Also used for `file_summary` pages, which restate source content |
+| `EXTRACTED` | `{1.0}` | The source states the relationship itself — a reader could point at the line that asserts it |
 | `INFERRED` | `{0.55, 0.65, 0.75, 0.85, 0.95}` | Concluded from context rather than from any explicit statement. Usually right, weighted below EXTRACTED. `concept` pages default to 0.75 |
 | `AMBIGUOUS` | `{0.1, 0.15, 0.2, 0.25, 0.3}` | A candidate the producer could neither confirm nor rule out — kept so review tooling can surface it rather than lose it |
 
@@ -220,7 +226,7 @@ Every node in the page or entity domain produced from a vault carries a `vault=<
 | `<stem>_<entity-slug>` | Idea / Service / Module / Paper / Person / Event |
 | `vault::<name>` | `WikiVault` |
 | `<vault>::<kind_dir>/<base>` | `WikiPage` (e.g. `kb::concept/revenue`) |
-| `source::<sha256>` | `Source` |
+| `corpus::<sha256>` | `CorpusDoc` |
 | `_meta:index:<repo_id>` | `IndexMetadata` |
 
-The `source::` ID is content-hashed — identical content via different ingestion paths lands on one node.
+The `corpus::` ID is content-hashed — identical content via different ingestion paths lands on one node.

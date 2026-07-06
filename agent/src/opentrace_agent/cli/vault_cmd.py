@@ -332,17 +332,11 @@ def _mirror_vault_into_graph(
     from opentrace_agent.sources.markdown import copy_corpus_between_scopes
     from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
     from opentrace_agent.wiki.paths import metadata_path, pages_dir
-    from opentrace_agent.wiki.vault import (
-        load_metadata,
-        migrate_disk_layout,
-        save_metadata,
-    )
+    from opentrace_agent.wiki.vault import load_metadata
 
     meta_path = metadata_path(vault_name, scope=scope, project_root=project_root)
     meta = load_metadata(meta_path, name=vault_name)
     pages_path = pages_dir(vault_name, scope=scope, project_root=project_root)
-    if migrate_disk_layout(meta, pages_path) > 0:
-        save_metadata(meta_path, meta)
 
     page_bodies: dict[str, str] = {}
     for slug in meta.pages.keys():

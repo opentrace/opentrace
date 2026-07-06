@@ -17,8 +17,10 @@
 The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
 source of truth for the vault's filesystem state. This module mirrors the
 *same* state into the graph as :class:`WikiVault`, :class:`WikiPage`, and
-:class:`Source` nodes connected by ``CONTAINS``, ``CITES``, and
-``LINKS_TO`` relationships.
+:class:`CorpusDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
+CorpusDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links),
+``MENTIONS`` (page/CorpusDoc → entity), and ``MIRRORS`` (CorpusDoc → File
+twin) relationships.
 
 Graph writes run *after* disk writes succeed, and any failure here is
 caught and logged so the on-disk vault stays valid even if the graph
@@ -47,19 +49,16 @@ def _sniff_content_type(filename: str) -> str:
     return guessed or ""
 
 
-# Confidence rubric (mirrors sources/markdown/prompts.py — shared across the
-# wiki pipeline and the experiment's generic ingest extractor).
+# Confidence rubric (mirrors sources/markdown/prompts.py).
 #
-#   file_summary  — restatement of source bytes. EXTRACTED, score 1.0.
-#   concept         — LLM synthesis across sources. INFERRED, default 0.75
-#                     (median of {0.55, 0.65, 0.75, 0.85, 0.95}).
+#   concept — LLM synthesis across sources. INFERRED, default 0.75
+#             (median of {0.55, 0.65, 0.75, 0.85, 0.95}).
 #
-# These are conservative defaults stamped at compile time without asking the
+# This is a conservative default stamped at compile time without asking the
 # LLM to self-rate. A future change can have the Execute prompt return a
 # per-page tier so we pick up genuinely ambiguous output instead of always
 # treating concepts as INFERRED.
 _DEFAULT_CONFIDENCE_BY_KIND: dict[str, tuple[str, float]] = {
-    "file_summary": ("EXTRACTED", 1.0),
     "concept": ("INFERRED", 0.75),
 }
 
@@ -75,12 +74,19 @@ def _confidence_for_kind(kind: str) -> tuple[str, float]:
 
 NODE_TYPE_WIKI_VAULT = "WikiVault"
 NODE_TYPE_WIKI_PAGE = "WikiPage"
-NODE_TYPE_SOURCE = "Source"
+NODE_TYPE_CORPUS_DOC = "CorpusDoc"
 
 REL_TYPE_CONTAINS = "CONTAINS"
 REL_TYPE_CITES = "CITES"
 REL_TYPE_LINKS_TO = "LINKS_TO"
 REL_TYPE_MENTIONS = "MENTIONS"
+REL_TYPE_MIRRORS = "MIRRORS"
+
+# Code-tree types written by the DirectoryWalker; used here when a repo-walked
+# doc needs a File twin the code walk didn't create (see _ensure_file_twin).
+NODE_TYPE_FILE = "File"
+NODE_TYPE_DIRECTORY = "Directory"
+REL_TYPE_DEFINES = "DEFINES"
 
 # Entity node types eligible as MENTIONS targets — flat entity types
 # produced by ``--wiki``.
@@ -99,8 +105,107 @@ def page_node_id(vault_name: str, slug: str) -> str:
     return f"{vault_name}::{slug}"
 
 
-def source_node_id(sha256: str) -> str:
-    return f"source::{sha256}"
+def corpus_doc_node_id(sha256: str) -> str:
+    return f"corpus::{sha256}"
+
+
+def link_corpus_doc_mirrors(
+    store: GraphStore,
+    repo_id: str,
+    named_blobs: list[tuple[str, bytes]],
+) -> int:
+    """Link CorpusDocs to the File nodes for the same repo-walked documents.
+
+    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` for every doc
+    the wiki pass ingested from a repo walk. For each, the CorpusDoc id is the
+    sha256 of the raw bytes (same scheme as :func:`corpus_doc_node_id` /
+    ``autoprune.compute_walked_shas``) and the File id is
+    ``<repo_id>/<rel_path>``. A ``CorpusDoc -MIRRORS-> File`` edge is merged
+    (idempotent) and the repo-relative ``path`` is stamped onto the CorpusDoc
+    so the twins are mutually navigable. When the code walk didn't create the
+    File node (extensions outside INCLUDED_EXTENSIONS — .rst/.txt/.html/PDFs),
+    it is created here (see :func:`_ensure_file_twin`) so every repo-walked
+    CorpusDoc has a File twin. Blobs that never became a CorpusDoc
+    (content-gated) are skipped silently.
+
+    Returns the number of MIRRORS edges written.
+    """
+    import hashlib
+
+    edges = 0
+    for rel_path, data in named_blobs:
+        sha = hashlib.sha256(data).hexdigest()
+        cid = corpus_doc_node_id(sha)
+        fid = f"{repo_id}/{rel_path}"
+        corpus_node = store.get_node(cid)
+        if corpus_node is None:
+            continue
+        if store.get_node(fid) is None:
+            _ensure_file_twin(store, repo_id, rel_path)
+        store.merge_relationship(
+            id=f"{cid}->MIRRORS->{fid}",
+            rel_type=REL_TYPE_MIRRORS,
+            source_id=cid,
+            target_id=fid,
+        )
+        edges += 1
+        props = dict(corpus_node.get("properties") or {})
+        if props.get("path") != rel_path:
+            props["path"] = rel_path
+            store.add_node(
+                id=cid,
+                node_type=NODE_TYPE_CORPUS_DOC,
+                name=corpus_node.get("name") or rel_path,
+                properties=props,
+            )
+    return edges
+
+
+def _ensure_file_twin(store: GraphStore, repo_id: str, rel_path: str) -> str:
+    """Create the File node (and any missing ancestor Directory nodes) for a
+    repo-walked doc the code walk didn't cover.
+
+    Mirrors the DirectoryWalker's node shape exactly: ids are
+    ``<repo_id>/<rel_path>``, each node hangs off its parent via ``DEFINES``,
+    and File/Directory nodes carry a repo-relative ``path`` property. The
+    walker already creates Directory nodes for every non-excluded dir, so the
+    ancestor loop is a no-op in practice — it exists so a doc under a dir the
+    code walk never persisted still gets a well-formed chain.
+    """
+    parts = rel_path.split("/")
+    parent_id = repo_id
+    for depth in range(1, len(parts)):
+        rel_dir = "/".join(parts[:depth])
+        dir_id = f"{repo_id}/{rel_dir}"
+        if store.get_node(dir_id) is None:
+            store.add_node(
+                id=dir_id,
+                node_type=NODE_TYPE_DIRECTORY,
+                name=parts[depth - 1],
+                properties={"path": rel_dir},
+            )
+            store.merge_relationship(
+                id=f"{parent_id}->DEFINES->{dir_id}",
+                rel_type=REL_TYPE_DEFINES,
+                source_id=parent_id,
+                target_id=dir_id,
+            )
+        parent_id = dir_id
+
+    file_id = f"{repo_id}/{rel_path}"
+    filename = parts[-1]
+    _, dot, ext = filename.rpartition(".")
+    props: dict[str, Any] = {"path": rel_path}
+    if dot and ext:
+        props["extension"] = f".{ext.lower()}"
+    store.add_node(id=file_id, node_type=NODE_TYPE_FILE, name=filename, properties=props)
+    store.merge_relationship(
+        id=f"{parent_id}->DEFINES->{file_id}",
+        rel_type=REL_TYPE_DEFINES,
+        source_id=parent_id,
+        target_id=file_id,
+    )
+    return file_id
 
 
 # ---------------------------------------------------------------------------
@@ -135,15 +240,15 @@ def parse_wiki_links(body: str) -> list[str]:
 
 
 def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int]:
-    """Remove a vault's WikiVault and WikiPage nodes, plus any Source nodes
+    """Remove a vault's WikiVault and WikiPage nodes, plus any CorpusDoc nodes
     that no other vault still references via ``CONTAINS``. Symmetric
     counterpart of :func:`write_vault_to_graph`.
 
-    Source nodes are shared across vaults by sha256 identity — deleting a
-    vault must NOT delete a Source that another vault still uses. We resolve
-    this by inspecting the incoming ``CONTAINS`` edges on each Source: if the
-    only remaining edge originates from the vault being deleted (or none
-    does), the Source is orphaned and can go too.
+    CorpusDocs are shared across vaults by sha256 identity — deleting a
+    vault must NOT delete a CorpusDoc that another vault still uses. We
+    resolve this by inspecting the incoming ``CONTAINS`` edges on each: if
+    the only remaining edge originates from the vault being deleted (or none
+    does), the CorpusDoc is orphaned and can go too.
 
     Returns
     -------
@@ -165,7 +270,7 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
     except ValueError:
         contained = []  # vault node already gone
     for r in contained:
-        if r["node"]["type"] == NODE_TYPE_SOURCE:
+        if r["node"]["type"] == NODE_TYPE_CORPUS_DOC:
             sources_in_vault.append(r["node"]["id"])
 
     # 2. Delete WikiPages belonging to this vault. Pages are 1:1 with their
@@ -288,16 +393,20 @@ def write_vault_to_graph(
     )
     nodes_written += 1
 
-    # 2. Source nodes — one per ingested source. Use the AcquiredSource
+    # 2. CorpusDoc nodes — one per ingested document. Use the AcquiredSource
     #    metadata when present, otherwise fall back to .vault.json's
     #    IngestedSource (sha256 + original_name + ingested_at only).
+    #    ``source_bodies`` collects each source's raw markdown along the way
+    #    (in-memory for sources normalized this run, corpus file otherwise)
+    #    for the MENTIONS pass in step 6.
     by_sha_acquired: dict[str, AcquiredSource] = {s.sha256: s for s in (acquired or [])}
     by_sha_normalized: dict[str, Any] = {n.sha256: n for n in (normalized or [])}
+    source_bodies: dict[str, str] = {}
     for sha, ingested in meta.sources.items():
-        sid = source_node_id(sha)
+        sid = corpus_doc_node_id(sha)
         acq = by_sha_acquired.get(sha)
         norm = by_sha_normalized.get(sha)
-        # Source nodes are shared across vaults by sha256 identity — vault
+        # CorpusDocs are shared across vaults by sha256 identity — vault
         # membership is expressed via the WikiVault -CONTAINS-> Source edge
         # (one edge per vault), NOT via a property on the Source itself. A
         # `vault` property would be wrong: the merge-on-write would overwrite
@@ -312,17 +421,38 @@ def write_vault_to_graph(
             props["content_type"] = _sniff_content_type(ingested.original_name)
         if norm is not None and norm.corpus_path:
             # Body persisted on disk this run — point the node at it so
-            # downstream consumers can stream it back without going through
-            # the wiki pages.
+            # downstream consumers (``load_source``, concept synthesis)
+            # can stream it back.
             props["corpus_path"] = norm.corpus_path
+        # Navigation label: prefer this run's extraction (NormalizedSource),
+        # fall back to the label persisted in .vault.json (covers ``vault
+        # attach`` of a vault compiled elsewhere). Stored under BOTH keys:
+        # ``one_line_summary`` matches the WikiPage convention
+        # (_neighbour_summary prefers it), and ``summary`` feeds
+        # build_search_text so the label is FTS-findable.
+        title = (norm.title if norm is not None else "") or getattr(ingested, "title", "")
+        one_liner = (norm.one_line_summary if norm is not None else "") or getattr(ingested, "one_line_summary", "")
+        if title:
+            props["title"] = title
+        if one_liner:
+            props["one_line_summary"] = one_liner
+            props["summary"] = one_liner
+        # ``add_node`` overwrites the full property blob, and this loop runs
+        # over ALL of meta.sources on every mirror — sources not (re)ingested
+        # this run have no AcquiredSource/NormalizedSource, so carry their
+        # previously-written values forward instead of wiping them.
+        existing_src_props = (store.get_node(sid) or {}).get("properties") or {}
+        for k in ("size_bytes", "content_type", "corpus_path", "title", "one_line_summary", "summary", "path"):
+            if k not in props and k in existing_src_props:
+                props[k] = existing_src_props[k]
         store.add_node(
             id=sid,
-            node_type=NODE_TYPE_SOURCE,
+            node_type=NODE_TYPE_CORPUS_DOC,
             name=ingested.original_name,
             properties=props,
         )
         nodes_written += 1
-        # WikiVault CONTAINS Source.
+        # WikiVault CONTAINS CorpusDoc.
         store.merge_relationship(
             id=f"{vault_id}->CONTAINS->{sid}",
             rel_type=REL_TYPE_CONTAINS,
@@ -330,27 +460,28 @@ def write_vault_to_graph(
             target_id=sid,
         )
         rels_written += 1
+        if norm is not None and norm.markdown:
+            source_bodies[sid] = norm.markdown
+        else:
+            body = _read_corpus_body(store, props.get("corpus_path"))
+            if body:
+                source_bodies[sid] = body
 
     # 3. WikiPage nodes — one per slug. Maintain title→slug for LINKS_TO
-    #    resolution. Slugs live under ``<kind_dir>/<base>``, so the same
-    #    title can legitimately exist as both a concept and a file-summary
-    #    page — we therefore track two maps: an unambiguous-by-title one
-    #    and a fully-qualified ``<kind_dir>/<title>`` one. Ambiguous bare
-    #    titles drop out so the LINKS_TO write surfaces broken links
-    #    instead of silently picking the wrong target.
+    #    resolution. Slugs live under ``<kind_dir>/<base>``; we track both
+    #    an unambiguous-by-title map and a fully-qualified
+    #    ``<kind_dir>/<title>`` one. Ambiguous bare titles drop out so the
+    #    LINKS_TO write surfaces broken links instead of silently picking
+    #    the wrong target.
     title_to_slug: dict[str, str] = {}
     kinded_title_to_slug: dict[str, str] = {}
     ambiguous_titles: set[str] = set()
-    sha_to_summary_slug: dict[str, str] = {}
     for slug, p in meta.pages.items():
         kinded_title_to_slug[f"{kind_dir(p.kind)}/{p.title}"] = slug
         if p.title in title_to_slug:
             ambiguous_titles.add(p.title)
         else:
             title_to_slug[p.title] = slug
-        if p.kind == "file_summary" and p.source_shas:
-            # File-summary pages are 1:1 with a Source by construction.
-            sha_to_summary_slug[p.source_shas[0]] = slug
 
     prov_keys = ("agent", "model", "session", "confidence", "confidence_tier")
     # Graph-only fields not present on disk metadata. Carry forward on
@@ -374,10 +505,9 @@ def write_vault_to_graph(
                 page_props[k] = existing_props[k]
         if provenance is not None and compiled_slugs is not None and slug in compiled_slugs:
             # Stamp provenance for pages produced or extended this run.
-            # Kind-aware confidence: file_summary → EXTRACTED (1.0),
-            # concept → INFERRED (0.75). Overridden by an explicit
-            # confidence/confidence_tier in the provenance dict if present
-            # (lets future per-page LLM self-ratings flow through).
+            # Concept pages default to INFERRED (0.75). Overridden by an
+            # explicit confidence/confidence_tier in the provenance dict if
+            # present (lets future per-page LLM self-ratings flow through).
             tier, score = _confidence_for_kind(p.kind)
             page_props["confidence"] = score
             page_props["confidence_tier"] = tier
@@ -406,40 +536,24 @@ def write_vault_to_graph(
         )
         rels_written += 1
 
-    # 4. CITES edges — provenance.
-    #    file_summary WikiPage --CITES--> Source            (1:1 by sha)
-    #    concept        WikiPage --CITES--> file_summary    (N from page.source_shas)
+    # 4. CITES edges — provenance. Every page cites the Source nodes it was
+    #    synthesised from, directly by sha (one hop, no intermediate page).
     for slug, p in meta.pages.items():
         pid = page_node_id(meta.name, slug)
-        if p.kind == "file_summary":
-            for sha in p.source_shas:
-                sid = source_node_id(sha)
-                store.merge_relationship(
-                    id=f"{pid}->CITES->{sid}",
-                    rel_type=REL_TYPE_CITES,
-                    source_id=pid,
-                    target_id=sid,
-                )
-                rels_written += 1
-        else:  # "concept" or legacy "source" treated as concept
-            for sha in p.source_shas:
-                summary_slug = sha_to_summary_slug.get(sha)
-                if not summary_slug:
-                    continue
-                target_pid = page_node_id(meta.name, summary_slug)
-                store.merge_relationship(
-                    id=f"{pid}->CITES->{target_pid}",
-                    rel_type=REL_TYPE_CITES,
-                    source_id=pid,
-                    target_id=target_pid,
-                )
-                rels_written += 1
+        for sha in p.source_shas:
+            sid = corpus_doc_node_id(sha)
+            store.merge_relationship(
+                id=f"{pid}->CITES->{sid}",
+                rel_type=REL_TYPE_CITES,
+                source_id=pid,
+                target_id=sid,
+            )
+            rels_written += 1
 
     # 5. LINKS_TO edges — parsed from [[Title]] occurrences in page bodies.
     #    The link target may be bare (``[[Title]]``) or kinded
-    #    (``[[concept/Title]]`` / ``[[file-summary/Title]]``). Kinded
-    #    targets always win; bare targets only resolve when the title is
-    #    unique across kinds.
+    #    (``[[concept/Title]]``). Kinded targets always win; bare targets
+    #    only resolve when the title is unique across kinds.
     for slug, body in page_bodies.items():
         if slug not in meta.pages:
             continue
@@ -459,12 +573,19 @@ def write_vault_to_graph(
             )
             rels_written += 1
 
-    # 6. MENTIONS edges — bridge the entity layer to the page layer.
+    # 6. MENTIONS edges — bridge the entity layer to the content layer.
     #    For each entity (Idea/Service/Module/Paper/Person/Event) in this
-    #    vault, find pages whose body contains the entity name as a whole
-    #    word. Case-insensitive except for Person (case-sensitive avoids
-    #    matching "Karen" inside arbitrary lowercase prose).
-    rels_written += _write_mentions_edges(store, meta, page_bodies)
+    #    vault, find pages AND sources whose body contains the entity name
+    #    as a whole word — matching over the raw source markdown gives docs
+    #    the same per-document entity bridge that summary pages used to
+    #    carry (with better coverage: the raw body is a superset of any
+    #    summary). Case-insensitive except for Person (case-sensitive
+    #    avoids matching "Karen" inside arbitrary lowercase prose).
+    mention_bodies: dict[str, str] = {
+        page_node_id(meta.name, slug): body for slug, body in page_bodies.items() if slug in meta.pages
+    }
+    mention_bodies.update(source_bodies)
+    rels_written += _write_mentions_edges(store, meta, mention_bodies)
 
     logger.debug(
         "vault graph write complete: %d nodes, %d rels (vault=%s)",
@@ -475,8 +596,32 @@ def write_vault_to_graph(
     return {"nodes_written": nodes_written, "rels_written": rels_written}
 
 
-def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, page_bodies: dict[str, str]) -> int:
-    """Write MENTIONS edges from WikiPages to entity nodes whose names appear in the body.
+def _read_corpus_body(store: GraphStore, corpus_rel: str | None) -> str | None:
+    """Read a source's corpus markdown given its DB-relative ``corpus_path``.
+
+    Returns ``None`` when the path is unset, escapes the DB directory, or
+    the file is unreadable — callers treat a missing body as "no MENTIONS
+    pass for this source", never an error.
+    """
+    from pathlib import Path
+
+    if not corpus_rel or ".." in corpus_rel or corpus_rel.startswith("/"):
+        return None
+    db_path = getattr(store, "db_path", None)
+    if not db_path:
+        return None
+    try:
+        return (Path(str(db_path)).parent / corpus_rel).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, bodies_by_node_id: dict[str, str]) -> int:
+    """Write MENTIONS edges from content nodes (WikiPage / Source) to entity
+    nodes whose names appear in the body.
+
+    *bodies_by_node_id* maps a graph node id to the text to scan — page
+    markdown for WikiPages, raw corpus markdown for Sources.
 
     Only operates on entities tagged with this vault (so vault scope is
     preserved). Uses whole-word matching via ``\\b...\\b`` regex.
@@ -508,10 +653,7 @@ def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, page_bodies: d
         by_name_cs.setdefault(e["name"], []).append(e["id"])
 
     rels_written = 0
-    for slug, body in page_bodies.items():
-        if slug not in meta.pages:
-            continue
-        pid = page_node_id(meta.name, slug)
+    for node_id, body in bodies_by_node_id.items():
         targets: set[str] = set()
 
         if ci_pattern is not None:
@@ -525,9 +667,9 @@ def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, page_bodies: d
 
         for eid in targets:
             store.merge_relationship(
-                id=f"{pid}->MENTIONS->{eid}",
+                id=f"{node_id}->MENTIONS->{eid}",
                 rel_type=REL_TYPE_MENTIONS,
-                source_id=pid,
+                source_id=node_id,
                 target_id=eid,
             )
             rels_written += 1

@@ -39,10 +39,10 @@ class TestParseWikiLinks:
         body = "Read [[Real Title|click here]] for details."
         assert parse_wiki_links(body) == ["Real Title"]
 
-    def test_file_summary_form(self):
-        body = "Cited in [[File Summary: Q4 Report]] and [[Concept A]]."
+    def test_multiple_kinded_targets(self):
+        body = "Cited in [[concept/Q4 Report]] and [[Concept A]]."
         assert parse_wiki_links(body) == [
-            "File Summary: Q4 Report",
+            "concept/Q4 Report",
             "Concept A",
         ]
 
@@ -69,18 +69,22 @@ ladybug = pytest.importorskip("real_ladybug")
 
 from opentrace_agent.store import GraphStore  # noqa: E402
 from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
-    NODE_TYPE_SOURCE,
+    NODE_TYPE_CORPUS_DOC,
     NODE_TYPE_WIKI_PAGE,
     NODE_TYPE_WIKI_VAULT,
     REL_TYPE_CITES,
     REL_TYPE_CONTAINS,
     REL_TYPE_LINKS_TO,
+    REL_TYPE_MENTIONS,
+    REL_TYPE_MIRRORS,
+    corpus_doc_node_id,
     delete_vault_from_graph,
+    link_corpus_doc_mirrors,
     page_node_id,
-    source_node_id,
     vault_node_id,
     write_vault_to_graph,
 )
+from opentrace_agent.wiki.ingest.types import NormalizedSource  # noqa: E402
 from opentrace_agent.wiki.vault import IngestedSource, PageMeta, VaultMetadata  # noqa: E402
 
 
@@ -93,7 +97,7 @@ def store(tmp_path):
 
 
 def _make_meta() -> tuple[VaultMetadata, dict[str, str]]:
-    """Two sources, two file-summary pages, one concept page that links + cites."""
+    """Two sources, two concept pages that cite them and link each other."""
     meta = VaultMetadata.empty(name="kb")
     meta.last_compiled_at = "2026-05-01T00:00:00+00:00"
 
@@ -102,24 +106,6 @@ def _make_meta() -> tuple[VaultMetadata, dict[str, str]]:
         "sha2": IngestedSource(sha256="sha2", original_name="memo.docx", ingested_at="2026-05-01T00:00:00"),
     }
     meta.pages = {
-        "file-summary/report-pdf": PageMeta(
-            slug="file-summary/report-pdf",
-            title="report.pdf",
-            one_line_summary="Q4 financial report summary.",
-            source_shas=["sha1"],
-            last_updated="2026-05-01T00:00:00",
-            revision=1,
-            kind="file_summary",
-        ),
-        "file-summary/memo-docx": PageMeta(
-            slug="file-summary/memo-docx",
-            title="memo.docx",
-            one_line_summary="Internal memo from finance.",
-            source_shas=["sha2"],
-            last_updated="2026-05-01T00:00:00",
-            revision=1,
-            kind="file_summary",
-        ),
         "concept/revenue": PageMeta(
             slug="concept/revenue",
             title="Revenue",
@@ -129,13 +115,42 @@ def _make_meta() -> tuple[VaultMetadata, dict[str, str]]:
             revision=1,
             kind="concept",
         ),
+        "concept/costs": PageMeta(
+            slug="concept/costs",
+            title="Costs",
+            one_line_summary="Cost structure topic.",
+            source_shas=["sha1"],
+            last_updated="2026-05-01T00:00:00",
+            revision=1,
+            kind="concept",
+        ),
     }
     page_bodies = {
-        "file-summary/report-pdf": "Summary of report.pdf — see [[Revenue]].",
-        "file-summary/memo-docx": "Summary of memo.docx — see [[Revenue]].",
-        "concept/revenue": ("Combined view of revenue across [[report.pdf]] and [[memo.docx]]."),
+        "concept/revenue": "Combined view of revenue. Related: [[Costs]].",
+        "concept/costs": "Cost breakdown. Related: [[Revenue]].",
     }
     return meta, page_bodies
+
+
+def _normalized() -> list[NormalizedSource]:
+    return [
+        NormalizedSource(
+            sha256="sha1",
+            original_name="report.pdf",
+            markdown="# Report\nQuarterly revenue report.",
+            corpus_path="corpus/sha1.md",
+            title="Report",
+            one_line_summary="Q4 financial report.",
+        ),
+        NormalizedSource(
+            sha256="sha2",
+            original_name="memo.docx",
+            markdown="# Memo\nInternal memo from finance.",
+            corpus_path="corpus/sha2.md",
+            title="Memo",
+            one_line_summary="Internal memo from finance.",
+        ),
+    ]
 
 
 class TestWriteVaultToGraph:
@@ -150,20 +165,36 @@ class TestWriteVaultToGraph:
     def test_writes_source_nodes(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
-        sources = store.list_nodes(NODE_TYPE_SOURCE)
+        sources = store.list_nodes(NODE_TYPE_CORPUS_DOC)
         shas = {s["properties"]["sha256"] for s in sources}
         assert shas == {"sha1", "sha2"}
+
+    def test_source_labels_stamped_from_normalized(self, store):
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies, normalized=_normalized())
+        node = store.get_node(corpus_doc_node_id("sha1"))
+        props = node["properties"]
+        assert props["title"] == "Report"
+        assert props["one_line_summary"] == "Q4 financial report."
+        # `summary` mirrors the one-liner so build_search_text FTS-indexes it.
+        assert props["summary"] == "Q4 financial report."
+
+    def test_source_labels_survive_remirror_without_normalized(self, store):
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies, normalized=_normalized())
+        # Re-mirror (e.g. vault attach / backfill) without NormalizedSources.
+        write_vault_to_graph(store, meta, bodies)
+        props = store.get_node(corpus_doc_node_id("sha1"))["properties"]
+        assert props["title"] == "Report"
+        assert props["one_line_summary"] == "Q4 financial report."
+        assert props["corpus_path"] == "corpus/sha1.md"
 
     def test_writes_page_nodes(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         pages = store.list_nodes(NODE_TYPE_WIKI_PAGE)
         slugs = {p["properties"]["slug"] for p in pages}
-        assert slugs == {
-            "file-summary/report-pdf",
-            "file-summary/memo-docx",
-            "concept/revenue",
-        }
+        assert slugs == {"concept/revenue", "concept/costs"}
         for p in pages:
             assert p["properties"]["vault"] == "kb"
 
@@ -178,24 +209,11 @@ class TestWriteVaultToGraph:
         )
         types = {c["node"]["type"] for c in children}
         assert NODE_TYPE_WIKI_PAGE in types
-        assert NODE_TYPE_SOURCE in types
-        # 2 sources + 3 pages = 5 children
-        assert len(children) == 5
+        assert NODE_TYPE_CORPUS_DOC in types
+        # 2 sources + 2 pages = 4 children
+        assert len(children) == 4
 
-    def test_file_summary_cites_source(self, store):
-        meta, bodies = _make_meta()
-        write_vault_to_graph(store, meta, bodies)
-        ss_id = page_node_id("kb", "file-summary/report-pdf")
-        cited = store.traverse(
-            ss_id,
-            direction="outgoing",
-            max_depth=1,
-            relationship_type=REL_TYPE_CITES,
-        )
-        target_ids = {c["node"]["id"] for c in cited}
-        assert source_node_id("sha1") in target_ids
-
-    def test_concept_cites_file_summaries(self, store):
+    def test_concept_cites_sources_directly(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         revenue_id = page_node_id("kb", "concept/revenue")
@@ -205,29 +223,50 @@ class TestWriteVaultToGraph:
             max_depth=1,
             relationship_type=REL_TYPE_CITES,
         )
-        target_slugs = {c["node"]["properties"]["slug"] for c in cited}
-        assert "file-summary/report-pdf" in target_slugs
-        assert "file-summary/memo-docx" in target_slugs
+        target_ids = {c["node"]["id"] for c in cited}
+        assert target_ids == {corpus_doc_node_id("sha1"), corpus_doc_node_id("sha2")}
+        # Every CITES target is a Source — no intermediate summary pages.
+        assert all(c["node"]["type"] == NODE_TYPE_CORPUS_DOC for c in cited)
 
     def test_links_to_resolves_titles(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
-        # file-summary-report-pdf body links to [[Revenue]]
-        ss_id = page_node_id("kb", "file-summary/report-pdf")
+        # concept/revenue body links to [[Costs]]
+        revenue_id = page_node_id("kb", "concept/revenue")
         outgoing = store.traverse(
-            ss_id,
+            revenue_id,
             direction="outgoing",
             max_depth=1,
             relationship_type=REL_TYPE_LINKS_TO,
         )
         targets = {o["node"]["properties"]["slug"] for o in outgoing}
-        assert "concept/revenue" in targets
+        assert "concept/costs" in targets
+
+    def test_mentions_from_pages_and_sources(self, store):
+        # Entity in this vault whose name appears in a page body AND in a
+        # source's raw markdown.
+        store.add_node("idea::revenue", "Idea", "revenue", {"vault": "kb"})
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies, normalized=_normalized())
+
+        incoming = store.traverse(
+            "idea::revenue",
+            direction="incoming",
+            max_depth=1,
+            relationship_type=REL_TYPE_MENTIONS,
+        )
+        by_type = {r["node"]["type"] for r in incoming}
+        ids = {r["node"]["id"] for r in incoming}
+        # The concept page mentions "revenue" (in its body), and report.pdf's
+        # raw markdown does too — both should carry MENTIONS edges.
+        assert NODE_TYPE_WIKI_PAGE in by_type
+        assert NODE_TYPE_CORPUS_DOC in by_type
+        assert corpus_doc_node_id("sha1") in ids
 
     def test_idempotent_rewrite(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         write_vault_to_graph(store, meta, bodies)  # second pass shouldn't dupe
-        # Three pages, no duplicates.
         pages = store.list_nodes(NODE_TYPE_WIKI_PAGE)
         slugs = [p["properties"]["slug"] for p in pages]
         assert sorted(slugs) == sorted(set(slugs))
@@ -245,31 +284,31 @@ class TestDeleteVaultFromGraph:
             "shaX": IngestedSource(sha256="shaX", original_name="x.pdf", ingested_at="2026-05-02T00:00:00"),
         }
         meta_other.pages = {
-            "file-summary/x-pdf": PageMeta(
-                slug="file-summary/x-pdf",
-                title="x.pdf",
+            "concept/x": PageMeta(
+                slug="concept/x",
+                title="X",
                 one_line_summary="X.",
                 source_shas=["shaX"],
                 last_updated="2026-05-02T00:00:00",
                 revision=1,
-                kind="file_summary",
+                kind="concept",
             ),
         }
-        write_vault_to_graph(store, meta_other, {"file-summary/x-pdf": "x"})
+        write_vault_to_graph(store, meta_other, {"concept/x": "x"})
 
         # Delete the kb vault from the graph.
         result = delete_vault_from_graph(store, "kb")
-        # 1 vault + 3 pages + 2 sources for kb = 6 nodes.
-        assert result["nodes_deleted"] == 6
+        # 1 vault + 2 pages + 2 sources for kb = 5 nodes.
+        assert result["nodes_deleted"] == 5
 
         # kb vault is gone.
         assert store.get_node(vault_node_id("kb")) is None
         assert store.get_node(page_node_id("kb", "concept/revenue")) is None
-        assert store.get_node(source_node_id("sha1")) is None
+        assert store.get_node(corpus_doc_node_id("sha1")) is None
 
         # other vault is intact.
         assert store.get_node(vault_node_id("other")) is not None
-        assert store.get_node(source_node_id("shaX")) is not None
+        assert store.get_node(corpus_doc_node_id("shaX")) is not None
 
     def test_shared_source_survives_when_other_vault_still_uses_it(self, store):
         """Two vaults ingest the same source file (same sha256). Deleting one
@@ -285,35 +324,35 @@ class TestDeleteVaultFromGraph:
             "sha1": IngestedSource(sha256="sha1", original_name="report.pdf", ingested_at="2026-05-02T00:00:00"),
         }
         meta_b.pages = {
-            "file-summary/report-pdf": PageMeta(
-                slug="file-summary/report-pdf",
-                title="report.pdf",
+            "concept/reporting": PageMeta(
+                slug="concept/reporting",
+                title="Reporting",
                 one_line_summary="Same source, different vault.",
                 source_shas=["sha1"],
                 last_updated="2026-05-02T00:00:00",
                 revision=1,
-                kind="file_summary",
+                kind="concept",
             ),
         }
-        write_vault_to_graph(store, meta_b, {"file-summary/report-pdf": "in vault b"})
+        write_vault_to_graph(store, meta_b, {"concept/reporting": "in vault b"})
 
         # Source nodes don't carry a `vault` property — vault membership is
         # graph-edge based.
-        sha1_node = store.get_node(source_node_id("sha1"))
+        sha1_node = store.get_node(corpus_doc_node_id("sha1"))
         assert sha1_node is not None
         assert "vault" not in (sha1_node.get("properties") or {})
 
         # Delete vault A. Only sha2 (which only A used) should be removed;
         # sha1 must survive because vault B still references it.
         delete_vault_from_graph(store, "kb")
-        assert store.get_node(source_node_id("sha1")) is not None, (
+        assert store.get_node(corpus_doc_node_id("sha1")) is not None, (
             "shared source must survive when another vault still references it"
         )
-        assert store.get_node(source_node_id("sha2")) is None
+        assert store.get_node(corpus_doc_node_id("sha2")) is None
 
         # Now delete vault B too — sha1 should now go.
         delete_vault_from_graph(store, "b")
-        assert store.get_node(source_node_id("sha1")) is None
+        assert store.get_node(corpus_doc_node_id("sha1")) is None
 
     def test_idempotent_when_vault_absent(self, store):
         result = delete_vault_from_graph(store, "nonexistent")
@@ -328,3 +367,105 @@ class TestDeleteVaultFromGraph:
         # We only ever delete WikiVault / WikiPage / Source by id or by
         # vault property — code nodes are out of scope.
         assert store.get_node("repo-1") is not None
+
+
+class TestLinkCorpusDocMirrors:
+    def _seed_twins(self, store):
+        """A CorpusDoc and its File twin, plus a PDF with no File node."""
+        import hashlib
+
+        md_bytes = b"# Usage\ndocs body"
+        pdf_bytes = b"%PDF-fake"
+        md_sha = hashlib.sha256(md_bytes).hexdigest()
+        pdf_sha = hashlib.sha256(pdf_bytes).hexdigest()
+        store.add_node(corpus_doc_node_id(md_sha), NODE_TYPE_CORPUS_DOC, "usage.md", {"sha256": md_sha})
+        store.add_node(corpus_doc_node_id(pdf_sha), NODE_TYPE_CORPUS_DOC, "spec.pdf", {"sha256": pdf_sha})
+        store.add_node("myrepo/docs/usage.md", "File", "usage.md", {"path": "docs/usage.md"})
+        return md_bytes, pdf_bytes, md_sha
+
+    def test_links_twin_and_stamps_path(self, store):
+        md_bytes, pdf_bytes, md_sha = self._seed_twins(store)
+        linked = link_corpus_doc_mirrors(store, "myrepo", [("docs/usage.md", md_bytes), ("docs/spec.pdf", pdf_bytes)])
+        assert linked == 2  # PDF's missing File twin is created on the fly
+
+        outgoing = store.traverse(
+            corpus_doc_node_id(md_sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_MIRRORS
+        )
+        assert [r["node"]["id"] for r in outgoing] == ["myrepo/docs/usage.md"]
+        props = store.get_node(corpus_doc_node_id(md_sha))["properties"]
+        assert props["path"] == "docs/usage.md"
+        assert props["sha256"] == md_sha  # existing props preserved
+
+    def test_creates_file_twin_when_code_walk_skipped_it(self, store):
+        """Docs outside INCLUDED_EXTENSIONS (.rst/.pdf/...) get a File node created."""
+        import hashlib
+
+        rst_bytes = b"Quickstart\n==========\nbody"
+        rst_sha = hashlib.sha256(rst_bytes).hexdigest()
+        store.add_node(corpus_doc_node_id(rst_sha), NODE_TYPE_CORPUS_DOC, "quickstart.rst", {"sha256": rst_sha})
+        # Parent Directory exists from the code walk (it always does — the
+        # walker creates Directory nodes for every non-excluded dir).
+        store.add_node("myrepo/docs", "Directory", "docs", {"path": "docs"})
+
+        linked = link_corpus_doc_mirrors(store, "myrepo", [("docs/quickstart.rst", rst_bytes)])
+        assert linked == 1
+
+        file_node = store.get_node("myrepo/docs/quickstart.rst")
+        assert file_node is not None
+        assert file_node["type"] == "File"
+        assert file_node["properties"]["path"] == "docs/quickstart.rst"
+        assert file_node["properties"]["extension"] == ".rst"
+        # Hangs off its parent dir like walker-created File nodes.
+        children = store.traverse("myrepo/docs", direction="outgoing", max_depth=1, relationship_type="DEFINES")
+        assert "myrepo/docs/quickstart.rst" in [r["node"]["id"] for r in children]
+        # And the MIRRORS edge points at it.
+        mirrors = store.traverse(
+            corpus_doc_node_id(rst_sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_MIRRORS
+        )
+        assert [r["node"]["id"] for r in mirrors] == ["myrepo/docs/quickstart.rst"]
+        assert store.get_node(corpus_doc_node_id(rst_sha))["properties"]["path"] == "docs/quickstart.rst"
+
+    def test_creates_missing_ancestor_directories(self, store):
+        import hashlib
+
+        data = b"deep doc"
+        sha = hashlib.sha256(data).hexdigest()
+        store.add_node(corpus_doc_node_id(sha), NODE_TYPE_CORPUS_DOC, "notes.txt", {"sha256": sha})
+
+        assert link_corpus_doc_mirrors(store, "myrepo", [("docs/guide/notes.txt", data)]) == 1
+
+        assert store.get_node("myrepo/docs")["type"] == "Directory"
+        assert store.get_node("myrepo/docs/guide")["type"] == "Directory"
+        chain = store.traverse("myrepo/docs", direction="outgoing", max_depth=2, relationship_type="DEFINES")
+        ids = [r["node"]["id"] for r in chain]
+        assert "myrepo/docs/guide" in ids
+        assert "myrepo/docs/guide/notes.txt" in ids
+
+    def test_idempotent(self, store):
+        md_bytes, pdf_bytes, md_sha = self._seed_twins(store)
+        blobs = [("docs/usage.md", md_bytes)]
+        link_corpus_doc_mirrors(store, "myrepo", blobs)
+        link_corpus_doc_mirrors(store, "myrepo", blobs)
+        outgoing = store.traverse(
+            corpus_doc_node_id(md_sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_MIRRORS
+        )
+        assert len(outgoing) == 1
+
+    def test_missing_corpus_doc_skipped(self, store):
+        store.add_node("myrepo/readme.md", "File", "readme.md", {"path": "readme.md"})
+        # Bytes were content-gated — no CorpusDoc node exists.
+        assert link_corpus_doc_mirrors(store, "myrepo", [("readme.md", b"# hi")]) == 0
+
+    def test_path_survives_remirror(self, store):
+        """A vault re-mirror (write_vault_to_graph) must not wipe the stamped path."""
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies, normalized=_normalized())
+        # Stamp path via the mirror linker (sha1's raw bytes unknown here, so
+        # stamp directly through the same read-modify-write shape).
+        node = store.get_node(corpus_doc_node_id("sha1"))
+        props = dict(node["properties"])
+        props["path"] = "docs/report.pdf"
+        store.add_node(corpus_doc_node_id("sha1"), NODE_TYPE_CORPUS_DOC, node["name"], props)
+
+        write_vault_to_graph(store, meta, bodies)  # re-mirror without normalized
+        assert store.get_node(corpus_doc_node_id("sha1"))["properties"]["path"] == "docs/report.pdf"

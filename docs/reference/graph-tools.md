@@ -12,14 +12,14 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `find_orphans` | Nodes of a type with no edges of a given type | "Functions never called" |
 | `find_via_relationship_to_type` | All `(A) -[edge]-> (B)` pairs for given types | "All Files that DEFINE Classes" |
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
-| `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM source) | "Where did this come from?" |
+| `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM CorpusDoc) | "Where did this come from?" |
 | `grep` | Regex match via ripgrep over a Repository or WikiVault scope | "Find this exact string in source" |
 | `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
 | `cross_domain_bridges` | Edges spanning code / entity / page domains | "What connects code and docs?" |
 | `find_communities_spanning_domains` | Communities whose members span ≥N domains | Cross-cutting topics |
-| `find_pages_mentioning` | WikiPages that MENTIONS a given entity | "Pages discussing this concept" |
+| `find_pages_mentioning` | WikiPages and CorpusDocs that MENTION a given entity (typed hits) | "Pages and docs discussing this concept" |
 | `find_entities_mentioned_by` | Entities a WikiPage MENTIONS | "What does this page reference?" |
 
 ## MCP tools
@@ -41,7 +41,9 @@ grep                                    # ripgrep over Repository / WikiVault sc
 get_communities                         # listed clusters
 get_god_nodes                           # centrality hubs
 get_bridges                             # cross-community edges
-load_source                             # original source for a File/symbol
+load_source                             # a node's underlying content — code from the
+                                        #  repo checkout, CorpusDoc bodies from the
+                                        #  corpus, WikiPage bodies from the vault
 get_stats                               # node + edge counts by type
 ```
 
@@ -133,7 +135,7 @@ From `opentraceai index` (always produced):
 
 ### Entity layer
 
-From `index --extract-entities` — flat LLM-extracted entities with no body:
+From `index --wiki` — flat LLM-extracted entities with no body:
 
 | Type | Examples |
 |---|---|
@@ -146,13 +148,13 @@ From `index --extract-entities` — flat LLM-extracted entities with no body:
 
 ### Page layer
 
-From `index --build-pages` — curated markdown pages with bodies on disk:
+From `index --wiki` — curated markdown pages with bodies on disk:
 
 | Type | What it is |
 |---|---|
 | `WikiVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` |
-| `WikiPage` | A page with `kind="file_summary"` (1:1 with a Source) or `kind="concept"` (multi-source narrative). Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
-| `Source` | A raw ingested artifact — sha256-keyed. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults; for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
+| `WikiPage` | A concept page (`kind="concept"` — the only kind), a multi-source narrative. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
+| `CorpusDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
 
 ### Auxiliary
 
@@ -166,15 +168,16 @@ From `index --build-pages` — curated markdown pages with bodies on disk:
 
 | Edge | Source → Target | Meaning |
 |---|---|---|
-| `CONTAINS` | Directory → File, Repo → Directory, WikiVault → WikiPage/Source | Hierarchy |
+| `CONTAINS` | Directory → File, Repo → Directory, WikiVault → WikiPage/CorpusDoc | Hierarchy |
 | `DEFINES` | File → Class/Function, Class → Function | Symbol definition |
 | `CALLS` | Function → Function | Resolved call |
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
-| `DERIVED_FROM` | Idea/Service/... → Source/File | Entity provenance (with `transform="llm_extraction"`) |
-| `CITES` | WikiPage(concept) → WikiPage(file_summary), file_summary → Source | Wiki provenance chain |
+| `DERIVED_FROM` | Idea/Service/... → CorpusDoc | Entity provenance (with `transform="llm_extraction"`) |
+| `CITES` | WikiPage(concept) → CorpusDoc | Direct wiki provenance (one hop, keyed by doc sha) |
 | `LINKS_TO` | WikiPage → WikiPage | Wiki-link in body (`[[Title]]`) |
-| `MENTIONS` | WikiPage → Idea/Service/... | Page body references an entity name |
+| `MENTIONS` | WikiPage/CorpusDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name |
+| `MIRRORS` | CorpusDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the CorpusDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `SEMANTIC_EDGE` | Idea/Service/... → Idea/Service/... | LLM-proposed relationship between entities, with confidence tier |
 | `MEMBER_OF_COMMUNITY` | any non-internal node → Community | Cluster membership |
 | `PARTICIPATES_IN` | Idea/Service/... → Hyperedge | Group-relationship membership |
@@ -188,21 +191,23 @@ overview(store, vault_scope="research")          # only nodes tagged with the re
 search(store, "diffusion", vault_scope="papers")  # FTS scoped to one vault
 ```
 
-`vault` is denormalised onto every `WikiVault` / `WikiPage` / `Source` / entity node so the filter is a simple property equality — no graph traversal needed.
+`vault` is denormalised onto every `WikiVault` / `WikiPage` / `CorpusDoc` / entity node so the filter is a simple property equality — no graph traversal needed.
 
 ## Confidence + provenance
 
 Nodes carry typed confidence where appropriate:
 
 - **Entities** — `confidence` (numeric 0.0–1.0) + `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- **WikiPages** — same fields, plus `stale_since` set by autoprune when a cited source is removed
+- **WikiPages** — same fields, plus `stale_since` set by autoprune when a cited doc is removed
 - **Edges** — confidence stamped on `SEMANTIC_EDGE` and `CALLS` (resolver confidence)
 
 `provenance(node_id)` walks the right trust chain depending on node type:
 
 - **Code** — reads commit_sha + indexer version from the per-repo `IndexMetadata` node, plus file_path + line_range from the node
-- **Wiki** — walks `CITES` from a concept page through file-summary to Source
-- **Derived** — walks `DERIVED_FROM` from an entity to its Source
+- **Wiki** — walks `CITES` from a concept page directly to its CorpusDocs
+- **Derived** — walks `DERIVED_FROM` from an entity to its CorpusDoc
+
+Chain entries for ingested docs have `kind="corpus_doc"` and carry the doc's `path`; when the doc has a `MIRRORS` twin in the code tree, the entry also includes the mirrored `File` id in a `file` field.
 
 ## What's not in here
 

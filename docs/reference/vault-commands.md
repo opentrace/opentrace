@@ -1,6 +1,6 @@
 # Vault Commands
 
-`opentraceai vault` is the management surface for compiled wiki vaults. Compilation itself lives on `opentraceai index --build-pages` — see [Indexing](../getting-started/indexing.md). These commands handle the *post-compile* operations: listing, inspecting, attaching to graphs, moving between scopes.
+`opentraceai vault` is the management surface for compiled wiki vaults. Compilation itself lives on `opentraceai index --wiki` — see [Indexing](../getting-started/indexing.md). These commands handle the *post-compile* operations: listing, inspecting, attaching to graphs, moving between scopes.
 
 ## Concept refresher
 
@@ -9,7 +9,7 @@ A **vault** is a folder of LLM-curated markdown pages produced from one or more 
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`WikiVault` + `WikiPage` + `Source` nodes). The disk vault is rebuilt by re-running `index --build-pages`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** (`WikiVault` + `WikiPage` + `CorpusDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
 
 ## `vault list`
 
@@ -47,8 +47,8 @@ opentraceai vault show <name> --scope global       # disambiguate local vs globa
 Prints the vault metadata + page list (default) or the markdown body of one page. The `--page` form is useful for piping into `less`, `glow`, `pbcopy`, etc.
 
 ```bash
-opentraceai vault show research --page diffusion-models | less
-opentraceai vault show research --page diffusion-models | pbcopy
+opentraceai vault show research --page concept/diffusion-models | less
+opentraceai vault show research --page concept/diffusion-models | pbcopy
 ```
 
 ## `vault attach`
@@ -59,7 +59,7 @@ opentraceai vault attach <name> --scope global     # disambiguate on collision
 opentraceai vault attach <name> --db <path>        # explicit graph DB
 ```
 
-Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `WikiVault` / `WikiPage` / `Source` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
+Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `WikiVault` / `WikiPage` / `CorpusDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
 
 When to use:
 
@@ -83,7 +83,7 @@ opentraceai vault detach <name>
 opentraceai vault detach <name> --db <path>
 ```
 
-Removes the current graph's mirror — the disk vault is untouched. Source nodes shared with other attached vaults are preserved.
+Removes the current graph's mirror — the disk vault is untouched. CorpusDoc nodes shared with other attached vaults are preserved.
 
 ## `vault promote` / `vault demote`
 
@@ -111,12 +111,12 @@ opentraceai vault refresh-stale-pages                     # all stale pages in t
 opentraceai vault refresh-stale-pages --provider gemini   # specific LLM
 ```
 
-Re-runs Plan + Execute for concept pages stamped `stale_since` by autoprune. Pages become stale when a cited source is removed but the page still has other citations — they're kept (no LLM cost) but flagged so you can refresh on demand.
+Re-runs Plan + Execute for concept pages stamped `stale_since` by autoprune. Pages become stale when a cited doc is removed but the page still has other citations — they're kept (no LLM cost) but flagged so you can refresh on demand.
 
 `refresh-stale-pages` is also available inline on `index`:
 
 ```bash
-opentraceai index --build-pages --refresh-stale-pages ./papers research
+opentraceai index ./papers research --wiki --refresh-stale-pages
 ```
 
 ## Where vaults live on disk
@@ -126,23 +126,22 @@ opentraceai index --build-pages --refresh-stale-pages ./papers research
 ~/.opentrace/vaults/<name>/           # global (override with $OT_VAULT_ROOT)
 
   pages/concept/<base>.md             # multi-source synthesis pages
-  pages/file-summary/<base>.md      # one-per-uploaded-file summary pages
-  .vault.json                         # page metadata + sha256 dedup state
+  .vault.json                         # page metadata, source labels + sha256 dedup state
   .compile-log/<ts>.json              # per-compile audit log
 ```
 
-Source corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed by sha256, scope-aware:
+The doc corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed by sha256, scope-aware:
 
 ```
 <project>/.opentrace/corpus/<sha>.md   # local vaults attached to this project
 ~/.opentrace/corpus/<sha>.md           # globals compiled but not yet attached anywhere
 ```
 
-`vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `Source.corpus_path` resolves under `<project>/.opentrace/` like any local Source.
+`vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `CorpusDoc.corpus_path` resolves under `<project>/.opentrace/` like any local CorpusDoc.
 
-Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`, `file-summary/usage`). The kind folder is the namespace so concept and file-summary pages can share titles. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route.
+Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept pages are the only page kind, so everything lives under `concept/`. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route.
 
-The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it; re-compiling against the same vault uses its `source_shas` to dedup. Vaults compiled before the folders-by-kind layout migrate on the next compile or `vault attach`.
+The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it — including each doc's navigation label (`title` + one-line summary), so attached CorpusDocs keep their labels; re-compiling against the same vault uses its `source_shas` to dedup.
 
 ## Cross-project example
 
@@ -150,7 +149,7 @@ Compile once globally, use everywhere:
 
 ```bash
 # In ~/code/project-a:
-opentraceai index --build-pages --global ./papers research
+opentraceai index ./papers research --wiki --global
 opentraceai vault list   # research: attached
 
 # In ~/code/project-b:
@@ -160,7 +159,7 @@ opentraceai vault list   # research: attached
 
 # Project A adds a new paper, recompiles
 cd ~/code/project-a
-opentraceai index --build-pages --global ./papers/new-paper.pdf research
+opentraceai index ./papers/new-paper.pdf research --wiki --global
 
 # Project B sees the global vault is now ahead of its mirror
 cd ~/code/project-b

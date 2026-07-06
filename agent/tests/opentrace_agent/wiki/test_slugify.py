@@ -37,13 +37,13 @@ def test_base_slug_empty_input():
     assert base_slug("!!!") == "untitled"
 
 
-def test_kind_dir_maps_concept_and_file_summary():
+def test_kind_dir_maps_concept():
     assert kind_dir("concept") == "concept"
-    assert kind_dir("file_summary") == "file-summary"
 
 
 def test_kind_dir_falls_back_to_concept_for_unknown():
     assert kind_dir("source") == "concept"
+    assert kind_dir("file_summary") == "concept"
     assert kind_dir("") == "concept"
 
 
@@ -51,16 +51,10 @@ def test_unique_slug_concept_no_collision():
     assert unique_slug("Foo", existing=set()) == "concept/foo"
 
 
-def test_unique_slug_file_summary_lands_under_file_summary_dir():
-    assert unique_slug("Foo", kind="file_summary", existing=set()) == "file-summary/foo"
-
-
-def test_unique_slug_same_title_across_kinds_does_not_collide():
-    # The kind directory IS the namespace — both pages can share a base.
-    concept = unique_slug("Usage", kind="concept", existing={"file-summary/usage"})
-    summary = unique_slug("Usage", kind="file_summary", existing={"concept/usage"})
-    assert concept == "concept/usage"
-    assert summary == "file-summary/usage"
+def test_unique_slug_other_kind_dirs_do_not_collide():
+    # The kind directory IS the namespace — a base taken under another kind
+    # folder doesn't block a concept slug.
+    assert unique_slug("Usage", kind="concept", existing={"other/usage"}) == "concept/usage"
 
 
 def test_unique_slug_appends_suffix_on_collision_within_kind():
@@ -76,4 +70,3 @@ def test_title_to_link_slug_does_not_apply_collision_suffix():
     # The renderer maps title → base slug under its kind folder; collisions
     # surface as broken links by design.
     assert title_to_link_slug("Foo") == "concept/foo"
-    assert title_to_link_slug("Foo", kind="file_summary") == "file-summary/foo"

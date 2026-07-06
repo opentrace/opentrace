@@ -133,7 +133,7 @@ export function makeVaultTools() {
         '[[Other Page Title]] wiki-links you can follow with another ' +
         'read_vault_page call. Resolve a link by finding the matching ' +
         'page in list_vault_pages and passing its `slug` here (slugs are ' +
-        '`<kind>/<base>`, e.g. `concept/usage` or `file-summary/usage`). ' +
+        '`concept/<base>`, e.g. `concept/usage`). ' +
         "Pages are LLM-summarised from the user's uploaded documents. " +
         'Returns: {markdown, truncated, length}.',
       schema: readVaultPageSchema,

@@ -29,11 +29,13 @@ from opentrace_agent.wiki.ingest.graph_writer import vault_node_id  # noqa: E402
 
 
 def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
-    """Seed a small graph: 3 Sources, 1 file_summary page each + 1 concept page citing all three.
+    """Seed a small graph: 3 Sources + 1 concept page citing all three, plus a
+    single-source concept page 1:1 with one Source.
 
     Mirrors the real graph the wiki pipeline writes: a ``WikiVault`` node owns
-    its Sources and pages via ``CONTAINS`` edges. Autoprune discovers in-scope
-    Sources by traversing ``WikiVault -CONTAINS-> Source`` (sources are
+    its Sources and pages via ``CONTAINS`` edges; concept pages CITE their
+    Sources directly by sha. Autoprune discovers in-scope Sources by
+    traversing ``WikiVault -CONTAINS-> Source`` (sources are
     content-addressed and carry no single vault), so the vault node + edges
     are what makes a source visible to the prune pass.
     """
@@ -42,11 +44,11 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     vault_id = vault_node_id(vault)
     store.add_node(vault_id, "WikiVault", vault, properties={"vault": vault, "scope": "local"})
     for i, sha in enumerate(["aaa", "bbb", "ccc"]):
-        sid = f"source::{sha}"
+        sid = f"corpus::{sha}"
         sids[sha] = sid
         store.add_node(
             sid,
-            "Source",
+            "CorpusDoc",
             f"file{i}.md",
             properties={
                 "sha256": sha,
@@ -55,13 +57,14 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
             },
         )
         store.add_relationship(f"{vault_id}->CONTAINS->{sid}", "CONTAINS", vault_id, sid, properties={"vault": vault})
-        # file_summary 1:1
-        page_id = f"{vault}::summary-{sha}"
+        # Single-source concept page 1:1 with this Source (exercises the
+        # zero-remaining-citations → delete branch).
+        page_id = f"{vault}::solo-{sha}"
         store.add_node(
             page_id,
             "WikiPage",
-            f"Summary {i}",
-            properties={"vault": vault, "slug": f"summary-{sha}", "kind": "file_summary"},
+            f"Solo {i}",
+            properties={"vault": vault, "slug": f"concept/solo-{sha}", "kind": "concept"},
         )
         store.add_relationship(
             f"{vault_id}->CONTAINS->{page_id}", "CONTAINS", vault_id, page_id, properties={"vault": vault}
@@ -90,7 +93,7 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
         properties={"vault": vault, "derived_from": sids["aaa"]},
     )
     store.add_relationship(
-        "derived:idea_thing->source::aaa",
+        "derived:idea_thing->corpus::aaa",
         "DERIVED_FROM",
         "idea_thing",
         sids["aaa"],
@@ -108,7 +111,6 @@ class TestAutoprune:
             report = autoprune_after_index(
                 store,
                 walked_doc_shas={"aaa", "bbb"},
-                walked_file_ids=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
@@ -120,22 +122,21 @@ class TestAutoprune:
             assert store.get_node(sids["aaa"]) is not None
             assert store.get_node(sids["bbb"]) is not None
 
-    def test_file_summary_page_deleted_when_source_removed(self, tmp_path):
+    def test_single_source_page_deleted_when_source_removed(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
             _seed(store)
             autoprune_after_index(
                 store,
                 walked_doc_shas={"aaa", "bbb"},
-                walked_file_ids=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
-            # The summary page 1:1 with the removed source is gone.
-            assert store.get_node("v::summary-ccc") is None
-            # The other two summary pages stay.
-            assert store.get_node("v::summary-aaa") is not None
-            assert store.get_node("v::summary-bbb") is not None
+            # The page whose ONLY citation was the removed source is gone.
+            assert store.get_node("v::solo-ccc") is None
+            # Pages citing surviving sources stay.
+            assert store.get_node("v::solo-aaa") is not None
+            assert store.get_node("v::solo-bbb") is not None
 
     def test_concept_page_marked_stale_when_one_citation_lost(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
@@ -143,7 +144,6 @@ class TestAutoprune:
             autoprune_after_index(
                 store,
                 walked_doc_shas={"aaa", "bbb"},  # ccc removed
-                walked_file_ids=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
@@ -161,7 +161,6 @@ class TestAutoprune:
             autoprune_after_index(
                 store,
                 walked_doc_shas=set(),
-                walked_file_ids=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
@@ -174,7 +173,6 @@ class TestAutoprune:
             autoprune_after_index(
                 store,
                 walked_doc_shas={"bbb", "ccc"},  # aaa removed
-                walked_file_ids=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
@@ -196,15 +194,14 @@ class TestAutoprune:
             autoprune_after_index(
                 store,
                 walked_doc_shas=set(),  # all of v1 walked away from disk
-                walked_file_ids=set(),
                 vault_name="v1",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
             # v2's vault-specific pages survive.
             assert store.get_node("v2::concept-x") is not None
-            assert store.get_node("v2::summary-aaa") is not None
-            assert store.get_node("v2::summary-bbb") is not None
+            assert store.get_node("v2::solo-aaa") is not None
+            assert store.get_node("v2::solo-bbb") is not None
 
 
 class TestComputeWalkedShas:

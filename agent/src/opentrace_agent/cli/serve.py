@@ -492,39 +492,19 @@ def _vault_routes(store: GraphStore | None) -> list[Route]:
             entries.append({"name": n, "scope": "global", "attached": True})
         return JSONResponse({"vaults": entries})
 
-    def _load_meta_with_migration(name: str, scope):
-        """Load a vault's metadata and migrate the on-disk layout if it's
-        still in a legacy form (flat ``source-summary-foo.md`` or the
-        pre-rename ``source-summary/foo.md`` rather than
-        ``file-summary/foo.md``).
+    def _load_vault_meta(name: str, scope):
+        """Load a vault's metadata for the given scope."""
+        from opentrace_agent.wiki.paths import metadata_path
+        from opentrace_agent.wiki.vault import load_metadata
 
-        ``VaultMetadata.from_json`` rewrites slugs to the new kind-folder
-        form in-memory, but the disk files only get moved during compile
-        or ``vault attach``. Without this fixup, hitting the page-body
-        route for an un-attached legacy vault 404s because the slug
-        points to a path that doesn't exist yet. Migration is idempotent
-        — a no-op once the layout is current.
-        """
-        from opentrace_agent.wiki.paths import metadata_path, pages_dir
-        from opentrace_agent.wiki.vault import (
-            load_metadata,
-            migrate_disk_layout,
-            save_metadata,
-        )
-
-        mp = metadata_path(name, scope=scope)
-        meta = load_metadata(mp, name=name)
-        pp = pages_dir(name, scope=scope)
-        if migrate_disk_layout(meta, pp) > 0:
-            save_metadata(mp, meta)
-        return meta
+        return load_metadata(metadata_path(name, scope=scope), name=name)
 
     async def list_pages_route(request: Request) -> JSONResponse:
         name = request.path_params["vault"]
         scope, err = _resolve_scope_for(name, request.query_params.get("scope"))
         if err is not None:
             return err
-        meta = _load_meta_with_migration(name, scope)
+        meta = _load_vault_meta(name, scope)
         pages = [
             {
                 "slug": p.slug,
@@ -562,7 +542,7 @@ def _vault_routes(store: GraphStore | None) -> list[Route]:
             return err
         # Migrate a legacy flat-layout vault so the slug → file mapping
         # holds even when no list-pages call ran first to do the fixup.
-        _load_meta_with_migration(name, scope)
+        _load_vault_meta(name, scope)
         pd = pages_dir(name, scope=scope)
         page_path = pd / f"{slug}.md"
         if not page_path.exists():
@@ -695,11 +675,7 @@ def _vault_routes(store: GraphStore | None) -> list[Route]:
         from opentrace_agent.sources.markdown import copy_corpus_between_scopes
         from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
         from opentrace_agent.wiki.paths import metadata_path, pages_dir
-        from opentrace_agent.wiki.vault import (
-            load_metadata,
-            migrate_disk_layout,
-            save_metadata,
-        )
+        from opentrace_agent.wiki.vault import load_metadata
 
         if store is None:
             return _error(503, "no graph store available — serve was started without a graph DB")
@@ -716,8 +692,6 @@ def _vault_routes(store: GraphStore | None) -> list[Route]:
         meta_path = metadata_path(name, scope="global")
         meta = load_metadata(meta_path, name=name)
         pages_path = pages_dir(name, scope="global")
-        if migrate_disk_layout(meta, pages_path) > 0:
-            save_metadata(meta_path, meta)
 
         page_bodies: dict[str, str] = {}
         for slug in meta.pages.keys():

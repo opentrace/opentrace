@@ -60,11 +60,9 @@ def seeded_store(store):
       Function(handle) -CALLS-> Function(authenticate)
 
     Wiki:
-      Vault(kb) -CONTAINS-> WikiPage(file-summary-spec)
       Vault(kb) -CONTAINS-> WikiPage(auth-flow)
-      WikiPage(auth-flow) -CITES-> WikiPage(file-summary-spec)
-      WikiPage(file-summary-spec) -CITES-> Source(spec.pdf)
-      WikiPage(auth-flow) -LINKS_TO-> WikiPage(file-summary-spec)
+      Vault(kb) -CONTAINS-> Source(spec.pdf)
+      WikiPage(auth-flow) -CITES-> Source(spec.pdf)
 
     IndexMetadata for myorg/api with commit_sha + indexer_version.
     """
@@ -118,15 +116,6 @@ def seeded_store(store):
         ),
     }
     meta.pages = {
-        "file-summary/spec": PageMeta(
-            slug="file-summary/spec",
-            title="spec.pdf",
-            one_line_summary="OAuth flow specification.",
-            source_shas=["spec-sha"],
-            last_updated="2026-05-01T00:00:00",
-            revision=1,
-            kind="file_summary",
-        ),
         "concept/auth-flow": PageMeta(
             slug="concept/auth-flow",
             title="Auth Flow",
@@ -138,8 +127,7 @@ def seeded_store(store):
         ),
     }
     bodies = {
-        "file-summary/spec": "Summary of the OAuth spec.",
-        "concept/auth-flow": ("Auth flow consumes [[spec.pdf]] to verify tokens."),
+        "concept/auth-flow": "Auth flow verifies tokens against the OAuth spec.",
     }
     write_vault_to_graph(
         store,
@@ -151,7 +139,7 @@ def seeded_store(store):
             "session": "test-session",
             "confidence": 0.0,
         },
-        compiled_slugs={"file-summary/spec", "concept/auth-flow"},
+        compiled_slugs={"concept/auth-flow"},
     )
 
     return store
@@ -178,7 +166,7 @@ class TestSessionStartOrientation:
         # Wiki side present
         assert "WikiVault" in types
         assert "WikiPage" in types
-        assert "Source" in types
+        assert "CorpusDoc" in types
         # Vault scope is null when not requested.
         assert result["vault_scope"] is None
 
@@ -186,7 +174,7 @@ class TestSessionStartOrientation:
         result = overview(seeded_store, top_n=10, vault_scope="kb")
         types = result["counts_by_type"]
         # Only vault-domain types appear under vault scope.
-        assert set(types).issubset({"WikiVault", "WikiPage", "Source"})
+        assert set(types).issubset({"WikiVault", "WikiPage", "CorpusDoc"})
         assert result["vault_scope"] == "kb"
 
 
@@ -209,7 +197,7 @@ class TestWikiCitationChain:
         assert p["wiki"]["model"] == "claude-opus-4-7"
 
         # 3. Chain terminates at a Source node carrying sha + filename.
-        sources = [c for c in p["wiki"]["chain"] if c["kind"] == "source"]
+        sources = [c for c in p["wiki"]["chain"] if c["kind"] == "corpus_doc"]
         assert sources, "provenance chain must reach at least one Source"
         assert sources[0]["sha256"] == "spec-sha"
         assert sources[0]["filename"] == "spec.pdf"
@@ -269,4 +257,4 @@ class TestVaultGraphCounts:
             parent_edge="CONTAINS",
             max_hops=1,
         )
-        assert result["count"] == 2
+        assert result["count"] == 1

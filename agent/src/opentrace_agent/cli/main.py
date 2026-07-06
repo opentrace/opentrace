@@ -423,15 +423,17 @@ def _run_indexing_pipeline(
                 # --- Phase 3: unified doc ingestion when --wiki is set ---
                 # The code pipeline above is code-only now. The wiki doc pass
                 # reads the doc files into SourceInputs and, in ONE LLM call per
-                # doc, produces file_summary + concept WikiPages AND the
-                # knowledge-graph entities/edges — all into the same staging DB;
-                # the atomic swap covers them together.
+                # doc, produces the Source labels, the knowledge-graph
+                # entities/edges, and the concept inventory (synthesised into
+                # concept WikiPages) — all into the same staging DB; the
+                # atomic swap covers them together.
                 if wiki:
                     _run_wiki_compile_against_index(
                         graph_store=graph_store,
                         source_path=source_path,
                         vault_name=vault_name or _default_vault_name(source_path),
                         vault_scope=vault_scope,
+                        repo_id=repo_id,
                         verbose=verbose,
                     )
 
@@ -502,13 +504,14 @@ def _run_indexing_pipeline(
     is_flag=True,
     help=(
         "Ingest doc files (PDF/DOCX/MD/HTML/...) alongside code: ONE LLM call "
-        "per doc produces a file-summary page, the knowledge-graph entities "
-        "(Idea / Service / Module / Paper / Person / Event + relationships), and "
-        "the concept inventory, then synthesises cross-document concept pages "
-        "under ~/.opentrace/vaults/<vault>/. The vault name defaults to the path "
-        "basename; pass it as a second positional to override "
-        "(e.g. ``index ./papers research``). Requires a configured LLM key — "
-        "fails fast if missing. Plain ``index`` (no --wiki) stays code-only."
+        "per doc produces the Source's navigation label, the knowledge-graph "
+        "entities (Idea / Service / Module / Paper / Person / Event + "
+        "relationships), and the concept inventory, then synthesises "
+        "cross-document concept pages under ~/.opentrace/vaults/<vault>/. The "
+        "vault name defaults to the path basename; pass it as a second "
+        "positional to override (e.g. ``index ./papers research``). Requires a "
+        "configured LLM key — fails fast if missing. Plain ``index`` (no "
+        "--wiki) stays code-only."
     ),
 )
 @click.option(
@@ -674,12 +677,9 @@ def _run_autoprune_after_index(
     from opentrace_agent.sources.code.directory_walker import (
         DOC_EXTENSIONS,
         EXCLUDED_DIRS,
-        INCLUDED_EXTENSIONS,
     )
 
     walked_docs: list[Path] = []
-    walked_file_ids: set[str] = set()
-    repo_id = source_path.name
 
     if source_path.is_file():
         if source_path.suffix.lower() in DOC_EXTENSIONS:
@@ -687,23 +687,16 @@ def _run_autoprune_after_index(
     else:
         for dirpath, dirnames, filenames in os.walk(source_path):
             dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
-            rel_dir = Path(dirpath).relative_to(source_path)
-            rel_dir_str = str(rel_dir) if str(rel_dir) != "." else ""
             for filename in sorted(filenames):
                 ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                abs_file = Path(dirpath) / filename
-                rel_file = str(rel_dir / filename) if rel_dir_str else filename
                 if ext in DOC_EXTENSIONS:
-                    walked_docs.append(abs_file)
-                if ext in INCLUDED_EXTENSIONS:
-                    walked_file_ids.add(f"{repo_id}/{rel_file}")
+                    walked_docs.append(Path(dirpath) / filename)
 
     walked_shas = compute_walked_shas(walked_docs)
 
     report = autoprune_after_index(
         graph_store,
         walked_doc_shas=walked_shas,
-        walked_file_ids=walked_file_ids,
         vault_name=vault_name,
         scope_path=source_path,
         db_path=db_path,
@@ -713,7 +706,6 @@ def _run_autoprune_after_index(
         [
             report.sources_deleted,
             report.entities_deleted,
-            report.file_summary_pages_deleted,
             report.concept_pages_deleted,
             report.concept_pages_marked_stale,
         ]
@@ -721,7 +713,6 @@ def _run_autoprune_after_index(
         click.echo(
             f"  Autoprune: -{report.sources_deleted} sources, "
             f"-{report.entities_deleted} entities, "
-            f"-{report.file_summary_pages_deleted} file_summary pages, "
             f"-{report.concept_pages_deleted} concept pages, "
             f"{report.concept_pages_marked_stale} stale-marked, "
             f"-{report.corpus_files_deleted} corpus files"
@@ -736,6 +727,7 @@ def _run_wiki_compile_against_index(
     source_path: Path,
     vault_name: str,
     vault_scope: str = "local",
+    repo_id: str | None = None,
     verbose: bool,
 ) -> None:
     """Run the wiki Plan+Execute pipeline against doc files under *source_path*.
@@ -749,6 +741,11 @@ def _run_wiki_compile_against_index(
 
     LLM autodetect mirrors ``cli/vault_cmd._autodetect_provider`` (hard-fail
     when no key set, anthropic→gemini→openai priority).
+
+    When *repo_id* is set (directory index), every ingested doc gets a
+    ``CorpusDoc -MIRRORS-> File`` edge plus a ``path`` stamp, bridging the
+    corpus layer and the code tree. Docs whose extension the code walk skips
+    (.rst/.txt/.html/PDFs) get their File node created at link time.
     """
     from opentrace_agent.cli.vault_cmd import _autodetect_provider
     from opentrace_agent.sources.code.directory_walker import (
@@ -819,7 +816,7 @@ def _run_wiki_compile_against_index(
     # Stages whose per-unit progress is worth showing by default — the
     # LLM-bound ones the user is actually waiting on. Cheap stages (hashing,
     # normalizing) stay --verbose-only so they don't spam the output.
-    _progress_phases = {WikiPhase.SUMMARIZING_SOURCES, WikiPhase.PLANNING, WikiPhase.EXECUTING}
+    _progress_phases = {WikiPhase.EXTRACTING, WikiPhase.PLANNING, WikiPhase.EXECUTING}
 
     # Globals are disk-only at compile time — attach them to a project's
     # graph via ``opentraceai vault attach`` (or the UI's Global-tab "+"
@@ -849,6 +846,21 @@ def _run_wiki_compile_against_index(
         elif event.kind == WikiEventKind.STAGE_PROGRESS and (verbose or event.phase in _progress_phases):
             counter = f"[{event.current}/{event.total}] " if event.total else ""
             click.echo(f"    wiki: {counter}{event.message}")
+
+    # Bridge the corpus layer to the code tree: docs that also got a File
+    # node from the code walk (e.g. .md) get a MIRRORS edge + path stamp.
+    # Single-file / URL / global-vault runs have no File twins (repo_id is
+    # None or the mirror target was skipped) — nothing to link.
+    if repo_id is not None and mirror_target is not None:
+        from opentrace_agent.wiki.ingest.graph_writer import link_corpus_doc_mirrors
+
+        linked = link_corpus_doc_mirrors(
+            mirror_target,
+            repo_id,
+            [(inp.name, inp.data) for inp in inputs],
+        )
+        if linked:
+            click.echo(f"    wiki: linked {linked} doc(s) to their File nodes (MIRRORS)")
 
 
 def _default_vault_name(path: Path) -> str:

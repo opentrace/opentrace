@@ -37,7 +37,7 @@ from opentrace_agent.store import GraphStore
 DOMAINS: dict[str, frozenset[str]] = {
     "code": frozenset({"Repository", "Directory", "File", "Class", "Function", "Variable"}),
     "entity": frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"}),
-    "page": frozenset({"WikiVault", "WikiPage", "Source"}),
+    "page": frozenset({"WikiVault", "WikiPage", "CorpusDoc"}),
 }
 
 

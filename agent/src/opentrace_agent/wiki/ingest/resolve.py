@@ -236,8 +236,9 @@ in exactly one page. Return the filled pages via the propose_concepts tool.
 def _concept_min_sources() -> int:
     """Minimum distinct source documents for a NEW concept page
     (``OT_WIKI_CONCEPT_MIN_SOURCES``, default 2). A concept page is multi-source
-    synthesis — single-source content is already covered by its file-summary
-    page. Extends of existing concept pages are not subject to this floor."""
+    synthesis — single-source content stays reachable through its Source node
+    (label + corpus body via load_source), so paging it would duplicate the
+    raw doc. Extends of existing concept pages are not subject to this floor."""
     raw = os.environ.get("OT_WIKI_CONCEPT_MIN_SOURCES", "").strip()
     try:
         return max(1, int(raw)) if raw else 2
@@ -513,8 +514,8 @@ def concepts_to_plan(resolved: list[ResolvedConcept], meta: VaultMetadata) -> Pl
     A concept whose title matches an existing **concept** page becomes an
     EXTEND (its new sources are added, no source floor). A new concept is
     CREATEd only when it draws on at least ``OT_WIKI_CONCEPT_MIN_SOURCES``
-    documents — single-source concepts are already covered by their
-    file-summary page, so paging them would just duplicate it.
+    documents — a single-source concept stays reachable through its Source
+    node (label + raw corpus body), so paging it would just duplicate the doc.
     """
     min_sources = _concept_min_sources()
     existing_concept_slug_by_title = {

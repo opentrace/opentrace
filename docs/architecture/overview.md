@@ -46,7 +46,7 @@ Tree-sitter walks source files and emits `Repository` / `Directory` / `File` / `
 
 ### 2. Entity (semantic, flat)
 
-Opt-in via `index --extract-entities`. An LLM extracts named entities from both code and doc bodies:
+Opt-in via `index --wiki`. The per-doc ingestion call extracts named entities from ingested doc bodies:
 
 | Type | Examples |
 |---|---|
@@ -57,17 +57,17 @@ Opt-in via `index --extract-entities`. An LLM extracts named entities from both 
 | `Person` | "Karen Chen", "Vaswani et al." |
 | `Event` | "the 2024 release" |
 
-Edges: `DERIVED_FROM` (entity → source File / Source) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`).
+Edges: `DERIVED_FROM` (entity → CorpusDoc) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Entities derive from CorpusDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
 
 ### 3. Page (curated)
 
-Opt-in via `index --build-pages`. The wiki Plan + Execute pipeline produces:
+Opt-in via `index --wiki`. The wiki Plan + Execute pipeline produces:
 
 - `WikiVault` — one per vault (scope: `local` or `global`)
-- `WikiPage(kind="file_summary")` — one per Source, body on disk
-- `WikiPage(kind="concept")` — multi-source curated narrative
+- `WikiPage(kind="concept")` — multi-source curated narrative, body on disk
+- Labelled `CorpusDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`); the raw body stays in the corpus
 
-Edges: `CONTAINS` (vault → page/source), `CITES` (concept → summary → Source), `LINKS_TO` (`[[Title]]` syntax in bodies), `MENTIONS` (page → entity whose name appears in the body — connects layer 3 to layer 2).
+Edges: `CONTAINS` (vault → page/doc), `CITES` (concept page → CorpusDoc, direct by sha), `LINKS_TO` (`[[Title]]` syntax in bodies, concept ↔ concept), `MENTIONS` (page or CorpusDoc → entity whose name appears in the page body or the doc's corpus markdown — connects layer 3 to layer 2), `MIRRORS` (CorpusDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop).
 
 The page layer is the closest thing OpenTrace has to a "human-readable wiki." Pages live on disk and are mirrored into the graph; disk is canonical and `vault attach` rebuilds the mirror.
 
@@ -80,7 +80,7 @@ The three layers form three **domains** in the cross-cutting analysis:
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
 entity domain   — Idea / Service / Module / Paper / Person / Event
-page domain     — WikiVault / WikiPage / Source
+page domain     — WikiVault / WikiPage / CorpusDoc
 ```
 
 `opentraceai analyze` surfaces:
@@ -89,7 +89,7 @@ page domain     — WikiVault / WikiPage / Source
 - **Cross-domain bridges** — edges spanning code ↔ entity ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
 - **Cross-cutting communities** — communities whose members span ≥2 domains
 
-The `MENTIONS` edge is the explicit bridge between the entity and page domains. `DERIVED_FROM` bridges entity ↔ code or entity ↔ page. The code and page domains rarely connect directly — they meet through the entity layer.
+The `MENTIONS` edge is the explicit bridge between the entity and page domains. `DERIVED_FROM` bridges entity ↔ page. `MIRRORS` is the direct code ↔ page bridge — a `CorpusDoc` and its `File` twin reach each other in one hop.
 
 ## Components
 
@@ -130,7 +130,7 @@ Shared schema for code-graph types (regenerated into Python + TypeScript). Sourc
 
 ## Data flow
 
-A typical full-stack run (`index --extract-entities --build-pages ./repo myvault`):
+A typical full-stack run (`index ./repo myvault --wiki`):
 
 ```
 1. Scan      → DirectoryWalker walks the path, classifying each file
@@ -140,23 +140,30 @@ A typical full-stack run (`index --extract-entities --build-pages ./repo myvault
 2. Process   → Per-file tree-sitter extraction → Class / Function /
                Variable nodes + intra-file Registries.
 
-3. Extract   → For each Source (doc) + each code File body:
-               • markitdown converts to markdown (docs only)
+3. Ingest    → For each doc:
+               • markitdown converts to markdown
                • Body persisted to .opentrace/corpus/<sha>.md
-               • LLM extracts entities → Idea / Service / ... nodes
-                 with DERIVED_FROM edges
+               • CorpusDoc node created (corpus::<sha>); when the
+                 doc also produced a File node in the code walk, a
+                 MIRRORS edge joins the twins and the repo-relative
+                 path is stamped on the CorpusDoc
 
 4. Resolve   → Cross-file call resolution → CALLS edges.
 
 5. Save      → All emitted nodes/edges land in the LadybugDB store.
 
-6. Build     → run_compile reads doc Sources, runs Plan + Execute,
-   pages       writes WikiPage bodies to disk + graph mirror with
-               CONTAINS / CITES / LINKS_TO + MENTIONS edges.
+6. Build     → run_compile makes one DocExtraction LLM call per doc
+   pages       (CorpusDoc navigation label + entity graph with
+               DERIVED_FROM edges + concept inventory), then Plan +
+               Execute writes concept WikiPage bodies to disk +
+               graph mirror with CONTAINS / CITES / LINKS_TO +
+               MENTIONS edges.
 
-7. Autoprune → Compare walked source set against the existing graph;
-               delete orphan Sources / entities / file_summary pages;
-               stamp stale_since on concept pages losing a citation.
+7. Autoprune → Compare walked doc set against the existing graph;
+               delete orphan CorpusDocs + the entities anchored to
+               them; remove dangling CITES edges from concept pages,
+               delete pages left with zero citations, stamp
+               stale_since on the rest.
 ```
 
 `opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community / Hyperedge nodes (cluster) or just print analysis (analyze).
@@ -170,22 +177,20 @@ A typical full-stack run (`index --extract-entities --build-pages ./repo myvault
   corpus/<sha>.md                     # raw doc bodies, sha-keyed
   vaults/<name>/                      # local vaults (scope=local)
     pages/concept/<base>.md           # multi-source synthesis pages
-    pages/file-summary/<base>.md    # one-per-uploaded-file summary pages
     .vault.json
     .compile-log/<ts>.json
 
 ~/.opentrace/vaults/<name>/           # global vaults (scope=global)
   pages/concept/<base>.md
-  pages/file-summary/<base>.md
   .vault.json
   .compile-log/<ts>.json
 ```
 
-Disk is canonical for page bodies + source bodies. The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
+Disk is canonical for page bodies + doc bodies. The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
 
 ## Conventions
 
 - **Read-only retrieval.** Every primitive under `opentrace_agent.retrieval` is read-only. Writes go through `index` / `vault attach` / `cluster`.
-- **Vault scope is a property.** `vault` denormalised onto every page / source / entity so scope queries are property equality, not graph traversal.
+- **Vault scope is a property.** `vault` denormalised onto every page / doc / entity so scope queries are property equality, not graph traversal.
 - **Discrete confidence.** All confidence values snap to a discrete rubric (`EXTRACTED` = 1.0, `INFERRED` ∈ {0.55, 0.65, 0.75, 0.85, 0.95}, `AMBIGUOUS` ∈ [0.1, 0.3]) — never 0.5.
 - **No backward-compat shims.** Each command does one thing; renamed commands are gone, not aliased.

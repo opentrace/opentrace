@@ -91,8 +91,8 @@ def url_basename(url: str) -> str:
     """Return a filesystem-safe basename for a URL.
 
     Prefers the last non-empty path segment; falls back to the host name.
-    Used as the ``name`` field on the SourceInput so the resulting Source /
-    file_summary node has a recognisable title.
+    Used as the ``name`` field on the SourceInput so the resulting Source
+    node has a recognisable title.
     """
     parsed = urlparse(url)
     parts = [p for p in (parsed.path or "").split("/") if p]

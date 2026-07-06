@@ -24,19 +24,16 @@ from typing import Any
 class WikiPhase(str, Enum):
     ACQUIRING = "acquiring"
     NORMALIZING = "normalizing"
-    SUMMARIZING_SOURCES = "summarizing_sources"
+    EXTRACTING = "extracting"
     PLANNING = "planning"
     EXECUTING = "executing"
     PERSISTING = "persisting"
 
 
-# String constants used for ``CompiledPage.kind`` and ``PageMeta.kind``.
-# Plain strings so they JSON-serialize trivially in ``.vault.json``.
-#
-# ``PAGE_KIND_FILE_SUMMARY`` replaces an older ``"source"`` value; vaults
-# written before this rename are migrated transparently when their
-# ``.vault.json`` is loaded (see ``vault.PageMeta.from_json``).
-PAGE_KIND_FILE_SUMMARY = "file_summary"
+# String constant used for ``CompiledPage.kind`` and ``PageMeta.kind``.
+# Plain string so it JSON-serializes trivially in ``.vault.json``. Concept
+# pages are the only page kind — per-document content is represented by
+# ``Source`` nodes (label + corpus body), not wiki pages.
 PAGE_KIND_CONCEPT = "concept"
 
 
@@ -77,6 +74,11 @@ class NormalizedSource:
     # attached). Relative to the .opentrace/ dir containing the graph DB,
     # so the value stays portable across machines.
     corpus_path: str | None = None
+    # Navigation label, stamped by the DocExtraction stage and copied onto
+    # the Source node by the graph writer: a display title derived from the
+    # filename plus the LLM's one-sentence description of the document.
+    title: str = ""
+    one_line_summary: str = ""
 
 
 @dataclass

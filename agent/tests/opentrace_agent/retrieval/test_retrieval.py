@@ -49,11 +49,11 @@ def _seed(store: GraphStore) -> None:
         repo -CONTAINS-> file -CONTAINS-> fn-orphan   (no callers)
 
     Wiki side:
-        vault -CONTAINS-> page-summary
+        vault -CONTAINS-> source-report
         vault -CONTAINS-> page-concept-a
         vault -CONTAINS-> page-concept-b   (no LINKS_TO from anyone)
-        page-concept-a -LINKS_TO-> page-summary
-        page-concept-a -CITES-> page-summary
+        page-concept-a -LINKS_TO-> page-concept-b
+        page-concept-a -CITES-> source-report
     """
     # Code
     store.add_node("repo-1", "Repository", "myrepo", {})
@@ -69,14 +69,14 @@ def _seed(store: GraphStore) -> None:
 
     # Wiki
     store.add_node("vault-1", "WikiVault", "knowledge", {})
-    store.add_node("page-summary", "WikiPage", "report.pdf", {"kind": "file_summary"})
+    store.add_node("source-report", "CorpusDoc", "report.pdf", {"sha256": "report-sha", "filename": "report.pdf"})
     store.add_node("page-concept-a", "WikiPage", "Concept A", {"kind": "concept"})
     store.add_node("page-concept-b", "WikiPage", "Concept B", {"kind": "concept"})
-    store.add_relationship("w1", "CONTAINS", "vault-1", "page-summary")
+    store.add_relationship("w1", "CONTAINS", "vault-1", "source-report")
     store.add_relationship("w2", "CONTAINS", "vault-1", "page-concept-a")
     store.add_relationship("w3", "CONTAINS", "vault-1", "page-concept-b")
-    store.add_relationship("w4", "LINKS_TO", "page-concept-a", "page-summary")
-    store.add_relationship("w5", "CITES", "page-concept-a", "page-summary")
+    store.add_relationship("w4", "LINKS_TO", "page-concept-a", "page-concept-b")
+    store.add_relationship("w5", "CITES", "page-concept-a", "source-report")
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ class TestFindViaRelationshipToType:
         result = find_via_relationship_to_type(store, "WikiPage", "LINKS_TO", "WikiPage")
         assert result["count"] == 1
         assert result["pairs"][0]["start"]["id"] == "page-concept-a"
-        assert result["pairs"][0]["target"]["id"] == "page-summary"
+        assert result["pairs"][0]["target"]["id"] == "page-concept-b"
 
     def test_limit_caps_results(self, store):
         for i in range(5):
@@ -206,10 +206,10 @@ class TestFindOrphans:
 
     def test_wiki_pages_with_no_inbound_links(self, store):
         _seed(store)
-        # page-concept-a, page-concept-b have no incoming LINKS_TO; page-summary does.
+        # page-concept-a has no incoming LINKS_TO; page-concept-b does.
         result = find_orphans(store, "WikiPage", "LINKS_TO", direction="incoming")
         ids = sorted(o["id"] for o in result["orphans"])
-        assert ids == ["page-concept-a", "page-concept-b"]
+        assert ids == ["page-concept-a"]
 
     def test_no_candidates(self, store):
         _seed(store)
@@ -255,7 +255,7 @@ class TestCountBy:
     def test_scoped_to_vault(self, store):
         _seed(store)
         result = count_by(store, "WikiPage", parent_id="vault-1", parent_edge="CONTAINS", max_hops=1)
-        assert result["count"] == 3
+        assert result["count"] == 2
 
     def test_missing_parent(self, store):
         _seed(store)

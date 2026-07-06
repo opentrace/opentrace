@@ -21,11 +21,11 @@ import logging
 import os
 import uuid
 from collections.abc import Iterable, Iterator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from opentrace_agent.sources._llm_common import resolve_model
+from opentrace_agent.wiki.ingest.doc_extraction import extract_docs as _extract_docs
 from opentrace_agent.wiki.ingest.entities import write_entities_to_graph
 from opentrace_agent.wiki.ingest.execute import _wiki_concurrency
 from opentrace_agent.wiki.ingest.execute import execute as _execute
@@ -33,13 +33,9 @@ from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
 from opentrace_agent.wiki.ingest.normalize import normalize as _normalize
 from opentrace_agent.wiki.ingest.persist import persist as _persist
 from opentrace_agent.wiki.ingest.resolve import concepts_to_plan, resolve
-from opentrace_agent.wiki.ingest.file_summaries import (
-    summarise_sources as _summarise_sources,
-)
 from opentrace_agent.wiki.ingest.sources import AcquiredSource
 from opentrace_agent.wiki.ingest.sources import acquire as _acquire
 from opentrace_agent.wiki.ingest.types import (
-    PAGE_KIND_FILE_SUMMARY,
     CompiledPage,
     ConceptMention,
     NormalizedSource,
@@ -61,11 +57,8 @@ from opentrace_agent.wiki.paths import (
     pages_dir,
 )
 from opentrace_agent.wiki.vault import (
-    PageMeta,
     VaultMetadata,
     load_metadata,
-    migrate_disk_layout,
-    save_metadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,14 +153,6 @@ def run_compile(
         if meta.name != vault_name:
             meta.name = vault_name
 
-        # Promote any legacy flat ``pages/<slug>.md`` files into the
-        # folders-by-kind layout. Vaults compiled before the slug refactor
-        # still have files at ``pages/usage.md``; after this step they live
-        # at ``pages/concept/usage.md`` matching the (already-migrated)
-        # metadata. No-op for fresh or already-migrated vaults.
-        if migrate_disk_layout(meta, pages_path) > 0:
-            save_metadata(meta_path, meta)
-
         # Acquire
         acquired: list[AcquiredSource] = []
         yield from _acquire(inputs, meta, acquired)
@@ -197,7 +182,7 @@ def run_compile(
             acquired[:] = [a for a in acquired if a.sha256 in kept_shas]
             yield WikiPipelineEvent(
                 kind=WikiEventKind.STAGE_PROGRESS,
-                phase=WikiPhase.SUMMARIZING_SOURCES,
+                phase=WikiPhase.NORMALIZING,
                 message=f"Skipped {before - len(normalized)} empty/low-content source(s) (< {min_chars} chars)",
             )
 
@@ -245,18 +230,18 @@ def run_compile(
                 )
 
         client: WikiLLM = llm or make_llm(provider, api_key=api_key, model=model, base_url=base_url)
-        # File summaries are per-doc distillation — run them on the cheap tier
+        # Per-doc extraction is a compact inventory — run it on the cheap tier
         # (role="wiki_summary", overridable via OT_WIKI_SUMMARY_MODEL) while plan
         # + synthesis keep the flagship `client`. When a caller injects `llm`
         # (tests), reuse it for both rather than spinning a second backend.
-        summary_client: WikiLLM = llm or make_llm(
+        extraction_client: WikiLLM = llm or make_llm(
             provider,
             api_key=api_key,
             model=resolve_model(provider, None, role="wiki_summary"),
             base_url=base_url,
         )
 
-        # One shared adaptive limiter across both clients (cheap summaries +
+        # One shared adaptive limiter across both clients (cheap extraction +
         # flagship resolve/synthesis). Starts at OT_WIKI_CONCURRENCY and ratchets
         # down on provider throttling so a high default stays safe on low API
         # tiers. Only wired for real backends — an injected `llm` (tests) gates
@@ -264,21 +249,19 @@ def run_compile(
         if llm is None:
             limiter = AdaptiveLimiter(_wiki_concurrency())
             client._limiter = limiter  # type: ignore[attr-defined]
-            summary_client._limiter = limiter  # type: ignore[attr-defined]
+            extraction_client._limiter = limiter  # type: ignore[attr-defined]
 
-        # File-summary pages — one per new source. Land in meta.pages
-        # in-memory so Plan/Execute can treat them as neighbours and concept
-        # pages can cite them via [[Title]] wiki-links (the neighbour list
-        # marks each page's kind).
-        file_summaries: list[CompiledPage] = []
+        # Per-doc extraction — stamps each source's navigation label (title +
+        # one-liner, mirrored onto its Source node) and inventories the doc's
+        # concepts + entities. No per-document wiki pages: the raw body stays
+        # in the corpus, readable via load_source.
         concept_mentions: list[ConceptMention] = []
         entity_nodes: list = []
         entity_rels: list = []
-        yield from _summarise_sources(
+        yield from _extract_docs(
             normalized,
             meta,
-            summary_client,
-            file_summaries,
+            extraction_client,
             concept_mentions,
             entity_nodes,
             entity_rels,
@@ -293,24 +276,12 @@ def run_compile(
             entity_nodes, entity_rels, _ = merge_entities(entity_nodes, entity_rels)
             yield WikiPipelineEvent(
                 kind=WikiEventKind.STAGE_PROGRESS,
-                phase=WikiPhase.SUMMARIZING_SOURCES,
+                phase=WikiPhase.EXTRACTING,
                 message=(
                     f"Extracted {len(entity_nodes)} entities, {len(entity_rels)} relationships "
                     f"from {len(normalized)} doc(s) ({raw_entity_count} before merge)"
                 ),
                 detail={"entities": len(entity_nodes), "relationships": len(entity_rels)},
-            )
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        for ss in file_summaries:
-            meta.pages[ss.slug] = PageMeta(
-                slug=ss.slug,
-                title=ss.title,
-                one_line_summary=ss.one_line_summary,
-                source_shas=list(ss.source_shas),
-                last_updated=now_iso,
-                revision=ss.revision,
-                kind=PAGE_KIND_FILE_SUMMARY,
             )
 
         # Resolve — cluster the per-document concept mentions (gathered during
@@ -349,18 +320,13 @@ def run_compile(
         if plan_obj.creates or plan_obj.extends:
             yield from _execute(plan_obj, normalized, meta, pages_path, client, concept_pages)
 
-        compiled = file_summaries + concept_pages
+        compiled = concept_pages
 
-        if not compiled:
-            yield WikiPipelineEvent(
-                kind=WikiEventKind.DONE,
-                phase=WikiPhase.EXECUTING,
-                message="No pages produced — vault unchanged",
-            )
-            return
-
-        # Persist
-        yield from _persist(compiled, acquired, meta, pages_path, meta_path, log_path)
+        # Persist. Runs even with zero new pages — the acquired sources and
+        # their metadata still need recording (persist updates meta.sources,
+        # including the extraction-stamped labels), and the graph mirror
+        # below still needs the Source nodes, labels, and entities.
+        yield from _persist(compiled, acquired, meta, pages_path, meta_path, log_path, normalized=normalized)
 
         # Mirror the post-compile state into the graph if a store is given.
         # Disk-write has already succeeded, so failures here are non-fatal.
@@ -370,9 +336,8 @@ def run_compile(
                 # Provenance: stamp agent/model/session on pages produced
                 # this run. Pages not touched this run preserve whatever
                 # provenance the graph already has. ``confidence`` /
-                # ``confidence_tier`` are set per-page by graph_writer based
-                # on page kind (file_summary → EXTRACTED, concept →
-                # INFERRED) — see _confidence_for_kind there.
+                # ``confidence_tier`` are set per-page by graph_writer
+                # (concept pages → INFERRED) — see _confidence_for_kind there.
                 provenance = {
                     "agent": "opentrace-wiki-compiler",
                     "model": model or _default_model_for(provider),
@@ -417,12 +382,8 @@ def run_compile(
         yield WikiPipelineEvent(
             kind=WikiEventKind.DONE,
             phase=WikiPhase.PERSISTING,
-            message=(
-                f"Compile complete — {len(file_summaries)} file summary "
-                f"page(s), {len(concept_pages)} concept page(s)"
-            ),
+            message=(f"Compile complete — {len(acquired)} new source(s), {len(concept_pages)} concept page(s)"),
             detail={
-                "file_summaries": len(file_summaries),
                 "concept_pages": len(concept_pages),
                 "new_sources": len(acquired),
             },
@@ -548,17 +509,14 @@ def _find_stale_pages(graph_store, *, vault_name: str | None) -> list[dict]:
 def _remaining_source_shas_for_page(graph_store, page_id: str) -> list[str]:
     """Walk outgoing CITES edges from a page to remaining Source shas.
 
-    Concept pages CITE file_summary WikiPages, not Source nodes directly —
-    the chain is ``concept -> file_summary -> Source``. Traverse two hops
-    so we collect Sources both at depth 1 (direct citations, if any) and at
-    depth 2 (via the file_summary hop). Dedup on sha.
+    Concept pages CITE Source nodes directly (one hop). Dedup on sha.
     """
-    traversal = graph_store.traverse(page_id, direction="outgoing", max_depth=2, relationship_type="CITES")
+    traversal = graph_store.traverse(page_id, direction="outgoing", max_depth=1, relationship_type="CITES")
     shas: list[str] = []
     seen: set[str] = set()
     for r in traversal:
         node = r.get("node") or {}
-        if node.get("type") != "Source":
+        if node.get("type") != "CorpusDoc":
             continue
         sha = (node.get("properties") or {}).get("sha256")
         if sha and sha not in seen:
@@ -578,7 +536,7 @@ def _read_corpus_bodies_for_shas(graph_store, shas: list[str]):
     out = []
     db_dir = Path(getattr(graph_store, "db_path", "")).parent if getattr(graph_store, "db_path", None) else None
     for sha in shas:
-        source_node = graph_store.get_node(f"source::{sha}")
+        source_node = graph_store.get_node(f"corpus::{sha}")
         if source_node is None or db_dir is None:
             continue
         props = source_node.get("properties") or {}

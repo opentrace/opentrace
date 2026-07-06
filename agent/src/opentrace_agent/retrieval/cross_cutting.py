@@ -53,15 +53,15 @@ def _strip_signature(name: str) -> str:
 
 
 def find_pages_mentioning(store: GraphStore, entity_id: str) -> list[dict[str, Any]]:
-    """Return WikiPages that have a MENTIONS edge to *entity_id*.
+    """Return WikiPages and Sources that have a MENTIONS edge to *entity_id*.
 
-    Useful for "which pages discuss this concept?" queries. By design,
-    MENTIONS edges in this graph only target the entity layer (Idea,
-    Service, Module, Paper, Person, Event) — they're emitted when an
-    entity's *name* appears in a page body during wiki compilation. So
-    the literal traversal returns zero when *entity_id* refers to a
-    code-layer node (Function, Class, Variable, File, Directory,
-    Repository).
+    Useful for "which pages or documents discuss this concept?" queries.
+    By design, MENTIONS edges in this graph only target the entity layer
+    (Idea, Service, Module, Paper, Person, Event) — they're emitted when an
+    entity's *name* appears in a concept-page body or a source document's
+    corpus markdown during wiki compilation. So the literal traversal
+    returns zero when *entity_id* refers to a code-layer node (Function,
+    Class, Variable, File, Directory, Repository).
 
     Fallback: if the literal traversal is empty AND *entity_id* refers
     to a code-layer node, this function strips any trailing Python
@@ -71,12 +71,13 @@ def find_pages_mentioning(store: GraphStore, entity_id: str) -> list[dict[str, A
     substring. This handles real-world extraction patterns where the
     entity ends up as ``"field_validator decorator"`` or
     ``"@field_validator"`` rather than a strict equality match. The
-    MENTIONS pages from every matching entity are unioned and
+    MENTIONS hits from every matching entity are unioned and
     deduplicated by id. The direct branch short-circuits the fallback,
     so callers get one path or the other, not both.
 
-    Returns a list of WikiPage node payloads. Empty list if nothing
-    matches.
+    Returns a list of node payloads — WikiPage (concept pages) and
+    Source (documents; readable via ``load_source``), distinguishable
+    by their ``type`` field. Empty list if nothing matches.
     """
     # Look up the node first so we can (a) bail cleanly on unknown ids
     # without a traversal error and (b) reuse its type/name for the
@@ -125,9 +126,9 @@ def find_entities_mentioned_by(store: GraphStore, page_id: str) -> list[dict[str
     """Return entity nodes a WikiPage MENTIONS.
 
     Catches every entity-typed node — Idea / Service / Module / Paper /
-    Person / Event — that the page's body referenced. ``page_id`` should
-    be a WikiPage; passing other node types returns the (likely empty)
-    outgoing MENTIONS set for whatever the node happens to be.
+    Person / Event — that the node's body referenced. ``page_id`` can be
+    a WikiPage or a Source; passing other node types returns the (likely
+    empty) outgoing MENTIONS set for whatever the node happens to be.
 
     Common chained workflow: call ``find_pages_mentioning`` on a code
     symbol first to surface the relevant pages, then call this on each
@@ -138,6 +139,7 @@ def find_entities_mentioned_by(store: GraphStore, page_id: str) -> list[dict[str
 
 
 def _mentions_to_pages(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
-    """Internal: incoming MENTIONS traversal, filtered to WikiPage nodes."""
+    """Internal: incoming MENTIONS traversal, filtered to content nodes
+    (WikiPage concept pages + Source documents)."""
     incoming = store.traverse(node_id, direction="incoming", max_depth=1, relationship_type="MENTIONS")
-    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "WikiPage"]
+    return [r["node"] for r in incoming if r.get("node", {}).get("type") in ("WikiPage", "CorpusDoc")]

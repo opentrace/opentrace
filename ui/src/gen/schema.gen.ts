@@ -11,7 +11,7 @@ export const NODE_SCHEMA_STATEMENTS = [
   `CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS WikiVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS WikiPage(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)`,
-  `CREATE NODE TABLE IF NOT EXISTS Source(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS CorpusDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)`,
   `CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)`,
@@ -28,7 +28,7 @@ export const NODE_TYPES = [
   'Variable',
   'WikiVault',
   'WikiPage',
-  'Source',
+  'CorpusDoc',
   'Community',
   'Hyperedge',
   'IndexMetadata',
@@ -151,7 +151,7 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'confidence', type: 'FLOAT' },
     { name: 'staleSince', type: 'STRING' },
   ],
-  Source: [
+  CorpusDoc: [
     { name: 'id', type: 'STRING' },
     { name: 'name', type: 'STRING' },
     { name: 'sha256', type: 'STRING' },
@@ -159,6 +159,11 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'contentType', type: 'STRING' },
     { name: 'sizeBytes', type: 'INT64' },
     { name: 'acquiredAt', type: 'STRING' },
+    { name: 'corpusPath', type: 'STRING' },
+    { name: 'title', type: 'STRING' },
+    { name: 'oneLineSummary', type: 'STRING' },
+    { name: 'summary', type: 'STRING' },
+    { name: 'path', type: 'STRING' },
   ],
   Community: [
     { name: 'id', type: 'STRING' },
@@ -300,7 +305,7 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'confidence',
     'staleSince',
   ],
-  Source: [
+  CorpusDoc: [
     'id',
     'name',
     'sha256',
@@ -308,6 +313,11 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'contentType',
     'sizeBytes',
     'acquiredAt',
+    'corpusPath',
+    'title',
+    'oneLineSummary',
+    'summary',
+    'path',
   ],
   Community: [
     'id',
@@ -383,6 +393,8 @@ export const REL_SCHEMA = {
     `CREATE REL TABLE IF NOT EXISTS LINKS_TO(${joinRelPairs(pairs)}, id STRING)`,
   CITES: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS CITES(${joinRelPairs(pairs)}, id STRING)`,
+  MIRRORS: (pairs: ReadonlyArray<RelPair>) =>
+    `CREATE REL TABLE IF NOT EXISTS MIRRORS(${joinRelPairs(pairs)}, id STRING)`,
   MENTIONS: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS MENTIONS(${joinRelPairs(pairs)}, id STRING)`,
   TARGETS_REPO: (pairs: ReadonlyArray<RelPair>) =>
@@ -400,6 +412,7 @@ export const REL_TYPES = [
   'DERIVED_FROM',
   'LINKS_TO',
   'CITES',
+  'MIRRORS',
   'MENTIONS',
   'TARGETS_REPO',
 ] as const;
@@ -445,6 +458,9 @@ export const REL_COLUMNS: Readonly<Record<RelType, readonly ColumnDef[]>> = {
     { name: 'id', type: 'STRING' },
   ],
   CITES: [
+    { name: 'id', type: 'STRING' },
+  ],
+  MIRRORS: [
     { name: 'id', type: 'STRING' },
   ],
   MENTIONS: [
@@ -496,6 +512,9 @@ export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
   CITES: [
     'id',
   ],
+  MIRRORS: [
+    'id',
+  ],
   MENTIONS: [
     'id',
   ],
@@ -513,7 +532,7 @@ const COLUMN_TO_PROTO: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Variable: { 'startLine': 'start_line', 'endLine': 'end_line', 'typeAnnotation': 'type_annotation' },
   WikiVault: { 'lastCompiledAt': 'last_compiled_at', 'mirrorCompiledAt': 'mirror_compiled_at' },
   WikiPage: { 'oneLineSummary': 'one_line_summary', 'lastUpdated': 'last_updated', 'staleSince': 'stale_since' },
-  Source: { 'contentType': 'content_type', 'sizeBytes': 'size_bytes', 'acquiredAt': 'acquired_at' },
+  CorpusDoc: { 'contentType': 'content_type', 'sizeBytes': 'size_bytes', 'acquiredAt': 'acquired_at', 'corpusPath': 'corpus_path', 'oneLineSummary': 'one_line_summary' },
   Community: { 'communityId': 'community_id', 'isGod': 'is_god' },
   Hyperedge: { 'confidenceScore': 'confidence_score', 'sourceFile': 'source_file' },
   IndexMetadata: { 'indexedAt': 'indexed_at', 'durationSeconds': 'duration_seconds', 'repoId': 'repo_id', 'repoPath': 'repo_path', 'commitSha': 'commit_sha', 'commitMessage': 'commit_message', 'sourceUri': 'source_uri', 'opentraceaiVersion': 'opentraceai_version', 'nodesCreated': 'nodes_created', 'relationshipsCreated': 'relationships_created', 'filesProcessed': 'files_processed', 'classesExtracted': 'classes_extracted', 'functionsExtracted': 'functions_extracted' },
@@ -529,7 +548,7 @@ const PROTO_TO_COLUMN: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Variable: { 'start_line': 'startLine', 'end_line': 'endLine', 'type_annotation': 'typeAnnotation' },
   WikiVault: { 'last_compiled_at': 'lastCompiledAt', 'mirror_compiled_at': 'mirrorCompiledAt' },
   WikiPage: { 'one_line_summary': 'oneLineSummary', 'last_updated': 'lastUpdated', 'stale_since': 'staleSince' },
-  Source: { 'content_type': 'contentType', 'size_bytes': 'sizeBytes', 'acquired_at': 'acquiredAt' },
+  CorpusDoc: { 'content_type': 'contentType', 'size_bytes': 'sizeBytes', 'acquired_at': 'acquiredAt', 'corpus_path': 'corpusPath', 'one_line_summary': 'oneLineSummary' },
   Community: { 'community_id': 'communityId', 'is_god': 'isGod' },
   Hyperedge: { 'confidence_score': 'confidenceScore', 'source_file': 'sourceFile' },
   IndexMetadata: { 'indexed_at': 'indexedAt', 'duration_seconds': 'durationSeconds', 'repo_id': 'repoId', 'repo_path': 'repoPath', 'commit_sha': 'commitSha', 'commit_message': 'commitMessage', 'source_uri': 'sourceUri', 'opentraceai_version': 'opentraceaiVersion', 'nodes_created': 'nodesCreated', 'relationships_created': 'relationshipsCreated', 'files_processed': 'filesProcessed', 'classes_extracted': 'classesExtracted', 'functions_extracted': 'functionsExtracted' },

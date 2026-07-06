@@ -183,17 +183,17 @@ class TestLoadSource:
         (db_dir / "corpus").mkdir(parents=True, exist_ok=True)
         (db_dir / "corpus" / "abc.md").write_text("# Doc\nbody text")
         store.add_node(
-            "source::abc",
-            "Source",
+            "corpus::abc",
+            "CorpusDoc",
             "doc.md",
             {"sha256": "abc", "filename": "doc.md", "corpus_path": "corpus/abc.md"},
         )
 
-        res = _call(store, "load_source", nodeId="source::abc")
-        assert res["type"] == "Source"
+        res = _call(store, "load_source", nodeId="corpus::abc")
+        assert res["type"] == "CorpusDoc"
         assert res["body"] == "# Doc\nbody text"
         assert res["filename"] == "doc.md"
 
     def test_source_node_rejects_path_traversal(self, store):
-        store.add_node("source::evil", "Source", "x", {"corpus_path": "../../etc/passwd"})
-        assert "error" in _call(store, "load_source", nodeId="source::evil")
+        store.add_node("corpus::evil", "CorpusDoc", "x", {"corpus_path": "../../etc/passwd"})
+        assert "error" in _call(store, "load_source", nodeId="corpus::evil")

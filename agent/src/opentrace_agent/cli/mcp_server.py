@@ -264,14 +264,14 @@ def _load_code_source(
     return {"nodeId": node_id, "type": node.get("type"), **result}
 
 
-def _load_corpus_source(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
-    """Read a ``Source`` node's body from the content-addressed corpus snapshot."""
+def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """Read a ``CorpusDoc`` node's body from the content-addressed corpus snapshot."""
     from pathlib import Path
 
     props = _props(node)
     corpus_rel = props.get("corpus_path")
     if not corpus_rel:
-        return {"error": f"Source {node_id} has no corpus_path"}
+        return {"error": f"CorpusDoc {node_id} has no corpus_path"}
     # corpus_path is always a repo-relative ``corpus/<sha>.md`` — reject anything
     # that tries to escape the DB directory.
     if ".." in corpus_rel or corpus_rel.startswith("/"):
@@ -284,7 +284,7 @@ def _load_corpus_source(store: GraphStore, node: dict[str, Any], node_id: str) -
         return {"error": f"corpus file not found: {body_path}"}
     return {
         "nodeId": node_id,
-        "type": "Source",
+        "type": "CorpusDoc",
         "filename": props.get("filename"),
         "sha256": props.get("sha256"),
         "contentType": props.get("content_type"),
@@ -545,7 +545,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Find all (A, B) pairs where A is startType, B is targetType, and a
         relationship of edgeType points from A to B.
 
-        Examples: Functions that CALL Endpoints, WikiPages that CITE Sources.
+        Examples: Functions that CALL Endpoints, WikiPages that CITE CorpusDocs.
         """
         if not store:
             logger.info("find_via_relationship_to_type called but no index exists")
@@ -623,9 +623,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Return the trust chain for a node.
 
         For wiki pages: agent / model / session / confidence stamped at
-        compile time, plus the CITES chain back through any file-summary
-        pages to the original Source artefacts (sha256 + filename, no
-        retained bytes).
+        compile time, plus the CITES chain to the original CorpusDoc
+        artefacts (sha256 + filename; read the bytes via ``load_source``).
 
         For code nodes: commit_sha + indexer_version from the per-repo
         IndexMetadata, plus file_path and line_range from the node itself.
@@ -745,13 +744,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def list_vault_pages(vault: str, kind: str = "", limit: int = 200) -> str:
-        """List WikiPage nodes in a vault.
+        """List WikiPage nodes in a vault (concept pages — the only kind).
 
-        Optional ``kind`` filter: ``"concept"`` or ``"file_summary"``
-        (default: both). Returns ``{vault, count, pages}`` where each page
-        carries ``{id, slug, title, kind, one_line_summary, revision,
-        last_updated}``. Use ``read_vault_page`` with the returned ``id``
-        to fetch the page body.
+        Returns ``{vault, count, pages}`` where each page carries
+        ``{id, slug, title, kind, one_line_summary, revision,
+        last_updated}``. Use ``read_vault_page`` (or ``load_source``) with
+        the returned ``id`` to fetch the page body. CorpusDoc documents are
+        not pages — find them via ``search_graph`` / ``find_pages_mentioning``
+        and read them with ``load_source``.
         """
         if not store:
             return NO_INDEX_MSG
@@ -816,7 +816,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
           …) → source read from the indexed repo checkout. Defaults to the
           node's own recorded line range; pass ``lineRange`` (``"10-25"``,
           ``"10-"``, or ``"10"``) to override, or read a whole ``File``.
-        - **Source** nodes (ingested docs) → the document body from the
+        - **CorpusDoc** nodes (ingested docs) → the document body from the
           content-addressed corpus snapshot (``corpus/<sha>.md``), independent
           of the working tree.
         - **WikiPage** nodes → the compiled markdown page body (same as
@@ -832,8 +832,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             if not node:
                 return json.dumps({"error": f"node not found: {nodeId}"})
             node_type = node.get("type")
-            if node_type == "Source":
-                return _dump_body_result(_load_corpus_source(store, node, nodeId))
+            if node_type == "CorpusDoc":
+                return _dump_body_result(_load_corpus_doc(store, node, nodeId))
             if node_type == "WikiPage":
                 return _dump_body_result(_read_wiki_page_body(store, node, nodeId))
             start_line, end_line = _parse_line_range(lineRange)
@@ -843,8 +843,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def find_pages_mentioning(entityId: str) -> str:
-        """Find WikiPages whose body mentions a given entity, OR pages
-        that discuss a given code symbol.
+        """Find WikiPages and CorpusDocs whose body mentions a given
+        entity, OR that discuss a given code symbol.
 
         MENTIONS edges only target the entity layer (``Idea`` / ``Service``
         / ``Module`` / ``Paper`` / ``Person`` / ``Event``). If you pass a
@@ -855,23 +855,26 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         ``field_validator(str, …)`` becomes ``field_validator``) and then
         finds entities whose name *contains* the bare symbol name (e.g.
         ``"field_validator decorator"`` or ``"@field_validator"``). The
-        MENTIONS pages from every match are unioned and returned — so
+        MENTIONS hits from every match are unioned and returned — so
         "find pages about this function" works without manually chaining
         an entity lookup first.
 
-        Returns ``{entityId, count, pages}``.
+        Returns ``{entityId, count, pages}``; each hit carries ``type``
+        (``WikiPage`` → read with ``read_vault_page``; ``CorpusDoc`` → read
+        with ``load_source``).
         """
         if not store:
             return NO_INDEX_MSG
         try:
             pages = _find_pages_mentioning(store, entityId)
-            # Trim each page to the agent-essential fields and bypass the
+            # Trim each hit to the agent-essential fields and bypass the
             # 4 KB truncation cap — find_pages_mentioning can legitimately
-            # return 30+ pages whose unabbreviated property dicts overflow
+            # return 30+ hits whose unabbreviated property dicts overflow
             # the response budget and chop the JSON mid-string.
             trimmed = [
                 {
                     "id": p.get("id"),
+                    "type": p.get("type"),
                     "name": p.get("name"),
                     "slug": (p.get("properties") or {}).get("slug"),
                     "kind": (p.get("properties") or {}).get("kind"),

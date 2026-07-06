@@ -12,7 +12,7 @@ Supply the key via the `ANTHROPIC_API_KEY` env var:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-opentraceai index --build-pages ./papers myvault
+opentraceai index ./papers myvault --wiki
 ```
 
 Get a key at the [Anthropic Console](https://platform.claude.com/settings/keys).
@@ -27,7 +27,7 @@ Supply the key via `GEMINI_API_KEY` (or `GOOGLE_API_KEY` — the SDK accepts bot
 
 ```bash
 export GEMINI_API_KEY=...
-opentraceai index --build-pages ./papers myvault
+opentraceai index ./papers myvault --wiki
 ```
 
 If another paid key is also set in your shell, pin Gemini with `OT_LLM_PROVIDER=gemini` (see [Provider auto-detection](#provider-auto-detection)).
@@ -42,7 +42,7 @@ GPT and reasoning models.
 
 ```bash
 export OPENAI_API_KEY=sk-...
-opentraceai index --build-pages ./papers myvault
+opentraceai index ./papers myvault --wiki
 ```
 
 Get a key at the [OpenAI Platform](https://platform.openai.com/api-keys).
@@ -57,7 +57,7 @@ Kimi models via Moonshot's OpenAI-compatible endpoint.
 ```bash
 export MOONSHOT_API_KEY=...
 export OT_LLM_PROVIDER=kimi   # required — Kimi is never auto-selected
-opentraceai index --build-pages ./papers myvault
+opentraceai index ./papers myvault --wiki
 ```
 
 ## Local LLM
@@ -72,7 +72,7 @@ No API key required, but you must point the compiler at the server's base URL wi
 export OT_LOCAL_LLM_URL=http://localhost:11434
 export OT_LLM_MODEL_LOCAL=llama3.2
 export OT_LLM_PROVIDER=local   # required when paid keys are also set
-opentraceai index --build-pages ./papers myvault
+opentraceai index ./papers myvault --wiki
 ```
 
 Commands that *do* take per-call provider flags (e.g. `vault refresh-stale-pages`) still accept `--provider local --base-url ... --model ...` for one-off overrides.
@@ -109,7 +109,7 @@ When multiple API keys are set in your shell (e.g. both Anthropic and Gemini), t
 
 ```bash
 export OT_LLM_PROVIDER=gemini
-opentraceai index --extract-entities ./papers
+opentraceai index ./papers --wiki
 # → routes through Gemini even though ANTHROPIC_API_KEY is also set
 ```
 
@@ -120,7 +120,7 @@ Scope is the shell session — `unset OT_LLM_PROVIDER` returns to precedence. If
 Before any LLM work, the CLI prints a pre-flight estimate:
 
 ```
-Running entity extraction on 142 files via anthropic (~$0.85 estimated)
+Running wiki ingestion on 142 docs via anthropic (~$0.85 estimated)
 ```
 
 The estimate uses each backend's `pricing_input_per_million` / `pricing_output_per_million` from a shared registry — accurate to ±50% depending on actual token counts. Treat it as a budget signal, not billing.
@@ -139,7 +139,7 @@ Each backend supports a per-backend model override env var:
 | `OT_LLM_MODEL_KIMI` | Kimi's default model |
 | `OT_LLM_MODEL_LOCAL` | Local server's default model |
 
-The same registry drives the wiki compiler and the entity-extraction step in `index --extract-entities` — overriding it changes both consistently.
+The same registry drives every LLM call in `index --wiki` — per-doc ingestion and concept-page synthesis alike — so an override applies consistently.
 
 ## UI flow
 

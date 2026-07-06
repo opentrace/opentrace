@@ -279,12 +279,26 @@ def _top_linked_concepts(store: GraphStore, top_n: int, vault_scope: str | None)
 
 
 def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -> list[dict[str, Any]]:
-    """File-summary WikiPages ranked by incoming ``CITES`` count.
+    """``Source`` nodes ranked by incoming ``CITES`` count.
 
-    Counts edges pointing *at* each page (page → file_summary CITES, so the
-    summary is the target). Uncited pages never appear; restricted to
-    *vault_scope* when set.
+    Counts edges pointing *at* each source (concept page → Source, direct by
+    sha). Uncited sources never appear. Sources deliberately carry no
+    ``vault`` property (membership is the WikiVault -CONTAINS-> Source edge),
+    so *vault_scope* filters against the vault's contained-source set.
     """
+    scope_source_ids: set[str] | None = None
+    if vault_scope is not None:
+        try:
+            contained = store.traverse(
+                f"vault::{vault_scope}",
+                direction="outgoing",
+                max_depth=1,
+                relationship_type="CONTAINS",
+            )
+        except ValueError:
+            contained = []
+        scope_source_ids = {r["node"]["id"] for r in contained if (r.get("node") or {}).get("type") == "CorpusDoc"}
+
     result = store._conn.execute(
         "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = 'CITES' "
         "RETURN b.id AS id, count(r) AS citations ORDER BY citations DESC, id LIMIT 200"
@@ -295,19 +309,18 @@ def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -
         nid, citations = str(row[0]), int(row[1])
         if citations <= 0:
             continue
+        if scope_source_ids is not None and nid not in scope_source_ids:
+            continue
         node = store.get_node(nid)
-        if node is None or node["type"] != "WikiPage":
+        if node is None or node["type"] != "CorpusDoc":
             continue
         props = node.get("properties") or {}
-        if props.get("kind") != "file_summary":
-            continue
-        if vault_scope is not None and props.get("vault") != vault_scope:
-            continue
         out.append(
             {
                 "id": nid,
                 "name": node["name"],
-                "vault": props.get("vault"),
+                "title": props.get("title"),
+                "summary": _trim_summary(props.get("one_line_summary") or ""),
                 "citation_count": citations,
             }
         )

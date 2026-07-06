@@ -56,18 +56,17 @@ EMIT_PAGE_SCHEMA = {
 
 CREATE_SYSTEM = """You write a single page of a markdown wiki.
 
-This is a CONCEPT page that synthesises across multiple sources. The vault
-also contains FILE-SUMMARY pages — one-per-uploaded-document summaries.
-The neighbour list marks each entry's kind. When you state a fact drawn
-from a particular source, cite it inline with [[<File-summary Title>]]
-after the relevant sentence so readers can audit your claims.
+This is a CONCEPT page that synthesises across multiple source documents.
+Provenance is tracked structurally (the page is linked to every source it
+was synthesised from), so you do NOT emit citation links. When attribution
+matters in prose, name the source document naturally (e.g. "the migration
+guide notes ...").
 
 Rules:
 - The first line of markdown_body MUST be an H1 equal to the supplied page_title (no leading frontmatter).
-- Use [[Page Title]] to reference any neighbour page — match the title verbatim.
-- For factual claims, cite the relevant kind=file_summary neighbour with [[<Title>]]
-  using its verbatim title from the neighbour list.
-- Do NOT invent links to titles that aren't in the neighbour list.
+- Use [[Page Title]] to reference a related concept page from the neighbour list — match the title verbatim.
+- Do NOT invent links to titles that aren't in the neighbour list, and do NOT
+  wiki-link source documents — [[...]] is for neighbour concept pages only.
 - Keep prose factual and grounded in the supplied source documents.
 - one_line_summary should be a single declarative sentence, < 200 chars.
 - Return both markdown_body and one_line_summary via the emit_page tool.
@@ -75,16 +74,17 @@ Rules:
 
 EXTEND_SYSTEM = """You revise a single page of a markdown wiki.
 
-This is a CONCEPT page. Neighbours marked kind=file_summary are
-one-per-document citation targets — when you add a fact from a specific
-source, cite it inline with [[<File-summary Title>]].
+This is a CONCEPT page. Provenance is tracked structurally (the page is
+linked to every source it was synthesised from), so you do NOT emit
+citation links. When attribution matters in prose, name the source
+document naturally.
 
 Rules:
 - Preserve the existing factual content unless the new sources directly contradict it.
 - Merge the new sources' contributions into the existing structure.
 - Keep the H1 from the existing page.
-- Update or add [[Page Title]] links as needed; only link to titles in the supplied neighbour list.
-- For factual claims drawn from a specific source, cite the kind=file_summary neighbour with [[<Title>]].
+- Update or add [[Page Title]] links as needed; only link to concept-page titles
+  in the supplied neighbour list — never wiki-link source documents.
 - Do not duplicate facts — integrate, don't append.
 - one_line_summary should reflect the post-merge state.
 - Return the FULL replacement page via the emit_page tool — markdown_body must be a complete page, not a diff.
@@ -105,23 +105,18 @@ def _neighbour_block(
     persisted yet. Without the pending entries, a fresh-vault compile that
     creates several pages at once produces zero wiki-links because every
     Execute call sees an empty neighbour list.
-
-    Each line carries the page kind so the LLM can pick out file_summary
-    neighbours as citation targets without relying on a title prefix.
     """
     lines: list[str] = []
     for p in meta.pages.values():
         if p.slug == exclude_slug:
             continue
-        lines.append(f"- [{p.kind}] {p.title}: {p.one_line_summary}")
+        lines.append(f"- {p.title}: {p.one_line_summary}")
     if pending_creates:
         for c in pending_creates:
             if c.title == exclude_title:
                 continue
             summary = c.rationale or "(being created in this batch)"
-            # Pending creates are concept pages by construction — Plan never
-            # proposes new file-summary creates.
-            lines.append(f"- [concept] {c.title}: {summary}")
+            lines.append(f"- {c.title}: {summary}")
     if not lines:
         return "(no neighbour pages)"
     return "Neighbour pages (link as [[Title]]):\n" + "\n".join(lines)
@@ -130,11 +125,9 @@ def _neighbour_block(
 def _sources_block(sources: list[NormalizedSource], shas: list[str]) -> str:
     """Render the cited sources for a synthesis prompt.
 
-    Synthesis reads the RAW source body (post-markitdown), not the digest
-    file-summary page: grounding each concept page in the full source — as the
-    LLM-wiki pattern intends — yields more accurate, detailed pages than
-    re-distilling an already-lossy digest. The digest page exists for browsing
-    and as a citation target, not as synthesis input.
+    Synthesis reads the RAW source body (post-markitdown) — grounding each
+    concept page in the full source, as the LLM-wiki pattern intends, yields
+    more accurate, detailed pages than working from any lossy distillation.
     """
     by_sha = {s.sha256: s for s in sources}
     blocks = []

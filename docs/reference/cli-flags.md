@@ -23,7 +23,7 @@ opentraceai index [PATH] [OPTIONS]
 | Arg | Type | Default | Description |
 |---|---|---|---|
 | `PATH` | path or URL | `.` | What to index — a directory, a single file, or a URL |
-| `VAULT_NAME` | string | auto | Optional second positional. Names the vault for `--build-pages`. Default derives from `PATH` — repo basename for git repos, folder basename for plain dirs, file stem for single files, slugified URL path for URLs. **Passing this implies `--build-pages`** |
+| `VAULT_NAME` | string | auto | Optional second positional. Names the vault for `--wiki`. Default derives from `PATH` — repo basename for git repos, folder basename for plain dirs, file stem for single files, slugified URL path for URLs. **Passing this implies `--wiki`** |
 
 **Flags:**
 
@@ -32,11 +32,10 @@ opentraceai index [PATH] [OPTIONS]
 | `--db PATH` | path | auto | Database path. Auto-discovered by walking up from cwd looking for `.opentrace/index.db`, stopping at the git root |
 | `--repo-id ID` | string | basename | Repository ID stamped on nodes (defaults to directory name) |
 | `--batch-size N` | int | 200 | Items per save batch |
-| `--extract-entities` | flag | off | Walks doc files in addition to code. Runs LLM entity extraction over both code and doc bodies → `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges. Hard-fails when no LLM key is configured |
-| `--build-pages` | flag | off | Runs the wiki Plan + Execute pipeline. Produces `WikiPage` nodes + bodies on disk under a vault. Vault name comes from the `VAULT_NAME` positional (or path-derived default) |
-| `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--build-pages` |
-| `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for sources that disappeared from disk (scope-limited to the walked path / vault) |
-| `--refresh-stale-pages` | flag | off | After autoprune, regenerate concept pages stamped `stale_since` against their remaining citations. Requires `--build-pages` (or a `VAULT_NAME` positional) |
+| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `CorpusDoc` navigation label, its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges), and a concept inventory; Plan + Execute then synthesise cross-document `WikiPage` nodes + bodies on disk under a vault. Every repo-walked doc gets a `MIRRORS` edge to its `File` twin (created at link time when the code walk skipped the extension). Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
+| `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki` |
+| `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
+| `--refresh-stale-pages` | flag | off | After autoprune, regenerate concept pages stamped `stale_since` against their remaining citations. Requires `--wiki` (or a `VAULT_NAME` positional) |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
 
 ### Common combinations
@@ -45,35 +44,31 @@ opentraceai index [PATH] [OPTIONS]
 # Cheap, fast — code structure only
 opentraceai index ./repo
 
-# Add flat entity layer from docs + code (LLM)
-opentraceai index --extract-entities ./repo
-
-# Compile a local curated vault from docs
-opentraceai index --build-pages ./docs              # vault auto-named
-opentraceai index --build-pages ./docs myvault      # explicit name
+# Compile a local curated vault from docs (labels + entities + pages)
+opentraceai index ./docs --wiki                     # vault auto-named
+opentraceai index ./docs myvault --wiki             # explicit name
 
 # Compile a global vault visible from other projects
-opentraceai index --build-pages --global ./papers refs
+opentraceai index ./papers refs --wiki --global
 
-# Full stack — code + entities + pages + MENTIONS edges
-opentraceai index --extract-entities --build-pages ./ myproject
+# Full stack — code + entities + pages + MIRRORS/MENTIONS edges
+opentraceai index ./ myproject --wiki
 
 # Re-build a vault, regenerate stale pages in the same run
-opentraceai index --build-pages --refresh-stale-pages ./papers research
+opentraceai index ./papers research --wiki --refresh-stale-pages
 
 # Re-walk without destroying orphans
-opentraceai index --extract-entities --no-prune ./repo
+opentraceai index ./repo --wiki --no-prune
 
 # Single URL into a vault
-opentraceai index --build-pages https://arxiv.org/abs/1706.03762
+opentraceai index https://arxiv.org/abs/1706.03762 --wiki
 ```
 
 ### Cost-affecting flags
 
 | Flag | LLM cost when set |
 |---|---|
-| `--extract-entities` | ~1 call per source (code file + doc file). Sha dedup skips unchanged files |
-| `--build-pages` | ~1 call per new doc + Plan (1) + Execute (~5–15 concept pages) |
+| `--wiki` | ~1 call per new doc + Plan (1) + Execute (~5–15 concept pages). Sha dedup skips unchanged docs |
 | `--refresh-stale-pages` | 1 call per stale page being regenerated |
 | All others | 0 |
 

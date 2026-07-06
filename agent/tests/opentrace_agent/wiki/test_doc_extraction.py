@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the SummariseSources stage, including the folded-in concept Map."""
+"""Tests for the DocExtraction stage — per-doc labels, concept Map, entities."""
 
 from __future__ import annotations
 
-from opentrace_agent.wiki.ingest.file_summaries import (
+from opentrace_agent.wiki.ingest.doc_extraction import (
     DEFAULT_MAX_DOC_CHARS,
     _chunk_markdown,
     _disambiguated_titles,
@@ -24,9 +24,9 @@ from opentrace_agent.wiki.ingest.file_summaries import (
     _merge_chunk_results,
     _parse_concepts,
     _split_sections,
-    summarise_sources,
+    extract_docs,
 )
-from opentrace_agent.wiki.ingest.types import CompiledPage, ConceptMention, NormalizedSource
+from opentrace_agent.wiki.ingest.types import ConceptMention, NormalizedSource
 from opentrace_agent.wiki.vault import VaultMetadata
 
 
@@ -37,14 +37,14 @@ def _src(sha: str, name: str) -> NormalizedSource:
 class TestDisambiguatedTitles:
     def test_unique_filenames_keep_bare_titles(self):
         srcs = [_src("1", "models.md"), _src("2", "validators.md")]
-        titles = _disambiguated_titles(srcs, existing_titles=set())
+        titles = _disambiguated_titles(srcs)
         assert titles == {"1": "Models", "2": "Validators"}
 
     def test_duplicate_basenames_first_bare_rest_qualified(self):
         # First claimant (deterministic order: docs < pydantic) keeps the bare
         # title; the collision is qualified by directory.
         srcs = [_src("1", "docs/README.md"), _src("2", "pydantic/README.md")]
-        titles = _disambiguated_titles(srcs, existing_titles=set())
+        titles = _disambiguated_titles(srcs)
         assert titles == {"1": "Readme", "2": "Readme (pydantic)"}
         assert len(set(titles.values())) == 2  # unique
 
@@ -56,18 +56,13 @@ class TestDisambiguatedTitles:
             _src("2", "b/docs/index.md"),
             _src("3", "c/docs/index.md"),
         ]
-        titles = _disambiguated_titles(srcs, existing_titles=set())
+        titles = _disambiguated_titles(srcs)
         assert titles == {"1": "Index", "2": "Index (docs)", "3": "Index (c/docs)"}
-
-    def test_collision_with_existing_page_is_qualified(self):
-        srcs = [_src("1", "docs/README.md")]
-        titles = _disambiguated_titles(srcs, existing_titles={"Readme"})
-        assert titles["1"] == "Readme (docs)"
 
     def test_root_level_duplicate_falls_back_to_numeric(self):
         # Same basename, no directory context to distinguish on.
         srcs = [_src("1", "README"), _src("2", "README")]
-        titles = _disambiguated_titles(srcs, existing_titles=set())
+        titles = _disambiguated_titles(srcs)
         assert set(titles.values()) == {"Readme", "Readme (2)"}
 
 
@@ -104,8 +99,8 @@ class TestMaxDocChars:
 
     def test_default_is_generous(self, monkeypatch):
         monkeypatch.delenv("OT_WIKI_MAX_DOC_CHARS", raising=False)
-        # Digest output is small, so the threshold guards input context, not the
-        # output budget — generous enough that only enormous docs are split.
+        # Extraction output is small, so the threshold guards input context, not
+        # the output budget — generous enough that only enormous docs are split.
         assert _max_doc_chars() == DEFAULT_MAX_DOC_CHARS
         assert DEFAULT_MAX_DOC_CHARS >= 100_000
 
@@ -139,32 +134,30 @@ class TestChunkMarkdown:
 
 class TestMergeChunkResults:
     def test_single_result_passthrough(self):
-        r = {"markdown_body": "# X\nbody", "one_line_summary": "s"}
+        r = {"one_line_summary": "s"}
         assert _merge_chunk_results([r]) is r
 
-    def test_concatenates_bodies_dropping_later_h1s(self):
+    def test_first_nonempty_one_liner_wins(self):
         merged = _merge_chunk_results(
             [
-                {"markdown_body": "# Doc\n\nAlpha", "one_line_summary": "first"},
-                {"markdown_body": "# Doc\n\nBeta", "one_line_summary": "second"},
+                {"one_line_summary": ""},
+                {"one_line_summary": "second"},
+                {"one_line_summary": "third"},
             ]
         )
-        assert "Alpha" in merged["markdown_body"]
-        assert "Beta" in merged["markdown_body"]
-        assert merged["markdown_body"].count("# Doc") == 1  # later H1 stripped
-        assert merged["one_line_summary"] == "first"  # first non-empty
+        assert merged["one_line_summary"] == "second"
 
     def test_unions_and_dedups_concepts_and_entities(self):
         merged = _merge_chunk_results(
             [
                 {
-                    "markdown_body": "# D\nx",
+                    "one_line_summary": "part one",
                     "concepts": [{"topic": "t1", "subject": "s", "gloss": "g"}],
                     "entities": [{"label": "Pydantic", "type": "module"}],
                     "edges": [{"source": "Pydantic", "target": "Mypy", "relation": "integrates"}],
                 },
                 {
-                    "markdown_body": "# D\ny",
+                    "one_line_summary": "part two",
                     "concepts": [
                         {"topic": "t1", "subject": "s", "gloss": "dup"},  # same (topic,subject) → dropped
                         {"topic": "t2", "subject": "s", "gloss": "g2"},
@@ -182,27 +175,25 @@ class TestMergeChunkResults:
         assert len(merged["edges"]) == 1
 
 
-def test_summarise_sources_chunks_large_doc_and_merges(fake_llm, monkeypatch):
-    """A doc over the (forced low) threshold is split, each part summarised, and
-    the parts merged into one page with one concept inventory."""
+def test_extract_docs_chunks_large_doc_and_merges(fake_llm, monkeypatch):
+    """A doc over the (forced low) threshold is split, each part extracted, and
+    the parts merged into one label + one concept/entity inventory."""
     monkeypatch.setenv("OT_WIKI_MAX_DOC_CHARS", "120")
     monkeypatch.setenv("OT_WIKI_CONCURRENCY", "1")
     body = "# Alpha\n" + ("a" * 80) + "\n## Beta\n" + ("b" * 80) + "\n"
     src = NormalizedSource(sha256="big", original_name="big-doc.md", markdown=body)
     responses = [
         (
-            "emit_page",
+            "emit_extraction",
             {
-                "markdown_body": "# Doc\n\nAlpha section",
                 "one_line_summary": "Part one.",
                 "concepts": [{"topic": "alpha", "subject": "lib", "gloss": "a"}],
                 "entities": [{"label": "Lib", "type": "module"}],
             },
         ),
         (
-            "emit_page",
+            "emit_extraction",
             {
-                "markdown_body": "# Doc\n\nBeta section",
                 "one_line_summary": "Part two.",
                 "concepts": [{"topic": "beta", "subject": "lib", "gloss": "b"}],
                 "entities": [{"label": "Lib", "type": "module"}],  # dup across chunks
@@ -210,45 +201,40 @@ def test_summarise_sources_chunks_large_doc_and_merges(fake_llm, monkeypatch):
         ),
     ]
     llm = fake_llm(responses)
-    out: list[CompiledPage] = []
     mentions: list[ConceptMention] = []
     entity_nodes: list = []
-    list(summarise_sources([src], VaultMetadata.empty("v"), llm, out, mentions, entity_nodes_out=entity_nodes))
+    list(extract_docs([src], VaultMetadata.empty("v"), llm, mentions, entity_nodes_out=entity_nodes))
 
     assert len(llm.calls) == 2  # one call per chunk
     assert "PART 1 of 2" in llm.calls[0][1] and "PART 2 of 2" in llm.calls[1][1]
-    assert len(out) == 1
-    merged_body = out[0].markdown_body
-    assert "Alpha section" in merged_body and "Beta section" in merged_body
-    assert "# Doc" not in merged_body  # chunk H1s removed; force_h1 supplies the title
+    assert src.title == "Big Doc"
+    assert src.one_line_summary == "Part one."  # first non-empty across chunks
     assert {m.topic for m in mentions} == {"alpha", "beta"}
     assert len(entity_nodes) == 1  # "Lib" deduped across the two chunks
 
 
-def test_summarise_sources_collects_mentions(fake_llm):
+def test_extract_docs_stamps_labels_and_collects_mentions(fake_llm):
     src = NormalizedSource(sha256="abc", original_name="ducks.md", markdown="# Ducks\nstuff")
     resp = (
-        "emit_page",
+        "emit_extraction",
         {
-            "markdown_body": "# Ducks\n\nbody",
             "one_line_summary": "About ducks.",
             "concepts": [{"topic": "waterfowl", "subject": "ducks", "gloss": "ducks are waterfowl"}],
         },
     )
-    out: list[CompiledPage] = []
     mentions: list[ConceptMention] = []
-    list(summarise_sources([src], VaultMetadata.empty("v"), fake_llm([resp]), out, mentions))
+    list(extract_docs([src], VaultMetadata.empty("v"), fake_llm([resp]), mentions))
 
-    assert len(out) == 1 and out[0].kind == "file_summary"
+    assert src.title == "Ducks"
+    assert src.one_line_summary == "About ducks."
     assert len(mentions) == 1
     assert mentions[0].topic == "waterfowl"
     assert mentions[0].source_sha == "abc"  # stamped from the document
 
 
-def test_summarise_sources_without_mentions_out_is_fine(fake_llm):
-    """mentions_out is optional — omitting it must not break summarisation."""
+def test_extract_docs_without_mentions_out_is_fine(fake_llm):
+    """mentions_out is optional — omitting it must not break extraction."""
     src = NormalizedSource(sha256="abc", original_name="a.md", markdown="# A\nx")
-    resp = ("emit_page", {"markdown_body": "# A\n\nb", "one_line_summary": "s", "concepts": []})
-    out: list[CompiledPage] = []
-    list(summarise_sources([src], VaultMetadata.empty("v"), fake_llm([resp]), out))
-    assert len(out) == 1
+    resp = ("emit_extraction", {"one_line_summary": "s", "concepts": []})
+    list(extract_docs([src], VaultMetadata.empty("v"), fake_llm([resp])))
+    assert src.one_line_summary == "s"

@@ -3101,7 +3101,7 @@ export class LadybugGraphStore implements GraphStore {
       };
     }
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const wikiTypes = new Set(['WikiVault', 'WikiPage', 'Source']);
+    const wikiTypes = new Set(['WikiVault', 'WikiPage', 'CorpusDoc']);
     const codeTypes = new Set([
       'Repository',
       'Directory',
@@ -3153,7 +3153,7 @@ export class LadybugGraphStore implements GraphStore {
     const asString = (v: unknown): string | null =>
       typeof v === 'string' && v ? v : null;
 
-    if (nodeType === 'Source') {
+    if (nodeType === 'CorpusDoc') {
       chain.push({
         kind: 'source',
         id: nodeId,
@@ -3169,7 +3169,7 @@ export class LadybugGraphStore implements GraphStore {
         if (visited.has(id)) continue;
         visited.add(id);
         const p = (r.node.properties ?? {}) as Record<string, unknown>;
-        if (r.node.type === 'Source') {
+        if (r.node.type === 'CorpusDoc') {
           chain.push({
             kind: 'source',
             id,

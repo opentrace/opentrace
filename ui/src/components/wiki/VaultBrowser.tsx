@@ -541,8 +541,6 @@ function DetachIcon() {
   );
 }
 
-type PageKindTab = 'concepts' | 'sources';
-
 function PagesSection({
   vaultData,
   vaultName,
@@ -554,41 +552,6 @@ function PagesSection({
   activeSlug: string | null;
   onSelect: (slug: string) => void;
 }) {
-  const { concepts, sourceSummaries } = useMemo(() => {
-    const c: VaultPageMeta[] = [];
-    const s: VaultPageMeta[] = [];
-    for (const p of vaultData?.pages ?? []) {
-      // Legacy "source" / "source_summary" values behave the same as the
-      // new "file_summary".
-      const isSummary =
-        p.kind === 'file_summary' ||
-        p.kind === 'source_summary' ||
-        p.kind === 'source';
-      (isSummary ? s : c).push(p);
-    }
-    return { concepts: c, sourceSummaries: s };
-  }, [vaultData]);
-
-  const [tab, setTab] = useState<PageKindTab>('concepts');
-
-  // Keep the active sub-tab in sync with which kind the currently
-  // selected page belongs to — so jumping between vaults (or following a
-  // wiki-link from a concept body to a file summary) auto-switches the
-  // visible list without forcing the user to click the tab themselves.
-  const activeInSources = useMemo(
-    () =>
-      activeSlug ? sourceSummaries.some((p) => p.slug === activeSlug) : false,
-    [activeSlug, sourceSummaries],
-  );
-  const activeInConcepts = useMemo(
-    () => (activeSlug ? concepts.some((p) => p.slug === activeSlug) : false),
-    [activeSlug, concepts],
-  );
-  useEffect(() => {
-    if (activeInSources) setTab('sources');
-    else if (activeInConcepts) setTab('concepts');
-  }, [activeInSources, activeInConcepts]);
-
   if (!vaultData || vaultData.pages.length === 0) {
     return (
       <div className="vault-drawer__sidebar-section vault-drawer__sidebar-section--pages">
@@ -611,52 +574,22 @@ function PagesSection({
     );
   }
 
-  const list = tab === 'concepts' ? concepts : sourceSummaries;
-
   return (
     <div className="vault-drawer__sidebar-section vault-drawer__sidebar-section--pages">
       <h4 className="vault-drawer__pages-header">
         Pages in{' '}
         <span className="vault-drawer__pages-header-vault">{vaultName}</span>
       </h4>
-      <div className="vault-drawer__subtabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'concepts'}
-          className={`vault-drawer__subtab${tab === 'concepts' ? ' vault-drawer__subtab--active' : ''}`}
-          onClick={() => setTab('concepts')}
-        >
-          Concepts ({concepts.length})
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'sources'}
-          className={`vault-drawer__subtab${tab === 'sources' ? ' vault-drawer__subtab--active' : ''}`}
-          onClick={() => setTab('sources')}
-        >
-          File summaries ({sourceSummaries.length})
-        </button>
+      <div className="vault-drawer__list">
+        {vaultData.pages.map((p) => (
+          <PageListItem
+            key={p.slug}
+            page={p}
+            active={p.slug === activeSlug}
+            onSelect={onSelect}
+          />
+        ))}
       </div>
-      {list.length === 0 ? (
-        <div className="vault-drawer__empty">
-          {tab === 'concepts'
-            ? 'No concept pages yet.'
-            : 'No file summaries yet.'}
-        </div>
-      ) : (
-        <div className="vault-drawer__list">
-          {list.map((p) => (
-            <PageListItem
-              key={p.slug}
-              page={p}
-              active={p.slug === activeSlug}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

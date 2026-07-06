@@ -36,12 +36,13 @@ def _seed_centrality(store: GraphStore) -> None:
 
     kb:
       hub (concept)         — central, linked by everyone else
-      core (concept)        — links to hub, summary-spec
+      core (concept)        — links to hub + leaf
       satellite (concept)   — links to hub only
+      leaf (concept)        — links to hub only
       lonely (concept)      — no edges
-      summary-spec (file_summary)   — cited by hub + core (2 citations)
-      summary-misc (file_summary)   — cited by core only (1 citation)
-      summary-cluster (file_summary) — cited by no one
+      corpus::spec (CorpusDoc)    — cited by hub + core (2 citations)
+      corpus::misc (CorpusDoc)    — cited by core only (1 citation)
+      corpus::cluster (CorpusDoc) — cited by no one
     other:
       page-x (concept) — minimal, used to verify vault-scope filtering
     """
@@ -49,10 +50,8 @@ def _seed_centrality(store: GraphStore) -> None:
         ("hub", "Hub", "concept"),
         ("core", "Core", "concept"),
         ("satellite", "Satellite", "concept"),
+        ("leaf", "Leaf", "concept"),
         ("lonely", "Lonely", "concept"),
-        ("summary-spec", "spec.pdf", "file_summary"),
-        ("summary-misc", "misc.pdf", "file_summary"),
-        ("summary-cluster", "cluster.pdf", "file_summary"),
     ]
     for slug, name, kind in pages_kb:
         store.add_node(
@@ -61,6 +60,18 @@ def _seed_centrality(store: GraphStore) -> None:
             name,
             {"kind": kind, "vault": "kb", "one_line_summary": f"Summary for {name}"},
         )
+
+    # Sources are vault members via WikiVault -CONTAINS-> Source, not a
+    # ``vault`` property.
+    store.add_node("vault::kb", "WikiVault", "kb", {"vault": "kb"})
+    for sid, fname in [("spec", "spec.pdf"), ("misc", "misc.pdf"), ("cluster", "cluster.pdf")]:
+        store.add_node(
+            f"corpus::{sid}",
+            "CorpusDoc",
+            fname,
+            {"sha256": sid, "filename": fname, "one_line_summary": f"Summary for {fname}"},
+        )
+        store.add_relationship(f"contains-{sid}", "CONTAINS", "vault::kb", f"corpus::{sid}")
 
     store.add_node(
         "other::page-x",
@@ -73,19 +84,17 @@ def _seed_centrality(store: GraphStore) -> None:
         # LINKS_TO — hub is the most-connected concept. Edges touching hub:
         # l1 (in), l2 (in), l3 (out), l5 (in) = degree 4. Core touches l1/l3/l4
         # = degree 3, so hub leads unambiguously.
-        ("l1", "LINKS_TO", "core", "hub"),
-        ("l2", "LINKS_TO", "satellite", "hub"),
-        ("l3", "LINKS_TO", "hub", "core"),
-        ("l4", "LINKS_TO", "core", "summary-spec"),
-        ("l5", "LINKS_TO", "summary-spec", "hub"),
-        # CITES — summary-spec is the most-cited source (2), summary-misc has 1
-        ("c1", "CITES", "hub", "summary-spec"),
-        ("c2", "CITES", "core", "summary-spec"),
-        ("c3", "CITES", "core", "summary-misc"),
+        ("l1", "LINKS_TO", "kb::core", "kb::hub"),
+        ("l2", "LINKS_TO", "kb::satellite", "kb::hub"),
+        ("l3", "LINKS_TO", "kb::hub", "kb::core"),
+        ("l4", "LINKS_TO", "kb::core", "kb::leaf"),
+        ("l5", "LINKS_TO", "kb::leaf", "kb::hub"),
+        # CITES — spec is the most-cited source (2), misc has 1
+        ("c1", "CITES", "kb::hub", "corpus::spec"),
+        ("c2", "CITES", "kb::core", "corpus::spec"),
+        ("c3", "CITES", "kb::core", "corpus::misc"),
     ]
-    for eid, etype, src, tgt in edges:
-        src_id = f"kb::{src}" if src != "other" else src
-        tgt_id = f"kb::{tgt}" if tgt != "other" else tgt
+    for eid, etype, src_id, tgt_id in edges:
         store.add_relationship(eid, etype, src_id, tgt_id)
 
 
@@ -114,7 +123,7 @@ class TestTopLinkedConcepts:
     def test_only_concepts(self, store):
         _seed_centrality(store)
         result = overview(store, top_n=10, vault_scope="kb")
-        # file-summary pages must not appear in the concept ranking.
+        # Source documents must not appear in the concept ranking.
         assert "spec.pdf" not in [r["name"] for r in result["top_linked_concepts"]]
 
 
@@ -134,11 +143,10 @@ class TestTopCitedSources:
         names = [r["name"] for r in result["top_cited_sources"]]
         assert "cluster.pdf" not in names
 
-    def test_only_file_summaries(self, store):
+    def test_only_sources(self, store):
         _seed_centrality(store)
         result = overview(store, top_n=10, vault_scope="kb")
-        # Concept pages must not appear here even when they're CITES targets
-        # (they aren't in this fixture, but the invariant is worth pinning).
+        # Only Source nodes appear here — never WikiPages.
         for r in result["top_cited_sources"]:
             assert r["name"].endswith(".pdf")
 

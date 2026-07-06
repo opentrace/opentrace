@@ -26,6 +26,7 @@ from pathlib import Path
 from opentrace_agent.wiki.ingest.sources import AcquiredSource
 from opentrace_agent.wiki.ingest.types import (
     CompiledPage,
+    NormalizedSource,
     WikiEventKind,
     WikiPhase,
     WikiPipelineEvent,
@@ -96,6 +97,7 @@ def persist(
     pages_dir: Path,
     metadata_path: Path,
     log_dir: Path,
+    normalized: list[NormalizedSource] | None = None,
 ) -> Iterator[WikiPipelineEvent]:
     """Write each page, update vault metadata, append a compile-log entry."""
     total = len(pages)
@@ -177,14 +179,20 @@ def persist(
                 file_name=page.slug,
             )
 
-    # Update sources index.
+    # Update sources index. Labels come from the DocExtraction stage via the
+    # NormalizedSource (matched by sha); persisted here so disk-only vaults
+    # keep them for a later ``vault attach``.
+    label_by_sha = {n.sha256: n for n in (normalized or [])}
     for src in acquired:
         contributed = [page.slug for page in pages if src.sha256 in page.source_shas]
+        norm = label_by_sha.get(src.sha256)
         meta.sources[src.sha256] = IngestedSource(
             sha256=src.sha256,
             original_name=src.name,
             ingested_at=now,
             contributed_to=contributed,
+            title=getattr(norm, "title", "") or "",
+            one_line_summary=getattr(norm, "one_line_summary", "") or "",
         )
 
     meta.last_compiled_at = now

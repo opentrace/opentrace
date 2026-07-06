@@ -45,7 +45,6 @@ class AutopruneReport:
 
     sources_deleted: int = 0
     entities_deleted: int = 0
-    file_summary_pages_deleted: int = 0
     concept_pages_deleted: int = 0
     concept_pages_marked_stale: int = 0
     cites_edges_removed: int = 0
@@ -55,8 +54,8 @@ class AutopruneReport:
 def compute_walked_shas(walked_doc_paths: list[Path]) -> set[str]:
     """SHA-256 of raw file bytes for each walked doc path.
 
-    Matches the scheme used by ``wiki/ingest/graph_writer.source_node_id``
-    so the resulting Source ids align with what the doc-ingestion pass writes.
+    Matches the scheme used by ``wiki/ingest/graph_writer.corpus_doc_node_id``
+    so the resulting CorpusDoc ids align with what the doc-ingestion pass writes.
     """
     shas: set[str] = set()
     for p in walked_doc_paths:
@@ -71,19 +70,21 @@ def autoprune_after_index(
     store,  # GraphStore — typed loosely to avoid the import cycle
     *,
     walked_doc_shas: set[str],
-    walked_file_ids: set[str],
     vault_name: str | None,
     scope_path: Path | None,
     db_path: str | None,
 ) -> AutopruneReport:
-    """Delete graph state for sources/entities/pages absent from this walk.
+    """Delete graph state for docs/entities/pages absent from this walk.
 
     ``walked_doc_shas`` — sha256 of raw bytes for every doc surfaced this run.
-    ``walked_file_ids`` — File node ids surfaced for code this run.
     ``vault_name`` — when set (``--wiki`` was used), scopes deletion
         to nodes carrying ``vault=<vault_name>``.
     ``scope_path`` — when set without ``vault_name``, scopes by source_uri
         prefix; otherwise deletion is vault-scoped.
+
+    Entities are anchored exclusively to CorpusDocs (``DERIVED_FROM``
+    entity → corpus doc) — there is no code-side entity sweep because
+    nothing creates code-derived entities today.
     """
     report = AutopruneReport()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -91,11 +92,11 @@ def autoprune_after_index(
     # --- 1. Identify candidate Sources in scope ---
     candidate_sources = _sources_in_scope(store, vault_name=vault_name, scope_path=scope_path)
 
-    walked_source_ids = {f"source::{sha}" for sha in walked_doc_shas}
+    walked_source_ids = {f"corpus::{sha}" for sha in walked_doc_shas}
 
     orphan_sources = [s for s in candidate_sources if s["id"] not in walked_source_ids]
 
-    if not orphan_sources and not _has_orphan_code_entities(store, walked_file_ids):
+    if not orphan_sources:
         return report  # nothing to do
 
     # --- 2. Delete corpus bodies for orphan Sources ---
@@ -124,11 +125,11 @@ def autoprune_after_index(
         sid = src["id"]
         report.sources_deleted += 1
 
-        # Find dependent file_summary pages (1:1 via CITES from page → source)
-        # and concept pages (multi-source via CITES) that referenced this Source.
-        # Scope to the target vault: Sources are content-addressed and may be
-        # shared across vaults, so a page in *another* vault that happens to
-        # cite the same Source must not be pruned by this vault's pass.
+        # Find concept pages that cited this Source (CITES page → source,
+        # direct by sha). Scope to the target vault: Sources are
+        # content-addressed and may be shared across vaults, so a page in
+        # *another* vault that happens to cite the same Source must not be
+        # pruned by this vault's pass.
         page_ids_citing = _pages_in_vault(_pages_citing(store, sid), vault_name)
 
         # Find entities derived from this Source (DERIVED_FROM entity → source)
@@ -145,63 +146,24 @@ def autoprune_after_index(
                 _delete_node_and_edges(store, ent_id)
                 report.entities_deleted += 1
 
-        # For each page that cited this Source:
+        # For each page that cited this Source: drop the dangling edge, then
+        # delete the page when it has no citations left, else stamp it stale.
         for page in page_ids_citing:
             pid = page["id"]
-            kind = (page.get("properties") or {}).get("kind") or "concept"
 
-            # Remove the now-dangling CITES edge.
             removed = _delete_cites_edge(store, source_id=pid, target_id=sid)
             report.cites_edges_removed += removed
 
-            if kind == "file_summary":
-                # 1:1 with the deleted Source → page is meaningless. Delete it,
-                # then cascade: concept pages CITE file_summary pages (not the
-                # Source directly), so this deletion is the actual stale-trigger
-                # for downstream concepts. Capture downstream citers before the
-                # delete so the traversal sees the still-extant edges.
-                downstream_pages = _pages_in_vault(_pages_citing(store, pid), vault_name)
+            remaining = _remaining_cites_count(store, pid)
+            if remaining == 0:
                 _delete_page_disk_file(store, page, vault_name=vault_name, db_path=db_path)
                 _delete_node_and_edges(store, pid)
-                report.file_summary_pages_deleted += 1
-
-                for downstream in downstream_pages:
-                    dpid = downstream["id"]
-                    dkind = (downstream.get("properties") or {}).get("kind") or "concept"
-                    if dkind == "file_summary":
-                        # Unexpected — file_summary nesting isn't part of the
-                        # schema. Skip rather than recurse.
-                        continue
-                    removed = _delete_cites_edge(store, source_id=dpid, target_id=pid)
-                    report.cites_edges_removed += removed
-                    remaining = _remaining_cites_count(store, dpid)
-                    if remaining == 0:
-                        _delete_page_disk_file(store, downstream, vault_name=vault_name, db_path=db_path)
-                        _delete_node_and_edges(store, dpid)
-                        report.concept_pages_deleted += 1
-                    else:
-                        _stamp_stale_since(store, dpid, now_iso)
-                        if dpid not in already_marked_stale:
-                            report.concept_pages_marked_stale += 1
-                            already_marked_stale.add(dpid)
+                report.concept_pages_deleted += 1
             else:
-                remaining = _remaining_cites_count(store, pid)
-                if remaining == 0:
-                    _delete_page_disk_file(store, page, vault_name=vault_name, db_path=db_path)
-                    _delete_node_and_edges(store, pid)
-                    report.concept_pages_deleted += 1
-                else:
-                    _stamp_stale_since(store, pid, now_iso)
-                    if pid not in already_marked_stale:
-                        report.concept_pages_marked_stale += 1
-                        already_marked_stale.add(pid)
-
-    # --- 4. Code-side: prune entities whose File parent was removed ---
-    #     File node pruning belongs to the structural pipeline itself
-    #     (orphan files are removed by re-walks). We sweep their dependent
-    #     entities here so the entity layer doesn't carry orphans.
-    if walked_file_ids:
-        report.entities_deleted += _prune_entities_for_missing_files(store, walked_file_ids, scope_path)
+                _stamp_stale_since(store, pid, now_iso)
+                if pid not in already_marked_stale:
+                    report.concept_pages_marked_stale += 1
+                    already_marked_stale.add(pid)
 
     return report
 
@@ -230,8 +192,8 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
             max_depth=1,
             relationship_type="CONTAINS",
         )
-        return [r["node"] for r in results if (r.get("node") or {}).get("type") == "Source"]
-    candidates = store.list_nodes("Source", limit=10_000)
+        return [r["node"] for r in results if (r.get("node") or {}).get("type") == "CorpusDoc"]
+    candidates = store.list_nodes("CorpusDoc", limit=10_000)
     if scope_path is not None:
         prefix = str(scope_path.resolve())
         return [s for s in candidates if str((s.get("properties") or {}).get("source_uri") or "").startswith(prefix)]
@@ -334,7 +296,7 @@ def _delete_page_disk_file(
 ) -> None:
     """Best-effort delete the on-disk markdown for a WikiPage being pruned.
 
-    The page's ``slug`` already encodes kind/base (e.g. ``file-summary/readme``),
+    The page's ``slug`` already encodes kind/base (e.g. ``concept/usage``),
     so the disk path is ``<vault>/pages/<slug>.md``. Resolves the vault dir
     using the WikiVault node's ``scope`` property; falls back to local scope
     when the WikiVault is missing.

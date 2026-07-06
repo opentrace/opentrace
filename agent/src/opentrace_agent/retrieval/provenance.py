@@ -17,8 +17,8 @@
 Three branches keyed off node type / edges:
 
 * **Wiki** (``WikiVault`` / ``WikiPage`` / ``Source``) — agent/model/session/
-  confidence stamped at compile time plus the CITES chain back through any
-  file-summary pages to the original ``Source`` artefacts.
+  confidence stamped at compile time plus the CITES chain to the original
+  ``Source`` artefacts (concept pages cite Sources directly by sha).
 * **Code** (``Repository`` / ``Directory`` / ``File`` / ``Class`` / ``Function`` /
   ``Variable``) — ``commit_sha`` / ``indexer_version`` from the per-repo
   ``IndexMetadata`` node written by ``opentraceai index``; file path and line
@@ -36,7 +36,7 @@ from typing import Any
 
 from opentrace_agent.store import GraphStore
 
-WIKI_NODE_TYPES = {"WikiVault", "WikiPage", "Source"}
+WIKI_NODE_TYPES = {"WikiVault", "WikiPage", "CorpusDoc"}
 CODE_NODE_TYPES = {"Repository", "Directory", "File", "Class", "Function", "Variable"}
 DERIVED_NODE_TYPES = {"Idea", "Service", "Module", "Paper", "Person", "Event"}
 
@@ -112,17 +112,17 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
     """Return ``{agent, model, session, confidence, vault, chain}`` for a wiki node.
 
     ``chain`` walks CITES outgoing up to 3 hops, stopping at Source nodes.
-    For a concept page the chain typically goes
-    concept → file-summary page → Source. For a file-summary page it
-    goes file-summary → Source. For a Source, the chain is just itself.
+    For a concept page the chain goes concept → Source (direct by sha).
+    For a Source, the chain is just itself.
     """
     chain: list[dict[str, Any]] = []
     visited: set[str] = {node_id}
 
-    if node_type == "Source":
-        chain.append(_source_link(node_id, props))
+    if node_type == "CorpusDoc":
+        chain.append(_source_link(node_id, props, store))
     else:
-        # Walk CITES outgoing up to 3 hops to capture concept→summary→source.
+        # Walk CITES outgoing (depth-capped defensively; the schema is one
+        # hop, concept → Source).
         traversal = store.traverse(
             node_id,
             direction="outgoing",
@@ -138,8 +138,8 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
             visited.add(nid)
             t = r["node"]["type"]
             p = r["node"].get("properties") or {}
-            if t == "Source":
-                chain.append(_source_link(nid, p))
+            if t == "CorpusDoc":
+                chain.append(_source_link(nid, p, store))
             elif t == "WikiPage":
                 chain.append(
                     {
@@ -162,14 +162,29 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
     }
 
 
-def _source_link(node_id: str, props: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "kind": "source",
+def _source_link(node_id: str, props: dict[str, Any], store: GraphStore | None = None) -> dict[str, Any]:
+    """Chain entry for a CorpusDoc. When *store* is given, follows the
+    outgoing MIRRORS edge (present for repo-walked docs whose extension also
+    produced a File node) so the chain hands the caller a code-tree anchor."""
+    link: dict[str, Any] = {
+        "kind": "corpus_doc",
         "id": node_id,
         "sha256": props.get("sha256"),
         "filename": props.get("filename"),
+        "path": props.get("path"),
         "acquired_at": props.get("acquired_at"),
     }
+    if store is not None:
+        try:
+            mirrors = store.traverse(node_id, direction="outgoing", max_depth=1, relationship_type="MIRRORS")
+        except ValueError:
+            mirrors = []
+        for r in mirrors:
+            n = r.get("node") or {}
+            if n.get("type") == "File":
+                link["file"] = n.get("id")
+                break
+    return link
 
 
 # ---------------------------------------------------------------------------
@@ -205,12 +220,12 @@ def _derived_provenance(store: GraphStore, node_id: str, props: dict[str, Any]) 
     for r in traversal:
         node = r.get("node") or {}
         rel = r.get("relationship") or {}
-        if node.get("type") != "Source":
+        if node.get("type") != "CorpusDoc":
             continue
         rel_props = rel.get("properties") or {}
         transform = rel_props.get("transform") or transform
         sp = node.get("properties") or {}
-        link = _source_link(node["id"], sp)
+        link = _source_link(node["id"], sp, store)
         link["content_type"] = sp.get("content_type")
         link["source_uri"] = sp.get("source_uri") or source_uri
         link["corpus_path"] = sp.get("corpus_path")

@@ -8,7 +8,7 @@ Click-based command-line interface for the `opentraceai` binary. Also hosts the 
 main.py          — Click root group + the unified index command:
                    • code-only walk (plain `index`; no LLM calls)
                    • --wiki [VAULT_NAME] [--global] — unified doc ingestion:
-                     ONE LLM call/doc → file-summary page + entities
+                     ONE LLM call/doc → CorpusDoc label + entities
                      (Idea/Service/… + edges) + concept inventory, then
                      cross-document concept-page synthesis
                    • --no-prune / --refresh-stale-pages for cleanup behaviour

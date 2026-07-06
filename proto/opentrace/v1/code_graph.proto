@@ -190,18 +190,25 @@ message WikiPageNode {
   string stale_since       = 12 [(ladybug.column) = "staleSince"];
 }
 
-// SourceNode represents a raw input artifact ingested into the graph — both
-// vault uploads (wiki pipeline) and generic ingestion (`opentraceai ingest`)
-// share this shape. The body is persisted to `.opentrace/corpus/<sha>.<ext>`
-// so it's available for re-extraction and grep.
-message SourceNode {
-  string id            = 1;          // sha256 hex (full) or `src:<sha16>` for legacy ingest
-  string name          = 2;          // original filename or title
-  string sha256        = 3;
-  string filename      = 4;
-  string content_type  = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
-  int64  size_bytes    = 6 [(ladybug.column) = "sizeBytes"];
-  string acquired_at   = 7 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+// CorpusDocNode represents a document ingested into the wiki corpus — the
+// raw material concept pages are synthesised from and cite. Identity is the
+// sha256 of the RAW bytes; the normalized markdown body is persisted to
+// `.opentrace/corpus/<sha>.md` (referenced by corpus_path) so it's readable
+// via load_source and available for re-extraction and grep. Carries the
+// navigation label (title + one_line_summary; the `summary` copy feeds FTS).
+message CorpusDocNode {
+  string id               = 1;       // `corpus::<sha256>`
+  string name             = 2;       // original filename
+  string sha256           = 3;
+  string filename         = 4;
+  string content_type     = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
+  int64  size_bytes       = 6 [(ladybug.column) = "sizeBytes"];
+  string acquired_at      = 7 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+  string corpus_path      = 8 [(ladybug.column) = "corpusPath"];    // relative to .opentrace/
+  string title            = 9;       // display title (derived from filename)
+  string one_line_summary = 10 [(ladybug.column) = "oneLineSummary"];
+  string summary          = 11;      // copy of the one-liner; feeds search_text FTS
+  string path             = 12;      // repo-relative path when repo-walked (see MirrorsRel)
 }
 
 // CommunityNode represents a cluster of related nodes detected by Leiden/Louvain.
@@ -339,29 +346,40 @@ message LinksToRel {
 }
 
 // CitesRel represents a wiki provenance citation.
-//   WikiPage --Cites--> SourceNode               (source-summary page → its source)
-//   WikiPage --Cites--> WikiPage (source_summary) (concept page → source-summary it cites)
+//   WikiPage --Cites--> CorpusDocNode   (concept page → the document it was synthesised from)
 //
-// Distinct from DerivedFromRel (variable data flow); kept separate to avoid
-// overloading edge semantics across the code-graph and wiki-graph domains.
+// Direct by sha, one hop. Distinct from DerivedFromRel (variable data flow);
+// kept separate to avoid overloading edge semantics across the code-graph
+// and wiki-graph domains.
 message CitesRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
 }
 
-// MentionsRel links a WikiPage (which has a body) to an Idea/Service/Module/
-// Paper/Person/Event entity whose name appears in the body. Bridges the
-// curated-page layer with the flat-entity layer so
-// cross-cutting queries work — "which pages discuss this concept?",
-// "which concepts span both code and curated docs?".
+// MirrorsRel links a CorpusDoc to the File node for the same on-disk
+// document, when the doc was discovered by a repo walk and its extension
+// also produces a File node (e.g. .md). Bridges the wiki corpus layer and
+// the code tree so either twin reaches the other in one hop. Docs with no
+// File twin (PDFs, uploads, URLs, attached global vaults) have no edge.
+message MirrorsRel {
+  string id        = 1;
+  string source_id = 2;   // CorpusDoc (corpus::<sha>)
+  string target_id = 3;   // File (<repo>/<rel_path>)
+}
+
+// MentionsRel links a WikiPage or CorpusDoc (which have bodies) to an
+// Idea/Service/Module/Paper/Person/Event entity whose name appears in the
+// body — page markdown for WikiPages, raw corpus markdown for CorpusDocs.
+// Bridges the content layers with the flat-entity layer so cross-cutting
+// queries work — "which pages or documents discuss this concept?".
 //
-// Written by the wiki ingest graph_writer after each page body is
-// persisted; uses whole-word name matching against the vault's entity
-// set (case-insensitive except for Person types).
+// Written by the wiki ingest graph_writer after each compile; uses
+// whole-word name matching against the vault's entity set
+// (case-insensitive except for Person types).
 message MentionsRel {
   string id        = 1;
-  string source_id = 2;   // WikiPage
+  string source_id = 2;   // WikiPage or CorpusDoc
   string target_id = 3;   // Idea / Service / Module / Paper / Person / Event
 }
 

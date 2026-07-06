@@ -14,11 +14,11 @@
 
 """Page title → filesystem slug, with collision suffixes and tombstone awareness.
 
-Slugs are path-like: ``<kind_dir>/<base>`` (e.g. ``concept/usage``,
-``file-summary/midwest-beef-rfp-response``). The ``<kind_dir>`` segment
-is the namespace that prevents same-titled concept and file-summary
-pages from colliding — it also doubles as the on-disk folder and the
-Obsidian-visible page-path prefix.
+Slugs are path-like: ``<kind_dir>/<base>`` (e.g. ``concept/usage``). The
+``<kind_dir>`` segment namespaces page kinds against each other — it also
+doubles as the on-disk folder and the Obsidian-visible page-path prefix.
+Concept is the only kind produced today; the structure stays kind-shaped
+so a future kind slots in without a layout migration.
 """
 
 from __future__ import annotations
@@ -31,10 +31,8 @@ MAX_SLUG_LEN = 80
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 # kind value (as stored in PageMeta.kind / CompiledPage.kind) → folder name.
-# Folder names use a dash because the kind value uses an underscore.
 _KIND_DIRS = {
     "concept": "concept",
-    "file_summary": "file-summary",
 }
 
 

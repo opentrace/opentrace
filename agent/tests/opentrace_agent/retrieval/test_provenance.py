@@ -24,7 +24,7 @@ from opentrace_agent.retrieval import provenance  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
     page_node_id,
-    source_node_id,
+    corpus_doc_node_id,
     write_vault_to_graph,
 )
 from opentrace_agent.wiki.vault import IngestedSource, PageMeta, VaultMetadata  # noqa: E402
@@ -49,15 +49,6 @@ def _make_meta_and_bodies():
         "sha1": IngestedSource(sha256="sha1", original_name="report.pdf", ingested_at="2026-05-01T00:00:00"),
     }
     meta.pages = {
-        "file-summary/report-pdf": PageMeta(
-            slug="file-summary/report-pdf",
-            title="report.pdf",
-            one_line_summary="Q4 financial report summary.",
-            source_shas=["sha1"],
-            last_updated="2026-05-01T00:00:00",
-            revision=1,
-            kind="file_summary",
-        ),
         "concept/revenue": PageMeta(
             slug="concept/revenue",
             title="Revenue",
@@ -69,8 +60,7 @@ def _make_meta_and_bodies():
         ),
     }
     bodies = {
-        "file-summary/report-pdf": "Summary of report.pdf — see [[Revenue]].",
-        "concept/revenue": "Concept revenue uses [[report.pdf]].",
+        "concept/revenue": "Concept revenue synthesised from report.pdf.",
     }
     return meta, bodies
 
@@ -88,7 +78,7 @@ class TestWikiProvenance:
                 "session": "session-uuid",
                 "confidence": 0.0,
             },
-            compiled_slugs={"file-summary/report-pdf", "concept/revenue"},
+            compiled_slugs={"concept/revenue"},
         )
         result = provenance(store, page_node_id("kb", "concept/revenue"))
         assert result["kind"] == "wiki"
@@ -96,27 +86,46 @@ class TestWikiProvenance:
         assert result["wiki"]["model"] == "claude-opus-4-7"
         assert result["wiki"]["session"] == "session-uuid"
         assert result["wiki"]["confidence"] == 0.0
-        # Chain should include the file-summary page and the source.
+        # Chain goes straight to the source — no intermediate pages.
         kinds = [c["kind"] for c in result["wiki"]["chain"]]
-        assert "wiki_page" in kinds
-        assert "source" in kinds
+        assert "corpus_doc" in kinds
         # The Source entry should carry sha256 + filename.
-        source_entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "source")
+        source_entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "corpus_doc")
         assert source_entry["sha256"] == "sha1"
         assert source_entry["filename"] == "report.pdf"
+
+    def test_corpus_doc_chain_includes_mirrored_file(self, store):
+        """A repo-walked doc's chain entry carries the File twin via MIRRORS."""
+        meta, bodies = _make_meta_and_bodies()
+        write_vault_to_graph(store, meta, bodies)
+        store.add_node("myrepo/docs/report.pdf", "File", "report.pdf", {"path": "docs/report.pdf"})
+        store.add_relationship("m1", "MIRRORS", corpus_doc_node_id("sha1"), "myrepo/docs/report.pdf")
+        result = provenance(store, page_node_id("kb", "concept/revenue"))
+        entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "corpus_doc")
+        assert entry["file"] == "myrepo/docs/report.pdf"
 
     def test_source_node_returns_self_chain(self, store):
         meta, bodies = _make_meta_and_bodies()
         write_vault_to_graph(store, meta, bodies)
-        result = provenance(store, source_node_id("sha1"))
+        result = provenance(store, corpus_doc_node_id("sha1"))
         assert result["kind"] == "wiki"
-        assert result["wiki"]["chain"][0]["kind"] == "source"
+        assert result["wiki"]["chain"][0]["kind"] == "corpus_doc"
         assert result["wiki"]["chain"][0]["sha256"] == "sha1"
 
     def test_unchanged_pages_keep_existing_provenance(self, store):
         """A second compile run that didn't touch a page must NOT clear its
         previously-stamped provenance."""
         meta, bodies = _make_meta_and_bodies()
+        meta.pages["concept/costs"] = PageMeta(
+            slug="concept/costs",
+            title="Costs",
+            one_line_summary="Cost structure topic.",
+            source_shas=["sha1"],
+            last_updated="2026-05-01T00:00:00",
+            revision=1,
+            kind="concept",
+        )
+        bodies = {**bodies, "concept/costs": "Cost breakdown from report.pdf."}
         first = {
             "agent": "opentrace-wiki-compiler",
             "model": "claude-opus-4-7",
@@ -128,25 +137,25 @@ class TestWikiProvenance:
             meta,
             bodies,
             provenance=first,
-            compiled_slugs={"file-summary/report-pdf", "concept/revenue"},
+            compiled_slugs={"concept/revenue", "concept/costs"},
         )
 
-        # Second pass marks ONLY the summary page as compiled — concept page
-        # keeps `first-run` session.
+        # Second pass marks ONLY costs as compiled — revenue keeps its
+        # `first-run` session.
         second = {**first, "session": "second-run"}
         write_vault_to_graph(
             store,
             meta,
             bodies,
             provenance=second,
-            compiled_slugs={"file-summary/report-pdf"},
+            compiled_slugs={"concept/costs"},
         )
 
         revenue = provenance(store, page_node_id("kb", "concept/revenue"))
         assert revenue["wiki"]["session"] == "first-run"
 
-        ss = provenance(store, page_node_id("kb", "file-summary/report-pdf"))
-        assert ss["wiki"]["session"] == "second-run"
+        costs = provenance(store, page_node_id("kb", "concept/costs"))
+        assert costs["wiki"]["session"] == "second-run"
 
     def test_missing_node(self, store):
         result = provenance(store, "nope")

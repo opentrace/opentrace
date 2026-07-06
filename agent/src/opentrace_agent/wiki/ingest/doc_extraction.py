@@ -12,19 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SummariseSources stage — one file-summary page per newly-ingested source.
+"""DocExtraction stage — one LLM call per newly-ingested source.
 
-Runs after Normalize, before Plan. Each new source becomes a page titled
-after the source filename (e.g. ``Midwest Beef Rfp Response``) that's a
-*distilled digest* of that document — the wiki layer that sits between a
-reader (usually an LLM browsing the vault) and the raw source. Concept pages
-produced by the later Execute stage cite file summaries by ``[[Title]]``
-wiki-link, giving inline provenance for any factual claim.
+Runs after Normalize, before Plan. Each new document gets a single
+extraction call that emits:
 
-The raw post-markitdown body is retained separately in the corpus
-(``Source.corpus_path``) and is what concept synthesis actually reads, so this
-page is a digest for browsing + citation — NOT the only on-disk record, and
-NOT a verbatim transcript.
+* a one-line summary + display title — stamped on the ``Source`` node as
+  its navigation label (what agents see in neighbour listings and search
+  hits before deciding to ``load_source`` the body),
+* the document's concept inventory (topic / subject / gloss) — input to
+  the Resolve stage's cross-document concept clustering,
+* the entity graph (typed entities + edges) — merged and mirrored into
+  the knowledge graph.
+
+There is no per-document wiki page. The raw post-markitdown body lives in
+the corpus (``Source.corpus_path``) and is read directly — by concept
+synthesis (which grounds pages in full sources) and by agents via the
+``load_source`` MCP tool. Concept pages cite sources via ``CITES`` edges
+to the ``Source`` node, not via wiki-links to a summary page.
 """
 
 from __future__ import annotations
@@ -35,10 +40,8 @@ import re
 from collections.abc import Iterator
 
 from opentrace_agent.wiki.ingest.entities import build_entities
-from opentrace_agent.wiki.ingest.execute import _wiki_concurrency, force_h1
+from opentrace_agent.wiki.ingest.execute import _wiki_concurrency
 from opentrace_agent.wiki.ingest.types import (
-    PAGE_KIND_FILE_SUMMARY,
-    CompiledPage,
     ConceptMention,
     NormalizedSource,
     WikiEventKind,
@@ -46,16 +49,15 @@ from opentrace_agent.wiki.ingest.types import (
     WikiPipelineEvent,
 )
 from opentrace_agent.wiki.llm import WikiLLM
-from opentrace_agent.wiki.slugify import unique_slug
 from opentrace_agent.wiki.vault import VaultMetadata
 
-# Output budget we request per summary call. A digest + concept/entity inventory
-# is small, so this is modest; the client clamps it to the backend's hard cap
-# (BackendConfig.max_output_tokens) regardless.
-SUMMARY_MAX_TOKENS = 8000
+# Output budget we request per extraction call. A one-liner + concept/entity
+# inventory is small, so this is modest; the client clamps it to the backend's
+# hard cap (BackendConfig.max_output_tokens) regardless.
+EXTRACTION_MAX_TOKENS = 4000
 
 # Chunking: a doc must fit the model's INPUT context to be read in one
-# extraction call. Since the digest output is small, input — not the output
+# extraction call. Since the extraction output is small, input — not the output
 # budget — is the binding constraint, so the threshold is generous and the
 # chunker is a rare safety net for enormous docs (not the common path). Override
 # with OT_WIKI_MAX_DOC_CHARS (e.g. lower it for a small-context local model, or
@@ -63,20 +65,17 @@ SUMMARY_MAX_TOKENS = 8000
 DEFAULT_MAX_DOC_CHARS = 120_000
 _HEADING_RE = re.compile(r"^#{1,6} ", re.MULTILINE)
 
-FILE_SUMMARY_SCHEMA = {
-    "description": "Emit the markdown body, one-line summary, concept inventory, and entity graph for a document.",
+DOC_EXTRACTION_SCHEMA = {
+    "description": "Emit the one-line summary, concept inventory, and entity graph for a document.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "markdown_body": {
-                "type": "string",
-                "description": (
-                    "Full markdown content for the page, starting with an H1 equal to the supplied page_title."
-                ),
-            },
             "one_line_summary": {
                 "type": "string",
-                "description": "One sentence describing the document (NOT its content) — used in the vault index.",
+                "description": (
+                    "One sentence describing the document — used as its navigation label in "
+                    "listings and search results."
+                ),
             },
             "concepts": {
                 "type": "array",
@@ -145,35 +144,26 @@ FILE_SUMMARY_SCHEMA = {
                 },
             },
         },
-        "required": ["markdown_body", "one_line_summary"],
+        "required": ["one_line_summary"],
     },
 }
 
 
-FILE_SUMMARY_SYSTEM = """You are distilling a single uploaded document into a wiki page.
+DOC_EXTRACTION_SYSTEM = """You are reading a single uploaded document for a knowledge graph.
 
-This page is a DIGEST for a knowledge wiki — a reader (usually an LLM) browses
-it to grasp what the document says and covers, then follows citations to the
-raw source when full detail is needed. The raw source is retained separately,
-so this is a digest, NOT a transcript: capture the key claims, decisions,
-definitions, and the figures that carry meaning, and drop boilerplate, repeated
-examples, and verbatim padding. Aim for a faithful but markedly shorter
-rendering — typically a fraction of the source length.
+The raw document is retained and readable in full, so you do NOT restate its
+content. Your job is a compact inventory: a one-line summary (its navigation
+label), the document's main concepts, and the named entities it is about.
 
 Hard rules:
-- The first line MUST be an H1 equal to the supplied page_title (no leading
-  prefix, no bracket annotations — the title verbatim).
-- Keep the key facts, named entities, and meaningful figures (decisive dates,
-  dollar amounts, specifications, IDs) — but you need NOT preserve every number
-  or restate the document at length.
-- Keep the document's main heading structure where it aids navigation.
+- one_line_summary describes the DOCUMENT in one sentence (e.g. "RFP response
+  from Midwest Beef Co outlining proposed pricing and delivery terms") — what a
+  reader scanning a list would need to decide whether to open it.
 - Do not introduce facts that aren't in the source — no outside knowledge.
 - Do not distort numbers or proper nouns.
-- one_line_summary describes the DOCUMENT (e.g. "RFP response from Midwest Beef Co
-  outlining proposed pricing and delivery terms"), not its content.
 
 Concept inventory (the `concepts` field):
-- Also list the document's MAIN concepts — its key recurring themes — so a later
+- List the document's MAIN concepts — its key recurring themes — so a later
   stage can synthesise cross-document concept pages. Capture the real themes, not
   every minor mention: a list- or table-style doc (e.g. a table of supported
   types) still has only a few actual concepts, not one per row.
@@ -206,13 +196,13 @@ Entity inventory (the `entities` + `edges` fields):
   0.55/0.65/0.75/0.85/0.95 (follows without being stated); AMBIGUOUS picks from
   0.1/0.15/0.2/0.25/0.3 (suspected, but real doubt). 0.5 is not a legal score.
 
-- Return every field via the emit_page tool in a single call.
+- Return every field via the emit_extraction tool in a single call.
 """
 
 
 def _parse_concepts(result: dict, source_sha: str) -> list[ConceptMention]:
-    """Defensively parse the ``concepts`` array from an emit_page response into
-    ConceptMentions, stamping the document's sha. Malformed/missing → []."""
+    """Defensively parse the ``concepts`` array from an emit_extraction response
+    into ConceptMentions, stamping the document's sha. Malformed/missing → []."""
     mentions: list[ConceptMention] = []
     for c in result.get("concepts") or []:
         if not isinstance(c, dict):
@@ -258,21 +248,19 @@ def _qualify_title(base: str, name: str, used: set[str]) -> str:
     return f"{base} ({n})"
 
 
-def _disambiguated_titles(sources: list[NormalizedSource], existing_titles: set[str]) -> dict[str, str]:
-    """Assign a unique display title to each file-summary page.
+def _disambiguated_titles(sources: list[NormalizedSource]) -> dict[str, str]:
+    """Assign a unique display title to each source.
 
     The base title comes from the filename (``README.md`` → ``Readme``). The
-    first claimant of a base title keeps it bare (mirroring how ``unique_slug``
-    hands out ``readme`` then ``readme-2``); later collisions — whether against
-    another source in this batch or an already-compiled file-summary page —
-    are qualified with directory context (``Readme (docs)``,
-    ``Readme (pydantic/internal)``) so a bare ``[[Readme]]`` wiki-link can't
-    land on two pages and render broken. Returns ``{sha256: title}``.
+    first claimant of a base title keeps it bare; later collisions within the
+    batch are qualified with directory context (``Readme (docs)``,
+    ``Readme (pydantic/internal)``) so listings that show titles stay
+    distinguishable. Returns ``{sha256: title}``.
     """
     base_by_sha = {s.sha256: _title_from_filename(s.original_name) for s in sources}
 
     assigned: dict[str, str] = {}
-    used = {t.casefold() for t in existing_titles}
+    used: set[str] = set()
     # Deterministic order so the same corpus disambiguates identically every run.
     for s in sorted(sources, key=lambda s: (base_by_sha[s.sha256].casefold(), s.original_name)):
         base = base_by_sha[s.sha256]
@@ -285,10 +273,10 @@ def _disambiguated_titles(sources: list[NormalizedSource], existing_titles: set[
 def _max_doc_chars() -> int:
     """Largest input document (in chars) we'll read in a single extraction call.
 
-    A digest output is small, so the binding constraint is whether the document
-    fits the model's input context — hence a generous fixed default that only
-    enormous docs exceed. Override with ``OT_WIKI_MAX_DOC_CHARS`` (lower it for a
-    small-context local model, or to force-split for testing).
+    The extraction output is small, so the binding constraint is whether the
+    document fits the model's input context — hence a generous fixed default
+    that only enormous docs exceed. Override with ``OT_WIKI_MAX_DOC_CHARS``
+    (lower it for a small-context local model, or to force-split for testing).
     """
     override = os.environ.get("OT_WIKI_MAX_DOC_CHARS")
     if override:
@@ -365,33 +353,15 @@ def _chunk_markdown(md: str, max_chars: int) -> list[str]:
     return chunks
 
 
-def _strip_leading_h1(body: str) -> str:
-    """Drop a leading ``# Heading`` line so concatenated chunk bodies don't
-    sprinkle the page with duplicate top-level headings."""
-    stripped = body.lstrip("\n")
-    head, _, rest = stripped.partition("\n")
-    if head.startswith("# "):
-        return rest.lstrip("\n")
-    return body
-
-
 def _merge_chunk_results(results: list[dict]) -> dict:
-    """Merge per-chunk emit_page payloads into one document-level result.
+    """Merge per-chunk emit_extraction payloads into one document-level result.
 
-    Bodies are concatenated (duplicate H1s dropped from later parts); the
-    one-line summary is the first non-empty one; concepts/entities/edges are
-    unioned with a light dedup so the doc's counts and downstream inputs aren't
-    inflated by content that spanned a chunk boundary.
+    The one-line summary is the first non-empty one; concepts/entities/edges
+    are unioned with a light dedup so the doc's counts and downstream inputs
+    aren't inflated by content that spanned a chunk boundary.
     """
     if len(results) == 1:
         return results[0]
-
-    bodies = [str(r.get("markdown_body", "")) for r in results]
-    merged_body = bodies[0].rstrip()
-    for b in bodies[1:]:
-        tail = _strip_leading_h1(b).strip()
-        if tail:
-            merged_body += "\n\n" + tail
 
     one_liner = next((s for r in results if (s := str(r.get("one_line_summary", "")).strip())), "")
 
@@ -436,7 +406,6 @@ def _merge_chunk_results(results: list[dict]) -> dict:
             edges.append(x)
 
     return {
-        "markdown_body": merged_body,
         "one_line_summary": one_liner,
         "concepts": concepts,
         "entities": entities,
@@ -444,89 +413,83 @@ def _merge_chunk_results(results: list[dict]) -> dict:
     }
 
 
-def summarise_sources(
+def extract_docs(
     sources: list[NormalizedSource],
     meta: VaultMetadata,
     llm: WikiLLM,
-    out: list[CompiledPage],
     mentions_out: list[ConceptMention] | None = None,
     entity_nodes_out: list | None = None,
     entity_rels_out: list | None = None,
 ) -> Iterator[WikiPipelineEvent]:
-    """Produce one file-summary page per newly-ingested source.
+    """Run the per-doc extraction call for each newly-ingested source.
 
-    The same call also inventories each document's concepts (qualified by
-    topic + subject) and extracts the entity graph (typed entities + edges).
-    When *mentions_out* / *entity_nodes_out* / *entity_rels_out* are given, the
-    parsed ConceptMentions and entity nodes/edges are appended to them for the
-    downstream Resolve and entity-merge stages. Folding concept + entity
-    extraction into the summary call keeps the per-doc work to ONE LLM call.
+    Stamps ``title`` + ``one_line_summary`` onto each ``NormalizedSource``
+    in place (the graph writer copies them onto the ``Source`` node as its
+    navigation label). When *mentions_out* / *entity_nodes_out* /
+    *entity_rels_out* are given, the parsed ConceptMentions and entity
+    nodes/edges are appended to them for the downstream Resolve and
+    entity-merge stages. Everything comes from ONE LLM call per document.
     """
     total = len(sources)
     yield WikiPipelineEvent(
         kind=WikiEventKind.STAGE_START,
-        phase=WikiPhase.SUMMARIZING_SOURCES,
-        message=f"Summarising {total} source(s)",
+        phase=WikiPhase.EXTRACTING,
+        message=f"Extracting from {total} source(s)",
         total=total,
     )
 
-    seen_slugs: set[str] = set(meta.pages.keys())
-    system = FILE_SUMMARY_SYSTEM
+    system = DOC_EXTRACTION_SYSTEM
 
     # Resolve a unique title per source up front — duplicate filenames across
-    # folders (README.md, index.md) would otherwise produce identical titles
-    # and unresolvable [[Title]] links. Considers already-compiled
-    # file-summary pages so re-runs don't reintroduce a clash.
-    existing_ss_titles = {p.title for p in meta.pages.values() if p.kind == PAGE_KIND_FILE_SUMMARY}
-    title_by_sha = _disambiguated_titles(sources, existing_ss_titles)
+    # folders (README.md, index.md) would otherwise produce identical labels
+    # and indistinguishable listings.
+    title_by_sha = _disambiguated_titles(sources)
 
     max_chars = _max_doc_chars()
 
-    def _summarise_one(src: NormalizedSource) -> tuple[NormalizedSource, str, dict, int]:
+    def _extract_one(src: NormalizedSource) -> tuple[NormalizedSource, str, dict, int]:
         title = title_by_sha[src.sha256]
         chunks = _chunk_markdown(src.markdown, max_chars)
         n = len(chunks)
         results: list[dict] = []
         for i, chunk in enumerate(chunks):
-            # A faithful (near-verbatim) summary tracks input size, so a large
-            # doc would overrun the per-backend output budget and truncate the
-            # concept/entity fields that follow the body. We split such docs on
-            # heading boundaries and summarise each part, then merge. Small docs
-            # stay a single call (the common case).
+            # A doc must fit the model's input context to be read in one call.
+            # We split oversized docs on heading boundaries, extract from each
+            # part, and merge. Small docs stay a single call (the common case).
             part_hint = (
                 ""
                 if n == 1
                 else (
                     f"This is PART {i + 1} of {n} of a larger document (split for length). "
-                    f"Summarise THIS part faithfully; the parts are concatenated into one page.\n\n"
+                    f"Inventory THIS part; the parts are merged into one document-level result.\n\n"
                 )
             )
             results.append(
                 llm.call_tool(
                     system=system,
                     user=(
-                        f"page_title: {title}\n\n"
+                        f"Document title: {title}\n\n"
                         f"Document filename: {src.original_name}\n\n"
                         f"{part_hint}"
                         f"Document body{f' (part {i + 1}/{n})' if n > 1 else ''}:\n{chunk}\n\n"
-                        "Call emit_page."
+                        "Call emit_extraction."
                     ),
-                    tool_name="emit_page",
-                    tool_schema=FILE_SUMMARY_SCHEMA,
-                    max_tokens=SUMMARY_MAX_TOKENS,
+                    tool_name="emit_extraction",
+                    tool_schema=DOC_EXTRACTION_SCHEMA,
+                    max_tokens=EXTRACTION_MAX_TOKENS,
                 )
             )
         return src, title, _merge_chunk_results(results), n
 
-    # Each source is independent — generate concurrently. Emit a progress event
+    # Each source is independent — extract concurrently. Emit a progress event
     # as each call COMPLETES (so the user sees live movement, not one burst at
-    # the end), surfacing the per-doc entity + concept counts. Slug assignment
-    # and page accumulation happen in a second pass in INPUT order so results
-    # stay deterministic regardless of completion order.
+    # the end), surfacing the per-doc entity + concept counts. Label stamping
+    # and accumulation happen in a second pass in INPUT order so results stay
+    # deterministic regardless of completion order.
     results_by_sha: dict[str, tuple[NormalizedSource, str, dict]] = {}
     done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=_wiki_concurrency()) as pool:
-        futures = [pool.submit(_summarise_one, src) for src in sources]
+        futures = [pool.submit(_extract_one, src) for src in sources]
         for fut in concurrent.futures.as_completed(futures):
             src, title, result, n_parts = fut.result()
             results_by_sha[src.sha256] = (src, title, result)
@@ -536,8 +499,8 @@ def summarise_sources(
             parts_note = f" ({n_parts} parts)" if n_parts > 1 else ""
             yield WikiPipelineEvent(
                 kind=WikiEventKind.STAGE_PROGRESS,
-                phase=WikiPhase.SUMMARIZING_SOURCES,
-                message=f"Summarised {src.original_name} → {n_ent} entities, {n_con} concepts{parts_note}",
+                phase=WikiPhase.EXTRACTING,
+                message=f"Extracted {src.original_name} → {n_ent} entities, {n_con} concepts{parts_note}",
                 current=done,
                 total=total,
                 file_name=src.original_name,
@@ -545,46 +508,26 @@ def summarise_sources(
 
     for src in sources:
         src, title, result = results_by_sha[src.sha256]
+        src.title = title
+        src.one_line_summary = str(result.get("one_line_summary", ""))
         if mentions_out is not None:
             mentions_out.extend(_parse_concepts(result, src.sha256))
         if entity_nodes_out is not None or entity_rels_out is not None:
             nodes, rels = build_entities(
                 result,
                 original_name=src.original_name,
-                source_id=f"source::{src.sha256}",
+                source_id=f"corpus::{src.sha256}",
                 vault=meta.name,
             )
             if entity_nodes_out is not None:
                 entity_nodes_out.extend(nodes)
             if entity_rels_out is not None:
                 entity_rels_out.extend(rels)
-        # The ``file-summary/`` directory in the slug is the namespace —
-        # a concept and a file-summary page can share a title without
-        # colliding because they live in different folders.
-        slug = unique_slug(
-            title,
-            kind=PAGE_KIND_FILE_SUMMARY,
-            existing=seen_slugs,
-            tombstones=meta.tombstones,
-        )
-        seen_slugs.add(slug)
-        out.append(
-            CompiledPage(
-                slug=slug,
-                title=title,
-                markdown_body=force_h1(str(result.get("markdown_body", "")), title),
-                one_line_summary=str(result.get("one_line_summary", "")),
-                source_shas=[src.sha256],
-                revision=1,
-                is_new=True,
-                kind=PAGE_KIND_FILE_SUMMARY,
-            )
-        )
 
     yield WikiPipelineEvent(
         kind=WikiEventKind.STAGE_STOP,
-        phase=WikiPhase.SUMMARIZING_SOURCES,
-        message=f"Produced {len(out)} file-summary page(s)",
+        phase=WikiPhase.EXTRACTING,
+        message=f"Extracted labels, concepts, and entities from {total} doc(s)",
         current=total,
         total=total,
     )

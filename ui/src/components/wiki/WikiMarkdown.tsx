@@ -32,33 +32,22 @@ interface Props {
 // single kind-folder prefix).
 const UNRESOLVED_SLUG = '__unresolved__';
 
-// PageMeta.kind → on-disk folder name used in slugs. Mirrors `kind_dir`
-// in agent/.../wiki/slugify.py.
-const KIND_DIRS: Record<string, string> = {
-  concept: 'concept',
-  file_summary: 'file-summary',
-  // Stale graph mirrors compiled before the file-summary rename still
-  // carry this kind, with slugs under the matching old folder.
-  source_summary: 'source-summary',
-};
-
-function kindDirForPage(kind: string | undefined): string {
-  return KIND_DIRS[kind ?? 'concept'] ?? 'concept';
-}
+// On-disk folder name used in slugs. Mirrors `kind_dir` in
+// agent/.../wiki/slugify.py. Concept is the only page kind.
+const KIND_DIR = 'concept';
 
 export function WikiMarkdown({ markdown, pages, onPageClick }: Props) {
   const slugSet = useMemo(() => new Set(pages.map((p) => p.slug)), [pages]);
-  // Resolve `[[Title]]` and `[[<kind-dir>/Title]]` against the page list.
-  // Slugs are ``<kind_dir>/<base>``; a bare title is unambiguous when it
-  // appears in only one kind, otherwise users disambiguate with the
-  // path-style form (e.g. `[[concept/Usage]]` vs `[[file-summary/Usage]]`).
+  // Resolve `[[Title]]` and `[[concept/Title]]` against the page list.
+  // Slugs are ``concept/<base>``; a bare title is unambiguous unless two
+  // pages share it, in which case users disambiguate with the path-style
+  // form (e.g. `[[concept/Usage]]`).
   const linkResolver = useMemo(() => {
     const byTitle = new Map<string, string>();
     const byKindedTitle = new Map<string, string>();
     const ambiguous = new Set<string>();
     for (const p of pages) {
-      const dir = kindDirForPage(p.kind);
-      byKindedTitle.set(`${dir}/${p.title}`, p.slug);
+      byKindedTitle.set(`${KIND_DIR}/${p.title}`, p.slug);
       if (byTitle.has(p.title)) {
         ambiguous.add(p.title);
       } else {
@@ -66,8 +55,7 @@ export function WikiMarkdown({ markdown, pages, onPageClick }: Props) {
       }
     }
     return (name: string): string => {
-      // `[[concept/Title]]` / `[[file-summary/Title]]` wins
-      // unambiguously over a bare title.
+      // `[[concept/Title]]` wins unambiguously over a bare title.
       const kinded = byKindedTitle.get(name);
       if (kinded) return kinded;
       if (ambiguous.has(name)) return UNRESOLVED_SLUG;

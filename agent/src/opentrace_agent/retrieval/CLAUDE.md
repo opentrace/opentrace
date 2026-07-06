@@ -46,7 +46,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 - **`snippet`** — anchored on the first query token found in `name + summary`,
   windowed to ~200 chars
 - **`vault`** — read from the node's `vault` property (set by Phase 4
-  `graph_writer` on WikiVault/WikiPage/Source; null for code nodes)
+  `graph_writer` on WikiVault/WikiPage; null for code nodes and CorpusDocs)
 - **`recency`** — `last_updated` property; null when not stamped
 - **`confidence`** — `confidence` property; null when not stamped
   (currently a placeholder; real wiki-synthesis confidence is future work)
@@ -58,9 +58,10 @@ unavailable (e.g. before the index is built).
 
 Two branches keyed off node type:
 
-- **Wiki** (`WikiVault` / `WikiPage` / `Source`) — returns the node's
-  agent/model/session/confidence properties plus the `CITES` outgoing chain
-  walked up to 3 hops. Concept page → file-summary page → Source.
+- **Wiki** (`WikiVault` / `WikiPage` / `CorpusDoc`) — returns the node's
+  agent/model/session/confidence properties plus the `CITES` outgoing chain.
+  Concept page → CorpusDoc, direct by sha; each chain entry carries the
+  MIRRORS File twin id when one exists.
 - **Code** (`Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`) — returns commit_sha + indexer_version from the per-repo
   `IndexMetadata` node (`_meta:index:{repoId}`), plus file_path + line_range
