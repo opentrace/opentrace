@@ -387,6 +387,89 @@ describe('makePRTools', () => {
         deletions: 1,
       });
     });
+
+    it('drops file entries instead of emitting broken JSON when over budget', async () => {
+      const prId = 'owner/repo/pr/10';
+      const hugeFiles = Array.from({ length: 300 }, (_, i) => ({
+        node: { id: `f${i}`, type: 'File', name: `f${i}.ts` },
+        relationship: {
+          id: `r${i}`,
+          type: 'CHANGES',
+          source_id: prId,
+          target_id: `f${i}`,
+          properties: {
+            path: `src/deeply/nested/directory/structure/${'x'.repeat(80)}/f${i}.ts`,
+            status: 'modified',
+            additions: 1,
+            deletions: 1,
+          },
+        },
+        depth: 1,
+      }));
+      const store = createMockStore({
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#10',
+          properties: {},
+        }),
+        traverse: vi.fn().mockResolvedValue(hugeFiles),
+      });
+      const tools = makePRTools(store);
+      const tool = tools.find((t) => t.name === 'get_pull_request')!;
+      const raw = (await tool.invoke({ prId })) as string;
+      // Must parse — the old path sliced the stringified JSON mid-stream
+      const result = JSON.parse(raw);
+      expect(raw.length).toBeLessThanOrEqual(16_000);
+      expect(result.file_count).toBe(300);
+      expect(result.files.length).toBeLessThan(300);
+      expect(result.files_omitted).toBe(300 - result.files.length);
+      expect(result.note).toContain(`of 300 files`);
+    });
+  });
+
+  describe('summarize_pr_changes', () => {
+    it('keys blast radius by file path, not graph node ID', async () => {
+      const prId = 'owner/repo/pr/11';
+      const changes = [
+        {
+          node: { id: 'owner/repo/src/a.ts', type: 'File', name: 'a.ts' },
+          relationship: {
+            id: 'r1',
+            type: 'CHANGES',
+            source_id: prId,
+            target_id: 'owner/repo/src/a.ts',
+            properties: { path: 'src/a.ts', status: 'modified' },
+          },
+          depth: 1,
+        },
+      ];
+      const dependents = [
+        {
+          node: { id: 'caller1', type: 'Function', name: 'callerFn' },
+          relationship: {
+            id: 'd1',
+            type: 'CALLS',
+            source_id: 'caller1',
+            target_id: 'owner/repo/src/a.ts',
+          },
+          depth: 1,
+        },
+      ];
+      const traverse = vi
+        .fn()
+        .mockResolvedValueOnce(changes) // PR --CHANGES--> files
+        .mockResolvedValueOnce(dependents); // incoming for the file
+      const store = createMockStore({ traverse });
+      const tools = makePRTools(store);
+      const tool = tools.find((t) => t.name === 'summarize_pr_changes')!;
+      const result = JSON.parse((await tool.invoke({ prId })) as string);
+      expect(result.blast_radius['src/a.ts']).toEqual({
+        dependents: 1,
+        sample: ['Function:callerFn'],
+      });
+      expect(result.blast_radius['owner/repo/src/a.ts']).toBeUndefined();
+    });
   });
 
   describe('submit_review_summary', () => {

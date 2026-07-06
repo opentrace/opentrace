@@ -133,21 +133,33 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
             deletions: p.deletions,
           };
         });
-        const omitted = Math.max(0, files.length - MAX_FILE_ENTRIES);
-        return truncate(
-          JSON.stringify({
-            pr: node,
-            files: files.slice(0, MAX_FILE_ENTRIES),
-            file_count: files.length,
-            ...(omitted
-              ? {
-                  files_omitted: omitted,
-                  note: `Showing first ${MAX_FILE_ENTRIES} of ${files.length} files`,
-                }
-              : {}),
-          }),
-          MAX_RESULT_CHARS,
-        );
+        const shown = files.slice(0, MAX_FILE_ENTRIES);
+        const result: {
+          pr: unknown;
+          files: typeof files;
+          file_count: number;
+          files_omitted?: number;
+          note?: string;
+        } = {
+          pr: node,
+          files: shown,
+          file_count: files.length,
+        };
+        const annotateOmitted = () => {
+          result.files_omitted = files.length - result.files.length;
+          result.note = `Showing first ${result.files.length} of ${files.length} files`;
+        };
+        if (shown.length < files.length) annotateOmitted();
+
+        // Never slice the stringified JSON — that hands the model a broken
+        // payload. Drop trailing file entries until the JSON fits instead.
+        let json = JSON.stringify(result);
+        while (json.length > MAX_RESULT_CHARS && result.files.length > 0) {
+          result.files.pop();
+          annotateOmitted();
+          json = JSON.stringify(result);
+        }
+        return json;
       },
       {
         name: 'get_pull_request',
@@ -166,33 +178,48 @@ export function makePRTools(store: GraphStore, prClient?: PRClient | null) {
       async ({ prId }) => {
         // Traverse: PR --CHANGES--> File --incoming(CALLS, IMPORTS, etc.)--> callers
         const modifies = await store.traverse(prId, 'outgoing', 1, 'CHANGES');
-        const blastRadius: Record<string, unknown> = {};
-        // Compact per-file summary (count + sample) so large PRs don't
-        // overflow into mid-JSON truncation.
+        // Compact per-file summary (count + sample), keyed by file path —
+        // graph node IDs mean little to the model.
+        const entries: [string, unknown][] = [];
         const scanned = modifies.slice(0, 100);
         for (const rel of scanned) {
           const fileId = rel.relationship.target_id;
           if (!fileId) continue;
+          const props = rel.relationship.properties as
+            | Record<string, unknown>
+            | undefined;
+          const path = (props?.path as string) || fileId;
           const incoming = await store.traverse(fileId, 'incoming', 2);
-          blastRadius[fileId] = {
-            dependents: incoming.length,
-            sample: incoming
-              .slice(0, 10)
-              .map((d) => `${d.node.type}:${d.node.name || d.node.id}`),
-          };
+          entries.push([
+            path,
+            {
+              dependents: incoming.length,
+              sample: incoming
+                .slice(0, 10)
+                .map((d) => `${d.node.type}:${d.node.name || d.node.id}`),
+            },
+          ]);
         }
-        return truncate(
+
+        // Never slice the stringified JSON — drop trailing entries until
+        // the payload fits so the model always gets valid JSON.
+        const build = (count: number) =>
           JSON.stringify({
             modified_files: modifies.length,
-            ...(modifies.length > scanned.length
+            ...(count < modifies.length
               ? {
-                  note: `Blast radius computed for first ${scanned.length} of ${modifies.length} files`,
+                  note: `Blast radius computed for first ${count} of ${modifies.length} files`,
                 }
               : {}),
-            blast_radius: blastRadius,
-          }),
-          MAX_RESULT_CHARS,
-        );
+            blast_radius: Object.fromEntries(entries.slice(0, count)),
+          });
+        let count = entries.length;
+        let json = build(count);
+        while (json.length > MAX_RESULT_CHARS && count > 0) {
+          count--;
+          json = build(count);
+        }
+        return json;
       },
       {
         name: 'summarize_pr_changes',
