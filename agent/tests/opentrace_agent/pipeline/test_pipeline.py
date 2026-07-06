@@ -236,3 +236,34 @@ def test_dependency_nodes_emitted_no_later_than_their_rels(tmp_path: Path) -> No
                     f"Rel {rel.id} was emitted before its Dependency node "
                     f"{rel.target_id} — a mid-stage rel flush would drop it."
                 )
+
+
+def test_non_utf8_file_is_skipped_not_fatal(tmp_path: Path) -> None:
+    """A single file in another encoding must be skipped, not abort the run.
+
+    Extractors decode tree-sitter node bytes as UTF-8; a legal latin-1
+    source file used to raise UnicodeDecodeError out of the pipeline,
+    killing the entire index (and the CLI then deleted the staging DB).
+    """
+    # Legal latin-1 Python file: é in a docstring, undecodable as UTF-8.
+    (tmp_path / "legacy.py").write_text(
+        '# -*- coding: latin-1 -*-\ndef caf():\n    """Un caf\xe9."""\n    return 1\n',
+        encoding="latin-1",
+    )
+    (tmp_path / "good.py").write_text("def fine():\n    return 42\n")
+
+    inp = PipelineInput(path=str(tmp_path), repo_id="test/encoding")
+    events, nodes, _ = collect_pipeline(inp)
+
+    # Pipeline ran to completion.
+    done_events = [e for e in events if e.kind == EventKind.DONE]
+    assert len(done_events) == 1
+    result = done_events[0].result
+    assert result is not None
+
+    # The good file was fully indexed (function names include the signature).
+    fn_names = {n.name for n in nodes if n.type == "Function"}
+    assert any(name.startswith("fine") for name in fn_names)
+
+    # The bad file was recorded as an error, not silently swallowed.
+    assert any("legacy.py" in e for e in result.errors)
