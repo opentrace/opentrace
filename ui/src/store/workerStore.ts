@@ -83,6 +83,11 @@ export class WorkerGraphStore implements GraphStore {
   // OSS-OPENTRACE-1G). storeWorker reaches it via `engine-request` messages.
   private engine: LbugEngine = createLbugEngine();
   private nodesImportedSinceClear = 0;
+  // Serializes storeSource's chunked posts. Ordering-sensitive methods
+  // (flush, exportDatabase, clearGraph, deleteRepo, importDatabase) await
+  // this so they can't overtake source chunks that haven't been posted yet.
+  // Always resolves — per-chunk errors are caught and logged in the pump.
+  private pendingSource: Promise<void> = Promise.resolve();
 
   constructor() {
     this.worker = new Worker(new URL('./storeWorker.ts', import.meta.url), {
@@ -152,11 +157,13 @@ export class WorkerGraphStore implements GraphStore {
   }
 
   async clearGraph(): Promise<void> {
+    await this.pendingSource;
     await this.call<void>('clearGraph', []);
     this.nodesImportedSinceClear = 0;
   }
 
-  deleteRepo(repoId: string): Promise<void> {
+  async deleteRepo(repoId: string): Promise<void> {
+    await this.pendingSource;
     return this.call<void>('deleteRepo', [repoId]);
   }
 
@@ -172,7 +179,9 @@ export class WorkerGraphStore implements GraphStore {
     return result;
   }
 
-  flush(): Promise<void> {
+  async flush(): Promise<void> {
+    // Source chunks must land before the flush that persists them.
+    await this.pendingSource;
     return this.call<void>('flush', []);
   }
 
@@ -184,6 +193,10 @@ export class WorkerGraphStore implements GraphStore {
     data: Uint8Array,
     onProgress?: (msg: string) => void,
   ): Promise<ImportBatchResponse> {
+    // Serialize behind any in-flight source posts — importDatabase clears
+    // the store, and a straggler source chunk landing mid-import would
+    // interleave stale source with the imported data.
+    await this.pendingSource;
     // Transfer the Uint8Array buffer zero-copy; the proxy no longer holds
     // a usable view after this call, but no caller in the codebase reuses
     // the bytes after handing them off.
@@ -197,10 +210,12 @@ export class WorkerGraphStore implements GraphStore {
     return result;
   }
 
-  exportDatabase(options?: {
+  async exportDatabase(options?: {
     includeSource?: boolean;
     repoId?: string;
   }): Promise<Uint8Array> {
+    // An export must include source chunks that were queued before it.
+    await this.pendingSource;
     return this.call<Uint8Array>('exportDatabase', [options]);
   }
 
@@ -210,30 +225,43 @@ export class WorkerGraphStore implements GraphStore {
   }
 
   storeSource(files: SourceFile[]): void {
-    // Fire-and-forget — matches the synchronous-void shape of the inner
-    // method. Callers pass the entire repo corpus in a single array; for a
-    // large repo (e.g. Grafana, ~15k files / 100s of MB) a single
-    // postMessage's structured-clone serialize blocks main long enough for
-    // the browser to mark the tab unresponsive. Chunk so main can breathe
-    // between batches.
+    // Synchronous-void shape matches the GraphStore interface; the actual
+    // posting is chained on `pendingSource`. Callers pass the entire repo
+    // corpus in a single array; for a large repo (e.g. Grafana, ~15k files /
+    // 100s of MB) a single postMessage's structured-clone serialize blocks
+    // main long enough for the browser to mark the tab unresponsive. Chunk
+    // so main can breathe between batches.
+    //
+    // Chaining (instead of fire-and-forget) fixes two bugs:
+    //  * a failed chunk used to abandon the remaining chunks as an
+    //    unhandled rejection — now each chunk's error is caught + logged
+    //    and the pump continues with the rest;
+    //  * flush()/exportDatabase()/clearGraph()/deleteRepo()/importDatabase()
+    //    could overtake unposted chunks — they now await the pump first.
     const CHUNK = 200;
-    if (files.length <= CHUNK) {
-      void this.call<void>('storeSource', [files]);
-      return;
-    }
-    void (async () => {
+    this.pendingSource = this.pendingSource.then(async () => {
       for (let i = 0; i < files.length; i += CHUNK) {
         const slice = files.slice(i, i + CHUNK);
-        await this.call<void>('storeSource', [slice]);
+        try {
+          await this.call<void>('storeSource', [slice]);
+        } catch (err) {
+          console.warn(
+            `[WorkerGraphStore] storeSource chunk ${i / CHUNK} (${slice.length} files) failed:`,
+            err,
+          );
+        }
       }
-    })();
+    });
   }
 
-  fetchSource(
+  async fetchSource(
     nodeId: string,
     startLine?: number,
     endLine?: number,
   ): Promise<NodeSourceResponse | null> {
+    // Don't answer from a source cache that's still being populated —
+    // the file being asked for may sit in an unposted chunk.
+    await this.pendingSource;
     return this.call<NodeSourceResponse | null>('fetchSource', [
       nodeId,
       startLine,

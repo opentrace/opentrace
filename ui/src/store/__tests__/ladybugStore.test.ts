@@ -703,3 +703,284 @@ describe('LadybugGraphStore progressive loading', () => {
     expect(s.progressiveIds.has('f1')).toBe(true);
   });
 });
+
+describe('LadybugGraphStore listNodes filter push-down', () => {
+  it('pushes STRING equality filters into the Cypher WHERE clause', async () => {
+    // Regression: filters used to run in JS AFTER `LIMIT n`, so matching
+    // rows past the first n unfiltered rows were never seen (e.g.
+    // listNodes('Function', 50, {language:'go'}) returned [] on a mixed
+    // repo). The DB must apply the predicate before the LIMIT.
+    const { store, connQuery } = makeStoreWithRows((cypher) => {
+      if (cypher.includes("lower(n.language) = 'go'")) {
+        return [
+          { id: 'fn-go', type: 'Function', name: 'main', language: 'go' },
+        ];
+      }
+      if (cypher.includes('MATCH (n:Function)')) {
+        // Unfiltered listing would only surface TS rows.
+        return Array.from({ length: 50 }, (_, i) => ({
+          id: `fn-ts-${i}`,
+          type: 'Function',
+          name: `f${i}`,
+          language: 'typescript',
+        }));
+      }
+      return [];
+    });
+
+    const results = await store.listNodes('Function', 50, { language: 'go' });
+
+    expect(results.map((n) => n.id)).toEqual(['fn-go']);
+    const fnQuery = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .find((c: string) => c.includes('MATCH (n:Function)'));
+    expect(fnQuery).toContain("WHERE lower(n.language) = 'go'");
+    expect(fnQuery).toContain('LIMIT 50');
+  });
+
+  it('escapes pushed filter values', async () => {
+    const { store, connQuery } = makeStoreWithRows(() => []);
+    await store.listNodes('Function', 10, { language: "o'caml" });
+    const fnQuery = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .find((c: string) => c.includes('MATCH (n:Function)'));
+    expect(fnQuery).toContain("lower(n.language) = 'o\\'caml'");
+  });
+
+  it('pages through the table for non-pushable filters until limit matches', async () => {
+    // `exported` is a BOOL column on Variable — not pushable as a string
+    // equality, so the store must scan with SKIP/LIMIT pages instead of
+    // filtering a single LIMIT-truncated page.
+    const PAGE = 1000;
+    const makePage = (skip: number, count: number) =>
+      Array.from({ length: count }, (_, i) => {
+        const idx = skip + i;
+        return {
+          id: `v${String(idx).padStart(5, '0')}`,
+          type: 'Variable',
+          name: `v${idx}`,
+          // Matches live deep in the table, beyond the requested limit.
+          exported: idx === 500 || idx === 1300,
+        };
+      });
+    const { store, connQuery } = makeStoreWithRows((cypher) => {
+      const m = /SKIP (\d+) LIMIT (\d+)/.exec(cypher);
+      if (!m || !cypher.includes('MATCH (n:Variable)')) return [];
+      const skip = Number(m[1]);
+      // Table has 1500 rows total.
+      return makePage(skip, Math.min(PAGE, Math.max(0, 1500 - skip)));
+    });
+
+    const results = await store.listNodes('Variable', 2, { exported: 'true' });
+
+    expect(results.map((n) => n.id)).toEqual(['v00500', 'v01300']);
+    const pagedQueries = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .filter((c: string) => c.includes('MATCH (n:Variable)'));
+    // Needed two pages to find both matches; each with a stable order.
+    expect(pagedQueries.length).toBe(2);
+    expect(pagedQueries[0]).toContain('ORDER BY n.id SKIP 0');
+    expect(pagedQueries[1]).toContain('ORDER BY n.id SKIP 1000');
+  });
+
+  it('returns [] for unknown node types without querying', async () => {
+    const { store, connQuery } = makeStoreWithRows(() => []);
+    expect(await store.listNodes('Bogus', 10, { language: 'go' })).toEqual([]);
+    expect(connQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('LadybugGraphStore fetchGraphPage ordering', () => {
+  it('pages with a stable ORDER BY n.id', async () => {
+    // Without ORDER BY, SKIP/LIMIT rides storage order — a concurrent
+    // append can shift an unseen row backward into an already-consumed
+    // offset range and drop it permanently.
+    const { store, connQuery } = makeStoreWithRows((cypher) =>
+      cypher.includes('MATCH (n:Function)')
+        ? [{ id: 'fn1', type: 'Function', name: 'a' }]
+        : [],
+    );
+    await store.fetchGraphPage({ type: 'Function', offset: 40, limit: 20 });
+    const fnQuery = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .find((c: string) => c.includes('MATCH (n:Function)'));
+    expect(fnQuery).toContain('ORDER BY n.id SKIP 40 LIMIT 20');
+  });
+});
+
+describe('LadybugGraphStore flush failure handling', () => {
+  const importMixedBatch = async (store: LadybugGraphStore) => {
+    await store.importBatch({
+      nodes: [
+        { id: 'r/f.ts', type: 'File', name: 'f.ts', properties: {} },
+        { id: 'r/f.ts::fn', type: 'Function', name: 'fn', properties: {} },
+      ],
+      relationships: [
+        {
+          id: 'rel1',
+          type: 'DEFINES',
+          source_id: 'r/f.ts',
+          target_id: 'r/f.ts::fn',
+          properties: {},
+        },
+      ],
+    });
+  };
+
+  it('re-queues unwritten nodes and all rels when a node COPY fails, then retries cleanly', async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    const engine = s.engine as {
+      fsWrite: ReturnType<typeof vi.fn>;
+      fsUnlink: ReturnType<typeof vi.fn>;
+    };
+    await importMixedBatch(store);
+
+    let failFunctionCopy = true;
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (failFunctionCopy && cypher.startsWith('COPY Function')) {
+        throw new Error('engine COPY exploded');
+      }
+      return [];
+    });
+
+    await expect(store.flush()).rejects.toThrow('engine COPY exploded');
+
+    // The unwritten Function node and the relationship are back on the
+    // pending buffers; the already-written File node is not.
+    expect(s.pendingNodes.map((n: { id: string }) => n.id)).toEqual([
+      'r/f.ts::fn',
+    ]);
+    expect(s.pendingRels.map((r: { id: string }) => r.id)).toEqual(['rel1']);
+    // Temp CSVs never leak — every fsWrite has a matching fsUnlink, even
+    // for the chunk whose COPY threw.
+    expect(engine.fsUnlink.mock.calls.length).toBe(
+      engine.fsWrite.mock.calls.length,
+    );
+
+    // A later flush retries the re-queued remainder successfully.
+    failFunctionCopy = false;
+    await store.flush();
+    expect(s.pendingNodes).toEqual([]);
+    expect(s.pendingRels).toEqual([]);
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    expect(
+      cyphers.filter((c: string) => c.startsWith('COPY Function')).length,
+    ).toBe(2);
+    expect(
+      cyphers.some((c: string) => c.startsWith('COPY RELATES_File_Function')),
+    ).toBe(true);
+  });
+
+  it('re-queued Dependency nodes are made re-eligible for COPY', async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    await store.importBatch({
+      nodes: [
+        {
+          id: 'pkg:npm:lodash',
+          type: 'Dependency',
+          name: 'lodash',
+          properties: {},
+        },
+      ],
+      relationships: [],
+    });
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (cypher.startsWith('COPY Dependency')) {
+        throw new Error('boom');
+      }
+      return [];
+    });
+
+    await expect(store.flush()).rejects.toThrow('boom');
+
+    // Without this, the eager flushedPackageIds.add would make the retry
+    // skip the package forever.
+    expect(s.flushedPackageIds.has('pkg:npm:lodash')).toBe(false);
+    expect(s.pendingNodes.map((n: { id: string }) => n.id)).toEqual([
+      'pkg:npm:lodash',
+    ]);
+  });
+
+  it('a SourceText COPY failure does not drop the relationship flush', async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    await importMixedBatch(store);
+    store.storeSource([{ id: 'r/f.ts', path: 'f.ts', content: 'const x = 1' }]);
+
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (cypher.startsWith('COPY SourceText')) {
+        throw new Error('source copy failed');
+      }
+      return [];
+    });
+
+    // Flush resolves; source text is deferred, not fatal.
+    await store.flush();
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    expect(
+      cyphers.some((c: string) => c.startsWith('COPY RELATES_File_Function')),
+    ).toBe(true);
+    // The failed snippet is NOT marked flushed — it retries next flush.
+    expect(s.flushedSourceIds.has('r/f.ts')).toBe(false);
+  });
+
+  it('aborts the remaining chunks when clearGraph fires mid-flush', async () => {
+    // Regression: flushInner used to let each chunk's exec() re-capture the
+    // CURRENT generation, so a clearGraph between chunks recreated the
+    // schema and the flush kept COPYing old-repo rows into it.
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    await importMixedBatch(store);
+
+    let clearPromise: Promise<void> | null = null;
+    connQuery.mockImplementation(async (cypher: string) => {
+      if (cypher.startsWith('COPY File') && !clearPromise) {
+        // Concurrent clearGraph lands while the File chunk is COPYing.
+        clearPromise = store.clearGraph();
+      }
+      return [];
+    });
+
+    await expect(store.flush()).rejects.toMatchObject({ name: 'AbortError' });
+    await clearPromise;
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    // The Function chunk (and rels) must never be COPY'd into the
+    // freshly-recreated schema.
+    expect(cyphers.some((c: string) => c.startsWith('COPY Function'))).toBe(
+      false,
+    );
+    expect(cyphers.some((c: string) => c.startsWith('COPY RELATES'))).toBe(
+      false,
+    );
+    // And nothing gets re-queued — clearGraph means "discard the batch".
+    expect(s.pendingNodes).toEqual([]);
+    expect(s.pendingRels).toEqual([]);
+  });
+});
+
+describe('LadybugGraphStore ensureReady retry', () => {
+  it('retries WASM init after a failed attempt instead of caching the rejection', async () => {
+    const init = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('wasm fetch failed'))
+      .mockResolvedValue(undefined);
+    const engine = {
+      init,
+      query: vi.fn().mockResolvedValue([]),
+      exec: vi.fn().mockResolvedValue(undefined),
+      fsWrite: vi.fn().mockResolvedValue(undefined),
+      fsUnlink: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = new LadybugGraphStore(engine);
+
+    // First caller sees the original error…
+    await expect(store.ensureReady()).rejects.toThrow('wasm fetch failed');
+    // …but the failure is not cached: the next call re-runs init and succeeds.
+    await expect(store.ensureReady()).resolves.toBeUndefined();
+    expect(init).toHaveBeenCalledTimes(2);
+    // And once ready, further calls don't re-init.
+    await store.ensureReady();
+    expect(init).toHaveBeenCalledTimes(2);
+  });
+});

@@ -643,10 +643,18 @@ export class LadybugGraphStore implements GraphStore {
     return this.nodeTypeMap.size > 0 || this.totalNodesBuffered > 0;
   }
 
-  /** Start WASM init if not already started. Safe to call multiple times. */
+  /** Start WASM init if not already started. Safe to call multiple times.
+   *  A failed init is NOT cached: the rejected promise is cleared so the
+   *  next call retries instead of wedging the store forever on a transient
+   *  failure (e.g. a flaky WASM fetch). Callers awaiting the failed attempt
+   *  still see the original rejection. */
   ensureReady(): Promise<void> {
     if (!this.ready) {
-      this.ready = this.initModule();
+      const attempt = this.initModule();
+      this.ready = attempt;
+      attempt.catch(() => {
+        if (this.ready === attempt) this.ready = null;
+      });
     }
     return this.ready;
   }
@@ -1201,17 +1209,24 @@ export class LadybugGraphStore implements GraphStore {
       return { nodes: [], links: [], exhausted: true };
     }
     const lim = Math.max(1, Math.floor(limit));
+    // ORDER BY n.id makes the SKIP/LIMIT cursor stable: without it, storage
+    // order can change under concurrent writes, shifting an unseen row
+    // backward into an already-consumed offset range (permanently dropped) or
+    // forward (duplicate). With a stable order, the only residual hole is a
+    // concurrent APPEND whose new ids sort before the cursor — accepted, as
+    // live indexing concurrent with a progressive load is rare and the next
+    // fetchGraphSkeleton resync picks those rows up.
     const rows = await this.query(
       `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} ` +
-        `SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
+        `ORDER BY n.id SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
     );
     const nodes: GraphNode[] = [];
     const pageIds = new Set<string>();
     for (const r of rows as Record<string, unknown>[]) {
       const id = String(r.id);
-      // SKIP/LIMIT paging has no ORDER BY, so an interleaved write can shift
-      // rows between pages — skip anything already streamed this session
-      // rather than hand the UI a ghost duplicate.
+      // Even with ORDER BY, a concurrent delete/append can still shift rows
+      // between pages — skip anything already streamed this session rather
+      // than hand the UI a ghost duplicate.
       if (this.progressiveIds.has(id)) continue;
       pageIds.add(id);
       this.progressiveIds.add(id);
@@ -2411,17 +2426,19 @@ export class LadybugGraphStore implements GraphStore {
     await this.ensureReady();
 
     // Persist to LadybugDB NodeVector table in chunks
+    const importGeneration = this.generation;
     for (let offset = 0; offset < vectors.length; offset += FLUSH_CHUNK_SIZE) {
       const chunk = vectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
       const lines = ['id,vec'];
       for (const { id, vec } of chunk) {
         lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
       }
-      const csv = lines.join('\n');
-      const path = this.tmpCsvPath('vectors_embed');
-      await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-      await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
-      await this.engine.fsUnlink(path);
+      await this.copyCsvChunk(
+        'NodeVector',
+        'vectors_embed',
+        lines.join('\n'),
+        importGeneration,
+      );
     }
 
     if (!this.hasVectorIndex) {
@@ -2460,9 +2477,66 @@ export class LadybugGraphStore implements GraphStore {
     return p;
   }
 
+  /** Write one CSV chunk into the engine FS and COPY it into `table`.
+   *
+   *  - Aborts (AbortError) if `flushGeneration` no longer matches the store's
+   *    current generation — i.e. clearGraph()/importDatabase() tore the schema
+   *    down since the caller started. Without this per-chunk check, a
+   *    multi-chunk flush would re-capture the NEW generation on its next
+   *    exec() and COPY stale rows into the freshly-recreated schema.
+   *  - Unlinks the temp file in `finally` so a failed COPY doesn't leak it
+   *    in the engine's virtual filesystem.
+   */
+  private async copyCsvChunk(
+    table: string,
+    label: string,
+    csv: string,
+    flushGeneration: number,
+  ): Promise<void> {
+    if (this.generation !== flushGeneration) {
+      throw abortError('Flush aborted: store was cleared');
+    }
+    const path = this.tmpCsvPath(label);
+    await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+    try {
+      // Re-check after the fsWrite await: a clearGraph in that window would
+      // otherwise let exec() capture the NEW generation and pass its check.
+      // No await sits between this check and the exec() enqueue, and exec's
+      // own generation check covers any bump after enqueue.
+      if (this.generation !== flushGeneration) {
+        throw abortError('Flush aborted: store was cleared');
+      }
+      await this.exec(`COPY ${table} FROM '${path}' ${COPY_OPTS}`);
+    } finally {
+      try {
+        await this.engine.fsUnlink(path);
+      } catch {
+        // best-effort cleanup — never mask the COPY error
+      }
+    }
+  }
+
+  // NOT TRANSACTIONAL — what a mid-flush failure can still leave behind:
+  //  * JS-side indexes (bm25Index, nodeCache, nodeTypeMap) are updated
+  //    eagerly before the COPYs, so they may briefly describe nodes that
+  //    aren't in the DB yet. A retried flush re-applies those updates
+  //    idempotently, so they converge once the re-queued batch lands.
+  //  * SourceText chunks that fail are left un-marked in flushedSourceIds
+  //    and retried on the next flush; chunks already COPY'd stay.
+  //  * NodeVector (embedding) chunks that fail are LOST for the session —
+  //    their nodes are already COPY'd so they can't be re-queued through
+  //    pendingNodes without PK violations. Semantic search degrades for
+  //    those nodes; accepted (vectors are an enrichment, not source data).
+  //  * Node/relationship rows, however, are never silently dropped: any
+  //    unwritten remainder is restored to the pending buffers before the
+  //    error propagates (see the node-stage catch below).
   private async flushInner(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
     await this.ensureReady();
+
+    // Captured ONCE for the whole flush; every chunk checks it before its
+    // exec so a concurrent clearGraph aborts the remainder of the flush.
+    const flushGeneration = this.generation;
 
     const rawNodes = this.pendingNodes;
     const rels = this.pendingRels;
@@ -2546,15 +2620,44 @@ export class LadybugGraphStore implements GraphStore {
     // node names regularly do (e.g. `setup(:Partial<Props["x"]>)`), tripping
     // "neither QUOTE nor ESCAPE is preceded by ESCAPE". Single-threaded reads
     // parse them correctly (mirrors the agent's graph_store COPY).
-    for (const [type, bucket] of buckets) {
-      for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
-        const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const csv = generateTypedNodeCSV(type, chunk);
-        const path = this.tmpCsvPath(`nodes_${type}`);
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY ${type} FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
+    //
+    // Each bucket is consumed (spliced) only AFTER its chunk's COPY succeeds,
+    // so on failure `buckets` holds exactly the unwritten remainder — which
+    // the catch re-queues (with all relationships, none flushed yet) instead
+    // of silently dropping the rest of the batch.
+    try {
+      for (const [type, bucket] of buckets) {
+        while (bucket.length > 0) {
+          const chunk = bucket.slice(0, FLUSH_CHUNK_SIZE);
+          const csv = generateTypedNodeCSV(type, chunk);
+          await this.copyCsvChunk(type, `nodes_${type}`, csv, flushGeneration);
+          bucket.splice(0, chunk.length);
+        }
       }
+    } catch (err) {
+      if (this.generation === flushGeneration) {
+        // Real COPY failure (not a clearGraph abort): restore the unwritten
+        // nodes and every relationship to the pending buffers so the next
+        // flush retries them. clearGraph aborts skip the re-queue — the
+        // whole batch is intentionally discarded then.
+        const unwritten: ImportBatchRequest['nodes'] = [];
+        for (const bucket of buckets.values()) {
+          for (const node of bucket) {
+            // Re-queued Dependencies must be re-eligible for COPY next time.
+            if (node.type === 'Dependency') {
+              this.flushedPackageIds.delete(node.id);
+            }
+            unwritten.push(node);
+          }
+        }
+        this.pendingNodes = unwritten.concat(this.pendingNodes);
+        this.pendingRels = rels.concat(this.pendingRels);
+        console.warn(
+          `[LadybugStore] flush failed mid-batch — re-queued ${unwritten.length} nodes + ${rels.length} rels for retry:`,
+          err,
+        );
+      }
+      throw err;
     }
 
     // --- Flush source text for FTS indexing (file-level only) ---
@@ -2567,41 +2670,71 @@ export class LadybugGraphStore implements GraphStore {
     }
     if (newSnippets.size > 0) {
       const entries = Array.from(newSnippets.entries());
-      for (
-        let offset = 0;
-        offset < entries.length;
-        offset += FLUSH_CHUNK_SIZE
-      ) {
-        const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
-        const csv = generateSourceTextCSV(chunk, this.sourceCache);
-        const path = this.tmpCsvPath('source_text');
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY SourceText FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
-      }
-      for (const id of newSnippets.keys()) {
-        this.flushedSourceIds.add(id);
+      try {
+        for (
+          let offset = 0;
+          offset < entries.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
+          const slice = entries.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const csv = generateSourceTextCSV(new Map(slice), this.sourceCache);
+          await this.copyCsvChunk(
+            'SourceText',
+            'source_text',
+            csv,
+            flushGeneration,
+          );
+          // Mark per chunk (not all-at-end) so a later chunk's failure
+          // doesn't leave already-written rows unmarked — re-COPYing them
+          // next flush would trip PK violations.
+          for (const [id] of slice) {
+            this.flushedSourceIds.add(id);
+          }
+        }
+      } catch (err) {
+        if (this.generation !== flushGeneration) throw err;
+        // Non-fatal: unmarked snippets stay in sourceSnippets and are
+        // retried on the next flush. Don't abort — the relationship flush
+        // below must still run for the nodes already written.
+        console.warn(
+          '[LadybugStore] SourceText flush failed — remaining snippets will retry next flush:',
+          err,
+        );
       }
       await this.rebuildSourceFTS();
     }
 
     // --- Flush embeddings to NodeVector table ---
     if (pendingVectors.length > 0) {
-      for (
-        let offset = 0;
-        offset < pendingVectors.length;
-        offset += FLUSH_CHUNK_SIZE
-      ) {
-        const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const lines = ['id,vec'];
-        for (const { id, vec } of chunk) {
-          lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+      try {
+        for (
+          let offset = 0;
+          offset < pendingVectors.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
+          const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const lines = ['id,vec'];
+          for (const { id, vec } of chunk) {
+            lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+          }
+          await this.copyCsvChunk(
+            'NodeVector',
+            'vectors',
+            lines.join('\n'),
+            flushGeneration,
+          );
         }
-        const csv = lines.join('\n');
-        const path = this.tmpCsvPath('vectors');
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
+      } catch (err) {
+        if (this.generation !== flushGeneration) throw err;
+        // Non-fatal but LOSSY: the nodes these vectors belong to are already
+        // COPY'd, so the vectors can't be re-queued via pendingNodes without
+        // PK violations. Semantic search degrades for these nodes (see the
+        // NOT TRANSACTIONAL note above flushInner). The relationship flush
+        // below must still run.
+        console.warn(
+          '[LadybugStore] NodeVector flush failed — embeddings for this batch are lost:',
+          err,
+        );
       }
       // Create vector index if not yet created
       if (!this.hasVectorIndex) {
@@ -2634,13 +2767,25 @@ export class LadybugGraphStore implements GraphStore {
           offset < bucket.length;
           offset += FLUSH_CHUNK_SIZE
         ) {
+          if (this.generation !== flushGeneration) {
+            throw abortError('Flush aborted: store was cleared');
+          }
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = this.tmpCsvPath(`rels_${key}`);
           await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
           try {
+            // Re-check after the fsWrite await (see copyCsvChunk).
+            if (this.generation !== flushGeneration) {
+              throw abortError('Flush aborted: store was cleared');
+            }
             await this.exec(`COPY RELATES_${key} FROM '${path}' ${COPY_OPTS}`);
           } catch (err) {
+            // A clearGraph abort must propagate, not fall back to inserts
+            // (they'd COPY stale rows into the recreated schema).
+            if (err instanceof DOMException && err.name === 'AbortError') {
+              throw err;
+            }
             console.warn(
               `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
               err,
@@ -2660,8 +2805,13 @@ export class LadybugGraphStore implements GraphStore {
                 );
               }
             }
+          } finally {
+            try {
+              await this.engine.fsUnlink(path);
+            } catch {
+              // best-effort cleanup
+            }
           }
-          await this.engine.fsUnlink(path);
         }
       }
     }
@@ -2955,11 +3105,28 @@ export class LadybugGraphStore implements GraphStore {
       return [];
     }
 
-    const rows = await this.query(
-      `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} LIMIT ${effectiveLimit}`,
+    // Push equality filters into the Cypher WHERE clause wherever possible.
+    // Filtering in JS after `LIMIT ${effectiveLimit}` produced false
+    // negatives: matching rows past the first `limit` unfiltered rows were
+    // never seen (e.g. listNodes('Function', 50, {language:'go'}) returned []
+    // on a mixed-language repo). Only STRING columns declared for this node
+    // type are pushable (case-insensitive equality, matching the old JS
+    // predicate); anything else falls back to a paged JS scan below.
+    const columnTypes = new Map(
+      NODE_COLUMNS[type as NodeType].map((c) => [c.name, c.type]),
     );
+    const pushed: string[] = [];
+    const residual: [string, string][] = [];
+    for (const [k, v] of Object.entries(filters ?? {})) {
+      if (columnTypes.get(k) === 'STRING') {
+        pushed.push(`lower(n.${k}) = '${esc(v.toLowerCase())}'`);
+      } else {
+        residual.push([k, v]);
+      }
+    }
+    const where = pushed.length > 0 ? `WHERE ${pushed.join(' AND ')} ` : '';
 
-    let results: NodeResult[] = (rows as Record<string, unknown>[]).map((r) => {
+    const mapRow = (r: Record<string, unknown>): NodeResult => {
       const props = rowToProperties(r);
       return {
         id: String(r.id),
@@ -2967,16 +3134,51 @@ export class LadybugGraphStore implements GraphStore {
         name: String(r.name),
         ...(props && { properties: props }),
       };
-    });
+    };
+    const matchesResidual = (n: NodeResult): boolean => {
+      if (residual.length === 0) return true;
+      if (!n.properties) return false;
+      return residual.every(
+        ([k, v]) => String(n.properties![k]).toLowerCase() === v.toLowerCase(),
+      );
+    };
 
-    if (filters && Object.keys(filters).length > 0) {
-      results = results.filter((n) => {
-        if (!n.properties) return false;
-        return Object.entries(filters).every(
-          ([k, v]) =>
-            String(n.properties![k]).toLowerCase() === v.toLowerCase(),
+    let results: NodeResult[];
+    if (residual.length === 0) {
+      // Fully pushable — one query, DB applies the filter before the LIMIT.
+      const rows = await this.query(
+        `MATCH (n:${type}) ${where}RETURN ${typedReturnClause(type as NodeType)} LIMIT ${effectiveLimit}`,
+      );
+      results = (rows as Record<string, unknown>[]).map(mapRow);
+    } else {
+      // Residual JS filters — page through the (Cypher-prefiltered) rows
+      // with a stable ORDER BY until we have `limit` matches or the table
+      // is exhausted, capped to a sane total scan.
+      const PAGE_SIZE = Math.max(effectiveLimit, 1000);
+      const MAX_SCANNED_ROWS = 50_000;
+      results = [];
+      let offset = 0;
+      for (;;) {
+        const rows = await this.query(
+          `MATCH (n:${type}) ${where}RETURN ${typedReturnClause(type as NodeType)} ` +
+            `ORDER BY n.id SKIP ${offset} LIMIT ${PAGE_SIZE}`,
         );
-      });
+        for (const r of rows as Record<string, unknown>[]) {
+          const node = mapRow(r);
+          if (matchesResidual(node)) {
+            results.push(node);
+            if (results.length >= effectiveLimit) break;
+          }
+        }
+        offset += rows.length;
+        if (
+          results.length >= effectiveLimit ||
+          rows.length < PAGE_SIZE ||
+          offset >= MAX_SCANNED_ROWS
+        ) {
+          break;
+        }
+      }
     }
 
     logPerf(
