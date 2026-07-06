@@ -596,10 +596,15 @@ const GraphViewer = memo(
           // properties used by search, not the on-screen structure.)
           if (liveGrewRef.current) return;
           suppressNextFitRef.current = true;
-          loadGraph().finally(() => {
-            // Defensive reset: if loadGraph failed or was aborted, the
-            // graphVersion-driven auto-fit never fired and the flag would
-            // leak onto the next unrelated call.
+          // The flag is consumed (read-and-reset) by the graphVersion-driven
+          // auto-fit effect in useGraphViewer AFTER React commits the reload.
+          // Do NOT clear it in a `.finally` here: that runs in a microtask,
+          // before the commit, so the effect would still see the flag as
+          // false and auto-fit anyway (making the suppression dead code).
+          loadGraph().catch(() => {
+            // Load failed — no graphVersion bump, so the consumer never
+            // reads the flag. Reset it here so it can't leak onto the next
+            // unrelated load.
             suppressNextFitRef.current = false;
           });
         }

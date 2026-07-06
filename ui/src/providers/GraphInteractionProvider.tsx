@@ -323,31 +323,66 @@ function InternalGraphInteractionProvider({
   // user opened. Search / hop refinements (query set) are skipped: they bump
   // graphVersion too, and re-hiding Variables the user just unhid on every
   // search would fight their explicit choice.
+  // A single "applied for this version" stamp isn't enough under progressive
+  // loading: the skeleton commit bumps graphVersion before most Variable /
+  // Dependency sub-types have streamed in, and later effect re-runs (fired by
+  // `availableSubTypes` growing) would bail on the version guard — so streamed
+  // sub-types never got default-hidden. Instead we track which sub-type keys
+  // have already been default-processed. A key is auto-hidden only the FIRST
+  // time it appears; once processed it is never re-hidden within the same
+  // load, so a user unhiding a sub-type mid-stream keeps their choice. A new
+  // full load (fresh graphVersion) resets the processed set, restoring the
+  // per-load default behavior for repo switches / re-indexing.
   const lastDefaultsVersion = useRef(0);
+  const processedDefaultSubTypes = useRef(new Set<string>());
   useEffect(() => {
     if (graphVersion === 0) return;
-    if (lastDefaultsVersion.current === graphVersion) return;
-    lastDefaultsVersion.current = graphVersion;
-    if (lastSearchQuery) return;
-    // Hide Variables and Dependencies by default — Variables are the bulk of
-    // the nodes (often >half) and aren't part of the structural view people
-    // normally look at (files/classes/functions); Dependencies are registry
-    // noise. Both have sub-types, and in `shouldHideNode` sub-type visibility
-    // takes precedence over the whole-type flag — so they must be hidden at the
-    // sub-type level (the type flag alone is ignored for sub-typed nodes). We
-    // still add the type flag too, as a fallback for nodes that have no sub-type.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
-    setHiddenNodeTypes((prev) =>
-      prev.has('Variable') ? prev : new Set(prev).add('Variable'),
-    );
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
-    setHiddenSubTypes((prev) => {
-      const next = new Set(prev);
-      for (const type of ['Variable', 'Dependency']) {
-        const subs = availableSubTypes.get(type);
-        if (subs) subs.forEach((s) => next.add(`${type}:${s.subType}`));
+    if (lastDefaultsVersion.current !== graphVersion) {
+      lastDefaultsVersion.current = graphVersion;
+      // Search / hop refinements (query set) bump graphVersion too, but must
+      // not re-apply defaults — re-hiding Variables the user just unhid on
+      // every search would fight their explicit choice.
+      if (lastSearchQuery) return;
+      processedDefaultSubTypes.current = new Set();
+      // Hide Variables and Dependencies by default — Variables are the bulk of
+      // the nodes (often >half) and aren't part of the structural view people
+      // normally look at (files/classes/functions); Dependencies are registry
+      // noise. Both have sub-types, and in `shouldHideNode` sub-type visibility
+      // takes precedence over the whole-type flag — so they must be hidden at the
+      // sub-type level (the type flag alone is ignored for sub-typed nodes). We
+      // still add the type flag too, as a fallback for nodes that have no sub-type.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
+      setHiddenNodeTypes((prev) =>
+        prev.has('Variable') ? prev : new Set(prev).add('Variable'),
+      );
+    } else if (lastSearchQuery) {
+      // Mid-load re-run while a search is active — leave filters alone.
+      return;
+    }
+    // Default-hide any Variable/Dependency sub-types we haven't seen yet this
+    // load (covers both the initial commit and sub-types streamed in later).
+    const pending: string[] = [];
+    for (const type of ['Variable', 'Dependency']) {
+      const subs = availableSubTypes.get(type);
+      if (!subs) continue;
+      for (const s of subs) {
+        const key = `${type}:${s.subType}`;
+        if (!processedDefaultSubTypes.current.has(key)) pending.push(key);
       }
-      return next;
+    }
+    if (pending.length === 0) return;
+    for (const key of pending) processedDefaultSubTypes.current.add(key);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-sub-type default init
+    setHiddenSubTypes((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const key of pending) {
+        if (!next.has(key)) {
+          next.add(key);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
     });
   }, [graphVersion, availableSubTypes, lastSearchQuery]);
 

@@ -108,9 +108,17 @@ export default function IndexMetadataPanel({ graphVersion }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    store.fetchMetadata().then((result) => {
-      if (!cancelled) setEntries(result);
-    });
+    store
+      .fetchMetadata()
+      .then((result) => {
+        if (!cancelled) setEntries(result);
+      })
+      .catch((err: unknown) => {
+        // Aborted fetches (store teardown / navigation) are expected — stay
+        // quiet. Anything else: warn, keep whatever entries we already show.
+        if (err instanceof Error && err.name === 'AbortError') return;
+        console.warn('[IndexMetadataPanel] fetchMetadata failed:', err);
+      });
     return () => {
       cancelled = true;
     };
