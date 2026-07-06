@@ -99,6 +99,53 @@ describe('Parquet export → import round-trip fidelity', () => {
   });
 });
 
+describe('LadybugGraphStore traverse direction', () => {
+  it("reports incoming edges with correct source/target under 'both'", async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    s.nodeTypeMap.set('n1', 'Function');
+
+    // 'both' must issue the two directed patterns; the undirected form
+    // carries no direction info, which flipped incoming edges.
+    connQuery.mockImplementation((cypher: string) => {
+      if (cypher.includes('-[r:RELATES]->')) {
+        return Promise.resolve([
+          {
+            fromId: 'n1',
+            id: 'callee',
+            name: 'callee',
+            rel_id: 'r-out',
+            rel_type: 'CALLS',
+            rel_properties: '',
+          },
+        ]);
+      }
+      if (cypher.includes('<-[r:RELATES]-')) {
+        return Promise.resolve([
+          {
+            fromId: 'n1',
+            id: 'caller',
+            name: 'caller',
+            rel_id: 'r-in',
+            rel_type: 'CALLS',
+            rel_properties: '',
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const results = await store.traverse('n1', 'both', 1);
+
+    const byRelId = new Map(results.map((r) => [r.relationship.id, r]));
+    // Outgoing: n1 calls callee.
+    expect(byRelId.get('r-out')?.relationship.source_id).toBe('n1');
+    expect(byRelId.get('r-out')?.relationship.target_id).toBe('callee');
+    // Incoming: caller calls n1 — must NOT be flipped.
+    expect(byRelId.get('r-in')?.relationship.source_id).toBe('caller');
+    expect(byRelId.get('r-in')?.relationship.target_id).toBe('n1');
+  });
+});
+
 describe('LadybugGraphStore clearGraph abort behavior', () => {
   it('aborts queued query()/exec() tasks when clearGraph fires', async () => {
     const { store, s, connQuery } = makeStoreWithMockEngine();

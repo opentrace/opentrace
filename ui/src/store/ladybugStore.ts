@@ -1389,43 +1389,54 @@ export class LadybugGraphStore implements GraphStore {
       sourceId: string;
     }> = [];
 
+    // An undirected MATCH carries no direction info, so 'both' runs the
+    // two directed patterns separately — otherwise every incoming edge
+    // would be reported with source/target flipped. Each RELATES edge
+    // matches exactly one of the two patterns (self-loops aside), so no
+    // duplicates are introduced.
+    const patterns: Array<{
+      outgoing: boolean;
+      pattern: (t: string) => string;
+    }> = [];
+    if (direction === 'outgoing' || direction === 'both') {
+      patterns.push({
+        outgoing: true,
+        pattern: (t) => `MATCH (a:${t})-[r:RELATES]->(b)`,
+      });
+    }
+    if (direction === 'incoming' || direction === 'both') {
+      patterns.push({
+        outgoing: false,
+        pattern: (t) => `MATCH (a:${t})<-[r:RELATES]-(b)`,
+      });
+    }
+
     for (const [type, ids] of byType) {
       for (let off = 0; off < ids.length; off += 500) {
         const chunk = ids.slice(off, off + 500);
         const idList = chunk.map((i) => `'${esc(i)}'`).join(', ');
-
-        let pattern: string;
-        switch (direction) {
-          case 'outgoing':
-            pattern = `MATCH (a:${type})-[r:RELATES]->(b)`;
-            break;
-          case 'incoming':
-            pattern = `MATCH (a:${type})<-[r:RELATES]-(b)`;
-            break;
-          default:
-            pattern = `MATCH (a:${type})-[r:RELATES]-(b)`;
-            break;
-        }
-
         const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
-        const rows = await this.query(
-          `${pattern} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
-        );
 
-        for (const row of rows as Record<string, string>[]) {
-          // Neighbor properties come from the JS-side cache (typed columns
-          // vary per type, so we can't select them in a cross-type query)
-          const cached = this.nodeCache.get(row.id);
-          results.push({
-            fromId: row.fromId,
-            neighborId: row.id,
-            neighborName: row.name,
-            neighborProps: cached?.properties,
-            relId: row.rel_id,
-            relType: row.rel_type,
-            relProps: row.rel_properties,
-            sourceId: row.fromId,
-          });
+        for (const { outgoing, pattern } of patterns) {
+          const rows = await this.query(
+            `${pattern(type)} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
+          );
+
+          for (const row of rows as Record<string, string>[]) {
+            // Neighbor properties come from the JS-side cache (typed columns
+            // vary per type, so we can't select them in a cross-type query)
+            const cached = this.nodeCache.get(row.id);
+            results.push({
+              fromId: row.fromId,
+              neighborId: row.id,
+              neighborName: row.name,
+              neighborProps: cached?.properties,
+              relId: row.rel_id,
+              relType: row.rel_type,
+              relProps: row.rel_properties,
+              sourceId: outgoing ? row.fromId : row.id,
+            });
+          }
         }
       }
     }
