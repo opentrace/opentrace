@@ -1906,6 +1906,52 @@ def _scrub_token(message: str) -> str:
     return _URL_USERINFO_RE.sub("://[REDACTED]@", message)
 
 
+def _normalize_git_url(url: str) -> str:
+    """Normalize a git URL for origin comparison.
+
+    Strips userinfo (tokens), a trailing ``.git`` suffix, and trailing
+    slashes, and lowercases the result. Converts scp-like SSH forms
+    (``git@host:org/name``) to ``host/org/name`` so they compare equal to
+    their https counterparts.
+    """
+    url = url.strip()
+    url = _URL_USERINFO_RE.sub("://", url)
+    # scp-like syntax: git@github.com:org/name(.git)
+    m = re.match(r"^[^@/\s]+@([^:/\s]+):(.+)$", url)
+    if m:
+        url = f"{m.group(1)}/{m.group(2)}"
+    else:
+        url = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", url)
+    return url.rstrip("/").removesuffix(".git").lower()
+
+
+def _existing_clone_matches(clone_dir: Path, repo_url: str) -> bool:
+    """Whether *clone_dir*'s ``origin`` points at *repo_url*.
+
+    The clone directory is keyed only by the last two URL segments
+    (``<org>/<name>``), so the same directory may hold a clone of a
+    different host's repo. Returns False on any git error so callers
+    fall back to a fresh clone rather than silently indexing the
+    wrong repository.
+    """
+    from opentrace_agent.sources.code.git_cloner import _clean_env
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(clone_dir), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_clean_env(),
+        )
+    except Exception:
+        return False
+    if proc.returncode != 0:
+        return False
+    origin = proc.stdout.strip()
+    return _normalize_git_url(origin) == _normalize_git_url(repo_url)
+
+
 def _update_existing_clone(clone_dir: Path, ref: str | None) -> None:
     """Best-effort fast-forward of an already-cloned repo.
 
@@ -2034,12 +2080,14 @@ def fetch_and_index(
     repos_dir.mkdir(parents=True, exist_ok=True)
     clone_dir = repos_dir / inferred_name
 
-    if clone_dir.exists() and (clone_dir / ".git").exists():
+    if clone_dir.exists() and (clone_dir / ".git").exists() and _existing_clone_matches(clone_dir, repo_url):
         click.echo(f"Repository already cloned at {clone_dir}, updating...")
         _update_existing_clone(clone_dir, ref)
         local_path = clone_dir
     elif clone_dir.exists():
-        # Directory exists but no .git — remove and re-clone
+        # Directory exists but no .git, or its origin points at a different
+        # repository (the dir is keyed only by <org>/<name>, so another
+        # host's repo may occupy it) — remove and re-clone.
         import shutil
 
         shutil.rmtree(clone_dir)

@@ -34,6 +34,8 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from opentrace_agent.cli.main import (
+    _existing_clone_matches,
+    _normalize_git_url,
     _scrub_token,
     _update_existing_clone,
     app,
@@ -63,6 +65,54 @@ class TestScrubToken:
         assert "t1:s" not in scrubbed
         assert "t2:s" not in scrubbed
         assert scrubbed.count("[REDACTED]") == 2
+
+
+class TestNormalizeGitUrl:
+    def test_strips_dot_git_and_trailing_slash(self) -> None:
+        assert _normalize_git_url("https://github.com/org/repo.git") == _normalize_git_url(
+            "https://github.com/org/repo/"
+        )
+
+    def test_strips_embedded_token(self) -> None:
+        assert _normalize_git_url("https://oauth2:tok@github.com/org/repo") == _normalize_git_url(
+            "https://github.com/org/repo"
+        )
+
+    def test_scp_form_equals_https_form(self) -> None:
+        assert _normalize_git_url("git@github.com:org/repo.git") == _normalize_git_url("https://github.com/org/repo")
+
+    def test_different_hosts_do_not_match(self) -> None:
+        assert _normalize_git_url("https://gitlab.com/org/repo") != _normalize_git_url("https://github.com/org/repo")
+
+
+class TestExistingCloneMatches:
+    """Origin verification against the requested URL."""
+
+    def _make_repo(self, path: Path, origin: str) -> None:
+        subprocess.run(["git", "init", "-q", str(path)], check=True)
+        subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin], check=True)
+
+    def test_matching_origin(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        self._make_repo(repo, "https://github.com/org/repo.git")
+        assert _existing_clone_matches(repo, "https://github.com/org/repo")
+
+    def test_different_host_does_not_match(self, tmp_path) -> None:
+        # Same <org>/<name> on another host must NOT be treated as the
+        # same repo (the clone dir is keyed only by the last two segments).
+        repo = tmp_path / "repo"
+        self._make_repo(repo, "https://gitlab.com/org/repo.git")
+        assert not _existing_clone_matches(repo, "https://github.com/org/repo")
+
+    def test_no_origin_remote_does_not_match(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        assert not _existing_clone_matches(repo, "https://github.com/org/repo")
+
+    def test_not_a_git_repo_does_not_match(self, tmp_path) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        assert not _existing_clone_matches(plain, "https://github.com/org/repo")
 
 
 class TestUpdateExistingClone:
@@ -277,6 +327,7 @@ def _stub_collaborators(monkeypatch):
         "do_clone": [],
         "update": [],
         "pipeline": [],
+        "origin_check": [],
     }
 
     def fake_do_clone(repo_url, clone_dir, ref, token):
@@ -290,9 +341,15 @@ def _stub_collaborators(monkeypatch):
         calls["pipeline"].append(kwargs)
         return 0.5
 
+    def fake_origin_check(clone_dir, repo_url):
+        # The stub dirs aren't real git repos; assume origin matches.
+        calls["origin_check"].append({"clone_dir": clone_dir, "repo_url": repo_url})
+        return True
+
     monkeypatch.setattr("opentrace_agent.cli.main._do_clone", fake_do_clone)
     monkeypatch.setattr("opentrace_agent.cli.main._update_existing_clone", fake_update)
     monkeypatch.setattr("opentrace_agent.cli.main._run_indexing_pipeline", fake_pipeline)
+    monkeypatch.setattr("opentrace_agent.cli.main._existing_clone_matches", fake_origin_check)
     monkeypatch.setattr(
         "opentrace_agent.cli.main._resolve_db",
         lambda db_path=None, **_: db_path or "/tmp/fake.db",
@@ -414,6 +471,28 @@ class TestExistingDirBranches:
         assert len(calls["update"]) == 0
         # rmtree happened before _do_clone re-created the directory; the
         # stale marker should be gone.
+        assert not marker.exists()
+
+    def test_origin_mismatch_triggers_reclone(self, tmp_path, monkeypatch) -> None:
+        """A clone dir whose origin points at a different repo (same
+        <org>/<name> on another host) must be replaced, not fetched."""
+        _patch_home(monkeypatch, tmp_path)
+
+        clone_dir = tmp_path / ".opentrace" / "repos" / "owner" / "repo"
+        (clone_dir / ".git").mkdir(parents=True)
+        marker = clone_dir / "marker.txt"
+        marker.write_text("stale")
+
+        calls = _stub_collaborators(monkeypatch)
+        monkeypatch.setattr("opentrace_agent.cli.main._existing_clone_matches", lambda *_: False)
+
+        result = _run(["https://github.com/owner/repo"])
+        assert result.exit_code == 0, result.output
+
+        # The stale clone is replaced by a fresh clone; no fetch on the
+        # wrong-origin repo.
+        assert len(calls["do_clone"]) == 1
+        assert len(calls["update"]) == 0
         assert not marker.exists()
 
     def test_recovery_rmtree_only_targets_the_clone_dir(self, tmp_path, monkeypatch) -> None:

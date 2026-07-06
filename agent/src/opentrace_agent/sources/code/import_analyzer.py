@@ -96,16 +96,28 @@ def _parse_python_import(
     for child in node.children:
         if child.type == "dotted_name":
             module_name = child.text.decode()
+            top_level = module_name.split(".")[0]
             # Try to resolve module.submodule → module/submodule.py or module/submodule/__init__.py
             candidates = _module_to_paths(module_name)
             resolved = False
             for candidate in candidates:
                 if candidate in known_files:
-                    result[module_name.split(".")[-1]] = candidate
+                    # ``import a.b.c`` binds only ``a`` in Python; attribute
+                    # calls reference the full dotted path (``a.b.c.func()``),
+                    # so register the full name — not the last segment, which
+                    # is never a usable binding for a plain dotted import.
+                    result[module_name] = candidate
                     resolved = True
                     break
-            if not resolved:
-                top_level = module_name.split(".")[0]
+            top_resolved = False
+            if "." in module_name:
+                # Also map the top-level package name (the actual binding).
+                for candidate in _module_to_paths(top_level):
+                    if candidate in known_files:
+                        result.setdefault(top_level, candidate)
+                        top_resolved = True
+                        break
+            if not resolved and not top_resolved:
                 external[top_level] = package_id("pypi", top_level)
         elif child.type == "aliased_import":
             name_node = child.child_by_field_name("name")
@@ -179,20 +191,29 @@ def _parse_python_from_import(
             resolved_path = candidate
             break
 
-    # Store individual imported symbol names from `from X import Y, Z`
+    # Store individual imported symbol names from `from X import Y, Z`.
+    # When X resolved to a package __init__.py, an imported name may be a
+    # submodule (`from . import helper` with pkg/helper.py) — prefer the
+    # module file and fall back to the __init__.py (symbol import) only
+    # when no such module file exists.
     if resolved_path is not None:
         for child in node.children:
             if child.type == "dotted_name" and child != node.child_by_field_name("module_name"):
                 # Bare imported name: `from X import Y`
-                result[child.text.decode()] = resolved_path
+                name = child.text.decode()
+                result[name] = _package_submodule_path(resolved_path, name, known_files) or resolved_path
             elif child.type == "aliased_import":
                 # `from X import Y as Z` — store the alias
                 name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
+                name = name_node.text.decode() if name_node else None
+                target = resolved_path
+                if name:
+                    target = _package_submodule_path(resolved_path, name, known_files) or resolved_path
                 if alias_node:
-                    result[alias_node.text.decode()] = resolved_path
-                elif name_node:
-                    result[name_node.text.decode()] = resolved_path
+                    result[alias_node.text.decode()] = target
+                elif name:
+                    result[name] = target
     elif not is_relative:
         # External import: not resolved to any local file
         top_level = module_text.split(".")[0]
@@ -502,6 +523,22 @@ def _parent_dir(path: str) -> str:
     """Get parent directory of a path string."""
     parts = path.rsplit("/", 1)
     return parts[0] if len(parts) > 1 else ""
+
+
+def _package_submodule_path(resolved_path: str, name: str, known_files: set[str]) -> str | None:
+    """Resolve *name* as a submodule of the package *resolved_path* points at.
+
+    Only applies when the import resolved to a package ``__init__.py``;
+    returns ``pkg/name.py`` or ``pkg/name/__init__.py`` when known, else None.
+    """
+    if not resolved_path.endswith("__init__.py"):
+        return None
+    pkg_dir = resolved_path[: -len("__init__.py")].rstrip("/")
+    base = f"{pkg_dir}/{name}" if pkg_dir else name
+    for candidate in (f"{base}.py", f"{base}/__init__.py"):
+        if candidate in known_files:
+            return candidate
+    return None
 
 
 def _module_to_paths(module_name: str) -> list[str]:

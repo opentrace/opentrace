@@ -483,7 +483,13 @@ def _variables_to_graph(
     scope_vars = registries.variable_registry.setdefault(scope_id, {})
 
     for var in variables:
-        var_id = f"{scope_id}::{var.name}"
+        # `var:` namespaces the Variable id so it can't collide with a
+        # Function/Class node id in the same scope (e.g. `self.handler = None`
+        # in __init__ alongside `def handler(self)`, whose id is
+        # `{scope_id}::handler` when the signature is empty). Consumers only
+        # see these ids via the variable_registry / emitted nodes, and
+        # `id.split("::")[0]` still yields the file id.
+        var_id = f"{scope_id}::var:{var.name}"
         props: dict[str, str | int | bool | None] = {
             "language": language,
             "kind": var.kind,

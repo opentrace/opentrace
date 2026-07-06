@@ -57,9 +57,7 @@ def _walk_node(node: tree_sitter.Node) -> list[CodeSymbol]:
     symbols: list[CodeSymbol] = []
     for child in node.children:
         if child.type == "type_declaration":
-            sym = _extract_type_decl(child)
-            if sym:
-                symbols.append(sym)
+            symbols.extend(_extract_type_decls(child))
         elif child.type == "function_declaration":
             sym = _extract_function(child)
             if sym:
@@ -71,8 +69,14 @@ def _walk_node(node: tree_sitter.Node) -> list[CodeSymbol]:
     return symbols
 
 
-def _extract_type_decl(node: tree_sitter.Node) -> CodeSymbol | None:
-    """Extract a type declaration (struct, interface)."""
+def _extract_type_decls(node: tree_sitter.Node) -> list[CodeSymbol]:
+    """Extract type declarations (struct, interface).
+
+    A single ``type_declaration`` may hold several ``type_spec`` children
+    when the grouped form ``type ( A struct{...}; B struct{...} )`` is used,
+    so this collects every struct/interface spec, not just the first.
+    """
+    symbols: list[CodeSymbol] = []
     for child in node.children:
         if child.type == "type_spec":
             name_node = child.child_by_field_name("name")
@@ -91,18 +95,20 @@ def _extract_type_decl(node: tree_sitter.Node) -> CodeSymbol | None:
                 else:
                     superclasses = _extract_embedded_structs(type_node)
                 docs = _extract_godoc(node)
-                return CodeSymbol(
-                    name=name_node.text.decode(),
-                    kind="class",
-                    start_line=node.start_point.row + 1,
-                    end_line=node.end_point.row + 1,
-                    children=methods,
-                    subtype=subtype,
-                    superclasses=superclasses,
-                    interfaces=interfaces,
-                    docs=docs,
+                symbols.append(
+                    CodeSymbol(
+                        name=name_node.text.decode(),
+                        kind="class",
+                        start_line=child.start_point.row + 1,
+                        end_line=child.end_point.row + 1,
+                        children=methods,
+                        subtype=subtype,
+                        superclasses=superclasses,
+                        interfaces=interfaces,
+                        docs=docs,
+                    )
                 )
-    return None
+    return symbols
 
 
 def _extract_interface_methods(node: tree_sitter.Node) -> list[CodeSymbol]:

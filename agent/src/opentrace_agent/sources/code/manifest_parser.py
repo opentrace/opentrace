@@ -112,7 +112,7 @@ _GO_REQUIRE_SINGLE = re.compile(
     r'^\s*require\s+"?([^\s"]+)"?\s+(\S+)',
 )
 _GO_REQUIRE_BLOCK_LINE = re.compile(
-    r"^\s*([^\s/]+)\s+(\S+)",
+    r"^\s*(\S+)\s+(\S+)",
 )
 
 
@@ -149,6 +149,10 @@ def parse_go_mod(content: str, source: str) -> list[ParsedDependency]:
         if in_require:
             if stripped == ")":
                 in_require = False
+                continue
+            # Skip pure comment lines — module paths contain slashes, so the
+            # regex can't be used to filter comments (e.g. "// indirect deps").
+            if stripped.startswith("//"):
                 continue
             m = _GO_REQUIRE_BLOCK_LINE.match(stripped)
             if m:

@@ -54,10 +54,22 @@ class TestPythonImports:
         assert result.internal["utils"] == "utils.py"
 
     def test_import_dotted_module(self):
+        """`import a.b` binds `a`, and code refers to `a.b.func()` — the full
+        dotted path is registered, never the bare last segment."""
         source = b"import mypackage.helpers\n"
         known = {"mypackage/helpers.py"}
         result = analyze_python_imports(_parse_python(source), "main.py", known)
-        assert result.internal["helpers"] == "mypackage/helpers.py"
+        assert result.internal["mypackage.helpers"] == "mypackage/helpers.py"
+        assert "helpers" not in result.internal
+
+    def test_import_dotted_module_registers_top_level_binding(self):
+        """`import a.b` also maps the actual bound name `a` when resolvable."""
+        source = b"import mypackage.helpers\n"
+        known = {"mypackage/helpers.py", "mypackage/__init__.py"}
+        result = analyze_python_imports(_parse_python(source), "main.py", known)
+        assert result.internal["mypackage"] == "mypackage/__init__.py"
+        assert result.internal["mypackage.helpers"] == "mypackage/helpers.py"
+        assert result.external == {}
 
     def test_import_aliased(self):
         source = b"import mypackage.helpers as h\n"
@@ -110,6 +122,28 @@ class TestPythonImports:
         known = {"models.py"}
         result = analyze_python_imports(_parse_python(source), "main.py", known)
         assert result.internal.get("U") == "models.py"
+
+    def test_from_dot_import_resolves_submodule(self):
+        """`from . import helper` should map 'helper' to pkg/helper.py, not
+        the package __init__.py, when the module file exists."""
+        source = b"from . import helper\n"
+        known = {"pkg/__init__.py", "pkg/helper.py"}
+        result = analyze_python_imports(_parse_python(source), "pkg/main.py", known)
+        assert result.internal.get("helper") == "pkg/helper.py"
+
+    def test_from_dot_import_falls_back_to_init_for_symbols(self):
+        """`from . import CONSTANT` with no pkg/CONSTANT.py maps to __init__.py."""
+        source = b"from . import CONSTANT\n"
+        known = {"pkg/__init__.py"}
+        result = analyze_python_imports(_parse_python(source), "pkg/main.py", known)
+        assert result.internal.get("CONSTANT") == "pkg/__init__.py"
+
+    def test_from_package_import_submodule(self):
+        """`from pkg import helper` prefers pkg/helper.py over pkg/__init__.py."""
+        source = b"from pkg import helper\n"
+        known = {"pkg/__init__.py", "pkg/helper.py"}
+        result = analyze_python_imports(_parse_python(source), "main.py", known)
+        assert result.internal.get("helper") == "pkg/helper.py"
 
     def test_from_import_external(self):
         """from requests import get should produce external ref."""
