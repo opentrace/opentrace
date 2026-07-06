@@ -37,6 +37,15 @@ function MyGraph() {
 }
 ```
 
+### Custom Styling
+
+Load only the component styles and supply your own design tokens:
+
+```tsx
+import { GraphToolbar, FilterPanel } from '@opentrace/opentrace';
+import '@opentrace/opentrace/graph.css';
+```
+
 ## Exports
 
 The package provides multiple entry points for tree-shaking:
@@ -52,7 +61,9 @@ The package provides multiple entry points for tree-shaking:
 | `@opentrace/opentrace/job`        | Job execution and streaming for async indexing operations     |
 | `@opentrace/opentrace/app-components` | Full app panels (GraphViewer, NodeDetailsPanel, ChatPanel) |
 | `@opentrace/opentrace/app`        | Drop-in `OpenTraceApp` component with all providers          |
-| `@opentrace/opentrace/utils`      | Shared utility functions                                     |
+| `@opentrace/opentrace/utils`      | Shared utility functions and store-free constants (e.g. `GRAPH_SETTING_DEFAULTS`) |
+| `@opentrace/opentrace/style.css`  | Full design system — tokens, themes, resets, and all component styles |
+| `@opentrace/opentrace/graph.css`  | Graph component styles only — token-driven, no global selectors |
 
 ## WASM Setup
 

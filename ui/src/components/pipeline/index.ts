@@ -142,11 +142,20 @@ export {
   SummarizeStage,
   StoreStage,
   EmbedStage,
+  createExtractionState,
+  extractFile,
+  mergeExtraction,
 } from './concurrent/stages';
 export type {
   FileCacheStageConfig,
   ExtractStageConfig,
+  ExtractionState,
 } from './concurrent/stages';
+export { ExtractPool, defaultPoolSize } from './concurrent/extractPool';
+export type {
+  ExtractPoolResult,
+  ExtractFileRef,
+} from './concurrent/extractPool';
 export { PipelineDebugLog } from './concurrent/debug';
 export type { DebugEntry } from './concurrent/debug';
 

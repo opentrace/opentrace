@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { PROVIDERS, DEFAULT_PROVIDER_ID } from './providers';
+
 const KEY_PREFIX = 'ot_chat_apikey_';
 const PROVIDER_KEY = 'ot_chat_provider';
 const MODEL_PREFIX = 'ot_chat_model_';
@@ -32,8 +34,20 @@ export function saveApiKey(provider: string, key: string): void {
   }
 }
 
+/**
+ * Read the user's persisted chat provider choice, validating it against
+ * the current `PROVIDERS` map. Returns `DEFAULT_PROVIDER_ID` when the
+ * stored id is missing or no longer recognized — e.g. after a build
+ * renamed/removed a provider. Without this guard, `ChatPanel` would
+ * deref `PROVIDERS[providerId].models` and black-screen the whole app
+ * (Fix #3).
+ */
 export function loadProviderChoice(): string {
-  return localStorage.getItem(PROVIDER_KEY) ?? 'gemini';
+  const stored = localStorage.getItem(PROVIDER_KEY);
+  if (stored && Object.prototype.hasOwnProperty.call(PROVIDERS, stored)) {
+    return stored;
+  }
+  return DEFAULT_PROVIDER_ID;
 }
 
 export function saveProviderChoice(provider: string): void {

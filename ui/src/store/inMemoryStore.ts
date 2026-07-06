@@ -381,7 +381,10 @@ export class InMemoryGraphStore implements GraphStore {
   ): Promise<TraverseResult[]> {
     const t0 = performance.now();
     const results: TraverseResult[] = [];
-    const visited = new Set<string>();
+    // Mark nodes as seen when ENQUEUED (not when dequeued). Marking on
+    // dequeue let two parents both emit/enqueue a shared child before either
+    // marked it, producing duplicate result rows for diamond paths.
+    const seen = new Set<string>([nodeId]);
     const queue: Array<{ id: string; depth: number }> = [
       { id: nodeId, depth: 0 },
     ];
@@ -389,8 +392,6 @@ export class InMemoryGraphStore implements GraphStore {
     while (queue.length > 0) {
       const { id, depth } = queue.shift()!;
       if (depth >= maxDepth) continue;
-      if (visited.has(id)) continue;
-      visited.add(id);
 
       // Collect relevant relationship IDs from adjacency indexes
       const relIds: string[] = [];
@@ -406,11 +407,12 @@ export class InMemoryGraphStore implements GraphStore {
         if (relType && rel.type !== relType) continue;
 
         const neighborId = rel.source_id === id ? rel.target_id : rel.source_id;
-        if (visited.has(neighborId)) continue;
+        if (seen.has(neighborId)) continue;
 
         const neighbor = this.nodes.get(neighborId);
         if (!neighbor) continue;
 
+        seen.add(neighborId);
         results.push({
           node: {
             id: neighbor.id,

@@ -154,6 +154,8 @@ class MlStrategy implements SummarizationStrategy {
 // ---------------------------------------------------------------------------
 
 const LLM_CALL_TIMEOUT_MS = 60_000;
+// Cap concurrent LLM requests so a large batch doesn't flood the server.
+const LLM_BATCH_CONCURRENCY = 4;
 
 class LlmStrategy implements SummarizationStrategy {
   readonly type = 'llm' as const;
@@ -180,6 +182,8 @@ class LlmStrategy implements SummarizationStrategy {
         return `Summarize what this source file does in one sentence:\n\n${source}`;
       case 'directory':
         return `Describe the purpose of this directory in one sentence:\n\n${source}`;
+      default:
+        return `Summarize this code in one sentence:\n\n${source}`;
     }
   }
 
@@ -206,7 +210,24 @@ class LlmStrategy implements SummarizationStrategy {
   }
 
   async summarizeBatch(items: SymbolMetadata[]): Promise<string[]> {
-    return Promise.all(items.map((item) => this.summarize(item)));
+    // Bounded concurrency: an unbounded Promise.all fires one request per
+    // symbol at once, flooding the local LLM server and triggering spurious
+    // per-call timeouts under load. A failed summary is best-effort → ''.
+    const results: string[] = new Array(items.length).fill('');
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        try {
+          results[i] = await this.summarize(items[i]);
+        } catch {
+          results[i] = '';
+        }
+      }
+    };
+    const workers = Math.min(LLM_BATCH_CONCURRENCY, items.length);
+    await Promise.all(Array.from({ length: workers }, () => worker()));
+    return results;
   }
 
   async dispose(): Promise<void> {}

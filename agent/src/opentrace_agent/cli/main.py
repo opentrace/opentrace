@@ -25,6 +25,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -372,6 +373,7 @@ def _run_indexing_pipeline(
     vault_scope: str = "local",
     no_prune: bool = False,
     refresh_stale_pages: bool = False,
+    on_event: "Callable[[object], None] | None" = None,
 ) -> float:
     """Run the four-stage pipeline with atomic-write staging.
 
@@ -380,6 +382,13 @@ def _run_indexing_pipeline(
     exclusive flock on ``<db>.indexlock`` so two concurrent indexes can't race
     the swap. *extra_metadata* is merged on top of the auto-collected metadata
     before persistence. Returns elapsed seconds.
+
+    ``on_event`` (optional): invoked for every PipelineEvent yielded by the
+    inner pipeline. Used by the serve.py /api/index-url worker to publish
+    live progress (phase / current / total / nodes / edges) so the UI's
+    polling endpoint can report meaningful numbers instead of zeros.
+    Exceptions raised in the callback are swallowed — observability must
+    never crash the pipeline.
     """
     from opentrace_agent.pipeline import PipelineInput, run_pipeline
     from opentrace_agent.pipeline.adapters import GraphStoreAdapter
@@ -417,6 +426,11 @@ def _run_indexing_pipeline(
                     _print_event(event, verbose)
                     if getattr(event, "result", None) is not None:
                         last_result = event.result
+                    if on_event is not None:
+                        try:
+                            on_event(event)
+                        except Exception:
+                            logging.getLogger(__name__).debug("on_event callback raised; ignoring", exc_info=True)
 
                 store.flush()
 
@@ -1417,14 +1431,18 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
         click.echo(f"Created empty graph DB at {resolved_db}")
 
     log.debug("Opening database: %s", resolved_db)
-    store = GraphStore(resolved_db)
+    # serve opens read-only so other readers (MCP, a second serve) can share
+    # the DB file. Vault mutation routes escalate to a writable handle for
+    # the duration of the write and drop back to read-only after.
+    store = GraphStore(resolved_db, read_only=True)
+
     stats = store.get_stats()
     click.echo(f"Database: {resolved_db}")
     click.echo(f"  {stats['total_nodes']} nodes, {stats['total_edges']} edges")
 
     click.echo(f"Listening on http://{host}:{port}")
 
-    app = create_app(store)
+    app = create_app(store, db_path=resolved_db)
 
     try:
         uvicorn.run(app, host=host, port=port, log_level="debug" if verbose else "info")
@@ -1701,7 +1719,7 @@ def whoami() -> None:
     click.echo(f"Issuer:  {issuer}")
     click.echo(f"Type:    {token_type}")
     click.echo(f"Scope:   {scope}")
-    if created:
+    if isinstance(created, (int, float)):
         from datetime import datetime, timezone
 
         dt = datetime.fromtimestamp(created, tz=timezone.utc)

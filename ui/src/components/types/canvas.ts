@@ -65,6 +65,12 @@ export interface GraphCanvasProps {
   communityData?: CommunityData;
   /** When false, all node labels are hidden. */
   labelsVisible?: boolean;
+  /** When false, the edge layer is not drawn (Fix #7). Reapplied on
+   *  prop change so the value survives graph refreshes; the imperative
+   *  `setEdgesEnabled` handle remains available for one-off toggles. */
+  edgesEnabled?: boolean;
+  /** Whether community wayfinder labels are shown (Fix #52). */
+  communityLabelsVisible?: boolean;
   /** Animation settings (glow, pulse, particles, smooth layout). */
   animationSettings?: AnimationSettings;
   /** Called when a node is clicked. */
@@ -73,14 +79,58 @@ export interface GraphCanvasProps {
   onEdgeClick?: (edge: SelectedEdge) => void;
   /** Called when the background (stage) is clicked. */
   onStageClick?: () => void;
+  /** Called when the cursor enters a node (canvas-local px) or leaves one
+   *  (`null` node). Hosts use it for hover tooltips. */
+  onNodeHover?: (node: GraphNode | null, x: number, y: number) => void;
   /** Called when the optimize status changes. */
   onOptimizeStatus?: (status: OptimizeStatus | null) => void;
   /** Initial layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
-  layoutMode?: 'spread' | 'compact';
+  layoutMode?: 'spread' | 'compact' | 'tree' | 'onion';
+  /** Sprite size response to zoom — `appliedSize = baseSize * (1/scale)^exp`.
+   *  Re-applied on every prop change so the persisted user setting takes
+   *  effect immediately on mount (Fix #22). Without this the renderer
+   *  sat at its hard-coded default of 0.8 even when the slider showed a
+   *  different saved value, and only a manual touch would resync them. */
+  zoomSizeExponent?: number;
+  /** Label scale multiplier. Persisted setting; re-applied like
+   *  `zoomSizeExponent` so the renderer matches the slider on mount. */
+  labelScale?: number;
+  /** User edge-opacity multiplier (1.0 = default). Scales the renderer's
+   *  zoom-driven edge opacity so edges can be made more/less visible. */
+  edgeOpacity?: number;
+  /** Charge/repulsion strength (negative = repel). Persisted physics setting;
+   *  re-applied on prop change so a saved value takes effect on load, not just
+   *  on a live slider drag (same pattern as `zoomSizeExponent`/`labelScale`). */
+  chargeStrength?: number;
+  /** Target distance between linked nodes. Persisted; re-applied like
+   *  `chargeStrength`. */
+  linkDistance?: number;
+  /** Compact-layout tuning (already-scaled values). Persisted; re-applied on
+   *  prop change. Pass a stable (memoized) object so the effect only fires when
+   *  a value actually changes. */
+  compactConfig?: {
+    radialStrength: number;
+    communityPull: number;
+    centeringStrength: number;
+    radiusScale: number;
+  };
   /** Enable pseudo-3D rotation mode. */
   mode3d?: boolean;
+  /** Auto-rotation speed in radians/frame. Persisted setting; re-applied on
+   *  prop change so the renderer matches the slider on mount (same pattern as
+   *  `zoomSizeExponent`/`labelScale`). Without this a saved rotation speed was
+   *  stored but never applied — the renderer kept its hard-coded default. */
+  rotationSpeed?: number;
+  /** Camera tilt as a fraction (elevation above the equator). Persisted
+   *  setting; re-applied on prop change like `rotationSpeed`. */
+  cameraTilt?: number;
   /** Called when auto-rotation state changes (e.g. paused on node click). */
   on3DAutoRotateChange?: (autoRotate: boolean) => void;
+  /** When true, the canvas is in continuous live-build mode: incremental data
+   *  updates animate in (new nodes fly out from their parent + scale up; placed
+   *  nodes stay put, pinned in the layout) instead of teleporting/reshuffling.
+   *  Used while indexing so the graph visibly builds itself in real time. */
+  liveGrow?: boolean;
   /** CSS class name for the container div. */
   className?: string;
   /** Inline styles for the container div. */
@@ -117,6 +167,9 @@ export interface GraphCanvasHandle {
   isPhysicsRunning: () => boolean;
   setEdgesEnabled?: (enabled: boolean) => void;
   setShowLabels?: (show: boolean) => void;
+  /** Show/hide the community wayfinder labels independently of
+   *  layout mode (Fix #52). */
+  setShowCommunityLabels?: (show: boolean) => void;
   setChargeStrength?: (strength: number) => void;
   setLinkDistance?: (distance: number) => void;
   setCenterStrength?: (strength: number) => void;
@@ -125,7 +178,7 @@ export interface GraphCanvasHandle {
   fitToScreen?: () => void;
   setZoomSizeExponent?: (exponent: number) => void;
   /** Switch layout mode: 'spread' (force-directed) or 'compact' (radial/circular). */
-  setLayoutMode?: (mode: 'spread' | 'compact') => void;
+  setLayoutMode?: (mode: 'spread' | 'compact' | 'tree' | 'onion') => void;
   /** Update compact-mode-specific parameters. */
   updateCompactConfig?: (config: {
     radialStrength?: number;
@@ -143,6 +196,45 @@ export interface GraphCanvasHandle {
   set3DAutoRotate?: (enabled: boolean) => void;
   /** Set label scale multiplier (independent of node size, default 1.0). */
   setLabelScale?: (scale: number) => void;
+  /** Set the user edge-opacity multiplier (1.0 = default). */
+  setEdgeOpacity?: (opacity: number) => void;
   /** Trigger a ping/glow animation on the given node IDs. */
   triggerPing?: (nodeIds: Iterable<string>) => void;
+  /** Arm the next data load to collapse immediately and hold hidden until
+   *  playBuildAnimation() fires — prevents the finished graph flashing before
+   *  the burst. Call as soon as an index completes. */
+  armBuildAnimation?: () => void;
+  /** Replay the graph "building itself" — reveal nodes/edges outward from the
+   *  root in BFS order. Cosmetic; the final state is unchanged. Three.js only;
+   *  optional so other renderers may omit it. */
+  playBuildAnimation?: (rootIds?: string[]) => void;
+  /** Abort an in-flight build replay and snap to the final state. */
+  stopBuildAnimation?: () => void;
+  /** Whether a build replay is currently running. */
+  isBuildAnimating?: () => boolean;
+  /** Animate the agent "walking" the graph: a glow pulse glides edge-by-edge
+   *  through each leg (an ordered real-edge path from the already-discovered
+   *  set to a newly-found node), lighting edges and pinging nodes as reached.
+   *  `orphanIds` are finds with no path — they just ping. Reached nodes/edges
+   *  stay lit until `clearTraversal()`. Successive calls append to the walk.
+   *  Three.js only; optional so other renderers may omit it. */
+  animateTraversal?: (
+    legs: { edges: { sourceId: string; targetId: string }[]; destId: string }[],
+    orphanIds?: string[],
+  ) => void;
+  /** Clear the traversal walk and its lit trail (new question / highlights off). */
+  clearTraversal?: () => void;
+  /** Re-lay-out the graph from a fresh seed — used on view-preset switches so
+   *  the result depends only on the preset's forces, not the prior layout.
+   *  Three.js only; optional so other renderers may omit it. */
+  reseedLayout?: () => void;
+  /** Toggle the nebula cloud layout (the Nebula preset). `baseMode` is the
+   *  layout to fall back to when disabling. Three.js only. */
+  setNebulaLayout?: (
+    enabled: boolean,
+    baseMode?: 'spread' | 'compact' | 'tree' | 'onion',
+  ) => void;
+  /** Toggle ambient motion — a gentle perpetual wander after the layout settles
+   *  so the graph stays alive instead of freezing. Three.js only. */
+  setAmbientMotion?: (enabled: boolean) => void;
 }

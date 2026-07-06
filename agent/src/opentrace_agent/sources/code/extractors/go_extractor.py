@@ -325,10 +325,17 @@ def _extract_godoc(node: tree_sitter.Node) -> str | None:
     """Extract GoDoc comment from consecutive // comment lines above a node."""
     lines: list[str] = []
     sibling = node.prev_named_sibling
+    # GoDoc comments sit on consecutive lines directly above the declaration.
+    # A blank-line gap ends the doc block (per Go convention), so track the
+    # row each comment must occupy and stop once the chain is broken.
+    expected_row = node.start_point.row - 1
     while sibling is not None and sibling.type == "comment":
+        if sibling.end_point.row != expected_row:
+            break
         text = sibling.text.decode()
         if text.startswith("//"):
             lines.append(text[2:].strip())
+            expected_row = sibling.start_point.row - 1
             sibling = sibling.prev_named_sibling
         else:
             break
@@ -338,28 +345,45 @@ def _extract_godoc(node: tree_sitter.Node) -> str | None:
     return "\n".join(lines)
 
 
+def _extract_call_from_node(node: tree_sitter.Node) -> CallRef | None:
+    """Extract a single CallRef if ``node`` is itself a Go call_expression.
+
+    Returns None for non-call nodes. Some Go expression contexts have a
+    call_expression as their direct child (e.g. single-expression
+    function literals); the recursive walk has to check ``node`` itself
+    before descending (Fix #17).
+    """
+    if node.type != "call_expression":
+        return None
+    func_node = node.child_by_field_name("function")
+    if func_node and func_node.type == "identifier":
+        return CallRef(name=func_node.text.decode())
+    if func_node and func_node.type == "selector_expression":
+        operand = func_node.child_by_field_name("operand")
+        field = func_node.child_by_field_name("field")
+        if operand and field:
+            return CallRef(
+                name=field.text.decode(),
+                receiver=operand.text.decode(),
+                kind="attribute",
+            )
+    return None
+
+
 def _collect_calls(node: tree_sitter.Node) -> list[CallRef]:
     """Collect function/method call references from a tree-sitter subtree.
 
     Captures both bare identifier calls (``foo()``) and selector calls
     (``fmt.Println()``, ``s.Listen()``).
+
+    Mirrors the UI's ``parser/extractors/go.ts:collectCalls`` — test the
+    current node before recursing into its children so a top-level call
+    isn't dropped at the boundary (Fix #17).
     """
     calls: list[CallRef] = []
+    own = _extract_call_from_node(node)
+    if own is not None:
+        calls.append(own)
     for child in node.children:
-        if child.type == "call_expression":
-            func_node = child.child_by_field_name("function")
-            if func_node and func_node.type == "identifier":
-                calls.append(CallRef(name=func_node.text.decode()))
-            elif func_node and func_node.type == "selector_expression":
-                operand = func_node.child_by_field_name("operand")
-                field = func_node.child_by_field_name("field")
-                if operand and field:
-                    calls.append(
-                        CallRef(
-                            name=field.text.decode(),
-                            receiver=operand.text.decode(),
-                            kind="attribute",
-                        )
-                    )
         calls.extend(_collect_calls(child))
     return calls

@@ -38,6 +38,31 @@
   flex-shrink: 0;
 }
 
+/* Minimize button on the running indexing modal (Fix #13). Sits at
+ * the right edge of the header; clicking dismisses the modal while
+ * keeping the job alive — the JobMinimizedBar takes over. */
+.indexing-header-minimize {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.indexing-header-minimize:hover {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
 /* ── Indexing Progress ───────────────────────── */
 .indexing-progress {
   text-align: center;

@@ -65,6 +65,46 @@ class UserService {
         assert "constructor" in method_names
         assert "getUser" in method_names
 
+    def test_extract_implements_interfaces(self):
+        source = b"""\
+class Repo extends Base implements Reader, Writer {
+  read(): void {}
+}
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        assert cls.superclasses == ["Base"]
+        assert cls.interfaces == ["Reader", "Writer"]
+
+    def test_arrow_function_field_captures_body_calls(self):
+        source = b"""\
+class Widget {
+  handler = (x: number): void => {
+    doWork(x);
+  }
+}
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        assert len(cls.children) == 1
+        handler = cls.children[0]
+        assert handler.name == "handler"
+        assert handler.kind == "function"
+        # The body lives on the nested arrow function; its calls must survive.
+        assert any(c.name == "doWork" for c in handler.calls)
+
+    def test_data_field_not_emitted_as_method(self):
+        source = b"""\
+class Config {
+  count = 5
+  name = "x"
+}
+"""
+        result = self.extractor.extract(source)
+        cls = result.symbols[0]
+        # Plain data fields are not functions and must not become phantom methods.
+        assert cls.children == []
+
     def test_extract_exported_function(self):
         source = b"export function helper(): void {}\n"
         result = self.extractor.extract(source)

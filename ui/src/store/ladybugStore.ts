@@ -50,10 +50,11 @@ async function getParquetWasm(): Promise<
   return _parquetMod;
 }
 
-import lbug from '@ladybugdb/wasm-core';
-
-type Database = InstanceType<typeof lbug.Database>;
-type Connection = InstanceType<typeof lbug.Connection>;
+// The LadybugDB engine itself runs on the MAIN thread (see lbugEngine.ts).
+// This store runs inside `storeWorker` and reaches the engine over an
+// injected RPC surface — never importing `@ladybugdb/wasm-core` directly, so
+// the engine's worker is spawned from main and is never a nested worker.
+import type { LbugEngine } from './lbugEngine';
 import type {
   CountByResult,
   FindOrphansResult,
@@ -159,12 +160,23 @@ const REL_PAIR_SET: ReadonlySet<string> = new Set(
 const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 
 function csvEscape(value: string): string {
+  // RFC-4180 quoting: wrap in " and double embedded quotes (" → "").
+  // The COPY statements force ESCAPE='"' (see COPY_OPTS) so the reader uses
+  // this same doubling AND treats backslash as plain data — critical because
+  // node names/signatures contain both literal " (TS/Go type strings) and \
+  // (regexes, paths). With LadybugDB's *default* ESCAPE ('\\'), a backslash in
+  // the data is misread as an escape char and the COPY throws.
   const safe = (value ?? '')
     .replace(CONTROL_CHARS_RE, '') // strip control chars except \t \n \r
     .replace(/[\r\n]+/g, ' ') // flatten newlines
-    .replace(/"/g, '""'); // escape quotes
+    .replace(/"/g, '""'); // escape quotes by doubling (RFC-4180)
   return '"' + safe + '"';
 }
+
+/** Shared CSV COPY options. ESCAPE='"' forces RFC-4180 doubling and makes
+ *  backslashes literal data; PARALLEL=FALSE avoids the parallel reader's
+ *  mishandling of quoted newlines. */
+const COPY_OPTS = `(HEADER=true, PARALLEL=FALSE, ESCAPE='"')`;
 
 /** Format a value for a LadybugDB CSV column based on its type. */
 function csvFormatValue(value: unknown, colType: ColumnType): string {
@@ -435,20 +447,47 @@ function rowToProperties(
   return hasProps ? props : undefined;
 }
 
-// TODO: UNION ALL returns only common columns (id, type, name) because typed
-// tables have different column counts. Callers needing full properties should
-// use fetchNodesByIds() or the node cache. Fix before merge — consider whether
-// LadybugDB supports a way to return heterogeneous columns in UNION ALL, or
-// pad with NULLs for the superset of all columns.
+// NOTE: UNION ALL can't return each type's full property set (typed tables
+// have different column counts), so these queries return id/type/name plus a
+// single per-type `subtype` column — the one property the filter UI actually
+// needs (see SUBTYPE_COLUMNS). Callers needing full properties should use
+// fetchNodesByIds() or the node cache.
+
+/** The property column that drives each type's filter sub-chips (mirrors the
+ *  UI's getSubType). Carried through UNION ALL queries as `subtype` so filter
+ *  chips and the Variable/Dependency default-hide work without materializing
+ *  full property blobs for every node. */
+const SUBTYPE_COLUMNS: Readonly<Record<string, string>> = {
+  Function: 'language',
+  Class: 'language',
+  Variable: 'kind',
+  Dependency: 'registry',
+};
+
+/** Rebuild a node's lean properties from the UNION ALL `subtype` column —
+ *  `{ language: 'go' }`, `{ kind: 'const' }`, … — or undefined when the type
+ *  has no sub-type or the value is empty. */
+function subtypeProperties(
+  type: string,
+  subtype: unknown,
+): Record<string, unknown> | undefined {
+  const column = SUBTYPE_COLUMNS[type];
+  if (!column) return undefined;
+  const v = unbox(subtype);
+  return typeof v === 'string' && v !== '' ? { [column]: v } : undefined;
+}
 
 /** Build a UNION ALL query across all typed node tables.
- *  Returns only id, type, name — use node cache for properties. */
+ *  Returns id, type, name, subtype — use node cache for full properties. */
 function unionAllNodes(where?: string, suffix?: string): string {
   return (
     GRAPH_NODE_TYPES.map((t) => {
+      const subtypeCol = SUBTYPE_COLUMNS[t];
       let q = `MATCH (n:${t})`;
       if (where) q += ` WHERE ${where}`;
-      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name`;
+      q += ` RETURN n.id AS id, '${t}' AS type, n.name AS name, ${
+        subtypeCol ? `n.${subtypeCol}` : `''`
+      } AS subtype`;
       return q;
     }).join(' UNION ALL ') + (suffix ?? '')
   );
@@ -524,8 +563,7 @@ async function parquetToArrow(
 // ---- Store implementation ----
 
 export class LadybugGraphStore implements GraphStore {
-  private db!: Database;
-  private conn!: Connection;
+  private engine: LbugEngine;
   private ready: Promise<void> | null = null;
   private embedder: Embedder | null = null;
   private sourceCache = new Map<
@@ -566,11 +604,33 @@ export class LadybugGraphStore implements GraphStore {
   private flushedSourceIds = new Set<string>();
 
   // --- Visualization limits ---
-  private maxVisNodes = 20000;
-  private maxVisEdges = 20000;
+  // Match SettingsDrawer's DEFAULT_MAX_* and serverStore. Kept above typical
+  // graph sizes so a graph isn't silently truncated (orphaning nodes whose
+  // edges get cut). Lowerable in Settings for very large browser-indexed graphs.
+  private maxVisNodes = 50000;
+  private maxVisEdges = 50000;
+
+  // Accumulated node-id set for the current progressive-load session. Seeded by
+  // fetchGraphSkeleton, extended by each fetchGraphPage, and used to decide
+  // which streamed edges have both endpoints loaded. Kept in the store (not
+  // passed per page) so we don't re-serialize a 50k-id array on every page.
+  private progressiveIds = new Set<string>();
 
   // --- Serialization queue (lbug-wasm wraps single-threaded C++ engine) ---
   private queue: Promise<void> = Promise.resolve();
+
+  /** Monotonic counter for COPY-FROM temp filenames. The engine's virtual
+   *  filesystem is process-wide, so a fixed path (e.g. /nodes_Function.csv)
+   *  would collide if two import/flush operations ran in close succession —
+   *  one COPY could read the other's bytes, or an unlink could remove a file
+   *  before the other's COPY runs. Unique names make the paths collision-proof
+   *  regardless of caller serialization. */
+  private copySeq = 0;
+
+  /** A unique temp path for a CSV about to be COPY'd in. */
+  private tmpCsvPath(label: string): string {
+    return `/${label}_${++this.copySeq}.csv`;
+  }
 
   /** Monotonic counter bumped by clearGraph(). Each queued task captures the
    *  current value at enqueue; when it runs, a mismatch means clearGraph fired
@@ -578,7 +638,13 @@ export class LadybugGraphStore implements GraphStore {
    *  it skip work that's about to be invalidated anyway. */
   private generation = 0;
 
-  constructor() {
+  /**
+   * @param engine LadybugDB engine RPC surface. In production this is a shim
+   *   (installed by `storeWorker`) that forwards each call to the real
+   *   main-thread engine; tests inject a mock.
+   */
+  constructor(engine: LbugEngine) {
+    this.engine = engine;
     // Don't init WASM here — the constructor runs at app startup.
     // WASM loads lazily on first DB operation via ensureReady().
   }
@@ -598,33 +664,22 @@ export class LadybugGraphStore implements GraphStore {
 
   private async initModule(): Promise<void> {
     const t0 = performance.now();
-    lbug.setWorkerPath('/lbug_wasm_worker.js');
-    await lbug.init();
-    this.db = new lbug.Database(':memory:');
-    await this.db.init();
-    this.conn = new lbug.Connection(this.db);
-    await this.conn.init();
+    // Boots the engine worker (on the main thread) and opens the connection.
+    await this.engine.init();
     await this.initSchema();
 
     console.log(
       `[LadybugStore] ready in ${(performance.now() - t0).toFixed(0)}ms`,
     );
-    const savedNodes = localStorage.getItem('ot:maxVisNodes');
-    const savedEdges = localStorage.getItem('ot:maxVisEdges');
-    if (savedNodes || savedEdges) {
-      const maxN = savedNodes ? Number(savedNodes) : 2000;
-      const maxE = savedEdges ? Number(savedEdges) : 5000;
-      if (Number.isFinite(maxN) && Number.isFinite(maxE)) {
-        this.maxVisNodes = maxN;
-        this.maxVisEdges = maxE;
-      }
-    }
+    // Visualization limits used to be loaded here from localStorage, but the
+    // store now runs in a Web Worker where window.localStorage is undefined.
+    // The main-thread proxy reads the saved values and pushes them in via
+    // setLimits() after ensureReady().
   }
 
   private async initSchema(): Promise<void> {
     for (const stmt of SCHEMA_STATEMENTS) {
-      const result = await this.conn.query(stmt);
-      await result.close();
+      await this.engine.exec(stmt);
     }
     // Create FTS indexes on code-bearing node types for content search
     await this.createFTSIndexes();
@@ -635,18 +690,15 @@ export class LadybugGraphStore implements GraphStore {
   /** Install VECTOR extension and create the NodeVector table for persistent embeddings. */
   private async initVectorSchema(): Promise<void> {
     try {
-      const r1 = await this.conn.query('INSTALL VECTOR');
-      await r1.close();
-      const r2 = await this.conn.query('LOAD EXTENSION VECTOR');
-      await r2.close();
+      await this.engine.exec('INSTALL VECTOR');
+      await this.engine.exec('LOAD EXTENSION VECTOR');
     } catch {
       // Already installed/loaded — safe to ignore
     }
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         'CREATE NODE TABLE IF NOT EXISTS NodeVector(id STRING PRIMARY KEY, vec FLOAT[384])',
       );
-      await r.close();
     } catch {
       // Table may already exist
     }
@@ -655,10 +707,9 @@ export class LadybugGraphStore implements GraphStore {
   /** Create the vector index on NodeVector. Call once after all embeddings are loaded. */
   private async createVectorIndex(): Promise<void> {
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_VECTOR_INDEX('NodeVector', 'nodevec_idx', 'vec', metric := 'cosine')`,
       );
-      await r.close();
       this.hasVectorIndex = true;
     } catch {
       // Index may already exist — check if we can query it
@@ -670,20 +721,17 @@ export class LadybugGraphStore implements GraphStore {
   private async createFTSIndexes(): Promise<void> {
     // LadybugDB requires the FTS extension to be installed and loaded
     try {
-      const r1 = await this.conn.query('INSTALL FTS');
-      await r1.close();
-      const r2 = await this.conn.query('LOAD EXTENSION FTS');
-      await r2.close();
+      await this.engine.exec('INSTALL FTS');
+      await this.engine.exec('LOAD EXTENSION FTS');
     } catch {
       // Already installed/loaded — safe to ignore
     }
 
     // Create FTS index on the SourceText table (name + source content)
     try {
-      const result = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
       );
-      await result.close();
     } catch {
       // Index may already exist on re-init — safe to ignore
     }
@@ -693,18 +741,16 @@ export class LadybugGraphStore implements GraphStore {
    *  LadybugDB FTS indexes are static — new rows require a rebuild. */
   private async rebuildSourceFTS(): Promise<void> {
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL DROP_FTS_INDEX('SourceText', 'search_idx_source')`,
       );
-      await r.close();
     } catch {
       // Index may not exist yet — safe to ignore
     }
     try {
-      const r = await this.conn.query(
+      await this.engine.exec(
         `CALL CREATE_FTS_INDEX('SourceText', 'search_idx_source', ['name', 'source_text'], stemmer := 'porter')`,
       );
-      await r.close();
     } catch {
       // Empty table is fine — index will be rebuilt on next flush
     }
@@ -712,7 +758,7 @@ export class LadybugGraphStore implements GraphStore {
 
   /**
    * Execute a Cypher query and return all result rows as objects.
-   * Uses conn.query() + getAllObjects() for row extraction.
+   * Delegates row extraction to the engine (engine.query()).
    * Serialized through a queue to prevent concurrent calls.
    *
    * If clearGraph() fires between the enqueue and the run, the task
@@ -729,14 +775,9 @@ export class LadybugGraphStore implements GraphStore {
             return;
           }
           const qt0 = performance.now();
-          const result = await this.conn.query(cypher);
-          try {
-            const rows = await result.getAllObjects();
-            logQuery(cypher, rows.length, performance.now() - qt0);
-            resolve(rows);
-          } finally {
-            await result.close();
-          }
+          const rows = await this.engine.query(cypher);
+          logQuery(cypher, rows.length, performance.now() - qt0);
+          resolve(rows);
         })
         .catch((err) => {
           reject(err);
@@ -758,8 +799,7 @@ export class LadybugGraphStore implements GraphStore {
             reject(abortError('Exec aborted: store was cleared'));
             return;
           }
-          const result = await this.conn.query(cypher);
-          await result.close();
+          await this.engine.exec(cypher);
           resolve();
         })
         .catch((err) => {
@@ -778,8 +818,7 @@ export class LadybugGraphStore implements GraphStore {
     return new Promise<void>((resolve, reject) => {
       this.queue = this.queue
         .then(async () => {
-          const result = await this.conn.query(cypher);
-          await result.close();
+          await this.engine.exec(cypher);
           resolve();
         })
         .catch((err) => {
@@ -880,31 +919,18 @@ export class LadybugGraphStore implements GraphStore {
   /** Close the database connection and release WASM resources. */
   async dispose(): Promise<void> {
     try {
-      await this.conn?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await this.db?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await lbug.close();
+      await this.engine.close();
     } catch {
       /* ignore */
     }
   }
 
-  /** Current WASM linear memory size in MB (for diagnostics). */
+  /** Current WASM linear memory size in MB (for diagnostics).
+   *  The engine's linear memory now lives behind the main-thread engine
+   *  worker boundary and isn't directly measurable from here, so this
+   *  reports -1 ("unknown"). */
   getWasmMemoryMB(): number {
-    try {
-      const mem = (lbug as unknown as { wasmMemory?: WebAssembly.Memory })
-        .wasmMemory;
-      return mem ? mem.buffer.byteLength / (1024 * 1024) : -1;
-    } catch {
-      return -1;
-    }
+    return -1;
   }
 
   /** Set an embedder for generating query embeddings during search. */
@@ -976,10 +1002,115 @@ export class LadybugGraphStore implements GraphStore {
       );
     }
 
-    // For large graphs, fetch edges first then their endpoint nodes.
-    // This guarantees every edge has both endpoints in the result.
+    // Two large-graph strategies, depending on which cap is binding:
+    //
+    //  (a) Nodes don't fit (totalNodes > maxVisNodes): fetch a stratified
+    //      sample of nodes first, then keep only edges that connect two
+    //      sampled nodes. Guarantees every visible edge has both endpoints
+    //      in the node set.
+    //
+    //  (b) Nodes fit but edges don't: fetch ALL nodes, then sample
+    //      edges among them up to maxVisEdges. Without this, the
+    //      edges-first path would silently cap visible nodes to the
+    //      edge endpoints — surprising to users who bumped the node
+    //      cap explicitly to see more nodes.
+    if (isLarge && totalNodes > this.maxVisNodes) {
+      // Strategy (a): stratified per-type sampling.
+      //
+      // Each non-empty node type gets a fair share of `maxVisNodes`.
+      // Small types take their full count and leave room for larger
+      // ones, so a tiny Repository (1) doesn't burn a 143-slot share.
+      // Result: the sampled subgraph contains Functions, Classes,
+      // Files, etc. in roughly equal numbers — not whatever type the
+      // DB happens to surface first in iteration order.
+      const typeCounts: { type: NodeType; count: number }[] = [];
+      for (const row of countRows as Record<string, unknown>[]) {
+        const count = Number(row.cnt ?? 0);
+        if (count > 0) {
+          typeCounts.push({ type: row.type as NodeType, count });
+        }
+      }
+      // Allocate by ascending count: small types take what they have,
+      // leftover capacity gets re-divided among the remaining (bigger)
+      // types each iteration.
+      typeCounts.sort((a, b) => a.count - b.count);
+      let remaining = this.maxVisNodes;
+      const allocations = new Map<NodeType, number>();
+      for (let i = 0; i < typeCounts.length; i++) {
+        const evenShare = Math.floor(remaining / (typeCounts.length - i));
+        const take = Math.min(typeCounts[i].count, evenShare);
+        allocations.set(typeCounts[i].type, take);
+        remaining -= take;
+      }
+
+      const nodes: GraphNode[] = [];
+      const nodeIdSet = new Set<string>();
+      for (const [type, take] of allocations) {
+        if (take <= 0) continue;
+        const rows = await this.query(
+          `MATCH (n:${type}) RETURN ${typedReturnClause(type)} LIMIT ${take}`,
+        );
+        for (const r of rows as Record<string, unknown>[]) {
+          const id = String(r.id);
+          nodes.push({
+            id,
+            type: String(r.type),
+            name: String(r.name),
+            properties: rowToProperties(r),
+          });
+          nodeIdSet.add(id);
+        }
+      }
+
+      // Fetch only edges whose endpoints are both in the sample, capped at
+      // maxVisEdges — pushed into the query so the DB never materializes the
+      // full RELATES set (can be 100k+ on large repos) just to discard it.
+      const sampledIds = [...nodeIdSet].map((id) => `'${esc(id)}'`).join(', ');
+      const relRows =
+        nodeIdSet.size > 0
+          ? await this.query(
+              `MATCH (a)-[r:RELATES]->(b) ` +
+                `WHERE a.id IN [${sampledIds}] AND b.id IN [${sampledIds}] ` +
+                `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
+                `LIMIT ${this.maxVisEdges}`,
+            )
+          : [];
+      const links: GraphLink[] = [];
+      for (const r of relRows as Record<string, string>[]) {
+        if (!nodeIdSet.has(r.source) || !nodeIdSet.has(r.target)) continue;
+        links.push({
+          source: r.source,
+          target: r.target,
+          label: r.type,
+          properties: parseProps(r.properties),
+        });
+        if (links.length >= this.maxVisEdges) break;
+      }
+
+      return { nodes, links };
+    }
+
     if (isLarge) {
-      // Fetch limited edges
+      // Strategy (b): nodes-first. Fetch every node (it fits), then
+      // sample edges and keep only those whose endpoints are in the
+      // node set. The endpoint filter is essentially a no-op here
+      // (every node is in the set) but matches the (a) path's shape.
+      const nodeRows = await this.query(unionAllNodes());
+      const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
+        (r) => {
+          const id = String(r.id);
+          const type = String(r.type);
+          const cached = this.nodeCache.get(id);
+          return {
+            id,
+            type,
+            name: String(r.name),
+            properties:
+              cached?.properties ?? subtypeProperties(type, r.subtype),
+          };
+        },
+      );
+
       const relRows = await this.query(
         `MATCH (a)-[r:RELATES]->(b) ` +
           `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
@@ -994,47 +1125,22 @@ export class LadybugGraphStore implements GraphStore {
         }),
       );
 
-      // Collect unique node IDs from edges
-      const connectedIds = new Set<string>();
-      for (const link of links) {
-        connectedIds.add(link.source as string);
-        connectedIds.add(link.target as string);
-      }
-
-      // Fetch connected nodes — routed by type instead of 7-way UNION ALL
-      const cappedIds = [...connectedIds].slice(0, this.maxVisNodes);
-      const nodeRows = await this.fetchNodesByIds(cappedIds);
-      const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
-        (r) => ({
-          id: String(r.id),
-          type: String(r.type),
-          name: String(r.name),
-          properties: rowToProperties(r),
-        }),
-      );
-
-      const nodeIdSet = new Set(nodes.map((n) => n.id));
-      const filteredLinks = links.filter(
-        (l) =>
-          nodeIdSet.has(l.source as string) &&
-          nodeIdSet.has(l.target as string),
-      );
-
-      return { nodes, links: filteredLinks };
+      return { nodes, links };
     }
 
-    // Small graph — fetch everything via UNION ALL (returns id/type/name only,
-    // properties come from the JS-side node cache)
+    // Small graph — fetch everything via UNION ALL (id/type/name/subtype;
+    // full properties come from the JS-side node cache when present)
     const nodeRows = await this.query(unionAllNodes());
     const nodes: GraphNode[] = (nodeRows as Record<string, unknown>[]).map(
       (r) => {
         const id = String(r.id);
+        const type = String(r.type);
         const cached = this.nodeCache.get(id);
         return {
           id,
-          type: String(r.type),
+          type,
           name: String(r.name),
-          properties: cached?.properties,
+          properties: cached?.properties ?? subtypeProperties(type, r.subtype),
         };
       },
     );
@@ -1052,6 +1158,137 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     return { nodes, links };
+  }
+
+  // ─── Progressive ("dynamic") loading ──────────────────────────────────
+  //
+  // For very large graphs, load a structural SKELETON first (Repo/Dir/File…)
+  // — small + fast to lay out — then STREAM the bulk (Function/Variable) in
+  // pages that the UI appends to the live graph. These two methods are the
+  // store half; useGraphData orchestrates the skeleton→stream sequence.
+
+  /** Structural skeleton: nodes of `types` (only those that have tables) plus
+   *  the RELATES edges among them. Bounded by maxVisNodes per type. */
+  async fetchGraphSkeleton(types: string[]): Promise<GraphData> {
+    // Start a fresh progressive-load session.
+    this.progressiveIds = new Set<string>();
+    const skeleton = types.filter((t) => NODE_TYPE_SET.has(t)) as NodeType[];
+    if (skeleton.length === 0) return { nodes: [], links: [] };
+
+    const nodes: GraphNode[] = [];
+    const idSet = this.progressiveIds;
+    for (const type of skeleton) {
+      const rows = await this.query(
+        `MATCH (n:${type}) RETURN ${typedReturnClause(type)} LIMIT ${this.maxVisNodes}`,
+      );
+      for (const r of rows as Record<string, unknown>[]) {
+        const id = String(r.id);
+        if (idSet.has(id)) continue;
+        idSet.add(id);
+        nodes.push({
+          id,
+          type: String(r.type),
+          name: String(r.name),
+          properties: rowToProperties(r),
+        });
+      }
+    }
+    // Skeleton edges = both endpoints in the skeleton set.
+    const links = await this.edgesTouching(idSet, idSet);
+    return { nodes, links };
+  }
+
+  /** One page of a single leaf type, plus the RELATES edges that connect the
+   *  page's nodes to the already-loaded set (`loadedIds` ∪ page). An edge to a
+   *  not-yet-loaded node is omitted now and surfaces when that node's page
+   *  arrives. `exhausted` is true once a short page signals the type is done. */
+  async fetchGraphPage(opts: {
+    type: string;
+    offset: number;
+    limit: number;
+  }): Promise<{ nodes: GraphNode[]; links: GraphLink[]; exhausted: boolean }> {
+    const { type, offset, limit } = opts;
+    if (!NODE_TYPE_SET.has(type)) {
+      return { nodes: [], links: [], exhausted: true };
+    }
+    const lim = Math.max(1, Math.floor(limit));
+    const rows = await this.query(
+      `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} ` +
+        `SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
+    );
+    const nodes: GraphNode[] = [];
+    const pageIds = new Set<string>();
+    for (const r of rows as Record<string, unknown>[]) {
+      const id = String(r.id);
+      // SKIP/LIMIT paging has no ORDER BY, so an interleaved write can shift
+      // rows between pages — skip anything already streamed this session
+      // rather than hand the UI a ghost duplicate.
+      if (this.progressiveIds.has(id)) continue;
+      pageIds.add(id);
+      this.progressiveIds.add(id);
+      nodes.push({
+        id,
+        type: String(r.type),
+        name: String(r.name),
+        properties: rowToProperties(r),
+      });
+    }
+    // Judge exhaustion by the RAW page size — after dedup `nodes` can come up
+    // short on a page that still has more rows behind it.
+    const exhausted = rows.length < lim;
+
+    // Edges queried by the small page-id list (not the full loaded set), then
+    // filtered so both endpoints are in the accumulated session set — keeps the
+    // Cypher IN-list bounded by page size, and an edge to a not-yet-loaded node
+    // surfaces when that node's own page arrives.
+    const links = await this.edgesTouching(pageIds, this.progressiveIds);
+    return { nodes, links, exhausted };
+  }
+
+  /** RELATES edges with at least one endpoint in `seedIds` (the query's bounded
+   *  IN-list) and BOTH endpoints in `known` (the JS-side accepted set). Used by
+   *  both the skeleton (seed = known = skeleton) and each stream page. */
+  private async edgesTouching(
+    seedIds: Set<string>,
+    known: Set<string>,
+  ): Promise<GraphLink[]> {
+    if (seedIds.size === 0) return [];
+    // Chunk the IN-list so the Cypher string stays small even for a big page
+    // (a 4k-id literal is a ~120KB query to parse). Each chunk's edges are
+    // filtered to the accumulated `known` set; results merged + deduped.
+    const seeds = [...seedIds];
+    const CHUNK = 1000;
+    const links: GraphLink[] = [];
+    const seen = new Set<string>();
+    for (
+      let i = 0;
+      i < seeds.length && links.length < this.maxVisEdges;
+      i += CHUNK
+    ) {
+      const ids = seeds
+        .slice(i, i + CHUNK)
+        .map((id) => `'${esc(id)}'`)
+        .join(', ');
+      const rows = await this.query(
+        `MATCH (a)-[r:RELATES]->(b) WHERE a.id IN [${ids}] OR b.id IN [${ids}] ` +
+          `RETURN a.id AS source, b.id AS target, r.type AS type, r.properties AS properties ` +
+          `LIMIT ${this.maxVisEdges}`,
+      );
+      for (const r of rows as Record<string, string>[]) {
+        if (!known.has(r.source) || !known.has(r.target)) continue;
+        const key = `${r.source}|${r.type}|${r.target}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        links.push({
+          source: r.source,
+          target: r.target,
+          label: r.type,
+          properties: parseProps(r.properties),
+        });
+        if (links.length >= this.maxVisEdges) break;
+      }
+    }
+    return links;
   }
 
   /**
@@ -1264,11 +1501,19 @@ export class LadybugGraphStore implements GraphStore {
       allRows.push(...(rows as Record<string, unknown>[]));
     }
 
-    // Fallback for IDs with unknown type — UNION ALL returns id/type/name only
+    // Fallback for IDs with unknown type — UNION ALL returns id/type/name
+    // plus the `subtype` marker column, remapped here to its real property
+    // name (language/kind/registry) so these rows match typed-table rows.
     if (unknownIds.length > 0) {
       const idList = unknownIds.map((i) => `'${esc(i)}'`).join(', ');
       const rows = await this.query(unionAllNodes(`n.id IN [${idList}]`));
-      allRows.push(...(rows as Record<string, unknown>[]));
+      for (const row of rows as Record<string, unknown>[]) {
+        const { subtype, ...rest } = row;
+        allRows.push({
+          ...rest,
+          ...subtypeProperties(String(row.type), subtype),
+        });
+      }
     }
 
     return allRows as Record<string, string>[];
@@ -1508,6 +1753,7 @@ export class LadybugGraphStore implements GraphStore {
     // against state that's about to be torn down. Must happen before we
     // enqueue our own DDL below — execInternal bypasses the check.
     this.generation++;
+    this.progressiveIds = new Set<string>();
     // Drop REL TABLE GROUP first (references node tables)
     try {
       await this.execInternal(`DROP TABLE IF EXISTS RELATES`);
@@ -1555,6 +1801,10 @@ export class LadybugGraphStore implements GraphStore {
    *  repos' in-flight queries remain valid. The store's serialization queue
    *  ensures our deletes run between neighboring queries. */
   async deleteRepo(repoId: string): Promise<void> {
+    return this.chainWrite(() => this.deleteRepoInner(repoId));
+  }
+
+  private async deleteRepoInner(repoId: string): Promise<void> {
     if (!repoId) return;
     await this.ensureReady();
 
@@ -1562,6 +1812,14 @@ export class LadybugGraphStore implements GraphStore {
     const metaId = `_meta:index:${repoId}`;
     const matches = (id: string): boolean =>
       id === repoId || id.startsWith(prefix) || id === metaId;
+
+    // Progressive-load bookkeeping may reference this repo's node ids —
+    // drop them so a later fetchGraphPage doesn't treat deleted nodes as
+    // already-streamed. (Latent today — overwritten by fetchGraphSkeleton —
+    // but cheap to keep correct.)
+    for (const id of this.progressiveIds) {
+      if (matches(id)) this.progressiveIds.delete(id);
+    }
 
     // Drop any buffered writes that would re-create this repo's rows on the
     // next flush — they'd collide with the deletions we're about to do.
@@ -1791,12 +2049,12 @@ export class LadybugGraphStore implements GraphStore {
       }
 
       const csv = generateTypedNodeCSV(type, nodes);
-      const csvPath = `/import_nodes_${type}.csv`;
-      await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+      const csvPath = this.tmpCsvPath(`import_nodes_${type}`);
+      await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
       try {
-        await this.exec(`COPY ${type} FROM '${csvPath}' (HEADER=true)`);
+        await this.exec(`COPY ${type} FROM '${csvPath}' ${COPY_OPTS}`);
       } finally {
-        await lbug.FS.unlink(csvPath);
+        await this.engine.fsUnlink(csvPath);
       }
 
       // Rebuild nodeTypeMap, BM25 index, and node cache for this type
@@ -1876,11 +2134,11 @@ export class LadybugGraphStore implements GraphStore {
           ) {
             const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
             const csv = generateRelCSV(chunk);
-            const csvPath = `/rels_${key}.csv`;
-            await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+            const csvPath = this.tmpCsvPath(`rels_${key}`);
+            await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
             try {
               await this.exec(
-                `COPY RELATES_${key} FROM '${csvPath}' (HEADER=true)`,
+                `COPY RELATES_${key} FROM '${csvPath}' ${COPY_OPTS}`,
               );
             } catch (err) {
               console.warn(
@@ -1888,7 +2146,7 @@ export class LadybugGraphStore implements GraphStore {
                 err,
               );
             }
-            await lbug.FS.unlink(csvPath);
+            await this.engine.fsUnlink(csvPath);
           }
         }
       } catch (err) {
@@ -1920,12 +2178,12 @@ export class LadybugGraphStore implements GraphStore {
       }
       if (snippets.size > 0) {
         const csv = generateSourceTextCSV(snippets, fakeCache);
-        const csvPath = '/import_source_text.csv';
-        await lbug.FS.writeFile(csvPath, CSV_ENCODER.encode(csv));
+        const csvPath = this.tmpCsvPath('import_source_text');
+        await this.engine.fsWrite(csvPath, CSV_ENCODER.encode(csv));
         try {
-          await this.exec(`COPY SourceText FROM '${csvPath}' (HEADER=true)`);
+          await this.exec(`COPY SourceText FROM '${csvPath}' ${COPY_OPTS}`);
         } finally {
-          await lbug.FS.unlink(csvPath);
+          await this.engine.fsUnlink(csvPath);
         }
 
         // Repopulate sourceCache so fetchSource can serve code views
@@ -2149,10 +2407,10 @@ export class LadybugGraphStore implements GraphStore {
         lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
       }
       const csv = lines.join('\n');
-      const path = '/vectors_embed.csv';
-      await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-      await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
-      await lbug.FS.unlink(path);
+      const path = this.tmpCsvPath('vectors_embed');
+      await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+      await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
+      await this.engine.fsUnlink(path);
     }
 
     if (!this.hasVectorIndex) {
@@ -2171,6 +2429,27 @@ export class LadybugGraphStore implements GraphStore {
    * using the same chunked approach.
    */
   async flush(): Promise<void> {
+    return this.chainWrite(() => this.flushInner());
+  }
+
+  /** Serializes the writes whose awaits can interleave: flush COPYs rows in
+   *  chunks with awaits between them, so an unserialized deleteRepo could run
+   *  its DELETEs BETWEEN chunks — the trailing chunks would then resurrect
+   *  just-deleted rows. (importBatch appends synchronously and needs no
+   *  chaining; concurrent flush() calls also conflict per the store contract,
+   *  and this makes that safe too.) */
+  private writeChain: Promise<void> = Promise.resolve();
+
+  private chainWrite<T>(work: () => Promise<T>): Promise<T> {
+    const p = this.writeChain.then(work, work);
+    this.writeChain = p.then(
+      () => undefined,
+      () => undefined,
+    );
+    return p;
+  }
+
+  private async flushInner(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
     await this.ensureReady();
 
@@ -2251,14 +2530,19 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     // --- Flush nodes: chunked COPY FROM per type ---
+    // PARALLEL=FALSE: LadybugDB's parallel CSV reader mis-parses quoted fields
+    // containing embedded quotes / newlines — which TypeScript type-signature
+    // node names regularly do (e.g. `setup(:Partial<Props["x"]>)`), tripping
+    // "neither QUOTE nor ESCAPE is preceded by ESCAPE". Single-threaded reads
+    // parse them correctly (mirrors the agent's graph_store COPY).
     for (const [type, bucket] of buckets) {
       for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
         const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
         const csv = generateTypedNodeCSV(type, chunk);
-        const path = `/nodes_${type}.csv`;
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY ${type} FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        const path = this.tmpCsvPath(`nodes_${type}`);
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY ${type} FROM '${path}' ${COPY_OPTS}`);
+        await this.engine.fsUnlink(path);
       }
     }
 
@@ -2279,10 +2563,10 @@ export class LadybugGraphStore implements GraphStore {
       ) {
         const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
         const csv = generateSourceTextCSV(chunk, this.sourceCache);
-        const path = '/source_text.csv';
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY SourceText FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        const path = this.tmpCsvPath('source_text');
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY SourceText FROM '${path}' ${COPY_OPTS}`);
+        await this.engine.fsUnlink(path);
       }
       for (const id of newSnippets.keys()) {
         this.flushedSourceIds.add(id);
@@ -2303,10 +2587,10 @@ export class LadybugGraphStore implements GraphStore {
           lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
         }
         const csv = lines.join('\n');
-        const path = '/vectors.csv';
-        await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY NodeVector FROM '${path}' (HEADER=true)`);
-        await lbug.FS.unlink(path);
+        const path = this.tmpCsvPath('vectors');
+        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+        await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
+        await this.engine.fsUnlink(path);
       }
       // Create vector index if not yet created
       if (!this.hasVectorIndex) {
@@ -2341,10 +2625,10 @@ export class LadybugGraphStore implements GraphStore {
         ) {
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
-          const path = `/rels_${key}.csv`;
-          await lbug.FS.writeFile(path, CSV_ENCODER.encode(csv));
+          const path = this.tmpCsvPath(`rels_${key}`);
+          await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
           try {
-            await this.exec(`COPY RELATES_${key} FROM '${path}' (HEADER=true)`);
+            await this.exec(`COPY RELATES_${key} FROM '${path}' ${COPY_OPTS}`);
           } catch (err) {
             console.warn(
               `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
@@ -2366,7 +2650,7 @@ export class LadybugGraphStore implements GraphStore {
               }
             }
           }
-          await lbug.FS.unlink(path);
+          await this.engine.fsUnlink(path);
         }
       }
     }

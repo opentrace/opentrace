@@ -102,6 +102,23 @@ export interface GraphStore {
   /** Start DB init if not already started. No-op if already ready. */
   ensureReady?(): Promise<void>;
   fetchGraph(query?: string, hops?: number): Promise<GraphData>;
+  /** Progressive loading (LadybugStore only): the structural skeleton —
+   *  nodes of the given types + edges among them. Small + fast to lay out;
+   *  loaded first, before streaming the bulk via fetchGraphPage. */
+  fetchGraphSkeleton?(types: string[]): Promise<GraphData>;
+  /** Progressive loading (LadybugStore only): one page of a single node type
+   *  plus edges connecting it to the accumulated session set (seeded by
+   *  fetchGraphSkeleton, extended internally per page). `exhausted` is true
+   *  once the type has no more rows past this page. */
+  fetchGraphPage?(opts: {
+    type: string;
+    offset: number;
+    limit: number;
+  }): Promise<{
+    nodes: GraphData['nodes'];
+    links: GraphData['links'];
+    exhausted: boolean;
+  }>;
   fetchStats(): Promise<GraphStats>;
   fetchMetadata(): Promise<IndexMetadata[]>;
   clearGraph(): Promise<void>;

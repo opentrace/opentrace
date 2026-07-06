@@ -65,3 +65,11 @@ export type {
   TreeNodeData,
   DiscoverPanelProps,
 } from './panels/types';
+
+// ─── Graph setting defaults (plain literal, store-free, WebGL-free) ──────
+// Lets prop-driven consumers of PixiGraphCanvas + PhysicsPanel initialize
+// their own panel from the same defaults the store-bound viewer uses.
+export {
+  GRAPH_SETTING_DEFAULTS,
+  type GraphSettingDefaults,
+} from '../config/graphSettingDefaults';

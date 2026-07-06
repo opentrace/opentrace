@@ -36,6 +36,28 @@ describe('parseGitHubUrl', () => {
     expect(result).toEqual({ owner: 'owner', repo: 'repo' });
   });
 
+  it('keeps dots in the repo name', () => {
+    expect(parseGitHubUrl('https://github.com/owner/react.dev')).toEqual({
+      owner: 'owner',
+      repo: 'react.dev',
+    });
+    expect(parseGitHubUrl('https://github.com/owner/foo.bar.git')).toEqual({
+      owner: 'owner',
+      repo: 'foo.bar',
+    });
+  });
+
+  it('stops the repo at a trailing path / query / fragment', () => {
+    expect(parseGitHubUrl('https://github.com/owner/repo/tree/main')).toEqual({
+      owner: 'owner',
+      repo: 'repo',
+    });
+    expect(parseGitHubUrl('https://github.com/owner/repo?tab=readme')).toEqual({
+      owner: 'owner',
+      repo: 'repo',
+    });
+  });
+
   it('returns null for non-GitHub URL', () => {
     expect(parseGitHubUrl('https://gitlab.com/owner/repo')).toBeNull();
     expect(parseGitHubUrl('not a url')).toBeNull();

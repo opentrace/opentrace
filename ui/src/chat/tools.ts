@@ -59,7 +59,12 @@ function truncate(text: string, limit: number): string {
         const attempt = JSON.stringify({ ...data, truncated: true });
         if (attempt.length <= limit) return attempt;
       }
-      return JSON.stringify({ ...data, truncated: true }).slice(0, limit);
+      // A single remaining entry can still exceed the limit; fall back to the
+      // valid-JSON envelope rather than slicing a JSON string into garbage.
+      return JSON.stringify({
+        partial: text.slice(0, limit - 50),
+        truncated: true,
+      });
     }
     // For non-array results (e.g. explore_node), truncate source content string
     if (data.source?.content && typeof data.source.content === 'string') {

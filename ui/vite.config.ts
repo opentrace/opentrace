@@ -75,8 +75,12 @@ function resolveEnvDir(): string {
  * Also sets the correct MIME type for .wasm files so WebAssembly
  * streaming compilation works (requires application/wasm).
  *
- * Uses "credentialless" instead of "require-corp" so cross-origin
- * fetches (e.g. api.github.com) still work without CORS attributes.
+ * Uses "require-corp" to match production (oss.opentrace.ai). Safari does
+ * not honor "credentialless", so a dev server sending it leaves Safari
+ * without cross-origin isolation — `window.crossOriginIsolated` is false and
+ * the browser-support gate in main.tsx blocks the app. Production's
+ * cross-origin assets (HF model CDN, oss.opentrace.ai archive proxy,
+ * code-host APIs) already coexist with require-corp via CORS, so dev matches.
  */
 function crossOriginIsolation(): Plugin {
   const publicDir = resolve(__dirname, 'public');
@@ -88,7 +92,7 @@ function crossOriginIsolation(): Plugin {
     next: () => void,
   ) {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 
     // Serve .wasm files directly with correct MIME type.
     // Vite's static handler sets the wrong Content-Type for .wasm and
@@ -201,6 +205,11 @@ export default defineConfig(({ mode }) => {
     },
     worker: {
       format: 'es',
+      // Workers bundle through a separate plugin pipeline. storeWorker.ts
+      // pulls in parquet-wasm (via LadybugGraphStore), so the worker build
+      // needs vite-plugin-wasm too — without it production `vite build`
+      // fails on the .wasm ESM import (dev works via the wasm middleware).
+      plugins: () => [wasm()],
     },
   };
 });

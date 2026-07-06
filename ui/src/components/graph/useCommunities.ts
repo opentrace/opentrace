@@ -30,6 +30,12 @@ const EMPTY_COMMUNITY: CommunityData = {
   count: 0,
 };
 
+/** Debounce before dispatching Louvain. During progressive streaming (and
+ *  live indexing) `allNodes` changes every batch; without this, the worker
+ *  respawns and recomputes over the whole graph on each one. Waiting for the
+ *  node set to settle collapses that into a single compute. */
+const COMMUNITY_DEBOUNCE_MS = 350;
+
 /**
  * Compute Louvain communities in a Web Worker.
  * Color and naming functions are provided via layoutConfig and run on the
@@ -44,6 +50,7 @@ export function useCommunities(
   allNodes: GraphNode[],
   allLinks: GraphLink[],
   layoutConfig: LayoutConfig,
+  enabled: boolean = true,
 ): CommunityData {
   const [communityData, setCommunityData] =
     useState<CommunityData>(EMPTY_COMMUNITY);
@@ -61,8 +68,19 @@ export function useCommunities(
   }, []);
 
   useEffect(() => {
+    // Master switch: when communities are disabled, never spawn the
+    // Louvain worker and keep assignments empty. Downstream features
+    // (colors, labels, community-gravity force, 3D depth) already treat
+    // empty assignments as "no communities" — flipping this off cleanly
+    // returns to a community-agnostic view with no wasted compute.
+    if (!enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when disabled
+      setCommunityData(EMPTY_COMMUNITY);
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      return;
+    }
     if (allNodes.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset to empty when graph clears
       setCommunityData(EMPTY_COMMUNITY);
       return;
     }
@@ -73,63 +91,74 @@ export function useCommunities(
 
     const reqId = ++requestIdRef.current;
 
-    const worker = new Worker(
-      new URL('../workers/communityWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    workerRef.current = worker;
-
-    worker.onerror = (err) => {
-      if (reqId !== requestIdRef.current || unmountedRef.current) return;
-      console.error('[graph] community worker failed:', err);
-      setCommunityData(EMPTY_COMMUNITY);
-    };
-
-    worker.onmessage = (e: MessageEvent<CommunityResponse>) => {
+    // Debounced dispatch — coalesces rapid node-set changes (streaming / live
+    // indexing) into a single Louvain pass once they settle.
+    const timer = setTimeout(() => {
       if (reqId !== requestIdRef.current || unmountedRef.current) return;
 
-      const { assignments } = e.data;
-      const colorMap = layoutConfig.buildCommunityColorMap(assignments);
-      const names = layoutConfig.buildCommunityNames(assignments, allNodes);
-      const count = new Set(Object.values(assignments)).size;
+      const worker = new Worker(
+        new URL('../workers/communityWorker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      workerRef.current = worker;
 
-      if (process.env.NODE_ENV === 'development') {
-        console.log(
-          `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
-        );
-      }
+      worker.onerror = (err) => {
+        // Terminate unconditionally — a stale/errored worker must not
+        // linger (the success path already does this symmetrically).
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+        if (reqId !== requestIdRef.current || unmountedRef.current) return;
+        console.error('[graph] community worker failed:', err);
+        setCommunityData(EMPTY_COMMUNITY);
+      };
 
-      setCommunityData({ assignments, colorMap, names, count });
-      // Clean up worker — it's single-shot
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-    };
+      worker.onmessage = (e: MessageEvent<CommunityResponse>) => {
+        if (reqId !== requestIdRef.current || unmountedRef.current) return;
 
-    // Prepare serializable data for the worker
-    const nodes = allNodes.map((n) => ({ id: n.id, type: n.type }));
-    const links = allLinks.map((link) => ({
-      source:
-        typeof link.source === 'string'
-          ? link.source
-          : (link.source as GraphNode).id,
-      target:
-        typeof link.target === 'string'
-          ? link.target
-          : (link.target as GraphNode).id,
-      label: link.label,
-    }));
+        const { assignments } = e.data;
+        const colorMap = layoutConfig.buildCommunityColorMap(assignments);
+        const names = layoutConfig.buildCommunityNames(assignments, allNodes);
+        const count = new Set(Object.values(assignments)).size;
 
-    worker.postMessage({
-      nodes,
-      links,
-      resolution: layoutConfig.louvainResolution,
-    });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            `[graph] Louvain: ${count} communities from ${allNodes.length} nodes`,
+          );
+        }
+
+        setCommunityData({ assignments, colorMap, names, count });
+        // Clean up worker — it's single-shot
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      };
+
+      // Prepare serializable data for the worker
+      const nodes = allNodes.map((n) => ({ id: n.id, type: n.type }));
+      const links = allLinks.map((link) => ({
+        source:
+          typeof link.source === 'string'
+            ? link.source
+            : (link.source as GraphNode).id,
+        target:
+          typeof link.target === 'string'
+            ? link.target
+            : (link.target as GraphNode).id,
+        label: link.label,
+      }));
+
+      worker.postMessage({
+        nodes,
+        links,
+        resolution: layoutConfig.louvainResolution,
+      });
+    }, COMMUNITY_DEBOUNCE_MS);
 
     return () => {
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
+      clearTimeout(timer);
+      workerRef.current?.terminate();
+      if (workerRef.current) workerRef.current = null;
     };
-  }, [allNodes, allLinks, layoutConfig]);
+  }, [allNodes, allLinks, layoutConfig, enabled]);
 
   return communityData;
 }

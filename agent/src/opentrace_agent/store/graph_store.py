@@ -179,6 +179,7 @@ class GraphStore:
 
     def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self.db_path = db_path
+        self.read_only = read_only
         self._db = ladybug.Database(db_path, read_only=read_only)
         self._conn = ladybug.Connection(self._db)
         self._load_extensions()
@@ -321,20 +322,175 @@ class GraphStore:
         nodes: list[dict[str, Any]],
         relationships: list[dict[str, Any]],
     ) -> dict[str, int]:
-        """Bulk import nodes then relationships inside explicit transactions.
+        """Bulk import nodes then relationships.
 
         Accepts the same dict format used by the pipeline stages:
           - node: ``{id, type, name, properties}``
           - rel:  ``{id, type, source_id, target_id, properties}``
 
-        Uses explicit BEGIN/COMMIT to avoid per-statement auto-commit overhead.
-        Returns a summary dict.
+        Fast path: stream the batch through a temp CSV file and let
+        LadybugDB's ``COPY FROM`` do a true bulk insert — much faster
+        than per-row Cypher CREATE statements (Fix #16). Falls back
+        to per-row MERGE for the batch on any failure (e.g. a primary
+        key collision from a duplicate id within the batch).
         """
+        if not nodes and not relationships:
+            return {"nodes_created": 0, "relationships_created": 0, "errors": 0}
+
+        try:
+            return self._import_batch_via_copy(nodes, relationships)
+        except Exception as exc:
+            logger.warning(
+                "Bulk COPY import failed (%s); falling back to per-row MERGE",
+                exc,
+                exc_info=False,
+            )
+            return self._import_batch_via_merge(nodes, relationships)
+
+    def _import_batch_via_copy(
+        self,
+        nodes: list[dict[str, Any]],
+        relationships: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """Fast-path: COPY FROM a temp CSV for both tables. Order matters:
+        nodes first (so rel FROM/TO refs resolve), rels second.
+
+        Pre-flight hygiene before each COPY (Fix #16). LadybugDB's
+        COPY is strict and any of these would otherwise roll the
+        whole batch back (and leave the underlying transaction in a
+        state where subsequent ops can crash the process):
+
+          * **In-batch dedup** — pipeline can emit the same node id
+            twice within one batch.
+          * **Cross-batch dedup** — query existing ids and drop them
+            from this batch so we don't violate the PK constraint
+            on rows that landed in a previous flush. Mirrors the
+            MERGE upsert semantics for the typical "no-op on re-emit"
+            case; updates to an existing node's name/properties are
+            dropped, which matches the indexer's intent (it emits the
+            same id with the same data).
+          * **Rel FK filter** — drop rels whose FROM/TO nodes aren't
+            yet in the DB. They'll come back on the next batch once
+            their nodes have landed.
+          * **PARALLEL=FALSE** — LadybugDB's parallel CSV reader can't
+            handle quoted newlines (which our Python type-signature
+            names regularly contain), so we force single-threaded
+            reads. Any row that still trips up raises, which import_batch
+            catches and routes to the MERGE fallback (no data loss).
+        """
+        import csv as _csv
+        import os as _os
+        import tempfile as _tempfile
+
+        copy_opts = "(PARALLEL=FALSE)"
+        nodes_ok = 0
+        rels_ok = 0
+
+        with _tempfile.TemporaryDirectory(prefix="opentrace-copy-") as tmpdir:
+            if nodes:
+                # In-batch dedup by id, keep last.
+                seen: dict[str, dict[str, Any]] = {}
+                for n in nodes:
+                    seen[n["id"]] = n
+
+                # Cross-batch dedup: drop ids already in the DB.
+                candidate_ids = list(seen.keys())
+                existing_node_ids: set[str] = set()
+                if candidate_ids:
+                    res = self._conn.execute(
+                        "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
+                        parameters={"ids": candidate_ids},
+                    )
+                    while res.has_next():
+                        existing_node_ids.add(str(res.get_next()[0]))
+
+                deduped = [n for nid, n in seen.items() if nid not in existing_node_ids]
+
+                if deduped:
+                    csv_path = _os.path.join(tmpdir, "nodes.csv")
+                    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+                        writer = _csv.writer(fh)
+                        for n in deduped:
+                            nid = n["id"]
+                            ntype = n["type"]
+                            nname = n["name"]
+                            props = n.get("properties")
+                            props_json = _marshal_props(props)
+                            search_text = build_search_text(nname, ntype, props or {})
+                            writer.writerow([nid, ntype, nname, props_json, search_text])
+                    # Column order matches the schema declaration:
+                    # id, type, name, properties, search_text.
+                    self._conn.execute(f"COPY Node FROM '{csv_path}' {copy_opts}")
+                nodes_ok = len(deduped)
+
+            if relationships:
+                # Pre-filter rels whose endpoints aren't in the DB.
+                referenced: set[str] = set()
+                for r in relationships:
+                    referenced.add(r["source_id"])
+                    referenced.add(r["target_id"])
+                existing: set[str] = set()
+                if referenced:
+                    res = self._conn.execute(
+                        "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
+                        parameters={"ids": list(referenced)},
+                    )
+                    while res.has_next():
+                        existing.add(str(res.get_next()[0]))
+
+                # In-batch dedup by id, keep last (matches node dedup above).
+                rel_seen: dict[str, dict[str, Any]] = {}
+                for r in relationships:
+                    rel_seen[r["id"]] = r
+
+                # Preserve merge-path idempotency: RELATES.id is not unique, so
+                # COPY would append duplicate logical edges on re-import. Delete
+                # any existing rels carrying these ids first, then re-insert.
+                rel_ids = list(rel_seen.keys())
+                if rel_ids:
+                    self._conn.execute(
+                        "MATCH ()-[r:RELATES]->() WHERE r.id IN $ids DELETE r",
+                        parameters={"ids": rel_ids},
+                    )
+
+                clean_rels = [r for r in rel_seen.values() if r["source_id"] in existing and r["target_id"] in existing]
+                if clean_rels:
+                    csv_path = _os.path.join(tmpdir, "rels.csv")
+                    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+                        writer = _csv.writer(fh)
+                        for r in clean_rels:
+                            writer.writerow(
+                                [
+                                    r["source_id"],
+                                    r["target_id"],
+                                    r["id"],
+                                    r["type"],
+                                    _marshal_props(r.get("properties")),
+                                ]
+                            )
+                    # REL TABLE COPY columns: FROM_id, TO_id, then the rel
+                    # column values in declaration order (id, type, properties).
+                    self._conn.execute(f"COPY RELATES FROM '{csv_path}' {copy_opts}")
+                rels_ok = len(clean_rels)
+
+        return {
+            "nodes_created": nodes_ok,
+            "relationships_created": rels_ok,
+            "errors": 0,
+        }
+
+    def _import_batch_via_merge(
+        self,
+        nodes: list[dict[str, Any]],
+        relationships: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """Slow-path fallback used when COPY FROM raises. Mirrors the
+        original per-row MERGE behaviour: each node and rel goes through
+        a Cypher MERGE so re-runs are idempotent."""
         nodes_ok = 0
         rels_ok = 0
         errors = 0
 
-        # --- Nodes in a single transaction ---
         self._conn.execute("BEGIN TRANSACTION")
         try:
             for n in nodes:
@@ -356,10 +512,8 @@ class GraphStore:
                 self._conn.execute("ROLLBACK")
             except Exception:
                 pass
-            # Fall back to individual writes
             nodes_ok, errors = self._import_nodes_individually(nodes)
 
-        # --- Relationships in a single transaction (idempotent via merge) ---
         self._conn.execute("BEGIN TRANSACTION")
         try:
             for r in relationships:
@@ -382,7 +536,6 @@ class GraphStore:
                 self._conn.execute("ROLLBACK")
             except Exception:
                 pass
-            # Fall back to individual writes
             rels_count, rel_errors = self._import_rels_individually(relationships)
             rels_ok = rels_count
             errors += rel_errors
@@ -1130,6 +1283,56 @@ class GraphStore:
                 }
             )
         return rows
+
+    # -- Repository deletion (used by reindex) --------------------------
+
+    def delete_repo(self, repo_id: str) -> dict[str, int]:
+        """Remove every node and relationship belonging to ``repo_id``.
+
+        Used by server-mode reindex (Fix #6, Q6d): before a fresh index
+        of an already-indexed repo, we must wipe the existing rows so
+        the bulk-import path doesn't hit primary-key collisions.
+
+        Scope: nodes whose id is exactly ``repo_id`` (the Repository
+        node itself), nodes whose id starts with ``f"{repo_id}/"`` (every
+        directory/file/symbol scoped to that repo), and the metadata
+        row at ``_meta:index:{repo_id}``. Global nodes (e.g. shared
+        Dependency entries) survive — they belong to no single repo.
+
+        Returns ``{"nodes_deleted": N, "relationships_deleted": M}``.
+        """
+        prefix = f"{repo_id}/"
+        meta_id = f"{self._METADATA_ID_PREFIX}{repo_id}"
+
+        # Pre-count for a meaningful return value. LadybugDB lacks a
+        # `RETURN count(*)` from DETACH DELETE, so we count up front.
+        node_count = self._conn.execute(
+            "MATCH (n:Node) WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id RETURN count(n)",
+            parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
+        )
+        nodes_deleted = 0
+        if node_count.has_next():
+            nodes_deleted = int(node_count.get_next()[0])
+
+        rel_count = self._conn.execute(
+            "MATCH (a:Node)-[r]->(b:Node) "
+            "WHERE a.id = $repo_id OR a.id STARTS WITH $prefix OR a.id = $meta_id "
+            "   OR b.id = $repo_id OR b.id STARTS WITH $prefix OR b.id = $meta_id "
+            "RETURN count(r)",
+            parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
+        )
+        rels_deleted = 0
+        if rel_count.has_next():
+            rels_deleted = int(rel_count.get_next()[0])
+
+        # DETACH DELETE drops the node plus all incident relationships
+        # in a single statement, so we don't need a separate edge delete.
+        self._conn.execute(
+            "MATCH (n:Node) WHERE n.id = $repo_id OR n.id STARTS WITH $prefix OR n.id = $meta_id DETACH DELETE n",
+            parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
+        )
+
+        return {"nodes_deleted": nodes_deleted, "relationships_deleted": rels_deleted}
 
     # -- lifecycle -------------------------------------------------------
 

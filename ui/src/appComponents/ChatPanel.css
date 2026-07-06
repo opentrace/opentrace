@@ -27,6 +27,43 @@
   gap: 8px;
 }
 
+.chat-export-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.chat-export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--color-surface, #1b1f27);
+  border: 1px solid var(--color-border, #2a2f3a);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-export-item {
+  appearance: none;
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text, #e5e7eb);
+  cursor: pointer;
+}
+
+.chat-export-item:hover {
+  background: var(--color-surface-hover, rgba(255, 255, 255, 0.08));
+}
+
 .provider-tag {
   font-size: 0.65rem;
   font-weight: 600;
@@ -119,6 +156,38 @@
   background: color-mix(in oklch, var(--primary) 15%, transparent);
   border-color: var(--primary);
   color: var(--ring);
+}
+
+/* Cloud-key reveal — collapsed (0fr) until a key is entered, then expands
+   smoothly. overflow:hidden on the inner wrapper both clips the collapsed
+   content and establishes a BFC so child margins don't leak out. */
+.cloud-key-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+  transition:
+    grid-template-rows 0.25s ease,
+    opacity 0.25s ease,
+    margin-top 0.25s ease;
+}
+
+.cloud-key-reveal.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 12px;
+}
+
+.cloud-key-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Reserve one line so swapping in the "Detected provider" text doesn't
+   shift the model selector below it. */
+.detect-status {
+  min-height: 1.25em;
+  margin: 0 0 12px;
 }
 
 /* Model selector */
@@ -400,6 +469,37 @@
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid color-mix(in oklch, var(--border) 25%, transparent);
+}
+
+/* Provider switcher chips inside the help block — pick whose guide to read. */
+.api-key-help-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.api-key-provider-chip {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
+  background: color-mix(in oklch, var(--card) 50%, transparent);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.api-key-provider-chip:hover {
+  border-color: color-mix(in oklch, var(--primary) 40%, transparent);
+  color: var(--secondary-foreground);
+}
+
+.api-key-provider-chip.active {
+  background: color-mix(in oklch, var(--primary) 15%, transparent);
+  border-color: var(--primary);
+  color: var(--ring);
 }
 
 .api-key-help-title {

@@ -25,13 +25,19 @@
  * Stage order: FileCacheStage → ExtractStage → ResolveStage → SummarizeStage → StoreStage
  */
 
-import type { GraphNode, GraphRelationship, ScanResult } from '../types';
+import type {
+  CodeSymbol,
+  GraphNode,
+  GraphRelationship,
+  ScanResult,
+} from '../types';
 import type { Registries, CallInfo } from '../parser/callResolver';
 import {
   resolveCalls,
   resolvedCallsToRelationships,
 } from '../parser/callResolver';
 import { analyzeImports } from '../parser/importAnalyzer';
+import type { ImportAnalysisResult } from '../parser/importAnalyzer';
 import { detectLanguage, getExtension } from '../stages/loading';
 import {
   getExtractor,
@@ -142,6 +148,160 @@ export class FileCacheStage implements INodeStage {
   }
 }
 
+// --- Shared extraction state + merge ---
+
+/**
+ * Mutable state accumulated while extracting a repo: the call-resolution
+ * registries + per-symbol call info (consumed by ResolveStage), plus the
+ * package-node dedupe set and the repo-constant lookups. Shared by BOTH the
+ * main-thread ExtractStage and the worker-pool path so both produce identical
+ * output (parity is guaranteed by using one merge function).
+ */
+export interface ExtractionState {
+  registries: Registries;
+  allCallInfo: CallInfo[];
+  packageNodes: Map<string, GraphNode>;
+  pendingPackageNodes: GraphNode[];
+  emittedNodeIds: Set<string>;
+  knownPaths: Set<string>;
+  pathToFileId: Map<string, string>;
+  goModulePath?: string;
+}
+
+export function createExtractionState(scanResult: ScanResult): ExtractionState {
+  return {
+    registries: {
+      nameRegistry: new Map(),
+      fileRegistry: new Map(),
+      classRegistry: new Map(),
+      importRegistry: new Map(),
+    },
+    allCallInfo: [],
+    packageNodes: new Map(scanResult.packageNodes),
+    pendingPackageNodes: [],
+    emittedNodeIds: new Set(),
+    knownPaths: scanResult.knownPaths,
+    pathToFileId: scanResult.pathToFileId,
+    goModulePath: scanResult.goModulePath,
+  };
+}
+
+/**
+ * Parse + walk one file on the CURRENT thread (main thread, or a worker that
+ * has called initParsers). Returns null for non-parseable files / parse
+ * failures. The tree is freed before returning.
+ */
+export function extractFile(
+  filePath: string,
+  content: string,
+  knownPaths: Set<string>,
+  goModulePath: string | undefined,
+): {
+  language: string;
+  symbols: CodeSymbol[];
+  importResult: ImportAnalysisResult;
+} | null {
+  const ext = getExtension(filePath);
+  const language = detectLanguage(ext);
+  if (!language) return null;
+
+  const parser = getParserForLanguage(language, ext);
+  const extractor = getExtractor(language);
+  if (!parser || !extractor) return null;
+
+  const tree = parser.parse(content);
+  if (!tree) return null;
+
+  try {
+    const extraction = extractor(tree.rootNode);
+    const importResult = analyzeImports(
+      tree.rootNode,
+      language,
+      filePath,
+      knownPaths,
+      goModulePath,
+    );
+    return { language, symbols: extraction.symbols, importResult };
+  } finally {
+    // Free the WASM-backed tree — we're done walking it.
+    tree.delete();
+  }
+}
+
+/**
+ * Merge one file's extraction (symbols + import analysis) into the shared
+ * registries, producing that file's symbol nodes + DEFINES/IMPORTS rels.
+ * Pure main-thread work on serializable data. Does NOT include the File node
+ * itself — it's already a pipeline seed / already streamed.
+ */
+export function mergeExtraction(
+  fileId: string,
+  language: string,
+  symbols: CodeSymbol[],
+  importResult: ImportAnalysisResult,
+  state: ExtractionState,
+): StageMutation {
+  const nodes: GraphNode[] = [];
+  const rels: GraphRelationship[] = [];
+
+  state.registries.fileRegistry.set(fileId, new Map());
+
+  for (const sym of symbols) {
+    processSymbol(
+      sym,
+      fileId,
+      language,
+      state.registries,
+      state.allCallInfo,
+      nodes,
+      rels,
+      state.emittedNodeIds,
+    );
+  }
+
+  // Internal imports → importRegistry + IMPORTS edges
+  const fileImports: Record<string, string> = {};
+  const seenTargetFiles = new Set<string>();
+  for (const [alias, targetPath] of Object.entries(importResult.internal)) {
+    const targetFileId = state.pathToFileId.get(targetPath);
+    if (targetFileId) {
+      fileImports[alias] = targetFileId;
+      if (!seenTargetFiles.has(targetFileId)) {
+        seenTargetFiles.add(targetFileId);
+        rels.push({
+          id: `${fileId}->IMPORTS->${targetFileId}`,
+          type: 'IMPORTS',
+          source_id: fileId,
+          target_id: targetFileId,
+        });
+      }
+    }
+  }
+  state.registries.importRegistry.set(fileId, fileImports);
+
+  // External imports → IMPORTS rels + new Dependency nodes
+  for (const [pkgName, pkgId] of Object.entries(importResult.external)) {
+    if (!state.packageNodes.has(pkgId)) {
+      const pkgNode: GraphNode = {
+        id: pkgId,
+        type: 'Dependency',
+        name: pkgName,
+        properties: { registry: pkgId.split(':')[1] },
+      };
+      state.packageNodes.set(pkgId, pkgNode);
+      state.pendingPackageNodes.push(pkgNode);
+    }
+    rels.push({
+      id: `${fileId}->IMPORTS->${pkgId}`,
+      type: 'IMPORTS',
+      source_id: fileId,
+      target_id: pkgId,
+    });
+  }
+
+  return { nodes, relationships: rels };
+}
+
 // --- ExtractStage ---
 
 export interface ExtractStageConfig {
@@ -151,38 +311,30 @@ export interface ExtractStageConfig {
 }
 
 /**
- * Processes File nodes: parses with tree-sitter, extracts symbols,
- * analyzes imports. Produces Class/Function/Package nodes and
- * DEFINES/IMPORTS relationships.
+ * Processes File nodes: parses with tree-sitter, extracts symbols, analyzes
+ * imports. Produces Class/Function/Package nodes and DEFINES/IMPORTS
+ * relationships. Non-File nodes (and non-parseable files) pass through
+ * unchanged. Accumulates registries and callInfo for use by ResolveStage.
  *
- * Non-File nodes (and non-parseable files) pass through unchanged.
- *
- * Accumulates registries and callInfo for use by ResolveStage.
+ * NOTE: this is the single-threaded path (used for tiny repos / tests). Large
+ * repos parse via the worker pool (see extractPool.ts) which calls the same
+ * {@link extractFile} + {@link mergeExtraction} functions off the main thread.
  */
 export class ExtractStage implements INodeStage {
-  readonly registries: Registries = {
-    nameRegistry: new Map(),
-    fileRegistry: new Map(),
-    classRegistry: new Map(),
-    importRegistry: new Map(),
-  };
-  readonly allCallInfo: CallInfo[] = [];
-
-  private readonly knownPaths: Set<string>;
-  private readonly pathToFileId: Map<string, string>;
-  private readonly goModulePath: string | undefined;
+  readonly state: ExtractionState;
   private readonly getContent: (fileId: string) => string | undefined;
-  private readonly packageNodes: Map<string, GraphNode>;
-  private readonly emittedNodeIds = new Set<string>();
-  private readonly pendingPackageNodes: GraphNode[] = [];
 
   constructor(config: ExtractStageConfig) {
-    const { scanResult, getContent } = config;
-    this.knownPaths = scanResult.knownPaths;
-    this.pathToFileId = scanResult.pathToFileId;
-    this.goModulePath = scanResult.goModulePath;
-    this.getContent = getContent;
-    this.packageNodes = new Map(scanResult.packageNodes);
+    this.state = createExtractionState(config.scanResult);
+    this.getContent = config.getContent;
+  }
+
+  /** Exposed for ResolveStage (structural). */
+  get registries(): Registries {
+    return this.state.registries;
+  }
+  get allCallInfo(): CallInfo[] {
+    return this.state.allCallInfo;
   }
 
   name(): string {
@@ -199,117 +351,44 @@ export class ExtractStage implements INodeStage {
       return { nodes: [node], relationships: [] };
     }
 
-    const ext = getExtension(filePath);
-    const language = detectLanguage(ext);
-    if (!language) {
-      return { nodes: [node], relationships: [] };
-    }
-
-    const parser = getParserForLanguage(language, ext);
-    const extractor = getExtractor(language);
-    if (!parser || !extractor) {
-      return { nodes: [node], relationships: [] };
-    }
-
-    const fileId = node.id;
-    const content = this.getContent(fileId);
+    const content = this.getContent(node.id);
     if (content === undefined) {
       return { nodes: [node], relationships: [] };
     }
 
-    const nodes: GraphNode[] = [node]; // File node passes through
-    const rels: GraphRelationship[] = [];
-
+    let extracted: ReturnType<typeof extractFile> = null;
     try {
-      const tree = parser.parse(content);
-      if (!tree) {
-        return { nodes: [node], relationships: [] };
-      }
-
-      const extraction = extractor(tree.rootNode);
-
-      // Initialize file registry entry
-      this.registries.fileRegistry.set(fileId, new Map());
-
-      // Process symbols → graph nodes + registries
-      for (const sym of extraction.symbols) {
-        processSymbol(
-          sym,
-          fileId,
-          language,
-          this.registries,
-          this.allCallInfo,
-          nodes,
-          rels,
-          this.emittedNodeIds,
-        );
-      }
-
-      // Import analysis
-      const rootNode = extraction.rootNode;
-      if (rootNode) {
-        const importResult = analyzeImports(
-          rootNode,
-          language,
-          filePath,
-          this.knownPaths,
-          this.goModulePath,
-        );
-
-        // Internal imports → populate importRegistry + IMPORTS edges
-        const fileImports: Record<string, string> = {};
-        const seenTargetFiles = new Set<string>();
-        for (const [alias, targetPath] of Object.entries(
-          importResult.internal,
-        )) {
-          const targetFileId = this.pathToFileId.get(targetPath);
-          if (targetFileId) {
-            fileImports[alias] = targetFileId;
-            if (!seenTargetFiles.has(targetFileId)) {
-              seenTargetFiles.add(targetFileId);
-              rels.push({
-                id: `${fileId}->IMPORTS->${targetFileId}`,
-                type: 'IMPORTS',
-                source_id: fileId,
-                target_id: targetFileId,
-              });
-            }
-          }
-        }
-        this.registries.importRegistry.set(fileId, fileImports);
-
-        // External imports → IMPORTS rels + new Package nodes
-        for (const [pkgName, pkgId] of Object.entries(importResult.external)) {
-          if (!this.packageNodes.has(pkgId)) {
-            const pkgNode: GraphNode = {
-              id: pkgId,
-              type: 'Dependency',
-              name: pkgName,
-              properties: { registry: pkgId.split(':')[1] },
-            };
-            this.packageNodes.set(pkgId, pkgNode);
-            this.pendingPackageNodes.push(pkgNode);
-          }
-
-          rels.push({
-            id: `${fileId}->IMPORTS->${pkgId}`,
-            type: 'IMPORTS',
-            source_id: fileId,
-            target_id: pkgId,
-          });
-        }
-      }
+      extracted = extractFile(
+        filePath,
+        content,
+        this.state.knownPaths,
+        this.state.goModulePath,
+      );
     } catch {
       // Parse error — return the File node so it still flows to summarization
       return { nodes: [node], relationships: [] };
     }
+    if (!extracted) {
+      return { nodes: [node], relationships: [] };
+    }
 
-    return { nodes, relationships: rels };
+    const merged = mergeExtraction(
+      node.id,
+      extracted.language,
+      extracted.symbols,
+      extracted.importResult,
+      this.state,
+    );
+    // File node passes through to downstream stages, then the symbol nodes.
+    return {
+      nodes: [node, ...merged.nodes],
+      relationships: merged.relationships,
+    };
   }
 
   flush(): StageMutation {
     // Emit any external package nodes accumulated during processing
-    const nodes = this.pendingPackageNodes.splice(0);
+    const nodes = this.state.pendingPackageNodes.splice(0);
     return { nodes, relationships: [] };
   }
 }
@@ -324,10 +403,11 @@ export class ExtractStage implements INodeStage {
  * calls using the 7-strategy resolver.
  */
 export class ResolveStage implements INodeStage {
-  private readonly extractStage: ExtractStage;
+  private readonly src: { registries: Registries; allCallInfo: CallInfo[] };
 
-  constructor(extractStage: ExtractStage) {
-    this.extractStage = extractStage;
+  /** Accepts an ExtractStage or a bare ExtractionState (structural). */
+  constructor(src: { registries: Registries; allCallInfo: CallInfo[] }) {
+    this.src = src;
   }
 
   name(): string {
@@ -340,7 +420,7 @@ export class ResolveStage implements INodeStage {
   }
 
   flush(): StageMutation {
-    const { registries, allCallInfo } = this.extractStage;
+    const { registries, allCallInfo } = this.src;
     const resolvedCalls = resolveCalls(allCallInfo, registries);
     const callRels = resolvedCallsToRelationships(resolvedCalls);
     return { nodes: [], relationships: callRels };
@@ -541,9 +621,14 @@ export class EmbedStage implements INodeStage {
     if (!this.initPromise) {
       this.initPromise = (async () => {
         try {
-          const { MiniLmEmbedder } =
-            await import('../../../runner/browser/enricher/embedder/miniLmEmbedder');
-          const embedder = new MiniLmEmbedder(this.embedderConfig);
+          // Embedder runs in a Web Worker (Fix #55 / Plan E) so
+          // inference doesn't block the Pixi ticker during indexing.
+          // `WorkerEmbedder` implements the same `Embedder` interface
+          // as the old in-process `MiniLmEmbedder`, so the rest of
+          // the pipeline doesn't know the difference.
+          const { WorkerEmbedder } =
+            await import('../../../runner/browser/enricher/embedder/workerEmbedder');
+          const embedder = new WorkerEmbedder(this.embedderConfig);
           await embedder.init();
           this.store.setEmbedder?.(embedder);
           return embedder;

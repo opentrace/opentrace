@@ -90,6 +90,10 @@ jobs:
         working-directory: ui
         run: npm run build
 
+      - name: Build library
+        working-directory: ui
+        run: npm run build:lib
+
       - name: Validate build output
         working-directory: ui
         run: node scripts/validate-build.mjs

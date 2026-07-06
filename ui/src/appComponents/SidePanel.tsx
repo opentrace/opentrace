@@ -92,6 +92,57 @@ export default function SidePanel({
   } = useGraphInteraction();
   const { graphVersion, graphData } = useGraph();
 
+  // ─── Lazy property resolution for the selected node ──────────────────
+  // The in-memory graph holds LEAN nodes (id/name/type only) so huge repos
+  // (Grafana-scale, ~50k nodes) don't OOM the tab by keeping every property
+  // blob in the JS heap. The detail panel needs properties, so we fetch them
+  // on demand here — served from the store's LRU node cache, so re-selecting a
+  // node is instant. When the node already carries properties (e.g. loaded via
+  // a full fetchGraph rather than the live stream) we use them as-is.
+  const [resolvedProps, setResolvedProps] = useState<
+    Record<string, unknown> | undefined
+  >(undefined);
+  /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
+  useEffect(() => {
+    if (!selectedNode) {
+      setResolvedProps(undefined);
+      return;
+    }
+    if (
+      selectedNode.properties &&
+      Object.keys(selectedNode.properties).length > 0
+    ) {
+      setResolvedProps(selectedNode.properties);
+      return;
+    }
+    let cancelled = false;
+    setResolvedProps(undefined);
+    store
+      .getNode(selectedNode.id)
+      .then((n) => {
+        if (!cancelled) setResolvedProps(n?.properties ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedProps({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // The selected node with its properties filled in (lazily, see above).
+  const resolvedNode = useMemo(
+    () =>
+      selectedNode
+        ? {
+            ...selectedNode,
+            properties: resolvedProps ?? selectedNode.properties,
+          }
+        : null,
+    [selectedNode, resolvedProps],
+  );
+
   // ─── Source code fetch for the selected node ─────────────────────────
   const [nodeSource, setNodeSource] = useState<NodeSourceResponse | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -105,13 +156,17 @@ export default function SidePanel({
       return;
     }
 
+    // Wait until properties have resolved so we can slice the exact line range
+    // (without them fetchSource would return the whole file).
+    if (resolvedProps === undefined) return;
+
     let cancelled = false;
     setSourceLoading(true);
     setSourceError(null);
     setNodeSource(null);
 
-    const startLine = selectedNode.properties?.startLine as number | undefined;
-    const endLine = selectedNode.properties?.endLine as number | undefined;
+    const startLine = resolvedProps?.startLine as number | undefined;
+    const endLine = resolvedProps?.endLine as number | undefined;
 
     store
       .fetchSource(selectedNode.id, startLine, endLine)
@@ -132,7 +187,7 @@ export default function SidePanel({
     return () => {
       cancelled = true;
     };
-  }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedNode?.id, resolvedProps, store]); // eslint-disable-line react-hooks/exhaustive-deps
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // ─── Selection callbacks (from context, plus light wrappers) ─────────
@@ -523,9 +578,9 @@ export default function SidePanel({
       </div>
       {effectiveTab === 'details' && (
         <div className="side-panel-content">
-          {selectedNode ? (
+          {resolvedNode ? (
             <NodeDetailsPanel
-              node={selectedNode}
+              node={resolvedNode}
               nodeSource={nodeSource}
               sourceLoading={sourceLoading}
               communityName={communityName}

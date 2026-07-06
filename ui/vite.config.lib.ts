@@ -96,5 +96,9 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
+    // storeWorker.ts pulls in parquet-wasm (via LadybugGraphStore), so the
+    // worker build needs vite-plugin-wasm too — without it `build:lib` fails
+    // on the .wasm ESM import (mirrors the app build in vite.config.ts).
+    plugins: () => [wasm()],
   },
 });

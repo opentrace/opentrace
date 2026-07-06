@@ -391,6 +391,15 @@ export default function AddRepoModal({
     setError(null);
   }, [source]);
 
+  // onSubmit is fire-and-forget, so `loading` has no reset path if a submit
+  // fails without unmounting the modal (the form would stay stuck on the
+  // spinner). Re-enable it as soon as the user edits any submit input — a
+  // clear retry signal — so the button can never get permanently stuck.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- retry reset
+    setLoading(false);
+  }, [source, repoUrl, serverUrl, selectedFiles, importFile, pat, ref]);
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
 

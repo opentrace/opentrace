@@ -15,14 +15,12 @@
  */
 
 import type { GraphCanvasHandle } from '@opentrace/components';
-import {
-  useState,
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-} from 'react';
+import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 
-type LayoutMode = 'spread' | 'compact';
+type LayoutMode = 'spread' | 'compact' | 'tree' | 'onion';
+
+// The manual layout toggle cycles these three; 'onion' is a preset-only view.
+const LAYOUT_CYCLE: LayoutMode[] = ['tree', 'spread', 'compact'];
 
 const FullscreenEnterIcon = () => (
   <>
@@ -38,23 +36,6 @@ const FullscreenExitIcon = () => (
     <polyline points="4 14 4 20 10 20" />
     <polyline points="20 10 20 4 14 4" />
   </>
-);
-
-const KebabIcon = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="5" r="1" />
-    <circle cx="12" cy="12" r="1" />
-    <circle cx="12" cy="19" r="1" />
-  </svg>
 );
 
 const SearchIcon = ({ withCross }: { withCross: boolean }) => (
@@ -163,10 +144,60 @@ const LayoutIcon = ({ compact }: { compact: boolean }) => (
     strokeLinejoin="round"
   >
     {compact ? (
-      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+      // Three tight clusters — visually distinct from Zoom-to-fit's
+      // outward arrows (Fix #40).
+      <>
+        <circle cx="7" cy="7" r="2.2" />
+        <circle cx="17" cy="7" r="2.2" />
+        <circle cx="12" cy="17" r="2.2" />
+      </>
     ) : (
-      <circle cx="12" cy="12" r="9" />
+      // Spread mode: ring of scattered points
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="6" r="1" fill="currentColor" />
+        <circle cx="6" cy="14" r="1" fill="currentColor" />
+        <circle cx="18" cy="14" r="1" fill="currentColor" />
+      </>
     )}
+  </svg>
+);
+
+const ResetIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Circular refresh arrow — universally legible "reset" symbol. */}
+    <path d="M21 12a9 9 0 1 1-3-6.7" />
+    <polyline points="21 3 21 9 15 9" />
+  </svg>
+);
+
+const BuildAnimIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {/* Three connected nodes "growing" out from a root — evokes the graph
+        assembling itself. */}
+    <circle cx="5" cy="19" r="2.2" />
+    <circle cx="18" cy="14" r="2.2" />
+    <circle cx="13" cy="5" r="2.2" />
+    <line x1="6.8" y1="17.7" x2="11.6" y2="6.4" />
+    <line x1="6.9" y1="18.4" x2="16" y2="14.6" />
   </svg>
 );
 
@@ -210,11 +241,22 @@ interface GraphControlsBarProps {
   mode3d: boolean;
   setMode3d: Dispatch<SetStateAction<boolean>>;
 
-  /** Controlled mobile menu state. Pass both to lift it out of this
-   *  component (e.g. to close it from a layout-mode effect). When omitted,
-   *  the menu manages its own internal open/closed state. */
-  showMenu?: boolean;
-  setShowMenu?: Dispatch<SetStateAction<boolean>>;
+  /** When provided, renders a "Replay build animation" button that re-plays
+   *  the graph assembling itself. Omitted by renderers that don't support it
+   *  (Pixi), so the button only appears for the Three.js renderer. */
+  onReplayBuild?: () => void;
+
+  /** Override for the "Reset graph" button click. When provided, replaces
+   *  the default behaviour (reheat physics + reset camera) with a full
+   *  settings-and-state reset — used by callers that wire it to
+   *  `settings.resetSettings`. */
+  onResetGraph?: () => void;
+
+  /** Called when the user hand-adjusts a persisted view setting (layout
+   *  cycle, 2D/3D). Callers use it to drop the active-preset highlight —
+   *  otherwise the stored preset re-applies on the next load and silently
+   *  reverts the user's choice. */
+  onUserAdjust?: () => void;
 }
 
 /** Bottom-right control bar with mobile toggle and zoom/layout/3D buttons. */
@@ -231,13 +273,10 @@ export const GraphControlsBar = ({
   setLayoutMode,
   mode3d,
   setMode3d,
-  showMenu,
-  setShowMenu,
+  onReplayBuild,
+  onResetGraph,
+  onUserAdjust,
 }: GraphControlsBarProps) => {
-  const [internalShowMenu, setInternalShowMenu] = useState(false);
-  const showGraphMenu = showMenu ?? internalShowMenu;
-  const setShowGraphMenu = setShowMenu ?? setInternalShowMenu;
-
   return (
     <div className="graph-controls">
       {onToggleGraphFullscreen && (
@@ -261,17 +300,7 @@ export const GraphControlsBar = ({
         </button>
       )}
 
-      <button
-        className={`graph-control-btn graph-controls-trigger${showGraphMenu ? ' graph-control-btn--active' : ''}`}
-        onClick={() => setShowGraphMenu((v) => !v)}
-        title="Graph controls"
-      >
-        <KebabIcon />
-      </button>
-
-      <div
-        className={`graph-controls-items${showGraphMenu ? ' graph-controls-items--open' : ''}`}
-      >
+      <div className="graph-controls-items graph-controls-items--open">
         <button
           className={`graph-control-btn${zoomOnSelect ? ' graph-control-btn--active' : ''}`}
           onClick={() => setZoomOnSelect((z) => !z)}
@@ -309,6 +338,33 @@ export const GraphControlsBar = ({
         </button>
 
         <button
+          className="graph-control-btn"
+          onClick={() => {
+            if (onResetGraph) {
+              onResetGraph();
+            } else {
+              // Default: reheat physics so the layout reflows from current
+              // positions, then re-fit the view.
+              canvasRef.current?.reheat?.();
+              canvasRef.current?.resetCamera();
+            }
+          }}
+          title="Reset graph"
+        >
+          <ResetIcon />
+        </button>
+
+        {onReplayBuild && (
+          <button
+            className="graph-control-btn"
+            onClick={onReplayBuild}
+            title="Replay build animation"
+          >
+            <BuildAnimIcon />
+          </button>
+        )}
+
+        <button
           ref={physicsTriggerRef}
           className={`graph-control-btn${showPhysicsPanel ? ' graph-control-btn--active' : ''}`}
           onClick={() => setShowPhysicsPanel((v) => !v)}
@@ -318,17 +374,21 @@ export const GraphControlsBar = ({
         </button>
 
         <button
-          className={`graph-control-btn${layoutMode === 'compact' ? ' graph-control-btn--active' : ''}`}
+          className={`graph-control-btn${layoutMode !== 'tree' ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
-            const next = layoutMode === 'spread' ? 'compact' : 'spread';
+            const next =
+              LAYOUT_CYCLE[
+                (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+              ];
+            onUserAdjust?.();
             setLayoutMode(next);
             canvasRef.current?.setLayoutMode?.(next);
           }}
-          title={
-            layoutMode === 'compact'
-              ? 'Switch to spread layout'
-              : 'Switch to compact layout'
-          }
+          title={`Layout: ${layoutMode} — switch to ${
+            LAYOUT_CYCLE[
+              (LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length
+            ]
+          }`}
         >
           <LayoutIcon compact={layoutMode === 'compact'} />
         </button>
@@ -337,6 +397,7 @@ export const GraphControlsBar = ({
           className={`graph-control-btn${mode3d ? ' graph-control-btn--active' : ''}`}
           onClick={() => {
             const next = !mode3d;
+            onUserAdjust?.();
             setMode3d(next);
             canvasRef.current?.set3DMode?.(next);
           }}

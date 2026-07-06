@@ -118,6 +118,25 @@ describe('makeGraphTools', () => {
   });
 
   describe('truncation', () => {
+    it('returns valid JSON when a single entry alone exceeds the limit', async () => {
+      // One result whose JSON is larger than MAX_RESULT_CHARS: the array
+      // cannot be trimmed below length 1, so the fallback path runs. It must
+      // still emit parseable JSON (not a sliced JSON string).
+      const huge = {
+        hits: [{ id: 'n0', type: 'Repository', name: 'x'.repeat(8000) }],
+        count: 1,
+        query: 'x',
+      };
+      const store = createMockStore({
+        search: vi.fn().mockResolvedValue(huge),
+      });
+      const tools = makeGraphTools(store);
+      const searchTool = tools.find((t) => t.name === 'search_graph')!;
+      const result = (await searchTool.invoke({ query: 'x' })) as string;
+      expect(() => JSON.parse(result)).not.toThrow();
+      expect(JSON.parse(result)).toMatchObject({ truncated: true });
+    });
+
     it('truncates results exceeding MAX_RESULT_CHARS (4000)', async () => {
       const bigHits = Array.from({ length: 200 }, (_, i) => ({
         id: `n${i}`,

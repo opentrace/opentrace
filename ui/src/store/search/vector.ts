@@ -45,8 +45,10 @@ export class VectorIndex {
         `Vector dimension mismatch: expected ${this.dim}, got ${vector.length}`,
       );
     }
-    const arr =
-      vector instanceof Float32Array ? vector : new Float32Array(vector);
+    // Always copy: we normalize in place below, and the caller's array must
+    // not be mutated as a side effect of indexing (search() copies for the
+    // same reason).
+    const arr = new Float32Array(vector);
     // Normalize to unit vector for efficient cosine similarity (dot product of unit vectors)
     const norm = Math.sqrt(arr.reduce((sum, v) => sum + v * v, 0));
     if (norm > 0) {

@@ -23,8 +23,8 @@ import type { GraphStore } from '../../../store/types';
 // factory below replaces that module so tests can inject failure modes
 // (init() rejects, embed() throws on a specific batch, etc.) without pulling
 // in the real ONNX/transformers stack.
-vi.mock('../../../runner/browser/enricher/embedder/miniLmEmbedder', () => ({
-  MiniLmEmbedder: vi.fn(),
+vi.mock('../../../runner/browser/enricher/embedder/workerEmbedder', () => ({
+  WorkerEmbedder: vi.fn(),
 }));
 
 const fileNode = (id: string): GraphNode => ({
@@ -56,14 +56,14 @@ const makeStore = (): GraphStore => ({
 
 describe('EmbedStage error visibility', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
-  let MiniLmEmbedderMock: ReturnType<typeof vi.fn>;
+  let WorkerEmbedderMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const mod =
-      await import('../../../runner/browser/enricher/embedder/miniLmEmbedder');
-    MiniLmEmbedderMock = vi.mocked(mod.MiniLmEmbedder);
-    MiniLmEmbedderMock.mockReset();
+      await import('../../../runner/browser/enricher/embedder/workerEmbedder');
+    WorkerEmbedderMock = vi.mocked(mod.WorkerEmbedder);
+    WorkerEmbedderMock.mockReset();
   });
 
   afterEach(() => {
@@ -71,7 +71,7 @@ describe('EmbedStage error visibility', () => {
   });
 
   it('logs init failure and skips embedding without throwing', async () => {
-    MiniLmEmbedderMock.mockImplementation(() => ({
+    WorkerEmbedderMock.mockImplementation(() => ({
       init: vi.fn().mockRejectedValue(new Error('test: init failed')),
       embed: vi.fn(),
       dimension: () => 384,
@@ -100,7 +100,7 @@ describe('EmbedStage error visibility', () => {
 
   it('logs batch failure and continues with the next batch', async () => {
     let embedCallCount = 0;
-    MiniLmEmbedderMock.mockImplementation(() => ({
+    WorkerEmbedderMock.mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       embed: vi.fn().mockImplementation(async (texts: string[]) => {
         embedCallCount++;

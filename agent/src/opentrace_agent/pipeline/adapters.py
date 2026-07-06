@@ -69,6 +69,13 @@ class GraphStoreAdapter:
     def save_relationship(self, rel: GraphRelationship) -> None:
         self._rels.append(_rel_to_dict(rel))
         if len(self._rels) >= self._batch_size:
+            # Flush queued nodes first so the rel batch's FROM/TO
+            # references resolve. Otherwise a fast COPY-FROM bulk
+            # insert would reject the whole batch on missing FKs
+            # (Fix #16 follow-up). Per-row MERGE silently skips
+            # those rels — same end result, just slower.
+            if self._nodes:
+                self._flush_nodes()
             self._flush_rels()
 
     def flush(self) -> None:

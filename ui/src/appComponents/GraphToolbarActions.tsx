@@ -16,7 +16,6 @@
 
 import type { JobState } from '../job';
 import { HelpMenuButton } from './HelpMenuButton';
-import JobMinimizedBar from './JobMinimizedBar';
 import ThemeSelector from './ThemeSelector';
 
 const PlusIcon = () => (
@@ -211,8 +210,6 @@ interface GraphToolbarActionButtonsProps {
   // Job
   jobState: JobState;
   jobExpanded: boolean;
-  onJobExpand: () => void;
-  onJobCancel: () => void;
   // Add repo
   onAddRepoOpen: () => void;
   // Export
@@ -233,8 +230,6 @@ export const GraphToolbarActionButtons = ({
   toolbarActions,
   jobState,
   jobExpanded,
-  onJobExpand,
-  onJobCancel,
   onAddRepoOpen,
   hasGraphData,
   canExport,
@@ -247,20 +242,19 @@ export const GraphToolbarActionButtons = ({
   showSettings,
   onToggleSettings,
 }: GraphToolbarActionButtonsProps) => {
-  const showJobMinimized =
-    (jobState.status === 'enriching' || jobState.status === 'done') &&
+  // Running / enriching / persisted surface in the bottom-left
+  // LiveIndexingPanel (the graph builds live behind it). The old
+  // post-completion "Complete" pill was dropped — the finished graph on
+  // screen IS the completion signal, and the pill just cluttered the
+  // toolbar's top right.
+  const jobInProgress =
+    (jobState.status === 'running' || jobState.status === 'enriching') &&
     !jobExpanded;
 
   return (
     <>
       {toolbarActions}
-      {showJobMinimized ? (
-        <JobMinimizedBar
-          state={jobState}
-          onClick={onJobExpand}
-          onCancel={onJobCancel}
-        />
-      ) : (
+      {!jobInProgress && (
         <button
           className="add-repo-btn"
           onClick={onAddRepoOpen}

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ChatThought from './ChatThought';
@@ -30,7 +31,13 @@ interface Props {
   onPostComment?: (number: number, body: string) => Promise<void>;
 }
 
-export default function ChatParts({
+// Memoized: a long transcript renders many ChatParts, each running
+// ReactMarkdown. Without memo, every ChatPanel re-render (e.g. a keystroke
+// in the composer) re-parses the markdown of every message. Completed
+// messages have stable `parts`/handler refs, so they skip re-rendering and
+// only the streaming message updates. Keep the props passed in by callers
+// referentially stable (useCallback) or the memo is defeated.
+function ChatParts({
   parts,
   streaming,
   onNodeSelect,
@@ -72,3 +79,5 @@ export default function ChatParts({
     </>
   );
 }
+
+export default memo(ChatParts);

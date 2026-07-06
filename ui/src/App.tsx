@@ -28,6 +28,7 @@ import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
 import type { AnimationSettings } from '@opentrace/components';
 import { useStore } from './store';
+import { ServerGraphStore } from './store/serverStore';
 import { GraphDataProvider, useGraph } from './providers/GraphDataProvider';
 import { GraphInteractionProvider } from './providers/GraphInteractionProvider';
 import './App.css';
@@ -61,15 +62,44 @@ function AppInner({
   isServerMode = false,
 }: AppProps) {
   const { store } = useStore();
-  const { loadGraph } = useGraph();
+  const { loadGraph, startLiveStream, pushLiveBatch, endLiveStream } =
+    useGraph();
   const jobService = useJobService();
   const {
     state: jobState,
     start: startJob,
+    attach: attachJob,
     cancel: cancelJob,
     minimize: minimizeJob,
     reset: resetJob,
-  } = useJobStream(jobService);
+  } = useJobStream(jobService, {
+    onGraphDelta: pushLiveBatch,
+    onLiveEnd: endLiveStream,
+  });
+
+  // Fix #14 — after a page reload, if the agent is still running an
+  // index job, attach to it so the user sees the progress indicator
+  // resume instead of landing on the empty "Add Repository" state.
+  // Server-mode only; ladybug-backed sessions don't have an agent.
+  useEffect(() => {
+    if (!(store instanceof ServerGraphStore)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const active = await store.getActiveIndexJob();
+        if (cancelled || !active || active.done) return;
+        attachJob(active.jobId);
+      } catch (err) {
+        console.warn('[App] failed to probe for active index job', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only run on mount; attachJob/store identities are stable for a
+    // mounted session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const graphViewerRef = useRef<GraphViewerHandle>(null);
   const [chatHighlightNodes, setChatHighlightNodes] = useState<Set<string>>(
@@ -91,6 +121,10 @@ function AppInner({
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [showVaults, setShowVaults] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
+  // `true` only when the user explicitly expands the compact LiveIndexingPanel
+  // into the full-screen IndexingProgress modal. Defaults `false`: a new job
+  // shows the bottom-left panel and the graph builds live behind it, rather
+  // than the modal taking over the screen.
   const [jobExpanded, setJobExpanded] = useState(false);
   const [mobilePanelTab, setMobilePanelTab] = useState<SidePanelTab | null>(
     null,
@@ -127,9 +161,15 @@ function AppInner({
       }
       setShowAddRepo(false);
       setJobExpanded(false);
+      const isBrowserPipelineJob =
+        !(store instanceof ServerGraphStore) &&
+        (message.type === 'index-repo' ||
+          message.type === 'reindex-repo' ||
+          message.type === 'index-directory');
+      if (isBrowserPipelineJob) startLiveStream();
       startJob(message);
     },
-    [startJob],
+    [startJob, onConnectServer, store, startLiveStream],
   );
 
   // Index or navigate to a repo by URL — shared by ?repo= param and postMessage
@@ -217,8 +257,15 @@ function AppInner({
   const handleJobExpand = useCallback(() => setJobExpanded(true), []);
   const handleAddRepoOpen = useCallback(() => {
     if (hasRepoParam.current) return; // suppress while deep link is being handled
+    // A finished job leaves status at 'done' (the "Complete" bar). The
+    // AddRepoModal only renders while status is 'idle', so clear the
+    // done job first — otherwise opening it from the toolbar would no-op
+    // until the user manually dismisses the completion indicator.
+    if (jobState.status === 'done') {
+      resetJob();
+    }
     setShowAddRepo(true);
-  }, []);
+  }, [jobState.status, resetJob]);
   const handleAddRepoClose = useCallback(() => setShowAddRepo(false), []);
   const handleToggleChat = useCallback(() => {
     setShowChat((v) => {
@@ -334,8 +381,14 @@ function AppInner({
               }}
               onChatHighlight={(allIds, newIds) => {
                 setChatHighlightNodes(allIds);
-                if (newIds.length > 0) {
-                  graphViewerRef.current?.triggerPing(newIds);
+                const viewer = graphViewerRef.current;
+                if (allIds.size === 0) {
+                  // Highlights cleared (turn end / toggle off / convo switch) —
+                  // drop the traversal walk + lit trail so the graph un-dims.
+                  viewer?.clearChatTraversal();
+                } else if (newIds.length > 0) {
+                  // Animate the agent walking the graph to the newly-found nodes.
+                  viewer?.animateChatTraversal(newIds, allIds);
                 }
               }}
               onQuestionSubmit={() => {
