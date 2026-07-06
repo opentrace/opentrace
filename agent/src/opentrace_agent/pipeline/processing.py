@@ -172,7 +172,12 @@ def processing(
                 if id_imports:
                     registries.import_registry[file_id] = id_imports
 
-            # External imports → Package nodes + IMPORTS rels
+            # External imports → Package nodes + IMPORTS rels. The Dependency
+            # node must ride in the SAME event as the first IMPORTS rel that
+            # references it: the saving adapter flushes rel batches mid-stage,
+            # and its FK filter permanently drops rels whose endpoints aren't
+            # in the DB yet — deferring package nodes to end-of-stage loses
+            # every File-[IMPORTS]->Dependency edge on multi-batch repos.
             for pkg_name, pkg_id in import_result.external.items():
                 if pkg_id not in package_nodes:
                     registry = pkg_id.split(":")[1]
@@ -180,12 +185,14 @@ def processing(
                     source_url = package_source_url(registry, pkg_name)
                     if source_url:
                         pkg_props["sourceUri"] = source_url
-                    package_nodes[pkg_id] = GraphNode(
+                    pkg_node = GraphNode(
                         id=pkg_id,
                         type="Dependency",
                         name=pkg_name,
                         properties=pkg_props,
                     )
+                    package_nodes[pkg_id] = pkg_node
+                    file_nodes.append(pkg_node)
                 file_rels.append(
                     GraphRelationship(
                         id=f"{file_id}->IMPORTS->{pkg_id}",
@@ -228,18 +235,6 @@ def processing(
             detail=ProgressDetail(current=i + 1, total=total, file_name=fe.path),
             nodes=file_nodes if file_nodes else None,
             relationships=file_rels if file_rels else None,
-        )
-
-    # Emit deduplicated Package nodes
-    if package_nodes:
-        pkg_node_list = list(package_nodes.values())
-        total_nodes += len(pkg_node_list)
-        yield PipelineEvent(
-            kind=EventKind.STAGE_PROGRESS,
-            phase=Phase.PROCESSING,
-            message=f"Emitting {len(pkg_node_list)} package nodes",
-            detail=ProgressDetail(current=total, total=total),
-            nodes=pkg_node_list,
         )
 
     yield PipelineEvent(
