@@ -38,7 +38,11 @@ import type { RepoTree } from '../types';
 export function parseBitbucketUrl(
   url: string,
 ): { workspace: string; repo: string } | null {
-  const match = url.match(/bitbucket\.org[/:]([^/]+)\/([^/.]+)/);
+  // Repo names may contain dots (e.g. "my.repo") — mirror github.ts: stop
+  // only at a path separator / query / fragment, dropping a trailing ".git".
+  const match = url.match(
+    /bitbucket\.org[/:]([^/]+)\/([^/]+?)(?:\.git)?(?:[/?#]|$)/,
+  );
   if (!match) return null;
   return { workspace: match[1], repo: match[2] };
 }

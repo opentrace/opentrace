@@ -662,9 +662,16 @@ export class EmbedStage implements INodeStage {
   /**
    * Run embedding sequentially on all queued nodes. The model was
    * pre-loaded in the constructor so init is already done by now.
+   *
+   * `isCancelled` is checked between batches (cooperative cancellation,
+   * same contract as the rest of the pipeline): when it returns true,
+   * embedding stops, no further vectors are persisted, and the queue is
+   * released. Without it, a cancelled job kept running WASM inference and
+   * importVectors for minutes after the user hit cancel.
    */
   async settle(
     onProgress?: (embedded: number, total: number) => void,
+    isCancelled?: () => boolean,
   ): Promise<void> {
     const embedder = await this.ensureModel();
     if (!embedder) {
@@ -679,6 +686,7 @@ export class EmbedStage implements INodeStage {
 
     const BATCH = 8;
     for (let off = 0; off < this.queue.length; off += BATCH) {
+      if (isCancelled?.()) break;
       const batch = this.queue.slice(off, off + BATCH);
       const texts = batch.map((n) => {
         const parts = [n.name, n.type];
@@ -690,6 +698,9 @@ export class EmbedStage implements INodeStage {
 
       try {
         const vectors = await embedder.embed(texts);
+        // Cancellation may have landed during the (slow) inference await —
+        // skip the store write and stop.
+        if (isCancelled?.()) break;
         const pending: { id: string; vec: number[] }[] = [];
         for (let i = 0; i < batch.length; i++) {
           if (vectors[i] && vectors[i].length > 0) {

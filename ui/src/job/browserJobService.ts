@@ -69,7 +69,11 @@ import { loadEmbedderConfig } from '../config/embedding';
 
 // --- Tree-sitter lazy initialization ---
 
-let parsersReady = false;
+/** Singleton promise guard for parser initialization. `Parser.init()` is
+ *  global and async — concurrent calls corrupt web-tree-sitter state (see
+ *  ui/CLAUDE.md), so all callers must share one in-flight init. Cleared on
+ *  failure so a later retry can attempt init again. */
+let parsersInitPromise: Promise<void> | null = null;
 
 /** Map of parser key → WASM filename for all supported languages. */
 const PARSER_WASM_MAP: Record<string, string> = {
@@ -96,9 +100,18 @@ async function loadParser(wasmFile: string): Promise<Parser> {
   return parser;
 }
 
-async function ensureParsers(): Promise<void> {
-  if (parsersReady) return;
+function ensureParsers(): Promise<void> {
+  if (!parsersInitPromise) {
+    parsersInitPromise = initAllParsers().catch((err) => {
+      // Failed init must not be cached — clear so the next job retries.
+      parsersInitPromise = null;
+      throw err;
+    });
+  }
+  return parsersInitPromise;
+}
 
+async function initAllParsers(): Promise<void> {
   await Parser.init({
     locateFile: (file: string) => `/${file}`,
   });
@@ -128,7 +141,6 @@ async function ensureParsers(): Promise<void> {
   }
 
   initParsers(parserMap);
-  parsersReady = true;
 }
 
 // --- Phase mapping ---
@@ -511,6 +523,10 @@ export class BrowserJobService implements JobService {
       for (const file of scanResult.parseableFiles) {
         fileContentMap.set(`${scanResult.repoId}/${file.path}`, file.content);
       }
+      // Captured BEFORE the memory-relief truncation below — the
+      // pipeline_done metadata reads this count, and `.length = 0` would
+      // otherwise make `filesProcessed` always 0.
+      const parseableFileCount = scanResult.parseableFiles.length;
       // Release raw file strings — source is compressed in the store's
       // sourceCache; parseable content now lives in fileContentMap.
       repoTree.files.length = 0;
@@ -1023,6 +1039,11 @@ export class BrowserJobService implements JobService {
               return;
 
             case 'pipeline_done': {
+              // Cancellation may have landed while an earlier event handler
+              // was awaiting — don't write metadata or run embedding for a
+              // job the user already cancelled.
+              if (cancelled) return;
+
               const durationSeconds =
                 Math.round((performance.now() - pipelineStartTime) / 10) / 100;
               debug.log(
@@ -1048,38 +1069,42 @@ export class BrowserJobService implements JobService {
                       branch: repoTree.branch ?? repoTree.ref ?? '',
                       nodesCreated: persistedNodes,
                       relationshipsCreated: persistedRels,
-                      filesProcessed:
-                        scanResult?.parseableFiles?.length ??
-                        scanResult?.fileNodes?.length ??
-                        0,
+                      filesProcessed: parseableFileCount,
                     },
                   },
                 ],
                 relationships: [],
               });
               await this.store.flush();
+              if (cancelled) return;
 
               // Run embedding — model was pre-loaded during pipeline
-              if (embedStage && embedStage.total > 0) {
+              if (embedStage && embedStage.total > 0 && !cancelled) {
                 debug.log(
                   'embedding',
                   `starting ${embedStage.total} embeddings`,
                 );
-                await embedStage.settle((embedded, total) => {
-                  channel.push({
-                    ...emptyEvent(),
-                    kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-                    phase: JobPhase.JOB_PHASE_EMBEDDING,
-                    message: `Embedded ${embedded} of ${total} nodes`,
-                    detail: {
-                      current: embedded,
-                      total,
-                      fileName: '',
-                      nodesCreated: 0,
-                      relationshipsCreated: 0,
-                    },
-                  });
-                });
+                await embedStage.settle(
+                  (embedded, total) => {
+                    channel.push({
+                      ...emptyEvent(),
+                      kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                      phase: JobPhase.JOB_PHASE_EMBEDDING,
+                      message: `Embedded ${embedded} of ${total} nodes`,
+                      detail: {
+                        current: embedded,
+                        total,
+                        fileName: '',
+                        nodesCreated: 0,
+                        relationshipsCreated: 0,
+                      },
+                    });
+                  },
+                  // Cancel stops WASM inference between batches — without
+                  // this, a cancelled job kept embedding for minutes.
+                  () => cancelled,
+                );
+                if (cancelled) return;
                 debug.log(
                   'embedding',
                   `completed: ${embedStage.embeddedCount} nodes embedded`,
@@ -1150,7 +1175,9 @@ export class BrowserJobService implements JobService {
       cancel() {
         cancelled = true;
         abortController.abort();
-        channel.close();
+        // Drop buffered events — a cancelled job's stale GRAPH_READY/DONE
+        // must not keep driving UI state after the user hit cancel.
+        channel.closeAndDrop();
       },
     };
   }
@@ -1242,7 +1269,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }
@@ -1305,7 +1332,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelRef.cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }
@@ -1342,7 +1369,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelRef.cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }

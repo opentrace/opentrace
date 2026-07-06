@@ -132,4 +132,65 @@ describe('EmbedStage error visibility', () => {
     expect(stage.embeddedCount).toBe(8);
     expect(store.importVectors).toHaveBeenCalledTimes(1);
   });
+
+  it('stops embedding between batches when cancelled', async () => {
+    const embedMock = vi
+      .fn()
+      .mockImplementation(async (texts: string[]) =>
+        texts.map(() => [0.1, 0.2, 0.3]),
+      );
+    WorkerEmbedderMock.mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      embed: embedMock,
+      dimension: () => 3,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    const store = makeStore();
+    const stage = new EmbedStage({
+      config: { enabled: true, model: 'test-model' },
+      store,
+    });
+
+    // 24 nodes → 3 batches of 8. Cancel after the first batch completes.
+    for (let i = 0; i < 24; i++) stage.process(fileNode(`f${i}.ts`));
+
+    let cancelled = false;
+    await stage.settle(
+      () => {
+        cancelled = true; // fires after batch 1 persists
+      },
+      () => cancelled,
+    );
+
+    // Only batch 1 ran — inference and importVectors stopped after cancel.
+    expect(embedMock).toHaveBeenCalledTimes(1);
+    expect(store.importVectors).toHaveBeenCalledTimes(1);
+    expect(stage.embeddedCount).toBe(8);
+  });
+
+  it('skips the store write when cancellation lands during inference', async () => {
+    let cancelled = false;
+    WorkerEmbedderMock.mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      embed: vi.fn().mockImplementation(async (texts: string[]) => {
+        cancelled = true; // cancel arrives mid-inference
+        return texts.map(() => [0.1, 0.2, 0.3]);
+      }),
+      dimension: () => 3,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    const store = makeStore();
+    const stage = new EmbedStage({
+      config: { enabled: true, model: 'test-model' },
+      store,
+    });
+    for (let i = 0; i < 8; i++) stage.process(fileNode(`f${i}.ts`));
+
+    await stage.settle(undefined, () => cancelled);
+
+    expect(store.importVectors).not.toHaveBeenCalled();
+    expect(stage.embeddedCount).toBe(0);
+  });
 });

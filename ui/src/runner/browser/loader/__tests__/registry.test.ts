@@ -36,4 +36,22 @@ describe('loaderRegistry', () => {
       expect(typeof loader.load).toBe('function');
     }
   });
+
+  it('routes GitHub URLs with "gitlab" path segments to the github loader', () => {
+    const input = {
+      kind: 'url' as const,
+      url: 'https://github.com/gitlab-org/gitlab-runner/tree/main',
+    };
+    const claimed = loaderRegistry.find((l) => l.canHandle(input));
+    expect(claimed?.name).toBe('github');
+  });
+
+  it('routes GitLab deep links to the gitlab loader', () => {
+    const input = {
+      kind: 'url' as const,
+      url: 'https://gitlab.com/group/project/-/tree/main',
+    };
+    const claimed = loaderRegistry.find((l) => l.canHandle(input));
+    expect(claimed?.name).toBe('gitlab');
+  });
 });

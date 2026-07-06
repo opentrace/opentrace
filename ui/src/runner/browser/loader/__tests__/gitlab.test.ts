@@ -57,4 +57,70 @@ describe('parseGitLabUrl', () => {
   it('returns null for non-GitLab URL', () => {
     expect(parseGitLabUrl('https://github.com/foo/bar')).toBeNull();
   });
+
+  it('does not claim GitHub URLs whose path contains "gitlab"', () => {
+    // Host matching must be anchored to the hostname — previously the
+    // "gitlab-org" path segment matched the host pattern.
+    expect(
+      parseGitLabUrl('https://github.com/gitlab-org/gitlab-runner/tree/main'),
+    ).toBeNull();
+    expect(
+      parseGitLabUrl('https://github.com/gitlab-org/gitlab-runner'),
+    ).toBeNull();
+  });
+
+  it('cuts deep links at the canonical /-/ separator', () => {
+    const result = parseGitLabUrl(
+      'https://gitlab.com/group/project/-/tree/main',
+    );
+    expect(result).toMatchObject({
+      host: 'gitlab.com',
+      namespace: 'group',
+      project: 'project',
+    });
+    expect(result!.projectPath).toBe(encodeURIComponent('group/project'));
+  });
+
+  it('cuts subgroup deep links at /-/', () => {
+    const result = parseGitLabUrl(
+      'https://gitlab.com/group/subgroup/project/-/blob/main/README.md',
+    );
+    expect(result).toMatchObject({
+      namespace: 'group/subgroup',
+      project: 'project',
+    });
+  });
+
+  it('handles a trailing /- with no route after it', () => {
+    const result = parseGitLabUrl('https://gitlab.com/group/project/-');
+    expect(result).toMatchObject({
+      namespace: 'group',
+      project: 'project',
+    });
+  });
+
+  it('handles trailing slashes', () => {
+    const result = parseGitLabUrl('https://gitlab.com/group/project/');
+    expect(result).toMatchObject({
+      namespace: 'group',
+      project: 'project',
+    });
+  });
+
+  it('handles URLs without a protocol', () => {
+    const result = parseGitLabUrl('gitlab.com/group/project');
+    expect(result).toMatchObject({
+      host: 'gitlab.com',
+      namespace: 'group',
+      project: 'project',
+    });
+  });
+
+  it('parses dotted project names', () => {
+    const result = parseGitLabUrl('https://gitlab.com/group/my.project');
+    expect(result).toMatchObject({
+      namespace: 'group',
+      project: 'my.project',
+    });
+  });
 });
