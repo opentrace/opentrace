@@ -40,6 +40,7 @@ import { shouldHideNode } from './graph/useGraphFilters';
 import { useThemeKey } from './graph/useThemeKey';
 import { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
 import { ThreeRenderer } from './three/ThreeRenderer';
+import { takeUnsentRenderLinks } from './three/sentLinks';
 import { useForceLayout3d } from './three/useForceLayout3d';
 
 import Graph from 'graphology';
@@ -289,6 +290,11 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
 
     // ── Set data when layout is ready ───────────────────────────────────
     const prevNodeIdsRef = useRef<Set<string>>(new Set());
+    // Renderer-side link keys already delivered (setData/addData/appendLive).
+    // Diffing against this catches resolve-stage edges whose endpoints BOTH
+    // arrived in earlier batches — an endpoint-membership filter never sends
+    // those. Reset whenever the renderer does a full setData.
+    const sentLinkKeysRef = useRef<Set<string>>(new Set());
     useEffect(() => {
       if (!layoutReady || !rendererRef.current) return;
 
@@ -309,6 +315,9 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       // so the build stays continuous + high-FPS. Pass the FULL graph; the
       // renderer diffs against what it holds (also catching late-arriving edges).
       if (liveGrow && allPrevPresent && prevIds.size > 0) {
+        // appendLiveData dedups internally (edgeKeySet); record the keys here
+        // too so the sent-set stays in sync for any later non-live update.
+        takeUnsentRenderLinks(links, sentLinkKeysRef.current);
         rendererRef.current.appendLiveData(
           nodes,
           links,
@@ -319,21 +328,27 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         );
         return;
       }
-      if (isSameNodes) return;
 
-      if (isIncremental) {
+      if (isSameNodes) {
+        // A flush can carry ONLY new links (resolve-stage edges between
+        // already-present nodes) — they must still reach the renderer.
+        const lateLinks = takeUnsentRenderLinks(links, sentLinkKeysRef.current);
+        if (lateLinks.length === 0) return;
+        rendererRef.current
+          .addData(
+            [],
+            lateLinks,
+            posSnapshot,
+            nodeColors,
+            nodeSizes,
+            linkColors,
+          )
+          .then(() => {
+            if (!cancelled) setDataVersion((v) => v + 1);
+          });
+      } else if (isIncremental) {
         const newNodes = nodes.filter((n) => !prevIds.has(n.id));
-        const newLinks = links.filter((l) => {
-          const s =
-            typeof l.source === 'string'
-              ? l.source
-              : (l.source as { id: string }).id;
-          const t =
-            typeof l.target === 'string'
-              ? l.target
-              : (l.target as { id: string }).id;
-          return !prevIds.has(s) || !prevIds.has(t);
-        });
+        const newLinks = takeUnsentRenderLinks(links, sentLinkKeysRef.current);
         rendererRef.current
           .addData(
             newNodes,
@@ -347,6 +362,8 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
             if (!cancelled) setDataVersion((v) => v + 1);
           });
       } else {
+        sentLinkKeysRef.current = new Set();
+        takeUnsentRenderLinks(links, sentLinkKeysRef.current);
         rendererRef.current
           .setData(nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors)
           .then(() => {

@@ -21,7 +21,7 @@
  * simulation between 2D and 3D when the user toggles 3D mode.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   GraphNode,
   GraphLink,
@@ -132,7 +132,6 @@ export function useForceLayout3d(
 
   const nodeOrderRef = useRef<string[]>([]);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const nodeSizesRef = useRef<Map<string, number>>(new Map());
   const onTickRef = useRef(onTick);
   onTickRef.current = onTick;
   // Dimensions are applied at init; later changes go via setDimensions.
@@ -150,7 +149,12 @@ export function useForceLayout3d(
     };
   }, []);
 
-  useEffect(() => {
+  // useMemo (mirroring nodeColors in ThreeGraphCanvas), NOT an effect into a
+  // ref: the canvas's data effect consumes this map in the SAME commit that
+  // nodes/links change. A ref written by an effect is always one commit stale,
+  // so every incrementally-appended node would miss the map and be rendered at
+  // the fallback minimum size forever.
+  const nodeSizes = useMemo(() => {
     const degreeMap = new Map<string, number>();
     for (const link of allLinks) {
       const s = endpointId(link.source);
@@ -165,7 +169,7 @@ export function useForceLayout3d(
         nodeSize(degreeMap.get(node.id) ?? 0, node.type, structuralTypes),
       );
     }
-    nodeSizesRef.current = sizes;
+    return sizes;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks]);
 
@@ -192,6 +196,13 @@ export function useForceLayout3d(
   // add-nodes). Diffing against this is what catches resolve-stage edges that
   // arrive after both endpoints (see takeUnsentLinks). Reset on full rebuild.
   const sentLinkCountsRef = useRef<Map<string, number>>(new Map());
+  // Identity of the assignments object last sent to the worker (init /
+  // add-nodes / set-communities). Louvain produces a NEW object each time it
+  // (re)computes, so identity is a cheap "actually changed" signal — without
+  // it, ANY same-node effect re-run (e.g. a link-only resolve flush) would
+  // re-post set-communities and the worker would full-rebuild + reheat
+  // (alpha 0.7), reshuffling an already-settled graph.
+  const lastPostedCommunitiesRef = useRef<Record<string, number> | null>(null);
 
   const buildLayoutLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
@@ -255,13 +266,18 @@ export function useForceLayout3d(
           nodeTypes: {},
           pinExisting: growBuildRef.current,
         } satisfies Worker3DInMessage);
+        // add-nodes already delivered (and applied) these assignments — no
+        // need for the set-communities rebuild below on top of it.
+        lastPostedCommunitiesRef.current = communityData.assignments;
         simRunningRef.current = true;
         setSimRunning(true);
       }
       // When Louvain (re)computes — including at the end of a live build — let
       // the layout cluster into communities so the result matches the finished
-      // graph's shape.
-      if (communityData.assignments) {
+      // graph's shape. Only when the assignments ACTUALLY changed (identity
+      // check — see lastPostedCommunitiesRef).
+      if (communityData.assignments !== lastPostedCommunitiesRef.current) {
+        lastPostedCommunitiesRef.current = communityData.assignments;
         workerRef.current.postMessage({
           type: 'set-communities',
           communities: communityData.assignments,
@@ -323,6 +339,7 @@ export function useForceLayout3d(
         nodeTypes: newTypes,
         pinExisting: growBuildRef.current,
       } satisfies Worker3DInMessage);
+      lastPostedCommunitiesRef.current = communityData.assignments;
 
       simRunningRef.current = true;
       setSimRunning(true);
@@ -337,6 +354,7 @@ export function useForceLayout3d(
     if (allNodes.length === 0) {
       prevNodeIdsRef.current = new Set();
       sentLinkCountsRef.current = new Map();
+      lastPostedCommunitiesRef.current = null;
       return;
     }
 
@@ -401,6 +419,7 @@ export function useForceLayout3d(
         layoutMode: initialLayoutMode,
       },
     } satisfies Worker3DInMessage);
+    lastPostedCommunitiesRef.current = communityData.assignments;
 
     prevNodeIdsRef.current = nodeIdSet;
     simRunningRef.current = true;
@@ -579,7 +598,7 @@ export function useForceLayout3d(
   return {
     layoutReady,
     positions: positionsRef.current,
-    nodeSizes: nodeSizesRef.current,
+    nodeSizes,
     simRunning,
     reheat,
     reseed,

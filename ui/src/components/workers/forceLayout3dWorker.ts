@@ -38,6 +38,8 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force-3d';
 
+import { modeChargeStrength, treeRelax } from './layoutChargeScale';
+
 interface SimNode extends SimulationNodeDatum {
   id: string;
   z?: number | null;
@@ -511,9 +513,8 @@ function buildSimulation(
     // charge/link strengths that polish a 400-node tree tear the seeded
     // rings apart into a lumpy blob. Relational (call/import) links exert NO
     // pull — they're drawn over the tree but must not distort it.
-    const n = Math.max(1, nodes.length);
     // ~full strength below ~600 nodes, fading toward near-zero at 5k+.
-    const relax = Math.min(1, 600 / n);
+    const relax = treeRelax(nodes.length);
     s.force(
       'link',
       forceLink<SimNode, SimLink>(links)
@@ -528,8 +529,11 @@ function buildSimulation(
       'charge',
       // Gentle repulsion — just enough to separate overlapping siblings
       // without fighting the anchor and fanning the tree into a ball.
+      // (Scaling lives in modeChargeStrength, shared with update-config.)
       forceManyBody()
-        .strength(config.chargeStrength * 0.4 * relax)
+        .strength(
+          modeChargeStrength('tree', config.chargeStrength, nodes.length)!,
+        )
         .theta(defaultTheta),
     );
     s.force(
@@ -554,7 +558,9 @@ function buildSimulation(
     ).force(
       'charge',
       forceManyBody()
-        .strength(config.chargeStrength * 0.12)
+        .strength(
+          modeChargeStrength('nebula', config.chargeStrength, nodes.length)!,
+        )
         .theta(defaultTheta),
     );
     s.force(
@@ -1621,10 +1627,14 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       sim.stop();
       stopStreaming();
       // Deterministic layouts must re-seed so the newly-added nodes get a
-      // shell/tree position (only fires when that mode is active — normal
-      // live-build runs in compact/spread, so this is a no-op there).
+      // shell/tree/cloud position (only fires when that mode is active —
+      // normal live-build runs in compact/spread, so this is a no-op there).
+      // Nebula included: without a reseed, nebulaSeed stays shorter than the
+      // grown node list and makeNebulaAnchorForce's length guard no-ops the
+      // ENTIRE anchor force — the cloud's density envelope dissolves.
       if (currentMode === 'onion') computeOnion();
       else if (currentMode === 'tree') computeRadialTree();
+      else if (currentMode === 'nebula') computeNebulaCloud();
       sim = buildSimulation(simNodes, cachedLinks, cachedConfig, currentMode);
       // Live-build adds: a VERY gentle warm-up so each streaming batch barely
       // nudges the existing layout — settled nodes stay put, so the grow-in
@@ -1680,10 +1690,29 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       if (msg.centerStrength !== undefined)
         cachedConfig.centerStrength = msg.centerStrength;
       if (msg.chargeStrength !== undefined) {
-        sim.force(
-          'charge',
-          forceManyBody().strength(msg.chargeStrength).theta(defaultTheta),
+        // Route through the same mode-aware scaling buildSimulation uses:
+        // installing a raw full-strength forceManyBody would give onion a
+        // charge force it deliberately lacks, and hit tree/nebula with many
+        // times their built strength. For onion (null) the new value is only
+        // recorded in cachedConfig for future rebuilds.
+        const scaled = modeChargeStrength(
+          currentMode,
+          msg.chargeStrength,
+          simNodes.length,
         );
+        if (scaled !== null) {
+          const charge = sim.force('charge') as
+            | ReturnType<typeof forceManyBody>
+            | undefined;
+          // Update in place to preserve the current theta (drag boost);
+          // install fresh only if the mode was built without one.
+          if (charge) charge.strength(scaled);
+          else
+            sim.force(
+              'charge',
+              forceManyBody().strength(scaled).theta(defaultTheta),
+            );
+        }
       }
       if (msg.linkDistance !== undefined) {
         const link = sim.force('link') as

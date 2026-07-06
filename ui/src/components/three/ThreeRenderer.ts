@@ -1480,6 +1480,13 @@ export class ThreeRenderer {
     nodeColors: Map<string, string>,
     nodeSizes: Map<string, number>,
     linkColors: Map<string, string>,
+    opts?: {
+      /** Skip the instant full-graph zoomToFit after the rebuild. Used by
+       *  addData: an incremental append must not snap the user's camera —
+       *  restoring `hasUserMovedCamera` afterwards is too late, the fit has
+       *  already moved the camera by then. */
+      skipAutoFit?: boolean;
+    },
   ): Promise<void> {
     if (this.destroyed || !this.scene) return;
 
@@ -1574,7 +1581,7 @@ export class ThreeRenderer {
     this.buildEdgeObjects();
     if (this.liveGrowActive) {
       this.applyLiveGrowAfterRebuild();
-    } else {
+    } else if (!opts?.skipAutoFit) {
       this.zoomToFit(0);
     }
     // If a build animation was armed (post-index), collapse the freshly-built
@@ -1966,7 +1973,8 @@ export class ThreeRenderer {
     const mergedLinks = this.edges.map((e) => e.graphLink);
     for (const gl of newLinks) mergedLinks.push(gl);
 
-    // Preserve current positions for existing nodes.
+    // Preserve current positions for existing nodes, and don't let the rebuild
+    // snap the camera to a full-graph fit (skipAutoFit — see setData).
     const wasUserMoved = this.hasUserMovedCamera;
     await this.setData(
       mergedNodes,
@@ -1975,6 +1983,7 @@ export class ThreeRenderer {
       nodeColors,
       nodeSizes,
       linkColors,
+      { skipAutoFit: true },
     );
     this.hasUserMovedCamera = wasUserMoved;
   }
@@ -3342,8 +3351,17 @@ export class ThreeRenderer {
     // layout. On un-settle (a re-layout is starting) just PAUSE; do NOT restore
     // the now-stale home into posArray — that overwrote the incoming layout and
     // caused the onion "have to click twice" bug when switching from Bundled.
+    // Same gate as refreshAmbient: no ambient above AMBIENT_MAX_NODES (the
+    // drift + edge rebuild is per-frame O(N+E) — too heavy on huge graphs) and
+    // never during a live build (ambient offsets would fight the grow easing's
+    // targets and the nodes judder between the two).
     if (settled) {
-      if (this.ambientEnabled && this.nodeArray.length > 0) {
+      if (
+        this.ambientEnabled &&
+        !this.liveGrowActive &&
+        this.nodeArray.length > 0 &&
+        this.nodeArray.length <= AMBIENT_MAX_NODES
+      ) {
         this.captureAmbientHome();
         this.ambientActive = true;
       } else {
@@ -3384,6 +3402,7 @@ export class ThreeRenderer {
     const shouldRun =
       this.ambientEnabled &&
       this.layoutSettled &&
+      !this.liveGrowActive &&
       this.nodeArray.length > 0 &&
       this.nodeArray.length <= AMBIENT_MAX_NODES;
     if (shouldRun === this.ambientActive) return;
@@ -4302,6 +4321,11 @@ export class ThreeRenderer {
       if (this.mode3d) this.animateReframe3D();
       else this.zoomToFit(800);
     }
+    // liveGrowActive just flipped false — re-evaluate ambient so a user toggle
+    // that arrived mid-build (suppressed by the liveGrowActive guard) can
+    // start now. If the layout is still re-settling (end-of-build reseed), the
+    // layoutSettled gate keeps this a no-op and the settle path activates it.
+    this.refreshAmbient();
     this.requestRender();
   }
 
@@ -4552,11 +4576,17 @@ export class ThreeRenderer {
 
     if (fresh.length > 0) {
       this.scheduleGrowIn(oldN, startM);
-      this.nodeGeometry.setDrawRange(0, this.nodeArray.length);
       for (const a of ['position', 'aColor', 'aSize', 'aState', 'aPickColor']) {
         (this.nodeGeometry.getAttribute(a) as BufferAttribute).needsUpdate =
           true;
       }
+      // The node geometry carries a draw INDEX (applyNodeStates installs one at
+      // build time), so setDrawRange counts index entries — extending the range
+      // alone would never expose the appended vertices. Rebuild the
+      // visible-node index (and the halo's) over the grown array so appends
+      // are self-sufficient rather than relying on the host's highlight effect
+      // happening to repaint after every batch.
+      this.applyNodeStates();
     }
     this.requestRender();
   }
@@ -4600,9 +4630,14 @@ export class ThreeRenderer {
       col[o + 1] = col[o + 4] = this.tmpColor.g;
       col[o + 2] = col[o + 5] = this.tmpColor.b;
     }
-    this.edgeGeometry.setDrawRange(0, this.edges.length * 2);
     (this.edgeGeometry.getAttribute('aColor') as BufferAttribute).needsUpdate =
       true;
+    // Same index-buffer caveat as appendLiveData: the edge geometry got a draw
+    // index from rebuildEdgeDrawIndex at build time, so a bare setDrawRange
+    // doesn't expose the appended segments — and their alpha is still 0.
+    // updateEdgeAlpha fills alpha for the whole (grown) edge list and rebuilds
+    // the draw index + range in one pass.
+    this.updateEdgeAlpha();
   }
 
   /** Schedule grow-in for the appended nodes [oldN, n): BFS outward from the
