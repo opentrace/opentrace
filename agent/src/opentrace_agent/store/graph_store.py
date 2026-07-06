@@ -939,16 +939,21 @@ class GraphStore:
     def list_relationships_for_nodes(
         self,
         node_ids: set[str],
-        limit: int = 10000,
+        limit: int | None = 10000,
     ) -> list[dict[str, Any]]:
-        """Return relationships where both endpoints are in *node_ids*."""
+        """Return relationships where both endpoints are in *node_ids*.
+
+        Pass ``limit=None`` for an unbounded listing (export needs every
+        edge — a silent cap produces disconnected archives).
+        """
         if not node_ids:
             return []
+        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
         result = self._conn.execute(
             "MATCH (a:Node)-[r:RELATES]->(b:Node) "
             "WHERE a.id IN $ids AND b.id IN $ids "
-            "RETURN r.id, r.type, r.properties, a.id, b.id "
-            f"LIMIT {limit}",
+            "RETURN r.id, r.type, r.properties, a.id, b.id"
+            f"{limit_clause}",
             parameters={"ids": list(node_ids)},
         )
         rels: list[dict[str, Any]] = []
