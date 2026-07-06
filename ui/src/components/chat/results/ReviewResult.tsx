@@ -16,61 +16,19 @@
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { PRReviewComment } from '../types';
 import { markdownComponents } from '../markdownComponents';
 import './ReviewResult.css';
 
-export interface ReviewData {
-  summary: string;
-  verdict: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
-  comments: PRReviewComment[];
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function parseReviewResult(text: string): ReviewData | null {
-  // Try ```json:review first, then any ```json block containing review fields
-  const patterns = [
-    /```json:review\s*\n([\s\S]*?)```/g,
-    /```json\s*\n([\s\S]*?)```/g,
-  ];
-
-  for (const pattern of patterns) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      try {
-        const data = JSON.parse(match[1]);
-        // Must have summary + verdict to be a review block (not some other JSON)
-        if (data.summary && data.verdict) {
-          return {
-            summary: data.summary,
-            verdict: data.verdict,
-            comments: Array.isArray(data.comments) ? data.comments : [],
-          };
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-  return null;
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function stripReviewBlock(text: string): string {
-  // Remove ```json:review blocks first, then any ```json block that contains review fields
-  let result = text.replace(/```json:review\s*\n[\s\S]*?```/, '');
-  // Only strip plain ```json blocks if they contain review structure
-  result = result.replace(/```json\s*\n([\s\S]*?)```/g, (full, inner) => {
-    try {
-      const data = JSON.parse(inner);
-      if (data.summary && data.verdict) return '';
-    } catch {
-      /* not valid JSON, keep it */
-    }
-    return full;
-  });
-  return result.trim();
-}
+// Parsing logic lives in a React-free module so the review runner can
+// share it; re-export to keep existing import paths working.
+/* eslint-disable react-refresh/only-export-components */
+export {
+  parseReviewResult,
+  stripReviewBlock,
+  type ReviewData,
+} from '../../../pr/reviewParse';
+/* eslint-enable react-refresh/only-export-components */
+import type { ReviewData } from '../../../pr/reviewParse';
 
 const VERDICT_LABELS: Record<string, string> = {
   APPROVE: 'Approve',

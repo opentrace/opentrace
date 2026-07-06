@@ -174,7 +174,10 @@ describe('makePRTools', () => {
       const result = JSON.parse(
         (await tool.invoke({ prId, filePath, version: 'base' })) as string,
       );
-      expect(result.base_content).toBe('original code');
+      // Content is line-numbered and flagged as an indexed-snapshot read
+      expect(result.base_content).toContain('original code');
+      expect(result.base_content).toMatch(/^\s*1\t/);
+      expect(result.base_content_note).toContain('indexed snapshot');
     });
 
     it('calls prClient.getFileContent when available', async () => {
@@ -192,6 +195,197 @@ describe('makePRTools', () => {
       const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
       await tool.invoke({ prId, filePath, version: 'base' });
       expect(prClient.getFileContent).toHaveBeenCalledWith(filePath, 'main');
+    });
+
+    it('prefers immutable SHAs over branch names', async () => {
+      const prClient = createMockPRClient();
+      const store = createMockStore({
+        traverse: vi.fn().mockResolvedValue(traverseResult),
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#1',
+          properties: {
+            baseBranch: 'main',
+            headBranch: 'feat',
+            baseSha: 'base123',
+            headSha: 'head456',
+          },
+        }),
+      });
+      const tools = makePRTools(store, prClient);
+      const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
+      await tool.invoke({ prId, filePath, version: 'all' });
+      expect(prClient.getFileContent).toHaveBeenCalledWith(filePath, 'base123');
+      expect(prClient.getFileContent).toHaveBeenCalledWith(filePath, 'head456');
+    });
+
+    it('reads camelCase branch props written by the indexer', async () => {
+      const prClient = createMockPRClient();
+      const store = createMockStore({
+        traverse: vi.fn().mockResolvedValue(traverseResult),
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#1',
+          // what indexPRIntoGraph actually writes — used to be dropped
+          properties: { baseBranch: 'main', headBranch: 'feat' },
+        }),
+      });
+      const tools = makePRTools(store, prClient);
+      const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
+      const result = JSON.parse(
+        (await tool.invoke({ prId, filePath, version: 'new' })) as string,
+      );
+      expect(prClient.getFileContent).toHaveBeenCalledWith(filePath, 'feat');
+      expect(result.new_content).toContain('file content');
+    });
+
+    it('retries via head repo for fork PRs when base repo misses the ref', async () => {
+      const getFileContent = vi
+        .fn()
+        .mockResolvedValueOnce(null) // base repo does not have the fork commit
+        .mockResolvedValueOnce('fork content');
+      const prClient = createMockPRClient({ getFileContent });
+      const store = createMockStore({
+        traverse: vi.fn().mockResolvedValue(traverseResult),
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#1',
+          properties: { headSha: 'head456', headRepo: 'fork/repo' },
+        }),
+      });
+      const tools = makePRTools(store, prClient);
+      const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
+      const result = JSON.parse(
+        (await tool.invoke({ prId, filePath, version: 'new' })) as string,
+      );
+      expect(getFileContent).toHaveBeenNthCalledWith(
+        2,
+        filePath,
+        'head456',
+        'fork/repo',
+      );
+      expect(result.new_content).toContain('fork content');
+    });
+
+    it('pages new_content with startLine and flags truncation', async () => {
+      const bigFile = Array.from(
+        { length: 3000 },
+        (_, i) => `line ${i + 1} ${'x'.repeat(20)}`,
+      ).join('\n');
+      const prClient = createMockPRClient({
+        getFileContent: vi.fn().mockResolvedValue(bigFile),
+      });
+      const store = createMockStore({
+        traverse: vi.fn().mockResolvedValue(traverseResult),
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#1',
+          properties: { headSha: 'head456' },
+        }),
+      });
+      const tools = makePRTools(store, prClient);
+      const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
+
+      const first = JSON.parse(
+        (await tool.invoke({ prId, filePath, version: 'new' })) as string,
+      );
+      expect(first.new_content_truncated).toBe(true);
+      expect(first.new_content_lines).toMatch(/^1-\d+ of 3000$/);
+      const next = Number(first.new_content_note.match(/startLine=(\d+)/)![1]);
+      expect(next).toBeGreaterThan(1);
+
+      const second = JSON.parse(
+        (await tool.invoke({
+          prId,
+          filePath,
+          version: 'new',
+          startLine: next,
+        })) as string,
+      );
+      expect(second.new_content).toContain(`line ${next} `);
+      expect(second.new_content_lines.startsWith(`${next}-`)).toBe(true);
+    });
+
+    it('slices an explicit line range', async () => {
+      const content = Array.from({ length: 100 }, (_, i) => `l${i + 1}`).join(
+        '\n',
+      );
+      const prClient = createMockPRClient({
+        getFileContent: vi.fn().mockResolvedValue(content),
+      });
+      const store = createMockStore({
+        traverse: vi.fn().mockResolvedValue(traverseResult),
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#1',
+          properties: { headSha: 'h' },
+        }),
+      });
+      const tools = makePRTools(store, prClient);
+      const tool = tools.find((t) => t.name === 'get_pr_file_change')!;
+      const result = JSON.parse(
+        (await tool.invoke({
+          prId,
+          filePath,
+          version: 'new',
+          startLine: 10,
+          endLine: 12,
+        })) as string,
+      );
+      expect(result.new_content_lines).toBe('10-12 of 100');
+      expect(result.new_content).toContain('l10');
+      expect(result.new_content).toContain('l12');
+      expect(result.new_content).not.toContain('l13');
+      expect(result.new_content_truncated).toBeUndefined();
+    });
+  });
+
+  describe('get_pull_request', () => {
+    it('returns a complete compact file list', async () => {
+      const prId = 'owner/repo/pr/9';
+      const manyFiles = Array.from({ length: 120 }, (_, i) => ({
+        node: { id: `f${i}`, type: 'File', name: `f${i}.ts` },
+        relationship: {
+          id: `r${i}`,
+          type: 'CHANGES',
+          source_id: prId,
+          target_id: `f${i}`,
+          properties: {
+            path: `src/f${i}.ts`,
+            status: 'modified',
+            additions: 1,
+            deletions: 1,
+            patch: '@@ -1 +1 @@\n+x'.repeat(50),
+          },
+        },
+        depth: 1,
+      }));
+      const store = createMockStore({
+        getNode: vi.fn().mockResolvedValue({
+          id: prId,
+          type: 'PullRequest',
+          name: '#9',
+          properties: {},
+        }),
+        traverse: vi.fn().mockResolvedValue(manyFiles),
+      });
+      const tools = makePRTools(store);
+      const tool = tools.find((t) => t.name === 'get_pull_request')!;
+      const result = JSON.parse((await tool.invoke({ prId })) as string);
+      expect(result.file_count).toBe(120);
+      expect(result.files).toHaveLength(120);
+      // Compact entries — no patch payloads in the listing
+      expect(result.files[0]).toEqual({
+        path: 'src/f0.ts',
+        status: 'modified',
+        additions: 1,
+        deletions: 1,
+      });
     });
   });
 

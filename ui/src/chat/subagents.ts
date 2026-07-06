@@ -282,10 +282,11 @@ After your prose review, you MUST end your response with a fenced code block tag
 \`\`\`
 
 Rules for the structured block:
-- "verdict": Use APPROVE if the code is good, REQUEST_CHANGES if there are must-fix issues, COMMENT for informational review
-- "comments": Include one entry per actionable finding. Use the exact file path and line number from the source code. Omit path/line if the comment is general.
+- "verdict": Use APPROVE only if the code is good AND you inspected every changed file; REQUEST_CHANGES if there are must-fix issues; COMMENT for informational review
+- "comments": Include one entry per actionable finding. "line" must be a line number in the NEW version of the file (right side of the diff), taken from content you actually read — never estimate it. Omit path/line if the comment is general.
 - "summary": A concise paragraph suitable as the PR review body on GitHub
-- Always include this block, even if there are no issues (empty comments array, APPROVE verdict)`;
+- Always include this block, even if there are no issues (empty comments array, APPROVE verdict)
+- Graph data and load_source reflect the indexed snapshot, which may predate the PR — when they disagree with PR file tools, trust the PR file tools. Only make claims about code you actually read.`;
 
 // ---- Helpers ----
 

@@ -31,8 +31,10 @@ import type {
 import type { PRDetail, PRFileDiff } from './types';
 import type { RepoMeta } from './types';
 
-/** Max characters of unified diff to store per file edge. */
-const MAX_PATCH_CHARS = 5000;
+/** Max characters of unified diff to store per file edge. Generous — a
+ *  truncated patch means the review agent literally cannot see part of
+ *  the change, so only guard against pathological blobs. */
+const MAX_PATCH_CHARS = 50_000;
 
 function truncatePatch(patch: string | undefined): string | undefined {
   if (!patch) return undefined;
@@ -82,6 +84,9 @@ export async function indexPRIntoGraph(
           createdAt: pr.created_at,
           baseBranch: pr.base_branch,
           headBranch: pr.head_branch,
+          ...(pr.base_sha ? { baseSha: pr.base_sha } : {}),
+          ...(pr.head_sha ? { headSha: pr.head_sha } : {}),
+          ...(pr.head_repo ? { headRepo: pr.head_repo } : {}),
           additions: pr.additions,
           deletions: pr.deletions,
           filesChanged: pr.files.length,

@@ -48,9 +48,13 @@ function parsePatchLines(patch: string): Set<number> {
   return validLines;
 }
 
+/** A comment relocated further than this many lines would land on code the
+ *  reviewer wasn't talking about — fold it into the review body instead. */
+const MAX_SNAP_DISTANCE = 3;
+
 /**
- * Find the closest valid line in the diff to a given target line.
- * Returns undefined if no valid lines exist.
+ * Find the closest valid line in the diff to a given target line, within
+ * MAX_SNAP_DISTANCE. Returns undefined if none is close enough.
  */
 function snapToValidLine(
   target: number,
@@ -67,16 +71,7 @@ function snapToValidLine(
       closest = line;
     }
   }
-  return closest;
-}
-
-/** Return the first (lowest) line number in the set, or undefined. */
-function firstValidLine(validLines: Set<number>): number | undefined {
-  let min: number | undefined;
-  for (const line of validLines) {
-    if (min === undefined || line < min) min = line;
-  }
-  return min;
+  return minDist <= MAX_SNAP_DISTANCE ? closest : undefined;
 }
 
 function headers(token?: string): Record<string, string> {
@@ -118,6 +113,8 @@ function mapFileStatus(status: string): PRFileDiff['status'] {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toPRSummary(pr: any): PRSummary {
+  const baseRepo = pr.base?.repo?.full_name;
+  const headRepo = pr.head?.repo?.full_name;
   return {
     number: pr.number,
     title: pr.title,
@@ -128,6 +125,9 @@ function toPRSummary(pr: any): PRSummary {
     updated_at: pr.updated_at,
     base_branch: pr.base?.ref ?? '',
     head_branch: pr.head?.ref ?? '',
+    base_sha: pr.base?.sha,
+    head_sha: pr.head?.sha,
+    head_repo: headRepo && headRepo !== baseRepo ? headRepo : undefined,
     draft: pr.draft,
   };
 }
@@ -152,15 +152,25 @@ export async function fetchGitHubPRDetail(
   number: number,
   token?: string,
 ): Promise<PRDetail> {
-  const [pr, files] = await Promise.all([
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pr = await ghFetch<any>(
+    `/repos/${owner}/${repo}/pulls/${number}`,
+    token,
+  );
+
+  // GitHub lists at most 3000 files per PR, 100 per page — paginate so
+  // large PRs don't silently lose files past the first page.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const files: any[] = [];
+  for (let page = 1; page <= 30; page++) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ghFetch<any>(`/repos/${owner}/${repo}/pulls/${number}`, token),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ghFetch<any[]>(
-      `/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`,
+    const batch = await ghFetch<any[]>(
+      `/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}`,
       token,
-    ),
-  ]);
+    );
+    files.push(...batch);
+    if (batch.length < 100) break;
+  }
 
   return {
     ...toPRSummary(pr),
@@ -206,16 +216,21 @@ export async function createGitHubReview(
     }
 
     // GitHub's reviews endpoint requires a valid `line` on every comment.
-    // Resolve each comment to a line visible in the diff; drop comments
-    // whose file has no patch data (binary files, etc.).
+    // Resolve each comment to a line visible in the diff; comments that
+    // can't be anchored nearby (or whose file has no patch data) are
+    // folded into the review body rather than relocated or dropped.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const resolved: any[] = [];
+    const unanchored: PRReviewComment[] = [];
 
     for (const c of comments) {
       const validLines = c.path ? patchLinesByPath.get(c.path) : undefined;
-      if (!validLines?.size) continue; // no patch for this file — skip
+      if (!validLines?.size || !c.line) {
+        unanchored.push(c);
+        continue;
+      }
 
-      if (c.line && validLines.has(c.line)) {
+      if (validLines.has(c.line)) {
         // Exact match — use it directly
         resolved.push({
           body: c.body,
@@ -223,8 +238,8 @@ export async function createGitHubReview(
           line: c.line,
           side: c.side ?? 'RIGHT',
         });
-      } else if (c.line) {
-        // Snap to closest visible diff line
+      } else {
+        // Snap to a nearby visible diff line, if one is close enough
         const snapped = snapToValidLine(c.line, validLines);
         if (snapped !== undefined) {
           resolved.push({
@@ -233,23 +248,25 @@ export async function createGitHubReview(
             line: snapped,
             side: c.side ?? 'RIGHT',
           });
-        }
-      } else {
-        // No line provided — pin to first line of the file's diff
-        const first = firstValidLine(validLines);
-        if (first !== undefined) {
-          resolved.push({
-            body: c.body,
-            path: c.path,
-            line: first,
-            side: 'RIGHT',
-          });
+        } else {
+          unanchored.push(c);
         }
       }
     }
 
     if (resolved.length) {
       payload.comments = resolved;
+    }
+    if (unanchored.length) {
+      const lines = unanchored.map((c) => {
+        const loc = c.path
+          ? `\`${c.path}${c.line ? `:${c.line}` : ''}\` — `
+          : '';
+        return `- ${loc}${c.body}`;
+      });
+      payload.body =
+        `${body}\n\n**Additional comments** (outside the visible diff):\n` +
+        lines.join('\n');
     }
   }
   await ghFetch(`/repos/${owner}/${repo}/pulls/${number}/reviews`, token, {

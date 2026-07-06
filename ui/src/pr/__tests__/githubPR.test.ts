@@ -129,6 +129,90 @@ describe('fetchGitHubPRDetail', () => {
     expect(detail.files[0].status).toBe('added');
     expect(detail.body).toBe('desc');
   });
+
+  it('captures base/head SHAs and fork head repo', async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          number: 1,
+          title: 'PR',
+          state: 'open',
+          user: { login: 'a' },
+          html_url: '',
+          created_at: '',
+          updated_at: '',
+          base: { ref: 'main', sha: 'base123', repo: { full_name: 'o/r' } },
+          head: { ref: 'feat', sha: 'head456', repo: { full_name: 'fork/r' } },
+          body: '',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    const detail = await fetchGitHubPRDetail('o', 'r', 1, 'tok');
+    expect(detail.base_sha).toBe('base123');
+    expect(detail.head_sha).toBe('head456');
+    expect(detail.head_repo).toBe('fork/r');
+  });
+
+  it('omits head_repo for same-repo PRs', async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          number: 1,
+          title: 'PR',
+          state: 'open',
+          user: { login: 'a' },
+          html_url: '',
+          created_at: '',
+          updated_at: '',
+          base: { ref: 'main', sha: 'b', repo: { full_name: 'o/r' } },
+          head: { ref: 'feat', sha: 'h', repo: { full_name: 'o/r' } },
+          body: '',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    const detail = await fetchGitHubPRDetail('o', 'r', 1, 'tok');
+    expect(detail.head_repo).toBeUndefined();
+  });
+
+  it('paginates the files listing past 100 entries', async () => {
+    const fileEntry = (i: number) => ({
+      filename: `src/f${i}.ts`,
+      status: 'modified',
+      additions: 1,
+      deletions: 1,
+      patch: '@@',
+    });
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          number: 1,
+          title: 'PR',
+          state: 'open',
+          user: { login: 'a' },
+          html_url: '',
+          created_at: '',
+          updated_at: '',
+          base: { ref: 'main' },
+          head: { ref: 'feat' },
+          body: '',
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(Array.from({ length: 100 }, (_, i) => fileEntry(i))),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(Array.from({ length: 50 }, (_, i) => fileEntry(100 + i))),
+      );
+
+    const detail = await fetchGitHubPRDetail('o', 'r', 1, 'tok');
+    expect(detail.files).toHaveLength(150);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('page=2'),
+      expect.anything(),
+    );
+  });
 });
 
 describe('createGitHubReview', () => {
@@ -139,6 +223,95 @@ describe('createGitHubReview', () => {
       expect.stringContaining('/reviews'),
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  // "@@ -1,3 +5,4 @@" — right side covers lines 5-8
+  const patch = '@@ -1,3 +5,4 @@\n line5\n+line6\n+line7\n line8';
+  const fileDiffs = [
+    {
+      path: 'src/a.ts',
+      status: 'modified' as const,
+      additions: 2,
+      deletions: 0,
+      patch,
+    },
+  ];
+
+  function sentPayload() {
+    const [, init] = mockFetch.mock.calls[0];
+    return JSON.parse(init.body);
+  }
+
+  it('keeps comments on exact diff lines', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 1 }));
+    await createGitHubReview(
+      'o',
+      'r',
+      1,
+      'tok',
+      'body',
+      'COMMENT',
+      [{ body: 'exact', path: 'src/a.ts', line: 6 }],
+      fileDiffs,
+    );
+    expect(sentPayload().comments).toEqual([
+      { body: 'exact', path: 'src/a.ts', line: 6, side: 'RIGHT' },
+    ]);
+  });
+
+  it('snaps comments within 3 lines of the diff', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 1 }));
+    await createGitHubReview(
+      'o',
+      'r',
+      1,
+      'tok',
+      'body',
+      'COMMENT',
+      [
+        { body: 'near', path: 'src/a.ts', line: 10 }, // 2 away from line 8
+      ],
+      fileDiffs,
+    );
+    const payload = sentPayload();
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].line).toBe(8);
+    expect(payload.comments[0].body).toContain('(re: line 10)');
+  });
+
+  it('folds far-away comments into the review body instead of relocating', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 1 }));
+    await createGitHubReview(
+      'o',
+      'r',
+      1,
+      'tok',
+      'body',
+      'COMMENT',
+      [{ body: 'way off', path: 'src/a.ts', line: 200 }],
+      fileDiffs,
+    );
+    const payload = sentPayload();
+    expect(payload.comments).toBeUndefined();
+    expect(payload.body).toContain('Additional comments');
+    expect(payload.body).toContain('`src/a.ts:200` — way off');
+  });
+
+  it('folds comments on files without patch data into the body', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 1 }));
+    await createGitHubReview(
+      'o',
+      'r',
+      1,
+      'tok',
+      'body',
+      'COMMENT',
+      [{ body: 'binary file note', path: 'assets/logo.png', line: 1 }],
+      fileDiffs,
+    );
+    const payload = sentPayload();
+    expect(payload.comments).toBeUndefined();
+    expect(payload.body).toContain('binary file note');
   });
 });
 
