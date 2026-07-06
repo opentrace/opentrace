@@ -1731,6 +1731,17 @@ export class LadybugGraphStore implements GraphStore {
       await this.execInternal(`DROP TABLE IF EXISTS ${type}`);
     }
     await this.execInternal(`DROP TABLE IF EXISTS SourceText`);
+    // NodeVector lives outside SCHEMA_STATEMENTS (created by initVectorSchema).
+    // Dropping it also drops nodevec_idx; leaving it would keep stale embedding
+    // rows that break re-index COPYs (PK violations) and pollute vector search.
+    try {
+      await this.execInternal(`DROP TABLE IF EXISTS NodeVector`);
+      await this.execInternal(
+        'CREATE NODE TABLE IF NOT EXISTS NodeVector(id STRING PRIMARY KEY, vec FLOAT[384])',
+      );
+    } catch {
+      // VECTOR extension may be unavailable — mirrors initVectorSchema
+    }
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
       await this.execInternal(stmt);

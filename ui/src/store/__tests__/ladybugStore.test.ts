@@ -100,6 +100,21 @@ describe('LadybugGraphStore clearGraph abort behavior', () => {
     expect(cyphers).toContain('MATCH (n) RETURN n');
   });
 
+  it('drops and recreates the NodeVector table', async () => {
+    const { store, connQuery } = makeStoreWithMockEngine();
+
+    await store.clearGraph();
+
+    const cyphers = connQuery.mock.calls.map((c: [string]) => c[0]);
+    expect(cyphers).toContain('DROP TABLE IF EXISTS NodeVector');
+    const recreateIdx = cyphers.findIndex((c: string) =>
+      c.includes('CREATE NODE TABLE IF NOT EXISTS NodeVector'),
+    );
+    expect(recreateIdx).toBeGreaterThan(
+      cyphers.indexOf('DROP TABLE IF EXISTS NodeVector'),
+    );
+  });
+
   it('bumps the generation counter on clearGraph', async () => {
     const { store, s } = makeStoreWithMockEngine();
 
