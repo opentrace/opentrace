@@ -162,8 +162,15 @@ function csvEscape(value: string): string {
  *  mishandling of quoted newlines. */
 const COPY_OPTS = `(HEADER=true, PARALLEL=FALSE, ESCAPE='"')`;
 
-/** Format a value for a LadybugDB CSV column based on its type. */
-function csvFormatValue(value: unknown, colType: ColumnType): string {
+/** Format a value for a LadybugDB CSV column based on its type.
+ *
+ *  BOOL and STRING[] values may arrive as strings rather than native
+ *  booleans/arrays: the Parquet export path stringifies every cell
+ *  (`'false'`, `'["a","b"]'`), and importDatabase feeds those strings
+ *  back through here. Treating them as generic truthy values flipped
+ *  every exported `false` to `true` and erased every list column on
+ *  import, so both types decode their string forms explicitly. */
+export function csvFormatValue(value: unknown, colType: ColumnType): string {
   if (value == null || value === '') {
     // LadybugDB treats empty quoted strings as empty; use defaults per type
     if (colType === 'INT32') return csvEscape('0');
@@ -173,14 +180,28 @@ function csvFormatValue(value: unknown, colType: ColumnType): string {
     return csvEscape('');
   }
   if (colType === 'STRING[]') {
-    const arr = Array.isArray(value) ? value : [];
+    let arr: unknown[] = [];
+    if (Array.isArray(value)) {
+      arr = value;
+    } else if (typeof value === 'string') {
+      // JSON-encoded array from the Parquet export path. Legacy archives
+      // hold comma-joined `String(arr)` output — split as a best effort
+      // (elements containing commas are not recoverable from that form).
+      try {
+        const parsed: unknown = JSON.parse(value);
+        arr = Array.isArray(parsed) ? parsed : value.split(',');
+      } catch {
+        arr = value.split(',');
+      }
+    }
     // LadybugDB CSV array format: ["a","b","c"]
     return csvEscape(
       '[' + arr.map((v: unknown) => JSON.stringify(String(v))).join(',') + ']',
     );
   }
   if (colType === 'BOOL') {
-    return csvEscape(value ? 'true' : 'false');
+    const bool = typeof value === 'string' ? value === 'true' : Boolean(value);
+    return csvEscape(bool ? 'true' : 'false');
   }
   return csvEscape(String(value));
 }
@@ -482,6 +503,15 @@ function safeJsonParse(
   }
 }
 
+/** Stringify one cell for the all-Utf8 Parquet export schema. Arrays are
+ *  JSON-encoded so csvFormatValue can decode them losslessly on import —
+ *  `String(['a','b'])` gives `'a,b'`, which is ambiguous for elements
+ *  containing commas. Booleans/numbers round-trip fine via String(). */
+export function parquetCellValue(value: unknown): string {
+  if (Array.isArray(value)) return JSON.stringify(value.map(String));
+  return String(value ?? '');
+}
+
 /** Convert an array of row objects to Parquet bytes via Arrow IPC → parquet-wasm. */
 async function rowsToParquet(
   rows: Record<string, unknown>[],
@@ -493,7 +523,7 @@ async function rowsToParquet(
   const children = columns.map(
     (col) =>
       vectorFromArray(
-        rows.map((r) => String(r[col] ?? '')),
+        rows.map((r) => parquetCellValue(r[col])),
         new Utf8(),
       ).data[0],
   );

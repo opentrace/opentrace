@@ -15,7 +15,12 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LadybugGraphStore, REL_PAIRS } from '../ladybugStore';
+import {
+  LadybugGraphStore,
+  REL_PAIRS,
+  csvFormatValue,
+  parquetCellValue,
+} from '../ladybugStore';
 
 describe('REL_PAIRS', () => {
   it('has no duplicate FROM→TO pairs', () => {
@@ -49,6 +54,50 @@ function makeStoreWithMockEngine() {
   s.ready = Promise.resolve();
   return { store, s, connQuery: engineCall };
 }
+
+describe('Parquet export → import round-trip fidelity', () => {
+  // exportDatabase stringifies every cell via parquetCellValue and
+  // importDatabase feeds the strings back through csvFormatValue.
+  // Regression: `false` flipped to `true` (truthy non-empty string) and
+  // STRING[] columns were erased (string failed Array.isArray).
+
+  it('round-trips BOOL false', () => {
+    expect(csvFormatValue(parquetCellValue(false), 'BOOL')).toBe('"false"');
+    expect(csvFormatValue(parquetCellValue(true), 'BOOL')).toBe('"true"');
+  });
+
+  it('still accepts native booleans', () => {
+    expect(csvFormatValue(false, 'BOOL')).toBe('"false"');
+    expect(csvFormatValue(true, 'BOOL')).toBe('"true"');
+  });
+
+  it('round-trips STRING[] values', () => {
+    const cell = parquetCellValue(['Base', 'Mixin']);
+    expect(csvFormatValue(cell, 'STRING[]')).toBe('"[""Base"",""Mixin""]"');
+    expect(csvFormatValue(parquetCellValue([]), 'STRING[]')).toBe('"[]"');
+  });
+
+  it('round-trips STRING[] elements containing commas and quotes', () => {
+    const arr = ['Map<string, number>', 'a"b'];
+    // The string form coming back from Parquet must format identically to
+    // the native array a fresh index would produce.
+    expect(csvFormatValue(parquetCellValue(arr), 'STRING[]')).toBe(
+      csvFormatValue(arr, 'STRING[]'),
+    );
+  });
+
+  it('best-effort splits legacy comma-joined STRING[] exports', () => {
+    // Old archives hold String(['a','b']) → 'a,b'
+    expect(csvFormatValue('Base,Mixin', 'STRING[]')).toBe(
+      '"[""Base"",""Mixin""]"',
+    );
+  });
+
+  it('round-trips numeric columns via String()', () => {
+    expect(csvFormatValue(parquetCellValue(42), 'INT32')).toBe('"42"');
+    expect(csvFormatValue(parquetCellValue(null), 'INT32')).toBe('"0"');
+  });
+});
 
 describe('LadybugGraphStore clearGraph abort behavior', () => {
   it('aborts queued query()/exec() tasks when clearGraph fires', async () => {
