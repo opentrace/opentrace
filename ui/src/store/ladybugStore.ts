@@ -591,6 +591,13 @@ export class LadybugGraphStore implements GraphStore {
    *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
   private flushedPackageIds = new Set<string>();
   private flushedSourceIds = new Set<string>();
+  /** Dirty set: snippet ids added by storeSource and not yet flushed to the
+   *  SourceText table. Lets flushInner skip the SourceText stage outright
+   *  when nothing new arrived — previously EVERY flush re-scanned ALL of
+   *  sourceSnippets (~15k entries on Grafana) against flushedSourceIds.
+   *  Ids are removed only when their chunk COPY succeeds, so failed chunks
+   *  stay dirty and retry on the next flush (same retry contract). */
+  private pendingSnippetIds = new Set<string>();
 
   // --- Visualization limits ---
   // Match SettingsDrawer's DEFAULT_MAX_* and serverStore. Kept above typical
@@ -1808,6 +1815,7 @@ export class LadybugGraphStore implements GraphStore {
     this.nodeCache.clear();
     this.flushedPackageIds.clear();
     this.flushedSourceIds.clear();
+    this.pendingSnippetIds.clear();
     this.sourceCache.clear();
     this.sourceSnippets.clear();
     this.pendingNodes = [];
@@ -1930,6 +1938,9 @@ export class LadybugGraphStore implements GraphStore {
     }
     for (const id of [...this.flushedSourceIds]) {
       if (matches(id)) this.flushedSourceIds.delete(id);
+    }
+    for (const id of [...this.pendingSnippetIds]) {
+      if (matches(id)) this.pendingSnippetIds.delete(id);
     }
 
     await this.sweepOrphanedDependencies();
@@ -2661,10 +2672,26 @@ export class LadybugGraphStore implements GraphStore {
     }
 
     // --- Flush source text for FTS indexing (file-level only) ---
-    // Only flush snippets not yet in the SourceText table (avoid PK violations)
+    // Only flush snippets not yet in the SourceText table (avoid PK
+    // violations). Driven by the pendingSnippetIds dirty set so a flush
+    // with no new source (the common case — many node flushes per source
+    // load) skips this stage without scanning every stored snippet.
+    // Iteration order matches the old full-map scan: ids enter the dirty
+    // set in sourceSnippets insertion order and leave only on COPY success.
     const newSnippets = new Map<string, string>();
-    for (const [id, text] of this.sourceSnippets) {
-      if (!this.flushedSourceIds.has(id)) {
+    if (this.pendingSnippetIds.size > 0) {
+      for (const id of this.pendingSnippetIds) {
+        if (this.flushedSourceIds.has(id)) {
+          // Already in SourceText (a re-stored id) — never re-COPY it.
+          this.pendingSnippetIds.delete(id);
+          continue;
+        }
+        const text = this.sourceSnippets.get(id);
+        if (text === undefined) {
+          // Snippet removed since it was queued (deleteRepo) — drop it.
+          this.pendingSnippetIds.delete(id);
+          continue;
+        }
         newSnippets.set(id, text);
       }
     }
@@ -2686,9 +2713,11 @@ export class LadybugGraphStore implements GraphStore {
           );
           // Mark per chunk (not all-at-end) so a later chunk's failure
           // doesn't leave already-written rows unmarked — re-COPYing them
-          // next flush would trip PK violations.
+          // next flush would trip PK violations. Failed chunks keep their
+          // ids in pendingSnippetIds and retry on the next flush.
           for (const [id] of slice) {
             this.flushedSourceIds.add(id);
+            this.pendingSnippetIds.delete(id);
           }
         }
       } catch (err) {
@@ -2842,6 +2871,7 @@ export class LadybugGraphStore implements GraphStore {
           f.id,
           f.content.slice(0, MAX_SOURCE_TEXT_CHARS),
         );
+        this.pendingSnippetIds.add(f.id);
       }
     }
   }

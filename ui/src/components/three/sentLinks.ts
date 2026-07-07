@@ -25,6 +25,7 @@
  */
 
 import type { GraphLink } from '../graph/types';
+import type { AppendTracker } from './appendPrefix';
 
 /** Renderer-side link identity — must match the `edgeKeySet` keys built in
  *  ThreeRenderer.buildEdges / appendLiveEdges. */
@@ -42,13 +43,29 @@ export function renderLinkKey(link: GraphLink): string {
 
 /** Return the links whose key is not yet in `sent`, recording them as sent.
  *  A plain set (not a multiset) suffices here because the renderer dedups
- *  multi-edges by this same key anyway. */
+ *  multi-edges by this same key anyway.
+ *
+ *  `tracker` (optional) enables the append fast path: when `links` provably
+ *  extends the array processed by the previous call, the prefix is skipped —
+ *  every call scans its whole region into `sent`, so all prefix keys are
+ *  already there and re-scanning them can only produce skips. The per-link
+ *  `sent.has` check is kept on the suffix, so even a key that re-appears is
+ *  still deduped — the fast path only skips work, never changes the output.
+ *  Callers must reset the tracker whenever `sent` is replaced/cleared, and
+ *  must not share one tracker across different `sent` sets. */
 export function takeUnsentRenderLinks(
   links: GraphLink[],
   sent: Set<string>,
+  tracker?: AppendTracker<GraphLink>,
 ): GraphLink[] {
+  let start = 0;
+  if (tracker) {
+    const suffix = tracker.suffixStart(links);
+    if (suffix > 0) start = suffix;
+  }
   const out: GraphLink[] = [];
-  for (const link of links) {
+  for (let i = start; i < links.length; i++) {
+    const link = links[i];
     const key = renderLinkKey(link);
     if (sent.has(key)) continue;
     sent.add(key);

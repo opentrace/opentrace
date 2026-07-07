@@ -76,3 +76,12 @@ export const GRAPH_SETTING_DEFAULTS = {
 
 /** Shape of {@link GRAPH_SETTING_DEFAULTS}. */
 export type GraphSettingDefaults = typeof GRAPH_SETTING_DEFAULTS;
+
+/**
+ * Past this many edges the edge cloud makes the graph unreadable, so the
+ * viewer hides edges by default on load (visual only — the force layout
+ * still uses every edge, and the user can re-enable them at any time).
+ * The auto-hide is a per-load overlay on top of `edgesVisible`; it is
+ * never written to the persisted settings, so small graphs are unaffected.
+ */
+export const LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD = 20_000;

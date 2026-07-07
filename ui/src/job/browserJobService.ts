@@ -421,13 +421,24 @@ export class BrowserJobService implements JobService {
         if (cancelled) return;
       }
 
-      this.store.storeSource(
-        repoTree.files.map((f) => ({
-          id: `${repoId}/${f.path}`,
-          path: f.path,
-          content: f.content,
-        })),
-      );
+      // Store source files for UI code viewing — in bounded chunks with an
+      // event-loop yield between them. One repo-sized call meant one giant
+      // synchronous pass in the store (per-file compression on the
+      // main-thread store; one huge structured-clone-retaining pump segment
+      // on the worker store) that froze the tab on Grafana-scale corpora.
+      // Call order = file order, so the store's internal chunk pump sees
+      // exactly the same file sequence as a single call.
+      const SOURCE_STORE_CHUNK = 500;
+      for (let i = 0; i < repoTree.files.length; i += SOURCE_STORE_CHUNK) {
+        this.store.storeSource(
+          repoTree.files.slice(i, i + SOURCE_STORE_CHUNK).map((f) => ({
+            id: `${repoId}/${f.path}`,
+            path: f.path,
+            content: f.content,
+          })),
+        );
+        await new Promise((r) => setTimeout(r, 0));
+      }
 
       // 3. Run scanning stage (builds structural graph + lookup maps)
       debug.log('scanning', 'starting');
@@ -820,7 +831,11 @@ export class BrowserJobService implements JobService {
         });
         await this.store.flush();
         persistedNodes += nodes.length;
-        pushGraphDelta(nodes, []);
+        // No live-stream re-push here: every drained node was already
+        // streamed (structural seeds up front; symbols + new Dependency
+        // nodes via flushLiveBatch as they were parsed), and the consumer
+        // (useGraphData pushLiveBatch) drops already-seen ids — the
+        // duplicate delivery was pure event/allocation overhead.
       };
 
       /** Drain buffered relationships from the store stage and persist them. */
@@ -935,6 +950,16 @@ export class BrowserJobService implements JobService {
                   phase,
                   message: `Finalizing ${event.stage}`,
                 });
+              }
+              // Pre-compute call resolution in event-loop-yielding slices
+              // BEFORE advancing the generator: the generator's next() runs
+              // resolveStage.flush() synchronously, and at Grafana scale a
+              // single resolveCalls pass over allCallInfo froze the main
+              // thread for seconds. The registries are complete here (all
+              // ticks processed), so the sliced result is byte-identical
+              // and flush() just returns it.
+              if (event.stage === 'resolve') {
+                await resolveStage.resolveSliced(() => cancelled);
               }
               break;
             }

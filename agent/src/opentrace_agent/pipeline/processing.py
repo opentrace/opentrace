@@ -51,6 +51,7 @@ from opentrace_agent.sources.code.import_analyzer import (
     analyze_go_imports,
     analyze_python_imports,
     analyze_typescript_imports,
+    build_go_dir_index,
     package_source_url,
 )
 
@@ -94,6 +95,12 @@ def processing(
         message=f"Processing {total} files",
         detail=ProgressDetail(current=0, total=total),
     )
+
+    # Precompute the Go package-directory index once per repo. Resolving a Go
+    # import against it is O(path depth) instead of O(|known_paths|) per
+    # import spec — the per-import full scan was ~5e8 iterations (minutes) on
+    # Grafana-scale repos (~15k files, ~6k Go).
+    go_dir_index = build_go_dir_index(scan.known_paths)
 
     registries = Registries()
     call_infos: list[CallInfo] = []
@@ -154,6 +161,7 @@ def processing(
                     file_path,
                     scan.known_paths,
                     scan.go_module_path,
+                    go_dir_index=go_dir_index,
                 )
                 # Internal imports → registry + IMPORTS rels
                 if import_result.internal:
@@ -282,12 +290,13 @@ def _analyze_imports_from_node(
     file_path: str,
     known_paths: set[str],
     go_module_path: str | None = None,
+    go_dir_index: dict[str, str] | None = None,
 ) -> ImportResult:
     """Run language-specific import analysis using the already-parsed root node."""
     if language == "python":
         return analyze_python_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     elif language == "go":
-        return analyze_go_imports(root_node, known_paths, go_module_path)  # type: ignore[arg-type]
+        return analyze_go_imports(root_node, known_paths, go_module_path, dir_index=go_dir_index)  # type: ignore[arg-type]
     elif language in ("typescript", "javascript"):
         return analyze_typescript_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     return ImportResult()

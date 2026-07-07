@@ -32,7 +32,7 @@ import {
   useState,
 } from 'react';
 
-import type { GetSubTypeFn } from './graph/types';
+import type { GetSubTypeFn, GraphLink, GraphNode } from './graph/types';
 import type { GraphCanvasHandle, GraphCanvasProps } from './types/canvas';
 import { useCommunities } from './graph/useCommunities';
 import { useHighlights } from './graph/useHighlights';
@@ -40,6 +40,7 @@ import { shouldHideNode } from './graph/useGraphFilters';
 import { useThemeKey } from './graph/useThemeKey';
 import { DEFAULT_LAYOUT_CONFIG } from './config/graphLayout';
 import { ThreeRenderer } from './three/ThreeRenderer';
+import { AppendTracker } from './three/appendPrefix';
 import { takeUnsentRenderLinks } from './three/sentLinks';
 import { useForceLayout3d } from './three/useForceLayout3d';
 
@@ -142,16 +143,48 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const activeHighlightNodes = highlightNodesProp ?? computedHighlightNodes;
     const activeHighlightLinks = highlightLinksProp ?? computedHighlightLinks;
 
+    // Node colors: recomputed in full whenever a color INPUT changes (mode,
+    // communities, config, theme); when only `nodes` grew by append (live
+    // indexing — concat preserves prefix element identity) the map is
+    // EXTENDED in place with just the new nodes. Existing entries can't
+    // change in that case (same inputs → same deterministic color), so the
+    // contents are identical to a full recompute. Keeping the SAME map
+    // identity on the append path is deliberate: it stops the
+    // [dataVersion, nodeColors] repaint effect from re-firing per batch —
+    // appendLiveData already colors the new nodes from this same map, so
+    // that repaint was a value-identical no-op.
+    const nodeColorsCacheRef = useRef<{
+      map: Map<string, string>;
+      colorMode: typeof colorMode;
+      communityData: typeof communityData;
+      layoutConfig: typeof layoutConfig;
+      themeKey: string;
+      byCommunity: boolean;
+    } | null>(null);
+    const nodeColorsTrackerRef = useRef(new AppendTracker<GraphNode>());
     const nodeColors = useMemo(() => {
-      const colors = new Map<string, string>();
       const { assignments, colorMap } = communityData;
+      const cache = nodeColorsCacheRef.current;
+      const suffix = nodeColorsTrackerRef.current.suffixStart(nodes);
+      const appendOnly =
+        suffix >= 0 &&
+        cache !== null &&
+        cache.colorMode === colorMode &&
+        cache.communityData === communityData &&
+        cache.layoutConfig === layoutConfig &&
+        cache.themeKey === themeKey;
       // Community colors need community data: with communities toggled OFF
       // (or not yet computed) the assignments are empty and every node would
       // hit the gray fallback — fall back to TYPE colors instead of a gray
       // graph. Flipping communities back on restores community colors.
-      const byCommunity =
-        colorMode === 'community' && Object.keys(assignments).length > 0;
-      for (const node of nodes) {
+      // (Reused on append: Object.keys over 100k assignments per batch is
+      // exactly the kind of per-batch rescan the append path avoids.)
+      const byCommunity = appendOnly
+        ? cache.byCommunity
+        : colorMode === 'community' && Object.keys(assignments).length > 0;
+      const colors = appendOnly ? cache.map : new Map<string, string>();
+      for (let i = appendOnly ? suffix : 0; i < nodes.length; i++) {
+        const node = nodes[i];
         if (byCommunity) {
           colors.set(
             node.id,
@@ -161,19 +194,45 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           colors.set(node.id, layoutConfig.getNodeColor(node.type));
         }
       }
+      nodeColorsCacheRef.current = {
+        map: colors,
+        colorMode,
+        communityData,
+        layoutConfig,
+        themeKey,
+        byCommunity,
+      };
       return colors;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [nodes, colorMode, communityData, layoutConfig, themeKey]);
 
+    // Link colors are keyed by LABEL and deterministic per (config, theme),
+    // so an append can only ADD labels — extend the map from the suffix
+    // instead of rescanning every link per streamed batch. Same stable-map
+    // identity rationale as nodeColors: appendLiveEdges colors new edges from
+    // this map, making the per-batch updateLinkColors repaint value-identical.
+    const linkColorsCacheRef = useRef<{
+      map: Map<string, string>;
+      layoutConfig: typeof layoutConfig;
+      themeKey: string;
+    } | null>(null);
+    const linkColorsTrackerRef = useRef(new AppendTracker<GraphLink>());
     const linkColors = useMemo(() => {
-      const colors = new Map<string, string>();
-      for (const link of links) {
+      const cache = linkColorsCacheRef.current;
+      const suffix = linkColorsTrackerRef.current.suffixStart(links);
+      const appendOnly =
+        suffix >= 0 &&
+        cache !== null &&
+        cache.layoutConfig === layoutConfig &&
+        cache.themeKey === themeKey;
+      const colors = appendOnly ? cache.map : new Map<string, string>();
+      for (let i = appendOnly ? suffix : 0; i < links.length; i++) {
+        const link = links[i];
         if (!colors.has(link.label)) {
           colors.set(link.label, layoutConfig.getLinkColor(link.label));
         }
       }
+      linkColorsCacheRef.current = { map: colors, layoutConfig, themeKey };
       return colors;
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [links, layoutConfig, themeKey]);
 
     const onLayoutTick = useCallback(
@@ -295,33 +354,72 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     // arrived in earlier batches — an endpoint-membership filter never sends
     // those. Reset whenever the renderer does a full setData.
     const sentLinkKeysRef = useRef<Set<string>>(new Set());
+    // Append fast path (live indexing): nodes/links grow by concat, so when
+    // the prefix is element-identical only the suffix needs diffing. The
+    // trackers gate that; any non-append transition (reload, filter rebuild,
+    // shrink) fails their check and takes the full-rescan path below.
+    const nodesTrackerRef = useRef(new AppendTracker<GraphNode>());
+    const linksTrackerRef = useRef(new AppendTracker<GraphLink>());
     useEffect(() => {
       if (!layoutReady || !rendererRef.current) return;
 
-      const currentIds = new Set(nodes.map((n) => n.id));
       const prevIds = prevNodeIdsRef.current;
-      const allPrevPresent =
-        prevIds.size > 0 && [...prevIds].every((id) => currentIds.has(id));
-      const isIncremental = allPrevPresent && currentIds.size > prevIds.size;
-      const isSameNodes = allPrevPresent && currentIds.size === prevIds.size;
+      const prevSize = prevIds.size;
+      const suffixStart = nodesTrackerRef.current.suffixStart(nodes);
+      let allPrevPresent: boolean;
+      let currentSize: number;
+      let newNodes: GraphNode[];
+      if (suffixStart >= 0) {
+        // [0, suffixStart) is the previous array — its ids are exactly
+        // `prevIds`, so every previous node is present and only the suffix
+        // can contain new ones. Extend the id set in place (contents end up
+        // identical to a from-scratch rebuild).
+        newNodes = [];
+        for (let i = suffixStart; i < nodes.length; i++) {
+          const n = nodes[i];
+          if (!prevIds.has(n.id)) {
+            prevIds.add(n.id);
+            newNodes.push(n);
+          }
+        }
+        allPrevPresent = prevSize > 0;
+        currentSize = prevIds.size;
+      } else {
+        const currentIds = new Set(nodes.map((n) => n.id));
+        allPrevPresent =
+          prevSize > 0 && [...prevIds].every((id) => currentIds.has(id));
+        currentSize = currentIds.size;
+        newNodes =
+          allPrevPresent && currentSize > prevSize
+            ? nodes.filter((n) => !prevIds.has(n.id))
+            : [];
+        prevNodeIdsRef.current = currentIds;
+      }
+      const isIncremental = allPrevPresent && currentSize > prevSize;
+      const isSameNodes = allPrevPresent && currentSize === prevSize;
 
-      prevNodeIdsRef.current = currentIds;
-
-      const posSnapshot = new Map(positions);
       let cancelled = false;
 
       // Live-build: once the first batch has built the (over-allocated) geometry,
       // every subsequent change appends the delta in place — no geometry rebuild,
       // so the build stays continuous + high-FPS. Pass the FULL graph; the
       // renderer diffs against what it holds (also catching late-arriving edges).
-      if (liveGrow && allPrevPresent && prevIds.size > 0) {
+      if (liveGrow && allPrevPresent) {
         // appendLiveData dedups internally (edgeKeySet); record the keys here
         // too so the sent-set stays in sync for any later non-live update.
-        takeUnsentRenderLinks(links, sentLinkKeysRef.current);
+        takeUnsentRenderLinks(
+          links,
+          sentLinkKeysRef.current,
+          linksTrackerRef.current,
+        );
+        // No posSnapshot copy here: appendLiveData is synchronous, reads
+        // `positions` only for the nodes it appends, and retains no reference
+        // to the map — and worker position messages can't land mid-call — so
+        // it observes exactly the values a snapshot would have carried.
         rendererRef.current.appendLiveData(
           nodes,
           links,
-          posSnapshot,
+          positions,
           nodeColors,
           nodeSizes,
           linkColors,
@@ -332,13 +430,17 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       if (isSameNodes) {
         // A flush can carry ONLY new links (resolve-stage edges between
         // already-present nodes) — they must still reach the renderer.
-        const lateLinks = takeUnsentRenderLinks(links, sentLinkKeysRef.current);
+        const lateLinks = takeUnsentRenderLinks(
+          links,
+          sentLinkKeysRef.current,
+          linksTrackerRef.current,
+        );
         if (lateLinks.length === 0) return;
         rendererRef.current
           .addData(
             [],
             lateLinks,
-            posSnapshot,
+            new Map(positions),
             nodeColors,
             nodeSizes,
             linkColors,
@@ -347,13 +449,16 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
             if (!cancelled) setDataVersion((v) => v + 1);
           });
       } else if (isIncremental) {
-        const newNodes = nodes.filter((n) => !prevIds.has(n.id));
-        const newLinks = takeUnsentRenderLinks(links, sentLinkKeysRef.current);
+        const newLinks = takeUnsentRenderLinks(
+          links,
+          sentLinkKeysRef.current,
+          linksTrackerRef.current,
+        );
         rendererRef.current
           .addData(
             newNodes,
             newLinks,
-            posSnapshot,
+            new Map(positions),
             nodeColors,
             nodeSizes,
             linkColors,
@@ -362,10 +467,25 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
             if (!cancelled) setDataVersion((v) => v + 1);
           });
       } else {
+        // Full rebuild: fresh sent-set ⇒ the links tracker MUST reset with it
+        // (its fast path assumes the previous array was scanned into the same
+        // set).
         sentLinkKeysRef.current = new Set();
-        takeUnsentRenderLinks(links, sentLinkKeysRef.current);
+        linksTrackerRef.current.reset();
+        takeUnsentRenderLinks(
+          links,
+          sentLinkKeysRef.current,
+          linksTrackerRef.current,
+        );
         rendererRef.current
-          .setData(nodes, links, posSnapshot, nodeColors, nodeSizes, linkColors)
+          .setData(
+            nodes,
+            links,
+            new Map(positions),
+            nodeColors,
+            nodeSizes,
+            linkColors,
+          )
           .then(() => {
             if (!cancelled) setDataVersion((v) => v + 1);
           });

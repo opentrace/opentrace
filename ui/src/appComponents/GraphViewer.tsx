@@ -51,6 +51,7 @@ import {
   GRAPH_SETTING_DEFAULTS,
 } from '../hooks/useGraphViewer';
 import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
+import { LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD } from '../config/graphSettingDefaults';
 import ExportModal from './ExportModal';
 import {
   EmptyStateHeader,
@@ -266,6 +267,52 @@ const GraphViewer = memo(
         communityData,
       } = useGraphInteraction();
 
+      // ── Large-graph edge auto-hide ─────────────────────────────────
+      // Past LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD edges the edge cloud makes
+      // the graph unreadable, so edges start hidden (visual only — the force
+      // layout still uses every edge). This is a per-load overlay on top of
+      // the persisted `edgesVisible` preference, never written to storage,
+      // so small graphs keep the user's stored choice. A user re-enable
+      // (pill or physics panel) sticks for as long as the large graph is on
+      // screen — including the authoritative reload at the end of a live
+      // build — and everything resets once a smaller graph loads.
+      const [edgesAutoHidden, setEdgesAutoHidden] = useState(false);
+      const [edgePillDismissed, setEdgePillDismissed] = useState(false);
+      const edgesAutoHiddenRef = useRef(false);
+      const edgesUserOverrideRef = useRef(false);
+      useEffect(() => {
+        const large =
+          graphData.links.length > LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD;
+        const next = large && !edgesUserOverrideRef.current;
+        if (!large) {
+          edgesUserOverrideRef.current = false;
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- derived overlay flag, guarded setter
+          setEdgePillDismissed(false);
+        }
+        edgesAutoHiddenRef.current = next;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- derived overlay flag, guarded setter
+        setEdgesAutoHidden((prev) => (prev === next ? prev : next));
+      }, [graphData.links.length]);
+
+      const effectiveEdgesVisible = v.settings.edgesVisible && !edgesAutoHidden;
+      /** User-initiated edge toggle: clears the auto-hide overlay for this
+       *  large graph before applying the (persisted) preference. Accepts
+       *  functional updaters (the physics panel's prop is a state setter);
+       *  they resolve against the EFFECTIVE visibility the panel displays. */
+      const setEdgesVisibleUser = useCallback(
+        (action: React.SetStateAction<boolean>) => {
+          const current =
+            v.settings.edgesVisible && !edgesAutoHiddenRef.current;
+          const visible =
+            typeof action === 'function' ? action(current) : action;
+          edgesUserOverrideRef.current = true;
+          edgesAutoHiddenRef.current = false;
+          setEdgesAutoHidden(false);
+          v.settings.setEdgesVisible(visible);
+        },
+        [v.settings],
+      );
+
       // ── View presets ───────────────────────────────────────────────
       const [activePresetId, setActivePresetId] = useState<string | null>(
         () => {
@@ -336,7 +383,9 @@ const GraphViewer = memo(
           c?.setZoomSizeExponent?.(s.zoomSizeExponent);
           c?.setLabelScale?.(s.labelScale / 100);
           c?.setShowLabels?.(s.labelsVisible);
-          c?.setEdgesEnabled?.(s.edgesVisible);
+          // Preset edgesVisible is a stored preference; the large-graph
+          // auto-hide overlay stays in force until the user toggles edges.
+          c?.setEdgesEnabled?.(s.edgesVisible && !edgesAutoHiddenRef.current);
           c?.setShowCommunityLabels?.(s.communityLabelsVisible);
           // 3. Nebula is a worker-internal layout toggled separately;
           //    enabling it seeds + restarts the sim itself.
@@ -913,7 +962,7 @@ const GraphViewer = memo(
             onStageClick={v.onStageClick}
             onNodeHover={onNodeHover}
             labelsVisible={v.settings.labelsVisible}
-            edgesEnabled={v.settings.edgesVisible}
+            edgesEnabled={effectiveEdgesVisible}
             communityLabelsVisible={v.settings.communityLabelsVisible}
             layoutMode={v.settings.layoutMode}
             zoomSizeExponent={v.settings.pixiZoomExponent}
@@ -944,6 +993,32 @@ const GraphViewer = memo(
           )}
 
           <NodeHoverCard info={hoverInfo} />
+
+          {/* Large-graph notice: edges started hidden for readability. The
+              pill re-enables them in place; the × hides just the notice. */}
+          {edgesAutoHidden && !edgePillDismissed && (
+            <div className="graph-edges-hidden-pill" role="status">
+              <span>
+                Edges hidden ({graphData.links.length.toLocaleString()}) to keep
+                this large graph readable
+              </span>
+              <button
+                type="button"
+                className="graph-edges-hidden-pill__show"
+                onClick={() => setEdgesVisibleUser(true)}
+              >
+                Show edges
+              </button>
+              <button
+                type="button"
+                className="graph-edges-hidden-pill__dismiss"
+                aria-label="Dismiss"
+                onClick={() => setEdgePillDismissed(true)}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {/* Fetch-phase placeholder: a job is running but nothing has streamed
               into the canvas yet (initializing / fetching the archive), so the
@@ -978,8 +1053,8 @@ const GraphViewer = memo(
               setRepulsion={v.settings.setRepulsion}
               labelsVisible={v.settings.labelsVisible}
               setLabelsVisible={v.settings.setLabelsVisible}
-              edgesVisible={v.settings.edgesVisible}
-              setEdgesVisible={v.settings.setEdgesVisible}
+              edgesVisible={effectiveEdgesVisible}
+              setEdgesVisible={setEdgesVisibleUser}
               communityLabelsVisible={v.settings.communityLabelsVisible}
               setCommunityLabelsVisible={v.settings.setCommunityLabelsVisible}
               communitiesEnabled={v.settings.communitiesEnabled}
@@ -1075,7 +1150,9 @@ const GraphViewer = memo(
               c?.set3DTilt?.(D.mode3dTilt / 100);
               c?.set3DAutoRotate?.(true);
               c?.setShowLabels?.(D.labelsVisible);
-              c?.setEdgesEnabled?.(D.edgesVisible);
+              c?.setEdgesEnabled?.(
+                D.edgesVisible && !edgesAutoHiddenRef.current,
+              );
               c?.setShowCommunityLabels?.(D.communityLabelsVisible);
               // 3. Reheat physics + reset camera (the original behaviour).
               c?.reheat?.();

@@ -25,6 +25,7 @@ from opentrace_agent.sources.code.import_analyzer import (
     analyze_go_imports,
     analyze_python_imports,
     analyze_typescript_imports,
+    build_go_dir_index,
 )
 
 
@@ -220,6 +221,79 @@ import (
         known = {"internal/store/store.go"}
         result = analyze_go_imports(_parse_go(source), known, go_module_path="myproject")
         assert result.internal.get("store") == "internal/store/store.go"
+
+    def test_multi_candidate_same_dir_is_deterministic(self):
+        """Several files in the matching package dir: the lexicographically
+        smallest resolves.
+
+        The old full scan returned whichever file came first in
+        set-iteration order — str-hash dependent, so it varied between
+        processes (PYTHONHASHSEED isn't pinned). The indexed lookup replaces
+        that nondeterminism with a stable pick."""
+        source = b'package main\n\nimport "myproject/internal/store"\n'
+        known = {f"internal/store/file_{i:02d}.go" for i in range(20)}
+        for _ in range(3):
+            result = analyze_go_imports(_parse_go(source), known)
+            assert result.internal.get("store") == "internal/store/file_00.go"
+
+    def test_multi_candidate_across_dirs_is_deterministic(self):
+        """Both ``internal/store`` (full suffix of the import path) and
+        ``store`` (its last segment) match; the smallest matching file path
+        wins deterministically."""
+        source = b'package main\n\nimport "myproject/internal/store"\n'
+        known = {"store/z.go", "internal/store/a.go"}
+        result = analyze_go_imports(_parse_go(source), known)
+        assert result.internal.get("store") == "internal/store/a.go"
+
+    def test_non_go_file_in_package_dir_still_resolves(self):
+        """Parity: matching never filtered by extension, so a known non-Go
+        file in the package directory resolves the import (unlike the TS
+        mirror, which indexes only .go files)."""
+        source = b'package main\n\nimport "myproject/internal/store"\n'
+        known = {"internal/store/schema.sql"}
+        result = analyze_go_imports(_parse_go(source), known)
+        assert result.internal.get("store") == "internal/store/schema.sql"
+
+    def test_module_root_import_resolves_to_repo_root_file(self):
+        """Importing the module path itself matches files at the repo root
+        (module-prefix strip yields an empty relative dir)."""
+        source = b'package main\n\nimport "github.com/me/proj"\n'
+        known = {"main.go"}
+        result = analyze_go_imports(_parse_go(source), known, go_module_path="github.com/me/proj")
+        assert result.internal.get("proj") == "main.go"
+
+    def test_prebuilt_dir_index_matches_on_the_fly(self):
+        """Passing a precomputed dir index (the pipeline path) must produce
+        the same result as building it inside analyze_go_imports."""
+        source = b"""\
+package main
+
+import (
+\t"myproject/internal/store"
+\t"myproject/pkg/api"
+\t"github.com/gorilla/mux"
+)
+"""
+        known = {"internal/store/store.go", "pkg/api/api.go", "main.go"}
+        idx = build_go_dir_index(known)
+        without_idx = analyze_go_imports(_parse_go(source), known)
+        with_idx = analyze_go_imports(_parse_go(source), known, dir_index=idx)
+        assert with_idx.internal == without_idx.internal
+        assert with_idx.external == without_idx.external
+        assert with_idx.internal.get("store") == "internal/store/store.go"
+        assert with_idx.internal.get("api") == "pkg/api/api.go"
+        assert with_idx.external.get("github.com/gorilla/mux") == "pkg:go:github.com/gorilla/mux"
+
+
+class TestBuildGoDirIndex:
+    def test_maps_dir_to_lexicographically_smallest_file(self):
+        idx = build_go_dir_index({"a/b.go", "a/a.go", "top.go"})
+        assert idx["a"] == "a/a.go"
+        assert idx[""] == "top.go"
+
+    def test_indexes_all_extensions(self):
+        idx = build_go_dir_index({"pkg/schema.sql", "pkg/store.go"})
+        assert idx["pkg"] == "pkg/schema.sql"
 
 
 class TestTypeScriptImports:

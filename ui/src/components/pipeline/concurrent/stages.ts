@@ -31,7 +31,11 @@ import type {
   GraphRelationship,
   ScanResult,
 } from '../types';
-import type { Registries, CallInfo } from '../parser/callResolver';
+import type {
+  Registries,
+  CallInfo,
+  ResolvedCall,
+} from '../parser/callResolver';
 import {
   resolveCalls,
   resolvedCallsToRelationships,
@@ -395,15 +399,24 @@ export class ExtractStage implements INodeStage {
 
 // --- ResolveStage ---
 
+/** CallInfo entries resolved per slice in {@link ResolveStage.resolveSliced}. */
+export const RESOLVE_SLICE_SIZE = 2000;
+
 /**
  * Call resolution stage. Per-node processing is a passthrough since
  * resolution requires the complete symbol registry.
  *
  * All real work happens in flush(): bulk-resolves all accumulated
- * calls using the 7-strategy resolver.
+ * calls using the 7-strategy resolver. Drivers that want the event loop
+ * to keep breathing during resolution can call {@link resolveSliced}
+ * right before flush() (i.e. on the resolve stage's flush_start event);
+ * flush() then just returns the precomputed relationships.
  */
 export class ResolveStage implements INodeStage {
   private readonly src: { registries: Registries; allCallInfo: CallInfo[] };
+  /** Relationships precomputed by {@link resolveSliced}; consumed (and
+   *  cleared) by flush(). null = resolve synchronously in flush(). */
+  private preResolved: GraphRelationship[] | null = null;
 
   /** Accepts an ExtractStage or a bare ExtractionState (structural). */
   constructor(src: { registries: Registries; allCallInfo: CallInfo[] }) {
@@ -419,7 +432,50 @@ export class ResolveStage implements INodeStage {
     return { nodes: [node], relationships: [] };
   }
 
+  /**
+   * Resolve all accumulated calls in ordered slices, yielding to the event
+   * loop between slices so a big repo's resolution (a single multi-second
+   * synchronous pass at Grafana scale) doesn't freeze the main thread.
+   *
+   * Output-identical to the synchronous flush() path: resolveCalls carries
+   * no state across CallInfo entries (its dedup set is per-caller), so
+   * resolving ordered slices and concatenating yields exactly the same
+   * relationships in the same order. Callers MUST only invoke this once the
+   * registries are complete — i.e. at the resolve stage's flush_start,
+   * after every tick has been processed.
+   *
+   * If `shouldStop` reports cancellation between slices, the partial result
+   * is discarded (flush() returns no relationships) — the driver discards
+   * the resolve flush on cancel anyway, so nothing observes the difference,
+   * and we avoid burning the remaining slices on a dead job.
+   */
+  async resolveSliced(
+    shouldStop?: () => boolean,
+    sliceSize = RESOLVE_SLICE_SIZE,
+  ): Promise<void> {
+    const { registries, allCallInfo } = this.src;
+    const resolved: ResolvedCall[] = [];
+    for (let off = 0; off < allCallInfo.length; off += sliceSize) {
+      if (shouldStop?.()) {
+        this.preResolved = [];
+        return;
+      }
+      const part = resolveCalls(
+        allCallInfo.slice(off, off + sliceSize),
+        registries,
+      );
+      for (let i = 0; i < part.length; i++) resolved.push(part[i]);
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+    this.preResolved = resolvedCallsToRelationships(resolved);
+  }
+
   flush(): StageMutation {
+    if (this.preResolved) {
+      const callRels = this.preResolved;
+      this.preResolved = null;
+      return { nodes: [], relationships: callRels };
+    }
     const { registries, allCallInfo } = this.src;
     const resolvedCalls = resolveCalls(allCallInfo, registries);
     const callRels = resolvedCallsToRelationships(resolvedCalls);
@@ -486,8 +542,14 @@ export class SummarizeStage implements INodeStage {
 
 // --- StoreStage ---
 
-/** Default number of nodes to buffer before signalling a drain. */
-const DEFAULT_DRAIN_THRESHOLD = 500;
+/** Default number of nodes to buffer before signalling a drain.
+ *  Each drain costs a full store round-trip (importBatch + flush → CSV
+ *  generation + COPY + FTS/index upkeep), so small thresholds made large
+ *  repos drain-bound: 500 meant ~200 flushes on a 100k-node repo. 2500
+ *  keeps peak buffer memory modest (nodes are lean at this point) while
+ *  cutting the flush count ~5×. Persisted output is unchanged — the store
+ *  chunks its COPYs internally regardless of batch size. */
+const DEFAULT_DRAIN_THRESHOLD = 2500;
 
 /**
  * Terminal stage that accumulates graph data for incremental persistence.
@@ -590,6 +652,13 @@ export interface EmbedStageConfig {
   store: GraphStore;
 }
 
+/** Vectors accumulated before an importVectors persistence call.
+ *  Inference stays at batches of 8 (see BATCH in settle — float
+ *  accumulation order must not drift), but persisting per inference batch
+ *  meant one store round-trip (worker RPC + CSV + COPY) every 8 vectors,
+ *  which made the embedding tail store-bound on large repos. */
+const EMBED_PERSIST_BATCH = 500;
+
 /**
  * Embedding stage decoupled from the pipeline tick loop.
  *
@@ -603,6 +672,10 @@ export class EmbedStage implements INodeStage {
   private readonly embedderConfig: EmbedderConfig;
   private readonly store: GraphStore;
   private queue: GraphNode[] = [];
+  /** Embedded vectors awaiting persistence (drained every
+   *  {@link EMBED_PERSIST_BATCH} vectors and at the end of settle). */
+  private pendingPersist: { id: string; vec: number[] }[] = [];
+  /** Vectors PERSISTED so far (not merely embedded). */
   private embedded = 0;
   private _total = 0;
 
@@ -684,6 +757,9 @@ export class EmbedStage implements INodeStage {
     }
     if (this.queue.length === 0) return;
 
+    // Inference batch size — EXACTLY 8. Changing it changes the model's
+    // float accumulation order and drifts the output vectors. Persistence
+    // is batched separately (EMBED_PERSIST_BATCH) via pendingPersist.
     const BATCH = 8;
     for (let off = 0; off < this.queue.length; off += BATCH) {
       if (isCancelled?.()) break;
@@ -699,17 +775,18 @@ export class EmbedStage implements INodeStage {
       try {
         const vectors = await embedder.embed(texts);
         // Cancellation may have landed during the (slow) inference await —
-        // skip the store write and stop.
+        // this batch is never queued for persistence, so the final drain
+        // below writes only pre-cancel batches.
         if (isCancelled?.()) break;
-        const pending: { id: string; vec: number[] }[] = [];
-        for (let i = 0; i < batch.length; i++) {
-          if (vectors[i] && vectors[i].length > 0) {
-            pending.push({ id: batch[i].id, vec: vectors[i] });
+        if (this.store.importVectors) {
+          for (let i = 0; i < batch.length; i++) {
+            if (vectors[i] && vectors[i].length > 0) {
+              this.pendingPersist.push({ id: batch[i].id, vec: vectors[i] });
+            }
           }
-        }
-        if (pending.length > 0 && this.store.importVectors) {
-          await this.store.importVectors(pending);
-          this.embedded += pending.length;
+          if (this.pendingPersist.length >= EMBED_PERSIST_BATCH) {
+            await this.drainPendingVectors();
+          }
         }
       } catch (err) {
         // Skip the bad batch but keep going — one toxic input shouldn't
@@ -721,12 +798,46 @@ export class EmbedStage implements INodeStage {
         );
       }
 
-      onProgress?.(this.embedded, this.queue.length);
+      // Report embedded-so-far (persisted + accumulated) — same numbers the
+      // old persist-per-batch code reported after each inference batch.
+      onProgress?.(
+        this.embedded + this.pendingPersist.length,
+        this.queue.length,
+      );
       await new Promise<void>((r) => setTimeout(r, 0));
     }
 
+    // Final drain: the sub-batch remainder on completion. On cancel this
+    // persists exactly the batches embedded BEFORE cancellation — the same
+    // set the old per-batch code had already written by that point — and
+    // never a batch whose inference finished after cancel (skipped above).
+    await this.drainPendingVectors();
+
     // Free node references — they're persisted in the DB now
     this.queue = [];
+  }
+
+  /** Persist accumulated vectors in one importVectors call. Failures are
+   *  logged and the batch is dropped — the same lossy-but-non-fatal
+   *  contract as the per-inference-batch persist this replaces (vectors
+   *  are an enrichment; the graph itself is already persisted), just with
+   *  a larger batch at risk on the rare store error. */
+  private async drainPendingVectors(): Promise<void> {
+    if (this.pendingPersist.length === 0 || !this.store.importVectors) {
+      this.pendingPersist = [];
+      return;
+    }
+    const pending = this.pendingPersist;
+    this.pendingPersist = [];
+    try {
+      await this.store.importVectors(pending);
+      this.embedded += pending.length;
+    } catch (err) {
+      console.error(
+        `[EmbedStage] importVectors failed (${pending.length} vectors dropped):`,
+        err,
+      );
+    }
   }
 
   get embeddedCount(): number {

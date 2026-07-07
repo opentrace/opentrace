@@ -85,7 +85,15 @@ export type Worker3DInMessage =
       type: 'add-nodes';
       nodeIds: string[];
       links: { source: string; target: string; w?: number }[];
+      /** FULL assignments record — sent only when Louvain actually recomputed
+       *  (identity change host-side). Merged copy-on-write, like before. */
       communities?: Record<string, number>;
+      /** Per-batch delta: assignments for JUST the new node ids. Merged into
+       *  the existing record in place — safe because those ids aren't in any
+       *  active force's node list until this same message adds them. Sending
+       *  a delta instead of structured-cloning the full (100k-key) record on
+       *  every streamed batch is a large host-side saving. */
+      communitiesDelta?: Record<string, number>;
       /** id → node type for the newly-added nodes (onion layout). */
       nodeTypes?: Record<string, string>;
       /** Live-build: pin all already-present nodes in place so adding new ones
@@ -125,6 +133,26 @@ export type Worker3DOutMessage =
   | { type: 'positions'; buffer: Float64Array }
   | { type: 'settled' }
   | { type: 'ready'; buffer: Float64Array };
+
+/** Merge an add-nodes communities payload into the current record. A FULL
+ *  record (Louvain recompute) merges copy-on-write — any force built against
+ *  the old object keeps seeing it until the rebuild below installs the new
+ *  one, exactly like the old spread-merge. A DELTA (new-node assignments
+ *  only) merges IN PLACE — those ids aren't simulation nodes yet, so mutating
+ *  the shared object can't change what any existing force computes — which
+ *  avoids cloning a 100k-key record per streamed batch. Exported for tests. */
+export function mergeAddNodesCommunities(
+  current: Record<string, number> | undefined,
+  full: Record<string, number> | undefined,
+  delta: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (full) current = { ...current, ...full };
+  if (delta) {
+    if (current) Object.assign(current, delta);
+    else current = { ...delta };
+  }
+  return current;
+}
 
 // ─── State ────────────────────────────────────────────────────────────────
 
@@ -491,6 +519,37 @@ function makeOnionAnchorForce(
   return force as unknown as Parameters<typeof s.force>[1];
 }
 
+// Incrementally-maintained per-node link-degree counts, keyed on the identity
+// AND folded length of the links array. cachedLinks only ever (a) gets
+// wholly REPLACED at init or (b) grows by push in add-nodes — and degree
+// counting is additive over an append-only multiset — so folding just the
+// unseen tail yields exactly the map a full refold would. (d3's forceLink
+// rewrites link endpoints from id strings to node objects in place, but
+// endId resolves both forms to the same id, so already-folded entries are
+// unaffected.) Any other array (or a truncation, which cannot currently
+// happen) falls back to a full refold.
+let linkDegCache: {
+  linksRef: SimLink[] | null;
+  folded: number;
+  deg: Map<string, number>;
+} = { linksRef: null, folded: 0, deg: new Map() };
+
+function getLinkDeg(links: SimLink[]): Map<string, number> {
+  if (linkDegCache.linksRef !== links || links.length < linkDegCache.folded) {
+    linkDegCache = { linksRef: links, folded: 0, deg: new Map() };
+  }
+  const deg = linkDegCache.deg;
+  for (let i = linkDegCache.folded; i < links.length; i++) {
+    const l = links[i];
+    const a = endId(l.source);
+    const b = endId(l.target);
+    deg.set(a, (deg.get(a) ?? 0) + 1);
+    deg.set(b, (deg.get(b) ?? 0) + 1);
+  }
+  linkDegCache.folded = links.length;
+  return deg;
+}
+
 function buildSimulation(
   nodes: SimNode[],
   links: SimLink[],
@@ -594,14 +653,10 @@ function buildSimulation(
   // Degree over the link set, so structural links keep d3's default
   // degree-normalized strength (1/min-degree) — high-degree hubs don't get
   // over-pulled. Relational links then scale that by their weight `w`.
-  const linkDeg = new Map<string, number>();
-  const endId = (v: string | SimNode) => (typeof v === 'string' ? v : v.id);
-  for (const l of links) {
-    const a = endId(l.source);
-    const b = endId(l.target);
-    linkDeg.set(a, (linkDeg.get(a) ?? 0) + 1);
-    linkDeg.set(b, (linkDeg.get(b) ?? 0) + 1);
-  }
+  // Maintained incrementally (see getLinkDeg): during a live build this
+  // rebuild runs per add-nodes batch, and refolding all links each time is
+  // an O(E)-per-batch rescan for what is an append-only list.
+  const linkDeg = getLinkDeg(links);
   const linkForce = forceLink<SimNode, SimLink>(links)
     .id((d: SimNode) => d.id)
     .distance(mode === 'compact' ? 40 : config.linkDistance);
@@ -1544,12 +1599,22 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
     case 'add-nodes': {
       if (!sim || !cachedConfig) break;
-      if (msg.communities) communities = { ...communities, ...msg.communities };
+      communities = mergeAddNodesCommunities(
+        communities,
+        msg.communities,
+        msg.communitiesDelta,
+      );
       if (msg.nodeTypes)
         for (const id in msg.nodeTypes) nodeTypeById.set(id, msg.nodeTypes[id]);
 
-      const existingIds = new Set(simNodes.map((n) => n.id));
-      const posById = new Map<string, { x: number; y: number; z: number }>();
+      // Membership/position lookups go through nodeIdToIndex + simNodes[i]
+      // instead of rebuilding two Sets and a posById Map over ALL sim nodes
+      // per batch. nodeIdToIndex is in exact sync with simNodes at this
+      // point: it's rebuilt at init and extended by this handler — the only
+      // two places simNodes membership ever changes. `preCount` freezes the
+      // pre-batch membership boundary so the checks below see exactly what
+      // the old existingIds/posById snapshots saw.
+      const preCount = simNodes.length;
       let cx = 0,
         cy = 0,
         cz = 0;
@@ -1557,7 +1622,6 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         cx += n.x ?? 0;
         cy += n.y ?? 0;
         cz += n.z ?? 0;
-        posById.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0 });
       }
       if (simNodes.length > 0) {
         cx /= simNodes.length;
@@ -1573,11 +1637,12 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
       // (the finished-graph shape), not a frozen incremental approximation.
       const neighbourOf = new Map<string, string>();
       if (msg.pinExisting) {
+        // Runs before any pushes, so has() means "existing before this batch".
         for (const link of msg.links) {
-          if (existingIds.has(link.source) && !existingIds.has(link.target))
+          if (nodeIdToIndex.has(link.source) && !nodeIdToIndex.has(link.target))
             if (!neighbourOf.has(link.target))
               neighbourOf.set(link.target, link.source);
-          if (existingIds.has(link.target) && !existingIds.has(link.source))
+          if (nodeIdToIndex.has(link.target) && !nodeIdToIndex.has(link.source))
             if (!neighbourOf.has(link.source))
               neighbourOf.set(link.source, link.target);
         }
@@ -1585,13 +1650,24 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
 
       let added = 0;
       for (const id of msg.nodeIds) {
-        if (existingIds.has(id)) continue;
-        const anchor = msg.pinExisting
-          ? posById.get(neighbourOf.get(id) ?? '')
-          : undefined;
-        const ax = anchor?.x ?? cx;
-        const ay = anchor?.y ?? cy;
-        const az = anchor?.z ?? cz;
+        // Skip ids that existed BEFORE this batch (index < preCount) — same
+        // semantics as the old snapshot Set, which was not updated in-loop.
+        const existingIdx = nodeIdToIndex.get(id);
+        if (existingIdx !== undefined && existingIdx < preCount) continue;
+        // Anchor = position of the recorded existing neighbour (never moved
+        // by this loop — only new nodes are appended), read on demand.
+        let anchor: SimNode | undefined;
+        if (msg.pinExisting) {
+          const neighbourId = neighbourOf.get(id);
+          const idx =
+            neighbourId !== undefined
+              ? nodeIdToIndex.get(neighbourId)
+              : undefined;
+          anchor = idx !== undefined ? simNodes[idx] : undefined;
+        }
+        const ax = anchor ? (anchor.x ?? 0) : cx;
+        const ay = anchor ? (anchor.y ?? 0) : cy;
+        const az = anchor ? (anchor.z ?? 0) : cz;
         const localSpread = anchor ? 30 : spread;
         const angle = Math.random() * Math.PI * 2;
         const r = Math.random() * localSpread;
@@ -1606,10 +1682,11 @@ self.onmessage = (e: MessageEvent<Worker3DInMessage>) => {
         added++;
       }
 
-      const updatedIds = new Set(simNodes.map((n) => n.id));
       let linksAdded = 0;
       for (const link of msg.links) {
-        if (updatedIds.has(link.source) && updatedIds.has(link.target)) {
+        // nodeIdToIndex now includes this batch's nodes — same membership the
+        // old post-push updatedIds Set captured.
+        if (nodeIdToIndex.has(link.source) && nodeIdToIndex.has(link.target)) {
           cachedLinks.push({
             source: link.source,
             target: link.target,

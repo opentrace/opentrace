@@ -906,8 +906,9 @@ describe('LadybugGraphStore flush failure handling', () => {
     await importMixedBatch(store);
     store.storeSource([{ id: 'r/f.ts', path: 'f.ts', content: 'const x = 1' }]);
 
+    let failSourceCopy = true;
     connQuery.mockImplementation(async (cypher: string) => {
-      if (cypher.startsWith('COPY SourceText')) {
+      if (failSourceCopy && cypher.startsWith('COPY SourceText')) {
         throw new Error('source copy failed');
       }
       return [];
@@ -922,6 +923,99 @@ describe('LadybugGraphStore flush failure handling', () => {
     ).toBe(true);
     // The failed snippet is NOT marked flushed — it retries next flush.
     expect(s.flushedSourceIds.has('r/f.ts')).toBe(false);
+    // …and stays in the dirty set so the retry isn't skipped.
+    expect(s.pendingSnippetIds.has('r/f.ts')).toBe(true);
+
+    // Next flush (with new node work) retries the snippet successfully.
+    failSourceCopy = false;
+    await store.importBatch({
+      nodes: [{ id: 'r/g.ts', type: 'File', name: 'g.ts', properties: {} }],
+      relationships: [],
+    });
+    await store.flush();
+    expect(s.flushedSourceIds.has('r/f.ts')).toBe(true);
+    expect(s.pendingSnippetIds.has('r/f.ts')).toBe(false);
+    const copies = connQuery.mock.calls
+      .map((c: [string]) => c[0])
+      .filter((c: string) => c.startsWith('COPY SourceText'));
+    expect(copies).toHaveLength(2); // failed attempt + successful retry
+  });
+
+  it('flushes each snippet exactly once and skips the SourceText stage when nothing new arrived', async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    store.storeSource([
+      { id: 'r/a.ts', path: 'a.ts', content: 'const a = 1' },
+      { id: 'r/b.ts', path: 'b.ts', content: 'const b = 2' },
+    ]);
+    await importMixedBatch(store);
+    await store.flush();
+
+    const sourceCopies = () =>
+      connQuery.mock.calls
+        .map((c: [string]) => c[0])
+        .filter((c: string) => c.startsWith('COPY SourceText')).length;
+    expect(sourceCopies()).toBe(1);
+    expect(s.flushedSourceIds.has('r/a.ts')).toBe(true);
+    expect(s.flushedSourceIds.has('r/b.ts')).toBe(true);
+    // Dirty set drained — the next flush skips the stage entirely.
+    expect(s.pendingSnippetIds.size).toBe(0);
+
+    // Second flush with node work but no new source: no SourceText COPY.
+    await store.importBatch({
+      nodes: [{ id: 'r/h.ts', type: 'File', name: 'h.ts', properties: {} }],
+      relationships: [],
+    });
+    await store.flush();
+    expect(sourceCopies()).toBe(1);
+
+    // Re-storing an already-flushed id must not re-COPY it (PK protection),
+    // and the stale dirty entry is dropped.
+    store.storeSource([{ id: 'r/a.ts', path: 'a.ts', content: 'const a = 1' }]);
+    await store.importBatch({
+      nodes: [{ id: 'r/i.ts', type: 'File', name: 'i.ts', properties: {} }],
+      relationships: [],
+    });
+    await store.flush();
+    expect(sourceCopies()).toBe(1);
+    expect(s.pendingSnippetIds.size).toBe(0);
+
+    // A genuinely new snippet flushes on the next flush.
+    store.storeSource([{ id: 'r/c.ts', path: 'c.ts', content: 'const c = 3' }]);
+    await store.importBatch({
+      nodes: [{ id: 'r/j.ts', type: 'File', name: 'j.ts', properties: {} }],
+      relationships: [],
+    });
+    await store.flush();
+    expect(sourceCopies()).toBe(2);
+    expect(s.flushedSourceIds.has('r/c.ts')).toBe(true);
+  });
+
+  it('deleteRepo prunes the snippet dirty set so deleted snippets never flush', async () => {
+    const { store, s, connQuery } = makeStoreWithMockEngine();
+    store.storeSource([
+      { id: 'alice/foo/src/a.ts', path: 'src/a.ts', content: 'const a = 1' },
+      { id: 'bob/bar/lib/b.ts', path: 'lib/b.ts', content: 'const b = 2' },
+    ]);
+
+    await store.deleteRepo('alice/foo');
+    expect(s.pendingSnippetIds.has('alice/foo/src/a.ts')).toBe(false);
+    expect(s.pendingSnippetIds.has('bob/bar/lib/b.ts')).toBe(true);
+
+    connQuery.mockClear();
+    await store.importBatch({
+      nodes: [
+        { id: 'bob/bar/lib/b.ts', type: 'File', name: 'b.ts', properties: {} },
+      ],
+      relationships: [],
+    });
+    await store.flush();
+    // Only the surviving repo's snippet is COPY'd.
+    const fsWrites = (s.engine.fsWrite as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c: [string, Uint8Array]) => c[0].includes('source_text'))
+      .map((c: [string, Uint8Array]) => new TextDecoder().decode(c[1]));
+    expect(fsWrites).toHaveLength(1);
+    expect(fsWrites[0]).toContain('bob/bar/lib/b.ts');
+    expect(fsWrites[0]).not.toContain('alice/foo');
   });
 
   it('aborts the remaining chunks when clearGraph fires mid-flush', async () => {

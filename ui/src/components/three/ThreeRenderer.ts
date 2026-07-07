@@ -48,6 +48,7 @@ import {
   SpriteMaterial,
   CanvasTexture,
   Color,
+  Matrix4,
   Vector2,
   Vector3,
   Quaternion,
@@ -106,6 +107,10 @@ export interface ThreeEdge {
    *  per-frame edge hot loops avoid a `nodeIdToIndex.get()` per edge. */
   sourceIdx: number;
   targetIdx: number;
+  /** Hot-set lookup key `${sourceId}-${targetId}`, built once at edge creation
+   *  so updateEdgeAlpha / fillEdgeColors don't concatenate strings per edge
+   *  per call. (Distinct from the dedup key, which includes the label.) */
+  key: string;
   label: string;
   graphLink: GraphLink;
   color: string;
@@ -565,6 +570,10 @@ export class ThreeRenderer {
   private communityMemberCount: Map<number, number> = new Map();
   private communityCentroids: Map<number, { x: number; y: number; z: number }> =
     new Map();
+  /** True when node positions / visibility changed since the centroids were
+   *  last computed — lets the throttled recompute skip entirely on static
+   *  frames (recomputing unchanged inputs yields identical centroids). */
+  private centroidsDirty = true;
 
   // Node point cloud
   private nodeGeometry: BufferGeometry | null = null;
@@ -630,6 +639,10 @@ export class ThreeRenderer {
   private nodeArray: ThreeNode[] = [];
   private nodeIdToIndex: Map<string, number> = new Map();
   private edges: ThreeEdge[] = [];
+  /** Count of nodes with visible === false (maintained by setNodeVisibility;
+   *  creation paths always start nodes visible). Lets the live-build append
+   *  fast path know cheaply that per-node visibility can't hide anything. */
+  private hiddenNodeCount = 0;
 
   // Dimensions
   private width = 0;
@@ -1130,16 +1143,14 @@ export class ThreeRenderer {
       return;
     }
 
-    // Candidate set: highlighted-only when a highlight is active, else all visible.
-    const candidates: number[] = [];
-    for (let i = 0; i < this.nodeArray.length; i++) {
-      const node = this.nodeArray[i];
-      if (!node.visible) continue;
-      if (this.hasHighlight && !this.nodeIsHot(node.id)) continue;
-      candidates.push(i);
-    }
-    // Largest (highest-degree) nodes win label slots.
-    candidates.sort((a, b) => this.nodeArray[b].size - this.nodeArray[a].size);
+    // Candidate walk order: a size-sorted index over ALL nodes, rebuilt only
+    // when the node set changes (sorting per cull was O(N log N) on every
+    // zoom/orbit/highlight). Current filters (visibility / highlight) are
+    // applied inline while walking — a stable sort of a filtered subsequence
+    // equals the filtered subsequence of the stable-sorted whole, so the
+    // resulting candidate order (size desc, ties by ascending node index) is
+    // identical to the old filter-then-sort.
+    const candidates = this.getLabelOrder();
 
     const lm = this.labelScaleMultiplier;
     const labelH = (LABEL_SIZE + 4) * lm;
@@ -1192,6 +1203,10 @@ export class ThreeRenderer {
 
     for (const i of candidates) {
       const node = this.nodeArray[i];
+      // Candidate filter: highlighted-only when a highlight is active, else
+      // all visible (formerly applied while building the candidate array).
+      if (!node.visible) continue;
+      if (this.hasHighlight && !this.nodeIsHot(node.id)) continue;
       // gateSize: capped so proximity beats hub size (see LABEL_GATE_SIZE_CAP);
       // screenR: the node's REAL rendered radius, for the label gap.
       const gateSize = Math.min(node.size, LABEL_GATE_SIZE_CAP);
@@ -1268,6 +1283,30 @@ export class ThreeRenderer {
       }
     }
   }
+
+  /** All node indices sorted by node size DESC, ties by ascending index (the
+   *  stable-sort order the per-cull sort used to produce). Node sizes are
+   *  fixed at creation, so the order only changes when the node set does —
+   *  setData / appendLiveData mark it dirty. */
+  private getLabelOrder(): number[] {
+    if (
+      this.labelOrderDirty ||
+      this.labelOrder.length !== this.nodeArray.length
+    ) {
+      const n = this.nodeArray.length;
+      const order: number[] = new Array(n);
+      for (let i = 0; i < n; i++) order[i] = i;
+      // Array.prototype.sort is stable, so equal sizes keep ascending-index
+      // order — the same tie-break the old candidates sort produced.
+      order.sort((a, b) => this.nodeArray[b].size - this.nodeArray[a].size);
+      this.labelOrder = order;
+      this.labelOrderDirty = false;
+    }
+    return this.labelOrder;
+  }
+
+  private labelOrder: number[] = [];
+  private labelOrderDirty = true;
 
   private ensureNodeLabel(
     id: string,
@@ -1566,6 +1605,11 @@ export class ThreeRenderer {
       this.nodeArray.push(node);
       this.nodes.set(gn.id, node);
     }
+    // Node set replaced: label order must re-sort, every node starts visible,
+    // and community centroids must recompute from the new positions.
+    this.labelOrderDirty = true;
+    this.hiddenNodeCount = 0;
+    this.centroidsDirty = true;
 
     this.buildEdges(graphLinks, linkColors);
     this.bp = selectBreakpoint(n, this.breakpoints);
@@ -1614,6 +1658,7 @@ export class ThreeRenderer {
         targetId,
         sourceIdx,
         targetIdx,
+        key: `${sourceId}-${targetId}`,
         label: gl.label,
         graphLink: gl,
         color: linkColors.get(gl.label) ?? '#3b4048',
@@ -1631,6 +1676,9 @@ export class ThreeRenderer {
     geo.setAttribute('aPickColor', new BufferAttribute(this.pickColorArray, 3));
     // Buffers may be over-allocated (live-build) — only draw the real nodes.
     geo.setDrawRange(0, this.nodeArray.length);
+    // Fresh geometry has no draw index yet (drawRange covers raw vertices)
+    // until the next applyNodeStates installs one.
+    this.nodeDrawIndexValid = false;
     const points = new Points(geo, this.nodeMaterial);
     points.frustumCulled = false; // we manage culling; bounds change every tick
     points.renderOrder = 1; // draw nodes on top of edges
@@ -1729,8 +1777,7 @@ export class ThreeRenderer {
     const hasTrail = this.traversalLitEdges.size > 0;
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
-      const lit =
-        hasTrail && this.traversalLitEdges.has(`${e.sourceId}-${e.targetId}`);
+      const lit = hasTrail && this.traversalLitEdges.has(e.key);
       hexToRgb(lit ? TRAVERSAL_TRAIL_COLOR : e.color, this.tmpColor);
       const o = i * 6;
       col[o] = this.tmpColor.r;
@@ -1791,59 +1838,23 @@ export class ThreeRenderer {
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
+    const lodVis = lod ? this.computeLodVisFlags() : null;
     // While a chat walk is in play (or its lit trail persists), the graph's
     // OTHER edges hide completely instead of dimming — every visible edge is
     // one the agent actually built, so the connections read as appearing from
     // nothing ("watch it build") rather than recoloring an existing web.
     const traversalActive = this.traversalActive();
+    // No-highlight fast pass: with no highlight active and no traversal edges
+    // pending, the hot / pending branches of the general path are statically
+    // false for every edge, so a tight loop over the base computation skips
+    // two Set lookups per edge. Output is bit-identical to the general path.
+    const noHighlight =
+      !this.hasHighlight && this.traversalPendingEdges.size === 0;
     for (let i = 0; i < this.edges.length; i++) {
       const e = this.edges[i];
-      const key = `${e.sourceId}-${e.targetId}`;
-      // Hot edges (chat traversal trail / highlight neighborhood) stay
-      // visible even when the edge layer is off, the link type is hidden, or
-      // LOD collapsed the region — "show me the path" beats the hide toggles
-      // (highlighted NODES already get the same override in applyNodeStates).
-      const hot = this.hasHighlight && this.edgeIsHot(key);
-      let alpha: number;
-      if (this.traversalPendingEdges.has(key)) {
-        // Queued in the walk but not yet crossed — invisible until the pulse
-        // builds it, even if the app-side highlight already marked it hot.
-        alpha = 0;
-      } else if ((!enabled || this.hiddenLinkTypes.has(e.label)) && !hot) {
-        alpha = 0;
-      } else {
-        const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
-        const tVis = this.nodeArray[e.targetIdx]?.visible ?? true;
-        // Under LOD a detail edge only draws when BOTH endpoints' communities
-        // are expanded; otherwise a super-edge represents the relationship.
-        const lodHidden =
-          lod &&
-          (!this.nodeLodVisible(e.sourceId) ||
-            !this.nodeLodVisible(e.targetId));
-        if (!sVis || !tVis || (lodHidden && !hot)) {
-          alpha = 0;
-        } else if (this.hasHighlight) {
-          // Hot edges use the shader's ABSOLUTE encoding (1 + alpha) so the
-          // lit path renders fully opaque regardless of the preset's edge
-          // opacity. Everything else keeps its normal global multiplier and
-          // is dimmed relative to it — a preset that hides edges (Onion 0%,
-          // Planet 15%) keeps them hidden while the walked path lights up.
-          alpha = hot
-            ? 1 + EDGE_OPACITY_HIGHLIGHTED
-            : traversalActive
-              ? 0
-              : EDGE_OPACITY_DIMMED;
-        } else {
-          alpha = EDGE_OPACITY_DEFAULT;
-          // The radial tree reads through its DEFINES skeleton. Relational
-          // chords (calls/imports) cross the whole map — on a real repo
-          // (thousands of them) they drown the structure into a solid web,
-          // so keep them faint until a highlight makes them relevant.
-          if (this.currentLayoutMode === 'tree' && e.label !== 'DEFINES') {
-            alpha *= 0.1;
-          }
-        }
-      }
+      const alpha = noHighlight
+        ? this.edgeAlphaNoHighlight(e, enabled, lodVis)
+        : this.edgeAlphaGeneral(e, enabled, lodVis, traversalActive);
       a[i * 2] = alpha;
       a[i * 2 + 1] = alpha;
     }
@@ -1851,6 +1862,102 @@ export class ThreeRenderer {
       true;
     this.rebuildEdgeDrawIndex();
   }
+
+  /** Per-edge alpha, general path (highlight active and/or traversal edges
+   *  pending). Exactly the historical updateEdgeAlpha per-edge computation. */
+  private edgeAlphaGeneral(
+    e: ThreeEdge,
+    enabled: boolean,
+    lodVis: Uint8Array | null,
+    traversalActive: boolean,
+  ): number {
+    const key = e.key;
+    // Hot edges (chat traversal trail / highlight neighborhood) stay
+    // visible even when the edge layer is off, the link type is hidden, or
+    // LOD collapsed the region — "show me the path" beats the hide toggles
+    // (highlighted NODES already get the same override in applyNodeStates).
+    const hot = this.hasHighlight && this.edgeIsHot(key);
+    if (this.traversalPendingEdges.has(key)) {
+      // Queued in the walk but not yet crossed — invisible until the pulse
+      // builds it, even if the app-side highlight already marked it hot.
+      return 0;
+    }
+    if ((!enabled || this.hiddenLinkTypes.has(e.label)) && !hot) return 0;
+    const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
+    const tVis = this.nodeArray[e.targetIdx]?.visible ?? true;
+    // Under LOD a detail edge only draws when BOTH endpoints' communities
+    // are expanded; otherwise a super-edge represents the relationship.
+    const lodHidden =
+      lodVis !== null &&
+      (lodVis[e.sourceIdx] === 0 || lodVis[e.targetIdx] === 0);
+    if (!sVis || !tVis || (lodHidden && !hot)) return 0;
+    if (this.hasHighlight) {
+      // Hot edges use the shader's ABSOLUTE encoding (1 + alpha) so the
+      // lit path renders fully opaque regardless of the preset's edge
+      // opacity. Everything else keeps its normal global multiplier and
+      // is dimmed relative to it — a preset that hides edges (Onion 0%,
+      // Planet 15%) keeps them hidden while the walked path lights up.
+      return hot
+        ? 1 + EDGE_OPACITY_HIGHLIGHTED
+        : traversalActive
+          ? 0
+          : EDGE_OPACITY_DIMMED;
+    }
+    return this.edgeAlphaBase(e);
+  }
+
+  /** Per-edge alpha when NO highlight is active and no traversal edges are
+   *  pending (the common idle / live-streaming state): the general path with
+   *  its hot / pending / highlight branches — all statically false in that
+   *  state — removed. Shared by the full updateEdgeAlpha pass and the
+   *  appendLiveEdges O(batch) fast path so both compute identical values. */
+  private edgeAlphaNoHighlight(
+    e: ThreeEdge,
+    enabled: boolean,
+    lodVis: Uint8Array | null,
+  ): number {
+    if (!enabled || this.hiddenLinkTypes.has(e.label)) return 0;
+    const sVis = this.nodeArray[e.sourceIdx]?.visible ?? true;
+    const tVis = this.nodeArray[e.targetIdx]?.visible ?? true;
+    // Under LOD a detail edge only draws when BOTH endpoints' communities
+    // are expanded; otherwise a super-edge represents the relationship.
+    const lodHidden =
+      lodVis !== null &&
+      (lodVis[e.sourceIdx] === 0 || lodVis[e.targetIdx] === 0);
+    if (!sVis || !tVis || lodHidden) return 0;
+    return this.edgeAlphaBase(e);
+  }
+
+  /** Base (visible, un-highlighted) edge alpha: the default opacity, with the
+   *  tree-mode relational-chord fade. */
+  private edgeAlphaBase(e: ThreeEdge): number {
+    let alpha = EDGE_OPACITY_DEFAULT;
+    // The radial tree reads through its DEFINES skeleton. Relational
+    // chords (calls/imports) cross the whole map — on a real repo
+    // (thousands of them) they drown the structure into a solid web,
+    // so keep them faint until a highlight makes them relevant.
+    if (this.currentLayoutMode === 'tree' && e.label !== 'DEFINES') {
+      alpha *= 0.1;
+    }
+    return alpha;
+  }
+
+  /** Fill (and return) the reusable per-node LOD visibility flag array —
+   *  `flags[i] === 1` ⇔ `nodeLodVisible(nodeArray[i].id)`. Lets the per-edge
+   *  loops (2 lookups per edge) and applyNodeStates read one array cell per
+   *  endpoint instead of re-walking assignments/cidToSuper maps each time.
+   *  Only meaningful while LOD is aggregating (callers gate on that). */
+  private computeLodVisFlags(): Uint8Array {
+    const n = this.nodeArray.length;
+    if (this.lodVisFlags.length < n) this.lodVisFlags = new Uint8Array(n);
+    const f = this.lodVisFlags;
+    for (let i = 0; i < n; i++) {
+      f[i] = this.nodeLodVisible(this.nodeArray[i].id) ? 1 : 0;
+    }
+    return f;
+  }
+
+  private lodVisFlags: Uint8Array = new Uint8Array(0);
 
   /** True if node `i` projects inside the viewport (plus a margin). No
    *  allocation — reuses tmpVec. Used to viewport-cull edges. */
@@ -1883,33 +1990,97 @@ export class ThreeRenderer {
   private rebuildEdgeDrawIndex(): void {
     if (!this.edgeGeometry) return;
     const a = this.edgeAlphaArray;
-    if (this.edgeDrawIndex.length !== this.edges.length * 2) {
+    // `<` (not `!==`): keep spare capacity so the live-build append fast path
+    // can extend in place; entries past edgeDrawCount are never submitted.
+    if (this.edgeDrawIndex.length < this.edges.length * 2) {
       this.edgeDrawIndex = new Uint32Array(this.edges.length * 2);
     }
     const eidx = this.edgeDrawIndex;
     const cull = this.bp.edgeViewportCulling && this.activeCamera != null;
     const mx = this.width * 0.25;
     const my = this.height * 0.25;
+    // Project each NODE once into a reusable flag array instead of running
+    // nodeInView per edge endpoint (up to 2·E projections; E ≈ 1.35·N at
+    // Grafana scale, and this reruns every 180ms while orbiting). Decisions
+    // are identical — same nodeInView, same margins, same camera. Built
+    // lazily on the first drawable edge so states where nothing draws (edges
+    // off / all alphas 0) pay no projections at all.
+    let view: Uint8Array | null = null;
     let ec = 0;
     for (let i = 0; i < this.edges.length; i++) {
       if (a[i * 2] <= 0) continue;
       if (cull) {
+        if (view === null) view = this.computeNodeViewFlags(mx, my);
         const e = this.edges[i];
-        if (
-          !this.nodeInView(e.sourceIdx, mx, my) &&
-          !this.nodeInView(e.targetIdx, mx, my)
-        ) {
+        if (view[e.sourceIdx] === 0 && view[e.targetIdx] === 0) {
           continue; // both endpoints off-screen → don't draw
         }
       }
       eidx[ec++] = i * 2;
       eidx[ec++] = i * 2 + 1;
     }
+    this.edgeDrawCount = ec;
+    this.snapshotEdgeCullCamera(cull);
     this.setGeometryDrawIndex(this.edgeGeometry, eidx, ec);
     if (this.activeCamera)
       this.lastEdgeCullCamPos.copy(this.activeCamera.position);
     this.lastEdgeCull = performance.now();
     this.requestRender();
+  }
+
+  /** Fill (and return) the reusable per-node "projects inside the viewport"
+   *  flag array — flags[i] ⇔ nodeInView(i, marginX, marginY). One projection
+   *  per node, identical decisions to calling nodeInView per use. */
+  private computeNodeViewFlags(marginX: number, marginY: number): Uint8Array {
+    const n = this.nodeArray.length;
+    if (this.nodeViewFlags.length < n) this.nodeViewFlags = new Uint8Array(n);
+    const view = this.nodeViewFlags;
+    for (let i = 0; i < n; i++) {
+      view[i] = this.nodeInView(i, marginX, marginY) ? 1 : 0;
+    }
+    return view;
+  }
+
+  /** Reusable per-node "projects inside the viewport" flags (see
+   *  rebuildEdgeDrawIndex). */
+  private nodeViewFlags: Uint8Array = new Uint8Array(0);
+  /** Index entries currently submitted from edgeDrawIndex. */
+  private edgeDrawCount = 0;
+  /** Camera pose (projection + view matrices, viewport dims) at the last
+   *  culled rebuildEdgeDrawIndex. The live-build append fast path may extend
+   *  the index only while this pose is unchanged — otherwise the retained
+   *  entries' in-view decisions would be stale vs a full rebuild. */
+  private readonly lastCullProj = new Matrix4();
+  private readonly lastCullView = new Matrix4();
+  private lastCullW = -1;
+  private lastCullH = -1;
+  private lastCullValid = false;
+
+  private snapshotEdgeCullCamera(cull: boolean): void {
+    const cam = this.activeCamera;
+    if (!cull || !cam) {
+      this.lastCullValid = false;
+      return;
+    }
+    this.lastCullProj.copy(cam.projectionMatrix);
+    this.lastCullView.copy(cam.matrixWorldInverse);
+    this.lastCullW = this.width;
+    this.lastCullH = this.height;
+    this.lastCullValid = true;
+  }
+
+  /** True while the projection nodeInView uses is exactly the one captured at
+   *  the last culled rebuild — same matrices, same viewport. */
+  private edgeCullCameraUnchanged(): boolean {
+    const cam = this.activeCamera;
+    return (
+      this.lastCullValid &&
+      cam !== null &&
+      this.lastCullW === this.width &&
+      this.lastCullH === this.height &&
+      cam.projectionMatrix.equals(this.lastCullProj) &&
+      cam.matrixWorldInverse.equals(this.lastCullView)
+    );
   }
 
   /** Hide the edge layer for instant zoom/pan response, restoring it after the
@@ -2032,6 +2203,7 @@ export class ThreeRenderer {
   }
 
   private markPositionsDirty(): void {
+    this.centroidsDirty = true;
     this.requestRender();
     if (this.nodeGeometry) {
       (
@@ -2391,6 +2563,16 @@ export class ThreeRenderer {
     // readRenderTargetPixels is bottom-up.
     const py = Math.floor(buf.y - screenY * dpr);
 
+    // Scissor the pick render to the single pixel we read back: only that
+    // pixel is cleared + rasterized (the scissor test clips fragments, not
+    // primitives, so a point whose quad overlaps the pixel still writes it —
+    // the read value is identical to a full-target render). The rect is in
+    // target device pixels, bottom-up, exactly like readRenderTargetPixels —
+    // px/py above already include the pixel ratio. Render-target scissor
+    // state lives ON the target (three applies it in setRenderTarget), so it
+    // can't leak into the on-screen pass; cleared after the read anyway.
+    this.pickTarget.scissor.set(px, py, 1, 1);
+    this.pickTarget.scissorTest = true;
     renderer.setRenderTarget(this.pickTarget);
     renderer.setClearColor(0x000000, 1);
     renderer.clear();
@@ -2404,6 +2586,7 @@ export class ThreeRenderer {
       this.pickPixel,
     );
     renderer.setRenderTarget(null);
+    this.pickTarget.scissorTest = false;
 
     // Restore display state + cached theme clear color.
     points.material = prevNodeMat;
@@ -2960,10 +3143,13 @@ export class ThreeRenderer {
     if (!this.nodeGeometry) return;
     const st = this.stateArray;
     const lod = this.lodEnabled && this.superList.length > 0;
-    if (this.nodeDrawIndex.length !== this.nodeArray.length) {
+    const lodVis = lod ? this.computeLodVisFlags() : null;
+    // `<` (not `!==`): the append fast path grows these with capacity
+    // headroom; entries past the draw count are never submitted.
+    if (this.nodeDrawIndex.length < this.nodeArray.length) {
       this.nodeDrawIndex = new Uint32Array(this.nodeArray.length);
     }
-    if (this.nodeHaloDrawIndex.length !== this.nodeArray.length) {
+    if (this.nodeHaloDrawIndex.length < this.nodeArray.length) {
       this.nodeHaloDrawIndex = new Uint32Array(this.nodeArray.length);
     }
     const drawIdx = this.nodeDrawIndex;
@@ -2976,7 +3162,7 @@ export class ThreeRenderer {
       // highlighted nodes, which always show so search/chat focus survives.
       const highlighted = this.hasHighlight && this.nodeIsHot(node.id);
       const visible =
-        node.visible && (!lod || highlighted || this.nodeLodVisible(node.id));
+        node.visible && (lodVis === null || highlighted || lodVis[i] === 1);
       let s = visible ? NODE_STATE_VISIBLE : 0;
       if (this.hasHighlight && visible) {
         s |= this.nodeIsHot(node.id)
@@ -2994,12 +3180,24 @@ export class ThreeRenderer {
     (this.nodeGeometry.getAttribute('aState') as BufferAttribute).needsUpdate =
       true;
     // Only submit the visible nodes to the GPU.
+    this.nodeDrawCount = dc;
+    this.nodeDrawIndexValid = true;
     this.setGeometryDrawIndex(this.nodeGeometry, drawIdx, dc);
     if (this.nodeHaloGeometry) {
       this.setGeometryDrawIndex(this.nodeHaloGeometry, haloIdx, hc);
     }
     this.requestRender();
   }
+
+  /** Entries in nodeDrawIndex currently submitted (the array may hold spare
+   *  capacity past this count). Read by the incremental-append fast path to
+   *  extend the draw index in place. */
+  private nodeDrawCount = 0;
+  /** True once applyNodeStates has installed the draw index on the CURRENT
+   *  node geometry. A fresh geometry (buildNodePoints) starts index-less
+   *  (drawRange covers the raw vertices), so the append fast path must run a
+   *  full repack first rather than extend an index that isn't there. */
+  private nodeDrawIndexValid = false;
 
   /** Point/segment index + draw-range so the GPU processes only `count`
    *  vertices from `idx`, instead of the whole buffer. */
@@ -3018,14 +3216,18 @@ export class ThreeRenderer {
 
   setNodeVisibility(visibleIds: Set<string>): void {
     let changed = false;
+    let hidden = 0;
     for (const node of this.nodeArray) {
       const vis = visibleIds.has(node.id);
       if (node.visible !== vis) {
         node.visible = vis;
         changed = true;
       }
+      if (!vis) hidden++;
     }
     if (!changed) return;
+    this.hiddenNodeCount = hidden;
+    this.centroidsDirty = true; // centroids average only visible nodes
     this.applyNodeStates();
     this.updateEdgeAlpha();
     this.runNodeLabelCull();
@@ -3226,11 +3428,15 @@ export class ThreeRenderer {
     layer.style.opacity = String(alpha);
 
     const now = performance.now();
+    // Same 250ms cadence as before, but skip entirely while positions /
+    // visibility haven't changed since the last recompute — rerunning the
+    // O(N) pass on identical inputs would produce identical centroids.
     if (
-      now - this.lastCommunityUpdate > 250 ||
+      (this.centroidsDirty && now - this.lastCommunityUpdate > 250) ||
       this.communityCentroids.size === 0
     ) {
       this.lastCommunityUpdate = now;
+      this.centroidsDirty = false;
       this.recomputeCommunityCentroids();
     }
 
@@ -3423,6 +3629,7 @@ export class ThreeRenderer {
         this.ambientHome.length === this.nodeArray.length * 3 &&
         this.ambientHome.length <= this.posArray.length
       ) {
+        this.centroidsDirty = true;
         this.posArray.set(this.ambientHome);
         (
           this.nodeGeometry.getAttribute('position') as BufferAttribute
@@ -3444,6 +3651,7 @@ export class ThreeRenderer {
   private updateAmbient(now: number): void {
     const home = this.ambientHome;
     if (!home || !this.nodeGeometry) return;
+    this.centroidsDirty = true; // drift moves every node
     const pos = this.posArray;
     const t = (now - this.ambientStart) * 0.001; // seconds
     const A = this.ambientAmplitude;
@@ -4300,6 +4508,7 @@ export class ThreeRenderer {
     this.liveGrowPrevPos = null;
     if (this.nodeGeometry && this.nodeArray.length > 0) {
       const n = this.nodeArray.length;
+      this.centroidsDirty = true;
       for (let i = 0; i < n; i++) {
         this.posArray[i * 3] = this.layoutPos[i * 3];
         this.posArray[i * 3 + 1] = this.layoutPos[i * 3 + 1];
@@ -4437,6 +4646,7 @@ export class ThreeRenderer {
         this.finalizeLiveGrow();
       return;
     }
+    this.centroidsDirty = true; // every node eases toward its layout target
     // Soft overshoot (near-eased) — see GROW_BACK_C1. The burst uses a stronger
     // pop, but that's on a settled graph; here the target is still moving.
     const c1 = GROW_BACK_C1;
@@ -4576,6 +4786,9 @@ export class ThreeRenderer {
 
     if (fresh.length > 0) {
       this.scheduleGrowIn(oldN, startM);
+      // New nodes: re-sort the label priority order, refresh centroids.
+      this.labelOrderDirty = true;
+      this.centroidsDirty = true;
       for (const a of ['position', 'aColor', 'aSize', 'aState', 'aPickColor']) {
         (this.nodeGeometry.getAttribute(a) as BufferAttribute).needsUpdate =
           true;
@@ -4586,8 +4799,62 @@ export class ThreeRenderer {
       // visible-node index (and the halo's) over the grown array so appends
       // are self-sufficient rather than relying on the host's highlight effect
       // happening to repaint after every batch.
-      this.applyNodeStates();
+      //
+      // Fast path: when no global render state can alter the rows already in
+      // the index (canFastAppend) and the current geometry actually carries
+      // the index (nodeDrawIndexValid — a growNodeBuffers rebuild mid-batch
+      // creates fresh index-less geometry), the appended nodes are all
+      // visible + un-highlighted, so extending the index with [oldN, n) and
+      // widening the range reproduces the full repack O(batch) instead of
+      // O(N). Anything else → the unchanged full applyNodeStates.
+      if (this.canFastAppend() && this.nodeDrawIndexValid) {
+        this.appendNodeDrawIndices(oldN);
+      } else {
+        this.applyNodeStates();
+      }
     }
+    this.requestRender();
+  }
+
+  /** True when appendLiveData / appendLiveEdges may take the O(batch) fast
+   *  path: no render state is active that could make EXISTING rows' packed
+   *  state or alpha differ from what the last full pass wrote, and the
+   *  appended rows' values are derivable from per-edge-local state alone
+   *  (edgesEnabled / tree-mode are handled inside the shared per-edge alpha
+   *  helper). Any disqualifying state → callers use the full-rebuild paths
+   *  unchanged. */
+  private canFastAppend(): boolean {
+    return (
+      !this.hasHighlight &&
+      !this.traversalActive() &&
+      !this.buildPrepared &&
+      this.buildAnim === null &&
+      this.hiddenNodeCount === 0 &&
+      this.hiddenLinkTypes.size === 0 &&
+      !(this.lodEnabled && this.superList.length > 0)
+    );
+  }
+
+  /** O(batch) node append: under the canFastAppend guard every pre-existing
+   *  node is visible and un-highlighted, so the current draw index is exactly
+   *  [0, oldN) and the full repack would produce [0, n) with an empty halo
+   *  set — append the new rows and widen the range. stateArray rows for the
+   *  new nodes were already written by appendLiveData. */
+  private appendNodeDrawIndices(oldN: number): void {
+    if (!this.nodeGeometry) return;
+    const n = this.nodeArray.length;
+    if (this.nodeDrawIndex.length < n) {
+      const grown = new Uint32Array(Math.max(n, this.nodeDrawIndex.length * 2));
+      grown.set(this.nodeDrawIndex.subarray(0, this.nodeDrawCount));
+      this.nodeDrawIndex = grown;
+    }
+    const idx = this.nodeDrawIndex;
+    let dc = this.nodeDrawCount;
+    for (let i = oldN; i < n; i++) idx[dc++] = i;
+    this.nodeDrawCount = dc;
+    this.setGeometryDrawIndex(this.nodeGeometry, idx, dc);
+    // Halo untouched: no highlight is active (guard), so its index is empty
+    // and the appended nodes wouldn't join it either.
     this.requestRender();
   }
 
@@ -4616,6 +4883,7 @@ export class ThreeRenderer {
         targetId: tId,
         sourceIdx: si,
         targetIdx: ti,
+        key: `${sId}-${tId}`,
         label: gl.label,
         graphLink: gl,
         color: linkColors.get(gl.label) ?? '#3b4048',
@@ -4637,7 +4905,76 @@ export class ThreeRenderer {
     // doesn't expose the appended segments — and their alpha is still 0.
     // updateEdgeAlpha fills alpha for the whole (grown) edge list and rebuilds
     // the draw index + range in one pass.
-    this.updateEdgeAlpha();
+    //
+    // Fast path: when no global state can alter the EXISTING rows' alphas
+    // (canFastAppend), fill alpha only for the appended range — via the same
+    // per-edge helper the full pass uses, so edgesEnabled / tree-mode /
+    // node-visibility inputs are respected identically — and extend the draw
+    // index in place. O(batch) instead of O(E) per streamed flush.
+    if (this.canFastAppend()) {
+      this.appendLiveEdgeAlphas(startM);
+    } else {
+      this.updateEdgeAlpha();
+    }
+  }
+
+  /** O(batch) edge append (see appendLiveEdges): alphas for [startM, …) from
+   *  the shared no-highlight helper (bit-identical to what the full
+   *  updateEdgeAlpha pass computes for those rows in this state — LOD is
+   *  inactive under the canFastAppend guard, so the lodVis flags are null
+   *  exactly as the full pass would pass them), then the draw index grows by
+   *  the appended visible rows. When viewport culling is on and the camera
+   *  pose has changed since the index was last built, the RETAINED rows'
+   *  in-view decisions are stale vs what a full rebuild would decide — fall
+   *  back to rebuildEdgeDrawIndex (itself O(N) projections now) so culling
+   *  output matches the slow path exactly. */
+  private appendLiveEdgeAlphas(startM: number): void {
+    if (!this.edgeGeometry) return;
+    const a = this.edgeAlphaArray;
+    const enabled = this.edgesEnabled;
+    for (let i = startM; i < this.edges.length; i++) {
+      const alpha = this.edgeAlphaNoHighlight(this.edges[i], enabled, null);
+      a[i * 2] = alpha;
+      a[i * 2 + 1] = alpha;
+    }
+    (this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute).needsUpdate =
+      true;
+
+    const cull = this.bp.edgeViewportCulling && this.activeCamera != null;
+    if (cull && !this.edgeCullCameraUnchanged()) {
+      this.rebuildEdgeDrawIndex();
+      return;
+    }
+    if (this.edgeDrawIndex.length < this.edges.length * 2) {
+      const grown = new Uint32Array(
+        Math.max(this.edges.length * 2, this.edgeDrawIndex.length * 2),
+      );
+      grown.set(this.edgeDrawIndex.subarray(0, this.edgeDrawCount));
+      this.edgeDrawIndex = grown;
+    }
+    const eidx = this.edgeDrawIndex;
+    const mx = this.width * 0.25;
+    const my = this.height * 0.25;
+    let ec = this.edgeDrawCount;
+    for (let i = startM; i < this.edges.length; i++) {
+      if (a[i * 2] <= 0) continue;
+      if (cull) {
+        // Camera pose is unchanged (checked above), so these projections
+        // decide exactly as the full rebuild would for the appended rows.
+        const e = this.edges[i];
+        if (
+          !this.nodeInView(e.sourceIdx, mx, my) &&
+          !this.nodeInView(e.targetIdx, mx, my)
+        ) {
+          continue;
+        }
+      }
+      eidx[ec++] = i * 2;
+      eidx[ec++] = i * 2 + 1;
+    }
+    this.edgeDrawCount = ec;
+    this.setGeometryDrawIndex(this.edgeGeometry, eidx, ec);
+    this.requestRender();
   }
 
   /** Schedule grow-in for the appended nodes [oldN, n): BFS outward from the
@@ -4876,6 +5213,7 @@ export class ThreeRenderer {
     if (!anim) return;
     this.buildAnim = null;
     if (this.nodeGeometry) {
+      this.centroidsDirty = true;
       this.posArray.set(this.layoutPos);
       this.sizeArray.set(anim.targetSize);
       (this.nodeGeometry.getAttribute('aSize') as BufferAttribute).needsUpdate =
@@ -4984,6 +5322,7 @@ export class ThreeRenderer {
   private updateBuildAnim(now: number): void {
     const anim = this.buildAnim;
     if (!anim || !this.nodeGeometry) return;
+    this.centroidsDirty = true; // the burst repositions every node
     const t = now - anim.start;
     // easeOutBack — overshoots past 1 then settles, giving the launch + pop.
     const c1 = BUILD_BACK_C1;

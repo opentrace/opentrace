@@ -169,6 +169,42 @@ describe('EmbedStage error visibility', () => {
     expect(stage.embeddedCount).toBe(8);
   });
 
+  it('drops the post-cancel batch but persists pre-cancel batches', async () => {
+    // Cancel lands during batch 2's inference: batch 2's vectors must never
+    // reach the store, but batch 1 (embedded before cancel) must persist —
+    // exactly what the old persist-per-batch code left behind on cancel.
+    let cancelled = false;
+    let embedCallCount = 0;
+    const embedMock = vi.fn().mockImplementation(async (texts: string[]) => {
+      embedCallCount++;
+      if (embedCallCount === 2) cancelled = true;
+      return texts.map(() => [0.1, 0.2, 0.3]);
+    });
+    WorkerEmbedderMock.mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      embed: embedMock,
+      dimension: () => 3,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    const store = makeStore();
+    const stage = new EmbedStage({
+      config: { enabled: true, model: 'test-model' },
+      store,
+    });
+    for (let i = 0; i < 24; i++) stage.process(fileNode(`f${i}.ts`));
+
+    await stage.settle(undefined, () => cancelled);
+
+    expect(embedMock).toHaveBeenCalledTimes(2);
+    expect(store.importVectors).toHaveBeenCalledTimes(1);
+    const persisted = vi.mocked(store.importVectors!).mock.calls[0][0];
+    expect(persisted.map((v) => v.id)).toEqual(
+      Array.from({ length: 8 }, (_, i) => `f${i}.ts`),
+    );
+    expect(stage.embeddedCount).toBe(8);
+  });
+
   it('skips the store write when cancellation lands during inference', async () => {
     let cancelled = false;
     WorkerEmbedderMock.mockImplementation(() => ({
@@ -191,6 +227,107 @@ describe('EmbedStage error visibility', () => {
     await stage.settle(undefined, () => cancelled);
 
     expect(store.importVectors).not.toHaveBeenCalled();
+    expect(stage.embeddedCount).toBe(0);
+  });
+});
+
+describe('EmbedStage persistence batching', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let WorkerEmbedderMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mod =
+      await import('../../../runner/browser/enricher/embedder/workerEmbedder');
+    WorkerEmbedderMock = vi.mocked(mod.WorkerEmbedder);
+    WorkerEmbedderMock.mockReset();
+    WorkerEmbedderMock.mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      embed: vi
+        .fn()
+        .mockImplementation(async (texts: string[]) =>
+          texts.map(() => [0.1, 0.2, 0.3]),
+        ),
+      dimension: () => 3,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    }));
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  const makeStage = (store: GraphStore) =>
+    new EmbedStage({ config: { enabled: true, model: 'test-model' }, store });
+
+  it('keeps inference batches at 8 but persists every ~500 vectors plus a final drain', async () => {
+    const store = makeStore();
+    const stage = makeStage(store);
+    const N = 1010; // 127 inference batches (126×8 + 2)
+    for (let i = 0; i < N; i++) stage.process(fileNode(`f${i}.ts`));
+
+    const progress: number[] = [];
+    await stage.settle((embedded) => progress.push(embedded));
+
+    // Inference cadence unchanged: batches of exactly 8 (last one 2).
+    const embedder = WorkerEmbedderMock.mock.results[0].value as {
+      embed: ReturnType<typeof vi.fn>;
+    };
+    const batchSizes = embedder.embed.mock.calls.map(
+      (c: [string[]]) => c[0].length,
+    );
+    expect(batchSizes).toHaveLength(127);
+    expect(batchSizes.slice(0, 126)).toEqual(new Array(126).fill(8));
+    expect(batchSizes[126]).toBe(2);
+
+    // Persistence cadence: drain at ≥500 (after batch 63 → 504, after
+    // batch 126 → another 504), then the final drain flushes the tail.
+    const importCalls = vi.mocked(store.importVectors!).mock.calls;
+    expect(importCalls.map((c) => c[0].length)).toEqual([504, 504, 2]);
+
+    // All vectors persisted exactly once, in file order.
+    const persistedIds = importCalls.flatMap((c) => c[0].map((v) => v.id));
+    expect(persistedIds).toEqual(
+      Array.from({ length: N }, (_, i) => `f${i}.ts`),
+    );
+    expect(stage.embeddedCount).toBe(N);
+
+    // Progress reporting matches the old persist-per-batch cadence:
+    // one callback per inference batch, counting embedded-so-far.
+    expect(progress).toEqual(
+      Array.from({ length: 127 }, (_, k) => Math.min((k + 1) * 8, N)),
+    );
+  });
+
+  it('final drain persists a sub-threshold remainder', async () => {
+    const store = makeStore();
+    const stage = makeStage(store);
+    for (let i = 0; i < 12; i++) stage.process(fileNode(`f${i}.ts`));
+
+    await stage.settle();
+
+    expect(store.importVectors).toHaveBeenCalledTimes(1);
+    const persisted = vi.mocked(store.importVectors!).mock.calls[0][0];
+    expect(persisted.map((v) => v.id)).toEqual(
+      Array.from({ length: 12 }, (_, i) => `f${i}.ts`),
+    );
+    expect(stage.embeddedCount).toBe(12);
+  });
+
+  it('logs and drops the batch when the drain itself fails', async () => {
+    const store = makeStore();
+    vi.mocked(store.importVectors!).mockRejectedValue(new Error('copy died'));
+    const stage = makeStage(store);
+    for (let i = 0; i < 16; i++) stage.process(fileNode(`f${i}.ts`));
+
+    // Non-fatal, same contract as the old per-batch persist failure.
+    await expect(stage.settle()).resolves.toBeUndefined();
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[EmbedStage] importVectors failed'),
+      expect.any(Error),
+    );
+    // Nothing counted as embedded — the counter tracks persisted vectors.
     expect(stage.embeddedCount).toBe(0);
   });
 });

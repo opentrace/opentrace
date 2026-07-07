@@ -151,4 +151,46 @@ describe('WorkerGraphStore storeSource chunk pump', () => {
     await clearP;
     expect(order).toEqual(['storeSource:a', 'storeSource:b', 'clearGraph']);
   });
+
+  it('job-service-style chunked calls compose with the pump: file order preserved, flush waits for all', async () => {
+    // browserJobService now calls storeSource in ~500-file chunks (with
+    // event-loop yields between them) instead of one repo-sized call. Each
+    // call chains its own pump segment; the worker must see exactly the
+    // same 200-file RPC sequence, in file order, and flush must still wait
+    // for every chunk from every call.
+    const { store, s } = await makeStore();
+    const posted: { first: string; count: number }[] = [];
+    const order: string[] = [];
+    s.call = vi.fn(async (method: string, args: unknown[]) => {
+      order.push(method);
+      if (method === 'storeSource') {
+        const files = args[0] as SourceFile[];
+        posted.push({ first: files[0].id, count: files.length });
+      }
+      return undefined;
+    });
+
+    const files = makeFiles(1200);
+    const JOB_CHUNK = 500;
+    for (let i = 0; i < files.length; i += JOB_CHUNK) {
+      store.storeSource(files.slice(i, i + JOB_CHUNK));
+      // Same yield the job service performs between chunks.
+      await flushMicrotasks();
+    }
+    await store.flush();
+
+    // 500 → 200+200+100, 500 → 200+200+100, 200 → 200; file order intact.
+    expect(posted).toEqual([
+      { first: 'repo/f0.ts', count: 200 },
+      { first: 'repo/f200.ts', count: 200 },
+      { first: 'repo/f400.ts', count: 100 },
+      { first: 'repo/f500.ts', count: 200 },
+      { first: 'repo/f700.ts', count: 200 },
+      { first: 'repo/f900.ts', count: 100 },
+      { first: 'repo/f1000.ts', count: 200 },
+    ]);
+    // flush ran only after every source chunk posted.
+    expect(order[order.length - 1]).toBe('flush');
+    expect(order.filter((m) => m === 'storeSource')).toHaveLength(7);
+  });
 });

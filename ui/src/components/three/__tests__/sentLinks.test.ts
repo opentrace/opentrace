@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GraphLink } from '../../graph/types';
+import { AppendTracker } from '../appendPrefix';
 import { renderLinkKey, takeUnsentRenderLinks } from '../sentLinks';
 
 const link = (source: string, target: string, label = 'CALLS'): GraphLink => ({
@@ -82,5 +83,84 @@ describe('takeUnsentRenderLinks', () => {
     const sent = new Set<string>();
     const out = takeUnsentRenderLinks([link('a', 'b'), link('a', 'b')], sent);
     expect(out).toEqual([link('a', 'b')]);
+  });
+});
+
+describe('takeUnsentRenderLinks with an AppendTracker (prefix skip)', () => {
+  it('matches the full-scan output across append-only batches', () => {
+    const sentFast = new Set<string>();
+    const sentFull = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+
+    let list = [link('a', 'b', 'DEFINES')];
+    expect(takeUnsentRenderLinks(list, sentFast, tracker)).toEqual(
+      takeUnsentRenderLinks(list, sentFull),
+    );
+    // Batch 2 appends new links, including a late resolve edge between OLD
+    // nodes — the suffix scan must still return it.
+    list = list.concat([link('b', 'c', 'DEFINES'), link('a', 'b', 'CALLS')]);
+    expect(takeUnsentRenderLinks(list, sentFast, tracker)).toEqual(
+      takeUnsentRenderLinks(list, sentFull),
+    );
+    expect(sentFast).toEqual(sentFull);
+  });
+
+  it('returns only the new suffix links on the fast path', () => {
+    const sent = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+    const batch1 = [link('a', 'b'), link('b', 'c')];
+    takeUnsentRenderLinks(batch1, sent, tracker);
+    const batch2 = batch1.concat([link('c', 'd')]);
+    expect(takeUnsentRenderLinks(batch2, sent, tracker)).toEqual([
+      link('c', 'd'),
+    ]);
+  });
+
+  it('still dedups suffix links whose key is already sent', () => {
+    const sent = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+    const batch1 = [link('a', 'b')];
+    takeUnsentRenderLinks(batch1, sent, tracker);
+    const batch2 = batch1.concat([link('a', 'b'), link('b', 'c')]);
+    expect(takeUnsentRenderLinks(batch2, sent, tracker)).toEqual([
+      link('b', 'c'),
+    ]);
+  });
+
+  it('falls back to a full scan when the list is replaced (reload)', () => {
+    const sent = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+    takeUnsentRenderLinks([link('a', 'b')], sent, tracker);
+    // Fresh array with fresh objects — prefix identity broken.
+    const reloaded = [link('a', 'b'), link('x', 'y')];
+    expect(takeUnsentRenderLinks(reloaded, sent, tracker)).toEqual([
+      link('x', 'y'),
+    ]);
+  });
+
+  it('falls back to a full scan on shrink, then recovers on later appends', () => {
+    const sent = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+    const full = [link('a', 'b'), link('b', 'c'), link('c', 'd')];
+    takeUnsentRenderLinks(full, sent, tracker);
+    const shrunk = full.slice(0, 1);
+    expect(takeUnsentRenderLinks(shrunk, sent, tracker)).toEqual([]);
+    // Regrow from the shrunk baseline: re-appearing keys stay deduped by the
+    // per-link sent check, genuinely-new keys come through.
+    const regrown = shrunk.concat([link('b', 'c'), link('d', 'e')]);
+    expect(takeUnsentRenderLinks(regrown, sent, tracker)).toEqual([
+      link('d', 'e'),
+    ]);
+  });
+
+  it('a reset tracker + fresh sent set re-sends everything (full setData path)', () => {
+    const sent = new Set<string>();
+    const tracker = new AppendTracker<GraphLink>();
+    const list = [link('a', 'b'), link('b', 'c')];
+    takeUnsentRenderLinks(list, sent, tracker);
+    // Mirror ThreeGraphCanvas's full-rebuild branch: reset both together.
+    const freshSent = new Set<string>();
+    tracker.reset();
+    expect(takeUnsentRenderLinks(list, freshSent, tracker)).toEqual(list);
   });
 });
