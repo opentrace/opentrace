@@ -281,6 +281,14 @@
   transform: rotate(180deg);
 }
 
+/* Accordion body — restores the 12px stack the controls had when they were
+ * direct children of .physics-panel-scroll. */
+.physics-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 /* Divider */
 .physics-divider {
   height: 1px;
