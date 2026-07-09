@@ -50,7 +50,13 @@ afterEach(() => {
 
 let ctx: GraphInteractionState;
 function Probe() {
-  ctx = useGraphInteraction();
+  // Capture the context for assertions. Assign in an effect (not during
+  // render) so we don't reassign a module-scoped binding mid-render, which
+  // the react-hooks/globals lint rule (correctly) forbids.
+  const value = useGraphInteraction();
+  React.useEffect(() => {
+    ctx = value;
+  });
   return null;
 }
 

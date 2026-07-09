@@ -25,7 +25,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { OrthographicCamera, Scene, BufferAttribute } from 'three';
+import { OrthographicCamera, Scene } from 'three';
 
 import { ThreeRenderer, type ThreeEdge } from '../ThreeRenderer';
 import { createNodeMaterial } from '../nodeMaterial';

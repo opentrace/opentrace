@@ -289,11 +289,11 @@ const GraphViewer = memo(
         const next = large && !edgesUserOverrideRef.current;
         if (!large) {
           edgesUserOverrideRef.current = false;
-          // eslint-disable-next-line react-hooks/set-state-in-effect -- derived overlay flag, guarded setter
+
           setEdgePillDismissed(false);
         }
         edgesAutoHiddenRef.current = next;
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- derived overlay flag, guarded setter
+
         setEdgesAutoHidden((prev) => (prev === next ? prev : next));
       }, [graphData.links.length]);
 

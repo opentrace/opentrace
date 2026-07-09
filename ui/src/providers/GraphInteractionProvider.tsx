@@ -372,7 +372,7 @@ function InternalGraphInteractionProvider({
     }
     if (pending.length === 0) return;
     for (const key of pending) processedDefaultSubTypes.current.add(key);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-sub-type default init
+
     setHiddenSubTypes((prev) => {
       let changed = false;
       const next = new Set(prev);

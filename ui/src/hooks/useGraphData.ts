@@ -583,7 +583,6 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     // imported before). Skip the initial fetch for fresh sessions — this avoids
     // triggering WASM worker init (8+ seconds) before the user adds a repo.
     if (store.hasData()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data fetch on mount
       loadGraph();
     } else if (store.ensureReady) {
       // Server-backed stores don't know if data exists until they've called

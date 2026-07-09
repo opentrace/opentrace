@@ -103,7 +103,7 @@ export default function SidePanel({
   const [resolvedProps, setResolvedProps] = useState<
     Record<string, unknown> | undefined
   >(undefined);
-  /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
+
   useEffect(() => {
     if (!selectedNode) {
       setResolvedProps(undefined);
@@ -130,7 +130,6 @@ export default function SidePanel({
       cancelled = true;
     };
   }, [selectedNode?.id, store]); // eslint-disable-line react-hooks/exhaustive-deps
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // The selected node with its properties filled in (lazily, see above).
   const resolvedNode = useMemo(
@@ -149,7 +148,6 @@ export default function SidePanel({
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
 
-  /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
   useEffect(() => {
     if (!selectedNode || !SOURCE_TYPES.has(selectedNode.type)) {
       setNodeSource(null);
@@ -189,7 +187,6 @@ export default function SidePanel({
       cancelled = true;
     };
   }, [selectedNode?.id, resolvedProps, store]); // eslint-disable-line react-hooks/exhaustive-deps
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // ─── Selection callbacks (from context, plus light wrappers) ─────────
   const onCommunityFocus = useCallback(
@@ -273,7 +270,7 @@ export default function SidePanel({
           | 'discover'
           | 'history';
       }
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing tab to selection state
+
       setActiveTab('details');
     } else if (activeTabRef.current === 'details') {
       // Restore previous tab when details close
@@ -461,6 +458,7 @@ export default function SidePanel({
     });
 
     return sections;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- themeKey drives getNodeColor/getLinkColor's CSS-var reads
   }, [
     availableNodeTypes,
     availableLinkTypes,
