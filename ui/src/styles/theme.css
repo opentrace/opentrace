@@ -42,6 +42,11 @@
   --graph-node-service: #6366f1;
   --graph-node-module: #eab308;
   --graph-node-package: #14b8a6;
+  /* Dependency is now a known type (see nodeColors.ts). Default it to the
+     same palette slot it used to hash into (djb2('Dependency') % 12 === 4),
+     so every theme's Dependency color is unchanged; the clean/brand theme
+     overrides this below. */
+  --graph-node-dependency: var(--graph-node-palette-4);
   /* Node palette (DJB2 hash fallback for unknown types) */
   --graph-node-palette-0: #6366f1;
   --graph-node-palette-1: #eab308;
@@ -731,4 +736,95 @@
   --shadow-md: 0 2px 6px -1px hsl(0 0% 0% / 0.06);
   --shadow-lg: 0 4px 8px -2px hsl(0 0% 0% / 0.06);
   --shadow-xl: 0 8px 16px -4px hsl(0 0% 0% / 0.08);
+}
+
+/* ─── OpenTrace brand graph palette — DEFAULT (clean) theme only ──────────
+   Sourced from opentrace/website (css/style.css): marigold orange +
+   powder blues + white on near-black. Scoped to [data-theme='clean'] (NOT
+   :root) so it can't leak into the other themes via the :root branch of the
+   base blocks. Node/edge types the palette doesn't name hash deterministically
+   into the palette slots below. Placed last so it wins for the clean theme. */
+[data-theme='clean'] {
+  /* Same brand family (white + powder blues + cyan + teal + marigold/amber),
+     but spread across hue AND lightness so adjacent node types are
+     distinguishable: white hub, aqua, sky-cyan, deep ocean-blue, orange, amber. */
+  --graph-node-repository: #ffffff; /* white — the hub, brightest */
+  --graph-node-class: #6fe0da; /* aqua/teal */
+  --graph-node-file: #57c2e8; /* sky cyan */
+  --graph-node-directory: #2e8fc4; /* deep ocean blue */
+  --graph-node-function: #f97316; /* marigold orange */
+  --graph-node-dependency: #f5a623; /* amber/gold */
+  /* Palette for unnamed types — warm accents interleaved with a
+     light→dark blue/cyan ladder to keep consecutive hashes apart. */
+  --graph-node-palette-0: #f97316; /* orange */
+  --graph-node-palette-1: #6fe0da; /* aqua */
+  --graph-node-palette-2: #ffffff; /* white */
+  --graph-node-palette-3: #2e8fc4; /* deep blue */
+  --graph-node-palette-4: #f5a623; /* amber */
+  --graph-node-palette-5: #86d2f1; /* light sky */
+  --graph-node-palette-6: #2dd4bf; /* bright teal */
+  --graph-node-palette-7: #57c2e8; /* cyan */
+  --graph-node-palette-8: #fbbf24; /* gold */
+  --graph-node-palette-9: #7fcbec; /* pale cyan */
+  --graph-node-palette-10: #4fb0e0; /* mid blue */
+  --graph-node-palette-11: #a9dcf3; /* pale blue */
+  /* Edges: cool family spread by lightness, structural DEFINES kept pale. */
+  --graph-edge-calls: #57c2e8; /* cyan */
+  --graph-edge-defines: #a9dcf3; /* pale blue */
+  --graph-edge-imports: #6fe0da; /* aqua */
+  --graph-edge-depends-on: #2e8fc4; /* deep blue */
+  --graph-edge-palette-0: #6fe0da;
+  --graph-edge-palette-1: #a9dcf3;
+  --graph-edge-palette-2: #c6eaf8;
+  --graph-edge-palette-3: #2e8fc4;
+  --graph-edge-palette-4: #f5a623;
+  --graph-edge-palette-5: #86d2f1;
+  --graph-edge-palette-6: #7fcbec;
+  --graph-edge-palette-7: #4fb0e0;
+  --graph-edge-palette-8: #fbbf24;
+  --graph-edge-palette-9: #57c2e8;
+  --graph-edge-palette-10: #4fb0e0;
+  --graph-edge-palette-11: #3d97d4;
+}
+
+/* Light-mode adaptation of the brand palette: same marigold + blue hues,
+   deepened so nodes read on a near-white canvas (the dark-mode white / pale
+   blues would vanish). Clean theme only. */
+[data-theme='clean'][data-mode='light'] {
+  /* Deepened brand palette, spread by hue + lightness and dark enough to read
+     on the near-white canvas (the pale dark-mode values would vanish). */
+  --graph-node-repository: #0a4d78; /* deep navy — hub */
+  --graph-node-class: #0e9488; /* deep teal */
+  --graph-node-file: #2f8fca; /* mid blue */
+  --graph-node-directory: #1b6fa8; /* deep blue */
+  --graph-node-function: #e5610a; /* deep orange */
+  --graph-node-dependency: #b3730a; /* bronze / dark amber */
+  --graph-node-palette-0: #e5610a; /* orange */
+  --graph-node-palette-1: #0e9488; /* teal */
+  --graph-node-palette-2: #0a4d78; /* navy */
+  --graph-node-palette-3: #1b6fa8; /* deep blue */
+  --graph-node-palette-4: #b3730a; /* bronze */
+  --graph-node-palette-5: #2f8fca; /* mid blue */
+  --graph-node-palette-6: #147a70; /* deep teal 2 */
+  --graph-node-palette-7: #4aa3d6; /* light blue */
+  --graph-node-palette-8: #c98a12; /* gold-bronze */
+  --graph-node-palette-9: #5fb3e0; /* lighter blue */
+  --graph-node-palette-10: #1f7fb8; /* blue */
+  --graph-node-palette-11: #2f8fca; /* mid blue */
+  --graph-edge-calls: #2f8fca;
+  --graph-edge-defines: #5fb3e0;
+  --graph-edge-imports: #0e9488;
+  --graph-edge-depends-on: #14608f;
+  --graph-edge-palette-0: #0e9488;
+  --graph-edge-palette-1: #5fb3e0;
+  --graph-edge-palette-2: #7fc3e8;
+  --graph-edge-palette-3: #14608f;
+  --graph-edge-palette-4: #b3730a;
+  --graph-edge-palette-5: #2f8fca;
+  --graph-edge-palette-6: #4aa3d6;
+  --graph-edge-palette-7: #1f7fb8;
+  --graph-edge-palette-8: #c98a12;
+  --graph-edge-palette-9: #2f8fca;
+  --graph-edge-palette-10: #1f7fb8;
+  --graph-edge-palette-11: #1b6fa8;
 }

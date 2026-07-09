@@ -32,6 +32,7 @@ import {
 import { useGraph } from '../providers/GraphDataProvider';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
 import { linkId } from '../providers/graphFilterUtils';
+import { useThemeKey } from '../components/graph/useThemeKey';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
@@ -319,6 +320,11 @@ export default function SidePanel({
   }, [selectedNode, filteredGraphData.nodes, filteredGraphData.links]);
 
   // ─── Derived: filter sections for the FilterPanel UI ──────────────────
+  // Filter-panel swatches read CSS-variable colors via getNodeColor/
+  // getLinkColor, so they must recompute when the theme changes (same reason
+  // as the graph legend) or they'd show the previous theme's colors.
+  const themeKey = useThemeKey();
+
   const filterSections = useMemo<FilterPanelProps[]>(() => {
     const nodeFilterItems: FilterItem[] = availableNodeTypes.map(
       ({ type, count }) => {
@@ -470,6 +476,7 @@ export default function SidePanel({
     setHiddenLinkTypes,
     setHiddenSubTypes,
     setHiddenCommunities,
+    themeKey,
   ]);
 
   const handleCloseDetails = () => {

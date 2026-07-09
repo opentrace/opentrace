@@ -36,6 +36,7 @@ import type { GraphLink, GraphNode, SelectedEdge } from '../components/utils';
 import type { HistoryEntry } from '../appComponents/historyTypes';
 import { useGraph } from '../providers/GraphDataProvider';
 import { useGraphInteraction } from '../providers/GraphInteractionProvider';
+import { useThemeKey } from '../components/graph/useThemeKey';
 import {
   GRAPH_SETTING_DEFAULTS,
   type GraphSettingDefaults,
@@ -877,6 +878,13 @@ export function useGraphViewer(
   }, [zoomOnSelect, selectedNodeId, hasSelectedLink, focusedCommunitySize]);
 
   // ─── Legend items ───────────────────────────────────────────────────────
+  // Recompute legend colors when the theme changes (data-theme/data-mode).
+  // getNodeColor/getLinkColor read CSS variables, so without themeKey in the
+  // deps the legend keeps a previous theme's memoized colors while the canvas
+  // (which does depend on themeKey) recolors — the legend then disagrees with
+  // the graph for that theme.
+  const themeKey = useThemeKey();
+
   const legendNodeItems = useMemo<LegendItem[]>(() => {
     const counts: Record<string, number> = {};
     filteredGraphData.nodes.forEach((n) => {
@@ -889,7 +897,8 @@ export function useGraphViewer(
         color: getNodeColor(label),
       }))
       .sort((a, b) => b.count - a.count);
-  }, [filteredGraphData.nodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- themeKey drives getNodeColor's CSS-var reads
+  }, [filteredGraphData.nodes, themeKey]);
 
   const legendCommunityItems = useMemo<LegendItem[]>(() => {
     if (colorMode !== 'community') return [];
@@ -925,7 +934,8 @@ export function useGraphViewer(
         color: getLinkColor(label),
       }))
       .sort((a, b) => b.count - a.count);
-  }, [filteredGraphData.links]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- themeKey drives getLinkColor's CSS-var reads
+  }, [filteredGraphData.links, themeKey]);
 
   // ─── Search suggestions ─────────────────────────────────────────────────
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
