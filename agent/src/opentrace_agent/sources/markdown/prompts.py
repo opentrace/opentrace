@@ -123,7 +123,7 @@ DO NOT EXTRACT
 
 - Configuration: CLI flags (`--foo`), environment variables (`OT_*`), config
   keys. These are properties of their parent command or module.
-- Schema vocabulary: graph node-type labels ("Class Node", "WikiPage Node"),
+- Schema vocabulary: graph node-type labels ("Class Node", "Page Node"),
   edge-type labels ("MENTIONS edge", "DERIVED_FROM edge"), or any term whose
   role in the text is to describe the extraction system itself.
 - The type names above used as their own example ("Idea Entity",

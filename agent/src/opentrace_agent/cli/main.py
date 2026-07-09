@@ -439,7 +439,7 @@ def _run_indexing_pipeline(
                 # reads the doc files into SourceInputs and, in ONE LLM call per
                 # doc, produces the Source labels, the knowledge-graph
                 # entities/edges, and the concept inventory (synthesised into
-                # concept WikiPages) — all into the same staging DB; the
+                # concept Pages) — all into the same staging DB; the
                 # atomic swap covers them together.
                 if wiki:
                     _run_wiki_compile_against_index(
@@ -647,7 +647,7 @@ def _run_refresh_stale_after_index(
     vault_name: str | None,
     verbose: bool,
 ) -> None:
-    """Re-run Plan+Execute against any WikiPages stamped stale_since this run.
+    """Re-run Plan+Execute against any Pages stamped stale_since this run.
 
     Delegates to ``wiki.ingest.pipeline.refresh_stale_pages`` (the same
     helper backing ``opentraceai vault refresh-stale-pages``) so both surfaces
@@ -720,15 +720,15 @@ def _run_autoprune_after_index(
         [
             report.sources_deleted,
             report.entities_deleted,
-            report.concept_pages_deleted,
-            report.concept_pages_marked_stale,
+            report.pages_deleted,
+            report.pages_marked_stale,
         ]
     ):
         click.echo(
             f"  Autoprune: -{report.sources_deleted} sources, "
             f"-{report.entities_deleted} entities, "
-            f"-{report.concept_pages_deleted} concept pages, "
-            f"{report.concept_pages_marked_stale} stale-marked, "
+            f"-{report.pages_deleted} concept pages, "
+            f"{report.pages_marked_stale} stale-marked, "
             f"-{report.corpus_files_deleted} corpus files"
         )
     elif verbose:
@@ -861,13 +861,16 @@ def _run_wiki_compile_against_index(
             counter = f"[{event.current}/{event.total}] " if event.total else ""
             click.echo(f"    wiki: {counter}{event.message}")
 
-    # Bridge the corpus layer to the code tree: docs that also got a File
-    # node from the code walk (e.g. .md) get a MIRRORS edge + path stamp.
-    # Single-file / URL / global-vault runs have no File twins (repo_id is
-    # None or the mirror target was skipped) — nothing to link.
+    # Bridge the wiki layer to the code tree. Repo-walked runs only (repo_id
+    # set + a graph mirror): single-file / URL / global-vault compiles have
+    # neither a repo nor File twins — nothing to link.
     if repo_id is not None and mirror_target is not None:
-        from opentrace_agent.wiki.ingest.graph_writer import link_corpus_doc_mirrors
+        from opentrace_agent.wiki.ingest.graph_writer import (
+            link_corpus_doc_mirrors,
+            link_vault_to_repo,
+        )
 
+        # Every ingested doc gets a MIRRORS edge to its File twin + path stamp.
         linked = link_corpus_doc_mirrors(
             mirror_target,
             repo_id,
@@ -875,6 +878,13 @@ def _run_wiki_compile_against_index(
         )
         if linked:
             click.echo(f"    wiki: linked {linked} doc(s) to their File nodes (MIRRORS)")
+
+        # The vault itself spawned from this repo — record that as a
+        # Repository -DOCUMENTS-> Vault edge + spawned_from stamp.
+        # This is the ONLY path that writes it: attached globals and
+        # dropped-file compiles don't document the repo they sit next to.
+        if link_vault_to_repo(mirror_target, repo_id, vault_name):
+            click.echo(f"    wiki: linked vault {vault_name!r} to repository {repo_id!r} (DOCUMENTS)")
 
 
 def _default_vault_name(path: Path) -> str:

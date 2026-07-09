@@ -45,8 +45,8 @@ class AutopruneReport:
 
     sources_deleted: int = 0
     entities_deleted: int = 0
-    concept_pages_deleted: int = 0
-    concept_pages_marked_stale: int = 0
+    pages_deleted: int = 0
+    pages_marked_stale: int = 0
     cites_edges_removed: int = 0
     corpus_files_deleted: int = 0
 
@@ -158,11 +158,11 @@ def autoprune_after_index(
             if remaining == 0:
                 _delete_page_disk_file(store, page, vault_name=vault_name, db_path=db_path)
                 _delete_node_and_edges(store, pid)
-                report.concept_pages_deleted += 1
+                report.pages_deleted += 1
             else:
                 _stamp_stale_since(store, pid, now_iso)
                 if pid not in already_marked_stale:
-                    report.concept_pages_marked_stale += 1
+                    report.pages_marked_stale += 1
                     already_marked_stale.add(pid)
 
     return report
@@ -180,8 +180,8 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
     Wiki-created Source nodes deliberately don't carry a ``vault`` property
     (sources are content-addressed by sha and may live in multiple vaults at
     once — see ``wiki/ingest/graph_writer.py``). Vault membership is expressed
-    via ``WikiVault -CONTAINS-> Source`` edges, so we traverse from the
-    WikiVault when ``vault_name`` is set.
+    via ``Vault -CONTAINS-> Source`` edges, so we traverse from the
+    Vault when ``vault_name`` is set.
     """
     if vault_name:
         from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
@@ -201,9 +201,9 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
 
 
 def _pages_citing(store, source_id: str) -> list[dict[str, Any]]:
-    """Return WikiPage nodes that have a CITES edge to *source_id*."""
+    """Return Page nodes that have a CITES edge to *source_id*."""
     incoming = store.traverse(source_id, direction="incoming", max_depth=1, relationship_type="CITES")
-    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "WikiPage"]
+    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "Page"]
 
 
 def _pages_in_vault(pages: list[dict[str, Any]], vault_name: str | None) -> list[dict[str, Any]]:
@@ -294,12 +294,12 @@ def _delete_page_disk_file(
     vault_name: str | None,
     db_path: str | None,
 ) -> None:
-    """Best-effort delete the on-disk markdown for a WikiPage being pruned.
+    """Best-effort delete the on-disk markdown for a Page being pruned.
 
     The page's ``slug`` already encodes kind/base (e.g. ``concept/usage``),
     so the disk path is ``<vault>/pages/<slug>.md``. Resolves the vault dir
-    using the WikiVault node's ``scope`` property; falls back to local scope
-    when the WikiVault is missing.
+    using the Vault node's ``scope`` property; falls back to local scope
+    when the Vault is missing.
 
     Failures (missing file, permission denied) are logged and swallowed —
     the graph node has already been removed, the disk file is a follow-up.
@@ -354,7 +354,7 @@ def _delete_cites_edge(store, *, source_id: str, target_id: str) -> int:
 
 
 def _stamp_stale_since(store, page_id: str, iso_ts: str) -> None:
-    """Set ``stale_since=<iso_ts>`` on a WikiPage's properties blob.
+    """Set ``stale_since=<iso_ts>`` on a Page's properties blob.
 
     Reads-updates-writes via ``add_node`` (which upserts). Preserves all
     other properties.

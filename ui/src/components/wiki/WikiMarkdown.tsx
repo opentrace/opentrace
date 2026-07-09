@@ -19,6 +19,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import wikiLinkPlugin from 'remark-wiki-link';
 import type { VaultPageMeta } from '../../wiki/types';
+import './wiki.css';
 
 interface Props {
   markdown: string;

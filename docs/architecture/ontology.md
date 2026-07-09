@@ -10,7 +10,7 @@ The graph organises into three domains:
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
 | **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
-| **page** | `WikiVault`, `WikiPage`, `CorpusDoc` | `opentraceai index --wiki` (Plan + Execute) |
+| **page** | `Vault`, `Page`, `CorpusDoc` | `opentraceai index --wiki` (Plan + Execute) |
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -92,7 +92,7 @@ The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Ev
 
 ### Page domain
 
-#### `WikiVault`
+#### `Vault`
 
 A named collection of compiled pages (one per disk vault dir).
 
@@ -101,9 +101,10 @@ A named collection of compiled pages (one per disk vault dir).
 - `last_compiled_at` — ISO-8601 timestamp from `.vault.json`
 - `scope` — `"local"` or `"global"`
 - `mirror_compiled_at` — when this graph's mirror was last written. `vault list` compares against `last_compiled_at` to flag stale mirrors
+- `spawned_from` — repo id when the vault was built by `index --wiki` over that repository (paired with the `DOCUMENTS` edge); empty for uploads/URL compiles and attached globals
 - `summary`, `vault`
 
-#### `WikiPage`
+#### `Page`
 
 A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `CorpusDoc` node (see below) with the raw body in the corpus.
 
@@ -160,7 +161,7 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `WikiVault → WikiPage/CorpusDoc` |
+| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `Vault → Page/CorpusDoc` |
 | `DEFINES` | container → symbol | `File → Class/Function`, `Class → Function`, `Class → Variable` |
 | `CALLS` | `Function → Function` | Resolved call via 7-strategy resolver |
 | `IMPORTS` | `File → Dependency` | Resolved import |
@@ -180,14 +181,15 @@ Entities derive from CorpusDocs; if code-derived entities are ever introduced, t
 | Edge | From → To | Meaning |
 |---|---|---|
 | `CITES` | concept page → CorpusDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes |
-| `LINKS_TO` | WikiPage → WikiPage | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
+| `LINKS_TO` | Page → Page | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
 
 ### Cross-layer
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | WikiPage/CorpusDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match |
+| `MENTIONS` | Page/CorpusDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
 | `MIRRORS` | CorpusDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the CorpusDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
+| `DOCUMENTS` | Repository → Vault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 
 ### Auxiliary
 
@@ -224,8 +226,8 @@ Every node in the page or entity domain produced from a vault carries a `vault=<
 | `<file>::<class>::<method>` | `Function` (method) |
 | `pkg:<registry>:<name>` | `Dependency` |
 | `<stem>_<entity-slug>` | Idea / Service / Module / Paper / Person / Event |
-| `vault::<name>` | `WikiVault` |
-| `<vault>::<kind_dir>/<base>` | `WikiPage` (e.g. `kb::concept/revenue`) |
+| `vault::<name>` | `Vault` |
+| `<vault>::<kind_dir>/<base>` | `Page` (e.g. `kb::concept/revenue`) |
 | `corpus::<sha256>` | `CorpusDoc` |
 | `_meta:index:<repo_id>` | `IndexMetadata` |
 

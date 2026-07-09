@@ -29,7 +29,12 @@ from opentrace_agent.wiki.ingest.types import (
     WikiPipelineEvent,
 )
 
-_PASSTHROUGH_EXTS = {".md", ".markdown", ".txt"}
+# Plain-text formats we decode ourselves (UTF-8) rather than routing through
+# markitdown. `.rst` is included because markitdown has no reStructuredText
+# converter — it falls back to its PlainTextConverter, which decodes as ASCII
+# and dies on the first non-ASCII byte (em-dash, smart quotes). Passthrough is
+# both correct (RST is text) and avoids that bug.
+_PASSTHROUGH_EXTS = {".md", ".markdown", ".txt", ".rst"}
 
 
 def _is_passthrough(name: str) -> bool:
@@ -60,7 +65,18 @@ def _markitdown_convert(name: str, data: bytes) -> str:
         tmp.write(data)
         tmp_path = tmp.name
     try:
-        result = md.convert(tmp_path)
+        try:
+            result = md.convert(tmp_path)
+        except Exception as conv_err:
+            # markitdown routes text formats it has no dedicated converter for
+            # to PlainTextConverter, which decodes as ASCII and raises on any
+            # non-ASCII byte. When the bytes are valid UTF-8 they're just plain
+            # text we can pass through; genuine binary (invalid UTF-8) re-raises
+            # the original conversion error so real failures still surface.
+            try:
+                return data.decode("utf-8")
+            except UnicodeDecodeError:
+                raise conv_err
     finally:
         try:
             os.unlink(tmp_path)

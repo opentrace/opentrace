@@ -101,14 +101,25 @@ def build_entities(
     return entity_nodes, edges
 
 
-def write_entities_to_graph(store, nodes: list[GraphNode], rels: list[GraphRelationship]) -> int:
-    """Persist merged entity nodes + edges via the GraphStore mirror API.
+def write_entity_nodes(store, nodes: list[GraphNode]) -> int:
+    """Persist entity nodes only (no edges). Returns nodes written.
 
-    Uses the same ``add_node`` / ``merge_relationship`` calls the vault mirror
-    uses, so entity nodes dedupe by id and edges upsert. Returns nodes written.
+    Split from edge-writing because ``DERIVED_FROM`` edges point at
+    ``CorpusDoc`` nodes that the vault mirror creates *later* —
+    :func:`GraphStore.merge_relationship` silently drops an edge whose
+    target node doesn't exist yet, so edges must be written after the
+    vault mirror runs (see :func:`write_entity_edges`).
     """
     for n in nodes:
         store.add_node(id=n.id, node_type=n.type, name=n.name, properties=n.properties)
+    return len(nodes)
+
+
+def write_entity_edges(store, rels: list[GraphRelationship]) -> int:
+    """Persist entity edges (``DERIVED_FROM`` + ``SEMANTIC_EDGE``). Returns
+    edges written. Call *after* both the entity nodes and their
+    ``DERIVED_FROM`` targets (CorpusDoc nodes, created by the vault mirror)
+    exist, or the edges are silently dropped."""
     for r in rels:
         store.merge_relationship(
             id=r.id,
@@ -117,4 +128,18 @@ def write_entities_to_graph(store, nodes: list[GraphNode], rels: list[GraphRelat
             target_id=r.target_id,
             properties=r.properties,
         )
+    return len(rels)
+
+
+def write_entities_to_graph(store, nodes: list[GraphNode], rels: list[GraphRelationship]) -> int:
+    """Persist merged entity nodes + edges via the GraphStore mirror API.
+
+    Convenience wrapper for callers where all edge targets already exist.
+    The vault pipeline instead interleaves :func:`write_entity_nodes`
+    (before the vault mirror, so its MENTIONS pass sees the entities) and
+    :func:`write_entity_edges` (after, so DERIVED_FROM targets exist).
+    Returns nodes written.
+    """
+    write_entity_nodes(store, nodes)
+    write_entity_edges(store, rels)
     return len(nodes)

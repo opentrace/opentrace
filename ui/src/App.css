@@ -696,17 +696,14 @@
   background: color-mix(in oklch, var(--card) 80%, transparent);
   border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
   color: var(--muted-foreground);
+  width: 36px;
   height: 36px;
-  padding: 0 12px;
   border-radius: calc(var(--radius) + 2px);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   cursor: pointer;
   transition: all 0.2s;
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .vaults-btn:hover {

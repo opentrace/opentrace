@@ -21,6 +21,7 @@ from opentrace_agent.wiki.paths import (
     delete_vault,
     ensure_vault_layout,
     list_vaults,
+    move_vault_dir,
     validate_vault_name,
     vault_dir,
 )
@@ -62,6 +63,40 @@ def test_delete_vault_returns_false_when_missing(tmp_path: Path):
 def test_delete_vault_rejects_invalid_name(tmp_path: Path):
     with pytest.raises(InvalidVaultName):
         delete_vault("../etc", root=tmp_path)
+
+
+def test_move_vault_dir_local_to_global(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+    src = ensure_vault_layout("v1", scope="local", project_root=tmp_path)
+    (src / ".vault.json").write_text("{}")
+
+    old_src, new_dst = move_vault_dir("v1", src="local", dst="global", project_root=tmp_path)
+    assert not old_src.exists()
+    assert new_dst == vault_dir("v1", scope="global", project_root=tmp_path)
+    assert (new_dst / ".vault.json").exists()
+
+
+def test_move_vault_dir_missing_source(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+    with pytest.raises(FileNotFoundError):
+        move_vault_dir("nope", src="local", dst="global", project_root=tmp_path)
+
+
+def test_move_vault_dir_conflicts_with_existing_dst(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+    src = ensure_vault_layout("dup", scope="local", project_root=tmp_path)
+    (src / ".vault.json").write_text("{}")
+    ensure_vault_layout("dup", scope="global", project_root=tmp_path)
+
+    with pytest.raises(FileExistsError):
+        move_vault_dir("dup", src="local", dst="global", project_root=tmp_path)
+    # Source left intact on conflict.
+    assert (src / ".vault.json").exists()
+
+
+def test_move_vault_dir_rejects_invalid_name(tmp_path: Path):
+    with pytest.raises(InvalidVaultName):
+        move_vault_dir("../etc", src="local", dst="global", project_root=tmp_path)
 
 
 def test_ensure_vault_layout_writes_gitignore_at_root(tmp_path: Path):

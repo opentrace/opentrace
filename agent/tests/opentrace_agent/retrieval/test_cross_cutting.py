@@ -43,7 +43,7 @@ def seeded(store):
     * Entity ``Idea("AuthMiddleware")`` is what MENTIONS edges actually target.
     * Function ``auth.py::AuthMiddleware`` has the same ``name`` as the entity
       but no MENTIONS edges of its own — exercises the fallback path.
-    * Two WikiPages MENTIONS the entity; one unrelated page mentions nothing.
+    * Two Pages MENTIONS the entity; one unrelated page mentions nothing.
     """
     # Code symbol (no MENTIONS edges)
     store.add_node(
@@ -58,19 +58,19 @@ def seeded(store):
     # Wiki pages
     store.add_node(
         "vault::concept/auth-flow",
-        "WikiPage",
+        "Page",
         "Auth Flow",
         {"slug": "concept/auth-flow", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/sessions",
-        "WikiPage",
+        "Page",
         "Sessions",
         {"slug": "concept/sessions", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/unrelated",
-        "WikiPage",
+        "Page",
         "Unrelated",
         {"slug": "concept/unrelated", "vault": "vault", "kind": "concept"},
     )
@@ -149,19 +149,19 @@ def test_signature_stripping_and_substring_match(store):
     # Wiki pages
     store.add_node(
         "vault::concept/validators",
-        "WikiPage",
+        "Page",
         "Validators",
         {"slug": "concept/validators", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/decorators",
-        "WikiPage",
+        "Page",
         "Decorators",
         {"slug": "concept/decorators", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/models",
-        "WikiPage",
+        "Page",
         "Models",
         {"slug": "concept/models", "vault": "vault", "kind": "concept"},
     )
@@ -176,3 +176,37 @@ def test_signature_stripping_and_substring_match(store):
     assert ids == ["vault::concept/decorators", "vault::concept/validators"], (
         f"expected both matching-entity pages, got {ids!r}"
     )
+
+
+def test_originating_doc_recovered_via_derived_from(store):
+    """The doc an entity was extracted from carries no MENTIONS edge (that
+    pair is DERIVED_FROM instead), but must still surface as a reference."""
+    store.add_node("idea:Werkzeug", "Service", "Werkzeug", {"vault": "v"})
+    store.add_node("corpus::src", "CorpusDoc", "deploy.md", {"vault": "v"})
+    store.add_node("corpus::other", "CorpusDoc", "api.md", {"vault": "v"})
+    store.add_node("vault::concept/deploy", "Page", "Deploy", {"vault": "v"})
+    # deploy.md is the SOURCE of the entity → DERIVED_FROM, no MENTIONS.
+    store.add_relationship("df1", "DERIVED_FROM", "idea:Werkzeug", "corpus::src")
+    # api.md and a concept page merely mention it → MENTIONS.
+    store.add_relationship("m1", "MENTIONS", "corpus::other", "idea:Werkzeug")
+    store.add_relationship("m2", "MENTIONS", "vault::concept/deploy", "idea:Werkzeug")
+
+    pages = find_pages_mentioning(store, "idea:Werkzeug")
+    ids = sorted(p["id"] for p in pages)
+    # All three surface: the MENTIONS pair(s) AND the DERIVED_FROM source.
+    assert ids == ["corpus::other", "corpus::src", "vault::concept/deploy"]
+
+    # Reverse direction: the doc's derived entity surfaces even without MENTIONS.
+    ents = [e["id"] for e in find_entities_mentioned_by(store, "corpus::src")]
+    assert ents == ["idea:Werkzeug"]
+
+
+def test_no_duplicate_when_both_edges_exist(store):
+    """If a doc somehow has BOTH MENTIONS and DERIVED_FROM to an entity, the
+    union dedupes it to one result."""
+    store.add_node("idea:X", "Idea", "X", {"vault": "v"})
+    store.add_node("corpus::d", "CorpusDoc", "d.md", {"vault": "v"})
+    store.add_relationship("df", "DERIVED_FROM", "idea:X", "corpus::d")
+    store.add_relationship("mn", "MENTIONS", "corpus::d", "idea:X")
+    pages = find_pages_mentioning(store, "idea:X")
+    assert [p["id"] for p in pages] == ["corpus::d"]

@@ -39,7 +39,7 @@ def overview(
     Targets a compact JSON payload (well under 500 tokens) to fit the OT-1732
     Overview success criterion. Top concepts are the highest-degree non-internal
     nodes; recently-updated entries come from the per-node ``last_updated``
-    property when set (today: WikiPage). ``vault_scope`` is reserved for
+    property when set (today: Page). ``vault_scope`` is reserved for
     Phase 4 — currently no-op.
     """
     top_n = max(1, min(top_n, TOP_N_CAP))
@@ -72,7 +72,7 @@ def overview(
 def _scoped_overview(store: GraphStore, top_n: int, vault_scope: str) -> dict[str, Any]:
     """Restrict overview output to nodes whose ``vault`` property matches.
 
-    Vault-domain nodes (WikiVault / WikiPage / Source) all carry a ``vault``
+    Vault-domain nodes (Vault / Page / Source) all carry a ``vault``
     property by Phase 4 convention; non-vault nodes are excluded.
     """
     from opentrace_agent.store.graph_store import _parse_props
@@ -200,7 +200,7 @@ def _top_by_degree(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
 
 def _recently_updated(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
     """Return nodes whose properties carry a ``last_updated`` timestamp,
-    sorted descending. Currently driven by WikiPage; will broaden when code
+    sorted descending. Currently driven by Page; will broaden when code
     provenance stamping lands in Phase 5.
     """
     # Pull a bounded set of candidates and sort in Python — avoids relying on
@@ -240,7 +240,7 @@ def _trim_summary(value: Any) -> str:
 
 
 def _top_linked_concepts(store: GraphStore, top_n: int, vault_scope: str | None) -> list[dict[str, Any]]:
-    """Concept WikiPages ranked by how many ``LINKS_TO`` edges touch them.
+    """Concept Pages ranked by how many ``LINKS_TO`` edges touch them.
 
     Degree counts incident edges in either direction (a concept linked twice
     and linking out once has degree 3). File-summary pages and zero-degree
@@ -257,7 +257,7 @@ def _top_linked_concepts(store: GraphStore, top_n: int, vault_scope: str | None)
         if degree <= 0:
             continue
         node = store.get_node(nid)
-        if node is None or node["type"] != "WikiPage":
+        if node is None or node["type"] != "Page":
             continue
         props = node.get("properties") or {}
         if props.get("kind") != "concept":
@@ -283,7 +283,7 @@ def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -
 
     Counts edges pointing *at* each source (concept page → Source, direct by
     sha). Uncited sources never appear. Sources deliberately carry no
-    ``vault`` property (membership is the WikiVault -CONTAINS-> Source edge),
+    ``vault`` property (membership is the Vault -CONTAINS-> Source edge),
     so *vault_scope* filters against the vault's contained-source set.
     """
     scope_source_ids: set[str] | None = None
@@ -330,7 +330,7 @@ def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -
 
 
 def _cluster_sizes(store: GraphStore, vault_scope: str | None) -> dict[str, int]:
-    """Count WikiPages per ``cluster_id`` stamp (keys stringified).
+    """Count Pages per ``cluster_id`` stamp (keys stringified).
 
     Returns an empty dict when no page carries a ``cluster_id``. Restricted to
     *vault_scope* when set.
@@ -338,7 +338,8 @@ def _cluster_sizes(store: GraphStore, vault_scope: str | None) -> dict[str, int]
     from opentrace_agent.store.graph_store import _parse_props
 
     result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'WikiPage' AND n.properties CONTAINS 'cluster_id' RETURN n.properties LIMIT 5000"
+        "MATCH (n:Node) WHERE n.type = 'Page' AND n.properties CONTAINS 'cluster_id' "
+        "RETURN n.properties LIMIT 5000"
     )
     sizes: dict[str, int] = {}
     while result.has_next():

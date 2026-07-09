@@ -17,9 +17,16 @@ shared extraction validation (parse_entities)."""
 
 from __future__ import annotations
 
+import pytest
+
 from opentrace_agent.sources.markdown.extractor import parse_entities
 from opentrace_agent.sources.markdown.prompts import make_entity_id
-from opentrace_agent.wiki.ingest.entities import build_entities
+from opentrace_agent.wiki.ingest.entities import (
+    build_entities,
+    write_entities_to_graph,
+    write_entity_edges,
+    write_entity_nodes,
+)
 
 
 class TestBuildEntities:
@@ -63,6 +70,55 @@ class TestBuildEntities:
     def test_no_entities_yields_nothing(self):
         assert build_entities({}, original_name="x.md", source_id="corpus::s", vault=None) == ([], [])
         assert build_entities({"entities": []}, original_name="x.md", source_id="corpus::s", vault=None) == ([], [])
+
+
+pytest.importorskip("real_ladybug")
+from opentrace_agent.store import GraphStore  # noqa: E402
+
+
+class TestEntityWriteOrdering:
+    """Regression: DERIVED_FROM points at CorpusDoc nodes the vault mirror
+    creates later, and merge_relationship silently drops edges to a missing
+    target. So entity NODES must be written before the mirror (for MENTIONS)
+    and entity EDGES after it (so the DERIVED_FROM target exists)."""
+
+    def _store(self, tmp_path):
+        return GraphStore(str(tmp_path / "e.db"))
+
+    def _derived_from_count(self, store):
+        r = store._conn.execute("MATCH ()-[r:RELATES]->() WHERE r.type='DERIVED_FROM' RETURN count(*)")
+        return r.get_next()[0]
+
+    def test_edges_dropped_when_target_missing(self, tmp_path):
+        """Documents the failure mode: all-in-one write loses DERIVED_FROM
+        because the CorpusDoc target doesn't exist yet."""
+        store = self._store(tmp_path)
+        nodes, rels = build_entities(
+            {"entities": [{"label": "Werkzeug", "type": "Service"}]},
+            original_name="r.md",
+            source_id="corpus::abc",
+            vault="v",
+        )
+        write_entities_to_graph(store, nodes, rels)  # corpus::abc absent
+        assert self._derived_from_count(store) == 0
+        store.close()
+
+    def test_split_write_preserves_derived_from(self, tmp_path):
+        """The pipeline's node-first / mirror / edges-last order keeps it."""
+        store = self._store(tmp_path)
+        nodes, rels = build_entities(
+            {"entities": [{"label": "Werkzeug", "type": "Service"}]},
+            original_name="r.md",
+            source_id="corpus::abc",
+            vault="v",
+        )
+        write_entity_nodes(store, nodes)
+        store.add_node(id="corpus::abc", node_type="CorpusDoc", name="r.md", properties={})
+        write_entity_edges(store, rels)
+        assert self._derived_from_count(store) == 1
+        inc = store.traverse("corpus::abc", direction="incoming", max_depth=1, relationship_type="DERIVED_FROM")
+        assert [r["node"]["id"] for r in inc] == [nodes[0].id]
+        store.close()
 
 
 class TestParseEntities:

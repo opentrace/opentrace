@@ -154,18 +154,24 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
-  // DEFINES anchors code (Repository → Directory → File → symbol).
-  // For wiki, the equivalent hierarchy spans two edge types:
-  //   CONTAINS — WikiVault → WikiPage / Source       (top of the tree)
-  //   CITES    — Concept → Source                     (the inner level)
-  // CONTAINS alone leaves a flat star (vault → everything in one hop) and
-  // FA2 collapses stars into chains because siblings have no lateral pull.
-  // Adding CITES gives the layout an intermediate branching point per
-  // concept page, the same way a directory acts as a branching point
-  // inside a repo. LINKS_TO is intentionally excluded — it's a semantic
-  // cross-link (analogous to CALLS), not structural hierarchy.
-  layoutEdgeType: ['DEFINES', 'CONTAINS', 'CITES'],
-  structuralTypes: ['Repository', 'Directory', 'Dependency', 'WikiVault'],
+  // Priority-ORDERED list of tree-forming edge types: each node anchors to
+  // ONE full-strength parent spring — its highest-priority tree edge — and
+  // surplus tree edges demote to the weak relational weight (see
+  // useForceLayout3d). The order encodes where a node with several homes
+  // should live:
+  //   DEFINES   — code containment (Repository → Directory → File → symbol)
+  //   MIRRORS   — a CorpusDoc anchors AT its File twin, draping the corpus
+  //               over the part of the repo it documents, instead of
+  //               orbiting the vault
+  //   DOCUMENTS — a repo-spawned Vault hangs off its Repository
+  //   CONTAINS  — vault membership; the fallback anchor for Pages and
+  //               non-repo docs (uploads, URLs, attached globals)
+  // CITES is deliberately NOT a tree type — it's a many-to-many page → doc
+  // provenance mesh (each page cites ~5 docs), and as full-strength springs
+  // it welds pages and docs into one clump. It, LINKS_TO, and MENTIONS stay
+  // semantic cross-links (analogous to CALLS), not hierarchy.
+  layoutEdgeType: ['DEFINES', 'MIRRORS', 'DOCUMENTS', 'CONTAINS'],
+  structuralTypes: ['Repository', 'Directory', 'Dependency', 'Vault'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,

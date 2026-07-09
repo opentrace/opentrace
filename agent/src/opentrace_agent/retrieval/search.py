@@ -96,16 +96,16 @@ def _hit_from_node(
     props = node.get("properties") or {}
     snippet = _snippet(node, props, query)
 
-    # Vault scope is tracked at the WikiPage level via the auto-injected
+    # Vault scope is tracked at the Page level via the auto-injected
     # `vault` column; for code nodes it stays None until Phase 4 adds an
     # ancestor lookup.
     vault = props.get("vault") if isinstance(props.get("vault"), str) else None
 
-    # Recency: last_updated is populated on WikiPage by the wiki compile
+    # Recency: last_updated is populated on Page by the wiki compile
     # pipeline today; code-side stamping arrives in Phase 5.
     recency = props.get("last_updated") if isinstance(props.get("last_updated"), str) else None
 
-    # Confidence: Phase 5 stamps this on WikiPage; falls back to the rel-level
+    # Confidence: Phase 5 stamps this on Page; falls back to the rel-level
     # `confidence` carried on CALLS edges in some cases. Read whatever the
     # property says; None if unset.
     confidence_raw = props.get("confidence")

@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Retrieval helpers that traverse MENTIONS edges between WikiPages and
+"""Retrieval helpers that traverse MENTIONS edges between Pages and
 flat entity nodes (Idea / Service / Module / Paper / Person / Event).
 
 The wiki ingest graph_writer writes MENTIONS edges whenever an entity's
-name appears as a whole word in a WikiPage body. These helpers walk in
+name appears as a whole word in a Page body. These helpers walk in
 both directions:
 
 * ``find_pages_mentioning(entity_id)`` — reverse MENTIONS traversal,
-  returns the WikiPages that discuss a given entity. Includes a fallback
+  returns the Pages that discuss a given entity. Includes a fallback
   for code-symbol queries: if the supplied id points at a code-layer
   node (Function, Class, Variable, File, …) and has no direct MENTIONS
   edges, this function looks up entity-layer nodes whose ``name``
@@ -53,7 +53,7 @@ def _strip_signature(name: str) -> str:
 
 
 def find_pages_mentioning(store: GraphStore, entity_id: str) -> list[dict[str, Any]]:
-    """Return WikiPages and Sources that have a MENTIONS edge to *entity_id*.
+    """Return Pages and Sources that have a MENTIONS edge to *entity_id*.
 
     Useful for "which pages or documents discuss this concept?" queries.
     By design, MENTIONS edges in this graph only target the entity layer
@@ -75,7 +75,7 @@ def find_pages_mentioning(store: GraphStore, entity_id: str) -> list[dict[str, A
     deduplicated by id. The direct branch short-circuits the fallback,
     so callers get one path or the other, not both.
 
-    Returns a list of node payloads — WikiPage (concept pages) and
+    Returns a list of node payloads — Page (concept pages) and
     Source (documents; readable via ``load_source``), distinguishable
     by their ``type`` field. Empty list if nothing matches.
     """
@@ -123,23 +123,52 @@ def find_pages_mentioning(store: GraphStore, entity_id: str) -> list[dict[str, A
 
 
 def find_entities_mentioned_by(store: GraphStore, page_id: str) -> list[dict[str, Any]]:
-    """Return entity nodes a WikiPage MENTIONS.
+    """Return entity nodes a Page MENTIONS.
 
     Catches every entity-typed node — Idea / Service / Module / Paper /
     Person / Event — that the node's body referenced. ``page_id`` can be
-    a WikiPage or a Source; passing other node types returns the (likely
+    a Page or a Source; passing other node types returns the (likely
     empty) outgoing MENTIONS set for whatever the node happens to be.
 
     Common chained workflow: call ``find_pages_mentioning`` on a code
     symbol first to surface the relevant pages, then call this on each
     result to see what other entities those pages connect to.
+
+    For a CorpusDoc, the entities it was the *source* of carry no outgoing
+    MENTIONS (that pair lives as ``entity -DERIVED_FROM-> doc``), so those
+    are recovered via the doc's incoming DERIVED_FROM and unioned in.
     """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     outgoing = store.traverse(page_id, direction="outgoing", max_depth=1, relationship_type="MENTIONS")
-    return [r["node"] for r in outgoing if r.get("node")]
+    derived = store.traverse(page_id, direction="incoming", max_depth=1, relationship_type="DERIVED_FROM")
+    for r in (*outgoing, *derived):
+        n = r.get("node")
+        if n and n.get("id") not in seen:
+            seen.add(n.get("id"))
+            out.append(n)
+    return out
 
 
 def _mentions_to_pages(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
-    """Internal: incoming MENTIONS traversal, filtered to content nodes
-    (WikiPage concept pages + Source documents)."""
+    """Internal: content nodes (Page concept pages + CorpusDoc documents)
+    that reference *node_id* (an entity).
+
+    Unions two edges. MENTIONS covers pages and docs whose body names the
+    entity. But the doc an entity was *extracted from* deliberately has no
+    MENTIONS edge — that pair is encoded as ``entity -DERIVED_FROM-> doc``
+    instead (the stronger claim; the redundant reverse MENTIONS is dropped
+    at write time). So the originating doc — the most relevant "mention" —
+    is recovered here by also following the entity's outgoing DERIVED_FROM.
+    Results are deduped by id.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     incoming = store.traverse(node_id, direction="incoming", max_depth=1, relationship_type="MENTIONS")
-    return [r["node"] for r in incoming if r.get("node", {}).get("type") in ("WikiPage", "CorpusDoc")]
+    derived = store.traverse(node_id, direction="outgoing", max_depth=1, relationship_type="DERIVED_FROM")
+    for r in (*incoming, *derived):
+        n = r.get("node") or {}
+        if n.get("type") in ("Page", "CorpusDoc") and n.get("id") not in seen:
+            seen.add(n.get("id"))
+            out.append(n)
+    return out

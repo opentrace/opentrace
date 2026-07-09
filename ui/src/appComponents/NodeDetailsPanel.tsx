@@ -29,10 +29,19 @@ import {
   BitbucketIcon,
   AzureDevOpsIcon,
 } from './providerIcons';
+import { WikiMarkdown } from '../components/wiki/WikiMarkdown';
+import type { VaultPageMeta } from '../wiki/types';
 import './NodeDetailsPanel.css';
 
-/** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
+/** Node types whose source/body can be fetched and displayed. CorpusDoc is a
+ *  raw source document whose markitdown body renders as markdown. */
+const SOURCE_TYPES = new Set([
+  'File',
+  'Function',
+  'Class',
+  'PullRequest',
+  'CorpusDoc',
+]);
 
 /** Map file extensions → Prism language identifiers. */
 const EXT_TO_LANG: Record<string, string> = {
@@ -154,6 +163,14 @@ export interface NodeEdge {
   properties?: Record<string, unknown>;
 }
 
+/** A Page node's body + sibling page list (for `[[link]]` resolution),
+ *  fetched by the SidePanel from the vault REST API — bodies live on disk,
+ *  not in the graph, so they arrive separately from the node itself. */
+export interface PageContent {
+  body: string;
+  pages: VaultPageMeta[];
+}
+
 interface NodeDetailsPanelProps {
   node: SelectedNode;
   nodeSource: NodeSourceResponse | null;
@@ -164,6 +181,12 @@ interface NodeDetailsPanelProps {
   edges?: NodeEdge[];
   onSelectNode?: (nodeId: string) => void;
   onSelectEdge?: (edge: NodeEdge) => void;
+  /** Present only for Page nodes; loaded lazily by the parent. */
+  wikiPage?: PageContent | null;
+  wikiLoading?: boolean;
+  /** Follow a `[[wiki-link]]` — the parent resolves the slug to a page node
+   *  and selects it, so links traverse the graph rather than swap a reader. */
+  onPageLink?: (slug: string) => void;
 }
 
 type PreviewTab = 'rendered' | 'raw';
@@ -188,6 +211,9 @@ export default function NodeDetailsPanel({
   edges,
   onSelectNode,
   onSelectEdge,
+  wikiPage,
+  wikiLoading,
+  onPageLink,
 }: NodeDetailsPanelProps) {
   const [previewTab, setPreviewTab] = useState<PreviewTab>('rendered');
   const color = getNodeColor(node.type);
@@ -300,7 +326,11 @@ export default function NodeDetailsPanel({
       {SOURCE_TYPES.has(node.type) && (
         <div className="source-section">
           <h4>
-            {node.type === 'PullRequest' ? 'Description' : 'Source'}
+            {node.type === 'PullRequest'
+              ? 'Description'
+              : node.type === 'CorpusDoc'
+                ? 'Document'
+                : 'Source'}
             {nodeSource && node.type !== 'PullRequest' && (
               <span className="source-path">{nodeSource.path}</span>
             )}
@@ -398,8 +428,10 @@ export default function NodeDetailsPanel({
                 );
               }
 
-              // Markdown files: tabbed Rendered / Raw view
-              if (ext === '.md' || ext === '.mdx') {
+              // Markdown files (and CorpusDoc bodies, which are always
+              // markitdown-normalised markdown regardless of the original
+              // file's extension): tabbed Rendered / Raw view.
+              if (ext === '.md' || ext === '.mdx' || node.type === 'CorpusDoc') {
                 return (
                   <div className="preview-viewer">
                     <div className="preview-tab-bar">
@@ -533,6 +565,24 @@ export default function NodeDetailsPanel({
                 </div>
               );
             })()}
+        </div>
+      )}
+
+      {/* ── Page body ── read a concept page the same way a File node
+          shows its source: the node IS the page, its markdown renders here. */}
+      {node.type === 'Page' && (
+        <div className="source-section">
+          <h4>Page</h4>
+          {wikiLoading && <div className="source-loading">Loading page…</div>}
+          {!wikiLoading && wikiPage && (
+            <div className="wiki-page-body">
+              <WikiMarkdown
+                markdown={wikiPage.body}
+                pages={wikiPage.pages}
+                onPageClick={onPageLink}
+              />
+            </div>
+          )}
         </div>
       )}
 

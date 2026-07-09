@@ -63,7 +63,7 @@ def _resolve(*concepts: dict) -> tuple[str, dict]:
     return ("propose_concepts", {"concepts": out})
 
 
-def _concept_page(title: str, body: str = "Synthesised body.") -> tuple[str, dict]:
+def _page(title: str, body: str = "Synthesised body.") -> tuple[str, dict]:
     return ("emit_page", {"markdown_body": f"# {title}\n\n{body}\n", "one_line_summary": title})
 
 
@@ -71,10 +71,10 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
     pytest.importorskip("real_ladybug")
     from opentrace_agent.store import GraphStore
     from opentrace_agent.wiki.ingest.graph_writer import (
-        NODE_TYPE_WIKI_PAGE,
-        NODE_TYPE_WIKI_VAULT,
-        page_node_id,
+        NODE_TYPE_PAGE,
+        NODE_TYPE_VAULT,
         corpus_doc_node_id,
+        page_node_id,
         vault_node_id,
     )
 
@@ -83,7 +83,7 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
         [
             _extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src.data)]}),
-            _concept_page("Ducks", "Ducks are waterfowl."),
+            _page("Ducks", "Ducks are waterfowl."),
         ]
     )
 
@@ -95,10 +95,10 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
         assert (tmp_path / "testvault" / "pages" / "concept" / "ducks.md").exists()
 
         vault_node = graph_store.get_node(vault_node_id("testvault"))
-        assert vault_node is not None and vault_node["type"] == NODE_TYPE_WIKI_VAULT
+        assert vault_node is not None and vault_node["type"] == NODE_TYPE_VAULT
 
         ducks_node = graph_store.get_node(page_node_id("testvault", "concept/ducks"))
-        assert ducks_node is not None and ducks_node["type"] == NODE_TYPE_WIKI_PAGE
+        assert ducks_node is not None and ducks_node["type"] == NODE_TYPE_PAGE
         assert ducks_node["properties"]["kind"] == "concept"
 
         # The Source node carries its navigation label.
@@ -118,7 +118,7 @@ def test_first_compile_creates_pages(tmp_path, fake_llm):
         [
             _extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src.data)]}),
-            _concept_page("Ducks", "Ducks are waterfowl. See [[Geese]]."),
+            _page("Ducks", "Ducks are waterfowl. See [[Geese]]."),
         ]
     )
 
@@ -151,7 +151,7 @@ def test_second_compile_with_same_source_is_idempotent(tmp_path, fake_llm):
         [
             _extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src.data)]}),
-            _concept_page("Ducks"),
+            _page("Ducks"),
         ]
     )
     list(run_compile("v", [src], vault_root=tmp_path, llm=llm1))
@@ -173,7 +173,7 @@ def test_extend_path_updates_existing_page(tmp_path, fake_llm):
         [
             _extraction("A", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src1.data)]}),
-            _concept_page("Ducks", "Ducks are waterfowl."),
+            _page("Ducks", "Ducks are waterfowl."),
         ]
     )
     list(run_compile("v", [src1], vault_root=tmp_path, llm=create))
@@ -184,7 +184,7 @@ def test_extend_path_updates_existing_page(tmp_path, fake_llm):
         [
             _extraction("B", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "mallards"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src2.data)]}),
-            _concept_page("Ducks", "Ducks are waterfowl. Mallards are common."),
+            _page("Ducks", "Ducks are waterfowl. Mallards are common."),
         ]
     )
     list(run_compile("v", [src2], vault_root=tmp_path, llm=extend))
@@ -216,8 +216,8 @@ def test_execute_sees_sibling_creates_as_neighbours(tmp_path, fake_llm):
                 {"title": "Foo", "topic": "foo", "subject": "bundle", "source_shas": [sha]},
                 {"title": "Bar", "topic": "bar", "subject": "bundle", "source_shas": [sha]},
             ),
-            _concept_page("Foo"),
-            _concept_page("Bar"),
+            _page("Foo"),
+            _page("Bar"),
         ]
     )
 
@@ -263,7 +263,7 @@ def test_concept_synthesis_reads_raw_body(tmp_path, fake_llm):
         [
             _extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [_sha(src.data)]}),
-            _concept_page("Ducks"),
+            _page("Ducks"),
         ]
     )
     list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
@@ -286,7 +286,7 @@ def test_cross_document_concept_merges_sources(tmp_path, fake_llm, monkeypatch):
             _extraction("Models", concepts=[{"topic": "validation", "subject": "lib", "gloss": "on models"}]),
             _extraction("Fields", concepts=[{"topic": "validation", "subject": "lib", "gloss": "on fields"}]),
             _resolve({"title": "Validation", "topic": "validation", "subject": "lib", "source_shas": [sha1, sha2]}),
-            _concept_page("Validation"),
+            _page("Validation"),
         ]
     )
     list(run_compile("v", [src1, src2], vault_root=tmp_path, llm=llm))
@@ -308,7 +308,7 @@ def test_empty_content_source_is_skipped(tmp_path, fake_llm):
             # Only ONE extraction call — the blank source never reaches the LLM.
             _extraction("Real", concepts=[{"topic": "real", "subject": "thing", "gloss": "g"}]),
             _resolve({"title": "Real", "topic": "real", "subject": "thing", "source_shas": [_sha(real.data)]}),
-            _concept_page("Real"),
+            _page("Real"),
         ]
     )
     list(run_compile("v", [real, blank], vault_root=tmp_path, llm=llm))
@@ -351,7 +351,7 @@ def test_unified_call_emits_entities_into_graph(tmp_path, fake_llm):
         [
             extraction,
             _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna", "source_shas": [sha]}),
-            _concept_page("Ducks", "Ducks and Waterfowl Biology."),
+            _page("Ducks", "Ducks and Waterfowl Biology."),
         ]
     )
 
@@ -369,7 +369,7 @@ def test_unified_call_emits_entities_into_graph(tmp_path, fake_llm):
         gs.close()
 
 
-def test_single_source_concept_below_floor_makes_no_concept_page(tmp_path, fake_llm, monkeypatch):
+def test_single_source_concept_below_floor_makes_no_page(tmp_path, fake_llm, monkeypatch):
     """With the default floor of 2, a concept drawn from a single document is
     NOT paged — its raw source (labelled, load_source-readable) covers it."""
     monkeypatch.setenv("OT_WIKI_CONCEPT_MIN_SOURCES", "2")

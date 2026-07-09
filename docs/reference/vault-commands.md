@@ -9,7 +9,7 @@ A **vault** is a folder of LLM-curated markdown pages produced from one or more 
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`WikiVault` + `WikiPage` + `CorpusDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** (`Vault` + `Page` + `CorpusDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
 
 ## `vault list`
 
@@ -59,7 +59,7 @@ opentraceai vault attach <name> --scope global     # disambiguate on collision
 opentraceai vault attach <name> --db <path>        # explicit graph DB
 ```
 
-Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `WikiVault` / `WikiPage` / `CorpusDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
+Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `Vault` / `Page` / `CorpusDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
 
 When to use:
 

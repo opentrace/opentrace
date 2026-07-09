@@ -113,6 +113,38 @@ export async function detachVault(name: string): Promise<void> {
   }
 }
 
+/**
+ * Promote a local vault to global — moves it into `~/.opentrace/vaults/`
+ * and re-mirrors it into the graph as a global vault (still attached to
+ * this project). Only valid for local vaults.
+ */
+export async function promoteVault(name: string): Promise<void> {
+  const base = getVaultApiBase();
+  const res = await fetch(
+    `${base}/api/vaults/${encodeURIComponent(name)}/promote`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}: promote ${name}`);
+  }
+}
+
+/**
+ * Demote a global vault to local — moves it into this project's
+ * `.opentrace/vaults/` and re-mirrors it into the graph as a local vault.
+ * Only valid for global vaults.
+ */
+export async function demoteVault(name: string): Promise<void> {
+  const base = getVaultApiBase();
+  const res = await fetch(
+    `${base}/api/vaults/${encodeURIComponent(name)}/demote`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}: demote ${name}`);
+  }
+}
+
 export async function getPageMarkdown(
   vault: string,
   slug: string,
@@ -148,6 +180,8 @@ export async function* compileVault(
     model?: string;
     baseUrl?: string;
     scope?: VaultScope;
+    /** Abort the in-flight compile stream (used by background-cancel). */
+    signal?: AbortSignal;
   } = {},
 ): AsyncGenerator<WikiCompileEvent> {
   const base = getVaultApiBase();
@@ -161,7 +195,7 @@ export async function* compileVault(
 
   const res = await fetch(
     `${base}/api/vaults/${encodeURIComponent(vaultName)}/compile`,
-    { method: 'POST', body: fd },
+    { method: 'POST', body: fd, signal: options.signal },
   );
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '');

@@ -3385,7 +3385,7 @@ export class LadybugGraphStore implements GraphStore {
       };
     }
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const wikiTypes = new Set(['WikiVault', 'WikiPage', 'CorpusDoc']);
+    const wikiTypes = new Set(['Vault', 'Page', 'CorpusDoc']);
     const codeTypes = new Set([
       'Repository',
       'Directory',
@@ -3461,7 +3461,7 @@ export class LadybugGraphStore implements GraphStore {
             filename: asString(p.filename),
             acquired_at: asString(p.acquired_at),
           });
-        } else if (r.node.type === 'WikiPage') {
+        } else if (r.node.type === 'Page') {
           chain.push({
             kind: 'wiki_page',
             id,
@@ -3628,9 +3628,9 @@ export class LadybugGraphStore implements GraphStore {
 
     // Recently-updated: pick from any node type carrying last_updated.
     // Since browser-side props vary by typed table, we only inspect node
-    // types that are likely to carry this field — WikiPage today.
+    // types that are likely to carry this field — Page today.
     const recentBucket: OverviewRecent[] = [];
-    const wikiPages = await this.listNodes('WikiPage', 200).catch(() => []);
+    const wikiPages = await this.listNodes('Page', 200).catch(() => []);
     for (const p of wikiPages) {
       const props = (p.properties ?? {}) as Record<string, unknown>;
       const last = props.last_updated;

@@ -43,6 +43,23 @@ import type {
  *  lower = more tree-like. */
 const RELATIONAL_LINK_WEIGHT = 0.05;
 
+/** Edge types with NO physics at all — never sent to the layout worker. They
+ *  still render (subject to the link-type filter) and stay queryable; they're
+ *  retrieval indexes, not structure. MENTIONS is the archetype: a wiki corpus
+ *  emits it per whole-word entity match (flask: ~1.8k edges, half the wiki's
+ *  edge count), and even at relational weight the aggregate pull drags every
+ *  entity into the vault's neighbourhood — and, worse, inflates doc/page
+ *  degrees, which dilutes the degree-normalized strength of their structural
+ *  anchor springs. */
+const LAYOUT_INERT_EDGE_TYPES = new Set(['MENTIONS']);
+
+/** Which endpoint is the CHILD of a tree-forming edge. Everything points
+ *  parent → child except MIRRORS, which is stored doc → file while the File
+ *  (already rooted in the code tree) is the anchor the doc hangs off. */
+function childEnd(label: string, source: string, target: string): string {
+  return label === 'MIRRORS' ? source : target;
+}
+
 /** Multiset diff of layout links against what the worker was already sent,
  *  keyed source|target (weight excluded — a flat-mode / layout-edge-type
  *  change reclassifies weights without adding edges and must not re-send the
@@ -193,40 +210,73 @@ export function useForceLayout3d(
   // arrive after both endpoints (see takeUnsentLinks). Reset on full rebuild.
   const sentLinkCountsRef = useRef<Map<string, number>>(new Map());
 
-  // layoutEdgeType accepts one type or a list (DEFINES for code, plus
-  // CONTAINS/CITES so vault pages and corpus docs sit in the tree too).
-  const layoutEdgeTypes = useMemo(
-    () =>
-      new Set(
-        Array.isArray(layoutConfig.layoutEdgeType)
-          ? layoutConfig.layoutEdgeType
-          : [layoutConfig.layoutEdgeType],
-      ),
-    [layoutConfig.layoutEdgeType],
-  );
+  // layoutEdgeType is a priority-ORDERED list of tree-forming edge types
+  // (index 0 = strongest claim on a node). Each node gets exactly ONE
+  // full-strength "parent" spring — its highest-priority tree edge — and
+  // every other tree-type edge touching it is demoted to the weak
+  // relational weight. Without the one-parent rule, multi-parent nodes turn
+  // the backbone into a mesh and mega-hubs into dense stars: a Vault
+  // CONTAINS 100+ docs, but the docs' MIRRORS twins would scatter them
+  // across the code tree where their files actually live.
+  const parentPriority = useMemo(() => {
+    const list = Array.isArray(layoutConfig.layoutEdgeType)
+      ? layoutConfig.layoutEdgeType
+      : [layoutConfig.layoutEdgeType];
+    return new Map(list.map((t, i) => [t, i] as const));
+  }, [layoutConfig.layoutEdgeType]);
+
   const buildLayoutLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
+      // Pass 1 — pick each node's parent edge: the highest-priority
+      // tree-type edge where the node is the child end (first seen wins a
+      // tie, matching the worker's first-parent-wins forest).
+      const chosenIdx = new Map<string, number>();
+      const chosenPrio = new Map<string, number>();
+      if (!flatMode) {
+        for (let i = 0; i < linkArray.length; i++) {
+          const link = linkArray[i];
+          const prio = parentPriority.get(link.label);
+          if (prio === undefined) continue;
+          const source = endpointId(link.source);
+          const target = endpointId(link.target);
+          if (source === target) continue;
+          if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+          const child = childEnd(link.label, source, target);
+          const cur = chosenPrio.get(child);
+          if (cur === undefined || prio < cur) {
+            chosenPrio.set(child, prio);
+            chosenIdx.set(child, i);
+          }
+        }
+      }
+
       const out: { source: string; target: string; w: number }[] = [];
-      for (const link of linkArray) {
+      for (let i = 0; i < linkArray.length; i++) {
+        const link = linkArray[i];
+        if (LAYOUT_INERT_EDGE_TYPES.has(link.label)) continue;
         const source = endpointId(link.source);
         const target = endpointId(link.target);
         if (source === target) continue; // self-loops don't shape layout
         if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
-        // Structural edges (the DEFINES containment tree) drive the layout at
-        // full strength → the tree/flower shape. Relational edges (calls,
-        // imports, …) are included at a weak weight so call/import neighbours
-        // drift closer — shortening those long cross-graph edges into logical
-        // branches — without collapsing the structure into a hairball.
-        const structural = flatMode || layoutEdgeTypes.has(link.label);
+        // Structural = this edge IS some node's parent spring. Everything
+        // else (calls, imports, demoted surplus tree edges) pulls at the
+        // weak weight — enough to drift related nodes together without
+        // collapsing the backbone.
+        const child = childEnd(link.label, source, target);
+        const structural = flatMode || chosenIdx.get(child) === i;
+        // Emit tree edges parent → child: the worker's radial-tree forest
+        // builder reads `source` as the parent, and MIRRORS is stored the
+        // other way round (doc → file).
+        const swap = link.label === 'MIRRORS';
         out.push({
-          source,
-          target,
+          source: swap ? target : source,
+          target: swap ? source : target,
           w: structural ? 1 : RELATIONAL_LINK_WEIGHT,
         });
       }
       return out;
     },
-    [flatMode, layoutEdgeTypes],
+    [flatMode, parentPriority],
   );
 
   useEffect(() => {

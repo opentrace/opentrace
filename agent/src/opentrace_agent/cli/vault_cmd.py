@@ -30,7 +30,6 @@ mirror has drifted behind the disk vault's ``last_compiled_at``.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 import click
@@ -39,8 +38,8 @@ from opentrace_agent.wiki.paths import (
     InvalidVaultName,
     Scope,
     list_vaults_with_scope,
+    move_vault_dir,
     resolve_vault_scope,
-    vault_dir,
 )
 
 
@@ -174,7 +173,7 @@ def vault_list(global_only: bool, db_path: str | None) -> None:
     attached_by_name = {}
     if store is not None:
         try:
-            for v in store.list_nodes("WikiVault", limit=10_000):
+            for v in store.list_nodes("Vault", limit=10_000):
                 props = v.get("properties") or {}
                 attached_by_name[props.get("vault") or v.get("name")] = props
         finally:
@@ -188,8 +187,8 @@ def vault_list(global_only: bool, db_path: str | None) -> None:
             mirror_at = props.get("mirror_compiled_at") or ""
             # Read disk timestamp.
             try:
-                from opentrace_agent.wiki.vault import load_metadata
                 from opentrace_agent.wiki.paths import metadata_path
+                from opentrace_agent.wiki.vault import load_metadata
 
                 meta = load_metadata(
                     metadata_path(name, scope=scope, project_root=project_root),
@@ -283,7 +282,7 @@ def vault_attach(vault_name: str, scope: str | None, db_path: str | None) -> Non
     """Mirror an existing disk vault into the current graph.
 
     No LLM cost — just reads ``.vault.json`` + page files from disk and
-    writes WikiVault/WikiPage/Source nodes + CONTAINS/CITES/LINKS_TO edges
+    writes Vault/Page/Source nodes + CONTAINS/CITES/LINKS_TO edges
     into the graph. Use after a global vault has been re-compiled
     elsewhere, or after the graph DB was rebuilt.
 
@@ -315,7 +314,7 @@ def _mirror_vault_into_graph(
     project_root: Path,
     db_path: str | None = None,
 ) -> dict[str, int]:
-    """Read a disk vault and write its WikiVault/WikiPage/Source nodes into the graph.
+    """Read a disk vault and write its Vault/Page/Source nodes into the graph.
 
     Shared between ``vault attach`` and ``vault promote/demote`` so a scope
     move keeps the current project's mirror consistent without the user
@@ -445,20 +444,11 @@ def vault_demote(vault_name: str) -> None:
 def _move_vault_scope(vault_name: str, *, src: Scope, dst: Scope) -> None:
     project_root = Path.cwd()
     try:
-        src_dir = vault_dir(vault_name, scope=src, project_root=project_root)
-        dst_dir = vault_dir(vault_name, scope=dst, project_root=project_root)
+        move_vault_dir(vault_name, src=src, dst=dst, project_root=project_root)
     except InvalidVaultName as exc:
         raise click.ClickException(str(exc))
-
-    if not (src_dir / ".vault.json").exists():
-        raise click.ClickException(f"no {src} vault named {vault_name!r} (expected {src_dir})")
-    if dst_dir.exists():
-        raise click.ClickException(
-            f"cannot {src}→{dst}: a {dst} vault named {vault_name!r} already exists at {dst_dir}"
-        )
-
-    dst_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(src_dir), str(dst_dir))
+    except (FileNotFoundError, FileExistsError) as exc:
+        raise click.ClickException(str(exc))
     click.echo(f"Moved vault {vault_name!r}: {src} → {dst}")
 
     # Auto-refresh THIS project's graph mirror so autoprune/refresh-stale

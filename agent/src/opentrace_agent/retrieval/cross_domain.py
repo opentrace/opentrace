@@ -19,7 +19,7 @@ After Phase 5 the graph contains three coexisting domains:
 * **code** — `Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`
 * **entity** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`
-* **page** — `WikiVault` / `WikiPage` / `Source`
+* **page** — `Vault` / `Page` / `Source`
 
 This module surfaces the bridges across those domains — the "AuthMiddleware
 appears in 5 code files plus 2 design docs" view that's hard to ask via
@@ -37,7 +37,7 @@ from opentrace_agent.store import GraphStore
 DOMAINS: dict[str, frozenset[str]] = {
     "code": frozenset({"Repository", "Directory", "File", "Class", "Function", "Variable"}),
     "entity": frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"}),
-    "page": frozenset({"WikiVault", "WikiPage", "CorpusDoc"}),
+    "page": frozenset({"Vault", "Page", "CorpusDoc"}),
 }
 
 

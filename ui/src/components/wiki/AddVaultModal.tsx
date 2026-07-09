@@ -15,8 +15,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { compileVault } from '../../wiki/client';
-import type { VaultScope, WikiCompileEvent } from '../../wiki/types';
+import type { VaultScope } from '../../wiki/types';
 import { ThemedSelect } from '../ThemedSelect';
 import {
   loadApiKey,
@@ -24,6 +23,13 @@ import {
   loadProviderChoice,
 } from '../../chat/storage';
 import { PROVIDERS } from '../../chat/providers';
+import { useCompileJob } from '../../providers/CompileJobProvider';
+// Shell + form primitives shared with the indexing modal so the two
+// pop-ups read as one family (.modal-card, .form-hero, .chip-toggle,
+// .input-pill, .import-dropzone, .btn-cta).
+import '../indexing/indexing-base.css';
+import '../indexing/AddRepoModal.css';
+import './wiki.css';
 
 type WikiProvider = 'anthropic' | 'gemini' | 'openai' | 'local';
 
@@ -37,31 +43,35 @@ function pickInitialProvider(): WikiProvider {
 }
 
 interface Props {
+  /** Names of vaults that already exist in *scope* — used to decide whether
+   *  a "new" compile is really new (governs cancel-cleanup). */
   existingVaults: string[];
   scope: VaultScope;
+  /** When set, the modal appends files to this existing vault: the name is
+   *  fixed (no name input) and cancel won't delete the vault. When absent,
+   *  the modal creates a new vault and shows a name input. */
+  appendTo?: string;
   onClose: () => void;
-  onCompiled: (vaultName: string) => void;
 }
 
 export function AddVaultModal({
   existingVaults,
   scope,
+  appendTo,
   onClose,
-  onCompiled,
 }: Props) {
-  const [vaultMode, setVaultMode] = useState<'existing' | 'new'>(
-    existingVaults.length > 0 ? 'existing' : 'new',
-  );
-  const [vaultName, setVaultName] = useState(existingVaults[0] ?? '');
+  const { state: compileState, start: startCompile } = useCompileJob();
+  const appending = !!appendTo;
   const [newVaultName, setNewVaultName] = useState('');
   const [provider, setProvider] = useState<WikiProvider>(pickInitialProvider);
   const [files, setFiles] = useState<File[]>([]);
-  const [progress, setProgress] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // A background compile is already in flight — block starting a second one.
+  const compileBusy =
+    compileState.status === 'running' || compileState.status === 'cancelling';
 
   const apiKey = useMemo(() => loadApiKey(provider), [provider]);
   const baseUrl = useMemo(
@@ -72,235 +82,324 @@ export function AddVaultModal({
   // a key for the hosted providers.
   const keyOk = provider === 'local' || !!apiKey;
   const baseUrlOk = provider !== 'local' || !!baseUrl;
-  const targetName = (vaultMode === 'new' ? newVaultName : vaultName).trim();
+  const targetName = appending ? appendTo : newVaultName.trim();
   const submittable =
-    keyOk && baseUrlOk && !!targetName && files.length > 0 && !running;
-  // True once an attempt has finished without a clean compile — flips the
-  // primary button label from "Compile" to "Retry".
-  const [hasAttempted, setHasAttempted] = useState(false);
+    keyOk && baseUrlOk && !!targetName && files.length > 0 && !compileBusy;
 
-  const handleFiles = useCallback((fileList: FileList | null) => {
-    if (!fileList) return;
-    // FileList from <input webkitdirectory> contains real files only — folders
-    // are already expanded. From a plain <input type="file"> there are no
-    // directories. Filter defensively in case some browser/OS surfaces a
-    // directory-shaped File anyway (size 0, no type).
-    const out = Array.from(fileList).filter((f) => f.size > 0 || !!f.type);
-    setFiles(out);
-    setHasAttempted(false);
-  }, []);
-
-  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragActive(false);
-    const collected = await collectDroppedFiles(e.dataTransfer);
-    if (collected.length > 0) {
-      setFiles(collected);
-      setHasAttempted(false);
-    }
-  }, []);
-
-  const handleSubmit = useCallback(async () => {
-    if (!submittable) return;
-    setRunning(true);
-    setError(null);
-    setProgress([]);
-    let sawError = false;
-    let sawDone = false;
-    try {
-      for await (const ev of compileVault(targetName, files, apiKey, {
-        provider,
-        baseUrl: provider === 'local' ? baseUrl : undefined,
-        scope,
-      })) {
-        setProgress((p) => [...p, formatEvent(ev)]);
-        if (ev.kind === 'error') {
-          setError(ev.message);
-          sawError = true;
-        } else if (ev.kind === 'done') {
-          sawDone = true;
+  // Accumulate across multiple picks/drops rather than replacing — so the
+  // user can click "Browse files", add one, click again, add another, etc.
+  // Deduped by name+size+lastModified so re-selecting the same file is a
+  // no-op instead of a duplicate upload.
+  const addFiles = useCallback((incoming: File[]) => {
+    if (incoming.length === 0) return;
+    setFiles((prev) => {
+      const key = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
+      const seen = new Set(prev.map(key));
+      const merged = [...prev];
+      for (const f of incoming) {
+        if (!seen.has(key(f))) {
+          seen.add(key(f));
+          merged.push(f);
         }
       }
-      // Only auto-close the modal when the compile actually finished
-      // cleanly. On error, leave it open so the user can read the log.
-      if (sawDone && !sawError) {
-        onCompiled(targetName);
-      } else {
-        setHasAttempted(true);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setHasAttempted(true);
-    } finally {
-      setRunning(false);
-    }
+      return merged;
+    });
+  }, []);
+
+  const handleFiles = useCallback(
+    (fileList: FileList | null) => {
+      if (!fileList) return;
+      // FileList from <input webkitdirectory> contains real files only —
+      // folders are already expanded. From a plain <input type="file"> there
+      // are no directories. Filter defensively in case some browser/OS
+      // surfaces a directory-shaped File anyway (size 0, no type).
+      const out = Array.from(fileList).filter((f) => f.size > 0 || !!f.type);
+      addFiles(out);
+    },
+    [addFiles],
+  );
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragActive(false);
+      addFiles(await collectDroppedFiles(e.dataTransfer));
+    },
+    [addFiles],
+  );
+
+  // Kick off the compile in the background and close the modal immediately —
+  // progress now surfaces in the bottom-left CompileProgressPanel.
+  const handleSubmit = useCallback(() => {
+    if (!submittable) return;
+    startCompile({
+      vaultName: targetName,
+      files,
+      apiKey,
+      provider,
+      baseUrl: provider === 'local' ? baseUrl : undefined,
+      scope,
+      // A brand-new name → cancel may delete the partial vault. Appending, or
+      // typing a name that already exists, must not wipe prior pages.
+      isNew: !appending && !existingVaults.includes(targetName),
+    });
+    onClose();
   }, [
     submittable,
+    startCompile,
     targetName,
     files,
     apiKey,
     provider,
     baseUrl,
     scope,
-    onCompiled,
+    appending,
+    existingVaults,
+    onClose,
   ]);
 
   const providerName = PROVIDERS[provider]?.name ?? provider;
+  const subtitle = appending
+    ? `Runs one LLM pass over the new docs and merges them into "${appendTo}" — existing pages are extended, new concepts added, nothing removed.`
+    : scope === 'global'
+      ? 'One LLM pass over your docs builds a global vault in ~/.opentrace/vaults/ — attachable from any project.'
+      : 'One LLM pass over your docs builds a project-local vault of concept pages.';
+  const totalMb = files.reduce((n, f) => n + f.size, 0) / 1024 / 1024;
 
   return (
     <div
-      className="add-vault-modal"
+      className="modal-backdrop"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !running) onClose();
+        if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="add-vault-modal__panel">
-        <h3>
-          Compile files into a {scope} vault
-          {scope === 'global' && (
-            <span className="add-vault-modal__scope-hint">
-              {' '}
-              — stored in ~/.opentrace/vaults/, attachable from any project
-            </span>
-          )}
-        </h3>
-
-        {!keyOk && (
-          <div className="add-vault-modal__byok-warning">
-            No {providerName} API key found. Set one in Chat settings before
-            compiling.
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="form-hero">
+          <div className="hero-icon">
+            <svg
+              width="26"
+              height="26"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+            </svg>
           </div>
-        )}
-        {provider === 'local' && !baseUrlOk && (
-          <div className="add-vault-modal__byok-warning">
-            No local LLM URL configured. Set one in Chat settings before
-            compiling.
-          </div>
-        )}
-
-        <div className="add-vault-modal__row">
-          <label>Provider</label>
-          <ThemedSelect<WikiProvider>
-            value={provider}
-            onChange={setProvider}
-            ariaLabel="Provider"
-            options={SUPPORTED.map((id) => ({
-              value: id,
-              label: PROVIDERS[id]?.name ?? id,
-            }))}
-          />
+          <h2>{appending ? `Append to ${appendTo}` : `Compile a ${scope} vault`}</h2>
+          <p className="hero-subtitle">{subtitle}</p>
         </div>
 
-        <div className="add-vault-modal__row">
-          <label>Vault</label>
-          {existingVaults.length > 0 && (
-            <div className="add-vault-modal__mode">
-              <label>
-                <input
-                  type="radio"
-                  checked={vaultMode === 'existing'}
-                  onChange={() => setVaultMode('existing')}
-                />
-                Existing
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  checked={vaultMode === 'new'}
-                  onChange={() => setVaultMode('new')}
-                />
-                New
-              </label>
+        <div className="form-fields">
+          {!keyOk && (
+            <div className="form-error">
+              <InfoCircleIcon />
+              <span>
+                No {providerName} API key found. Set one in Chat settings before
+                compiling.
+              </span>
             </div>
           )}
-          {vaultMode === 'existing' && existingVaults.length > 0 ? (
-            <ThemedSelect<string>
-              value={vaultName}
-              onChange={setVaultName}
-              ariaLabel="Vault"
-              options={existingVaults.map((v) => ({ value: v, label: v }))}
+          {provider === 'local' && !baseUrlOk && (
+            <div className="form-error">
+              <InfoCircleIcon />
+              <span>
+                No local LLM URL configured. Set one in Chat settings before
+                compiling.
+              </span>
+            </div>
+          )}
+
+          <div className="add-vault-modal__field">
+            <span className="add-vault-modal__field-label">Provider</span>
+            <ThemedSelect<WikiProvider>
+              value={provider}
+              onChange={setProvider}
+              ariaLabel="Provider"
+              options={SUPPORTED.map((id) => ({
+                value: id,
+                label: PROVIDERS[id]?.name ?? id,
+              }))}
             />
-          ) : (
+          </div>
+
+          {!appending && (
+            <div className="add-vault-modal__field">
+              <span className="add-vault-modal__field-label">Vault name</span>
+              <input
+                type="text"
+                className="input-pill"
+                placeholder="vault-name"
+                value={newVaultName}
+                onChange={(e) => setNewVaultName(e.target.value)}
+                autoFocus
+              />
+            </div>
+          )}
+
+          <div className="add-vault-modal__field">
+            <span className="add-vault-modal__field-label">
+              Files ({files.length} selected)
+            </span>
+            <div
+              className={`import-dropzone${dragActive ? ' import-dropzone--active' : ''}${files.length ? ' import-dropzone--has-file' : ''}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+            >
+              {files.length === 0 ? (
+                <>
+                  <svg
+                    className="import-dropzone-icon"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <span className="import-dropzone-label">
+                    Drop files or a folder here, or click to browse
+                  </span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="import-dropzone-icon"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span className="import-dropzone-filename">
+                    {files.length} file{files.length === 1 ? '' : 's'} selected
+                  </span>
+                  <span className="import-dropzone-size">
+                    {totalMb.toFixed(1)} MB
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="add-vault-modal__pickers">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Browse files…
+              </button>
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+              >
+                Browse folder…
+              </button>
+              {files.length > 0 && (
+                <button
+                  type="button"
+                  className="add-vault-modal__pickers-clear"
+                  onClick={() => setFiles([])}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
             <input
-              type="text"
-              placeholder="vault-name"
-              value={newVaultName}
-              onChange={(e) => setNewVaultName(e.target.value)}
+              ref={fileInputRef}
+              type="file"
+              multiple
+              style={{ display: 'none' }}
+              // Reset the value after reading so picking the SAME file again
+              // still fires onChange (the browser suppresses it otherwise).
+              onChange={(e) => {
+                handleFiles(e.target.files);
+                e.target.value = '';
+              }}
             />
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              // @ts-expect-error webkitdirectory is non-standard but widely supported
+              webkitdirectory=""
+              directory=""
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                handleFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </div>
+
+          {compileBusy && (
+            <div className="form-info">
+              <InfoCircleIcon />
+              <span>
+                A compile is already running — watch its progress in the
+                bottom-left panel, or cancel it before starting another.
+              </span>
+            </div>
           )}
         </div>
 
-        <div className="add-vault-modal__row">
-          <label>Files ({files.length} selected)</label>
-          <div
-            className={`add-vault-modal__drop${dragActive ? ' add-vault-modal__drop--active' : ''}`}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragActive(true);
-            }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={handleDrop}
-          >
-            {files.length === 0
-              ? 'Drop files or a folder here, or pick below'
-              : files.map((f) => f.name).join(', ')}
-          </div>
-          <div className="add-vault-modal__pickers">
-            <button type="button" onClick={() => fileInputRef.current?.click()}>
-              Browse files…
-            </button>
-            <button
-              type="button"
-              onClick={() => folderInputRef.current?.click()}
-            >
-              Browse folder…
-            </button>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => handleFiles(e.target.files)}
-          />
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            // @ts-expect-error webkitdirectory is non-standard but widely supported
-            webkitdirectory=""
-            directory=""
-            style={{ display: 'none' }}
-            onChange={(e) => handleFiles(e.target.files)}
-          />
-        </div>
-
-        {(progress.length > 0 || error) && (
-          <div className="add-vault-modal__progress">
-            {progress.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
-            {error && (
-              <div className="add-vault-modal__progress-error">{error}</div>
-            )}
-          </div>
-        )}
-
         <div className="add-vault-modal__actions">
-          <button onClick={onClose} disabled={running}>
-            Close
-          </button>
           <button
-            className="primary"
+            type="button"
+            className="btn-cta"
             onClick={handleSubmit}
             disabled={!submittable}
           >
-            {running ? 'Compiling…' : hasAttempted ? 'Retry' : 'Compile'}
+            {appending ? 'Append' : 'Compile'}
+          </button>
+          <button
+            type="button"
+            className="btn-cta btn-cta--secondary"
+            onClick={onClose}
+          >
+            Cancel
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+function InfoCircleIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
   );
 }
 
@@ -364,15 +463,4 @@ async function walkEntry(entry: FileSystemEntry, out: File[]): Promise<void> {
       await Promise.all(batch.map((e) => walkEntry(e, out)));
     }
   }
-}
-
-function formatEvent(ev: WikiCompileEvent): string {
-  if (ev.kind === 'stage_start') return `[${ev.phase}] ▶ ${ev.message}`;
-  if (ev.kind === 'stage_progress') {
-    const tag = ev.total ? `[${ev.current}/${ev.total}]` : '';
-    return `  ${tag} ${ev.message}`;
-  }
-  if (ev.kind === 'stage_stop') return `[${ev.phase}] ✓ ${ev.message}`;
-  if (ev.kind === 'done') return `✓ ${ev.message}`;
-  return `✗ ${ev.message}`;
 }

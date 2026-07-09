@@ -23,8 +23,8 @@ ladybug = pytest.importorskip("real_ladybug")
 from opentrace_agent.retrieval import provenance  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
-    page_node_id,
     corpus_doc_node_id,
+    page_node_id,
     write_vault_to_graph,
 )
 from opentrace_agent.wiki.vault import IngestedSource, PageMeta, VaultMetadata  # noqa: E402

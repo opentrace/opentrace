@@ -63,11 +63,11 @@ Edges: `DERIVED_FROM` (entity → CorpusDoc) carries the entity's provenance. `S
 
 Opt-in via `index --wiki`. The wiki Plan + Execute pipeline produces:
 
-- `WikiVault` — one per vault (scope: `local` or `global`)
-- `WikiPage(kind="concept")` — multi-source curated narrative, body on disk
+- `Vault` — one per vault (scope: `local` or `global`)
+- `Page(kind="concept")` — multi-source curated narrative, body on disk
 - Labelled `CorpusDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`); the raw body stays in the corpus
 
-Edges: `CONTAINS` (vault → page/doc), `CITES` (concept page → CorpusDoc, direct by sha), `LINKS_TO` (`[[Title]]` syntax in bodies, concept ↔ concept), `MENTIONS` (page or CorpusDoc → entity whose name appears in the page body or the doc's corpus markdown — connects layer 3 to layer 2), `MIRRORS` (CorpusDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop).
+Edges: `CONTAINS` (vault → page/doc), `CITES` (concept page → CorpusDoc, direct by sha), `LINKS_TO` (`[[Title]]` syntax in bodies, concept ↔ concept), `MENTIONS` (page or CorpusDoc → entity whose name appears in the page body or the doc's corpus markdown — connects layer 3 to layer 2), `MIRRORS` (CorpusDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
 The page layer is the closest thing OpenTrace has to a "human-readable wiki." Pages live on disk and are mirrored into the graph; disk is canonical and `vault attach` rebuilds the mirror.
 
@@ -80,7 +80,7 @@ The three layers form three **domains** in the cross-cutting analysis:
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
 entity domain   — Idea / Service / Module / Paper / Person / Event
-page domain     — WikiVault / WikiPage / CorpusDoc
+page domain     — Vault / Page / CorpusDoc
 ```
 
 `opentraceai analyze` surfaces:
@@ -89,7 +89,7 @@ page domain     — WikiVault / WikiPage / CorpusDoc
 - **Cross-domain bridges** — edges spanning code ↔ entity ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
 - **Cross-cutting communities** — communities whose members span ≥2 domains
 
-The `MENTIONS` edge is the explicit bridge between the entity and page domains. `DERIVED_FROM` bridges entity ↔ page. `MIRRORS` is the direct code ↔ page bridge — a `CorpusDoc` and its `File` twin reach each other in one hop.
+The `MENTIONS` edge is the explicit bridge between the entity and page domains, deduped against `DERIVED_FROM` so the two never restate the same doc↔entity pair — MENTIONS carries references, `DERIVED_FROM` carries origin. `MIRRORS` is the direct code ↔ page bridge — a `CorpusDoc` and its `File` twin reach each other in one hop.
 
 ## Components
 
@@ -121,7 +121,7 @@ Python package + CLI (`opentraceai`). Managed with [uv](https://docs.astral.sh/u
 
 ### Protobuf (`proto/`)
 
-Shared schema for code-graph types (regenerated into Python + TypeScript). Source of truth for `RepositoryNode` / `FileNode` / `WikiVaultNode` / etc. — see `proto/opentrace/v1/code_graph.proto`.
+Shared schema for code-graph types (regenerated into Python + TypeScript). Source of truth for `RepositoryNode` / `FileNode` / `VaultNode` / etc. — see `proto/opentrace/v1/code_graph.proto`.
 
 ### Plugins
 
@@ -155,7 +155,7 @@ A typical full-stack run (`index ./repo myvault --wiki`):
 6. Build     → run_compile makes one DocExtraction LLM call per doc
    pages       (CorpusDoc navigation label + entity graph with
                DERIVED_FROM edges + concept inventory), then Plan +
-               Execute writes concept WikiPage bodies to disk +
+               Execute writes concept Page bodies to disk +
                graph mirror with CONTAINS / CITES / LINKS_TO +
                MENTIONS edges.
 

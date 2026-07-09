@@ -16,7 +16,7 @@
 
 The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
 source of truth for the vault's filesystem state. This module mirrors the
-*same* state into the graph as :class:`WikiVault`, :class:`WikiPage`, and
+*same* state into the graph as :class:`Vault`, :class:`Page`, and
 :class:`CorpusDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
 CorpusDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links),
 ``MENTIONS`` (page/CorpusDoc → entity), and ``MIRRORS`` (CorpusDoc → File
@@ -72,8 +72,8 @@ def _confidence_for_kind(kind: str) -> tuple[str, float]:
 # Node / edge type constants — kept in sync with proto/opentrace/v1/code_graph.proto
 # ---------------------------------------------------------------------------
 
-NODE_TYPE_WIKI_VAULT = "WikiVault"
-NODE_TYPE_WIKI_PAGE = "WikiPage"
+NODE_TYPE_VAULT = "Vault"
+NODE_TYPE_PAGE = "Page"
 NODE_TYPE_CORPUS_DOC = "CorpusDoc"
 
 REL_TYPE_CONTAINS = "CONTAINS"
@@ -81,6 +81,7 @@ REL_TYPE_CITES = "CITES"
 REL_TYPE_LINKS_TO = "LINKS_TO"
 REL_TYPE_MENTIONS = "MENTIONS"
 REL_TYPE_MIRRORS = "MIRRORS"
+REL_TYPE_DOCUMENTS = "DOCUMENTS"
 
 # Code-tree types written by the DirectoryWalker; used here when a repo-walked
 # doc needs a File twin the code walk didn't create (see _ensure_file_twin).
@@ -208,6 +209,39 @@ def _ensure_file_twin(store: GraphStore, repo_id: str, rel_path: str) -> str:
     return file_id
 
 
+def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool:
+    """Link a repo-spawned vault to its Repository node.
+
+    Merges ``Repository -DOCUMENTS-> Vault`` (idempotent) and stamps
+    ``spawned_from=<repo_id>`` on the vault node so the provenance is
+    self-describing. Called only from the ``index --wiki`` path where the
+    wiki compile runs alongside a repo walk — vaults compiled from uploads
+    or URLs and attached globals never reach this, so they never claim to
+    document a repo they didn't come from. Returns True when the edge was
+    written (both nodes present).
+    """
+    vid = vault_node_id(vault_name)
+    vault_node = store.get_node(vid)
+    if vault_node is None or store.get_node(repo_id) is None:
+        return False
+    store.merge_relationship(
+        id=f"{repo_id}->DOCUMENTS->{vid}",
+        rel_type=REL_TYPE_DOCUMENTS,
+        source_id=repo_id,
+        target_id=vid,
+    )
+    props = dict(vault_node.get("properties") or {})
+    if props.get("spawned_from") != repo_id:
+        props["spawned_from"] = repo_id
+        store.add_node(
+            id=vid,
+            node_type=NODE_TYPE_VAULT,
+            name=vault_node.get("name") or vault_name,
+            properties=props,
+        )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Wiki-link parser
 # ---------------------------------------------------------------------------
@@ -240,7 +274,7 @@ def parse_wiki_links(body: str) -> list[str]:
 
 
 def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int]:
-    """Remove a vault's WikiVault and WikiPage nodes, plus any CorpusDoc nodes
+    """Remove a vault's Vault and Page nodes, plus any CorpusDoc nodes
     that no other vault still references via ``CONTAINS``. Symmetric
     counterpart of :func:`write_vault_to_graph`.
 
@@ -273,21 +307,21 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
         if r["node"]["type"] == NODE_TYPE_CORPUS_DOC:
             sources_in_vault.append(r["node"]["id"])
 
-    # 2. Delete WikiPages belonging to this vault. Pages are 1:1 with their
+    # 2. Delete Pages belonging to this vault. Pages are 1:1 with their
     #    vault (id is "<vault>::<slug>") so the property check is sufficient.
-    for n in store.list_nodes(node_type=NODE_TYPE_WIKI_PAGE, limit=100_000):
+    for n in store.list_nodes(node_type=NODE_TYPE_PAGE, limit=100_000):
         props = n.get("properties") or {}
         if props.get("vault") != vault_name:
             continue
         if store.delete_node(n["id"]):
             deleted += 1
 
-    # 3. Delete the WikiVault node itself.
+    # 3. Delete the Vault node itself.
     if store.delete_node(vault_id):
         deleted += 1
 
     # 4. Delete shared Source nodes only when no other vault still references
-    #    them. We re-check after deleting the WikiVault above so the just-
+    #    them. We re-check after deleting the Vault above so the just-
     #    deleted vault's CONTAINS edges are gone from the count.
     for sid in sources_in_vault:
         try:
@@ -299,8 +333,8 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
             )
         except ValueError:
             inbound = []
-        # If any other WikiVault still CONTAINS this source, leave it alone.
-        still_referenced = any(r["node"]["type"] == NODE_TYPE_WIKI_VAULT for r in inbound)
+        # If any other Vault still CONTAINS this source, leave it alone.
+        still_referenced = any(r["node"]["type"] == NODE_TYPE_VAULT for r in inbound)
         if still_referenced:
             continue
         if store.delete_node(sid):
@@ -324,6 +358,7 @@ def write_vault_to_graph(
     compiled_slugs: set[str] | None = None,
     normalized: list[Any] | None = None,
     scope: str = "global",
+    derived_pairs: set[tuple[str, str]] | None = None,
 ) -> dict[str, int]:
     """Mirror *meta* + *page_bodies* into the graph as a fresh consistent slice.
 
@@ -379,17 +414,26 @@ def write_vault_to_graph(
     from datetime import datetime, timezone
 
     mirror_iso = datetime.now(timezone.utc).isoformat()
+    vault_props: dict[str, Any] = {
+        "vault": meta.name,
+        "last_compiled_at": meta.last_compiled_at or "",
+        "summary": "",
+        "scope": scope,
+        "mirror_compiled_at": mirror_iso,
+    }
+    # ``spawned_from`` is stamped by link_vault_to_repo AFTER the mirror on
+    # ``index --wiki`` runs; carry it forward here so re-mirrors that don't
+    # go through the linker (refresh-stale-pages, backfill) don't wipe it.
+    existing_vault = store.get_node(vault_id)
+    if existing_vault is not None:
+        prev = (existing_vault.get("properties") or {}).get("spawned_from")
+        if prev:
+            vault_props["spawned_from"] = prev
     store.add_node(
         id=vault_id,
-        node_type=NODE_TYPE_WIKI_VAULT,
+        node_type=NODE_TYPE_VAULT,
         name=meta.name,
-        properties={
-            "vault": meta.name,
-            "last_compiled_at": meta.last_compiled_at or "",
-            "summary": "",
-            "scope": scope,
-            "mirror_compiled_at": mirror_iso,
-        },
+        properties=vault_props,
     )
     nodes_written += 1
 
@@ -407,7 +451,7 @@ def write_vault_to_graph(
         acq = by_sha_acquired.get(sha)
         norm = by_sha_normalized.get(sha)
         # CorpusDocs are shared across vaults by sha256 identity — vault
-        # membership is expressed via the WikiVault -CONTAINS-> Source edge
+        # membership is expressed via the Vault -CONTAINS-> Source edge
         # (one edge per vault), NOT via a property on the Source itself. A
         # `vault` property would be wrong: the merge-on-write would overwrite
         # the previous tag whenever a second vault re-ingests the same file.
@@ -419,19 +463,26 @@ def write_vault_to_graph(
         if acq is not None:
             props["size_bytes"] = len(acq.data)
             props["content_type"] = _sniff_content_type(ingested.original_name)
-        if norm is not None and norm.corpus_path:
+        # ``norm`` is a NormalizedSource on a fresh compile, but attach /
+        # promote / demote / re-mirror pass lightweight stubs that carry only
+        # the fields they know (sha256 + corpus_path). Read every optional
+        # field via getattr so a stub without ``title``/``markdown``/etc.
+        # doesn't crash the mirror — the missing labels fall back to the
+        # ``.vault.json`` IngestedSource below.
+        norm_corpus_path = getattr(norm, "corpus_path", "") if norm is not None else ""
+        if norm_corpus_path:
             # Body persisted on disk this run — point the node at it so
             # downstream consumers (``load_source``, concept synthesis)
             # can stream it back.
-            props["corpus_path"] = norm.corpus_path
+            props["corpus_path"] = norm_corpus_path
         # Navigation label: prefer this run's extraction (NormalizedSource),
         # fall back to the label persisted in .vault.json (covers ``vault
         # attach`` of a vault compiled elsewhere). Stored under BOTH keys:
-        # ``one_line_summary`` matches the WikiPage convention
+        # ``one_line_summary`` matches the Page convention
         # (_neighbour_summary prefers it), and ``summary`` feeds
         # build_search_text so the label is FTS-findable.
-        title = (norm.title if norm is not None else "") or getattr(ingested, "title", "")
-        one_liner = (norm.one_line_summary if norm is not None else "") or getattr(ingested, "one_line_summary", "")
+        title = getattr(norm, "title", "") or getattr(ingested, "title", "")
+        one_liner = getattr(norm, "one_line_summary", "") or getattr(ingested, "one_line_summary", "")
         if title:
             props["title"] = title
         if one_liner:
@@ -452,7 +503,7 @@ def write_vault_to_graph(
             properties=props,
         )
         nodes_written += 1
-        # WikiVault CONTAINS CorpusDoc.
+        # Vault CONTAINS CorpusDoc.
         store.merge_relationship(
             id=f"{vault_id}->CONTAINS->{sid}",
             rel_type=REL_TYPE_CONTAINS,
@@ -460,14 +511,15 @@ def write_vault_to_graph(
             target_id=sid,
         )
         rels_written += 1
-        if norm is not None and norm.markdown:
-            source_bodies[sid] = norm.markdown
+        norm_markdown = getattr(norm, "markdown", "") if norm is not None else ""
+        if norm_markdown:
+            source_bodies[sid] = norm_markdown
         else:
             body = _read_corpus_body(store, props.get("corpus_path"))
             if body:
                 source_bodies[sid] = body
 
-    # 3. WikiPage nodes — one per slug. Maintain title→slug for LINKS_TO
+    # 3. Page nodes — one per slug. Maintain title→slug for LINKS_TO
     #    resolution. Slugs live under ``<kind_dir>/<base>``; we track both
     #    an unambiguous-by-title map and a fully-qualified
     #    ``<kind_dir>/<title>`` one. Ambiguous bare titles drop out so the
@@ -522,12 +574,12 @@ def write_vault_to_graph(
                     page_props[k] = existing_props[k]
         store.add_node(
             id=pid,
-            node_type=NODE_TYPE_WIKI_PAGE,
+            node_type=NODE_TYPE_PAGE,
             name=p.title,
             properties=page_props,
         )
         nodes_written += 1
-        # WikiVault CONTAINS WikiPage.
+        # Vault CONTAINS Page.
         store.merge_relationship(
             id=f"{vault_id}->CONTAINS->{pid}",
             rel_type=REL_TYPE_CONTAINS,
@@ -585,7 +637,7 @@ def write_vault_to_graph(
         page_node_id(meta.name, slug): body for slug, body in page_bodies.items() if slug in meta.pages
     }
     mention_bodies.update(source_bodies)
-    rels_written += _write_mentions_edges(store, meta, mention_bodies)
+    rels_written += _write_mentions_edges(store, meta, mention_bodies, derived_pairs=derived_pairs)
 
     logger.debug(
         "vault graph write complete: %d nodes, %d rels (vault=%s)",
@@ -616,12 +668,26 @@ def _read_corpus_body(store: GraphStore, corpus_rel: str | None) -> str | None:
         return None
 
 
-def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, bodies_by_node_id: dict[str, str]) -> int:
-    """Write MENTIONS edges from content nodes (WikiPage / Source) to entity
+def _write_mentions_edges(
+    store: GraphStore,
+    meta: VaultMetadata,
+    bodies_by_node_id: dict[str, str],
+    derived_pairs: set[tuple[str, str]] | None = None,
+) -> int:
+    """Write MENTIONS edges from content nodes (Page / Source) to entity
     nodes whose names appear in the body.
 
     *bodies_by_node_id* maps a graph node id to the text to scan — page
-    markdown for WikiPages, raw corpus markdown for Sources.
+    markdown for Pages, raw corpus markdown for Sources.
+
+    *derived_pairs* is the set of ``(corpus_doc_id, entity_id)`` pairs the
+    entity extraction produced a ``DERIVED_FROM`` edge for. A MENTIONS edge
+    for such a pair is skipped — ``entity -DERIVED_FROM-> doc`` is the
+    stronger claim ("extracted from") and already encodes that the doc is
+    about the entity, so the reverse ``doc -MENTIONS-> entity`` would just
+    restate it. Mentions of an entity by a doc it was NOT derived from (the
+    genuine cross-reference) are still written. Consumers that want "every
+    doc referencing X" union MENTIONS with incoming DERIVED_FROM.
 
     Only operates on entities tagged with this vault (so vault scope is
     preserved). Uses whole-word matching via ``\\b...\\b`` regex.
@@ -629,6 +695,7 @@ def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, bodies_by_node
     Returns the number of edges written. No-op when no entities exist in
     the vault (the common case when ``--wiki`` wasn't used).
     """
+    derived_pairs = derived_pairs or set()
     entities = _vault_entities(store, meta.name)
     if not entities:
         return 0
@@ -666,6 +733,10 @@ def _write_mentions_edges(store: GraphStore, meta: VaultMetadata, bodies_by_node
                     targets.add(eid)
 
         for eid in targets:
+            # Skip when DERIVED_FROM already encodes this doc↔entity pair —
+            # the reverse MENTIONS would be redundant.
+            if (node_id, eid) in derived_pairs:
+                continue
             store.merge_relationship(
                 id=f"{node_id}->MENTIONS->{eid}",
                 rel_type=REL_TYPE_MENTIONS,

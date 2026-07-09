@@ -69,17 +69,19 @@ ladybug = pytest.importorskip("real_ladybug")
 
 from opentrace_agent.store import GraphStore  # noqa: E402
 from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
+    NODE_TYPE_PAGE,
     NODE_TYPE_CORPUS_DOC,
-    NODE_TYPE_WIKI_PAGE,
-    NODE_TYPE_WIKI_VAULT,
+    NODE_TYPE_VAULT,
     REL_TYPE_CITES,
     REL_TYPE_CONTAINS,
+    REL_TYPE_DOCUMENTS,
     REL_TYPE_LINKS_TO,
     REL_TYPE_MENTIONS,
     REL_TYPE_MIRRORS,
     corpus_doc_node_id,
     delete_vault_from_graph,
     link_corpus_doc_mirrors,
+    link_vault_to_repo,
     page_node_id,
     vault_node_id,
     write_vault_to_graph,
@@ -159,7 +161,7 @@ class TestWriteVaultToGraph:
         write_vault_to_graph(store, meta, bodies)
         node = store.get_node(vault_node_id("kb"))
         assert node is not None
-        assert node["type"] == NODE_TYPE_WIKI_VAULT
+        assert node["type"] == NODE_TYPE_VAULT
         assert node["properties"]["vault"] == "kb"
 
     def test_writes_source_nodes(self, store):
@@ -192,7 +194,7 @@ class TestWriteVaultToGraph:
     def test_writes_page_nodes(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
-        pages = store.list_nodes(NODE_TYPE_WIKI_PAGE)
+        pages = store.list_nodes(NODE_TYPE_PAGE)
         slugs = {p["properties"]["slug"] for p in pages}
         assert slugs == {"concept/revenue", "concept/costs"}
         for p in pages:
@@ -208,7 +210,7 @@ class TestWriteVaultToGraph:
             relationship_type=REL_TYPE_CONTAINS,
         )
         types = {c["node"]["type"] for c in children}
-        assert NODE_TYPE_WIKI_PAGE in types
+        assert NODE_TYPE_PAGE in types
         assert NODE_TYPE_CORPUS_DOC in types
         # 2 sources + 2 pages = 4 children
         assert len(children) == 4
@@ -259,7 +261,7 @@ class TestWriteVaultToGraph:
         ids = {r["node"]["id"] for r in incoming}
         # The concept page mentions "revenue" (in its body), and report.pdf's
         # raw markdown does too — both should carry MENTIONS edges.
-        assert NODE_TYPE_WIKI_PAGE in by_type
+        assert NODE_TYPE_PAGE in by_type
         assert NODE_TYPE_CORPUS_DOC in by_type
         assert corpus_doc_node_id("sha1") in ids
 
@@ -267,9 +269,31 @@ class TestWriteVaultToGraph:
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         write_vault_to_graph(store, meta, bodies)  # second pass shouldn't dupe
-        pages = store.list_nodes(NODE_TYPE_WIKI_PAGE)
+        pages = store.list_nodes(NODE_TYPE_PAGE)
         slugs = [p["properties"]["slug"] for p in pages]
         assert sorted(slugs) == sorted(set(slugs))
+
+    def test_derived_pairs_skip_redundant_doc_mention(self, store):
+        """A doc↔entity pair covered by DERIVED_FROM gets no reverse MENTIONS,
+        but the same entity's mention by a DIFFERENT doc still does."""
+        store.add_node("idea::revenue", "Idea", "revenue", {"vault": "kb"})
+        meta, bodies = _make_meta()
+        # "revenue" appears in report.pdf (sha1) AND memo (sha2 body says
+        # nothing) — actually both source markdowns; mark sha1 as the entity's
+        # derivation source so its MENTIONS is suppressed.
+        derived = {(corpus_doc_node_id("sha1"), "idea::revenue")}
+        write_vault_to_graph(store, meta, bodies, normalized=_normalized(), derived_pairs=derived)
+
+        srcs = {
+            r["node"]["id"]
+            for r in store.traverse(
+                "idea::revenue", direction="incoming", max_depth=1, relationship_type=REL_TYPE_MENTIONS
+            )
+            if r["node"]["type"] == NODE_TYPE_CORPUS_DOC
+        }
+        # sha1 suppressed (DERIVED_FROM covers it); the concept page's MENTIONS
+        # (not a corpus doc) is unaffected.
+        assert corpus_doc_node_id("sha1") not in srcs
 
 
 class TestDeleteVaultFromGraph:
@@ -364,7 +388,7 @@ class TestDeleteVaultFromGraph:
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         delete_vault_from_graph(store, "kb")
-        # We only ever delete WikiVault / WikiPage / Source by id or by
+        # We only ever delete Vault / Page / Source by id or by
         # vault property — code nodes are out of scope.
         assert store.get_node("repo-1") is not None
 
@@ -469,3 +493,45 @@ class TestLinkCorpusDocMirrors:
 
         write_vault_to_graph(store, meta, bodies)  # re-mirror without normalized
         assert store.get_node(corpus_doc_node_id("sha1"))["properties"]["path"] == "docs/report.pdf"
+
+
+class TestLinkVaultToRepo:
+    def _seed(self, store):
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies)
+        store.add_node("myrepo", "Repository", "myrepo", {})
+
+    def test_links_and_stamps_spawned_from(self, store):
+        self._seed(store)
+        assert link_vault_to_repo(store, "myrepo", "kb") is True
+
+        out = store.traverse("myrepo", direction="outgoing", max_depth=1, relationship_type=REL_TYPE_DOCUMENTS)
+        assert [r["node"]["id"] for r in out] == [vault_node_id("kb")]
+        assert store.get_node(vault_node_id("kb"))["properties"]["spawned_from"] == "myrepo"
+
+    def test_missing_repo_or_vault_skipped(self, store):
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies)
+        # No Repository node — e.g. a wiki compile against an empty index.
+        assert link_vault_to_repo(store, "myrepo", "kb") is False
+        store.add_node("myrepo", "Repository", "myrepo", {})
+        assert link_vault_to_repo(store, "myrepo", "nonexistent") is False
+        out = store.traverse("myrepo", direction="outgoing", max_depth=1, relationship_type=REL_TYPE_DOCUMENTS)
+        assert out == []
+
+    def test_idempotent(self, store):
+        self._seed(store)
+        link_vault_to_repo(store, "myrepo", "kb")
+        link_vault_to_repo(store, "myrepo", "kb")
+        out = store.traverse("myrepo", direction="outgoing", max_depth=1, relationship_type=REL_TYPE_DOCUMENTS)
+        assert len(out) == 1
+
+    def test_spawned_from_survives_remirror(self, store):
+        """Re-mirrors that skip the linker (refresh-stale-pages, backfill)
+        must carry the stamp forward rather than wiping it."""
+        self._seed(store)
+        link_vault_to_repo(store, "myrepo", "kb")
+
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies)  # plain re-mirror
+        assert store.get_node(vault_node_id("kb"))["properties"]["spawned_from"] == "myrepo"

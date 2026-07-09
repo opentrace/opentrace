@@ -26,7 +26,7 @@ from typing import Any
 
 from opentrace_agent.sources._llm_common import resolve_model
 from opentrace_agent.wiki.ingest.doc_extraction import extract_docs as _extract_docs
-from opentrace_agent.wiki.ingest.entities import write_entities_to_graph
+from opentrace_agent.wiki.ingest.entities import write_entity_edges, write_entity_nodes
 from opentrace_agent.wiki.ingest.execute import _wiki_concurrency
 from opentrace_agent.wiki.ingest.execute import execute as _execute
 from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
@@ -316,11 +316,11 @@ def run_compile(
         # markdown carried on each NormalizedSource), not the digest summaries —
         # grounding each page in the full source yields more accurate synthesis
         # than re-distilling a lossy digest. See _sources_block.
-        concept_pages: list[CompiledPage] = []
+        pages: list[CompiledPage] = []
         if plan_obj.creates or plan_obj.extends:
-            yield from _execute(plan_obj, normalized, meta, pages_path, client, concept_pages)
+            yield from _execute(plan_obj, normalized, meta, pages_path, client, pages)
 
-        compiled = concept_pages
+        compiled = pages
 
         # Persist. Runs even with zero new pages — the acquired sources and
         # their metadata still need recording (persist updates meta.sources,
@@ -343,11 +343,20 @@ def run_compile(
                     "model": model or _default_model_for(provider),
                     "session": str(uuid.uuid4()),
                 }
-                # Persist entity nodes/edges FIRST so the vault mirror's
-                # MENTIONS pass (which scans for entity names in page bodies)
-                # can see and link them.
-                entities_written = write_entities_to_graph(graph_store, entity_nodes, entity_rels)
+                # Persist entity NODES first so the vault mirror's MENTIONS
+                # pass (which scans page/doc bodies for entity names) can see
+                # and link them. Entity EDGES wait until AFTER the vault
+                # mirror: DERIVED_FROM points at CorpusDoc nodes that
+                # write_vault_to_graph creates, and merge_relationship
+                # silently drops an edge whose target doesn't exist yet.
+                entities_written = write_entity_nodes(graph_store, entity_nodes)
                 compiled_slugs = {p.slug for p in compiled}
+                # (corpus_doc_id, entity_id) pairs from the DERIVED_FROM edges,
+                # so the mirror's MENTIONS pass can skip the redundant reverse
+                # edge for a doc↔entity pair provenance already covers.
+                derived_pairs = {
+                    (r.target_id, r.source_id) for r in entity_rels if r.type == "DERIVED_FROM"
+                }
                 stats = write_vault_to_graph(
                     graph_store,
                     meta,
@@ -357,7 +366,11 @@ def run_compile(
                     compiled_slugs=compiled_slugs,
                     normalized=normalized,
                     scope=scope,
+                    derived_pairs=derived_pairs,
                 )
+                # CorpusDoc nodes now exist — write the entity edges
+                # (DERIVED_FROM → CorpusDoc, SEMANTIC_EDGE → entity).
+                write_entity_edges(graph_store, entity_rels)
                 yield WikiPipelineEvent(
                     kind=WikiEventKind.STAGE_PROGRESS,
                     phase=WikiPhase.PERSISTING,
@@ -382,9 +395,9 @@ def run_compile(
         yield WikiPipelineEvent(
             kind=WikiEventKind.DONE,
             phase=WikiPhase.PERSISTING,
-            message=(f"Compile complete — {len(acquired)} new source(s), {len(concept_pages)} concept page(s)"),
+            message=(f"Compile complete — {len(acquired)} new source(s), {len(pages)} concept page(s)"),
             detail={
-                "concept_pages": len(concept_pages),
+                "pages": len(pages),
                 "new_sources": len(acquired),
             },
         )
@@ -400,7 +413,7 @@ def refresh_stale_pages(
     model: str | None = None,
     base_url: str | None = None,
 ) -> int:
-    """Re-run Plan+Execute against WikiPages with ``stale_since`` stamped.
+    """Re-run Plan+Execute against Pages with ``stale_since`` stamped.
 
     Used by both ``opentraceai vault refresh-stale-pages`` and the
     ``index --wiki --refresh-stale-pages`` flag, sharing the regeneration
@@ -413,7 +426,7 @@ def refresh_stale_pages(
     from opentrace_agent.wiki.ingest.execute import _execute_extend
     from opentrace_agent.wiki.ingest.types import PlanExtend
 
-    # Find all stale WikiPage(kind="concept") nodes in scope.
+    # Find all stale Page(kind="concept") nodes in scope.
     stale_pages = _find_stale_pages(graph_store, vault_name=vault_name)
     if not stale_pages:
         return 0
@@ -440,7 +453,7 @@ def refresh_stale_pages(
         if not remaining_source_shas:
             continue  # autoprune should have deleted; skip defensively
 
-        # Resolve scope from the WikiVault node, fall back to local since
+        # Resolve scope from the Vault node, fall back to local since
         # that's the common case.
         from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
 
@@ -491,8 +504,8 @@ def refresh_stale_pages(
 
 
 def _find_stale_pages(graph_store, *, vault_name: str | None) -> list[dict]:
-    """Return WikiPage nodes with stale_since stamped, scoped to *vault_name* when given."""
-    pages = graph_store.list_nodes("WikiPage", limit=10_000)
+    """Return Page nodes with stale_since stamped, scoped to *vault_name* when given."""
+    pages = graph_store.list_nodes("Page", limit=10_000)
     out = []
     for p in pages:
         props = p.get("properties") or {}

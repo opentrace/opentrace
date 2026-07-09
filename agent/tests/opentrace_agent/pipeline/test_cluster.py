@@ -30,7 +30,6 @@ from opentrace_agent.pipeline.cluster import (  # noqa: E402
 )
 from opentrace_agent.store import GraphStore  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Pure detection
 # ---------------------------------------------------------------------------

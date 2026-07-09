@@ -8,7 +8,7 @@ The graph holds three layers:
 
 1. **Code layer** — `File`, `Class`, `Function`, `Variable` nodes from tree-sitter. Always produced.
 2. **Entity layer** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from LLM extraction over ingested docs. Produced by `--wiki`.
-3. **Page layer** — labelled `CorpusDoc` nodes + `WikiPage` (concept) curated narratives. Produced by `--wiki`.
+3. **Page layer** — labelled `CorpusDoc` nodes + `Page` (concept) curated narratives. Produced by `--wiki`.
 
 One flag turns on both LLM layers: `--wiki`.
 
@@ -36,9 +36,9 @@ What happens:
 4. Every repo-walked doc's CorpusDoc gets a `MIRRORS` edge to its `File` twin and a repo-relative `path` property — the corpus layer and the code tree join in one hop. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created during linking. Docs not from a repo walk (uploads, URLs) have no edge
 5. One LLM call per doc emits the CorpusDoc's navigation label (`title` + one-line summary), its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes with `DERIVED_FROM` edges back to the doc, `SEMANTIC_EDGE` between entities), and a concept inventory — no per-doc page is written; the raw body stays in the corpus
 6. Plan stage decides which cross-document themes deserve a page (1 LLM call)
-7. Execute stage writes one `WikiPage(kind="concept")` per theme (1 LLM call per page, typically 5–15 pages)
+7. Execute stage writes one `Page(kind="concept")` per theme (1 LLM call per page, typically 5–15 pages)
 8. Pages land at `<project>/.opentrace/vaults/myvault/pages/`
-9. Graph mirror has `WikiVault` + `WikiPage` + `CorpusDoc` nodes plus `CONTAINS` / `CITES` / `LINKS_TO` / `MENTIONS` edges — `CITES` links each concept page directly to the CorpusDocs it drew from
+9. Graph mirror has `Vault` + `Page` + `CorpusDoc` nodes plus `CONTAINS` / `CITES` / `LINKS_TO` / `MENTIONS` edges — `CITES` links each concept page directly to the CorpusDocs it drew from
 
 The vault is **local by default** (project-scoped). Pass `--global` for a vault visible to any project. See [Wiki & Vaults](wiki.md) for the full vault model.
 

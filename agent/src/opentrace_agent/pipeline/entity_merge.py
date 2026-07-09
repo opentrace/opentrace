@@ -17,13 +17,21 @@
 After per-file LLM extraction, the same concept named in multiple files
 produces multiple nodes — one per ``{stem}_{entity}`` ID. This module
 collapses those duplicates by grouping nodes that share a normalised
-label and type, then rewriting edges to point at a canonical node.
+label, then rewriting edges to point at a canonical node.
+
+Merging is **cross-type**: per-doc extraction types the same referent
+inconsistently ("Werkzeug" is a Service to the changelog and a Module to
+the deploy guide), and a same-type-only rule leaves those as duplicate
+nodes — each of which then earns its own MENTIONS/DERIVED_FROM edges,
+double-counting everything downstream. The group's type is resolved by
+majority vote among the members (ties broken by ``_TYPE_PRECEDENCE`` so
+runs are stable).
 
 Two safety rails:
 
-* **Same-type rule.** Only nodes of identical ``type`` may merge. This
-  prevents generic-name collisions like ``Cluster:Idea`` (graph community)
-  vs ``Cluster:Service`` (Kubernetes cluster) from collapsing into one.
+* **Person rule.** ``Person`` nodes only merge with other ``Person``
+  nodes — a person who shares a name with a product/library ("Click")
+  must not collapse into it.
 * **Allowlist by type.** Only the LLM-extracted entity types
   (``Idea``, ``Service``, ``Module``, ``Paper``, ``Person``, ``Event``)
   participate. AST-extracted nodes (``File``, ``Class``, ``Function``)
@@ -38,15 +46,19 @@ that mentioned it; semantic edges collapse on
 from __future__ import annotations
 
 import re
-from collections import defaultdict
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
 
 from opentrace_agent.pipeline.types import GraphNode, GraphRelationship
-
 
 # LLM-extracted entity types participate in the merge. Other types
 # (File, Class, Function, etc.) have deterministic AST-derived IDs.
 MERGEABLE_TYPES: frozenset[str] = frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"})
+
+# Tie-break order for the cross-type majority vote: concrete artefact
+# types beat the catch-all Idea, so a 1-1 "Werkzeug is a Service / a
+# Module" split resolves to Service rather than whichever id sorts first.
+_TYPE_PRECEDENCE: tuple[str, ...] = ("Service", "Module", "Paper", "Event", "Person", "Idea")
 
 
 _PARENTHETICAL = re.compile(r"\s*\([^)]*\)\s*")
@@ -77,13 +89,24 @@ class MergeStats:
     edges_deduped: int = 0
 
 
-def _pick_canonical(members: list[GraphNode]) -> GraphNode:
+def _resolve_type(members: list[GraphNode]) -> str:
+    """Majority-vote the merged group's type; ties break by _TYPE_PRECEDENCE."""
+    counts = Counter(m.type for m in members)
+    return min(
+        counts,
+        key=lambda t: (-counts[t], _TYPE_PRECEDENCE.index(t) if t in _TYPE_PRECEDENCE else len(_TYPE_PRECEDENCE)),
+    )
+
+
+def _pick_canonical(members: list[GraphNode], resolved_type: str) -> GraphNode:
     """Select the representative node for a merge group.
 
-    Prefers the longest label (most descriptive). Ties broken by ID order
-    so the choice is stable across runs.
+    Prefers a member of the group's resolved type (so the surviving id and
+    properties agree with the type), then the longest label (most
+    descriptive). Remaining ties break by ID order so the choice is stable
+    across runs.
     """
-    return sorted(members, key=lambda n: (-len(n.name), n.id))[0]
+    return sorted(members, key=lambda n: (n.type != resolved_type, -len(n.name), n.id))[0]
 
 
 def merge_entities(
@@ -107,17 +130,26 @@ def merge_entities(
         else:
             pass_through.append(n)
 
-    # Group by (type, canonical_key). Same-type rule lives here.
+    # Group by canonical name, cross-type. The Person rule lives here:
+    # Person nodes group in their own namespace so a person sharing a name
+    # with a product never collapses into it.
     groups: dict[tuple[str, str], list[GraphNode]] = defaultdict(list)
     for n in mergeable:
-        groups[(n.type, canonical_key(n.name))].append(n)
+        namespace = "person" if n.type == "Person" else "entity"
+        groups[(namespace, canonical_key(n.name))].append(n)
 
-    # Build id remap and canonical node list.
+    # Build id remap and canonical node list. The group's type is the
+    # member majority — per-doc extraction types the same referent
+    # inconsistently, and the canonical node is rewritten to the resolved
+    # type when it disagrees.
     id_remap: dict[str, str] = {}
     canonical_nodes: list[GraphNode] = []
     for members in groups.values():
         stats.groups_considered += 1
-        canonical = _pick_canonical(members)
+        resolved_type = _resolve_type(members)
+        canonical = _pick_canonical(members, resolved_type)
+        if canonical.type != resolved_type:
+            canonical = replace(canonical, type=resolved_type)
         canonical_nodes.append(canonical)
         for m in members:
             id_remap[m.id] = canonical.id

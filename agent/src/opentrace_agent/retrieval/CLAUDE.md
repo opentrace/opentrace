@@ -14,7 +14,7 @@ paths.py       — find_path (Python-composed BFS) + find_via_relationship_to_ty
 existence.py   — find_orphans (two-query set difference)
 counts.py      — count_by (global or descendants-of-parent)
 provenance.py  — Trust chain for code (commit_sha + line range) and wiki (CITES chain)
-grep.py        — Regex match via ripgrep over a Repository or WikiVault scope
+grep.py        — Regex match via ripgrep over a Repository or Vault scope
 ```
 
 ## Convention
@@ -36,7 +36,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 | Node-fetch     | (in `cli/mcp_server.py::get_node`)             | Wraps `GraphStore.get_node` + `traverse(depth=1)`; adds `target_summary` per neighbour |
 | Traversal      | (in `GraphStore.traverse`)                     | Edge-type set, vault scope, confidence threshold |
 | Provenance     | `provenance.provenance`                        | Code + wiki branches; null payload for unknown types |
-| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path or WikiVault pages_dir |
+| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path or Vault pages_dir |
 | Query (typed)  | `paths.find_path`, `paths.find_via_relationship_to_type`, `existence.find_orphans`, `counts.count_by` | Replaces the spec's raw-Cypher escape hatch — convention-compliant typed templates |
 
 ## Search semantics
@@ -46,7 +46,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 - **`snippet`** — anchored on the first query token found in `name + summary`,
   windowed to ~200 chars
 - **`vault`** — read from the node's `vault` property (set by Phase 4
-  `graph_writer` on WikiVault/WikiPage; null for code nodes and CorpusDocs)
+  `graph_writer` on Vault/Page; null for code nodes and CorpusDocs)
 - **`recency`** — `last_updated` property; null when not stamped
 - **`confidence`** — `confidence` property; null when not stamped
   (currently a placeholder; real wiki-synthesis confidence is future work)
@@ -58,7 +58,7 @@ unavailable (e.g. before the index is built).
 
 Two branches keyed off node type:
 
-- **Wiki** (`WikiVault` / `WikiPage` / `CorpusDoc`) — returns the node's
+- **Wiki** (`Vault` / `Page` / `CorpusDoc`) — returns the node's
   agent/model/session/confidence properties plus the `CITES` outgoing chain.
   Concept page → CorpusDoc, direct by sha; each chain entry carries the
   MIRRORS File twin id when one exists.
@@ -74,7 +74,7 @@ segments) — works for both `owner/repo/...` GitHub-style IDs and
 ## Grep semantics
 
 Scope-based: caller provides a `Repository` (must have `local_path`) or
-`WikiVault` (rooted at `OT_VAULT_ROOT/<name>/pages`). ripgrep is shelled out
+`Vault` (rooted at `OT_VAULT_ROOT/<name>/pages`). ripgrep is shelled out
 with `--json --line-number --max-filesize=10M` and a 10s wall-time cap.
 When on-disk content is unavailable, returns a structured `mode="error"`
 response so the agent can fall back to `search_graph` for FTS over indexed

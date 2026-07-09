@@ -95,9 +95,9 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 | `list_nodes` | Enumerate all nodes of a type |
 | `get_node` | Full node details + immediate neighbors |
 | `traverse_graph` | Walk relationships (outgoing/incoming/both) with depth control |
-| `load_source` | Read a node's underlying content — code from the repo checkout (with line ranges), `CorpusDoc` bodies from the corpus snapshot, `WikiPage` bodies from the vault |
+| `load_source` | Read a node's underlying content — code from the repo checkout (with line ranges), `CorpusDoc` bodies from the corpus snapshot, `Page` bodies from the vault |
 | `read_vault_page` | Read a concept page's markdown body by node id |
-| `find_pages_mentioning` | Entity/symbol → the WikiPages and CorpusDocs that discuss it (typed hits) |
+| `find_pages_mentioning` | Entity/symbol → the Pages and CorpusDocs that discuss it (typed hits) |
 | `provenance` | Trust chain — concept page → cited `CorpusDoc` artefacts (+ MIRRORS File twin when present); code → commit + line range |
 
 ## Database Convention

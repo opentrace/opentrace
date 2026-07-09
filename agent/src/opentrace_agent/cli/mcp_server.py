@@ -58,7 +58,11 @@ from opentrace_agent.retrieval import (
 )
 from opentrace_agent.retrieval.communities import (
     cross_community_bridges as _cross_community_bridges,
+)
+from opentrace_agent.retrieval.communities import (
     god_nodes as _god_nodes,
+)
+from opentrace_agent.retrieval.communities import (
     list_communities as _list_communities,
 )
 from opentrace_agent.store import GraphStore
@@ -87,7 +91,7 @@ def _error_response(tool_name: str, e: Exception) -> str:
 def _neighbour_summary(node: dict[str, Any]) -> str:
     """Return a short, agent-legible summary for a neighbour node.
 
-    Prefer ``one_line_summary`` (set on WikiPage by the wiki compile pipeline);
+    Prefer ``one_line_summary`` (set on Page by the wiki compile pipeline);
     fall back to truncated ``summary`` (set on code nodes by the indexer);
     fall back to the node ``name``.
     """
@@ -293,7 +297,7 @@ def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> d
 
 
 def _read_wiki_page_body(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
-    """Resolve and read a ``WikiPage`` node's markdown body from disk."""
+    """Resolve and read a ``Page`` node's markdown body from disk."""
     from pathlib import Path
 
     from opentrace_agent.wiki.paths import resolve_vault_scope
@@ -302,7 +306,7 @@ def _read_wiki_page_body(store: GraphStore, node: dict[str, Any], node_id: str) 
     vault = props.get("vault")
     slug = props.get("slug")
     if not vault or not slug:
-        return {"error": f"WikiPage {node_id} missing vault/slug properties"}
+        return {"error": f"Page {node_id} missing vault/slug properties"}
     # Slug is "<kind_dir>/<base>"; reject any traversal nonsense.
     if ".." in slug or slug.startswith(".") or slug.startswith("/") or slug.endswith("/") or slug.count("/") > 1:
         return {"error": f"invalid slug: {slug}"}
@@ -318,7 +322,7 @@ def _read_wiki_page_body(store: GraphStore, node: dict[str, Any], node_id: str) 
         return {"error": f"page file not found: {page_path}"}
     return {
         "nodeId": node_id,
-        "type": "WikiPage",
+        "type": "Page",
         "vault": vault,
         "slug": slug,
         "scope": scope,
@@ -523,7 +527,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         given direction. direction is 'incoming', 'outgoing', or 'both'.
 
         Use this to find unused functions ('Function', 'CALLS', 'incoming'),
-        dangling wiki pages ('WikiPage', 'LINKS_TO', 'incoming'), etc.
+        dangling wiki pages ('Page', 'LINKS_TO', 'incoming'), etc.
         """
         if not store:
             logger.info("find_orphans called but no index exists")
@@ -545,7 +549,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Find all (A, B) pairs where A is startType, B is targetType, and a
         relationship of edgeType points from A to B.
 
-        Examples: Functions that CALL Endpoints, WikiPages that CITE CorpusDocs.
+        Examples: Functions that CALL Endpoints, Pages that CITE CorpusDocs.
         """
         if not store:
             logger.info("find_via_relationship_to_type called but no index exists")
@@ -595,7 +599,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     ) -> str:
         """Regex grep over the on-disk content reachable from a scope node.
 
-        ``scopeId`` is a Repository (with local_path set) or WikiVault id.
+        ``scopeId`` is a Repository (with local_path set) or Vault id.
         Returns matches with file_path, line_number, line_text, and
         structural_context. Falls back to a structured error when the scope
         has no on-disk content available; agent should then fall back to
@@ -717,7 +721,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def list_vaults() -> str:
-        """List WikiVault nodes present in the current graph.
+        """List Vault nodes present in the current graph.
 
         Returns ``{vaults: [{name, scope, last_compiled_at, summary}]}``.
         Empty unless a vault has been compiled via ``opentraceai index
@@ -726,7 +730,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         if not store:
             return NO_INDEX_MSG
         try:
-            nodes = store.list_nodes(node_type="WikiVault", limit=1000)
+            nodes = store.list_nodes(node_type="Vault", limit=1000)
             vaults = []
             for n in nodes:
                 props = n.get("properties") or {}
@@ -744,7 +748,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def list_vault_pages(vault: str, kind: str = "", limit: int = 200) -> str:
-        """List WikiPage nodes in a vault (concept pages — the only kind).
+        """List Page nodes in a vault (concept pages — the only kind).
 
         Returns ``{vault, count, pages}`` where each page carries
         ``{id, slug, title, kind, one_line_summary, revision,
@@ -760,7 +764,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             if kind.strip():
                 filters["kind"] = kind.strip()
             cap = min(limit, 1000)
-            nodes = store.list_nodes(node_type="WikiPage", filters=filters, limit=cap)
+            nodes = store.list_nodes(node_type="Page", filters=filters, limit=cap)
             pages = []
             for n in nodes:
                 props = n.get("properties") or {}
@@ -781,9 +785,9 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def read_vault_page(nodeId: str) -> str:
-        """Return the full markdown body of a WikiPage from disk.
+        """Return the full markdown body of a Page from disk.
 
-        WikiPage bodies live at ``<vault_dir>/pages/<slug>.md`` (the graph
+        Page bodies live at ``<vault_dir>/pages/<slug>.md`` (the graph
         node carries metadata only — LadybugDB caps STRING properties at
         ~4 KB, wiki pages run 5–20 KB). Resolves the vault's on-disk
         location via local-then-global scope lookup, rooted at the graph's
@@ -797,8 +801,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             node = store.get_node(nodeId)
             if not node:
                 return json.dumps({"error": f"node not found: {nodeId}"})
-            if node.get("type") != "WikiPage":
-                return json.dumps({"error": f"node {nodeId} is not a WikiPage (type={node.get('type')})"})
+            if node.get("type") != "Page":
+                return json.dumps({"error": f"node {nodeId} is not a Page (type={node.get('type')})"})
             # Wiki page bodies are 5–20 KB by design; bypass the 4 KB
             # truncation in ``_json_response`` that would chop a page body.
             return _dump_body_result(_read_wiki_page_body(store, node, nodeId))
@@ -819,7 +823,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         - **CorpusDoc** nodes (ingested docs) → the document body from the
           content-addressed corpus snapshot (``corpus/<sha>.md``), independent
           of the working tree.
-        - **WikiPage** nodes → the compiled markdown page body (same as
+        - **Page** nodes → the compiled markdown page body (same as
           ``read_vault_page``).
 
         Returns ``{nodeId, type, body, …}``; ``body`` is soft-capped and
@@ -834,7 +838,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             node_type = node.get("type")
             if node_type == "CorpusDoc":
                 return _dump_body_result(_load_corpus_doc(store, node, nodeId))
-            if node_type == "WikiPage":
+            if node_type == "Page":
                 return _dump_body_result(_read_wiki_page_body(store, node, nodeId))
             start_line, end_line = _parse_line_range(lineRange)
             return _dump_body_result(_load_code_source(store, node, nodeId, start_line, end_line))
@@ -843,7 +847,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def find_pages_mentioning(entityId: str) -> str:
-        """Find WikiPages and CorpusDocs whose body mentions a given
+        """Find Pages and CorpusDocs whose body mentions a given
         entity, OR that discuss a given code symbol.
 
         MENTIONS edges only target the entity layer (``Idea`` / ``Service``
@@ -860,7 +864,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         an entity lookup first.
 
         Returns ``{entityId, count, pages}``; each hit carries ``type``
-        (``WikiPage`` → read with ``read_vault_page``; ``CorpusDoc`` → read
+        (``Page`` → read with ``read_vault_page``; ``CorpusDoc`` → read
         with ``load_source``).
         """
         if not store:
@@ -891,7 +895,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def find_entities_mentioned_by(pageId: str) -> str:
-        """Find entities mentioned by a given WikiPage.
+        """Find entities mentioned by a given Page.
 
         Forward-traverses MENTIONS edges. Returns
         ``{pageId, count, entities}``.

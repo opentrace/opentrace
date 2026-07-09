@@ -23,7 +23,7 @@ What happens:
 2. Each doc is converted to markdown via markitdown, body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults, `~/.opentrace/corpus/<sha>.md` for globals)
 3. One LLM call per doc labels the `CorpusDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph and concept inventory. No per-doc page is written — the raw body stays in the corpus, readable via the `load_source` tool
 4. A `Plan` LLM call identifies concept-level themes across docs. A theme needs at least 2 supporting docs (`OT_WIKI_CONCEPT_MIN_SOURCES`) to get a page — single-doc content stays reachable through its labelled CorpusDoc node, so paging it would just duplicate the doc
-5. An `Execute` LLM call writes one `WikiPage(kind="concept")` per theme, each citing its CorpusDocs directly via `CITES` edges
+5. An `Execute` LLM call writes one `Page(kind="concept")` per theme, each citing its CorpusDocs directly via `CITES` edges
 6. The result lives at `<project>/.opentrace/vaults/papers/pages/` and is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
 
 Inspect it:
@@ -162,8 +162,9 @@ What you get from a single command:
 - Code structure (`File` / `Class` / `Function` / etc.) from tree-sitter
 - Doc bodies (`CorpusDoc` nodes + corpus files) from markitdown
 - `MIRRORS` edges joining each repo-walked CorpusDoc to its `File` twin in the code tree (the File node is created during linking if the code walk skipped the doc's extension — either twin reaches the other in one hop)
+- A `DOCUMENTS` edge joining the `Repository` to the vault it spawned (plus a `spawned_from` stamp on the vault) — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
 - Flat entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from LLM extraction over the ingested docs
-- Curated wiki pages (`WikiPage`) about cross-document themes
+- Curated wiki pages (`Page`) about cross-document themes
 - `MENTIONS` edges connecting pages **and** docs to the entities they discuss (matched against page bodies and raw corpus markdown)
 - `DERIVED_FROM` edges connecting entities to the CorpusDoc they came from
 

@@ -62,7 +62,6 @@ import { GraphControlsBar } from './GraphControlsBar';
 import {
   GitHubStarButton,
   GraphToolbarActionButtons,
-  VaultsButton,
   buildMobilePanelTabs,
 } from './GraphToolbarActions';
 import { PhysicsPanelContainer } from './PhysicsPanelContainer';
@@ -686,12 +685,9 @@ const GraphViewer = memo(
         () => (
           <>
             <GitHubStarButton />
-            {isServerMode && onToggleVaults && (
-              <VaultsButton active={showVaults} onClick={onToggleVaults} />
-            )}
           </>
         ),
-        [isServerMode, onToggleVaults, showVaults],
+        [],
       );
 
       // --- Early returns for loading/error/empty states ---
@@ -774,6 +770,9 @@ const GraphViewer = memo(
                 jobState={jobState}
                 jobExpanded={jobExpanded}
                 onAddRepoOpen={onAddRepoOpen}
+                isServerMode={isServerMode}
+                showVaults={showVaults}
+                onToggleVaults={onToggleVaults}
                 hasGraphData={graphData.nodes.length > 0}
                 canExport={!!store.exportDatabase}
                 exporting={exporting}

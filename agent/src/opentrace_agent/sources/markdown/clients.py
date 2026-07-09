@@ -37,12 +37,9 @@ shapes.
 
 from __future__ import annotations
 
-import os
-
 from opentrace_agent.sources._llm_common import (
     BACKENDS,
     BackendConfig,
-    _BACKEND_PRIORITY,
     _cost_usd,
     actionable_no_backend_message,
     canonical_backend,

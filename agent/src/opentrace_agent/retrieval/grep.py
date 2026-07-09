@@ -18,7 +18,7 @@ Scopes are nodes whose subtree has on-disk content the agent can search:
 
 - ``Repository`` with ``local_path`` set (local-directory indexes; cloned
   remote repos don't carry one).
-- ``WikiVault`` (always rooted under ``OT_VAULT_ROOT/<name>/pages``).
+- ``Vault`` (always rooted under ``OT_VAULT_ROOT/<name>/pages``).
 
 ripgrep is invoked via ``subprocess.run`` with ``--json`` for structured
 output. ``rg`` is expected on ``PATH``; missing-binary cases return a
@@ -59,7 +59,7 @@ def grep(
     Parameters
     ----------
     scope_id
-        ID of a ``Repository`` or ``WikiVault`` node — the node whose
+        ID of a ``Repository`` or ``Vault`` node — the node whose
         on-disk subtree is searched.
     file_filter
         Optional substring; only files whose path contains it are searched.
@@ -94,7 +94,7 @@ def grep(
                 "directory to enable grep, or fall back to search_graph",
             )
         root = Path(str(local_path))
-    elif scope_type == "WikiVault":
+    elif scope_type == "Vault":
         from opentrace_agent.wiki.paths import (
             InvalidVaultName,
         )
@@ -102,7 +102,7 @@ def grep(
             pages_dir as _pages_dir,
         )
 
-        # WikiVault id format is ``vault::<name>``. Strip the prefix.
+        # Vault id format is ``vault::<name>``. Strip the prefix.
         vault_name = scope_node["name"] or scope_id.replace("vault::", "", 1)
         try:
             root = _pages_dir(vault_name)
@@ -111,7 +111,7 @@ def grep(
     else:
         return _err(
             scope_id,
-            f"unsupported scope type {scope_type!r} — must be Repository or WikiVault",
+            f"unsupported scope type {scope_type!r} — must be Repository or Vault",
         )
 
     if not root.exists() or not root.is_dir():
@@ -238,19 +238,19 @@ def _resolve_file_node_id(store: GraphStore, scope_node: dict[str, Any], file_re
     """Best-effort lookup of the File node id for a hit's relative path.
 
     For a ``Repository``-scoped grep, file node IDs follow
-    ``{repoId}/{path}`` per the indexer convention. For ``WikiVault``
+    ``{repoId}/{path}`` per the indexer convention. For ``Vault``
     scopes, hits are markdown pages whose slug == filename minus ``.md``;
-    we map that to a ``WikiPage`` node id.
+    we map that to a ``Page`` node id.
     """
     scope_type = scope_node["type"]
     if scope_type == "Repository":
         return f"{scope_node['id']}/{file_rel_path}"
-    if scope_type == "WikiVault":
+    if scope_type == "Vault":
         if file_rel_path.endswith(".md"):
             slug = file_rel_path[: -len(".md")]
         else:
             slug = file_rel_path
-        # WikiPage id is ``<vault>::<slug>``. Vault name lives on the scope node.
+        # Page id is ``<vault>::<slug>``. Vault name lives on the scope node.
         vault_name = scope_node.get("name") or ""
         return f"{vault_name}::{slug}"
     return None
@@ -258,6 +258,6 @@ def _resolve_file_node_id(store: GraphStore, scope_node: dict[str, Any], file_re
 
 def _structural_context(scope_type: str, scope_props: dict[str, Any]) -> dict[str, Any]:
     ctx: dict[str, Any] = {"scope_type": scope_type}
-    if scope_type == "WikiVault":
+    if scope_type == "Vault":
         ctx["vault"] = scope_props.get("vault") or scope_props.get("name")
     return ctx

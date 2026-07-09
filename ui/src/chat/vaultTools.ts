@@ -19,9 +19,9 @@
  * via the wiki pipeline. The agent uses these to ground answers in the
  * user's uploaded documents instead of guessing.
  *
- * All tools hit the same REST endpoints the VaultBrowser uses
- * (``/api/vaults/*`` on ``opentraceai serve``), via the helpers in
- * ``../wiki/client``. No new transport.
+ * All tools hit the same REST endpoints the vault manager + node Details
+ * page reader use (``/api/vaults/*`` on ``opentraceai serve``), via the
+ * helpers in ``../wiki/client``. No new transport.
  */
 
 import { tool } from '@langchain/core/tools';

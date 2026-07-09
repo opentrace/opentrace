@@ -223,6 +223,39 @@ def delete_vault(
     return True
 
 
+def move_vault_dir(
+    name: str,
+    *,
+    src: Scope,
+    dst: Scope,
+    project_root: Path | str | None = None,
+) -> tuple[Path, Path]:
+    """Move a vault's on-disk directory from one scope to another.
+
+    Shared by ``vault promote`` / ``vault demote`` (CLI) and the
+    ``/api/vaults/{name}/promote`` REST route so the disk move stays in one
+    place. Only touches the vault directory itself — corpus bodies (a
+    separate ``.opentrace/corpus/`` tree) are handled by the caller via
+    :func:`sources.markdown.copy_corpus_between_scopes`.
+
+    Returns ``(src_dir, dst_dir)``. Raises:
+
+    * :class:`InvalidVaultName` — *name* fails validation.
+    * :class:`FileNotFoundError` — no *src*-scoped vault of that name.
+    * :class:`FileExistsError` — a *dst*-scoped vault of that name already
+      exists (the move would clobber it).
+    """
+    src_dir = vault_dir(name, scope=src, project_root=project_root)
+    dst_dir = vault_dir(name, scope=dst, project_root=project_root)
+    if not (src_dir / ".vault.json").exists():
+        raise FileNotFoundError(f"no {src} vault named {name!r} (expected {src_dir})")
+    if dst_dir.exists():
+        raise FileExistsError(f"cannot move {src}→{dst}: a {dst} vault named {name!r} already exists at {dst_dir}")
+    dst_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src_dir), str(dst_dir))
+    return src_dir, dst_dir
+
+
 def list_vaults(
     root: Path | str | None = None,
     *,

@@ -84,6 +84,60 @@ class TestGetNode:
         assert resp.status_code == 404
 
 
+class TestGetSource:
+    """GET /api/source/{id} — serves a CorpusDoc's on-disk body so the UI can
+    read a source document by selecting its node, like a code file."""
+
+    def _add_corpus_doc(self, store, tmp_path, body="# Title\n\nHello."):
+        # corpus_path is relative to the .opentrace dir (the DB's parent).
+        (tmp_path / "corpus").mkdir(exist_ok=True)
+        (tmp_path / "corpus" / "abc123.md").write_text(body, encoding="utf-8")
+        store.add_node(
+            "corpus::abc123",
+            "CorpusDoc",
+            "readme.md",
+            {"corpus_path": "corpus/abc123.md", "filename": "readme.md", "sha256": "abc123"},
+        )
+
+    def test_corpus_doc_body(self, store, tmp_path):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        self._add_corpus_doc(store, tmp_path)
+        client = TestClient(create_app(store))
+        resp = client.get("/api/source/corpus::abc123")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["content"] == "# Title\n\nHello."
+        assert data["path"] == "readme.md"
+        assert data["language"] == "markdown"
+
+    def test_node_without_corpus_path_404s(self, client):
+        # A Class node has no on-disk body in server mode.
+        resp = client.get("/api/source/node-1")
+        assert resp.status_code == 404
+
+    def test_missing_node_404s(self, client):
+        resp = client.get("/api/source/nonexistent")
+        assert resp.status_code == 404
+
+    def test_corpus_path_traversal_rejected(self, store, tmp_path):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        store.add_node(
+            "corpus::evil",
+            "CorpusDoc",
+            "evil",
+            {"corpus_path": "../../etc/passwd"},
+        )
+        client = TestClient(create_app(store))
+        resp = client.get("/api/source/corpus::evil")
+        assert resp.status_code == 400
+
+
 class TestHighlights:
     """REST endpoints backing the UI's KnowledgeHighlightsPanel."""
 
@@ -177,7 +231,7 @@ class TestVaultRoutes:
 
     def test_project_view_lists_locals_and_attached_globals(self, store, tmp_path, monkeypatch):
         # Project view = local vaults from cwd + global vaults whose
-        # WikiVault row in the graph has scope="global".
+        # Vault row in the graph has scope="global".
         from starlette.testclient import TestClient
 
         from opentrace_agent.cli.serve import create_app
@@ -189,12 +243,12 @@ class TestVaultRoutes:
         self._make_vault(tmp_path, "attached-glob", "global", project_root=tmp_path)
         self._make_vault(tmp_path, "loose-glob", "global", project_root=tmp_path)
 
-        # Mark one global as attached by adding a WikiVault node with
+        # Mark one global as attached by adding a Vault node with
         # scope=global. Locals are visible from disk so they don't need a
         # graph row to show up in the project view.
         store.add_node(
             "vault::attached-glob",
-            "WikiVault",
+            "Vault",
             "attached-glob",
             {"vault": "attached-glob", "scope": "global"},
         )
@@ -219,7 +273,7 @@ class TestVaultRoutes:
         self._make_vault(tmp_path, "g2", "global", project_root=tmp_path)
         store.add_node(
             "vault::g1",
-            "WikiVault",
+            "Vault",
             "g1",
             {"vault": "g1", "scope": "global"},
         )
@@ -245,7 +299,7 @@ class TestVaultRoutes:
         self._make_vault(tmp_path, "g1", "global", project_root=tmp_path)
         store.add_node(
             "vault::g1",
-            "WikiVault",
+            "Vault",
             "g1",
             {"vault": "g1", "scope": "global"},
         )
@@ -253,7 +307,7 @@ class TestVaultRoutes:
         client = TestClient(create_app(store))
         resp = client.post("/api/vaults/g1/detach")
         assert resp.status_code == 200
-        # WikiVault row gone; disk vault still present.
+        # Vault row gone; disk vault still present.
         assert store.get_node("vault::g1") is None
         assert (tmp_path / "globals" / "g1" / ".vault.json").exists()
 
@@ -272,3 +326,202 @@ class TestVaultRoutes:
         node = store.get_node("vault::g1")
         assert node is not None
         assert (node.get("properties") or {}).get("scope") == "global"
+
+    def test_promote_moves_local_to_global(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "v1", "local", project_root=tmp_path)
+        # A local vault carries a scope="local" Vault row in the graph.
+        store.add_node("vault::v1", "Vault", "v1", {"vault": "v1", "scope": "local"})
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/v1/promote")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["promoted"] == "v1"
+        assert body["scope"] == "global"
+        # Disk dir moved out of the project into the global root.
+        assert not (tmp_path / ".opentrace" / "vaults" / "v1").exists()
+        assert (tmp_path / "globals" / "v1" / ".vault.json").exists()
+        # Graph row re-stamped global → now shows in the project's Global tab.
+        node = store.get_node("vault::v1")
+        assert (node.get("properties") or {}).get("scope") == "global"
+
+    def test_promote_rejects_already_global(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "g1", "global", project_root=tmp_path)
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/g1/promote")
+        assert resp.status_code == 400
+
+    def test_promote_conflicts_when_global_name_taken(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "dup", "local", project_root=tmp_path)
+        self._make_vault(tmp_path, "dup", "global", project_root=tmp_path)
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/dup/promote")
+        assert resp.status_code == 409
+        # Local dir untouched on conflict.
+        assert (tmp_path / ".opentrace" / "vaults" / "dup" / ".vault.json").exists()
+
+    def test_demote_moves_global_to_local(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "g1", "global", project_root=tmp_path)
+        store.add_node("vault::g1", "Vault", "g1", {"vault": "g1", "scope": "global"})
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/g1/demote")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["demoted"] == "g1"
+        assert body["scope"] == "local"
+        # Disk dir moved into the project's local root.
+        assert not (tmp_path / "globals" / "g1").exists()
+        assert (tmp_path / ".opentrace" / "vaults" / "g1" / ".vault.json").exists()
+        # Graph row re-stamped local.
+        node = store.get_node("vault::g1")
+        assert (node.get("properties") or {}).get("scope") == "local"
+
+    def test_demote_rejects_already_local(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "v1", "local", project_root=tmp_path)
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/v1/demote")
+        assert resp.status_code == 400
+
+    def test_demote_conflicts_when_local_name_taken(self, store, tmp_path, monkeypatch):
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault(tmp_path, "dup", "local", project_root=tmp_path)
+        self._make_vault(tmp_path, "dup", "global", project_root=tmp_path)
+
+        client = TestClient(create_app(store))
+        # Force the global scope so the resolver targets the global "dup"
+        # (local-first resolution would otherwise pick the local one).
+        resp = client.post("/api/vaults/dup/demote?scope=global")
+        assert resp.status_code == 409
+        # Global dir untouched on conflict.
+        assert (tmp_path / "globals" / "dup" / ".vault.json").exists()
+
+    def _make_vault_with_content(self, tmp_path, name, scope, *, project_root):
+        """A vault with one page + one source + a corpus body, so the graph
+        re-mirror actually iterates sources (empty vaults hide writer bugs)."""
+        from opentrace_agent.sources.markdown import (
+            corpus_dir_for_scope,
+            write_corpus_markdown_to,
+        )
+        from opentrace_agent.wiki.paths import (
+            ensure_vault_layout,
+            metadata_path,
+            pages_dir,
+        )
+        from opentrace_agent.wiki.vault import (
+            IngestedSource,
+            PageMeta,
+            VaultMetadata,
+            save_metadata,
+        )
+
+        ensure_vault_layout(name, scope=scope, project_root=project_root)
+        sha = "a" * 64
+        meta = VaultMetadata(name=name)
+        meta.sources[sha] = IngestedSource(
+            sha256=sha,
+            original_name="doc.md",
+            ingested_at="2026-01-01T00:00:00Z",
+            title="Doc",
+            one_line_summary="a doc",
+        )
+        meta.pages["concept/usage"] = PageMeta(
+            slug="concept/usage",
+            title="Usage",
+            one_line_summary="how to use",
+            source_shas=[sha],
+        )
+        save_metadata(metadata_path(name, scope=scope, project_root=project_root), meta)
+        pd = pages_dir(name, scope=scope, project_root=project_root) / "concept"
+        pd.mkdir(parents=True, exist_ok=True)
+        (pd / "usage.md").write_text("# Usage\n\nbody")
+        cdir = corpus_dir_for_scope(scope, project_root=project_root)
+        write_corpus_markdown_to(cdir, sha, "# Doc\n\nraw body")
+
+    def test_demote_with_content_mirrors_without_warning(self, store, tmp_path, monkeypatch):
+        # Regression: the graph re-mirror on scope-move passed lightweight
+        # source stubs (sha256 + corpus_path) to write_vault_to_graph, which
+        # read `.title`/`.markdown` directly and crashed on a non-empty vault.
+        # Empty-vault tests missed it; demote (real global→local corpus copy)
+        # exposed it as a silent graph_warning.
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault_with_content(tmp_path, "gv", "global", project_root=tmp_path)
+        store.add_node("vault::gv", "Vault", "gv", {"vault": "gv", "scope": "global"})
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/gv/demote")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "graph_warning" not in body, body
+        assert body["scope"] == "local"
+        # CorpusDoc mirrored with the label carried from .vault.json.
+        doc = store.get_node("corpus::" + "a" * 64)
+        assert doc is not None
+        assert (doc.get("properties") or {}).get("title") == "Doc"
+
+    def test_promote_with_content_mirrors_without_warning(self, store, tmp_path, monkeypatch):
+        # Same writer fix, exercised through promote (local→global).
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+
+        self._make_vault_with_content(tmp_path, "lv", "local", project_root=tmp_path)
+        store.add_node("vault::lv", "Vault", "lv", {"vault": "lv", "scope": "local"})
+
+        client = TestClient(create_app(store))
+        resp = client.post("/api/vaults/lv/promote")
+        assert resp.status_code == 200
+        assert "graph_warning" not in resp.json(), resp.json()

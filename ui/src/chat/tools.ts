@@ -211,7 +211,7 @@ const findPathSchema = z.object({
 });
 
 const findOrphansSchema = z.object({
-  nodeType: z.string().describe('Node type to scan, e.g. Function or WikiPage'),
+  nodeType: z.string().describe('Node type to scan, e.g. Function or Page'),
   edgeType: z
     .string()
     .describe(
@@ -279,8 +279,8 @@ const grepSchema = z.object({
   scopeId: z
     .string()
     .describe(
-      'Repository or WikiVault node ID whose on-disk subtree to search. ' +
-        'Use list_nodes(type="Repository") or list_nodes(type="WikiVault") to discover.',
+      'Repository or Vault node ID whose on-disk subtree to search. ' +
+        'Use list_nodes(type="Repository") or list_nodes(type="Vault") to discover.',
     ),
   fileFilter: z
     .string()
@@ -308,7 +308,7 @@ const SEARCH_DESC =
 const LIST_DESC =
   'List nodes of a specific type with optional property filters. Valid ' +
   'types include Repository, Class, Function, File, Directory, Dependency, ' +
-  'WikiVault, WikiPage, Source. Filter values containing "*" are wildcards: ' +
+  'Vault, Page, Source. Filter values containing "*" are wildcards: ' +
   '`{"name":"*Service"}` matches anything ending in Service.';
 
 const GET_DESC =
@@ -357,13 +357,13 @@ const FIND_ORPHANS_DESC =
   'Find nodes of a given type that have no edges of edgeType in the given ' +
   'direction. Use this for cleanup/audit questions like finding functions ' +
   'never called (Function, CALLS, incoming) or wiki pages with no inbound ' +
-  'links (WikiPage, LINKS_TO, incoming).';
+  'links (Page, LINKS_TO, incoming).';
 
 const FIND_VIA_DESC =
   'Find all (A, B) pairs where A is startType, B is targetType, and a ' +
   'relationship of edgeType points from A to B. Examples: ' +
   '("Function","CALLS","Endpoint") for "what hits the API"; ' +
-  '("WikiPage","CITES","CorpusDoc") for "what wiki pages cite real documents." ' +
+  '("Page","CITES","CorpusDoc") for "what wiki pages cite real documents." ' +
   'Cheaper than calling traverse_graph once per source node.';
 
 const COUNT_BY_DESC =
@@ -371,12 +371,12 @@ const COUNT_BY_DESC =
   'Without parentId: total count. With parentId: count of descendants of ' +
   'parent reachable via parentEdge (default CONTAINS) within maxHops. ' +
   'Examples: count_by("Function") for total function count; ' +
-  'count_by("WikiPage", parentId="vault::kb", parentEdge="CONTAINS") for ' +
+  'count_by("Page", parentId="vault::kb", parentEdge="CONTAINS") for ' +
   '"how many pages in the kb vault."';
 
 const GREP_DESC =
   'Regex grep over the on-disk content reachable from a Repository or ' +
-  'WikiVault scope. Returns file paths, line numbers, and matching text. ' +
+  'Vault scope. Returns file paths, line numbers, and matching text. ' +
   'Best for finding specific strings (service names, API endpoints, error ' +
   'messages, config values) that may not appear in node names. Requires ' +
   'the scope node to have on-disk content available — falls back to a ' +

@@ -22,7 +22,7 @@ import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
-import { VaultBrowser } from './components/wiki/VaultBrowser';
+import { VaultManager } from './components/wiki/VaultManager';
 import SidePanel, { type SidePanelTab } from './appComponents/SidePanel';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
@@ -31,6 +31,8 @@ import { useStore } from './store';
 import { ServerGraphStore } from './store/serverStore';
 import { GraphDataProvider, useGraph } from './providers/GraphDataProvider';
 import { GraphInteractionProvider } from './providers/GraphInteractionProvider';
+import { CompileJobProvider } from './providers/CompileJobProvider';
+import CompileProgressPanel from './appComponents/CompileProgressPanel';
 import './App.css';
 
 interface AppProps {
@@ -48,7 +50,9 @@ function App(props: AppProps = {}) {
   return (
     <GraphDataProvider>
       <GraphInteractionProvider>
-        <AppInner {...props} />
+        <CompileJobProvider>
+          <AppInner {...props} />
+        </CompileJobProvider>
       </GraphInteractionProvider>
     </GraphDataProvider>
   );
@@ -442,7 +446,18 @@ function AppInner({
       )}
 
       {isServerMode && showVaults && (
-        <VaultBrowser onClose={() => setShowVaults(false)} />
+        <VaultManager onClose={() => setShowVaults(false)} />
+      )}
+
+      {isServerMode && (
+        <CompileProgressPanel
+          raised={
+            !jobExpanded &&
+            (jobState.status === 'running' ||
+              jobState.status === 'persisted' ||
+              jobState.status === 'enriching')
+          }
+        />
       )}
 
       {(version || typeof __APP_VERSION__ !== 'undefined') && (

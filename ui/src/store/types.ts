@@ -236,7 +236,7 @@ export interface GraphStore {
   /** Return the provenance chain for a node (code metadata or wiki citation chain). */
   provenance(nodeId: string): Promise<ProvenanceResult>;
 
-  /** Regex grep over the on-disk content reachable from a Repository or WikiVault scope. */
+  /** Regex grep over the on-disk content reachable from a Repository or Vault scope. */
   grep(
     pattern: string,
     scopeId: string,
@@ -345,7 +345,7 @@ export interface ProvenanceChainSource {
   acquired_at: string | null;
 }
 
-export interface ProvenanceChainWikiPage {
+export interface ProvenanceChainPage {
   kind: 'wiki_page';
   id: string;
   page_kind: string | null;
@@ -356,7 +356,7 @@ export interface ProvenanceChainWikiPage {
 
 export type ProvenanceChainEntry =
   | ProvenanceChainSource
-  | ProvenanceChainWikiPage;
+  | ProvenanceChainPage;
 
 export interface ProvenanceWiki {
   agent: string | null;

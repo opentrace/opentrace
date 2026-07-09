@@ -16,7 +16,7 @@
 
 Three branches keyed off node type / edges:
 
-* **Wiki** (``WikiVault`` / ``WikiPage`` / ``Source``) — agent/model/session/
+* **Wiki** (``Vault`` / ``Page`` / ``Source``) — agent/model/session/
   confidence stamped at compile time plus the CITES chain to the original
   ``Source`` artefacts (concept pages cite Sources directly by sha).
 * **Code** (``Repository`` / ``Directory`` / ``File`` / ``Class`` / ``Function`` /
@@ -36,7 +36,7 @@ from typing import Any
 
 from opentrace_agent.store import GraphStore
 
-WIKI_NODE_TYPES = {"WikiVault", "WikiPage", "CorpusDoc"}
+WIKI_NODE_TYPES = {"Vault", "Page", "CorpusDoc"}
 CODE_NODE_TYPES = {"Repository", "Directory", "File", "Class", "Function", "Variable"}
 DERIVED_NODE_TYPES = {"Idea", "Service", "Module", "Paper", "Person", "Event"}
 
@@ -140,7 +140,7 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
             p = r["node"].get("properties") or {}
             if t == "CorpusDoc":
                 chain.append(_source_link(nid, p, store))
-            elif t == "WikiPage":
+            elif t == "Page":
                 chain.append(
                     {
                         "kind": "wiki_page",

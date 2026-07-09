@@ -32,17 +32,17 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     """Seed a small graph: 3 Sources + 1 concept page citing all three, plus a
     single-source concept page 1:1 with one Source.
 
-    Mirrors the real graph the wiki pipeline writes: a ``WikiVault`` node owns
+    Mirrors the real graph the wiki pipeline writes: a ``Vault`` node owns
     its Sources and pages via ``CONTAINS`` edges; concept pages CITE their
     Sources directly by sha. Autoprune discovers in-scope Sources by
-    traversing ``WikiVault -CONTAINS-> Source`` (sources are
+    traversing ``Vault -CONTAINS-> Source`` (sources are
     content-addressed and carry no single vault), so the vault node + edges
     are what makes a source visible to the prune pass.
     """
     sids = {}
-    # WikiVault node — the discovery anchor for this vault.
+    # Vault node — the discovery anchor for this vault.
     vault_id = vault_node_id(vault)
-    store.add_node(vault_id, "WikiVault", vault, properties={"vault": vault, "scope": "local"})
+    store.add_node(vault_id, "Vault", vault, properties={"vault": vault, "scope": "local"})
     for i, sha in enumerate(["aaa", "bbb", "ccc"]):
         sid = f"corpus::{sha}"
         sids[sha] = sid
@@ -62,7 +62,7 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
         page_id = f"{vault}::solo-{sha}"
         store.add_node(
             page_id,
-            "WikiPage",
+            "Page",
             f"Solo {i}",
             properties={"vault": vault, "slug": f"concept/solo-{sha}", "kind": "concept"},
         )
@@ -75,7 +75,7 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     concept_id = f"{vault}::concept-x"
     store.add_node(
         concept_id,
-        "WikiPage",
+        "Page",
         "Concept X",
         properties={"vault": vault, "slug": "concept-x", "kind": "concept"},
     )
@@ -138,7 +138,7 @@ class TestAutoprune:
             assert store.get_node("v::solo-aaa") is not None
             assert store.get_node("v::solo-bbb") is not None
 
-    def test_concept_page_marked_stale_when_one_citation_lost(self, tmp_path):
+    def test_page_marked_stale_when_one_citation_lost(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
             _seed(store)
             autoprune_after_index(
@@ -153,7 +153,7 @@ class TestAutoprune:
             # Stale_since stamped — page kept, no regen.
             assert concept["properties"].get("stale_since")
 
-    def test_concept_page_deleted_when_all_citations_lost(self, tmp_path):
+    def test_page_deleted_when_all_citations_lost(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
             _seed(store)
             # Remove ALL sources from the walk → concept page has no remaining
@@ -190,7 +190,7 @@ class TestAutoprune:
             # are shared rather than duplicated; the *second* _seed wins
             # on vault tagging, which is a real edge case worth noting but
             # not what this test exercises. The test asserts the
-            # vault-specific WikiPage nodes survive intact.
+            # vault-specific Page nodes survive intact.
             autoprune_after_index(
                 store,
                 walked_doc_shas=set(),  # all of v1 walked away from disk

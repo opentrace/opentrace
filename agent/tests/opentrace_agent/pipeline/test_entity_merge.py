@@ -104,16 +104,71 @@ class TestSameNameMerge:
         assert stats.nodes_merged == 1
 
 
-class TestSameTypeRule:
-    def test_same_name_different_type_does_not_merge(self):
+class TestCrossTypeMerge:
+    def test_same_name_different_type_merges(self):
+        """Per-doc extraction types the same referent inconsistently
+        (Werkzeug: Service in the changelog, Module in the deploy guide) —
+        cross-type merge collapses them so MENTIONS/DERIVED_FROM aren't
+        double-counted."""
         nodes = [
-            _node("a_cluster", "Idea", "Cluster"),
-            _node("b_cluster", "Service", "Cluster"),
+            _node("changes_werkzeug", "Service", "Werkzeug"),
+            _node("deploy_werkzeug", "Module", "Werkzeug"),
+        ]
+        out_nodes, _, stats = merge_entities(nodes, [])
+        assert len(out_nodes) == 1
+        assert stats.nodes_merged == 1
+        assert stats.groups_considered == 1
+
+    def test_type_resolved_by_majority(self):
+        nodes = [
+            _node("a_jinja", "Module", "Jinja"),
+            _node("b_jinja", "Module", "Jinja"),
+            _node("c_jinja", "Service", "Jinja"),
+        ]
+        out_nodes, _, _ = merge_entities(nodes, [])
+        assert len(out_nodes) == 1
+        assert out_nodes[0].type == "Module"
+
+    def test_type_tie_breaks_by_precedence(self):
+        # 1-1 Service/Idea split: the concrete type (Service) wins the tie.
+        nodes = [
+            _node("a_click", "Idea", "Click"),
+            _node("b_click", "Service", "Click"),
+        ]
+        out_nodes, _, _ = merge_entities(nodes, [])
+        assert len(out_nodes) == 1
+        assert out_nodes[0].type == "Service"
+
+    def test_canonical_id_matches_resolved_type(self):
+        # The surviving node comes from a member OF the winning type, so id
+        # and properties stay consistent with it.
+        nodes = [
+            _node("a_jinja", "Module", "Jinja"),
+            _node("b_jinja", "Module", "Jinja"),
+            _node("c_jinja", "Service", "Jinja"),
+        ]
+        out_nodes, _, _ = merge_entities(nodes, [])
+        assert out_nodes[0].id in ("a_jinja", "b_jinja")
+
+    def test_person_never_merges_with_non_person(self):
+        """A person sharing a name with a product must stay distinct."""
+        nodes = [
+            _node("cli_click", "Service", "Click"),
+            _node("people_click", "Person", "Click"),
         ]
         out_nodes, _, stats = merge_entities(nodes, [])
         assert len(out_nodes) == 2
         assert stats.nodes_merged == 0
-        assert stats.groups_considered == 2
+        assert sorted(n.type for n in out_nodes) == ["Person", "Service"]
+
+    def test_persons_still_merge_with_each_other(self):
+        nodes = [
+            _node("a_karen", "Person", "Karen Chen"),
+            _node("b_karen", "Person", "Karen Chen"),
+        ]
+        out_nodes, _, stats = merge_entities(nodes, [])
+        assert len(out_nodes) == 1
+        assert stats.nodes_merged == 1
 
     def test_mergeable_and_pass_through_coexist(self):
         nodes = [

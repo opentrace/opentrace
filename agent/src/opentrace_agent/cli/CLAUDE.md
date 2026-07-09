@@ -60,6 +60,7 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 - `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` — optional `?scope=local|global` to disambiguate; legacy flat disk layouts are migrated on read.
 - `POST /api/vaults/{vault}/compile` — multipart upload; accepts a `scope` form field (default `local`). Globals are written disk-only — no graph mirror.
 - `POST /api/vaults/{vault}/attach` / `POST /api/vaults/{vault}/detach` — mirror a global vault into this project's graph (and copy its corpus into `<project>/.opentrace/corpus/`) / remove the mirror.
+- `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `Vault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.
 - `DELETE /api/vaults/{vault}?scope=...` — delete from disk (and graph) for the given scope.
 
 MCP tools mirror the same primitives plus the cross-cutting helpers (`find_pages_mentioning`, `find_entities_mentioned_by`, `find_cross_cutting_communities`). Tool list lives in `plugins/claude-code/CLAUDE.md`.

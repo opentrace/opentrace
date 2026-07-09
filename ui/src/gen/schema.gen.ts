@@ -9,8 +9,8 @@ export const NODE_SCHEMA_STATEMENTS = [
   `CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)`,
   `CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)`,
-  `CREATE NODE TABLE IF NOT EXISTS WikiVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING)`,
-  `CREATE NODE TABLE IF NOT EXISTS WikiPage(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS Vault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, spawnedFrom STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS Page(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS CorpusDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)`,
   `CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)`,
@@ -26,8 +26,8 @@ export const NODE_TYPES = [
   'Dependency',
   'PullRequest',
   'Variable',
-  'WikiVault',
-  'WikiPage',
+  'Vault',
+  'Page',
   'CorpusDoc',
   'Community',
   'Hyperedge',
@@ -129,15 +129,16 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'typeAnnotation', type: 'STRING' },
     { name: 'docs', type: 'STRING' },
   ],
-  WikiVault: [
+  Vault: [
     { name: 'id', type: 'STRING' },
     { name: 'name', type: 'STRING' },
     { name: 'lastCompiledAt', type: 'STRING' },
     { name: 'summary', type: 'STRING' },
     { name: 'scope', type: 'STRING' },
     { name: 'mirrorCompiledAt', type: 'STRING' },
+    { name: 'spawnedFrom', type: 'STRING' },
   ],
-  WikiPage: [
+  Page: [
     { name: 'id', type: 'STRING' },
     { name: 'name', type: 'STRING' },
     { name: 'slug', type: 'STRING' },
@@ -283,15 +284,16 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'typeAnnotation',
     'docs',
   ],
-  WikiVault: [
+  Vault: [
     'id',
     'name',
     'lastCompiledAt',
     'summary',
     'scope',
     'mirrorCompiledAt',
+    'spawnedFrom',
   ],
-  WikiPage: [
+  Page: [
     'id',
     'name',
     'slug',
@@ -395,6 +397,8 @@ export const REL_SCHEMA = {
     `CREATE REL TABLE IF NOT EXISTS CITES(${joinRelPairs(pairs)}, id STRING)`,
   MIRRORS: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS MIRRORS(${joinRelPairs(pairs)}, id STRING)`,
+  DOCUMENTS: (pairs: ReadonlyArray<RelPair>) =>
+    `CREATE REL TABLE IF NOT EXISTS DOCUMENTS(${joinRelPairs(pairs)}, id STRING)`,
   MENTIONS: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS MENTIONS(${joinRelPairs(pairs)}, id STRING)`,
   TARGETS_REPO: (pairs: ReadonlyArray<RelPair>) =>
@@ -413,6 +417,7 @@ export const REL_TYPES = [
   'LINKS_TO',
   'CITES',
   'MIRRORS',
+  'DOCUMENTS',
   'MENTIONS',
   'TARGETS_REPO',
 ] as const;
@@ -461,6 +466,9 @@ export const REL_COLUMNS: Readonly<Record<RelType, readonly ColumnDef[]>> = {
     { name: 'id', type: 'STRING' },
   ],
   MIRRORS: [
+    { name: 'id', type: 'STRING' },
+  ],
+  DOCUMENTS: [
     { name: 'id', type: 'STRING' },
   ],
   MENTIONS: [
@@ -515,6 +523,9 @@ export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
   MIRRORS: [
     'id',
   ],
+  DOCUMENTS: [
+    'id',
+  ],
   MENTIONS: [
     'id',
   ],
@@ -530,8 +541,8 @@ const COLUMN_TO_PROTO: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Function: { 'startLine': 'start_line', 'endLine': 'end_line' },
   PullRequest: { 'createdAt': 'created_at', 'baseBranch': 'base_branch', 'headBranch': 'head_branch', 'filesChanged': 'files_changed' },
   Variable: { 'startLine': 'start_line', 'endLine': 'end_line', 'typeAnnotation': 'type_annotation' },
-  WikiVault: { 'lastCompiledAt': 'last_compiled_at', 'mirrorCompiledAt': 'mirror_compiled_at' },
-  WikiPage: { 'oneLineSummary': 'one_line_summary', 'lastUpdated': 'last_updated', 'staleSince': 'stale_since' },
+  Vault: { 'lastCompiledAt': 'last_compiled_at', 'mirrorCompiledAt': 'mirror_compiled_at', 'spawnedFrom': 'spawned_from' },
+  Page: { 'oneLineSummary': 'one_line_summary', 'lastUpdated': 'last_updated', 'staleSince': 'stale_since' },
   CorpusDoc: { 'contentType': 'content_type', 'sizeBytes': 'size_bytes', 'acquiredAt': 'acquired_at', 'corpusPath': 'corpus_path', 'oneLineSummary': 'one_line_summary' },
   Community: { 'communityId': 'community_id', 'isGod': 'is_god' },
   Hyperedge: { 'confidenceScore': 'confidence_score', 'sourceFile': 'source_file' },
@@ -546,8 +557,8 @@ const PROTO_TO_COLUMN: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Function: { 'start_line': 'startLine', 'end_line': 'endLine' },
   PullRequest: { 'created_at': 'createdAt', 'base_branch': 'baseBranch', 'head_branch': 'headBranch', 'files_changed': 'filesChanged' },
   Variable: { 'start_line': 'startLine', 'end_line': 'endLine', 'type_annotation': 'typeAnnotation' },
-  WikiVault: { 'last_compiled_at': 'lastCompiledAt', 'mirror_compiled_at': 'mirrorCompiledAt' },
-  WikiPage: { 'one_line_summary': 'oneLineSummary', 'last_updated': 'lastUpdated', 'stale_since': 'staleSince' },
+  Vault: { 'last_compiled_at': 'lastCompiledAt', 'mirror_compiled_at': 'mirrorCompiledAt', 'spawned_from': 'spawnedFrom' },
+  Page: { 'one_line_summary': 'oneLineSummary', 'last_updated': 'lastUpdated', 'stale_since': 'staleSince' },
   CorpusDoc: { 'content_type': 'contentType', 'size_bytes': 'sizeBytes', 'acquired_at': 'acquiredAt', 'corpus_path': 'corpusPath', 'one_line_summary': 'oneLineSummary' },
   Community: { 'community_id': 'communityId', 'is_god': 'isGod' },
   Hyperedge: { 'confidence_score': 'confidenceScore', 'source_file': 'sourceFile' },

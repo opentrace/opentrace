@@ -326,6 +326,53 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
 
         return _with_store(_do)
 
+    async def get_source(request: Request) -> JSONResponse:
+        """GET /api/source/{node_id} — a node's readable body.
+
+        Today only ``CorpusDoc`` nodes carry an on-disk body: the
+        content-addressed corpus snapshot (markitdown-normalised markdown),
+        referenced by the ``corpus_path`` property. This is what lets the UI
+        read a source document the same way it reads a code file — by
+        selecting its node. Other node types 404: server mode has no repo
+        checkout to slice File/Function source from.
+        """
+        from pathlib import Path
+
+        node_id = request.path_params["node_id"]
+
+        def _do(cur: GraphStore) -> JSONResponse:
+            node = cur.get_node(node_id)
+            if node is None:
+                return _error(404, f"Node not found: {node_id}")
+            props = node.get("properties") or {}
+            corpus_rel = props.get("corpus_path")
+            if not corpus_rel:
+                return _error(404, f"No readable source for node: {node_id}")
+            # corpus_path is always a repo-relative ``corpus/<sha>.md`` —
+            # reject anything that tries to escape the DB directory (mirrors
+            # the guard in mcp_server._load_corpus_doc).
+            if ".." in corpus_rel or corpus_rel.startswith("/"):
+                return _error(400, f"invalid corpus_path: {corpus_rel}")
+            db_path = getattr(cur, "db_path", None)
+            if not db_path:
+                return _error(404, "store has no db_path; cannot locate corpus")
+            body_path = Path(str(db_path)).parent / corpus_rel
+            if not body_path.exists():
+                return _error(404, f"corpus file not found: {corpus_rel}")
+            body = body_path.read_text(encoding="utf-8")
+            filename = props.get("filename") or props.get("title") or "document.md"
+            return JSONResponse(
+                {
+                    "content": body,
+                    "path": str(filename),
+                    "language": "markdown",
+                    "line_count": body.count("\n") + 1,
+                    "binary": False,
+                }
+            )
+
+        return _with_store(_do)
+
     async def traverse(request: Request) -> JSONResponse:
         """POST /api/traverse"""
         body = await _read_json(request)
@@ -452,6 +499,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
             limit = int(body.get("limit", 1000))
         except (ValueError, TypeError):
             return _error(400, "limit must be an integer")
+
         def _do(cur: GraphStore) -> JSONResponse:
             try:
                 return JSONResponse(find_orphans(cur, node_type, edge_type, direction=direction, limit=limit))
@@ -962,6 +1010,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
                 Route("/api/nodes/search", search_nodes, methods=["GET"]),
                 Route("/api/nodes/list", list_nodes, methods=["GET"]),
                 Route("/api/nodes/{node_id:path}", get_node, methods=["GET"]),
+                Route("/api/source/{node_id:path}", get_source, methods=["GET"]),
                 Route("/api/traverse", traverse, methods=["POST"]),
                 Route("/api/retrieval/find_path", find_path_route, methods=["POST"]),
                 Route("/api/retrieval/find_orphans", find_orphans_route, methods=["POST"]),
@@ -1031,11 +1080,11 @@ def _vault_routes(
     """
 
     def _attached_global_names() -> set[str]:
-        """Return names of WikiVault nodes in the graph with scope=='global'.
+        """Return names of Vault nodes in the graph with scope=='global'.
 
         The serve process is the only consumer of the project's graph; we
-        treat WikiVault rows whose ``scope`` property is ``"global"`` as the
-        set of globals attached to this project. Local WikiVault rows
+        treat Vault rows whose ``scope`` property is ``"global"`` as the
+        set of globals attached to this project. Local Vault rows
         always belong to this project so we don't need to track them here.
         """
         store = get_store()
@@ -1043,14 +1092,14 @@ def _vault_routes(
             return set()
         out: set[str] = set()
         try:
-            for v in store.list_nodes("WikiVault", limit=10_000):
+            for v in store.list_nodes("Vault", limit=10_000):
                 props = v.get("properties") or {}
                 if (props.get("scope") or "global") == "global":
                     nm = props.get("vault") or v.get("name")
                     if nm:
                         out.add(nm)
         except Exception as e:  # noqa: BLE001
-            logger.warning("list_nodes(WikiVault) failed: %s", e)
+            logger.warning("list_nodes(Vault) failed: %s", e)
         return out
 
     def _resolve_scope_for(name: str, scope_q: str | None):
@@ -1283,7 +1332,7 @@ def _vault_routes(
         """Mirror a global disk vault into the current project's graph.
 
         No LLM cost — just reads ``.vault.json`` + page bodies and writes
-        WikiVault/WikiPage/Source nodes. Symmetric counterpart of the
+        Vault/Page/Source nodes. Symmetric counterpart of the
         ``vault attach`` CLI command.
         """
         from types import SimpleNamespace
@@ -1367,6 +1416,114 @@ def _vault_routes(
 
         return with_writable_store(_do)
 
+    def _move_vault_scope_response(request: Request, *, src, dst, verb: str) -> JSONResponse:
+        """Shared body for promote (local→global) and demote (global→local).
+
+        Moves the disk directory ``src``→``dst``, keeps the vault's corpus
+        resolvable from this project's local corpus (so retrieval/provenance
+        still work), and re-mirrors the graph ``Vault`` row with the new
+        scope. For promote it also seeds the global corpus so the vault is
+        self-contained for other projects. Errors: 404 no such vault, 400
+        already in ``dst`` scope, 409 a ``dst`` vault of that name exists.
+        """
+        from types import SimpleNamespace
+
+        from opentrace_agent.sources.markdown import copy_corpus_between_scopes
+        from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
+        from opentrace_agent.wiki.paths import (
+            InvalidVaultName,
+            metadata_path,
+            move_vault_dir,
+            pages_dir,
+        )
+        from opentrace_agent.wiki.vault import load_metadata
+
+        name = request.path_params["vault"]
+        # Resolve across both scopes so we can tell "already <dst>" (400)
+        # apart from "no such vault" (404).
+        scope, err = _resolve_scope_for(name, request.query_params.get("scope"))
+        if err is not None:
+            return err
+        if scope != src:
+            return _error(400, f"vault {name!r} is already {dst} — nothing to {verb}")
+
+        try:
+            move_vault_dir(name, src=src, dst=dst)
+        except InvalidVaultName as e:
+            return _error(400, str(e))
+        except FileNotFoundError as e:
+            return _error(404, str(e))
+        except FileExistsError as e:
+            return _error(409, str(e))
+
+        # Disk dir is now under the dst root.
+        meta = load_metadata(metadata_path(name, scope=dst), name=name)
+        pages_path = pages_dir(name, scope=dst)
+        page_bodies: dict[str, str] = {}
+        for slug in meta.pages.keys():
+            body_path = pages_path / f"{slug}.md"
+            try:
+                page_bodies[slug] = body_path.read_text()
+            except OSError:
+                page_bodies[slug] = ""
+
+        source_ids = list(meta.sources.keys())
+        # This project's mirror always reads bodies from the local corpus.
+        # Bodies live in the src scope pre-move; copy them local (a no-op
+        # existence check when src is already local, i.e. promote).
+        try:
+            corpus_map = copy_corpus_between_scopes(source_ids, from_scope=src, to_scope="local")
+        except OSError as e:
+            logger.warning("local corpus copy failed for vault %s: %s", name, e)
+            corpus_map = {}
+        # Promote additionally seeds the global corpus so the now-global
+        # vault is self-contained for other projects that attach it.
+        if dst == "global":
+            try:
+                copy_corpus_between_scopes(source_ids, from_scope=src, to_scope="global")
+            except OSError as e:
+                logger.warning("global corpus copy failed for vault %s: %s", name, e)
+        normalized_stubs = [SimpleNamespace(sha256=sha, corpus_path=path) for sha, path in corpus_map.items()]
+
+        past = "promoted" if dst == "global" else "demoted"
+        if not has_graph:
+            return JSONResponse({past: name, "scope": dst})
+
+        def _do(cur: GraphStore) -> JSONResponse:
+            try:
+                stats = write_vault_to_graph(
+                    cur,
+                    meta,
+                    page_bodies,
+                    normalized=normalized_stubs,
+                    scope=dst,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception("graph re-mirror failed for %s vault %s", past, name)
+                # Disk is already moved; surface the warning without reversing.
+                return JSONResponse({past: name, "scope": dst, "graph_warning": f"{type(e).__name__}: {e}"})
+            return JSONResponse({past: name, "scope": dst, **stats})
+
+        return with_writable_store(_do)
+
+    async def promote_vault_route(request: Request) -> JSONResponse:
+        """Promote a local vault to global (move disk local → global).
+
+        Mirrors the ``vault promote`` CLI command. The vault stays attached
+        to this project — its graph ``Vault`` row is re-stamped
+        ``scope="global"`` so it also shows up in the Global tab.
+        """
+        return _move_vault_scope_response(request, src="local", dst="global", verb="promote")
+
+    async def demote_vault_route(request: Request) -> JSONResponse:
+        """Demote a global vault to local (move disk global → this project).
+
+        Mirrors the ``vault demote`` CLI command. The vault moves into
+        ``<project>/.opentrace/vaults/`` and its graph ``Vault`` row is
+        re-stamped ``scope="local"``.
+        """
+        return _move_vault_scope_response(request, src="global", dst="local", verb="demote")
+
     return [
         Route("/api/vaults", list_vaults_route, methods=["GET"]),
         Route("/api/vaults/{vault}/pages", list_pages_route, methods=["GET"]),
@@ -1374,5 +1531,7 @@ def _vault_routes(
         Route("/api/vaults/{vault}/compile", compile_route, methods=["POST"]),
         Route("/api/vaults/{vault}/attach", attach_vault_route, methods=["POST"]),
         Route("/api/vaults/{vault}/detach", detach_vault_route, methods=["POST"]),
+        Route("/api/vaults/{vault}/promote", promote_vault_route, methods=["POST"]),
+        Route("/api/vaults/{vault}/demote", demote_vault_route, methods=["POST"]),
         Route("/api/vaults/{vault}", delete_vault_route, methods=["DELETE"]),
     ]

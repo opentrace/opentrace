@@ -11,8 +11,8 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)",
     "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS WikiVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS WikiPage(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Vault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, spawnedFrom STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Page(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)",
     "CREATE NODE TABLE IF NOT EXISTS CorpusDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)",
     "CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)",
@@ -27,14 +27,14 @@ NODE_TYPE_FUNCTION: Final[str] = "Function"
 NODE_TYPE_DEPENDENCY: Final[str] = "Dependency"
 NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
 NODE_TYPE_VARIABLE: Final[str] = "Variable"
-NODE_TYPE_WIKI_VAULT: Final[str] = "WikiVault"
-NODE_TYPE_WIKI_PAGE: Final[str] = "WikiPage"
+NODE_TYPE_VAULT: Final[str] = "Vault"
+NODE_TYPE_PAGE: Final[str] = "Page"
 NODE_TYPE_CORPUS_DOC: Final[str] = "CorpusDoc"
 NODE_TYPE_COMMUNITY: Final[str] = "Community"
 NODE_TYPE_HYPEREDGE: Final[str] = "Hyperedge"
 NODE_TYPE_INDEX_METADATA: Final[str] = "IndexMetadata"
 
-NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["WikiVault"] | Literal["WikiPage"] | Literal["CorpusDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
+NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["Vault"] | Literal["Page"] | Literal["CorpusDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
 
 NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_REPOSITORY,
@@ -45,8 +45,8 @@ NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_DEPENDENCY,
     NODE_TYPE_PULL_REQUEST,
     NODE_TYPE_VARIABLE,
-    NODE_TYPE_WIKI_VAULT,
-    NODE_TYPE_WIKI_PAGE,
+    NODE_TYPE_VAULT,
+    NODE_TYPE_PAGE,
     NODE_TYPE_CORPUS_DOC,
     NODE_TYPE_COMMUNITY,
     NODE_TYPE_HYPEREDGE,
@@ -135,15 +135,16 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("typeAnnotation", "STRING"),
         ("docs", "STRING"),
     ],
-    "WikiVault": [
+    "Vault": [
         ("id", "STRING"),
         ("name", "STRING"),
         ("lastCompiledAt", "STRING"),
         ("summary", "STRING"),
         ("scope", "STRING"),
         ("mirrorCompiledAt", "STRING"),
+        ("spawnedFrom", "STRING"),
     ],
-    "WikiPage": [
+    "Page": [
         ("id", "STRING"),
         ("name", "STRING"),
         ("slug", "STRING"),
@@ -289,15 +290,16 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "typeAnnotation",
         "docs",
     ],
-    "WikiVault": [
+    "Vault": [
         "id",
         "name",
         "lastCompiledAt",
         "summary",
         "scope",
         "mirrorCompiledAt",
+        "spawnedFrom",
     ],
-    "WikiPage": [
+    "Page": [
         "id",
         "name",
         "slug",
@@ -474,6 +476,15 @@ def rel_schema_mirrors(pairs: list[RelPair]) -> str:
     return f"CREATE REL TABLE IF NOT EXISTS MIRRORS({_join_rel_pairs(pairs)}, id STRING)"
 
 
+def rel_schema_documents(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Documents relationships.
+
+    Pass every (from, to) pair the DOCUMENTS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS DOCUMENTS({_join_rel_pairs(pairs)}, id STRING)"
+
+
 def rel_schema_mentions(pairs: list[RelPair]) -> str:
     """Return the CREATE REL TABLE DDL for Mentions relationships.
 
@@ -503,10 +514,11 @@ REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
 REL_TYPE_LINKS_TO: Final[str] = "LINKS_TO"
 REL_TYPE_CITES: Final[str] = "CITES"
 REL_TYPE_MIRRORS: Final[str] = "MIRRORS"
+REL_TYPE_DOCUMENTS: Final[str] = "DOCUMENTS"
 REL_TYPE_MENTIONS: Final[str] = "MENTIONS"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
-RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["CITES"] | Literal["MIRRORS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
+RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["CITES"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
 
 REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_SEMANTIC_EDGE,
@@ -520,6 +532,7 @@ REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_LINKS_TO,
     REL_TYPE_CITES,
     REL_TYPE_MIRRORS,
+    REL_TYPE_DOCUMENTS,
     REL_TYPE_MENTIONS,
     REL_TYPE_TARGETS_REPO,
 ]
@@ -566,6 +579,9 @@ REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
         ("id", "STRING"),
     ],
     "MIRRORS": [
+        ("id", "STRING"),
+    ],
+    "DOCUMENTS": [
         ("id", "STRING"),
     ],
     "MENTIONS": [
@@ -620,6 +636,9 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
     "MIRRORS": [
         "id",
     ],
+    "DOCUMENTS": [
+        "id",
+    ],
     "MENTIONS": [
         "id",
     ],
@@ -636,8 +655,8 @@ _COLUMN_TO_PROTO: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Function": {"startLine": "start_line", "endLine": "end_line"},
     "PullRequest": {"createdAt": "created_at", "baseBranch": "base_branch", "headBranch": "head_branch", "filesChanged": "files_changed"},
     "Variable": {"startLine": "start_line", "endLine": "end_line", "typeAnnotation": "type_annotation"},
-    "WikiVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at"},
-    "WikiPage": {"oneLineSummary": "one_line_summary", "lastUpdated": "last_updated", "staleSince": "stale_since"},
+    "Vault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at", "spawnedFrom": "spawned_from"},
+    "Page": {"oneLineSummary": "one_line_summary", "lastUpdated": "last_updated", "staleSince": "stale_since"},
     "CorpusDoc": {"contentType": "content_type", "sizeBytes": "size_bytes", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
     "Community": {"communityId": "community_id", "isGod": "is_god"},
     "Hyperedge": {"confidenceScore": "confidence_score", "sourceFile": "source_file"},
@@ -652,8 +671,8 @@ _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Function": {"start_line": "startLine", "end_line": "endLine"},
     "PullRequest": {"created_at": "createdAt", "base_branch": "baseBranch", "head_branch": "headBranch", "files_changed": "filesChanged"},
     "Variable": {"start_line": "startLine", "end_line": "endLine", "type_annotation": "typeAnnotation"},
-    "WikiVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt"},
-    "WikiPage": {"one_line_summary": "oneLineSummary", "last_updated": "lastUpdated", "stale_since": "staleSince"},
+    "Vault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt", "spawned_from": "spawnedFrom"},
+    "Page": {"one_line_summary": "oneLineSummary", "last_updated": "lastUpdated", "stale_since": "staleSince"},
     "CorpusDoc": {"content_type": "contentType", "size_bytes": "sizeBytes", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
     "Community": {"community_id": "communityId", "is_god": "isGod"},
     "Hyperedge": {"confidence_score": "confidenceScore", "source_file": "sourceFile"},

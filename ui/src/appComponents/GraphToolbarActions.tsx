@@ -184,7 +184,7 @@ export const VaultsButton = ({ active, onClick }: VaultsButtonProps) => (
     type="button"
     className={`vaults-btn${active ? ' vaults-btn-active' : ''}`}
     onClick={onClick}
-    title={active ? 'Close vaults' : 'Open knowledge vaults'}
+    title={active ? 'Close vaults' : 'Manage knowledge vaults'}
     aria-pressed={active}
   >
     <svg
@@ -200,7 +200,6 @@ export const VaultsButton = ({ active, onClick }: VaultsButtonProps) => (
       <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
       <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
     </svg>
-    <span className="vaults-label">Vaults</span>
   </button>
 );
 
@@ -212,6 +211,10 @@ interface GraphToolbarActionButtonsProps {
   jobExpanded: boolean;
   // Add repo
   onAddRepoOpen: () => void;
+  // Vaults (server mode only)
+  isServerMode?: boolean;
+  showVaults?: boolean;
+  onToggleVaults?: () => void;
   // Export
   hasGraphData: boolean;
   canExport: boolean;
@@ -231,6 +234,9 @@ export const GraphToolbarActionButtons = ({
   jobState,
   jobExpanded,
   onAddRepoOpen,
+  isServerMode,
+  showVaults = false,
+  onToggleVaults,
   hasGraphData,
   canExport,
   exporting,
@@ -263,6 +269,9 @@ export const GraphToolbarActionButtons = ({
           <PlusIcon />
           <span className="ot-menu-label">Add Repository</span>
         </button>
+      )}
+      {isServerMode && onToggleVaults && (
+        <VaultsButton active={showVaults} onClick={onToggleVaults} />
       )}
       {hasGraphData && canExport && (
         <button

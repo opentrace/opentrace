@@ -28,7 +28,7 @@ ingest/
                         plan (OT_WIKI_CONCEPT_MIN_SOURCES floor)
   execute.py          — Synthesis stage: per-action create/extend LLM calls
   persist.py          — Persist stage: atomic disk writes + .vault.json update
-  graph_writer.py     — Mirror vault to graph: WikiVault/WikiPage/CorpusDoc +
+  graph_writer.py     — Mirror vault to graph: Vault/Page/CorpusDoc +
                         CONTAINS/CITES/LINKS_TO/MENTIONS + MIRRORS edges
   pipeline.py         — Composer (sync generator); accepts scope= + project_root=
                         + graph_store=; also exports refresh_stale_pages()
@@ -124,7 +124,7 @@ Vaults are scoped at compile time:
 - ``scope="local"`` → ``<project_root>/.opentrace/vaults/<name>/``. Visible only to graphs in that project. The default for ``opentraceai index --wiki``.
 - ``scope="global"`` → ``~/.opentrace/vaults/<name>/`` (or ``$OT_VAULT_ROOT``). Attachable from any project via ``opentraceai vault attach <name>``.
 
-The `WikiVault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compiled_at` is set by `write_vault_to_graph` on every run; `vault list` compares it against the disk vault's `last_compiled_at` to flag stale mirrors.
+The `Vault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compiled_at` is set by `write_vault_to_graph` on every run; `vault list` compares it against the disk vault's `last_compiled_at` to flag stale mirrors.
 
 `paths.resolve_vault_scope(name, project_root=...)` finds a vault by name (local first, then global) and returns `(scope, vault_dir)`.
 
@@ -132,14 +132,15 @@ The `WikiVault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compi
 
 `run_compile(graph_store=..., scope="local"|"global")` mirrors the post-compile vault state into the graph after disk writes succeed:
 
-- `WikiVault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`.
-- `WikiPage` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
+- `Vault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id) when the vault was built by `index --wiki` over a repo. `spawned_from` is stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors.
+- `Page` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
 - `CorpusDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so CorpusDocs are FTS-findable by label), and `path` (repo-relative) when the doc came from a repo walk. Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
-- `CONTAINS` — WikiVault → WikiPage, WikiVault → CorpusDoc.
+- `CONTAINS` — Vault → Page, Vault → CorpusDoc.
 - `CITES` — concept page → CorpusDoc, direct by sha (one hop; no intermediate pages).
 - `LINKS_TO` — per `[[Title]]` occurrence in any page body (concept ↔ concept).
-- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `WikiPage → entity` and `CorpusDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset).
+- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `CorpusDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `CorpusDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim) — see `write_vault_to_graph(derived_pairs=...)`. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
 - `MIRRORS` — CorpusDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults). Entities always anchor to CorpusDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
+- `DOCUMENTS` — Repository → Vault, written by `link_vault_to_repo` in the same `index --wiki` post-compile step as MIRRORS. Marks the vault as spawned from that repo (paired with the `spawned_from` vault property). Attached globals and dropped-file compiles never get it — they live alongside a repo without documenting it.
 
 Graph-write failures are caught and emitted as non-fatal warnings — the on-disk vault stays valid. Recover with:
 
@@ -166,7 +167,7 @@ Refresh via `wiki.ingest.pipeline.refresh_stale_pages(graph_store, vault_name=..
 
 For wiki nodes, `retrieval.provenance(node_id)` walks the `CITES` chain:
 
-- concept WikiPage → CorpusDoc, direct by sha (with sha256 + filename + acquired_at, plus the MIRRORS File twin id when present)
+- concept Page → CorpusDoc, direct by sha (with sha256 + filename + acquired_at, plus the MIRRORS File twin id when present)
 - CorpusDoc returns its own metadata
 
 `agent`/`model`/`session`/`confidence` provenance is stamped at the page level.
