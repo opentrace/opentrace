@@ -51,7 +51,10 @@ import {
   GRAPH_SETTING_DEFAULTS,
 } from '../hooks/useGraphViewer';
 import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
-import { LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD } from '../config/graphSettingDefaults';
+import {
+  LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD,
+  MIN_VISIBLE_EDGE_OPACITY,
+} from '../config/graphSettingDefaults';
 import ExportModal from './ExportModal';
 import {
   EmptyStateHeader,
@@ -309,8 +312,23 @@ const GraphViewer = memo(
           edgesAutoHiddenRef.current = false;
           setEdgesAutoHidden(false);
           v.settings.setEdgesVisible(visible);
+          if (visible) {
+            // Some presets ship edgeOpacity: 0 (e.g. Onion), so just enabling
+            // edges would still render them invisible. Floor opacity to a
+            // faint-but-visible value (never lowering a higher setting) and
+            // push it to the renderer imperatively (prop effects only fire on
+            // a change), so "Show edges" always actually shows edges.
+            const nextOpacity = Math.max(
+              v.settings.edgeOpacity,
+              MIN_VISIBLE_EDGE_OPACITY,
+            );
+            if (nextOpacity !== v.settings.edgeOpacity) {
+              v.settings.setEdgeOpacity(nextOpacity);
+            }
+            v.canvasRef.current?.setEdgeOpacity?.(nextOpacity / 100);
+          }
         },
-        [v.settings],
+        [v.settings, v.canvasRef],
       );
 
       // ── View presets ───────────────────────────────────────────────
