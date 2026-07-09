@@ -745,86 +745,85 @@
    base blocks. Node/edge types the palette doesn't name hash deterministically
    into the palette slots below. Placed last so it wins for the clean theme. */
 [data-theme='clean'] {
-  /* Categorical palette, orange as the hero (OpenTrace brand accent). One
-     distinct hue per node type so they're easy to tell apart on dark bg. */
+  /* Teal + marigold + gold scheme (calendula-on-teal reference). Orange is
+     the hero; structural types use a pale-mint → teal → deep-teal lightness
+     ladder so they stay distinct, with white hub + gold accent. */
   --graph-node-repository: #ffffff; /* white — the hub */
-  --graph-node-function: #f97316; /* orange (brand) */
-  --graph-node-class: #a78bfa; /* violet */
-  --graph-node-file: #34d399; /* emerald */
-  --graph-node-directory: #38bdf8; /* sky blue */
-  --graph-node-dependency: #fbbf24; /* amber */
-  /* Palette for unnamed types — 12 distinct categorical hues; the common
-     hashed types (Variable, Service, Namespace, …) land on slots that differ
-     from the named colors above. */
-  --graph-node-palette-0: #f97316; /* orange */
-  --graph-node-palette-1: #a78bfa; /* violet */
-  --graph-node-palette-2: #f472b6; /* pink */
-  --graph-node-palette-3: #e879f9; /* fuchsia */
-  --graph-node-palette-4: #fbbf24; /* amber */
-  --graph-node-palette-5: #22d3ee; /* cyan */
-  --graph-node-palette-6: #a3e635; /* lime */
-  --graph-node-palette-7: #38bdf8; /* sky */
-  --graph-node-palette-8: #fb7185; /* rose */
-  --graph-node-palette-9: #818cf8; /* indigo */
-  --graph-node-palette-10: #2dd4bf; /* teal */
-  --graph-node-palette-11: #34d399; /* emerald */
-  /* Edges: distinct hues per relationship type. */
-  --graph-edge-calls: #60a5fa; /* blue */
-  --graph-edge-defines: #4ade80; /* green */
-  --graph-edge-imports: #c084fc; /* violet */
-  --graph-edge-depends-on: #fbbf24; /* amber */
-  --graph-edge-palette-0: #60a5fa;
-  --graph-edge-palette-1: #4ade80;
-  --graph-edge-palette-2: #f472b6;
-  --graph-edge-palette-3: #22d3ee;
-  --graph-edge-palette-4: #fb923c;
-  --graph-edge-palette-5: #a3e635;
-  --graph-edge-palette-6: #2dd4bf;
-  --graph-edge-palette-7: #c084fc;
-  --graph-edge-palette-8: #fbbf24;
-  --graph-edge-palette-9: #f87171;
-  --graph-edge-palette-10: #818cf8;
-  --graph-edge-palette-11: #34d399;
+  --graph-node-function: #f7941d; /* marigold orange */
+  --graph-node-dependency: #f6c830; /* gold */
+  --graph-node-file: #99f6e4; /* pale mint */
+  --graph-node-class: #2dd4bf; /* bright teal */
+  --graph-node-directory: #0d9488; /* deep teal */
+  /* Palette for unnamed types — teal / orange / gold / mint spread. */
+  --graph-node-palette-0: #f7941d; /* orange */
+  --graph-node-palette-1: #2dd4bf; /* teal */
+  --graph-node-palette-2: #f6c830; /* gold */
+  --graph-node-palette-3: #0d9488; /* deep teal */
+  --graph-node-palette-4: #f4a259; /* light orange */
+  --graph-node-palette-5: #99f6e4; /* pale mint */
+  --graph-node-palette-6: #5eead4; /* aqua */
+  --graph-node-palette-7: #14b8a6; /* teal 2 */
+  --graph-node-palette-8: #fcd34d; /* light gold */
+  --graph-node-palette-9: #ffffff; /* white */
+  --graph-node-palette-10: #0f766e; /* pine */
+  --graph-node-palette-11: #fdba74; /* peach */
+  /* Edges: teal family + warm accents. */
+  --graph-edge-calls: #2dd4bf; /* teal */
+  --graph-edge-defines: #5eead4; /* aqua (structural, light) */
+  --graph-edge-imports: #f7941d; /* orange */
+  --graph-edge-depends-on: #f6c830; /* gold */
+  --graph-edge-palette-0: #2dd4bf;
+  --graph-edge-palette-1: #5eead4;
+  --graph-edge-palette-2: #99f6e4;
+  --graph-edge-palette-3: #0d9488;
+  --graph-edge-palette-4: #f7941d;
+  --graph-edge-palette-5: #14b8a6;
+  --graph-edge-palette-6: #f6c830;
+  --graph-edge-palette-7: #0f766e;
+  --graph-edge-palette-8: #fcd34d;
+  --graph-edge-palette-9: #fdba74;
+  --graph-edge-palette-10: #2dd4bf;
+  --graph-edge-palette-11: #5eead4;
 }
 
 /* Light-mode adaptation of the brand palette: same marigold + blue hues,
    deepened so nodes read on a near-white canvas (the dark-mode white / pale
    blues would vanish). Clean theme only. */
 [data-theme='clean'][data-mode='light'] {
-  /* Deepened categorical shades — same hues as dark mode, dark enough to read
-     on the near-white canvas. */
-  --graph-node-repository: #334155; /* slate — hub */
-  --graph-node-function: #ea580c; /* deep orange */
-  --graph-node-class: #7c3aed; /* deep violet */
-  --graph-node-file: #059669; /* deep emerald */
-  --graph-node-directory: #0284c7; /* deep sky */
-  --graph-node-dependency: #ca8a04; /* deep amber */
-  --graph-node-palette-0: #ea580c; /* orange */
-  --graph-node-palette-1: #7c3aed; /* violet */
-  --graph-node-palette-2: #db2777; /* pink */
-  --graph-node-palette-3: #c026d3; /* fuchsia */
-  --graph-node-palette-4: #ca8a04; /* amber */
-  --graph-node-palette-5: #0891b2; /* cyan */
-  --graph-node-palette-6: #65a30d; /* lime */
-  --graph-node-palette-7: #0284c7; /* sky */
-  --graph-node-palette-8: #e11d48; /* rose */
-  --graph-node-palette-9: #4f46e5; /* indigo */
-  --graph-node-palette-10: #0d9488; /* teal */
-  --graph-node-palette-11: #059669; /* emerald */
-  --graph-edge-calls: #2563eb; /* blue */
-  --graph-edge-defines: #16a34a; /* green */
-  --graph-edge-imports: #9333ea; /* violet */
-  --graph-edge-depends-on: #ca8a04; /* amber */
-  --graph-edge-palette-0: #2563eb;
-  --graph-edge-palette-1: #16a34a;
-  --graph-edge-palette-2: #db2777;
-  --graph-edge-palette-3: #0891b2;
-  --graph-edge-palette-4: #ea580c;
-  --graph-edge-palette-5: #65a30d;
-  --graph-edge-palette-6: #0d9488;
-  --graph-edge-palette-7: #9333ea;
-  --graph-edge-palette-8: #ca8a04;
-  --graph-edge-palette-9: #dc2626;
-  --graph-edge-palette-10: #4f46e5;
-  --graph-edge-palette-11: #059669;
+  /* Deepened teal/orange/gold — dark enough to read on the near-white canvas.
+     Structural types keep a light→deep teal ladder; slate hub. */
+  --graph-node-repository: #1f2937; /* slate — hub */
+  --graph-node-function: #c2650c; /* deep orange */
+  --graph-node-dependency: #b7860b; /* deep gold */
+  --graph-node-file: #14b8a6; /* teal (lightest of the three) */
+  --graph-node-class: #0d9488; /* teal (mid) */
+  --graph-node-directory: #0f5f54; /* deep pine teal */
+  --graph-node-palette-0: #c2650c; /* orange */
+  --graph-node-palette-1: #0d9488; /* teal */
+  --graph-node-palette-2: #b7860b; /* gold */
+  --graph-node-palette-3: #0f5f54; /* deep teal */
+  --graph-node-palette-4: #d97706; /* amber-orange */
+  --graph-node-palette-5: #14b8a6; /* teal light */
+  --graph-node-palette-6: #0e7490; /* deep cyan */
+  --graph-node-palette-7: #115e59; /* pine */
+  --graph-node-palette-8: #a16207; /* dark gold */
+  --graph-node-palette-9: #1f2937; /* slate */
+  --graph-node-palette-10: #0f766e; /* teal deep */
+  --graph-node-palette-11: #b45309; /* burnt orange */
+  --graph-edge-calls: #0d9488; /* teal */
+  --graph-edge-defines: #14b8a6; /* teal light (structural) */
+  --graph-edge-imports: #c2650c; /* orange */
+  --graph-edge-depends-on: #b7860b; /* gold */
+  --graph-edge-palette-0: #0d9488;
+  --graph-edge-palette-1: #14b8a6;
+  --graph-edge-palette-2: #0f766e;
+  --graph-edge-palette-3: #0f5f54;
+  --graph-edge-palette-4: #c2650c;
+  --graph-edge-palette-5: #0e7490;
+  --graph-edge-palette-6: #b7860b;
+  --graph-edge-palette-7: #115e59;
+  --graph-edge-palette-8: #a16207;
+  --graph-edge-palette-9: #b45309;
+  --graph-edge-palette-10: #0d9488;
+  --graph-edge-palette-11: #14b8a6;
 }
