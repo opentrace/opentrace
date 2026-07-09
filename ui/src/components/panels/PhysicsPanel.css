@@ -153,7 +153,13 @@
   position: relative;
   width: 32px;
   height: 18px;
-  background: var(--muted);
+  /* --muted is near-invisible against the translucent panel; use the same
+   * faint primary wash as the idle .physics-action-btn (12% fill / 25%
+   * ring). Inset shadow, not a border — a border would shift the 2px
+   * thumb insets. */
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklch, var(--primary) 25%, transparent);
   border-radius: 9px;
   transition: background 0.2s;
   flex-shrink: 0;
@@ -161,6 +167,7 @@
 
 .physics-toggle-track.on {
   background: var(--primary);
+  box-shadow: none;
 }
 
 .physics-toggle-thumb {
@@ -169,10 +176,19 @@
   left: 2px;
   width: 14px;
   height: 14px;
-  background: var(--card);
+  /* --card is as dark as the off track in dark themes; tint the off-state
+   * thumb toward primary so it reads, and let .on restore the plain card
+   * thumb that already contrasts against --primary. */
+  background: color-mix(in oklch, var(--primary) 45%, var(--card));
   border-radius: 50%;
-  transition: transform 0.2s;
+  transition:
+    transform 0.2s,
+    background 0.2s;
   box-shadow: 0 1px 2px hsl(0 0% 0% / 0.15);
+}
+
+.physics-toggle-track.on .physics-toggle-thumb {
+  background: var(--card);
 }
 
 .physics-toggle-track.on .physics-toggle-thumb {
@@ -279,6 +295,14 @@
 
 .physics-advanced-toggle.open svg {
   transform: rotate(180deg);
+}
+
+/* Accordion body — restores the 12px stack the controls had when they were
+ * direct children of .physics-panel-scroll. */
+.physics-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Divider */
