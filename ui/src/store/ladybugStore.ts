@@ -1887,7 +1887,7 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     // Repo-scoped node tables. Dependency is the only global table and is
-    // omitted. Variable IDs are `{scope_id}::{name}` where scope_id is a
+    // omitted. Variable IDs are `{scope_id}::var:{name}` where scope_id is a
     // File/Class/Function — all repo-prefixed, so they match the predicate.
     // SourceText is repo-scoped (file-id keyed). NodeVector shadows every
     // node, so the same id predicate prunes it.
