@@ -43,23 +43,17 @@ function pickInitialProvider(): WikiProvider {
 }
 
 interface Props {
-  /** Names of vaults that already exist in *scope* — used to decide whether
-   *  a "new" compile is really new (governs cancel-cleanup). */
-  existingVaults: string[];
   scope: VaultScope;
   /** When set, the modal appends files to this existing vault: the name is
    *  fixed (no name input) and cancel won't delete the vault. When absent,
-   *  the modal creates a new vault and shows a name input. */
+   *  the modal creates a new vault and shows a name input. A new compile
+   *  auto-suffixes on the server if the name collides, so the modal doesn't
+   *  need the existing-vault list. */
   appendTo?: string;
   onClose: () => void;
 }
 
-export function AddVaultModal({
-  existingVaults,
-  scope,
-  appendTo,
-  onClose,
-}: Props) {
+export function AddVaultModal({ scope, appendTo, onClose }: Props) {
   const { state: compileState, start: startCompile } = useCompileJob();
   const appending = !!appendTo;
   const [newVaultName, setNewVaultName] = useState('');
@@ -67,7 +61,6 @@ export function AddVaultModal({
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
 
   // A background compile is already in flight — block starting a second one.
   const compileBusy =
@@ -109,10 +102,9 @@ export function AddVaultModal({
   const handleFiles = useCallback(
     (fileList: FileList | null) => {
       if (!fileList) return;
-      // FileList from <input webkitdirectory> contains real files only —
-      // folders are already expanded. From a plain <input type="file"> there
-      // are no directories. Filter defensively in case some browser/OS
-      // surfaces a directory-shaped File anyway (size 0, no type).
+      // A plain <input type="file"> surfaces no directories. Filter
+      // defensively in case some browser/OS surfaces a directory-shaped
+      // File anyway (size 0, no type).
       const out = Array.from(fileList).filter((f) => f.size > 0 || !!f.type);
       addFiles(out);
     },
@@ -139,9 +131,13 @@ export function AddVaultModal({
       provider,
       baseUrl: provider === 'local' ? baseUrl : undefined,
       scope,
-      // A brand-new name → cancel may delete the partial vault. Appending, or
-      // typing a name that already exists, must not wipe prior pages.
-      isNew: !appending && !existingVaults.includes(targetName),
+      // "+ Compile new" always produces a fresh vault (auto-suffixed if the
+      // name collides), so cancel may delete it. Appending must never wipe the
+      // existing vault's prior pages.
+      isNew: !appending,
+      // Appending updates the named vault in place; a new compile auto-suffixes
+      // (flask → flask-1) if the name is taken in either scope.
+      onConflict: appending ? 'append' : 'suffix',
     });
     onClose();
   }, [
@@ -154,7 +150,6 @@ export function AddVaultModal({
     baseUrl,
     scope,
     appending,
-    existingVaults,
     onClose,
   ]);
 
@@ -273,7 +268,7 @@ export function AddVaultModal({
                     <line x1="12" y1="3" x2="12" y2="15" />
                   </svg>
                   <span className="import-dropzone-label">
-                    Drop files or a folder here, or click to browse
+                    Drop files or a folder here, or click to browse files
                   </span>
                 </>
               ) : (
@@ -308,12 +303,6 @@ export function AddVaultModal({
               >
                 Browse files…
               </button>
-              <button
-                type="button"
-                onClick={() => folderInputRef.current?.click()}
-              >
-                Browse folder…
-              </button>
               {files.length > 0 && (
                 <button
                   type="button"
@@ -324,6 +313,11 @@ export function AddVaultModal({
                 </button>
               )}
             </div>
+            {/* File picker only — no `webkitdirectory` folder picker. The
+                folder picker triggers Chromium's native "Upload N files to
+                this site?" confirmation, which can't be suppressed. Folders
+                are still supported via drag-and-drop (collectDroppedFiles
+                walks them through the FileSystem API, prompt-free). */}
             <input
               ref={fileInputRef}
               type="file"
@@ -331,19 +325,6 @@ export function AddVaultModal({
               style={{ display: 'none' }}
               // Reset the value after reading so picking the SAME file again
               // still fires onChange (the browser suppresses it otherwise).
-              onChange={(e) => {
-                handleFiles(e.target.files);
-                e.target.value = '';
-              }}
-            />
-            <input
-              ref={folderInputRef}
-              type="file"
-              multiple
-              // @ts-expect-error webkitdirectory is non-standard but widely supported
-              webkitdirectory=""
-              directory=""
-              style={{ display: 'none' }}
               onChange={(e) => {
                 handleFiles(e.target.files);
                 e.target.value = '';

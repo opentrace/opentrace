@@ -128,6 +128,18 @@ The `Vault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compiled_
 
 `paths.resolve_vault_scope(name, project_root=...)` finds a vault by name (local first, then global) and returns `(scope, vault_dir)`.
 
+**Names are unique across BOTH scopes.** A new vault never reuses a name already
+taken locally or globally — `paths.unique_vault_name(name, project_root=...)`
+appends a filesystem-style `-1`, `-2`, … suffix until free. This keeps the two
+scopes from ever showing two different vaults under one label. Re-indexing a repo
+must stay idempotent, so `index --wiki` reuses the vault it produced before
+(matched by `spawned_from`) rather than suffixing anew — see the CLI's
+`_resolve_index_vault_name`. `VaultMetadata.spawned_from` (persisted in
+`.vault.json`) is the stable repo→vault key that makes this work even when the
+name was suffixed on first creation. The serve compile route takes an
+`on_conflict` form field (`suffix` for a new-vault compile, `append` to update in
+place).
+
 ## Graph mirror
 
 `run_compile(graph_store=..., scope="local"|"global")` mirrors the post-compile vault state into the graph after disk writes succeed:

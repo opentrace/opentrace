@@ -137,6 +137,40 @@ def compile_log_dir(
     return vault_dir(name, root, scope=scope, project_root=project_root) / ".compile-log"
 
 
+def unique_vault_name(
+    name: str,
+    *,
+    project_root: Path | str | None = None,
+) -> str:
+    """Return a vault name that collides with no existing vault in *either* scope.
+
+    A vault name must be unique across both local and global roots so the two
+    scopes never show two different vaults under the same label (the confusing
+    ``flask`` local + ``flask`` global situation). If *name* is unused it is
+    returned unchanged; otherwise a filesystem-style ``-1``, ``-2``, … suffix
+    is appended until a free name is found (kept within the 64-char limit).
+
+    Callers that intend to *update* an existing vault (append, or re-index of a
+    repo that already owns a vault) must resolve that vault's name first and
+    NOT route it through here — this only mints names for genuinely new vaults.
+    """
+    base = validate_vault_name(name)
+
+    def taken(candidate: str) -> bool:
+        return resolve_vault_scope(candidate, project_root=project_root) is not None
+
+    if not taken(base):
+        return base
+    i = 1
+    while True:
+        suffix = f"-{i}"
+        # Trim the base so "<base><suffix>" respects VAULT_NAME_RE's 64-char cap.
+        candidate = base[: 64 - len(suffix)] + suffix
+        if not taken(candidate):
+            return candidate
+        i += 1
+
+
 def resolve_vault_scope(
     name: str,
     *,

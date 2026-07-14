@@ -262,6 +262,42 @@ class TestVaultRoutes:
         # Project view: every entry is "attached" by definition.
         assert all(v["attached"] for v in data["vaults"])
 
+    def test_project_view_resolves_locals_from_db_root_not_cwd(self, tmp_path, monkeypatch):
+        """A local vault compiled by ``index --wiki`` lives at
+        ``<project>/.opentrace/vaults`` where ``<project>`` holds the index DB.
+        `serve` must find it regardless of the process cwd — otherwise a serve
+        started from elsewhere (or from ``~``, where the local root collides
+        with the global root) surfaces project vaults as globals or hides them.
+        """
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+        from opentrace_agent.store import GraphStore
+
+        # Canonical on-disk layout: <project>/.opentrace/index.db + a local vault.
+        project_root = tmp_path / "proj"
+        (project_root / ".opentrace").mkdir(parents=True)
+        store = GraphStore(str(project_root / ".opentrace" / "index.db"))
+        self._make_vault(project_root, "proj-local", "local", project_root=project_root)
+
+        # Point the global root somewhere empty and run serve from an unrelated
+        # cwd — the pre-fix code read locals from cwd/.opentrace/vaults.
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        try:
+            client = TestClient(create_app(store))
+            data = client.get("/api/vaults?view=project").json()
+            names = {(v["name"], v["scope"]) for v in data["vaults"]}
+            assert ("proj-local", "local") in names
+            # And it must NOT leak into the global view.
+            gdata = client.get("/api/vaults?view=global").json()
+            assert "proj-local" not in {v["name"] for v in gdata["vaults"]}
+        finally:
+            store.close()
+
     def test_global_view_marks_attached(self, store, tmp_path, monkeypatch):
         from starlette.testclient import TestClient
 
@@ -288,6 +324,89 @@ class TestVaultRoutes:
     def test_invalid_view(self, client):
         resp = client.get("/api/vaults?view=nonsense")
         assert resp.status_code == 400
+
+    def test_compile_route_streams_via_sync_generator(self, store, tmp_path, monkeypatch):
+        """The compile stream body is a *sync* generator so Starlette runs the
+        blocking pipeline in a threadpool (keeping reads responsive). Smoke-test
+        that the route still drives run_compile and streams its NDJSON events,
+        exercising the _LockedStore wrapper on the mirror target.
+        """
+        import json
+
+        from starlette.testclient import TestClient
+
+        import opentrace_agent.wiki as wiki_mod
+        from opentrace_agent.cli.serve import create_app
+        from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase, WikiPipelineEvent
+
+        seen_store = {}
+
+        def fake_run_compile(name, inputs, **kwargs):
+            seen_store["graph_store"] = kwargs.get("graph_store")
+            seen_store["project_root"] = kwargs.get("project_root")
+            yield WikiPipelineEvent(kind=WikiEventKind.STAGE_START, phase=WikiPhase.ACQUIRING, message="go")
+            yield WikiPipelineEvent(kind=WikiEventKind.DONE, phase=WikiPhase.PERSISTING, message="done")
+
+        monkeypatch.setattr(wiki_mod, "run_compile", fake_run_compile)
+
+        client = TestClient(create_app(store))
+        resp = client.post(
+            "/api/vaults/smoke/compile",
+            data={"scope": "local", "provider": "anthropic", "api_key": "k"},
+            files=[("files", ("a.md", b"# hi", "text/markdown"))],
+        )
+        assert resp.status_code == 200
+        lines = [line for line in resp.text.splitlines() if line.strip()]
+        kinds = [json.loads(line)["kind"] for line in lines]
+        assert kinds == ["stage_start", "done"]
+        # Local compile mirrors into the graph through the lock-guarding proxy.
+        assert type(seen_store["graph_store"]).__name__ == "_LockedStore"
+
+    def test_compile_new_suffixes_on_name_collision(self, tmp_path, monkeypatch):
+        """on_conflict=suffix renames a new-vault compile (flask → flask-1) when
+        the name already exists in either scope; the resolved name is reported."""
+        import json
+
+        import opentrace_agent.wiki as wiki_mod
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli.serve import create_app
+        from opentrace_agent.store import GraphStore
+        from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase, WikiPipelineEvent
+
+        # Canonical layout so serve's project root resolves; pre-create a local
+        # "flask" so a new "flask" must suffix.
+        project_root = tmp_path / "proj"
+        (project_root / ".opentrace").mkdir(parents=True)
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
+        from opentrace_agent.wiki.paths import ensure_vault_layout, metadata_path
+
+        ensure_vault_layout("flask", scope="local", project_root=project_root)
+        metadata_path("flask", scope="local", project_root=project_root).write_text("{}")
+
+        store = GraphStore(str(project_root / ".opentrace" / "index.db"))
+
+        compiled_name = {}
+
+        def fake_run_compile(name, inputs, **kwargs):
+            compiled_name["name"] = name
+            yield WikiPipelineEvent(kind=WikiEventKind.DONE, phase=WikiPhase.PERSISTING, message="done")
+
+        monkeypatch.setattr(wiki_mod, "run_compile", fake_run_compile)
+
+        try:
+            client = TestClient(create_app(store))
+            resp = client.post(
+                "/api/vaults/flask/compile",
+                data={"scope": "local", "provider": "anthropic", "api_key": "k", "on_conflict": "suffix"},
+                files=[("files", ("a.md", b"# hi", "text/markdown"))],
+            )
+            assert resp.status_code == 200
+            assert compiled_name["name"] == "flask-1"
+            done = json.loads([ln for ln in resp.text.splitlines() if ln.strip()][-1])
+            assert done["vault_name"] == "flask-1"
+        finally:
+            store.close()
 
     def test_detach_removes_mirror(self, store, tmp_path, monkeypatch):
         from starlette.testclient import TestClient

@@ -22,6 +22,7 @@ from opentrace_agent.wiki.paths import (
     ensure_vault_layout,
     list_vaults,
     move_vault_dir,
+    unique_vault_name,
     validate_vault_name,
     vault_dir,
 )
@@ -125,3 +126,40 @@ def test_list_vaults_skips_hidden_files_and_empty_dirs(tmp_path: Path):
     # invisible to the listing.
     (tmp_path / "empty").mkdir()
     assert list_vaults(root=tmp_path) == ["real"]
+
+
+class TestUniqueVaultName:
+    def _make(self, name, scope, *, project_root, global_root):
+        import os
+
+        from opentrace_agent.wiki.paths import ensure_vault_layout, metadata_path
+
+        os.environ["OT_VAULT_ROOT"] = str(global_root)
+        ensure_vault_layout(name, scope=scope, project_root=project_root)
+        # A dir only counts as a vault once it has .vault.json.
+        metadata_path(name, scope=scope, project_root=project_root).write_text("{}")
+
+    def test_free_name_unchanged(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "g"))
+        assert unique_vault_name("flask", project_root=tmp_path / "p") == "flask"
+
+    def test_suffixes_when_taken_in_local(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "g"))
+        pr = tmp_path / "p"
+        self._make("flask", "local", project_root=pr, global_root=tmp_path / "g")
+        assert unique_vault_name("flask", project_root=pr) == "flask-1"
+
+    def test_suffixes_across_scopes(self, tmp_path, monkeypatch):
+        # A global "flask" must push a NEW local vault to "flask-1" (the two
+        # scopes never share a label).
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "g"))
+        pr = tmp_path / "p"
+        self._make("flask", "global", project_root=pr, global_root=tmp_path / "g")
+        assert unique_vault_name("flask", project_root=pr) == "flask-1"
+
+    def test_increments_past_existing_suffixes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "g"))
+        pr = tmp_path / "p"
+        self._make("flask", "local", project_root=pr, global_root=tmp_path / "g")
+        self._make("flask-1", "global", project_root=pr, global_root=tmp_path / "g")
+        assert unique_vault_name("flask", project_root=pr) == "flask-2"

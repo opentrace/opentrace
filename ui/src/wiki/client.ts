@@ -180,6 +180,10 @@ export async function* compileVault(
     model?: string;
     baseUrl?: string;
     scope?: VaultScope;
+    /** How the server treats an existing vault of this name. 'append' (default)
+     *  compiles into it in place; 'suffix' auto-renames a NEW vault (flask →
+     *  flask-1) when the name is taken in either scope. */
+    onConflict?: 'append' | 'suffix';
     /** Abort the in-flight compile stream (used by background-cancel). */
     signal?: AbortSignal;
   } = {},
@@ -191,6 +195,7 @@ export async function* compileVault(
   if (options.model) fd.set('model', options.model);
   if (options.baseUrl) fd.set('base_url', options.baseUrl);
   if (options.scope) fd.set('scope', options.scope);
+  if (options.onConflict) fd.set('on_conflict', options.onConflict);
   for (const f of files) fd.append('files', f);
 
   const res = await fetch(

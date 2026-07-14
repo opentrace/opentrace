@@ -735,6 +735,57 @@ def _run_autoprune_after_index(
         click.echo("  Autoprune: no orphans found.")
 
 
+def _find_repo_vault(repo_id: str, *, scope: str, project_root: Path) -> str | None:
+    """Name of a vault in *scope* previously spawned from *repo_id*, or None.
+
+    Reads each on-disk vault's ``.vault.json`` ``spawned_from`` — the stable
+    repo→vault key that makes re-indexing idempotent (see
+    :func:`_resolve_index_vault_name`).
+    """
+    from opentrace_agent.wiki.paths import list_vaults, metadata_path
+    from opentrace_agent.wiki.vault import load_metadata
+
+    for name in list_vaults(scope=scope, project_root=project_root):  # type: ignore[arg-type]
+        try:
+            meta = load_metadata(metadata_path(name, scope=scope, project_root=project_root), name=name)  # type: ignore[arg-type]
+        except (OSError, ValueError):
+            continue
+        if meta.spawned_from == repo_id:
+            return name
+    return None
+
+
+def _resolve_index_vault_name(
+    vault_name: str,
+    *,
+    scope: str,
+    project_root: Path,
+    repo_id: str | None,
+) -> str:
+    """Pick the vault name an ``index --wiki`` run should write to.
+
+    1. **Re-index** — if *repo_id* already owns a vault in *scope* (matched by
+       ``spawned_from``), reuse that vault's name so the run updates it in
+       place. This is stable even when the name was auto-suffixed on first
+       creation, so re-runs don't pile up ``flask-1``, ``flask-2``, ….
+    2. **Adopt same-name** — a vault of this exact name already lives in
+       *scope* (e.g. one compiled before ``spawned_from`` tracking): update it,
+       matching the historical append-on-same-name behaviour.
+    3. **New vault** — mint a name free in *both* scopes so a local and global
+       vault never share a label.
+    """
+    from opentrace_agent.wiki.paths import resolve_vault_scope, unique_vault_name
+
+    if repo_id is not None:
+        owned = _find_repo_vault(repo_id, scope=scope, project_root=project_root)
+        if owned is not None:
+            return owned
+    existing = resolve_vault_scope(vault_name, prefer=scope, project_root=project_root)  # type: ignore[arg-type]
+    if existing is not None and existing[0] == scope:
+        return vault_name
+    return unique_vault_name(vault_name, project_root=project_root)
+
+
 def _run_wiki_compile_against_index(
     *,
     graph_store,
@@ -796,15 +847,23 @@ def _run_wiki_compile_against_index(
         click.echo(f"  --wiki: no doc files found under {source_path}.")
         return
 
-    scope_label = "global" if vault_scope == "global" else "local"
-    click.echo(f"  --wiki: ingesting {len(inputs)} doc(s) into {scope_label} vault {vault_name!r} ...")
-
     # Vault must live next to the index DB (so a single `.opentrace/`
     # dir holds both the graph and its vaults), not nested inside the
     # walked source path. db_path looks like `<root>/.opentrace/index.db`
     # (or its `.staging` sibling) — strip two levels to get the project root.
     db_path = Path(graph_store.db_path)
     project_root = db_path.parent.parent
+
+    # Resolve the target vault name: reuse the vault this repo produced on a
+    # previous run (so a re-index updates it in place — even if its name was
+    # auto-suffixed to dodge a collision), otherwise mint a name that doesn't
+    # clash with any existing vault in either scope.
+    vault_name = _resolve_index_vault_name(
+        vault_name, scope=vault_scope, project_root=project_root, repo_id=repo_id
+    )
+
+    scope_label = "global" if vault_scope == "global" else "local"
+    click.echo(f"  --wiki: ingesting {len(inputs)} doc(s) into {scope_label} vault {vault_name!r} ...")
 
     provider = _autodetect_provider()
 
@@ -885,6 +944,21 @@ def _run_wiki_compile_against_index(
         # dropped-file compiles don't document the repo they sit next to.
         if link_vault_to_repo(mirror_target, repo_id, vault_name):
             click.echo(f"    wiki: linked vault {vault_name!r} to repository {repo_id!r} (DOCUMENTS)")
+
+    # Persist the repo→vault link on disk (both scopes, graph or not) so a
+    # future re-index reuses this vault instead of minting a new suffixed one.
+    if repo_id is not None:
+        from opentrace_agent.wiki.paths import metadata_path
+        from opentrace_agent.wiki.vault import load_metadata, save_metadata
+
+        mp = metadata_path(vault_name, scope=vault_scope, project_root=project_root)  # type: ignore[arg-type]
+        try:
+            meta = load_metadata(mp, name=vault_name)
+            if meta.spawned_from != repo_id:
+                meta.spawned_from = repo_id
+                save_metadata(mp, meta)
+        except OSError as exc:
+            click.echo(f"  --wiki: could not stamp spawned_from on {vault_name!r}: {exc}", err=True)
 
 
 def _default_vault_name(path: Path) -> str:

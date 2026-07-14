@@ -1038,6 +1038,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
         _vault_routes(
             get_store=_get_store,
             has_graph=has_graph,
+            store_lock=store_lock,
             with_writable_store=_with_writable_store,
             escalate_writable=_escalate_writable_for_stream,
             restore_writable=_restore_after_stream,
@@ -1061,10 +1062,41 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
 # ---------------------------------------------------------------------------
 
 
+class _LockedStore:
+    """Serialises every store method call behind a lock.
+
+    The vault compile stream runs in a worker threadpool (so the event loop
+    stays responsive) and mirrors into the *live* graph store at the end.
+    Read handlers touch that same store handle from the event loop, and the
+    underlying LadybugDB connection is not concurrency-safe. Wrapping the
+    store the compile writes through — and holding the *same* lock on the read
+    side — guarantees only one thread touches the connection at a time. The
+    lock is taken per call (each write/read is short), not for the whole
+    compile, so LLM-long phases never block reads.
+    """
+
+    def __init__(self, inner: "GraphStore", lock: "threading.Lock") -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_lock", lock)
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(object.__getattribute__(self, "_inner"), name)
+        if not callable(attr):
+            return attr
+        lock = object.__getattribute__(self, "_lock")
+
+        def _locked(*args: Any, **kwargs: Any) -> Any:
+            with lock:
+                return attr(*args, **kwargs)
+
+        return _locked
+
+
 def _vault_routes(
     *,
     get_store: "Callable[[], GraphStore | None]",
     has_graph: bool,
+    store_lock: "threading.Lock",
     with_writable_store: "Callable[[Callable[[GraphStore], JSONResponse]], JSONResponse]",
     escalate_writable: "Callable[[], tuple[GraphStore | None, bool]]",
     restore_writable: "Callable[[bool], None]",
@@ -1092,7 +1124,12 @@ def _vault_routes(
             return set()
         out: set[str] = set()
         try:
-            for v in store.list_nodes("Vault", limit=10_000):
+            # Hold store_lock for the read: a background compile stream mirrors
+            # into this same store handle from a worker thread, and the
+            # LadybugDB connection is not safe for concurrent access.
+            with store_lock:
+                nodes = store.list_nodes("Vault", limit=10_000)
+            for v in nodes:
                 props = v.get("properties") or {}
                 if (props.get("scope") or "global") == "global":
                     nm = props.get("vault") or v.get("name")
@@ -1101,6 +1138,33 @@ def _vault_routes(
         except Exception as e:  # noqa: BLE001
             logger.warning("list_nodes(Vault) failed: %s", e)
         return out
+
+    def _project_root() -> "Path | None":
+        """The project root for *local* vault/corpus resolution.
+
+        ``index --wiki`` writes a local vault to ``<project>/.opentrace/
+        vaults/`` where ``<project>`` is the dir holding the index DB — NOT
+        the process cwd. `serve` may be launched from anywhere (a systemd
+        unit, ``~``, the opentrace repo while ``--db`` points elsewhere), so
+        resolving local vaults against ``Path.cwd()`` would miss them — or,
+        when cwd happens to be ``~``, silently read the *global* root
+        (``~/.opentrace/vaults``) and surface project vaults as globals.
+
+        Derive it from the live store's DB path (``<project>/.opentrace/
+        index.db`` → two levels up). Returns None in vault-only mode (no DB),
+        where the path helpers fall back to cwd as before.
+        """
+        store = get_store()
+        db = getattr(store, "db_path", None) if store is not None else None
+        if not db:
+            return None
+        db_path = Path(str(db)).resolve()
+        # Canonical layout: ``<project>/.opentrace/index.db`` → project root
+        # is two levels up. If the DB isn't nested under a ``.opentrace`` dir
+        # (flat/custom ``--db`` path), the project root is simply its parent.
+        if db_path.parent.name == ".opentrace":
+            return db_path.parent.parent
+        return db_path.parent
 
     def _resolve_scope_for(name: str, scope_q: str | None):
         """Resolve a vault's scope from the optional query param, else by
@@ -1112,10 +1176,11 @@ def _vault_routes(
         )
 
         try:
+            pr = _project_root()
             if scope_q in ("local", "global"):
-                found = resolve_vault_scope(name, prefer=scope_q)
+                found = resolve_vault_scope(name, prefer=scope_q, project_root=pr)
             else:
-                found = resolve_vault_scope(name)
+                found = resolve_vault_scope(name, project_root=pr)
         except InvalidVaultName as e:
             return None, _error(400, str(e))
         if found is None:
@@ -1137,8 +1202,12 @@ def _vault_routes(
             ]
             return JSONResponse({"vaults": entries})
 
-        # view == "project": local vaults from cwd + globals attached to graph.
-        entries = [{"name": n, "scope": "local", "attached": True} for n in list_vaults(scope="local")]
+        # view == "project": local vaults (resolved against the DB's project
+        # root, not cwd) + globals attached to graph.
+        entries = [
+            {"name": n, "scope": "local", "attached": True}
+            for n in list_vaults(scope="local", project_root=_project_root())
+        ]
         # Sort attached globals stably for deterministic UI ordering.
         for n in sorted(attached_globals):
             entries.append({"name": n, "scope": "global", "attached": True})
@@ -1149,7 +1218,7 @@ def _vault_routes(
         from opentrace_agent.wiki.paths import metadata_path
         from opentrace_agent.wiki.vault import load_metadata
 
-        return load_metadata(metadata_path(name, scope=scope), name=name)
+        return load_metadata(metadata_path(name, scope=scope, project_root=_project_root()), name=name)
 
     async def list_pages_route(request: Request) -> JSONResponse:
         name = request.path_params["vault"]
@@ -1195,7 +1264,7 @@ def _vault_routes(
         # Migrate a legacy flat-layout vault so the slug → file mapping
         # holds even when no list-pages call ran first to do the fixup.
         _load_vault_meta(name, scope)
-        pd = pages_dir(name, scope=scope)
+        pd = pages_dir(name, scope=scope, project_root=_project_root())
         page_path = pd / f"{slug}.md"
         if not page_path.exists():
             return _error(404, f"Page not found: {slug}")
@@ -1220,6 +1289,15 @@ def _vault_routes(
         scope = (form.get("scope") or "local").strip() or "local"
         if scope not in ("local", "global"):
             return _error(400, f"invalid scope: {scope!r} (expected 'local' or 'global')")
+        # on_conflict governs what happens when *name* already names a vault:
+        #   "append" (default) — compile into it in place (the per-vault append
+        #     flow, and back-compat with older clients).
+        #   "suffix" — this is a NEW vault ("+ Compile new"); if the name is
+        #     taken in EITHER scope, auto-suffix (flask → flask-1) so a local
+        #     and global vault never share a label.
+        on_conflict = (form.get("on_conflict") or "append").strip() or "append"
+        if on_conflict not in ("append", "suffix"):
+            return _error(400, f"invalid on_conflict: {on_conflict!r} (expected 'append' or 'suffix')")
         files = (
             form.getlist("files") if hasattr(form, "getlist") else [v for k, v in form.multi_items() if k == "files"]
         )
@@ -1233,7 +1311,24 @@ def _vault_routes(
                 fname = getattr(f, "filename", "uploaded") or "uploaded"
                 inputs.append(SourceInput(name=fname, data=data))
 
-        async def event_stream():
+        # Resolve the local project root on the event loop, before the body
+        # runs in the threadpool.
+        project_root = _project_root()
+
+        # New-vault compile: dodge a cross-scope name collision by suffixing.
+        if on_conflict == "suffix":
+            from opentrace_agent.wiki.paths import unique_vault_name
+
+            name = unique_vault_name(name, project_root=project_root)
+
+        # NOTE: a *synchronous* generator on purpose. `run_compile` is a
+        # blocking generator (LLM calls per step); an `async def` body would
+        # run it directly on the asyncio event loop and starve every other
+        # request — the vault list would hang until the compile finished, so
+        # the manager reopened to an empty list. Starlette iterates a sync
+        # generator via `iterate_in_threadpool`, so each blocking step runs
+        # off the loop and reads (GET /api/vaults) stay responsive.
+        def event_stream():
             # Wrap the entire pipeline so any exception (LLM failures, OS
             # errors, validation) becomes a final NDJSON line instead of a
             # silently-truncated stream. Without this, an unhandled raise
@@ -1248,10 +1343,14 @@ def _vault_routes(
             # pipeline, which needs a writable store — escalate for the
             # stream's duration (reads keep working against the writable
             # handle) and restore read-only in the finally below.
-            mirror_target: GraphStore | None = None
+            mirror_target: "GraphStore | _LockedStore | None" = None
             swapped = False
             if scope == "local":
-                mirror_target, swapped = escalate_writable()
+                raw_target, swapped = escalate_writable()
+                # Guard the compile's graph writes with store_lock so they
+                # can't run concurrently with a read handler on the same
+                # (non-thread-safe) connection.
+                mirror_target = _LockedStore(raw_target, store_lock) if raw_target is not None else None
             try:
                 for event in run_compile(
                     name,
@@ -1261,6 +1360,7 @@ def _vault_routes(
                     model=model,
                     base_url=base_url,
                     scope=scope,
+                    project_root=project_root,
                     graph_store=mirror_target,
                 ):
                     payload = {
@@ -1272,6 +1372,10 @@ def _vault_routes(
                         "file_name": event.file_name,
                         "detail": event.detail,
                         "errors": event.errors,
+                        # The resolved name (may differ from the requested one
+                        # when on_conflict=suffix bumped it) so the UI can show
+                        # the real vault the progress belongs to.
+                        "vault_name": name,
                     }
                     yield json.dumps(payload) + "\n"
                     if event.kind == WikiEventKind.DONE:
@@ -1303,7 +1407,7 @@ def _vault_routes(
         scope, err = _resolve_scope_for(name, request.query_params.get("scope"))
         if err is not None:
             return err
-        existed = _delete_vault(name, scope=scope)
+        existed = _delete_vault(name, scope=scope, project_root=_project_root())
         if not existed:
             return _error(404, f"Vault not found: {name}")
 
@@ -1368,13 +1472,14 @@ def _vault_routes(
 
         # Copy the global vault's corpus into this project's corpus dir
         # (sha-keyed, idempotent) so Source.corpus_path resolves locally
-        # and source-body retrieval works after attach. project_root is
-        # implicit cwd here — the serve process always runs from one.
+        # and source-body retrieval works after attach. The local project
+        # root comes from the DB path, not cwd (serve may run from anywhere).
         try:
             corpus_map = copy_corpus_between_scopes(
                 list(meta.sources.keys()),
                 from_scope="global",
                 to_scope="local",
+                to_project_root=_project_root(),
             )
         except OSError as e:
             logger.warning("corpus copy failed for vault %s: %s", name, e)
@@ -1447,8 +1552,9 @@ def _vault_routes(
         if scope != src:
             return _error(400, f"vault {name!r} is already {dst} — nothing to {verb}")
 
+        pr = _project_root()
         try:
-            move_vault_dir(name, src=src, dst=dst)
+            move_vault_dir(name, src=src, dst=dst, project_root=pr)
         except InvalidVaultName as e:
             return _error(400, str(e))
         except FileNotFoundError as e:
@@ -1457,8 +1563,8 @@ def _vault_routes(
             return _error(409, str(e))
 
         # Disk dir is now under the dst root.
-        meta = load_metadata(metadata_path(name, scope=dst), name=name)
-        pages_path = pages_dir(name, scope=dst)
+        meta = load_metadata(metadata_path(name, scope=dst, project_root=pr), name=name)
+        pages_path = pages_dir(name, scope=dst, project_root=pr)
         page_bodies: dict[str, str] = {}
         for slug in meta.pages.keys():
             body_path = pages_path / f"{slug}.md"
@@ -1472,7 +1578,9 @@ def _vault_routes(
         # Bodies live in the src scope pre-move; copy them local (a no-op
         # existence check when src is already local, i.e. promote).
         try:
-            corpus_map = copy_corpus_between_scopes(source_ids, from_scope=src, to_scope="local")
+            corpus_map = copy_corpus_between_scopes(
+                source_ids, from_scope=src, to_scope="local", from_project_root=pr, to_project_root=pr
+            )
         except OSError as e:
             logger.warning("local corpus copy failed for vault %s: %s", name, e)
             corpus_map = {}
@@ -1480,7 +1588,7 @@ def _vault_routes(
         # vault is self-contained for other projects that attach it.
         if dst == "global":
             try:
-                copy_corpus_between_scopes(source_ids, from_scope=src, to_scope="global")
+                copy_corpus_between_scopes(source_ids, from_scope=src, to_scope="global", from_project_root=pr)
             except OSError as e:
                 logger.warning("global corpus copy failed for vault %s: %s", name, e)
         normalized_stubs = [SimpleNamespace(sha256=sha, corpus_path=path) for sha, path in corpus_map.items()]

@@ -62,4 +62,8 @@ export interface WikiCompileEvent {
   file_name?: string | null;
   detail?: Record<string, unknown> | null;
   errors?: string[] | null;
+  /** The vault the server actually compiled into. Differs from the requested
+   *  name when a new-vault compile was auto-suffixed to avoid a collision
+   *  (e.g. `flask` → `flask-1`). */
+  vault_name?: string;
 }

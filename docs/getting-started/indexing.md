@@ -54,7 +54,7 @@ Cost: ~1 LLM call per doc + Plan + Execute. Pre-flight estimate is printed befor
 | Flag | What it does |
 |---|---|
 | `--wiki` | Walks docs + runs the doc-ingestion pipeline: one LLM call per doc (navigation label + entity graph + concept inventory), then Plan+Execute concept-page synthesis. Implies a vault |
-| `[VAULT_NAME]` (2nd positional) | Override the auto-derived vault name (defaults to path basename / repo name / file stem / URL slug). Implies `--wiki` when given |
+| `[VAULT_NAME]` (2nd positional) | Override the auto-derived vault name (defaults to path basename / repo name / file stem / URL slug). Implies `--wiki` when given. Names are unique across scopes — a genuinely new vault whose name is already taken (locally *or* globally) is auto-suffixed `-1`, `-2`, …; re-indexing the same repo reuses the vault it made before rather than suffixing again |
 | `--global` | Compile the vault into `~/.opentrace/vaults/` instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki`. Disk only — run `vault attach <name>` to mirror into this project's graph |
 
 ### Re-indexing & cleanup

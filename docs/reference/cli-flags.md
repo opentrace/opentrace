@@ -23,7 +23,7 @@ opentraceai index [PATH] [OPTIONS]
 | Arg | Type | Default | Description |
 |---|---|---|---|
 | `PATH` | path or URL | `.` | What to index — a directory, a single file, or a URL |
-| `VAULT_NAME` | string | auto | Optional second positional. Names the vault for `--wiki`. Default derives from `PATH` — repo basename for git repos, folder basename for plain dirs, file stem for single files, slugified URL path for URLs. **Passing this implies `--wiki`** |
+| `VAULT_NAME` | string | auto | Optional second positional. Names the vault for `--wiki`. Default derives from `PATH` — repo basename for git repos, folder basename for plain dirs, file stem for single files, slugified URL path for URLs. **Passing this implies `--wiki`**. Names are unique across scopes: a genuinely new vault whose name is already taken locally or globally is auto-suffixed (`flask` → `flask-1`); re-indexing the same repo reuses the vault it made before instead of suffixing again |
 
 **Flags:**
 

@@ -71,6 +71,9 @@ export interface CompileStartParams {
   /** True when this compile creates a brand-new vault (vs. appending to an
    *  existing one). Governs whether cancel deletes the whole vault. */
   isNew: boolean;
+  /** How the server treats a name collision: 'suffix' (new vault — auto-rename
+   *  flask → flask-1 if taken in either scope) or 'append' (update in place). */
+  onConflict: 'append' | 'suffix';
 }
 
 interface CompileJobContextValue {
@@ -157,13 +160,21 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
               provider: params.provider,
               baseUrl: params.baseUrl,
               scope: params.scope,
+              onConflict: params.onConflict,
               signal: controller.signal,
             },
           )) {
             if (ev.kind === 'error') sawError = true;
             if (ev.kind === 'done') sawDone = true;
+            // Adopt the server-resolved name — a new-vault compile may have
+            // been auto-suffixed (flask → flask-1) to avoid a collision.
+            if (ev.vault_name && ev.vault_name !== targetRef.current?.vaultName) {
+              const resolved = ev.vault_name;
+              if (targetRef.current) targetRef.current.vaultName = resolved;
+            }
             setState((s) => ({
               ...s,
+              vaultName: ev.vault_name || s.vaultName,
               phase: ev.phase ?? s.phase,
               message: ev.message || s.message,
               current: ev.current ?? s.current,

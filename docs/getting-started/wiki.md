@@ -60,7 +60,21 @@ Vaults can live in two places:
 
     Compiling a global produces a **disk-only** artifact. Mirroring into a project's graph is a separate, explicit `vault attach` (zero LLM cost — just re-reads disk and copies the doc corpus into `<project>/.opentrace/corpus/`).
 
-When both a local and a global vault share a name, the local one wins by default. Use `--scope global` on commands that take a name (e.g. `vault show research --scope global`) to disambiguate.
+If a local and a global vault do somehow share a name (e.g. both compiled before name de-duplication landed), the local one wins by default. Use `--scope global` on commands that take a name (e.g. `vault show research --scope global`) to disambiguate.
+
+## Vault names are unique
+
+A vault name is unique across **both** scopes — a new vault never reuses a name already taken locally or globally. When the name you'd get is already in use, OpenTrace appends a filesystem-style `-1`, `-2`, … suffix:
+
+```bash
+# a global "flask" already exists
+opentraceai index ./flask --wiki
+# → local vault 'flask-1' (not a second 'flask')
+```
+
+This is why `index --wiki` never produces a local *and* a global vault under the same label. Re-indexing is still idempotent: a repo re-index **reuses the vault it created before** (matched by the repo it was spawned from, recorded in `.vault.json`), so running `index ./flask --wiki` again updates `flask-1` in place rather than minting `flask-2`.
+
+In the UI, **"+ Compile new"** auto-suffixes the same way; use a vault row's **append** action to add docs to an existing vault instead of creating a new one.
 
 ## Adding to an existing vault
 

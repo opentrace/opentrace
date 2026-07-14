@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   attachVault,
   deleteVault,
@@ -215,14 +215,6 @@ export function VaultManager({ onClose }: Props) {
   // "Compile new" scope is implied by the active tab: Project → local,
   // Global → global.
   const compileScope: VaultScope = view === 'project' ? 'local' : 'global';
-  // Existing names in the modal's scope — used only to decide whether a
-  // typed name is really new (governs cancel-cleanup).
-  const existingNamesInScope = useMemo(() => {
-    if (!addModal) return [];
-    return [...projectVaults, ...globalVaults]
-      .filter((e) => e.scope === addModal.scope)
-      .map((e) => e.name);
-  }, [addModal, projectVaults, globalVaults]);
 
   return (
     <>
@@ -310,7 +302,6 @@ export function VaultManager({ onClose }: Props) {
 
       {addModal && (
         <AddVaultModal
-          existingVaults={existingNamesInScope}
           scope={addModal.scope}
           appendTo={addModal.appendTo}
           onClose={() => setAddModal(null)}

@@ -66,6 +66,12 @@ class VaultMetadata:
     sources: dict[str, IngestedSource] = field(default_factory=dict)
     pages: dict[str, PageMeta] = field(default_factory=dict)
     tombstones: list[str] = field(default_factory=list)
+    # Repository id this vault was spawned from by ``index --wiki`` over a repo
+    # (None for uploads / URLs / single files). Persisted so a re-index of the
+    # same repo finds and updates the vault it created before — even when the
+    # vault's name was auto-suffixed to avoid a cross-scope collision — instead
+    # of minting a new suffixed vault every run.
+    spawned_from: str | None = None
 
     @classmethod
     def empty(cls, name: str) -> VaultMetadata:
@@ -88,6 +94,7 @@ class VaultMetadata:
             sources=sources,
             pages=pages,
             tombstones=list(data.get("tombstones") or []),
+            spawned_from=data.get("spawned_from"),
         )
 
 
