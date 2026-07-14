@@ -164,6 +164,9 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
               signal: controller.signal,
             },
           )) {
+            // Cancelled mid-stream: stop applying events so a buffered line
+            // can't overwrite the 'cancelled' state the panel is showing.
+            if (controller.signal.aborted) break;
             if (ev.kind === 'error') sawError = true;
             if (ev.kind === 'done') sawDone = true;
             // Adopt the server-resolved name — a new-vault compile may have
@@ -210,9 +213,21 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
 
   const cancel = useCallback(() => {
     const target = targetRef.current;
+    // Abort the in-flight compile fetch right away — the client disconnect
+    // stops the server pipeline at its next checkpoint. Report 'cancelled'
+    // immediately (no 'cancelling' limbo) so the panel clears the instant the
+    // user clicks X; the disk/graph cleanup runs in the background rather than
+    // holding the UI until the round-trip returns.
     abortRef.current?.abort();
     abortRef.current = null;
-    setState((s) => ({ ...s, status: 'cancelling', message: 'Cancelling…' }));
+    // Mark aborted so any events still buffered in the stream can't flip the
+    // status back to a running-looking state.
+    targetRef.current = null;
+    setState((s) => ({
+      ...s,
+      status: 'cancelled',
+      message: 'Compilation cancelled',
+    }));
 
     void (async () => {
       // Delete the partial vault only when this compile created it — an
@@ -225,11 +240,6 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
         }
       }
       void loadGraph();
-      setState((s) => ({
-        ...s,
-        status: 'cancelled',
-        message: 'Compilation cancelled',
-      }));
     })();
   }, [loadGraph]);
 
