@@ -139,8 +139,14 @@ function oracleEdgeAlphas(r: Rndr): Float32Array {
       if (!sVis || !tVis || (lodHidden && !hot)) {
         alpha = 0;
       } else if (r.hasHighlight) {
+        // Hot edges use the shader's absolute encoding (1 + alpha) so the lit
+        // path renders fully opaque — UNLESS the curved glow ribbon owns them
+        // (hotRibbonActive), in which case the straight chord is zeroed here so
+        // it doesn't draw under the curve.
         alpha = hot
-          ? 1 + EDGE_OPACITY_HIGHLIGHTED
+          ? r.hotRibbonActive
+            ? 0
+            : 1 + EDGE_OPACITY_HIGHLIGHTED
           : traversalActive
             ? 0
             : EDGE_OPACITY_DIMMED;
