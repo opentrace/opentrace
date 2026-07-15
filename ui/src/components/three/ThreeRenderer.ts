@@ -697,6 +697,12 @@ export class ThreeRenderer {
   /** True while the ribbon owns the hot edges — the bulk line set then zeroes
    *  them so they don't double-draw as straight chords under the curves. */
   private hotRibbonActive = false;
+  /** True when the highlight has MORE hot edges than the ribbon can draw
+   *  (> HOT_EDGE_MAX). They then render as bright straight chords in the BULK
+   *  line set, which lives on the blurred DOF layer — so DOF is skipped for
+   *  that frame to stop them smearing into a blur (a huge highlight has no
+   *  meaningful "background" to blur anyway). */
+  private hotEdgesOverflowed = false;
 
   // Curve ALL bulk edges — an instanced LineSegments that reuses the straight
   // edge set's own buffers (edgePos/Color/Alpha) as per-instance attributes and
@@ -1192,6 +1198,10 @@ export class ThreeRenderer {
   private dofActive(): boolean {
     return (
       this.hasHighlight &&
+      // A highlight too big for the sharp ribbon draws its hot edges as bright
+      // chords on the blurred layer; blurring them smears the whole graph, so
+      // skip DOF (nothing meaningful to blur at that highlight size anyway).
+      !this.hotEdgesOverflowed &&
       !!this.renderer &&
       !!this.scene &&
       !!this.blurMaterial &&
@@ -2189,6 +2199,7 @@ export class ThreeRenderer {
   private syncHotEdgeList(): void {
     const list = this.hotEdgeList;
     list.length = 0;
+    this.hotEdgesOverflowed = false;
     if (!this.hasHighlight) {
       this.hotRibbonActive = false;
       return;
@@ -2201,9 +2212,12 @@ export class ThreeRenderer {
       if (!this.nodeArray[e.targetIdx]?.visible) continue;
       list.push(e);
       if (list.length > HOT_EDGE_MAX) {
-        // Too many to be worth a curved glow mesh — the bulk line set draws them.
+        // Too many to be worth a curved glow mesh — the bulk line set draws them
+        // (as bright straight chords). Flag it so DOF is skipped: those chords
+        // sit on the blurred layer and would otherwise smear.
         list.length = 0;
         this.hotRibbonActive = false;
+        this.hotEdgesOverflowed = true;
         return;
       }
     }
