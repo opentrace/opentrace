@@ -3668,7 +3668,15 @@ export class ThreeRenderer {
         // center rather than orbiting the (possibly panned-away) target, so
         // panning the graph off-center never changes the rotation pivot.
         if (this.mode3d) {
-          if (button === 0 && moved > CLICK_THRESHOLD) {
+          // Left-drag / one-finger rotates the graph. But two fingers are a
+          // pan+zoom gesture that OrbitControls owns — rotating on the primary
+          // finger too would move AND spin at once, so only rotate with a
+          // single active pointer.
+          if (
+            button === 0 &&
+            moved > CLICK_THRESHOLD &&
+            activePointers.size < 2
+          ) {
             this.rotateGraphBy(e.clientX - lastX, e.clientY - lastY);
           }
           lastX = e.clientX;
