@@ -37,3 +37,15 @@ export function isConstrainedDevice(): boolean {
       : Number.POSITIVE_INFINITY;
   return coarse && shortSide <= 600;
 }
+
+/**
+ * On a constrained device, skip the in-browser embedding stage when the repo has
+ * more than this many files. Embedding loads an onnxruntime model + inference
+ * arena on top of the already-resident graph; on a big repo that overflows the
+ * mobile browser's per-tab memory cap (iOS Safari/WebKit kills a tab at
+ * ~1–1.5 GB regardless of device RAM) and the tab silently reloads. Below this
+ * the graph is small enough that embedding still fits, so semantic search keeps
+ * working on small/medium repos. Search degrades to keyword-only when skipped.
+ * A conservative starting estimate — tune against real-device testing.
+ */
+export const MOBILE_EMBED_MAX_FILES = 3000;

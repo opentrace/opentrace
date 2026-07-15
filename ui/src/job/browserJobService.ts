@@ -66,6 +66,7 @@ import type {
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 import { loadEmbedderConfig } from '../config/embedding';
+import { isConstrainedDevice, MOBILE_EMBED_MAX_FILES } from '../config/device';
 
 // --- Tree-sitter lazy initialization ---
 
@@ -760,9 +761,24 @@ export class BrowserJobService implements JobService {
       const resolveStage = new ResolveStage(extractionState);
       const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
-      const embedStage = embedderConfig.enabled
-        ? new EmbedStage({ config: embedderConfig, store: this.store })
-        : null;
+      // On a constrained device (phone), a large repo's embedding stage loads an
+      // onnxruntime runtime on top of the already-resident graph and overflows
+      // the browser's per-tab memory cap (iOS Safari kills the tab ~1–1.5 GB) —
+      // so skip it above MOBILE_EMBED_MAX_FILES. The graph still indexes fully;
+      // search falls back to keyword (BM25). Small/medium repos still embed.
+      const skipEmbedForMemory =
+        isConstrainedDevice() &&
+        scanResult.fileNodes.length > MOBILE_EMBED_MAX_FILES;
+      if (skipEmbedForMemory) {
+        debug.log(
+          'embedding',
+          `skipped — ${scanResult.fileNodes.length} files on a constrained device would exceed the tab memory cap; keyword search still works`,
+        );
+      }
+      const embedStage =
+        embedderConfig.enabled && !skipEmbedForMemory
+          ? new EmbedStage({ config: embedderConfig, store: this.store })
+          : null;
 
       // Pre-feed scanning + symbol (DEFINES/IMPORTS) rels into the store stage.
       storeStage.addRelationships(scanningRels);
