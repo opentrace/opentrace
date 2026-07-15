@@ -27,6 +27,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -36,6 +37,11 @@ from opentrace_agent.cli.workspace import (
     EXIT_WORKSPACE_UNRESOLVABLE,
     resolve_workspace_db,
 )
+
+if TYPE_CHECKING:
+    # Imported lazily at runtime (real_ladybug is a heavy native dep); only the
+    # type annotations need the name at module scope.
+    from opentrace_agent.store import GraphStore
 
 # ---------------------------------------------------------------------------
 # Database discovery
@@ -1465,6 +1471,66 @@ def mcp_cmd(db_path: str | None, verbose: bool) -> None:
         log.debug("MCP server stopped")
 
 
+def _replay_db_journal(resolved_db: str) -> None:
+    """Replay a LadybugDB write journal by opening the DB read-write once.
+
+    Run in a SEPARATE process on purpose: real_ladybug segfaults if the same
+    DB path is opened more than once within a single process, so `serve` (which
+    must then open the DB read-only itself) can't do the replay in-process.
+    Opening read-write replays the WAL / shadow pages and closing checkpoints
+    them, clearing the ``.wal`` / ``.shadow`` files.
+    """
+    import subprocess
+    import sys
+
+    child = (
+        "import sys, real_ladybug as lb\n"
+        "db = lb.Database(sys.argv[1], read_only=False)\n"  # replays the journal
+        "lb.Connection(db).execute('MATCH (n) RETURN count(n)').get_next()\n"
+        "db.close()\n"  # checkpoints -> clears .wal / .shadow
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", child, resolved_db],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or "").strip()[-800:]
+        raise click.ClickException(
+            f"Could not recover the interrupted write journal for {resolved_db}. "
+            "The graph may be corrupt — re-index to rebuild it "
+            "(`opentraceai index <path>`).\n" + detail
+        )
+
+
+def _open_readonly_with_recovery(resolved_db: str) -> "GraphStore":
+    """Open the graph DB read-only, self-healing an unreplayed write journal.
+
+    `serve` opens read-only so multiple readers can share the file. If a prior
+    writer (a local-vault compile or an index) was killed/crashed while holding
+    the DB read-write, LadybugDB leaves ``.wal`` / ``.shadow`` journal files a
+    read-only handle can't replay — the open fails with "re-open the database
+    with read-write mode to replay shadow pages".
+
+    Detect that via the journal files (not by trying a read-only open first:
+    real_ladybug segfaults on a second open in the same process, so we must
+    open here exactly once) and replay them in a subprocess before opening.
+    """
+    from opentrace_agent.store import GraphStore
+
+    db = Path(resolved_db)
+    journal_files = [db.with_name(db.name + ext) for ext in (".wal", ".shadow")]
+    if any(f.exists() for f in journal_files):
+        click.echo(
+            "  Database has an unreplayed write journal — a previous compile or "
+            "index was interrupted. Recovering it before serving…",
+            err=True,
+        )
+        _replay_db_journal(resolved_db)
+
+    return GraphStore(resolved_db, read_only=True)
+
+
 @app.command()
 @click.option(
     "--db",
@@ -1517,8 +1583,10 @@ def serve(db_path: str | None, host: str, port: int, verbose: bool) -> None:
     log.debug("Opening database: %s", resolved_db)
     # serve opens read-only so other readers (MCP, a second serve) can share
     # the DB file. Vault mutation routes escalate to a writable handle for
-    # the duration of the write and drop back to read-only after.
-    store = GraphStore(resolved_db, read_only=True)
+    # the duration of the write and drop back to read-only after. If a prior
+    # writer was killed mid-write, self-heal the unreplayed journal instead of
+    # refusing to start.
+    store = _open_readonly_with_recovery(resolved_db)
 
     stats = store.get_stats()
     click.echo(f"Database: {resolved_db}")
