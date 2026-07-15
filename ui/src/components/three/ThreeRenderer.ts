@@ -42,7 +42,12 @@ import {
   BufferGeometry,
   BufferAttribute,
   Points,
+  Mesh,
+  PlaneGeometry,
   LineSegments,
+  InstancedBufferGeometry,
+  InstancedInterleavedBuffer,
+  InterleavedBufferAttribute,
   LineBasicMaterial,
   Sprite,
   SpriteMaterial,
@@ -54,6 +59,7 @@ import {
   Quaternion,
   Spherical,
   NearestFilter,
+  LinearFilter,
   AdditiveBlending,
   type Texture,
   type ShaderMaterial,
@@ -69,11 +75,20 @@ import {
 import { computeBounds, type Viewport } from './viewport';
 import {
   NODE_OPACITY_DIMMED,
+  NODE_OPACITY_HIGHLIGHTED,
   NODE_SIZE_DIMMED_SCALE,
   NODE_SIZE_HIGHLIGHTED_SCALE,
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_HIGHLIGHTED,
   EDGE_OPACITY_DIMMED,
+  HOT_EDGE_CURVE_SEGMENTS,
+  HOT_EDGE_SAG_FACTOR,
+  HOT_EDGE_HALF_WIDTH,
+  HOT_EDGE_GLOW_ALPHA,
+  HOT_EDGE_MAX,
+  DOF_BLUR_RADIUS,
+  CURVE_ALL_EDGES_SEGMENTS,
+  CURVE_ALL_EDGES_MAX,
   LABEL_SIZE,
   LABEL_FONT,
   LABEL_MAX_LENGTH,
@@ -89,6 +104,16 @@ import {
   type NodeMaterialUniforms,
 } from './nodeMaterial';
 import { createEdgeMaterial } from './edgeMaterial';
+import { createHotEdgeMaterial } from './hotEdgeMaterial';
+import {
+  createCurvedEdgeMaterial,
+  type CurvedEdgeMaterialUniforms,
+} from './curvedEdgeMaterial';
+import {
+  createBlurMaterial,
+  createCopyMaterial,
+  type BlurMaterialUniforms,
+} from './dofMaterials';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -585,6 +610,10 @@ export class ThreeRenderer {
   private nodeHaloMaterial: ShaderMaterial | null = null;
   private nodeHaloPoints: Points | null = null;
   private nodeHaloDrawIndex: Uint32Array = new Uint32Array(0);
+  /** Solid-core material for the foreground (in-front-of-veil) highlight pass —
+   *  a copy of the node material with depth test OFF, so highlighted cores draw
+   *  on top of the frosted glass even when a dimmed node is nearer the camera. */
+  private fgNodeMaterial: ShaderMaterial | null = null;
   private posArray: Float32Array = new Float32Array(0); // x,y,z per node (stride 3)
   private colorArray: Float32Array = new Float32Array(0);
   private sizeArray: Float32Array = new Float32Array(0);
@@ -610,6 +639,64 @@ export class ThreeRenderer {
   private edgesEnabled = true;
   private hiddenLinkTypes: Set<string> = new Set();
   private edgesHiddenForInteraction = false;
+
+  // Hot-edge glow ribbon — highlighted / chat edges rendered as soft, curved,
+  // additively-blended strands (see hotEdgeMaterial.ts) instead of the bulk
+  // straight 1px lines. Built on the CPU from the current hot-edge set; the
+  // ribbon width faces the screen via the shader, so orbiting needs no rebuild.
+  private hotEdgeGeometry: BufferGeometry | null = null;
+  private hotEdgeMaterial: ShaderMaterial | null = null;
+  private hotEdgeMesh: Mesh | null = null;
+  private hotEdgePosArray: Float32Array = new Float32Array(0);
+  private hotEdgeTangentArray: Float32Array = new Float32Array(0);
+  private hotEdgeSideArray: Float32Array = new Float32Array(0);
+  private hotEdgeColorArray: Float32Array = new Float32Array(0);
+  private hotEdgeAlphaArray: Float32Array = new Float32Array(0);
+  private hotEdgeIndexArray: Uint32Array = new Uint32Array(0);
+  /** The hot edges (endpoints visible) currently drawn as ribbons. */
+  private hotEdgeList: ThreeEdge[] = [];
+  /** Edge count the ribbon topology was last built for (rebuild on change). */
+  private hotEdgeBuiltCount = -1;
+  /** Number of triangle indices currently live in the ribbon geometry. */
+  private hotEdgeIndexCount = 0;
+  /** True while the ribbon owns the hot edges — the bulk line set then zeroes
+   *  them so they don't double-draw as straight chords under the curves. */
+  private hotRibbonActive = false;
+
+  // Curve ALL bulk edges — an instanced LineSegments that reuses the straight
+  // edge set's own buffers (edgePos/Color/Alpha) as per-instance attributes and
+  // bows each edge into an arc entirely in the vertex shader. When active it
+  // replaces the straight `edgeLines` in the scene (which is kept for state /
+  // hit-testing but removed from rendering). No per-frame CPU cost — the same
+  // buffers the straight set already fills drive the curves.
+  private curvedEdgeGeometry: InstancedBufferGeometry | null = null;
+  private curvedEdgeMaterial: ShaderMaterial | null = null;
+  private curvedEdgeObject: LineSegments | null = null;
+  private curvedEdgesActive = false;
+  /** Instanced buffers wrapping the straight arrays — flagged for re-upload
+   *  whenever those arrays change (they alias the same memory). */
+  private curvedPosBuffer: InstancedInterleavedBuffer | null = null;
+  private curvedColorBuffer: InstancedInterleavedBuffer | null = null;
+  private curvedAlphaBuffer: InstancedInterleavedBuffer | null = null;
+
+  // Depth-of-field: while a highlight is active the background (everything on
+  // layer 0) is rendered to an offscreen target, blurred (downsampled separable
+  // gaussian), composited to screen, then the highlighted set (layer 1: the fg
+  // cores, glow halo, hot-edge ribbon) is drawn sharp on top — so the rest of
+  // the graph is genuinely out of focus, not merely dimmed.
+  private dofSceneRT: WebGLRenderTarget | null = null;
+  private dofRtA: WebGLRenderTarget | null = null; // half-res ping/pong
+  private dofRtB: WebGLRenderTarget | null = null;
+  private blurMaterial: ShaderMaterial | null = null;
+  private copyMaterial: ShaderMaterial | null = null;
+  private postScene: Scene | null = null;
+  private postCamera: OrthographicCamera | null = null;
+  private postQuad: Mesh | null = null;
+  /** Highlighted node cores re-drawn crisply in front of the blur. Shares the
+   *  halo geometry (same highlighted-only draw index) with a depth-test-off
+   *  solid material; lives on render layer 1 (the sharp foreground). */
+  private fgNodePoints: Points | null = null;
+
   private interactionResumeTimer: ReturnType<typeof setTimeout> | null = null;
   private lastEdgeRedraw = 0;
   private layoutSettled = false;
@@ -821,6 +908,7 @@ export class ThreeRenderer {
 
     this.nodeMaterial = createNodeMaterial(this.pixelRatio, {
       hlScale: NODE_SIZE_HIGHLIGHTED_SCALE,
+      hlAlpha: NODE_OPACITY_HIGHLIGHTED,
       dimScale: NODE_SIZE_DIMMED_SCALE,
       dimAlpha: NODE_OPACITY_DIMMED,
     });
@@ -828,12 +916,38 @@ export class ThreeRenderer {
     // with no depth write so it blends over them (see createNodeMaterial).
     this.nodeHaloMaterial = createNodeMaterial(this.pixelRatio, {
       hlScale: NODE_SIZE_HIGHLIGHTED_SCALE,
+      hlAlpha: NODE_OPACITY_HIGHLIGHTED,
       dimScale: NODE_SIZE_DIMMED_SCALE,
       dimAlpha: NODE_OPACITY_DIMMED,
       haloPass: true,
     });
+    // Foreground core material: same as the main node material but depth-test
+    // off, so the highlighted cores drawn in the sharp DOF pass always sit in
+    // front of the blurred background.
+    this.fgNodeMaterial = createNodeMaterial(this.pixelRatio, {
+      hlScale: NODE_SIZE_HIGHLIGHTED_SCALE,
+      hlAlpha: NODE_OPACITY_HIGHLIGHTED,
+      dimScale: NODE_SIZE_DIMMED_SCALE,
+      dimAlpha: NODE_OPACITY_DIMMED,
+    });
+    this.fgNodeMaterial.depthTest = false;
+    this.fgNodeMaterial.depthWrite = false;
     this.edgeMaterial = createEdgeMaterial();
     this.superEdgeMaterial = createEdgeMaterial(); // independent opacity
+    this.hotEdgeMaterial = createHotEdgeMaterial(HOT_EDGE_HALF_WIDTH);
+    this.curvedEdgeMaterial = createCurvedEdgeMaterial(HOT_EDGE_SAG_FACTOR);
+    // Depth-of-field post pipeline: blur/copy materials + a full-screen quad in
+    // its own scene/camera (the shaders emit clip coords directly). Render
+    // targets are sized lazily in ensureDofTargets(). The camera must see layer
+    // 1 (the sharp foreground) in the normal path; the DOF path toggles layers.
+    this.blurMaterial = createBlurMaterial();
+    this.copyMaterial = createCopyMaterial();
+    this.postScene = new Scene();
+    this.postCamera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.postQuad = new Mesh(new PlaneGeometry(2, 2), this.copyMaterial);
+    this.postQuad.frustumCulled = false;
+    this.postScene.add(this.postQuad);
+    this.camera.layers.enable(1);
     // LOD mode: `?lod=1` forces on, `?lod=0` forces off, otherwise 'auto' —
     // engage aggregation only when the graph is big enough that full detail
     // is slow. Small graphs (e.g. 12k) render fully so you always see the
@@ -909,7 +1023,11 @@ export class ThreeRenderer {
       if (this.fit3D && this.stepFit3D()) this.needsRender = true;
       if (this.traversalAnim) this.updateTraversalAnim(performance.now());
       if (this.ambientActive) this.updateAmbient(performance.now());
-      for (const mat of [this.nodeMaterial, this.nodeHaloMaterial]) {
+      for (const mat of [
+        this.nodeMaterial,
+        this.nodeHaloMaterial,
+        this.fgNodeMaterial,
+      ]) {
         if (!mat) continue;
         const u = mat.uniforms as unknown as NodeMaterialUniforms;
         u.uPerspective.value = 1;
@@ -923,8 +1041,9 @@ export class ThreeRenderer {
       if (this.superEdgeMaterial)
         this.superEdgeMaterial.uniforms.uOpacity.value =
           this.edgeOpacityMultiplier;
+      this.syncCurvedEdgeFrame();
       if (this.lodEnabled) this.updateLod();
-      renderer.render(scene, cam);
+      this.renderScene(cam);
       this.updateLabelsPerFrame();
       this.updatePing();
       return;
@@ -1000,12 +1119,147 @@ export class ThreeRenderer {
     if (this.superEdgeMaterial)
       this.superEdgeMaterial.uniforms.uOpacity.value =
         this.edgeOpacityMultiplier;
+    this.syncCurvedEdgeFrame();
     if (this.lodEnabled) this.updateLod();
 
-    renderer.render(scene, cam);
+    this.renderScene(cam);
 
     this.updateLabelsPerFrame();
     this.updatePing();
+  }
+
+  /** Per-frame upkeep for the curved bulk-edge object: mirror the straight
+   *  edge set's visibility (so interaction-hide / LOD / enable toggles all
+   *  apply without duplicating them) and its zoom-driven opacity. */
+  private syncCurvedEdgeFrame(): void {
+    if (
+      !this.curvedEdgesActive ||
+      !this.curvedEdgeObject ||
+      !this.curvedEdgeMaterial
+    )
+      return;
+    this.curvedEdgeObject.visible = this.edgeLines
+      ? this.edgeLines.visible
+      : true;
+    (
+      this.curvedEdgeMaterial.uniforms as unknown as CurvedEdgeMaterialUniforms
+    ).uOpacity.value = this.edgeOpacity();
+  }
+
+  // ─── Depth of field ───────────────────────────────────────────────────
+
+  /** Whether to render through the DOF pipeline this frame (only while a
+   *  highlight is active and not mid build / live-grow, which own the frame). */
+  private dofActive(): boolean {
+    return (
+      this.hasHighlight &&
+      !!this.renderer &&
+      !!this.scene &&
+      !!this.blurMaterial &&
+      !!this.copyMaterial &&
+      !!this.postScene &&
+      !!this.postCamera &&
+      !!this.postQuad &&
+      this.buildAnim === null &&
+      !this.buildPrepared &&
+      !this.liveGrowActive
+    );
+  }
+
+  /** Full-res scene target + half-res ping/pong for the blur, sized to the
+   *  current drawing buffer. */
+  private ensureDofTargets(): void {
+    const r = this.renderer;
+    if (!r) return;
+    const buf = r.getDrawingBufferSize(this.tmpVec2);
+    const fw = Math.max(1, Math.floor(buf.x));
+    const fh = Math.max(1, Math.floor(buf.y));
+    const hw = Math.max(1, Math.floor(fw / 2));
+    const hh = Math.max(1, Math.floor(fh / 2));
+    const opts = { minFilter: LinearFilter, magFilter: LinearFilter };
+    if (!this.dofSceneRT) {
+      this.dofSceneRT = new WebGLRenderTarget(fw, fh, opts);
+      this.dofRtA = new WebGLRenderTarget(hw, hh, opts);
+      this.dofRtB = new WebGLRenderTarget(hw, hh, opts);
+    } else if (this.dofSceneRT.width !== fw || this.dofSceneRT.height !== fh) {
+      this.dofSceneRT.setSize(fw, fh);
+      this.dofRtA!.setSize(hw, hh);
+      this.dofRtB!.setSize(hw, hh);
+    }
+  }
+
+  /** Render the scene with depth of field: layer-0 background rendered to a
+   *  target, blurred (downsampled separable gaussian), composited to screen,
+   *  then the layer-1 sharp foreground (highlighted nodes + edges) on top. */
+  private renderWithDof(cam: OrthographicCamera | PerspectiveCamera): void {
+    const r = this.renderer!;
+    const scene = this.scene!;
+    const blur = this.blurMaterial!;
+    const copy = this.copyMaterial!;
+    const postScene = this.postScene!;
+    const postCam = this.postCamera!;
+    const quad = this.postQuad!;
+    this.ensureDofTargets();
+    const rtScene = this.dofSceneRT!;
+    const rtA = this.dofRtA!;
+    const rtB = this.dofRtB!;
+    const bu = blur.uniforms as unknown as BlurMaterialUniforms;
+    const cu = copy.uniforms as unknown as { uTex: { value: Texture | null } };
+
+    // Pass 1: background (layer 0) → full-res scene target.
+    cam.layers.disableAll();
+    cam.layers.enable(0);
+    r.setRenderTarget(rtScene);
+    r.setClearColor(this.bgColor, 1);
+    r.clear();
+    r.render(scene, cam);
+
+    // Downsample into the half-res ping target.
+    quad.material = copy;
+    cu.uTex.value = rtScene.texture;
+    r.setRenderTarget(rtA);
+    r.render(postScene, postCam);
+
+    // Separable gaussian: horizontal (A→B) then vertical (B→A).
+    const radius = DOF_BLUR_RADIUS;
+    quad.material = blur;
+    bu.uTex.value = rtA.texture;
+    bu.uDir.value = [radius / rtA.width, 0];
+    r.setRenderTarget(rtB);
+    r.render(postScene, postCam);
+    bu.uTex.value = rtB.texture;
+    bu.uDir.value = [0, radius / rtA.height];
+    r.setRenderTarget(rtA);
+    r.render(postScene, postCam);
+
+    // Composite the blurred background to the screen.
+    r.setRenderTarget(null);
+    r.setClearColor(this.bgColor, 1);
+    r.clear();
+    quad.material = copy;
+    cu.uTex.value = rtA.texture;
+    r.render(postScene, postCam);
+
+    // Pass 2: sharp foreground (layer 1) over the composite.
+    cam.layers.disableAll();
+    cam.layers.enable(1);
+    const prevAutoClear = r.autoClear;
+    r.autoClear = false;
+    r.render(scene, cam);
+    r.autoClear = prevAutoClear;
+
+    // Restore camera layers for the next normal render / GPU pick.
+    cam.layers.disableAll();
+    cam.layers.enable(0);
+    cam.layers.enable(1);
+  }
+
+  /** Render the scene, through the DOF pipeline when a highlight is active. */
+  private renderScene(cam: OrthographicCamera | PerspectiveCamera): void {
+    const r = this.renderer;
+    if (!r || !this.scene) return;
+    if (this.dofActive()) this.renderWithDof(cam);
+    else r.render(this.scene, cam);
   }
 
   // ─── Labels ────────────────────────────────────────────────────────
@@ -1426,6 +1680,8 @@ export class ThreeRenderer {
     this.nodeMaterial = null;
     this.nodeHaloMaterial?.dispose();
     this.nodeHaloMaterial = null;
+    this.fgNodeMaterial?.dispose();
+    this.fgNodeMaterial = null;
     this.edgeMaterial?.dispose();
     this.edgeMaterial = null;
     this.pickingMaterial?.dispose();
@@ -1435,6 +1691,24 @@ export class ThreeRenderer {
     this.disposeSuperGraph();
     this.superEdgeMaterial?.dispose();
     this.superEdgeMaterial = null;
+    this.disposeHotEdgeGeometry();
+    this.hotEdgeMaterial?.dispose();
+    this.hotEdgeMaterial = null;
+    this.disposeCurvedEdges();
+    this.curvedEdgeMaterial?.dispose();
+    this.curvedEdgeMaterial = null;
+    this.dofSceneRT?.dispose();
+    this.dofRtA?.dispose();
+    this.dofRtB?.dispose();
+    this.dofSceneRT = this.dofRtA = this.dofRtB = null;
+    this.blurMaterial?.dispose();
+    this.blurMaterial = null;
+    this.copyMaterial?.dispose();
+    this.copyMaterial = null;
+    this.postQuad?.geometry.dispose();
+    this.postQuad = null;
+    this.postScene = null;
+    this.postCamera = null;
     if (this.interactionResumeTimer !== null) {
       clearTimeout(this.interactionResumeTimer);
       this.interactionResumeTimer = null;
@@ -1501,6 +1775,10 @@ export class ThreeRenderer {
     this.nodeHaloGeometry?.dispose();
     this.nodeHaloGeometry = null;
     this.nodeHaloPoints = null;
+    // fgNodePoints shares the halo geometry (already disposed above); just drop
+    // the object from the scene.
+    if (this.fgNodePoints && this.scene) this.scene.remove(this.fgNodePoints);
+    this.fgNodePoints = null;
   }
 
   private disposeEdgeObjects(): void {
@@ -1698,10 +1976,23 @@ export class ThreeRenderer {
       haloGeo.setDrawRange(0, 0); // nothing highlighted yet
       const halo = new Points(haloGeo, this.nodeHaloMaterial);
       halo.frustumCulled = false;
-      halo.renderOrder = 3;
+      halo.renderOrder = 6; // highlighted glow, above the fg cores (5)
+      halo.layers.set(1); // sharp DOF foreground
       this.nodeHaloGeometry = haloGeo;
       this.nodeHaloPoints = halo;
       this.scene.add(halo);
+
+      // Foreground pass: the highlighted node CORES re-drawn crisply in front
+      // of the blurred background. Shares the halo geometry (same highlighted-
+      // only draw index) but uses the solid, depth-test-off core material.
+      if (this.fgNodeMaterial) {
+        const fg = new Points(haloGeo, this.fgNodeMaterial);
+        fg.frustumCulled = false;
+        fg.renderOrder = 5; // under the glow halo (6)
+        fg.layers.set(1); // sharp DOF foreground
+        this.fgNodePoints = fg;
+        this.scene.add(fg);
+      }
     }
     this.requestRender();
   }
@@ -1733,6 +2024,8 @@ export class ThreeRenderer {
     this.fillEdgeColors();
     this.updateEdgeAlpha();
     this.updateEdgePositions();
+    // Swap in the curved edge object (or rebuild it to wrap the new arrays).
+    this.syncCurvedEdges();
   }
 
   /** Depth/order policy for the edge layer, by camera mode.
@@ -1764,8 +2057,19 @@ export class ThreeRenderer {
       this.superEdgeMaterial.uniforms.uDepthBias.value = bias;
       this.superEdgeMaterial.needsUpdate = true;
     }
+    // Curved bulk edges match the straight set: occlude behind nodes in 3D,
+    // draw-under in 2D. (The hot-edge glow ribbon is separate — always on top.)
+    if (this.curvedEdgeMaterial) {
+      const u = this.curvedEdgeMaterial
+        .uniforms as unknown as CurvedEdgeMaterialUniforms;
+      this.curvedEdgeMaterial.depthTest = d;
+      u.uDepthBias.value = bias;
+      u.uMode3d.value = d ? 1 : 0;
+      this.curvedEdgeMaterial.needsUpdate = true;
+    }
     if (this.edgeLines) this.edgeLines.renderOrder = order;
     if (this.superEdgeLines) this.superEdgeLines.renderOrder = order;
+    if (this.curvedEdgeObject) this.curvedEdgeObject.renderOrder = order;
     this.requestRender();
   }
 
@@ -1792,6 +2096,8 @@ export class ThreeRenderer {
         this.edgeGeometry.getAttribute('aColor') as BufferAttribute
       ).needsUpdate = true;
     }
+    if (this.curvedEdgesActive && this.curvedColorBuffer)
+      this.curvedColorBuffer.needsUpdate = true;
     this.requestRender();
   }
 
@@ -1816,8 +2122,400 @@ export class ThreeRenderer {
     (
       this.edgeGeometry.getAttribute('position') as BufferAttribute
     ).needsUpdate = true;
+    // Hot-edge ribbons bow between the same endpoints — follow them as the
+    // layout streams (topology unchanged, so just rewrite curve samples).
+    this.refreshHotEdgePositions();
+    // Curved bulk edges alias edgePosArray — re-upload the instanced buffer.
+    if (this.curvedEdgesActive && this.curvedPosBuffer)
+      this.curvedPosBuffer.needsUpdate = true;
     this.lastEdgeRedraw = performance.now();
     this.requestRender();
+  }
+
+  // ─── Hot-edge glow ribbon ─────────────────────────────────────────────
+  //
+  // Highlighted / chat-traversal edges render as soft, curved, additively-
+  // blended strands of light instead of the bulk edges' straight 1px GL lines,
+  // so a highlight reads as organic filaments rather than a vector-graphic
+  // star. Geometry is built on the CPU (the hot set is small); the ribbon's
+  // pixel width and screen-facing orientation are handled in the shader, so
+  // orbiting the camera never needs a rebuild — only a change to the hot set
+  // (topology) or to node positions (curve samples) does.
+
+  /** Collect the hot edges the ribbon should own this pass: highlighted /
+   *  traversal-crossed edges whose endpoints are both visible. Sets
+   *  `hotRibbonActive` so the bulk line set zeroes them (no double-draw). Above
+   *  HOT_EDGE_MAX the ribbon bows out and the bulk lines keep the hot edges. */
+  private syncHotEdgeList(): void {
+    const list = this.hotEdgeList;
+    list.length = 0;
+    if (!this.hasHighlight) {
+      this.hotRibbonActive = false;
+      return;
+    }
+    for (let i = 0; i < this.edges.length; i++) {
+      const e = this.edges[i];
+      if (!this.edgeIsHot(e.key)) continue;
+      if (this.traversalPendingEdges.has(e.key)) continue; // not yet crossed
+      if (!this.nodeArray[e.sourceIdx]?.visible) continue;
+      if (!this.nodeArray[e.targetIdx]?.visible) continue;
+      list.push(e);
+      if (list.length > HOT_EDGE_MAX) {
+        // Too many to be worth a curved glow mesh — the bulk line set draws them.
+        list.length = 0;
+        this.hotRibbonActive = false;
+        return;
+      }
+    }
+    this.hotRibbonActive = list.length > 0;
+  }
+
+  /** Build / refresh the ribbon geometry from `hotEdgeList`. Topology (side
+   *  flags + triangle indices) only rebuilds when the edge count changes;
+   *  colours + curve samples refresh every call. */
+  private rebuildHotEdges(): void {
+    if (!this.scene || !this.hotEdgeMaterial) return;
+    const count = this.hotEdgeList.length;
+    if (!this.hotRibbonActive || count === 0) {
+      this.clearHotEdges();
+      return;
+    }
+    const N = HOT_EDGE_CURVE_SEGMENTS;
+    const vertsPerEdge = N * 2;
+    const verts = count * vertsPerEdge;
+
+    // Grow the buffers (with headroom) when the edge count outgrows them.
+    if (this.hotEdgeSideArray.length < verts) {
+      const capV = verts * 2;
+      this.hotEdgePosArray = new Float32Array(capV * 3);
+      this.hotEdgeTangentArray = new Float32Array(capV * 3);
+      this.hotEdgeSideArray = new Float32Array(capV);
+      this.hotEdgeColorArray = new Float32Array(capV * 3);
+      this.hotEdgeAlphaArray = new Float32Array(capV);
+      this.hotEdgeIndexArray = new Uint32Array(capV * 3); // ≥ (N-1)*6 per edge
+      this.disposeHotEdgeGeometry(); // rebind fresh arrays below
+      this.hotEdgeBuiltCount = -1; // force topology rebuild onto new buffers
+    }
+
+    if (this.hotEdgeBuiltCount !== count) {
+      const side = this.hotEdgeSideArray;
+      const idx = this.hotEdgeIndexArray;
+      let ii = 0;
+      for (let j = 0; j < count; j++) {
+        const base = j * vertsPerEdge;
+        for (let i = 0; i < N; i++) {
+          side[base + i * 2] = -1;
+          side[base + i * 2 + 1] = 1;
+          if (i < N - 1) {
+            const a0 = base + i * 2;
+            const a1 = a0 + 1;
+            const b0 = a0 + 2;
+            const b1 = a0 + 3;
+            // Two triangles per segment quad (a0,a1,b1,b0).
+            idx[ii++] = a0;
+            idx[ii++] = a1;
+            idx[ii++] = b0;
+            idx[ii++] = a1;
+            idx[ii++] = b1;
+            idx[ii++] = b0;
+          }
+        }
+      }
+      this.hotEdgeIndexCount = ii;
+      this.hotEdgeBuiltCount = count;
+      this.ensureHotEdgeGeometry();
+    }
+
+    this.fillHotEdgeColors();
+    this.refreshHotEdgePositions();
+
+    const geo = this.hotEdgeGeometry;
+    if (geo) {
+      for (const name of ['aTangent', 'aSide', 'aColor', 'aAlpha']) {
+        const attr = geo.getAttribute(name) as BufferAttribute | undefined;
+        if (attr) attr.needsUpdate = true;
+      }
+      const index = geo.getIndex();
+      if (index) index.needsUpdate = true;
+      geo.setDrawRange(0, this.hotEdgeIndexCount);
+    }
+    if (this.hotEdgeMesh) this.hotEdgeMesh.visible = true;
+    this.requestRender();
+  }
+
+  /** Rewrite the ribbon's curve samples (positions + tangents) from the current
+   *  node positions. Cheap; safe to call per layout tick. */
+  private refreshHotEdgePositions(): void {
+    if (!this.hotRibbonActive || !this.hotEdgeGeometry) return;
+    const edges = this.hotEdgeList;
+    const N = HOT_EDGE_CURVE_SEGMENTS;
+    const is3D = this.mode3d;
+    const pos = this.posArray;
+    const P = this.hotEdgePosArray;
+    const T = this.hotEdgeTangentArray;
+    for (let j = 0; j < edges.length; j++) {
+      const e = edges[j];
+      const s = e.sourceIdx * 3;
+      const t2 = e.targetIdx * 3;
+      const ax = pos[s];
+      const ay = pos[s + 1];
+      const az = pos[s + 2];
+      const bx = pos[t2];
+      const by = pos[t2 + 1];
+      const bz = pos[t2 + 2];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const dz = bz - az;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const inv = 1 / len;
+      const dnx = dx * inv;
+      const dny = dy * inv;
+      const dnz = dz * inv;
+      // Bow direction: in the plane for 2D; a stable horizontal arc in 3D
+      // (cross(dir, up), falling back to cross(dir, right) when near-vertical).
+      let px: number;
+      let py: number;
+      let pz: number;
+      if (!is3D) {
+        px = -dny;
+        py = dnx;
+        pz = 0;
+      } else {
+        px = -dnz;
+        py = 0;
+        pz = dnx;
+        if (px * px + py * py + pz * pz < 1e-4) {
+          px = 0;
+          py = dnz;
+          pz = -dny;
+        }
+      }
+      const pl = Math.hypot(px, py, pz) || 1;
+      const pinv = 1 / pl;
+      px *= pinv;
+      py *= pinv;
+      pz *= pinv;
+      const sag = len * HOT_EDGE_SAG_FACTOR;
+      const cx = (ax + bx) * 0.5 + px * sag;
+      const cy = (ay + by) * 0.5 + py * sag;
+      const cz = (az + bz) * 0.5 + pz * sag;
+      const base = j * N * 2;
+      for (let i = 0; i < N; i++) {
+        const tt = i / (N - 1);
+        const u = 1 - tt;
+        // Quadratic bezier point + tangent.
+        const w0 = u * u;
+        const w1 = 2 * u * tt;
+        const w2 = tt * tt;
+        const qx = w0 * ax + w1 * cx + w2 * bx;
+        const qy = w0 * ay + w1 * cy + w2 * by;
+        const qz = w0 * az + w1 * cz + w2 * bz;
+        let gx = 2 * u * (cx - ax) + 2 * tt * (bx - cx);
+        let gy = 2 * u * (cy - ay) + 2 * tt * (by - cy);
+        let gz = 2 * u * (cz - az) + 2 * tt * (bz - cz);
+        const gl = Math.hypot(gx, gy, gz) || 1;
+        const ginv = 1 / gl;
+        gx *= ginv;
+        gy *= ginv;
+        gz *= ginv;
+        const v0 = (base + i * 2) * 3;
+        const v1 = v0 + 3;
+        P[v0] = qx;
+        P[v0 + 1] = qy;
+        P[v0 + 2] = qz;
+        P[v1] = qx;
+        P[v1 + 1] = qy;
+        P[v1 + 2] = qz;
+        T[v0] = gx;
+        T[v0 + 1] = gy;
+        T[v0 + 2] = gz;
+        T[v1] = gx;
+        T[v1 + 1] = gy;
+        T[v1 + 2] = gz;
+      }
+    }
+    const p = this.hotEdgeGeometry.getAttribute('position') as BufferAttribute;
+    p.needsUpdate = true;
+    this.requestRender();
+  }
+
+  /** Per-vertex colour (label colour, or the trail colour while a walk lights
+   *  it) and the along-curve alpha taper (ends melt into the nodes). */
+  private fillHotEdgeColors(): void {
+    const edges = this.hotEdgeList;
+    const N = HOT_EDGE_CURVE_SEGMENTS;
+    const col = this.hotEdgeColorArray;
+    const alp = this.hotEdgeAlphaArray;
+    const hasTrail = this.traversalLitEdges.size > 0;
+    for (let j = 0; j < edges.length; j++) {
+      const e = edges[j];
+      const lit = hasTrail && this.traversalLitEdges.has(e.key);
+      hexToRgb(lit ? TRAVERSAL_TRAIL_COLOR : e.color, this.tmpColor);
+      const r = this.tmpColor.r;
+      const g = this.tmpColor.g;
+      const b = this.tmpColor.b;
+      const base = j * N * 2;
+      for (let i = 0; i < N; i++) {
+        const tt = i / (N - 1);
+        // Soften only the very tips (~4%) so the strand still visually reaches
+        // its nodes — a larger taper left a gap and the nodes looked unconnected.
+        const fade = Math.min(1, tt / 0.04) * Math.min(1, (1 - tt) / 0.04);
+        const a = HOT_EDGE_GLOW_ALPHA * fade;
+        for (let sdx = 0; sdx < 2; sdx++) {
+          const v = base + i * 2 + sdx;
+          col[v * 3] = r;
+          col[v * 3 + 1] = g;
+          col[v * 3 + 2] = b;
+          alp[v] = a;
+        }
+      }
+    }
+  }
+
+  /** (Re)create the ribbon geometry + mesh bound to the current buffers. */
+  private ensureHotEdgeGeometry(): void {
+    if (this.hotEdgeGeometry || !this.scene || !this.hotEdgeMaterial) return;
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(this.hotEdgePosArray, 3));
+    geo.setAttribute(
+      'aTangent',
+      new BufferAttribute(this.hotEdgeTangentArray, 3),
+    );
+    geo.setAttribute('aSide', new BufferAttribute(this.hotEdgeSideArray, 1));
+    geo.setAttribute('aColor', new BufferAttribute(this.hotEdgeColorArray, 3));
+    geo.setAttribute('aAlpha', new BufferAttribute(this.hotEdgeAlphaArray, 1));
+    geo.setIndex(new BufferAttribute(this.hotEdgeIndexArray, 1));
+    const mesh = new Mesh(geo, this.hotEdgeMaterial);
+    mesh.frustumCulled = false;
+    // Part of the sharp foreground (layer 1): drawn on top of the blurred
+    // background with the highlighted nodes (fg cores 5, glow halo 6).
+    mesh.renderOrder = 4;
+    mesh.layers.set(1);
+    this.hotEdgeGeometry = geo;
+    this.hotEdgeMesh = mesh;
+    this.scene.add(mesh);
+  }
+
+  private disposeHotEdgeGeometry(): void {
+    if (this.hotEdgeMesh && this.scene) this.scene.remove(this.hotEdgeMesh);
+    this.hotEdgeGeometry?.dispose();
+    this.hotEdgeGeometry = null;
+    this.hotEdgeMesh = null;
+  }
+
+  /** Stop drawing the ribbon (keeps buffers for reuse). */
+  private clearHotEdges(): void {
+    this.hotRibbonActive = false;
+    this.hotEdgeList.length = 0;
+    if (this.hotEdgeMesh) this.hotEdgeMesh.visible = false;
+  }
+
+  // ─── Curve-all bulk edges ─────────────────────────────────────────────
+  //
+  // Render every edge as a gentle arc instead of a straight ray. An instanced
+  // LineSegments draws one template curve per edge; the edge's endpoints /
+  // colour / alpha arrive as per-instance attributes that ALIAS the straight
+  // edge set's own arrays, and the bezier is evaluated in the vertex shader —
+  // so this adds no per-frame CPU work and reuses all the straight set's alpha /
+  // colour / visibility logic. When active it replaces the straight `edgeLines`
+  // in the scene (kept for hit-testing + state, just not rendered). Gated to
+  // graphs small enough that edges are actually shown (see CURVE_ALL_EDGES_MAX)
+  // and skipped mid-live-build (arrays realloc there).
+
+  private shouldCurveEdges(): boolean {
+    return (
+      this.edges.length > 0 &&
+      this.edges.length <= CURVE_ALL_EDGES_MAX &&
+      !this.liveGrowActive &&
+      this.buildAnim === null &&
+      !this.buildPrepared
+    );
+  }
+
+  /** Activate / deactivate / rebuild the curved edge object to match the
+   *  current edge set. Call after the straight edge geometry is (re)built. */
+  private syncCurvedEdges(): void {
+    if (!this.scene) return;
+    if (this.shouldCurveEdges()) {
+      // Rebuild so the instanced attributes wrap the CURRENT arrays (a prior
+      // buildEdgeObjects / append may have reallocated them).
+      this.disposeCurvedEdges();
+      this.buildCurvedEdgeGeometry();
+      if (this.curvedEdgeObject) {
+        this.scene.add(this.curvedEdgeObject);
+        if (this.edgeLines) this.scene.remove(this.edgeLines);
+        this.curvedEdgesActive = true;
+        this.applyEdgeDepthMode(); // sets depthTest / bias / renderOrder / mode
+        this.flagCurvedEdgeBuffers();
+        this.requestRender();
+      }
+    } else if (this.curvedEdgesActive) {
+      this.disposeCurvedEdges();
+      if (this.edgeLines && !this.scene.children.includes(this.edgeLines)) {
+        this.scene.add(this.edgeLines);
+      }
+      this.curvedEdgesActive = false;
+      this.requestRender();
+    }
+  }
+
+  private buildCurvedEdgeGeometry(): void {
+    if (!this.curvedEdgeMaterial) return;
+    const N = CURVE_ALL_EDGES_SEGMENTS; // sample points
+    const segs = N - 1; // sub-segments (LineSegments → vertex pairs)
+    const vtx = segs * 2;
+    // Template: a curve parameter per vertex; dummy positions (the shader
+    // computes the real position from the per-instance endpoints + aT).
+    const aT = new Float32Array(vtx);
+    const dummy = new Float32Array(vtx * 3);
+    let k = 0;
+    for (let i = 0; i < segs; i++) {
+      aT[k++] = i / segs;
+      aT[k++] = (i + 1) / segs;
+    }
+    const geo = new InstancedBufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(dummy, 3));
+    geo.setAttribute('aT', new BufferAttribute(aT, 1));
+    // Per-instance attributes aliasing the straight edge arrays (same memory):
+    //   edgePosArray   6 floats/edge → iA(0..2), iB(3..5)
+    //   edgeColorArray 6 floats/edge → iColor(0..2) (both verts share a colour)
+    //   edgeAlphaArray 2 floats/edge → iAlpha(0)
+    const posBuf = new InstancedInterleavedBuffer(this.edgePosArray, 6);
+    const colBuf = new InstancedInterleavedBuffer(this.edgeColorArray, 6);
+    const alpBuf = new InstancedInterleavedBuffer(this.edgeAlphaArray, 2);
+    geo.setAttribute('iA', new InterleavedBufferAttribute(posBuf, 3, 0));
+    geo.setAttribute('iB', new InterleavedBufferAttribute(posBuf, 3, 3));
+    geo.setAttribute('iColor', new InterleavedBufferAttribute(colBuf, 3, 0));
+    geo.setAttribute('iAlpha', new InterleavedBufferAttribute(alpBuf, 1, 0));
+    geo.instanceCount = this.edges.length;
+    this.curvedPosBuffer = posBuf;
+    this.curvedColorBuffer = colBuf;
+    this.curvedAlphaBuffer = alpBuf;
+    const obj = new LineSegments(geo, this.curvedEdgeMaterial);
+    obj.frustumCulled = false;
+    this.curvedEdgeGeometry = geo;
+    this.curvedEdgeObject = obj;
+  }
+
+  /** Re-upload the instanced buffers after the aliased arrays change (they
+   *  share memory with the straight set, which fills them). */
+  private flagCurvedEdgeBuffers(): void {
+    if (!this.curvedEdgesActive) return;
+    if (this.curvedPosBuffer) this.curvedPosBuffer.needsUpdate = true;
+    if (this.curvedColorBuffer) this.curvedColorBuffer.needsUpdate = true;
+    if (this.curvedAlphaBuffer) this.curvedAlphaBuffer.needsUpdate = true;
+  }
+
+  private disposeCurvedEdges(): void {
+    if (this.curvedEdgeObject && this.scene) {
+      this.scene.remove(this.curvedEdgeObject);
+    }
+    this.curvedEdgeGeometry?.dispose();
+    this.curvedEdgeGeometry = null;
+    this.curvedEdgeObject = null;
+    this.curvedPosBuffer = null;
+    this.curvedColorBuffer = null;
+    this.curvedAlphaBuffer = null;
   }
 
   /** Recompute per-edge alpha from edgesEnabled / hidden types / highlight.
@@ -1833,8 +2531,12 @@ export class ThreeRenderer {
       (
         this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute
       ).needsUpdate = true;
+      this.clearHotEdges();
       return;
     }
+    // Resolve which hot edges (if any) the glow ribbon owns BEFORE the per-edge
+    // loop — edgeAlphaGeneral reads hotRibbonActive to zero those edges here.
+    this.syncHotEdgeList();
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
@@ -1860,7 +2562,10 @@ export class ThreeRenderer {
     }
     (this.edgeGeometry.getAttribute('aAlpha') as BufferAttribute).needsUpdate =
       true;
+    if (this.curvedEdgesActive && this.curvedAlphaBuffer)
+      this.curvedAlphaBuffer.needsUpdate = true;
     this.rebuildEdgeDrawIndex();
+    this.rebuildHotEdges();
   }
 
   /** Per-edge alpha, general path (highlight active and/or traversal edges
@@ -1892,13 +2597,17 @@ export class ThreeRenderer {
       (lodVis[e.sourceIdx] === 0 || lodVis[e.targetIdx] === 0);
     if (!sVis || !tVis || (lodHidden && !hot)) return 0;
     if (this.hasHighlight) {
-      // Hot edges use the shader's ABSOLUTE encoding (1 + alpha) so the
-      // lit path renders fully opaque regardless of the preset's edge
-      // opacity. Everything else keeps its normal global multiplier and
-      // is dimmed relative to it — a preset that hides edges (Onion 0%,
-      // Planet 15%) keeps them hidden while the walked path lights up.
+      // Hot edges normally use the shader's ABSOLUTE encoding (1 + alpha) so
+      // the lit path renders fully opaque regardless of the preset's edge
+      // opacity. But when the glow ribbon owns them (hotRibbonActive) they must
+      // be zeroed here so the straight chord doesn't draw under the curve.
+      // Everything else keeps its normal global multiplier and is dimmed
+      // relative to it — a preset that hides edges (Onion 0%, Planet 15%) keeps
+      // them hidden while the walked path lights up.
       return hot
-        ? 1 + EDGE_OPACITY_HIGHLIGHTED
+        ? this.hotRibbonActive
+          ? 0
+          : 1 + EDGE_OPACITY_HIGHLIGHTED
         : traversalActive
           ? 0
           : EDGE_OPACITY_DIMMED;
@@ -2548,6 +3257,9 @@ export class ThreeRenderer {
     const edgeWasVisible = this.edgeLines?.visible ?? false;
     const superEdgeWasVisible = this.superEdgeLines?.visible ?? false;
     const haloWasVisible = this.nodeHaloPoints?.visible ?? false;
+    const curvedWasVisible = this.curvedEdgeObject?.visible ?? false;
+    const hotWasVisible = this.hotEdgeMesh?.visible ?? false;
+    const fgWasVisible = this.fgNodePoints?.visible ?? false;
     points.material = this.pickingMaterial;
     if (this.superNodePoints)
       this.superNodePoints.material = this.pickingMaterial;
@@ -2556,6 +3268,13 @@ export class ThreeRenderer {
     // The halo overlay would write its glow colors into the id buffer; the
     // highlighted nodes are already pickable via the main pass's index.
     if (this.nodeHaloPoints) this.nodeHaloPoints.visible = false;
+    // Same for the curved bulk edges + hot-edge glow ribbon: an edge passing
+    // over a node would otherwise blend its colour into the id pixel and
+    // corrupt the pick (the "click does nothing" bug).
+    if (this.curvedEdgeObject) this.curvedEdgeObject.visible = false;
+    if (this.hotEdgeMesh) this.hotEdgeMesh.visible = false;
+    // The fg cores would write node display colours into the id buffer.
+    if (this.fgNodePoints) this.fgNodePoints.visible = false;
 
     const dpr = renderer.getPixelRatio();
     const buf = renderer.getDrawingBufferSize(this.tmpVec2);
@@ -2595,6 +3314,9 @@ export class ThreeRenderer {
     if (this.edgeLines) this.edgeLines.visible = edgeWasVisible;
     if (this.superEdgeLines) this.superEdgeLines.visible = superEdgeWasVisible;
     if (this.nodeHaloPoints) this.nodeHaloPoints.visible = haloWasVisible;
+    if (this.curvedEdgeObject) this.curvedEdgeObject.visible = curvedWasVisible;
+    if (this.hotEdgeMesh) this.hotEdgeMesh.visible = hotWasVisible;
+    if (this.fgNodePoints) this.fgNodePoints.visible = fgWasVisible;
     renderer.setClearColor(this.bgColor, 1);
 
     const id =
@@ -4154,6 +4876,7 @@ export class ThreeRenderer {
           0.1,
           Math.max(dist * 100, 1e6),
         );
+        this.perspCamera.layers.enable(1); // see the sharp DOF foreground
       }
       this.perspCamera.aspect = this.width / this.height;
       // Position from azimuth 0 at the configured tilt.
@@ -4535,6 +5258,9 @@ export class ThreeRenderer {
     // start now. If the layout is still re-settling (end-of-build reseed), the
     // layoutSettled gate keeps this a no-op and the settle path activates it.
     this.refreshAmbient();
+    // Live build done — the edge arrays are stable now, so curve the bulk edges
+    // (skipped while liveGrowActive to avoid chasing reallocating buffers).
+    this.syncCurvedEdges();
     this.requestRender();
   }
 

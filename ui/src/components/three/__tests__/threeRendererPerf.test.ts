@@ -75,11 +75,13 @@ function makeRenderer(opts?: { camera?: boolean }): Rndr {
   r.scene = new Scene();
   r.nodeMaterial = createNodeMaterial(1, {
     hlScale: 1.5,
+    hlAlpha: 0.6,
     dimScale: 0.5,
     dimAlpha: 0.2,
   });
   r.nodeHaloMaterial = createNodeMaterial(1, {
     hlScale: 1.5,
+    hlAlpha: 0.6,
     dimScale: 0.5,
     dimAlpha: 0.2,
     haloPass: true,
