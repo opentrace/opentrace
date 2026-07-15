@@ -30,7 +30,12 @@
 import type { EmbedderConfig } from './types';
 
 type InMessage =
-  | { seq: number; type: 'init'; config: EmbedderConfig }
+  | {
+      seq: number;
+      type: 'init';
+      config: EmbedderConfig;
+      gpuPreferred?: boolean;
+    }
   | { seq: number; type: 'embed'; texts: string[] }
   | { seq: number; type: 'dispose' };
 
@@ -64,18 +69,23 @@ function webGpuAvailable(): boolean {
 // promise so only one runs at a time.
 let embedQueue: Promise<void> = Promise.resolve();
 
-async function handleInit(config: EmbedderConfig): Promise<number> {
+async function handleInit(
+  config: EmbedderConfig,
+  gpuPreferred: boolean,
+): Promise<number> {
   const { pipeline } = await import('@huggingface/transformers');
-  // Prefer WebGPU (typically 10–100× faster, and lets us batch) with fp32 —
-  // the always-present weights — falling back to the quantized WASM path on any
-  // failure so a machine without WebGPU (or a flaky adapter) still embeds.
-  if (webGpuAvailable()) {
+  // Prefer WebGPU (typically 10–100× faster, and lets us batch) with fp32 — the
+  // always-present weights — but ONLY on non-constrained devices: fp32 is ~90MB
+  // vs the quantized ~23MB, too much to stack on a phone's already-full heap.
+  // Falls back to the quantized WASM path on any failure.
+  if (gpuPreferred && webGpuAvailable()) {
     try {
       pipelineInstance = await pipeline('feature-extraction', config.model, {
         dtype: 'fp32',
         device: 'webgpu',
       });
       device = 'webgpu';
+      console.info('[embedderWorker] using WebGPU (fp32)');
       return dimension;
     } catch (err) {
       console.warn(
@@ -86,11 +96,12 @@ async function handleInit(config: EmbedderConfig): Promise<number> {
     }
   }
   pipelineInstance = await pipeline('feature-extraction', config.model, {
-    // Quantized model — the historical WASM default.
+    // Quantized model — small footprint, the default for phones + the fallback.
     dtype: 'q8',
     device: 'wasm',
   });
   device = 'wasm';
+  console.info('[embedderWorker] using WASM (q8)');
   return dimension;
 }
 
@@ -135,7 +146,7 @@ self.onmessage = async (e: MessageEvent<InMessage>) => {
   const msg = e.data;
   try {
     if (msg.type === 'init') {
-      const dim = await handleInit(msg.config);
+      const dim = await handleInit(msg.config, msg.gpuPreferred ?? false);
       const reply: OutMessage = {
         seq: msg.seq,
         type: 'init-done',

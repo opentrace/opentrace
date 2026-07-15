@@ -28,6 +28,7 @@
  */
 
 import type { Embedder, EmbedderConfig } from './types';
+import { isConstrainedDevice } from '../../../../config/device';
 
 type OutMessage =
   | { seq: number; type: 'init-done'; dimension: number }
@@ -68,8 +69,12 @@ export class WorkerEmbedder implements Embedder {
     // earlier pipeline stages. Matches the previous main-thread
     // behavior where `MiniLmEmbedder.init()` was kicked off from
     // EmbedStage's constructor.
+    // Only let the worker reach for the (bigger, fp32) WebGPU model on
+    // non-constrained devices; phones stay on the small quantized WASM model so
+    // the embedder doesn't add a ~90MB model on top of an already-full heap.
     this.initPromise = this.request<{ dimension: number }>('init', {
       config,
+      gpuPreferred: !isConstrainedDevice(),
     }).then((reply) => {
       this.dim = reply.dimension;
     });
