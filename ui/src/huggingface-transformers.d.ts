@@ -25,4 +25,15 @@ declare module '@huggingface/transformers' {
       options?: Record<string, unknown>,
     ) => Promise<Array<{ generated_text: string }>>
   >;
+
+  /** Global runtime config. Only the fields we set are typed. */
+  export const env: {
+    backends: {
+      onnx: {
+        wasm: {
+          numThreads: number;
+        };
+      };
+    };
+  };
 }

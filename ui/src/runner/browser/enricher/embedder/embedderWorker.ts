@@ -73,7 +73,15 @@ async function handleInit(
   config: EmbedderConfig,
   gpuPreferred: boolean,
 ): Promise<number> {
-  const { pipeline } = await import('@huggingface/transformers');
+  const { pipeline, env } = await import('@huggingface/transformers');
+  // On a constrained device, run onnxruntime single-threaded. With COOP/COEP on
+  // (for LadybugDB's SharedArrayBuffer), onnxruntime otherwise spins up
+  // multi-threaded WASM backed by a SharedArrayBuffer sized for every thread —
+  // a big heap. One thread shrinks that peak (slower inference, but the embed
+  // step is far less likely to OOM the tab on top of the full graph).
+  if (!gpuPreferred) {
+    env.backends.onnx.wasm.numThreads = 1;
+  }
   // Prefer WebGPU (typically 10–100× faster, and lets us batch) with fp32 — the
   // always-present weights — but ONLY on non-constrained devices: fp32 is ~90MB
   // vs the quantized ~23MB, too much to stack on a phone's already-full heap.
