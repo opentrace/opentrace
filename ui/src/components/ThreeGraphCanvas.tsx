@@ -332,20 +332,18 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
       } else {
         r.endLiveGrow();
         releasePins();
-        // A live build grows the layout path-dependently: each batch seeds new
-        // nodes next to already-placed neighbours while existing ones are
-        // pinned, so the settled result depends on arrival order — visibly
-        // different from the fresh-seed layout the same preset produces on a
-        // chip click. Re-lay-out from scratch once the build ends (pins just
-        // released, order matters) so "indexed in Planet" and "switched to
-        // Planet" converge to the same canonical shape.
+        // Keep the grown arrangement — do NOT reseed. The build is configured
+        // with the active preset's layout/physics up front (see GraphViewer's
+        // live-stream preset effect), so the graph already grows into that
+        // shape; a from-scratch reseed here would just re-explode it into a
+        // path-dependent variant. Only re-fit the camera to frame the settled
+        // result.
         if (didLiveGrowRef.current) {
           didLiveGrowRef.current = false;
-          reseed();
           r.scheduleAutoFit(800);
         }
       }
-    }, [liveGrow, layoutReady, releasePins, reseed]);
+    }, [liveGrow, layoutReady, releasePins]);
 
     // ── Set data when layout is ready ───────────────────────────────────
     const prevNodeIdsRef = useRef<Set<string>>(new Set());

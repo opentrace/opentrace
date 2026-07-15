@@ -30,6 +30,7 @@ import {
   type GraphPresetSettings,
 } from '@opentrace/components';
 import {
+  type CSSProperties,
   forwardRef,
   memo,
   useCallback,
@@ -455,26 +456,24 @@ const GraphViewer = memo(
         });
       }, []);
 
-      // On the first graph load, restore the remembered preset (re-applied in
-      // full so options that don't persist — autorotate, color mode — are
-      // honored), or apply the default on a user's very first load. Runs once
-      // per mount; 'custom' means the user is hand-driving, so we leave the
-      // individually-persisted settings alone.
+      // Restore the remembered preset (re-applied in full so options that don't
+      // persist — autorotate, color mode — are honored), or apply the default on
+      // a user's very first load. `animate` is false in both call sites: the
+      // graph is either laying out fresh (first load) or building live, so a
+      // reseed/recenter would fight that motion. Returns false and leaves
+      // settings untouched when 'custom' is stored (the user is hand-driving).
       const presetAppliedRef = useRef(false);
-      useEffect(() => {
-        if (presetAppliedRef.current) return;
-        if (graphVersion === 0 || graphData.nodes.length === 0) return;
-        presetAppliedRef.current = true;
+      const restoreRememberedPreset = useCallback(() => {
         let stored: string | null = null;
         try {
           stored = localStorage.getItem(PRESET_STORAGE_KEY);
         } catch {
           // ignore
         }
-        if (stored === CUSTOM_PRESET) return;
+        if (stored === CUSTOM_PRESET) return false;
         const id = stored ?? DEFAULT_PRESET_ID;
         const preset = getPreset(id);
-        if (!preset) return;
+        if (!preset) return false;
         setActivePresetId(id);
         if (stored === null) {
           try {
@@ -484,7 +483,35 @@ const GraphViewer = memo(
           }
         }
         applyPresetSettings(preset.settings, false);
-      }, [graphVersion, graphData.nodes.length, applyPresetSettings]);
+        return true;
+      }, [applyPresetSettings]);
+
+      // On the first graph load, restore the remembered preset. Runs once per
+      // mount; the live-build path below owns this during streaming.
+      useEffect(() => {
+        if (presetAppliedRef.current) return;
+        if (graphVersion === 0 || graphData.nodes.length === 0) return;
+        presetAppliedRef.current = true;
+        restoreRememberedPreset();
+      }, [graphVersion, graphData.nodes.length, restoreRememberedPreset]);
+
+      // Apply the remembered preset (or Planet on a first-ever index) the moment
+      // a live build STARTS, so the graph grows directly into that layout's
+      // physics and 3D/color settings. Without this the build would settle with
+      // the generic defaults and only snap to the preset at the end — the
+      // jarring end-of-build re-layout. Marking presetAppliedRef here keeps the
+      // first-load effect above from re-applying (and reseeding) post-build.
+      const liveStreamPresetRef = useRef(false);
+      useEffect(() => {
+        if (!isStreaming) {
+          liveStreamPresetRef.current = false;
+          return;
+        }
+        if (liveStreamPresetRef.current) return;
+        liveStreamPresetRef.current = true;
+        presetAppliedRef.current = true;
+        restoreRememberedPreset();
+      }, [isStreaming, restoreRememberedPreset]);
 
       // Sync ambient motion (gentle perpetual drift) to the renderer. Re-applied
       // on each graph load (graphVersion) since a fresh layout resets the worker.
@@ -698,7 +725,12 @@ const GraphViewer = memo(
       // whenever the user hasn't expanded to the full modal.
       const showLivePanel = jobActive && !jobExpanded;
 
-      const graphWidth = showChat || showHelp ? width - chatWidth : width;
+      // The canvas is ALWAYS full-width now: the chat / help panels float over it
+      // as translucent overlays (like the left side panel) so the graph shines
+      // through them. `rightPanelInset` shifts the bottom-right graph controls
+      // clear of whichever right panel is open so they stay reachable.
+      const graphWidth = width;
+      const rightPanelInset = showChat || showHelp ? chatWidth : 0;
 
       // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
       // to the "Computing layout" overlay without flashing "no data").
@@ -789,7 +821,12 @@ const GraphViewer = memo(
       // --- Main graph viewport ---
 
       return (
-        <div className="graph-viewport">
+        <div
+          className="graph-viewport"
+          style={
+            { '--right-panel-inset': `${rightPanelInset}px` } as CSSProperties
+          }
+        >
           <GraphToolbar
             logo={
               <button

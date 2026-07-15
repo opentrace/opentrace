@@ -286,7 +286,8 @@
 .graph-controls {
   position: absolute;
   bottom: 20px;
-  right: 24px;
+  /* Sit clear of the right-hand chat / help overlay when one is open. */
+  right: calc(24px + var(--right-panel-inset, 0px));
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -740,13 +741,19 @@
 }
 
 .chat-panel {
-  flex-shrink: 0;
-  background: var(--background);
+  /* Floats over the full-width graph (like the left side panel) with a
+   * translucent, blurred background so the graph shines through. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
   z-index: 10;
-  position: relative;
   padding-top: 64px;
   /* Clamp so a stored width wider than the current viewport can't hide the
    * left-edge resize handle. The stored value persists — CSS renders the
@@ -1802,6 +1809,10 @@
     border-top: 1px solid var(--border);
     padding-top: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
+    /* Stacked below the graph on mobile — nothing behind it, so keep it opaque. */
+    background: var(--background);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .chat-input-area {
