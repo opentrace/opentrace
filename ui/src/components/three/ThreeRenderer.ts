@@ -329,8 +329,26 @@ const BUILD_BACK_C1 = 2.2;
 /** Per-frame ease for a settled node following its layout target. Kept GENTLE
  *  (vs the burst) so settled nodes drift toward their moving target smoothly
  *  instead of snapping — the streaming force layout is still settling, so a
- *  stiff follow reads as jitter. */
+ *  stiff follow reads as jitter. Legacy fallback: only used if interpolation
+ *  has no interval yet (before the second position post arrives). */
 const GROW_FOLLOW_ALPHA = 0.08;
+/** Snapshot-interpolation slack. The worker streams positions on a node-count-
+ *  scaled interval (~66ms small graphs → ~240ms cap on huge ones), so a settled
+ *  node's on-screen motion is only as smooth as that ~5Hz stream unless we
+ *  interpolate. Each post we snapshot where the node IS and lerp it toward the
+ *  newly-posted target over the measured inter-post interval, evaluated every
+ *  render frame → smooth 60fps motion decoupled from the (deliberately throttled,
+ *  indexing-protecting) post rate. Slack >1 stretches the interpolation window a
+ *  little past the measured interval so a late/slower next post doesn't leave the
+ *  node parked at its target (a visible stutter); the next snapshot always
+ *  re-bases from the node's actual position, so the mild perpetual lag never
+ *  accumulates. */
+const LIVE_INTERP_SLACK = 1.2;
+/** Assumed inter-post interval (ms) before two posts have been observed. */
+const LIVE_INTERP_DEFAULT_MS = 120;
+/** EMA weight for the newest measured inter-post interval (rest = history), so
+ *  the pacing stays stable as the stream interval grows with the graph. */
+const LIVE_INTERP_INTERVAL_EMA = 0.3;
 /** Per-node grow-in window (ms): a freshly-indexed node eases out from its
  *  parent + scales 0→full over this long. Slower than the burst for a calm,
  *  controlled reveal (the user's "slow and smooth", not jumpy). */
@@ -528,6 +546,23 @@ export class ThreeRenderer {
   private layoutPos: Float32Array = new Float32Array(0);
 
   // ── Live-build state (continuous "build while indexing") ───────────
+  /** Snapshot-interpolation start positions: where each settled node was on
+   *  screen at the last position post (stride 3, capacity-sized). The render
+   *  loop lerps posArray from here toward `layoutPos` over the measured post
+   *  interval so the ~5Hz worker stream renders as smooth 60fps motion. */
+  private layoutInterpPrev: Float32Array = new Float32Array(0);
+  /** performance.now() of the last position post (interpolation window start). */
+  private layoutInterpStart = 0;
+  /** EMA of the inter-post interval (ms); the interpolation window length. */
+  private layoutInterpDur = 0;
+  /** True once a prev snapshot exists (i.e. at least one post seen this build). */
+  private layoutInterpActive = false;
+  /** After a live build finalizes, the worker keeps streaming its release-pins
+   *  settle. While true, those (non-live) posts are snapshot-interpolated too so
+   *  the settle stays as smooth as the build instead of rendering raw at the
+   *  ~5Hz stream rate. Cleared once the layout settles or an interaction /
+   *  ambient drift takes over (see updateStreamInterp). */
+  private postBuildSettle = false;
   /** While true, layout output streams into `layoutPos`; the render loop eases
    *  posArray toward it (settled nodes — kept stable by worker-side pinning)
    *  and flies newly-added nodes out from their parent. */
@@ -1012,12 +1047,14 @@ export class ThreeRenderer {
         this.traversalAnim === null &&
         !this.ambientActive &&
         !this.liveGrowActive &&
+        !this.postBuildSettle &&
         this.fit3D === null
       )
         return;
       this.needsRender = false;
       if (this.buildAnim) this.updateBuildAnim(performance.now());
       if (this.liveGrowActive) this.updateLiveGrow(performance.now());
+      if (this.postBuildSettle) this.updateStreamInterp(performance.now());
       // Animated final fit (smooth end-of-build reframe). Keep drawing while
       // it eases; it clears itself when it reaches the goal.
       if (this.fit3D && this.stepFit3D()) this.needsRender = true;
@@ -1064,7 +1101,8 @@ export class ThreeRenderer {
       this.buildAnim === null &&
       this.traversalAnim === null &&
       !this.ambientActive &&
-      !this.liveGrowActive
+      !this.liveGrowActive &&
+      !this.postBuildSettle
     )
       return;
     this.needsRender = false;
@@ -1103,6 +1141,7 @@ export class ThreeRenderer {
 
     if (this.buildAnim) this.updateBuildAnim(performance.now());
     if (this.liveGrowActive) this.updateLiveGrow(performance.now());
+    if (this.postBuildSettle) this.updateStreamInterp(performance.now());
     if (this.traversalAnim) this.updateTraversalAnim(performance.now());
     if (this.ambientActive) this.updateAmbient(performance.now());
 
@@ -1844,6 +1883,7 @@ export class ThreeRenderer {
     this.nodeCapacity = cap;
     this.posArray = new Float32Array(cap * 3);
     this.layoutPos = new Float32Array(cap * 3);
+    this.layoutInterpPrev = new Float32Array(cap * 3);
     this.colorArray = new Float32Array(cap * 3);
     this.sizeArray = new Float32Array(cap);
     this.stateArray = new Float32Array(cap);
@@ -2872,12 +2912,49 @@ export class ThreeRenderer {
 
   /** Stride-3 Float64Array from the layout worker (x0,y0,z0,x1,y1,z1,...).
    *  z is 0 in 2D mode. */
+  /** Open a fresh snapshot-interpolation window for a live build: record where
+   *  every node currently IS (posArray) as the lerp start and measure the gap
+   *  since the last post so the render loop can pace the lerp. No-op unless a
+   *  live build is active. */
+  private markLiveInterpPost(): void {
+    if (!this.liveGrowActive && !this.postBuildSettle) return;
+    const used = this.nodeArray.length * 3;
+    if (this.layoutInterpPrev.length < used) return;
+    this.layoutInterpPrev.set(this.posArray.subarray(0, used));
+    const now = performance.now();
+    const dt =
+      this.layoutInterpStart > 0
+        ? now - this.layoutInterpStart
+        : LIVE_INTERP_DEFAULT_MS;
+    this.layoutInterpDur =
+      this.layoutInterpDur > 0
+        ? this.layoutInterpDur * (1 - LIVE_INTERP_INTERVAL_EMA) +
+          dt * LIVE_INTERP_INTERVAL_EMA
+        : dt;
+    this.layoutInterpStart = now;
+    this.layoutInterpActive = true;
+  }
+
+  /** True when a post should feed the snapshot interpolator rather than being
+   *  drawn raw: during the live build, OR during the post-build settle (as long
+   *  as nothing else — a drag, ambient drift, or full settle — has taken over). */
+  private interpTargetsPosts(): boolean {
+    if (this.buildAnim !== null || this.liveGrowActive) return true;
+    return (
+      this.postBuildSettle &&
+      !this.layoutSettled &&
+      !this.ambientActive &&
+      this.dragNodeIndex < 0
+    );
+  }
+
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const len = Math.min(this.nodeArray.length, Math.floor(buffer.length / 3));
-    // During a build OR live-build the layout streams into layoutPos (the
-    // animation's fly-out / follow targets) and the animation writes the
-    // rendered posArray itself. Outside both, it writes posArray directly.
-    const toTargets = this.buildAnim !== null || this.liveGrowActive;
+    // During a build/live-build/post-build settle the layout streams into
+    // layoutPos (the interpolation targets) and the render loop writes the eased
+    // posArray itself. Otherwise it writes posArray directly.
+    const toTargets = this.interpTargetsPosts();
+    if (toTargets) this.markLiveInterpPost();
     const pos = toTargets ? this.layoutPos : this.posArray;
     for (let i = 0; i < len; i++) {
       const o = i * 3;
@@ -2899,7 +2976,8 @@ export class ThreeRenderer {
   }
 
   updatePositions(positions: Map<string, { x: number; y: number }>): void {
-    const toTargets = this.buildAnim !== null || this.liveGrowActive;
+    const toTargets = this.interpTargetsPosts();
+    if (toTargets) this.markLiveInterpPost();
     const pos = toTargets ? this.layoutPos : this.posArray;
     for (const [id, p] of positions) {
       const i = this.nodeIdToIndex.get(id);
@@ -4266,6 +4344,22 @@ export class ThreeRenderer {
 
   setLayoutSettled(settled: boolean): void {
     this.layoutSettled = settled;
+    // The post-build settle interpolation perpetually lags its target by a hair
+    // (LIVE_INTERP_SLACK). On settle, land posArray on the final layout BEFORE
+    // edges refresh / ambient captures its home, so nothing centers on the stale
+    // lagging positions.
+    if (settled && this.postBuildSettle) {
+      const used = this.nodeArray.length * 3;
+      if (this.layoutInterpActive && used <= this.layoutPos.length) {
+        this.posArray.set(this.layoutPos.subarray(0, used));
+        if (this.nodeGeometry) {
+          (
+            this.nodeGeometry.getAttribute('position') as BufferAttribute
+          ).needsUpdate = true;
+        }
+      }
+      this.postBuildSettle = false;
+    }
     // Refresh once on the transition so endpoints aren't left stale after the
     // throttle gate stops firing on settle.
     if (this.edgeLines && !this.edgesHiddenForInteraction) {
@@ -5207,6 +5301,13 @@ export class ThreeRenderer {
     this.liveGrowLastBirth = 0;
     this.liveGrowPrevPos = null;
     this.liveCamRadius = 0;
+    // Reset snapshot-interpolation pacing for this build; the prev buffer is
+    // (re)sized to the current position buffer so it always matches posArray.
+    this.layoutInterpPrev = this.posArray.slice();
+    this.layoutInterpStart = 0;
+    this.layoutInterpDur = 0;
+    this.layoutInterpActive = false;
+    this.postBuildSettle = false; // a fresh build supersedes any prior settle
     const n = this.nodeArray.length;
     this.growBirth = new Float32Array(n).fill(GROW_BORN);
     this.growParent = new Int32Array(n).fill(-1);
@@ -5245,6 +5346,17 @@ export class ThreeRenderer {
       ).needsUpdate = true;
       this.updateEdgePositions();
       this.updateEdgeAlpha();
+    }
+    // The worker keeps streaming its release-pins settle after the build ends.
+    // Keep snapshot-interpolating those posts so the settle stays as smooth as
+    // the build instead of stepping at the ~5Hz stream rate. Only arm while the
+    // layout is still settling; updateStreamInterp clears it the moment the
+    // worker settles or a drag / ambient drift takes over.
+    if (this.nodeArray.length > 0 && !this.layoutSettled) {
+      this.postBuildSettle = true;
+      this.layoutInterpStart = 0;
+      this.layoutInterpDur = 0;
+      this.layoutInterpActive = false;
     }
     // Smoothly settle into the final framing (3D animates the reframe; 2D uses
     // the eased zoomToFit). This catches up any zoom the live follow didn't
@@ -5384,19 +5496,38 @@ export class ThreeRenderer {
     const pos = this.posArray;
     const sz = this.sizeArray;
     const lp = this.layoutPos;
+    const prev = this.layoutInterpPrev;
     const tgt = this.growTargetSize;
     const birth = this.growBirth;
     const parent = this.growParent;
     const a = GROW_FOLLOW_ALPHA;
     const n = this.nodeArray.length;
+    // Snapshot-interpolation factor for settled nodes: fraction of the way from
+    // where each node sat at the last post (prev) toward the newly-posted target
+    // (lp), paced by the measured post interval so ~5Hz stream → 60fps motion.
+    // Falls back to the legacy per-frame ease before the first interval is known.
+    const useInterp = this.layoutInterpActive && this.layoutInterpDur > 0;
+    const ti = useInterp
+      ? Math.min(
+          1,
+          (now - this.layoutInterpStart) /
+            (this.layoutInterpDur * LIVE_INTERP_SLACK),
+        )
+      : 0;
     for (let i = 0; i < n; i++) {
       const o = i * 3;
       const p = (now - birth[i]) / GROW_REVEAL_MS;
       if (p >= 1) {
         sz[i] = tgt[i];
-        pos[o] += (lp[o] - pos[o]) * a;
-        pos[o + 1] += (lp[o + 1] - pos[o + 1]) * a;
-        pos[o + 2] += (lp[o + 2] - pos[o + 2]) * a;
+        if (useInterp) {
+          pos[o] = prev[o] + (lp[o] - prev[o]) * ti;
+          pos[o + 1] = prev[o + 1] + (lp[o + 1] - prev[o + 1]) * ti;
+          pos[o + 2] = prev[o + 2] + (lp[o + 2] - prev[o + 2]) * ti;
+        } else {
+          pos[o] += (lp[o] - pos[o]) * a;
+          pos[o + 1] += (lp[o + 1] - pos[o + 1]) * a;
+          pos[o + 2] += (lp[o + 2] - pos[o + 2]) * a;
+        }
         continue;
       }
       const pa = parent[i];
@@ -5442,6 +5573,58 @@ export class ThreeRenderer {
     if (this.liveGrowFinishAt !== null && now >= this.liveGrowFinishAt)
       this.finalizeLiveGrow();
     else this.requestRender();
+  }
+
+  /** Per-frame tick for the post-build settle: snapshot-interpolate every node
+   *  from where it was at the last worker post toward the freshly-posted target,
+   *  so the release-pins settle stays smooth instead of stepping at the ~5Hz
+   *  stream rate. Ends (snapping to the final target) once the layout settles or
+   *  a drag / ambient drift / new build takes over. */
+  private updateStreamInterp(now: number): void {
+    if (!this.postBuildSettle || !this.nodeGeometry) return;
+    const n = this.nodeArray.length;
+    // Hand back to the raw/ambient/interaction path: land on the latest target
+    // so nothing freezes mid-lerp, then stop owning the frame.
+    if (
+      n === 0 ||
+      this.liveGrowActive ||
+      this.buildAnim !== null ||
+      this.layoutSettled ||
+      this.ambientActive ||
+      this.dragNodeIndex >= 0
+    ) {
+      if (this.layoutInterpActive && n * 3 <= this.layoutPos.length) {
+        this.posArray.set(this.layoutPos.subarray(0, n * 3));
+        this.markPositionsDirty();
+      }
+      this.postBuildSettle = false;
+      return;
+    }
+    const ti =
+      this.layoutInterpActive && this.layoutInterpDur > 0
+        ? Math.min(
+            1,
+            (now - this.layoutInterpStart) /
+              (this.layoutInterpDur * LIVE_INTERP_SLACK),
+          )
+        : 1;
+    const pos = this.posArray;
+    const prev = this.layoutInterpPrev;
+    const lp = this.layoutPos;
+    const end = n * 3;
+    for (let o = 0; o < end; o++) pos[o] = prev[o] + (lp[o] - prev[o]) * ti;
+    this.centroidsDirty = true;
+    (
+      this.nodeGeometry.getAttribute('position') as BufferAttribute
+    ).needsUpdate = true;
+    // Throttled edge refresh (mirrors markPositionsDirty) — O(edges) per frame is
+    // the expensive part on big graphs; positions still ease every frame.
+    if (this.edgeLines && !this.edgesHiddenForInteraction) {
+      if (now - this.lastEdgeRedraw >= this.bp.edgeRedrawInterval) {
+        this.updateEdgePositions();
+      }
+    }
+    this.requestRender(); // keep frames coming between the ~5Hz posts
   }
 
   /** Append a streamed batch into the pre-allocated live-build buffers WITHOUT
@@ -5788,6 +5971,7 @@ export class ThreeRenderer {
     };
     this.posArray = f3(this.posArray);
     this.layoutPos = f3(this.layoutPos);
+    this.layoutInterpPrev = f3(this.layoutInterpPrev);
     this.colorArray = f3(this.colorArray);
     this.pickColorArray = f3(this.pickColorArray);
     this.sizeArray = f1(this.sizeArray);

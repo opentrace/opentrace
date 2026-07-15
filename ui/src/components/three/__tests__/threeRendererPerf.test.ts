@@ -755,3 +755,116 @@ describe('appendLiveData / appendLiveEdges fast path', () => {
     expectFullPassIdempotent(r);
   });
 });
+
+describe('live-build snapshot interpolation', () => {
+  /** Drive a settled live-build node from a known on-screen position toward a
+   *  freshly-posted target and read back the interpolated render position at a
+   *  given time within the post window. */
+  async function settledLiveNode(): Promise<{
+    r: Rndr;
+    start: number;
+    window: number;
+  }> {
+    const r = makeRenderer();
+    r.hasUserMovedCamera = true; // skip the camera-follow branch (no GL controls)
+    r.beginLiveGrow();
+    await setData(r, [node('a'), node('b')], []);
+    // Force both nodes past their grow-in window so updateLiveGrow takes the
+    // settled (interpolating) branch, not the fly-out branch.
+    (r.growBirth as Float32Array).fill(-1e12);
+    // Known interpolation start: both nodes at the origin.
+    (r.posArray as Float32Array).fill(0);
+    // First post: snapshots posArray as prev, writes targets into layoutPos.
+    r.updatePositionsFromBuffer(
+      new Float64Array([100, 0, 0, 0, 200, 0]), // a→(100,0,0), b→(0,200,0)
+    );
+    const start = r.layoutInterpStart as number;
+    const window = (r.layoutInterpDur as number) * 1.2; // LIVE_INTERP_SLACK
+    return { r, start, window };
+  }
+
+  it('renders a settled node partway to its newly-posted target mid-window', async () => {
+    const { r, start, window } = await settledLiveNode();
+    r.updateLiveGrow(start + window * 0.5);
+    // ~halfway from origin to each target.
+    expect(r.posArray[0]).toBeCloseTo(50, 1); // a.x → 100
+    expect(r.posArray[4]).toBeCloseTo(100, 1); // b.y → 200
+  });
+
+  it('reaches (and clamps at) the target by the end of the window', async () => {
+    const { r, start, window } = await settledLiveNode();
+    r.updateLiveGrow(start + window * 2); // well past the window
+    expect(r.posArray[0]).toBeCloseTo(100, 1); // a.x
+    expect(r.posArray[4]).toBeCloseTo(200, 1); // b.y
+    // Coincident-with-target start would give zero motion — sanity that b.x
+    // (target 0, start 0) never drifts off its axis.
+    expect(r.posArray[3]).toBeCloseTo(0, 5); // b.x stays 0
+  });
+
+  it('re-bases the interpolation start from where the node actually is on the next post', async () => {
+    const { r, start, window } = await settledLiveNode();
+    // Advance halfway (node a ≈ 50), then post a NEW target. The next window
+    // must lerp from ~50 (its live position), not from the old origin.
+    r.updateLiveGrow(start + window * 0.5);
+    r.updatePositionsFromBuffer(new Float64Array([100, 0, 0, 0, 200, 0]));
+    expect((r.layoutInterpPrev as Float32Array)[0]).toBeCloseTo(50, 1);
+  });
+});
+
+describe('post-build settle interpolation', () => {
+  /** Finalize a live build with the worker still settling, so the renderer arms
+   *  the post-build settle interpolation. */
+  async function finalizedBuild(): Promise<Rndr> {
+    const r = makeRenderer();
+    r.hasUserMovedCamera = true; // skip end-of-build camera framing (no GL)
+    r.beginLiveGrow();
+    await setData(r, [node('a'), node('b')], []);
+    r.layoutSettled = false; // worker's release-pins settle is still running
+    r.finalizeLiveGrow();
+    return r;
+  }
+
+  it('arms the post-build settle when a build finalizes mid-settle', async () => {
+    const r = await finalizedBuild();
+    expect(r.liveGrowActive).toBe(false);
+    expect(r.postBuildSettle).toBe(true);
+  });
+
+  it('interpolates the worker settle posts instead of drawing them raw', async () => {
+    const r = await finalizedBuild();
+    (r.posArray as Float32Array).fill(0); // where the nodes currently are
+    // A settle post routes into the interpolation targets, NOT straight to
+    // posArray — posArray only advances via updateStreamInterp.
+    r.updatePositionsFromBuffer(new Float64Array([100, 0, 0, 0, 200, 0]));
+    expect(r.posArray[0]).toBe(0); // not yet moved (raw path would jump to 100)
+    const start = r.layoutInterpStart as number;
+    const window = (r.layoutInterpDur as number) * 1.2; // LIVE_INTERP_SLACK
+    r.updateStreamInterp(start + window * 0.5);
+    expect(r.posArray[0]).toBeCloseTo(50, 1);
+    expect(r.posArray[4]).toBeCloseTo(100, 1);
+  });
+
+  it('lands on the final target and disarms when the layout settles', async () => {
+    const r = await finalizedBuild();
+    (r.posArray as Float32Array).fill(0);
+    r.updatePositionsFromBuffer(new Float64Array([100, 0, 0, 0, 200, 0]));
+    // Only part-way through the window…
+    const start = r.layoutInterpStart as number;
+    r.updateStreamInterp(start + 10);
+    expect(r.posArray[0]).toBeLessThan(100);
+    // …worker reports settled → snap to final + clear the flag.
+    r.setLayoutSettled(true);
+    expect(r.postBuildSettle).toBe(false);
+    expect(r.posArray[0]).toBeCloseTo(100, 1);
+    expect(r.posArray[4]).toBeCloseTo(200, 1);
+  });
+
+  it('does not interpolate settle posts during a node drag', async () => {
+    const r = await finalizedBuild();
+    r.dragNodeIndex = 0; // a drag is in progress
+    (r.posArray as Float32Array).fill(0);
+    r.updatePositionsFromBuffer(new Float64Array([100, 0, 0, 0, 200, 0]));
+    // Raw path: the worker position is written straight to posArray.
+    expect(r.posArray[0]).toBeCloseTo(100, 1);
+  });
+});
