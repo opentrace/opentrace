@@ -671,7 +671,11 @@ export class EmbedStage implements INodeStage {
   private initPromise: Promise<Embedder | null> | null = null;
   private readonly embedderConfig: EmbedderConfig;
   private readonly store: GraphStore;
-  private queue: GraphNode[] = [];
+  /** The text to embed per node, captured at process() time so we DON'T retain
+   *  the full File GraphNodes (with their source / summary blobs) for the whole
+   *  run — on a large repo that retained set is thousands of heavy objects and
+   *  is a major contributor to the embedding-phase OOM on constrained devices. */
+  private queue: { id: string; text: string }[] = [];
   /** Embedded vectors awaiting persistence (drained every
    *  {@link EMBED_PERSIST_BATCH} vectors and at the end of settle). */
   private pendingPersist: { id: string; vec: number[] }[] = [];
@@ -722,10 +726,21 @@ export class EmbedStage implements INodeStage {
 
   process(node: GraphNode): StageMutation {
     if (node.type === 'File' && !node.properties?.has_embedding) {
-      this.queue.push(node);
+      // Capture the embed text now (the node has been summarized by this point)
+      // and keep only { id, text } — see the `queue` field note.
+      this.queue.push({ id: node.id, text: EmbedStage.embedText(node) });
       this._total++;
     }
     return { nodes: [], relationships: [] };
+  }
+
+  /** Build the text embedded for a node: name + type + (summary, path). */
+  private static embedText(node: GraphNode): string {
+    const parts = [node.name, node.type];
+    const props = node.properties ?? {};
+    if (typeof props.summary === 'string') parts.push(props.summary);
+    if (typeof props.path === 'string') parts.push(props.path);
+    return parts.join(' ');
   }
 
   flush(): StageMutation {
@@ -757,20 +772,16 @@ export class EmbedStage implements INodeStage {
     }
     if (this.queue.length === 0) return;
 
-    // Inference batch size — EXACTLY 8. Changing it changes the model's
-    // float accumulation order and drifts the output vectors. Persistence
-    // is batched separately (EMBED_PERSIST_BATCH) via pendingPersist.
+    // Texts handed to the embedder per call. The worker runs them as one
+    // parallel batch on WebGPU (the speedup) and still sequentially per-text on
+    // WASM (batched WASM inference can OOM). Kept at 8: the persistence cadence
+    // (EMBED_PERSIST_BATCH) and cancellation granularity are pinned to it, and
+    // WebGPU already parallelizes the 8-wide call.
     const BATCH = 8;
     for (let off = 0; off < this.queue.length; off += BATCH) {
       if (isCancelled?.()) break;
       const batch = this.queue.slice(off, off + BATCH);
-      const texts = batch.map((n) => {
-        const parts = [n.name, n.type];
-        const props = n.properties ?? {};
-        if (typeof props.summary === 'string') parts.push(props.summary);
-        if (typeof props.path === 'string') parts.push(props.path);
-        return parts.join(' ');
-      });
+      const texts = batch.map((n) => n.text);
 
       try {
         const vectors = await embedder.embed(texts);
