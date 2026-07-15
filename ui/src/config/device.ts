@@ -16,14 +16,9 @@
 
 /**
  * Memory-constrained-device detection (phones), used to trim the browser
- * indexing footprint so large repos don't OOM-crash the tab:
- *   - a smaller extract worker pool (fewer concurrent grammars + ASTs), and
- *   - a cap on the live-streamed / rendered node count (the layout worker and
- *     Three.js buffers scale with it).
- *
- * The full graph still indexes into the LadybugDB store; only the in-heap +
- * on-GPU working set is bounded. Desktops are never treated as constrained, so
- * their behaviour is unchanged.
+ * indexing footprint so large repos don't OOM-crash the tab — e.g. a smaller
+ * extract worker pool (fewer concurrent grammars + ASTs). Desktops are never
+ * treated as constrained, so their behaviour is unchanged.
  */
 export function isConstrainedDevice(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -42,11 +37,3 @@ export function isConstrainedDevice(): boolean {
       : Number.POSITIVE_INFINITY;
   return coarse && shortSide <= 600;
 }
-
-/**
- * Cap on how many nodes the LIVE indexing stream feeds into React state / the
- * layout worker / the renderer on a constrained device. Beyond this the graph
- * keeps indexing into the store (queryable), but the on-screen working set stops
- * growing so the tab doesn't run out of memory. Tunable.
- */
-export const MOBILE_LIVE_NODE_CAP = 20000;

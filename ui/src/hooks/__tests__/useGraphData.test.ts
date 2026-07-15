@@ -26,18 +26,7 @@ vi.mock('../../store', () => ({
   useStore: () => ({ store: mockStore }),
 }));
 
-// Mock the device helper so we can drive the mobile node cap deterministically
-// (real detection returns false in jsdom, and the real cap is 20k — too many to
-// stream in a test).
-vi.mock('../../config/device', () => ({
-  isConstrainedDevice: vi.fn(() => false),
-  MOBILE_LIVE_NODE_CAP: 3,
-}));
-
 import { useGraphData } from '../useGraphData';
-import { isConstrainedDevice } from '../../config/device';
-
-const node = (id: string) => ({ id, name: id, type: 'Function' });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -140,71 +129,5 @@ describe('useGraphData', () => {
       { id: 'B', name: 'B', type: 'X' },
     ]);
     expect(result.current.lastSearchQuery).toBe('B');
-  });
-
-  describe('live-stream mobile node cap', () => {
-    it('streams every node on an unconstrained (desktop) device', async () => {
-      vi.mocked(isConstrainedDevice).mockReturnValue(false);
-      const { result } = renderHook(() => useGraphData());
-      act(() => {
-        result.current.startLiveStream();
-        result.current.pushLiveBatch(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          [node('a'), node('b'), node('c'), node('d'), node('e')] as any,
-          [],
-        );
-      });
-      await waitFor(() => {
-        expect(result.current.graphData.nodes.length).toBe(5);
-      });
-    });
-
-    it('caps the live working set at MOBILE_LIVE_NODE_CAP on a constrained device', async () => {
-      vi.mocked(isConstrainedDevice).mockReturnValue(true);
-      const { result } = renderHook(() => useGraphData());
-      act(() => {
-        result.current.startLiveStream();
-        result.current.pushLiveBatch(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          [node('a'), node('b'), node('c'), node('d'), node('e')] as any,
-          [],
-        );
-      });
-      // Cap is mocked to 3 — only the first 3 nodes reach React state.
-      await waitFor(() => {
-        expect(result.current.graphData.nodes.length).toBe(3);
-      });
-      expect(result.current.graphData.nodes.map((n) => n.id)).toEqual([
-        'a',
-        'b',
-        'c',
-      ]);
-    });
-
-    it('drops links whose endpoint was capped out (no unbounded deferral)', async () => {
-      vi.mocked(isConstrainedDevice).mockReturnValue(true);
-      const { result } = renderHook(() => useGraphData());
-      act(() => {
-        result.current.startLiveStream();
-        result.current.pushLiveBatch(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          [node('a'), node('b'), node('c'), node('d')] as any,
-          // a→b both kept; c→d has d capped out → dropped, not deferred.
-          [
-            { sourceId: 'a', targetId: 'b', type: 'CALLS' },
-            { sourceId: 'c', targetId: 'd', type: 'CALLS' },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ] as any,
-        );
-      });
-      await waitFor(() => {
-        expect(result.current.graphData.nodes.length).toBe(3);
-      });
-      expect(result.current.graphData.links.length).toBe(1);
-      expect(result.current.graphData.links[0]).toMatchObject({
-        source: 'a',
-        target: 'b',
-      });
-    });
   });
 });

@@ -25,7 +25,6 @@ import type {
   IndexedRelationship,
 } from '../gen/opentrace/v1/agent_service';
 import { useStore } from '../store';
-import { isConstrainedDevice, MOBILE_LIVE_NODE_CAP } from '../config/device';
 
 // ─── Live-build streaming ──────────────────────────────────────────────────
 // During browser indexing the pipeline streams node/relationship batches as
@@ -195,12 +194,6 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   // crashes d3-force-3d), promoted once both ends exist.
   const liveDeferredLinks = useRef<GraphLink[]>([]);
   const liveFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Ceiling on how many nodes the live stream feeds into React state / the
-  // layout worker / the renderer. Infinite on desktop; bounded on a phone so a
-  // huge repo's working set doesn't OOM the tab (it keeps indexing into the
-  // store — only the on-screen graph stops growing). Captured per stream.
-  const liveNodeCap = useRef<number>(Number.POSITIVE_INFINITY);
-  const liveCapNotified = useRef(false);
 
   const flushLive = useCallback(() => {
     const pn = livePendNodes.current;
@@ -251,10 +244,6 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     livePendNodes.current = [];
     livePendLinks.current = [];
     liveDeferredLinks.current = [];
-    liveNodeCap.current = isConstrainedDevice()
-      ? MOBILE_LIVE_NODE_CAP
-      : Number.POSITIVE_INFINITY;
-    liveCapNotified.current = false;
     setError(null);
     setRefreshError(null);
     setGraphData({ nodes: [], links: [] });
@@ -266,23 +255,9 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     (nodes: IndexedNode[], relationships: IndexedRelationship[]) => {
       if (!liveActiveRef.current) return;
       const seen = liveSeenNodes.current;
-      const cap = liveNodeCap.current;
       let addedNode = false;
       for (const n of nodes) {
         if (seen.has(n.id)) continue;
-        // Constrained device: once the working set hits the cap, stop feeding new
-        // nodes to the heap / layout worker / renderer. Indexing continues into
-        // the store, so the full graph stays queryable — only the live view is
-        // bounded.
-        if (seen.size >= cap) {
-          if (!liveCapNotified.current) {
-            liveCapNotified.current = true;
-            console.info(
-              `[opentrace] Live graph capped at ${cap} nodes to fit this device's memory; the full repo keeps indexing into the store and remains searchable.`,
-            );
-          }
-          break;
-        }
         seen.add(n.id);
         addedNode = true;
         // The stream carries only the lean sub-type fields (language / kind /
@@ -302,14 +277,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
         }
         livePendNodes.current.push(node);
       }
-      // Once the node cap is reached no further nodes will be seen, so a link
-      // with a missing endpoint can never resolve — drop it (without even
-      // remembering it) instead of deferring it forever, which would grow both
-      // the deferred array and the dedup set unbounded with dropped edges.
-      const atCap = seen.size >= cap;
       for (const r of relationships) {
-        const bothSeen = seen.has(r.sourceId) && seen.has(r.targetId);
-        if (!bothSeen && atCap) continue;
         const key = `${r.sourceId}|${r.type}|${r.targetId}`;
         if (liveSeenLinks.current.has(key)) continue;
         liveSeenLinks.current.add(key);
@@ -318,7 +286,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
           target: r.targetId,
           label: r.type,
         };
-        if (bothSeen) {
+        if (seen.has(r.sourceId) && seen.has(r.targetId)) {
           livePendLinks.current.push(link);
         } else {
           liveDeferredLinks.current.push(link);
