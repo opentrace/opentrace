@@ -56,18 +56,18 @@ def _seed_centrality(store: GraphStore) -> None:
     for slug, name, kind in pages_kb:
         store.add_node(
             f"kb::{slug}",
-            "Page",
+            "KnowledgeConcept",
             name,
             {"kind": kind, "vault": "kb", "one_line_summary": f"Summary for {name}"},
         )
 
     # Sources are vault members via Vault -CONTAINS-> Source, not a
     # ``vault`` property.
-    store.add_node("vault::kb", "Vault", "kb", {"vault": "kb"})
+    store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
     for sid, fname in [("spec", "spec.pdf"), ("misc", "misc.pdf"), ("cluster", "cluster.pdf")]:
         store.add_node(
             f"corpus::{sid}",
-            "CorpusDoc",
+            "KnowledgeDoc",
             fname,
             {"sha256": sid, "filename": fname, "one_line_summary": f"Summary for {fname}"},
         )
@@ -75,7 +75,7 @@ def _seed_centrality(store: GraphStore) -> None:
 
     store.add_node(
         "other::page-x",
-        "Page",
+        "KnowledgeConcept",
         "Other Page",
         {"kind": "concept", "vault": "other", "one_line_summary": "Not in scope"},
     )
@@ -163,7 +163,7 @@ class TestClusterSizes:
         for slug, cluster in [("hub", 0), ("core", 0), ("satellite", 0), ("lonely", 1)]:
             store.add_node(
                 f"kb::{slug}",
-                "Page",
+                "KnowledgeConcept",
                 slug,
                 {"kind": "concept", "vault": "kb", "cluster_id": cluster},
             )
@@ -171,8 +171,8 @@ class TestClusterSizes:
         assert result["cluster_sizes"] == {"0": 3, "1": 1}
 
     def test_vault_scope_filters(self, store):
-        store.add_node("kb::a", "Page", "a", {"kind": "concept", "vault": "kb", "cluster_id": 0})
-        store.add_node("other::a", "Page", "a", {"kind": "concept", "vault": "other", "cluster_id": 0})
+        store.add_node("kb::a", "KnowledgeConcept", "a", {"kind": "concept", "vault": "kb", "cluster_id": 0})
+        store.add_node("other::a", "KnowledgeConcept", "a", {"kind": "concept", "vault": "other", "cluster_id": 0})
         result = overview(store, top_n=5, vault_scope="kb")
         assert result["cluster_sizes"] == {"0": 1}
 

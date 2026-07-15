@@ -9,7 +9,7 @@ A **vault** is a folder of LLM-curated markdown pages produced from one or more 
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`Vault` + `Page` + `CorpusDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeConcept` + `KnowledgeDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
 
 ## `vault list`
 
@@ -59,7 +59,7 @@ opentraceai vault attach <name> --scope global     # disambiguate on collision
 opentraceai vault attach <name> --db <path>        # explicit graph DB
 ```
 
-Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `Vault` / `Page` / `CorpusDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
+Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
 
 When to use:
 
@@ -83,7 +83,7 @@ opentraceai vault detach <name>
 opentraceai vault detach <name> --db <path>
 ```
 
-Removes the current graph's mirror — the disk vault is untouched. CorpusDoc nodes shared with other attached vaults are preserved.
+Removes the current graph's mirror — the disk vault is untouched. KnowledgeDoc nodes shared with other attached vaults are preserved.
 
 ## `vault promote` / `vault demote`
 
@@ -137,11 +137,11 @@ The doc corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed b
 ~/.opentrace/corpus/<sha>.md           # globals compiled but not yet attached anywhere
 ```
 
-`vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `CorpusDoc.corpus_path` resolves under `<project>/.opentrace/` like any local CorpusDoc.
+`vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `KnowledgeDoc.corpus_path` resolves under `<project>/.opentrace/` like any local KnowledgeDoc.
 
 Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept pages are the only page kind, so everything lives under `concept/`. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route.
 
-The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it — including each doc's navigation label (`title` + one-line summary), so attached CorpusDocs keep their labels; re-compiling against the same vault uses its `source_shas` to dedup.
+The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it — including each doc's navigation label (`title` + one-line summary), so attached KnowledgeDocs keep their labels; re-compiling against the same vault uses its `source_shas` to dedup.
 
 ## Cross-project example
 

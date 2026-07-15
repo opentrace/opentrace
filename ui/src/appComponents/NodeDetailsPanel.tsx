@@ -33,14 +33,14 @@ import { WikiMarkdown } from '../components/wiki/WikiMarkdown';
 import type { VaultPageMeta } from '../wiki/types';
 import './NodeDetailsPanel.css';
 
-/** Node types whose source/body can be fetched and displayed. CorpusDoc is a
+/** Node types whose source/body can be fetched and displayed. KnowledgeDoc is a
  *  raw source document whose markitdown body renders as markdown. */
 const SOURCE_TYPES = new Set([
   'File',
   'Function',
   'Class',
   'PullRequest',
-  'CorpusDoc',
+  'KnowledgeDoc',
 ]);
 
 /** Map file extensions → Prism language identifiers. */
@@ -163,7 +163,7 @@ export interface NodeEdge {
   properties?: Record<string, unknown>;
 }
 
-/** A Page node's body + sibling page list (for `[[link]]` resolution),
+/** A KnowledgeConcept node's body + sibling page list (for `[[link]]` resolution),
  *  fetched by the SidePanel from the vault REST API — bodies live on disk,
  *  not in the graph, so they arrive separately from the node itself. */
 export interface PageContent {
@@ -181,8 +181,8 @@ interface NodeDetailsPanelProps {
   edges?: NodeEdge[];
   onSelectNode?: (nodeId: string) => void;
   onSelectEdge?: (edge: NodeEdge) => void;
-  /** Present only for Page nodes; loaded lazily by the parent. */
-  wikiPage?: PageContent | null;
+  /** Present only for KnowledgeConcept nodes; loaded lazily by the parent. */
+  concept?: PageContent | null;
   wikiLoading?: boolean;
   /** Follow a `[[wiki-link]]` — the parent resolves the slug to a page node
    *  and selects it, so links traverse the graph rather than swap a reader. */
@@ -211,7 +211,7 @@ export default function NodeDetailsPanel({
   edges,
   onSelectNode,
   onSelectEdge,
-  wikiPage,
+  concept,
   wikiLoading,
   onPageLink,
 }: NodeDetailsPanelProps) {
@@ -328,7 +328,7 @@ export default function NodeDetailsPanel({
           <h4>
             {node.type === 'PullRequest'
               ? 'Description'
-              : node.type === 'CorpusDoc'
+              : node.type === 'KnowledgeDoc'
                 ? 'Document'
                 : 'Source'}
             {nodeSource && node.type !== 'PullRequest' && (
@@ -428,10 +428,10 @@ export default function NodeDetailsPanel({
                 );
               }
 
-              // Markdown files (and CorpusDoc bodies, which are always
+              // Markdown files (and KnowledgeDoc bodies, which are always
               // markitdown-normalised markdown regardless of the original
               // file's extension): tabbed Rendered / Raw view.
-              if (ext === '.md' || ext === '.mdx' || node.type === 'CorpusDoc') {
+              if (ext === '.md' || ext === '.mdx' || node.type === 'KnowledgeDoc') {
                 return (
                   <div className="preview-viewer">
                     <div className="preview-tab-bar">
@@ -568,17 +568,17 @@ export default function NodeDetailsPanel({
         </div>
       )}
 
-      {/* ── Page body ── read a concept page the same way a File node
+      {/* ── Concept body ── read a concept page the same way a File node
           shows its source: the node IS the page, its markdown renders here. */}
-      {node.type === 'Page' && (
+      {node.type === 'KnowledgeConcept' && (
         <div className="source-section">
-          <h4>Page</h4>
+          <h4>Concept</h4>
           {wikiLoading && <div className="source-loading">Loading page…</div>}
-          {!wikiLoading && wikiPage && (
-            <div className="wiki-page-body">
+          {!wikiLoading && concept && (
+            <div className="concept-body">
               <WikiMarkdown
-                markdown={wikiPage.body}
-                pages={wikiPage.pages}
+                markdown={concept.body}
+                pages={concept.pages}
                 onPageClick={onPageLink}
               />
             </div>

@@ -2,7 +2,7 @@
 
 Knowledge-compilation pipeline that turns raw doc files into a folder of interconnected markdown pages (the "vault") and mirrors the result into the graph store. Driven by ``opentraceai index --wiki`` — there is no separate ``wiki compile`` command anymore.
 
-This is now the **single doc-ingestion path**: the one per-doc LLM call (`doc_extraction.py`) emits the CorpusDoc's navigation label (title + one-line summary), the concept inventory, AND the knowledge-graph entities + edges in a single shot. There are **no per-document wiki pages** — the raw doc body lives in the corpus and is read directly (`load_source`); concept pages are the only page kind. The entities are merged (`pipeline/entity_merge.py`) and mirrored to the graph alongside the vault. The old standalone `pipeline/entity_extraction.py` stage has been removed.
+This is now the **single doc-ingestion path**: the one per-doc LLM call (`doc_extraction.py`) emits the KnowledgeDoc's navigation label (title + one-line summary), the concept inventory, AND the knowledge-graph entities + edges in a single shot. There are **no per-document wiki pages** — the raw doc body lives in the corpus and is read directly (`load_source`); concept pages are the only page kind. The entities are merged (`pipeline/entity_merge.py`) and mirrored to the graph alongside the vault. The old standalone `pipeline/entity_extraction.py` stage has been removed.
 
 ## Layout
 
@@ -20,7 +20,7 @@ ingest/
                         NormalizedSource (with corpus_path)
   sources.py          — Acquire stage: file inputs + sha256 dedup
   normalize.py        — Normalize stage: lazy-imported markitdown wrapper
-  doc_extraction.py   — Extract + Map: 1 LLM call/doc → CorpusDoc label (title
+  doc_extraction.py   — Extract + Map: 1 LLM call/doc → KnowledgeDoc label (title
                         + one-liner) AND that doc's concept inventory
                         (topic/subject/gloss) AND the entity graph
   resolve.py          — Resolve stage: cluster concept mentions into concept
@@ -28,7 +28,7 @@ ingest/
                         plan (OT_WIKI_CONCEPT_MIN_SOURCES floor)
   execute.py          — Synthesis stage: per-action create/extend LLM calls
   persist.py          — Persist stage: atomic disk writes + .vault.json update
-  graph_writer.py     — Mirror vault to graph: Vault/Page/CorpusDoc +
+  graph_writer.py     — Mirror vault to graph: Vault/Page/KnowledgeDoc +
                         CONTAINS/CITES/LINKS_TO/MENTIONS + MIRRORS edges
   pipeline.py         — Composer (sync generator); accepts scope= + project_root=
                         + graph_store=; also exports refresh_stale_pages()
@@ -41,7 +41,7 @@ clustering them — not by one planner call enumerating everything (which
 under-generated: it satisficed and missed central multi-doc concepts).
 
 1. **Map** (folded into `doc_extraction.py`, cheap model): the per-doc call
-   emits the CorpusDoc's navigation label (one-line summary; the display title is
+   emits the KnowledgeDoc's navigation label (one-line summary; the display title is
    derived mechanically from the filename) plus that doc's concepts, each
    qualified by `topic` (subject matter), `subject` (the real-world entity it's
    a property *of* — the product/system, not the file), and a one-line `gloss`,
@@ -84,12 +84,12 @@ under-generated: it satisficed and missed central multi-doc concepts).
 3. **Diff + floor** (`concepts_to_plan`): a concept whose title matches an
    existing concept page → EXTEND (no floor); a new concept is CREATEd only with
    ≥ `OT_WIKI_CONCEPT_MIN_SOURCES` sources (default 2) — single-source content
-   stays reachable through its labelled CorpusDoc node (raw body via
+   stays reachable through its labelled KnowledgeDoc node (raw body via
    `load_source`).
 4. **Synthesise** (`execute.py`): one call per concept page, reading the **raw
    source bodies** (the corpus markdown on each `NormalizedSource`) — grounding
    synthesis in the full source yields more accurate, detailed pages (the
-   LLM-wiki pattern). Provenance is structural (`CITES` edges to CorpusDoc nodes),
+   LLM-wiki pattern). Provenance is structural (`CITES` edges to KnowledgeDoc nodes),
    so pages do not wiki-link documents; `[[links]]` are concept ↔ concept only.
 
 Subject granularity is decided automatically by Level 1 above (no configuration)
@@ -110,10 +110,10 @@ Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept is the only page k
 
 **Disk is the source of truth for page bodies.** The graph holds metadata + relationships, with bodies referenced by `corpus_path`. LadybugDB caps STRING properties at ~4 KB; vault page bodies typically run 5–20 KB, so they live on disk and are referenced by relative path.
 
-The body of each raw document (post-markitdown) lives at a scope-aware corpus dir. `CorpusDoc` nodes carry `corpus_path` (stored relative to `.opentrace/`) pointing there:
+The body of each raw document (post-markitdown) lives at a scope-aware corpus dir. `KnowledgeDoc` nodes carry `corpus_path` (stored relative to `.opentrace/`) pointing there:
 
 - **Local vaults** (or any compile that's mirroring to a graph store) → `<db_dir>/corpus/<sha>.md`, typically `<project>/.opentrace/corpus/`.
-- **Global vaults compiled without a graph store** → `~/.opentrace/corpus/<sha>.md` (or `$OT_VAULT_ROOT`'s parent + `/corpus/`). On `vault attach`, the corpus is copied sha-by-sha into the attaching project's corpus dir so `CorpusDoc.corpus_path` resolves locally.
+- **Global vaults compiled without a graph store** → `~/.opentrace/corpus/<sha>.md` (or `$OT_VAULT_ROOT`'s parent + `/corpus/`). On `vault attach`, the corpus is copied sha-by-sha into the attaching project's corpus dir so `KnowledgeDoc.corpus_path` resolves locally.
 
 The helper APIs are `sources.markdown.corpus_dir_for_scope(scope, project_root)`, `write_corpus_markdown_to(dir, sha, md)`, and `copy_corpus_between_scopes(...)`.
 
@@ -124,7 +124,7 @@ Vaults are scoped at compile time:
 - ``scope="local"`` → ``<project_root>/.opentrace/vaults/<name>/``. Visible only to graphs in that project. The default for ``opentraceai index --wiki``.
 - ``scope="global"`` → ``~/.opentrace/vaults/<name>/`` (or ``$OT_VAULT_ROOT``). Attachable from any project via ``opentraceai vault attach <name>``.
 
-The `Vault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compiled_at` is set by `write_vault_to_graph` on every run; `vault list` compares it against the disk vault's `last_compiled_at` to flag stale mirrors.
+The `KnowledgeVault` graph node carries `scope` + `mirror_compiled_at`. `mirror_compiled_at` is set by `write_vault_to_graph` on every run; `vault list` compares it against the disk vault's `last_compiled_at` to flag stale mirrors.
 
 `paths.resolve_vault_scope(name, project_root=...)` finds a vault by name (local first, then global) and returns `(scope, vault_dir)`.
 
@@ -144,14 +144,14 @@ place).
 
 `run_compile(graph_store=..., scope="local"|"global")` mirrors the post-compile vault state into the graph after disk writes succeed:
 
-- `Vault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id) when the vault was built by `index --wiki` over a repo. `spawned_from` is stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors.
-- `Page` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
-- `CorpusDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so CorpusDocs are FTS-findable by label), and `path` (repo-relative) when the doc came from a repo walk. Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
-- `CONTAINS` — Vault → Page, Vault → CorpusDoc.
-- `CITES` — concept page → CorpusDoc, direct by sha (one hop; no intermediate pages).
+- `KnowledgeVault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id) when the vault was built by `index --wiki` over a repo. `spawned_from` is stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors.
+- `KnowledgeConcept` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
+- `KnowledgeDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so KnowledgeDocs are FTS-findable by label), and `path` (repo-relative) when the doc came from a repo walk. Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
+- `CONTAINS` — Vault → Page, Vault → KnowledgeDoc.
+- `CITES` — concept page → KnowledgeDoc, direct by sha (one hop; no intermediate pages).
 - `LINKS_TO` — per `[[Title]]` occurrence in any page body (concept ↔ concept).
-- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `CorpusDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `CorpusDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim) — see `write_vault_to_graph(derived_pairs=...)`. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
-- `MIRRORS` — CorpusDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults). Entities always anchor to CorpusDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
+- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `KnowledgeDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `KnowledgeDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim) — see `write_vault_to_graph(derived_pairs=...)`. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
+- `MIRRORS` — KnowledgeDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults). Entities always anchor to KnowledgeDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
 - `DOCUMENTS` — Repository → Vault, written by `link_vault_to_repo` in the same `index --wiki` post-compile step as MIRRORS. Marks the vault as spawned from that repo (paired with the `spawned_from` vault property). Attached globals and dropped-file compiles never get it — they live alongside a repo without documenting it.
 
 Graph-write failures are caught and emitted as non-fatal warnings — the on-disk vault stays valid. Recover with:
@@ -168,7 +168,7 @@ Resolution accepts both bare and kinded forms: `[[Title]]` matches unambiguously
 
 ## Stale tracking + refresh
 
-Autoprune (in `pipeline/autoprune.py`) stamps `stale_since=<iso-timestamp>` on concept pages whose cited CorpusDoc was removed but the page has other remaining citations. Pages with no remaining citations are deleted entirely. No LLM cost during pruning.
+Autoprune (in `pipeline/autoprune.py`) stamps `stale_since=<iso-timestamp>` on concept pages whose cited KnowledgeDoc was removed but the page has other remaining citations. Pages with no remaining citations are deleted entirely. No LLM cost during pruning.
 
 Refresh via `wiki.ingest.pipeline.refresh_stale_pages(graph_store, vault_name=..., ...)` — re-runs `_execute_extend` against the page's current `CITES` set, clears `stale_since`, bumps `revision`. Exposed as:
 
@@ -179,8 +179,8 @@ Refresh via `wiki.ingest.pipeline.refresh_stale_pages(graph_store, vault_name=..
 
 For wiki nodes, `retrieval.provenance(node_id)` walks the `CITES` chain:
 
-- concept Page → CorpusDoc, direct by sha (with sha256 + filename + acquired_at, plus the MIRRORS File twin id when present)
-- CorpusDoc returns its own metadata
+- concept Page → KnowledgeDoc, direct by sha (with sha256 + filename + acquired_at, plus the MIRRORS File twin id when present)
+- KnowledgeDoc returns its own metadata
 
 `agent`/`model`/`session`/`confidence` provenance is stamped at the page level.
 

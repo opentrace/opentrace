@@ -18,7 +18,7 @@ The single per-doc ``emit_page`` call now returns ``entities`` and ``edges``
 alongside the summary + concept inventory (see ``doc_extraction.py``). This
 module turns that into graph primitives — ``Idea``/``Service``/… nodes (each
 carrying the new one-line ``description``), a ``DERIVED_FROM`` edge back to the
-``CorpusDoc``, and ``SEMANTIC_EDGE`` entity↔entity edges — reusing the validation
+``KnowledgeDoc``, and ``SEMANTIC_EDGE`` entity↔entity edges — reusing the validation
 in :func:`sources.markdown.extractor.parse_entities` and the entity-graph
 conventions formerly housed in the standalone entity-extraction stage.
 """
@@ -46,7 +46,7 @@ def build_entities(
 ) -> tuple[list[GraphNode], list[GraphRelationship]]:
     """Build entity nodes + edges from one unified ``emit_page`` result.
 
-    ``source_id`` is the ``corpus::<sha>`` CorpusDoc node the entities derive from;
+    ``source_id`` is the ``corpus::<sha>`` KnowledgeDoc node the entities derive from;
     ``original_name`` seeds the deterministic ``{stem}_{entity}`` id so re-runs
     converge. Entity-entity ``edges`` reference entities by label — resolved to
     ids inside :func:`parse_entities`.
@@ -105,7 +105,7 @@ def write_entity_nodes(store, nodes: list[GraphNode]) -> int:
     """Persist entity nodes only (no edges). Returns nodes written.
 
     Split from edge-writing because ``DERIVED_FROM`` edges point at
-    ``CorpusDoc`` nodes that the vault mirror creates *later* —
+    ``KnowledgeDoc`` nodes that the vault mirror creates *later* —
     :func:`GraphStore.merge_relationship` silently drops an edge whose
     target node doesn't exist yet, so edges must be written after the
     vault mirror runs (see :func:`write_entity_edges`).
@@ -118,7 +118,7 @@ def write_entity_nodes(store, nodes: list[GraphNode]) -> int:
 def write_entity_edges(store, rels: list[GraphRelationship]) -> int:
     """Persist entity edges (``DERIVED_FROM`` + ``SEMANTIC_EDGE``). Returns
     edges written. Call *after* both the entity nodes and their
-    ``DERIVED_FROM`` targets (CorpusDoc nodes, created by the vault mirror)
+    ``DERIVED_FROM`` targets (KnowledgeDoc nodes, created by the vault mirror)
     exist, or the edges are silently dropped."""
     for r in rels:
         store.merge_relationship(

@@ -346,7 +346,7 @@ def run_compile(
                 # Persist entity NODES first so the vault mirror's MENTIONS
                 # pass (which scans page/doc bodies for entity names) can see
                 # and link them. Entity EDGES wait until AFTER the vault
-                # mirror: DERIVED_FROM points at CorpusDoc nodes that
+                # mirror: DERIVED_FROM points at KnowledgeDoc nodes that
                 # write_vault_to_graph creates, and merge_relationship
                 # silently drops an edge whose target doesn't exist yet.
                 entities_written = write_entity_nodes(graph_store, entity_nodes)
@@ -368,8 +368,8 @@ def run_compile(
                     scope=scope,
                     derived_pairs=derived_pairs,
                 )
-                # CorpusDoc nodes now exist — write the entity edges
-                # (DERIVED_FROM → CorpusDoc, SEMANTIC_EDGE → entity).
+                # KnowledgeDoc nodes now exist — write the entity edges
+                # (DERIVED_FROM → KnowledgeDoc, SEMANTIC_EDGE → entity).
                 write_entity_edges(graph_store, entity_rels)
                 yield WikiPipelineEvent(
                     kind=WikiEventKind.STAGE_PROGRESS,
@@ -505,7 +505,7 @@ def refresh_stale_pages(
 
 def _find_stale_pages(graph_store, *, vault_name: str | None) -> list[dict]:
     """Return Page nodes with stale_since stamped, scoped to *vault_name* when given."""
-    pages = graph_store.list_nodes("Page", limit=10_000)
+    pages = graph_store.list_nodes("KnowledgeConcept", limit=10_000)
     out = []
     for p in pages:
         props = p.get("properties") or {}
@@ -529,7 +529,7 @@ def _remaining_source_shas_for_page(graph_store, page_id: str) -> list[str]:
     seen: set[str] = set()
     for r in traversal:
         node = r.get("node") or {}
-        if node.get("type") != "CorpusDoc":
+        if node.get("type") != "KnowledgeDoc":
             continue
         sha = (node.get("properties") or {}).get("sha256")
         if sha and sha not in seen:

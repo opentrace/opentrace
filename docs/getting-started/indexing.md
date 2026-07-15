@@ -8,7 +8,7 @@ The graph holds three layers:
 
 1. **Code layer** — `File`, `Class`, `Function`, `Variable` nodes from tree-sitter. Always produced.
 2. **Entity layer** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from LLM extraction over ingested docs. Produced by `--wiki`.
-3. **Page layer** — labelled `CorpusDoc` nodes + `Page` (concept) curated narratives. Produced by `--wiki`.
+3. **Concept layer** — labelled `KnowledgeDoc` nodes + `KnowledgeConcept` (concept) curated narratives. Produced by `--wiki`.
 
 One flag turns on both LLM layers: `--wiki`.
 
@@ -32,13 +32,13 @@ What happens:
 
 1. Standard code walk (tree-sitter)
 2. Doc files (PDF, DOCX, PPTX, XLSX, CSV, HTML, MD, TXT, RST, images via OCR, audio/video via transcription) discovered and converted via markitdown
-3. Each doc → `CorpusDoc` node (`corpus::<sha>`), body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults and any compile that mirrors to a graph; `~/.opentrace/corpus/<sha>.md` for `--global` compiles, which `vault attach` later copies into a project)
-4. Every repo-walked doc's CorpusDoc gets a `MIRRORS` edge to its `File` twin and a repo-relative `path` property — the corpus layer and the code tree join in one hop. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created during linking. Docs not from a repo walk (uploads, URLs) have no edge
-5. One LLM call per doc emits the CorpusDoc's navigation label (`title` + one-line summary), its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes with `DERIVED_FROM` edges back to the doc, `SEMANTIC_EDGE` between entities), and a concept inventory — no per-doc page is written; the raw body stays in the corpus
+3. Each doc → `KnowledgeDoc` node (`corpus::<sha>`), body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults and any compile that mirrors to a graph; `~/.opentrace/corpus/<sha>.md` for `--global` compiles, which `vault attach` later copies into a project)
+4. Every repo-walked doc's KnowledgeDoc gets a `MIRRORS` edge to its `File` twin and a repo-relative `path` property — the corpus layer and the code tree join in one hop. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created during linking. Docs not from a repo walk (uploads, URLs) have no edge
+5. One LLM call per doc emits the KnowledgeDoc's navigation label (`title` + one-line summary), its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes with `DERIVED_FROM` edges back to the doc, `SEMANTIC_EDGE` between entities), and a concept inventory — no per-doc page is written; the raw body stays in the corpus
 6. Plan stage decides which cross-document themes deserve a page (1 LLM call)
-7. Execute stage writes one `Page(kind="concept")` per theme (1 LLM call per page, typically 5–15 pages)
+7. Execute stage writes one `KnowledgeConcept(kind="concept")` per theme (1 LLM call per page, typically 5–15 pages)
 8. Pages land at `<project>/.opentrace/vaults/myvault/pages/`
-9. Graph mirror has `Vault` + `Page` + `CorpusDoc` nodes plus `CONTAINS` / `CITES` / `LINKS_TO` / `MENTIONS` edges — `CITES` links each concept page directly to the CorpusDocs it drew from
+9. Graph mirror has `KnowledgeVault` + `KnowledgeConcept` + `KnowledgeDoc` nodes plus `CONTAINS` / `CITES` / `LINKS_TO` / `MENTIONS` edges — `CITES` links each concept page directly to the KnowledgeDocs it drew from
 
 The vault is **local by default** (project-scoped). Pass `--global` for a vault visible to any project. See [Wiki & Vaults](wiki.md) for the full vault model.
 
@@ -89,8 +89,8 @@ arXiv abstract URLs are auto-rewritten to the PDF.
 
 Default-on for `--wiki`. When you re-run on a path:
 
-- CorpusDocs the walked set lost since the last run → deleted from graph + corpus body deleted from disk
-- Orphaned entities (no remaining `DERIVED_FROM` to a surviving CorpusDoc) → deleted
+- KnowledgeDocs the walked set lost since the last run → deleted from graph + corpus body deleted from disk
+- Orphaned entities (no remaining `DERIVED_FROM` to a surviving KnowledgeDoc) → deleted
 - `concept` page that cited a deleted doc has the dangling `CITES` edge removed, then:
     - **Still has other citations** → kept, stamped `stale_since=<timestamp>`. Use `vault refresh-stale-pages` or `index --refresh-stale-pages` to regenerate
     - **No remaining citations** → deleted entirely

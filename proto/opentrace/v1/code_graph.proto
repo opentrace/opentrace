@@ -150,9 +150,9 @@ enum ConfidenceTier {
   CONFIDENCE_TIER_AMBIGUOUS   = 3;
 }
 
-// VaultNode represents a knowledge vault — a named collection of compiled
+// KnowledgeVaultNode represents a knowledge vault — a named collection of compiled
 // wiki pages produced by the wiki ingest pipeline. One per vault directory.
-message VaultNode {
+message KnowledgeVaultNode {
   string id                  = 1;          // vault name (validated, no separators)
   string name                = 2;          // display name (same as id today)
   string last_compiled_at    = 3 [(ladybug.column) = "lastCompiledAt"];   // ISO-8601 UTC
@@ -168,15 +168,15 @@ message VaultNode {
   string mirror_compiled_at  = 6 [(ladybug.column) = "mirrorCompiledAt"];
   // Repo id this vault was spawned from, when it was built by
   // ``index --wiki`` over a repository walk (the same runs that emit a
-  // Repository -DOCUMENTS-> Vault edge). Empty for vaults compiled
+  // Repository -DOCUMENTS-> KnowledgeVault edge). Empty for vaults compiled
   // from uploads/URLs and for attached globals.
   string spawned_from        = 7 [(ladybug.column) = "spawnedFrom"];
 }
 
-// PageNode represents a single compiled markdown page within a vault.
-// One per .md file under <vault>/pages/. Pages are LLM-managed; provenance
+// KnowledgeConceptNode represents a single compiled markdown page within a vault.
+// One per .md file under <vault>/pages/. KnowledgeConcepts are LLM-managed; provenance
 // fields are stamped at compile time.
-message PageNode {
+message KnowledgeConceptNode {
   string id                = 1;          // "<vault>::<slug>"
   string name              = 2;          // page title
   string slug              = 3;
@@ -195,13 +195,13 @@ message PageNode {
   string stale_since       = 12 [(ladybug.column) = "staleSince"];
 }
 
-// CorpusDocNode represents a document ingested into the wiki corpus — the
+// KnowledgeDocNode represents a document ingested into the wiki corpus — the
 // raw material concept pages are synthesised from and cite. Identity is the
 // sha256 of the RAW bytes; the normalized markdown body is persisted to
 // `.opentrace/corpus/<sha>.md` (referenced by corpus_path) so it's readable
 // via load_source and available for re-extraction and grep. Carries the
 // navigation label (title + one_line_summary; the `summary` copy feeds FTS).
-message CorpusDocNode {
+message KnowledgeDocNode {
   string id               = 1;       // `corpus::<sha256>`
   string name             = 2;       // original filename
   string sha256           = 3;
@@ -342,7 +342,7 @@ message DerivedFromRel {
   string transform = 4;  // "identity", "call", "attribute"
 }
 
-// LinksToRel represents a wiki-style link between two Page nodes.
+// LinksToRel represents a wiki-style link between two KnowledgeConcept nodes.
 // Created by parsing [[wiki-link]] syntax in page bodies during compile.
 message LinksToRel {
   string id        = 1;
@@ -351,7 +351,7 @@ message LinksToRel {
 }
 
 // CitesRel represents a wiki provenance citation.
-//   Page --Cites--> CorpusDocNode   (concept page → the document it was synthesised from)
+//   KnowledgeConcept --Cites--> KnowledgeDocNode   (concept page → the document it was synthesised from)
 //
 // Direct by sha, one hop. Distinct from DerivedFromRel (variable data flow);
 // kept separate to avoid overloading edge semantics across the code-graph
@@ -362,7 +362,7 @@ message CitesRel {
   string target_id = 3;
 }
 
-// MirrorsRel links a CorpusDoc to the File node for the same on-disk
+// MirrorsRel links a KnowledgeDoc to the File node for the same on-disk
 // document, for every doc discovered by a repo walk. When the code walk
 // didn't create the File node (extensions like .rst/.txt/.html/PDFs), it
 // is created at link time so the twin always exists. Bridges the wiki
@@ -371,11 +371,11 @@ message CitesRel {
 // have no edge.
 message MirrorsRel {
   string id        = 1;
-  string source_id = 2;   // CorpusDoc (corpus::<sha>)
+  string source_id = 2;   // KnowledgeDoc (corpus::<sha>)
   string target_id = 3;   // File (<repo>/<rel_path>)
 }
 
-// DocumentsRel links a Repository to a Vault that was spawned from it —
+// DocumentsRel links a Repository to a KnowledgeVault that was spawned from it —
 // written only by ``index --wiki`` runs where the wiki compile executes
 // alongside a repo walk. Attached global vaults and vaults compiled from
 // dropped files/URLs never get this edge: they don't document the repo,
@@ -384,12 +384,12 @@ message MirrorsRel {
 message DocumentsRel {
   string id        = 1;
   string source_id = 2;   // Repository
-  string target_id = 3;   // Vault (vault::<name>)
+  string target_id = 3;   // KnowledgeVault (vault::<name>)
 }
 
-// MentionsRel links a Page or CorpusDoc (which have bodies) to an
+// MentionsRel links a KnowledgeConcept or KnowledgeDoc (which have bodies) to an
 // Idea/Service/Module/Paper/Person/Event entity whose name appears in the
-// body — page markdown for Pages, raw corpus markdown for CorpusDocs.
+// body — page markdown for KnowledgeConcepts, raw corpus markdown for KnowledgeDocs.
 // Bridges the content layers with the flat-entity layer so cross-cutting
 // queries work — "which pages or documents discuss this concept?".
 //
@@ -398,7 +398,7 @@ message DocumentsRel {
 // (case-insensitive except for Person types).
 message MentionsRel {
   string id        = 1;
-  string source_id = 2;   // Page or CorpusDoc
+  string source_id = 2;   // KnowledgeConcept or KnowledgeDoc
   string target_id = 3;   // Idea / Service / Module / Paper / Person / Event
 }
 

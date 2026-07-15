@@ -68,10 +68,10 @@ def _seed(store: GraphStore) -> None:
     store.add_relationship("c5", "CALLS", "fn-handle", "fn-query")
 
     # Wiki
-    store.add_node("vault-1", "Vault", "knowledge", {})
-    store.add_node("source-report", "CorpusDoc", "report.pdf", {"sha256": "report-sha", "filename": "report.pdf"})
-    store.add_node("page-concept-a", "Page", "Concept A", {"kind": "concept"})
-    store.add_node("page-concept-b", "Page", "Concept B", {"kind": "concept"})
+    store.add_node("vault-1", "KnowledgeVault", "knowledge", {})
+    store.add_node("source-report", "KnowledgeDoc", "report.pdf", {"sha256": "report-sha", "filename": "report.pdf"})
+    store.add_node("page-concept-a", "KnowledgeConcept", "Concept A", {"kind": "concept"})
+    store.add_node("page-concept-b", "KnowledgeConcept", "Concept B", {"kind": "concept"})
     store.add_relationship("w1", "CONTAINS", "vault-1", "source-report")
     store.add_relationship("w2", "CONTAINS", "vault-1", "page-concept-a")
     store.add_relationship("w3", "CONTAINS", "vault-1", "page-concept-b")
@@ -161,7 +161,7 @@ class TestFindViaRelationshipToType:
 
     def test_wiki_links(self, store):
         _seed(store)
-        result = find_via_relationship_to_type(store, "Page", "LINKS_TO", "Page")
+        result = find_via_relationship_to_type(store, "KnowledgeConcept", "LINKS_TO", "KnowledgeConcept")
         assert result["count"] == 1
         assert result["pairs"][0]["start"]["id"] == "page-concept-a"
         assert result["pairs"][0]["target"]["id"] == "page-concept-b"
@@ -204,10 +204,10 @@ class TestFindOrphans:
         ids = [o["id"] for o in result["orphans"]]
         assert ids == ["fn-orphan"]
 
-    def test_wiki_pages_with_no_inbound_links(self, store):
+    def test_concepts_with_no_inbound_links(self, store):
         _seed(store)
         # page-concept-a has no incoming LINKS_TO; page-concept-b does.
-        result = find_orphans(store, "Page", "LINKS_TO", direction="incoming")
+        result = find_orphans(store, "KnowledgeConcept", "LINKS_TO", direction="incoming")
         ids = sorted(o["id"] for o in result["orphans"])
         assert ids == ["page-concept-a"]
 
@@ -254,7 +254,7 @@ class TestCountBy:
 
     def test_scoped_to_vault(self, store):
         _seed(store)
-        result = count_by(store, "Page", parent_id="vault-1", parent_edge="CONTAINS", max_hops=1)
+        result = count_by(store, "KnowledgeConcept", parent_id="vault-1", parent_edge="CONTAINS", max_hops=1)
         assert result["count"] == 2
 
     def test_missing_parent(self, store):

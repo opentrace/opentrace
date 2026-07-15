@@ -21,9 +21,9 @@ What happens:
 
 1. The walker discovers PDF / DOCX / Markdown / HTML / etc. under `./papers`
 2. Each doc is converted to markdown via markitdown, body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults, `~/.opentrace/corpus/<sha>.md` for globals)
-3. One LLM call per doc labels the `CorpusDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph and concept inventory. No per-doc page is written — the raw body stays in the corpus, readable via the `load_source` tool
-4. A `Plan` LLM call identifies concept-level themes across docs. A theme needs at least 2 supporting docs (`OT_WIKI_CONCEPT_MIN_SOURCES`) to get a page — single-doc content stays reachable through its labelled CorpusDoc node, so paging it would just duplicate the doc
-5. An `Execute` LLM call writes one `Page(kind="concept")` per theme, each citing its CorpusDocs directly via `CITES` edges
+3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph and concept inventory. No per-doc page is written — the raw body stays in the corpus, readable via the `load_source` tool
+4. A `Plan` LLM call identifies concept-level themes across docs. A theme needs at least 2 supporting docs (`OT_WIKI_CONCEPT_MIN_SOURCES`) to get a page — single-doc content stays reachable through its labelled KnowledgeDoc node, so paging it would just duplicate the doc
+5. An `Execute` LLM call writes one `KnowledgeConcept(kind="concept")` per theme, each citing its KnowledgeDocs directly via `CITES` edges
 6. The result lives at `<project>/.opentrace/vaults/papers/pages/` and is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
 
 Inspect it:
@@ -129,7 +129,7 @@ Note: graph mirrors that pointed at the old scope are now stale. Run `vault atta
 
 By default, re-running `index --wiki` detects docs that disappeared from disk between runs and cleans them up:
 
-- The orphaned `CorpusDoc` node + its body in `corpus/` are deleted
+- The orphaned `KnowledgeDoc` node + its body in `corpus/` are deleted
 - Concept pages that cited the removed doc have the dangling citation removed:
     - If the page still has other citations → kept, stamped `stale_since=<timestamp>`
     - If the page has no remaining citations → deleted entirely
@@ -174,13 +174,13 @@ opentraceai index ./ myproject --wiki
 What you get from a single command:
 
 - Code structure (`File` / `Class` / `Function` / etc.) from tree-sitter
-- Doc bodies (`CorpusDoc` nodes + corpus files) from markitdown
-- `MIRRORS` edges joining each repo-walked CorpusDoc to its `File` twin in the code tree (the File node is created during linking if the code walk skipped the doc's extension — either twin reaches the other in one hop)
+- Doc bodies (`KnowledgeDoc` nodes + corpus files) from markitdown
+- `MIRRORS` edges joining each repo-walked KnowledgeDoc to its `File` twin in the code tree (the File node is created during linking if the code walk skipped the doc's extension — either twin reaches the other in one hop)
 - A `DOCUMENTS` edge joining the `Repository` to the vault it spawned (plus a `spawned_from` stamp on the vault) — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
 - Flat entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from LLM extraction over the ingested docs
-- Curated wiki pages (`Page`) about cross-document themes
+- Curated wiki pages (`KnowledgeConcept`) about cross-document themes
 - `MENTIONS` edges connecting pages **and** docs to the entities they discuss (matched against page bodies and raw corpus markdown)
-- `DERIVED_FROM` edges connecting entities to the CorpusDoc they came from
+- `DERIVED_FROM` edges connecting entities to the KnowledgeDoc they came from
 
 Then surface cross-cutting structure:
 
@@ -200,7 +200,7 @@ opentraceai analyze            # god nodes + bridges + cross-domain bridges + cr
   .compile-log/<ts>.json           — per-compile audit log
 ```
 
-Slugs are `<kind_dir>/<base>` — e.g. `concept/usage`. Concept pages are the only page kind, so everything lives under the `concept/` folder. Open the vault in Obsidian and pages show up there; `[[wiki-links]]` in page bodies point concept-to-concept only. Source attribution isn't a wiki-link — it's the structural `CITES` edge from each concept page to the `CorpusDoc` nodes it drew from.
+Slugs are `<kind_dir>/<base>` — e.g. `concept/usage`. Concept pages are the only page kind, so everything lives under the `concept/` folder. Open the vault in Obsidian and pages show up there; `[[wiki-links]]` in page bodies point concept-to-concept only. Source attribution isn't a wiki-link — it's the structural `CITES` edge from each concept page to the `KnowledgeDoc` nodes it drew from.
 
 Disk is the source of truth for page bodies; the knowledge graph holds metadata and relationships. `vault attach` can always rebuild a graph mirror from disk — doc navigation labels are persisted in `.vault.json`, so attached mirrors keep them.
 

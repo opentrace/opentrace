@@ -17,9 +17,9 @@
 The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
 source of truth for the vault's filesystem state. This module mirrors the
 *same* state into the graph as :class:`Vault`, :class:`Page`, and
-:class:`CorpusDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
-CorpusDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links),
-``MENTIONS`` (page/CorpusDoc → entity), and ``MIRRORS`` (CorpusDoc → File
+:class:`KnowledgeDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
+KnowledgeDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links),
+``MENTIONS`` (page/KnowledgeDoc → entity), and ``MIRRORS`` (KnowledgeDoc → File
 twin) relationships.
 
 Graph writes run *after* disk writes succeed, and any failure here is
@@ -72,9 +72,9 @@ def _confidence_for_kind(kind: str) -> tuple[str, float]:
 # Node / edge type constants — kept in sync with proto/opentrace/v1/code_graph.proto
 # ---------------------------------------------------------------------------
 
-NODE_TYPE_VAULT = "Vault"
-NODE_TYPE_PAGE = "Page"
-NODE_TYPE_CORPUS_DOC = "CorpusDoc"
+NODE_TYPE_KNOWLEDGE_VAULT = "KnowledgeVault"
+NODE_TYPE_KNOWLEDGE_CONCEPT = "KnowledgeConcept"
+NODE_TYPE_KNOWLEDGE_DOC = "KnowledgeDoc"
 
 REL_TYPE_CONTAINS = "CONTAINS"
 REL_TYPE_CITES = "CITES"
@@ -115,18 +115,18 @@ def link_corpus_doc_mirrors(
     repo_id: str,
     named_blobs: list[tuple[str, bytes]],
 ) -> int:
-    """Link CorpusDocs to the File nodes for the same repo-walked documents.
+    """Link KnowledgeDocs to the File nodes for the same repo-walked documents.
 
     *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` for every doc
-    the wiki pass ingested from a repo walk. For each, the CorpusDoc id is the
+    the wiki pass ingested from a repo walk. For each, the KnowledgeDoc id is the
     sha256 of the raw bytes (same scheme as :func:`corpus_doc_node_id` /
     ``autoprune.compute_walked_shas``) and the File id is
-    ``<repo_id>/<rel_path>``. A ``CorpusDoc -MIRRORS-> File`` edge is merged
-    (idempotent) and the repo-relative ``path`` is stamped onto the CorpusDoc
+    ``<repo_id>/<rel_path>``. A ``KnowledgeDoc -MIRRORS-> File`` edge is merged
+    (idempotent) and the repo-relative ``path`` is stamped onto the KnowledgeDoc
     so the twins are mutually navigable. When the code walk didn't create the
     File node (extensions outside INCLUDED_EXTENSIONS — .rst/.txt/.html/PDFs),
     it is created here (see :func:`_ensure_file_twin`) so every repo-walked
-    CorpusDoc has a File twin. Blobs that never became a CorpusDoc
+    KnowledgeDoc has a File twin. Blobs that never became a KnowledgeDoc
     (content-gated) are skipped silently.
 
     Returns the number of MIRRORS edges written.
@@ -155,7 +155,7 @@ def link_corpus_doc_mirrors(
             props["path"] = rel_path
             store.add_node(
                 id=cid,
-                node_type=NODE_TYPE_CORPUS_DOC,
+                node_type=NODE_TYPE_KNOWLEDGE_DOC,
                 name=corpus_node.get("name") or rel_path,
                 properties=props,
             )
@@ -235,7 +235,7 @@ def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool
         props["spawned_from"] = repo_id
         store.add_node(
             id=vid,
-            node_type=NODE_TYPE_VAULT,
+            node_type=NODE_TYPE_KNOWLEDGE_VAULT,
             name=vault_node.get("name") or vault_name,
             properties=props,
         )
@@ -274,15 +274,15 @@ def parse_wiki_links(body: str) -> list[str]:
 
 
 def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int]:
-    """Remove a vault's Vault and Page nodes, plus any CorpusDoc nodes
+    """Remove a vault's Vault and Page nodes, plus any KnowledgeDoc nodes
     that no other vault still references via ``CONTAINS``. Symmetric
     counterpart of :func:`write_vault_to_graph`.
 
-    CorpusDocs are shared across vaults by sha256 identity — deleting a
-    vault must NOT delete a CorpusDoc that another vault still uses. We
+    KnowledgeDocs are shared across vaults by sha256 identity — deleting a
+    vault must NOT delete a KnowledgeDoc that another vault still uses. We
     resolve this by inspecting the incoming ``CONTAINS`` edges on each: if
     the only remaining edge originates from the vault being deleted (or none
-    does), the CorpusDoc is orphaned and can go too.
+    does), the KnowledgeDoc is orphaned and can go too.
 
     Returns
     -------
@@ -304,12 +304,12 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
     except ValueError:
         contained = []  # vault node already gone
     for r in contained:
-        if r["node"]["type"] == NODE_TYPE_CORPUS_DOC:
+        if r["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC:
             sources_in_vault.append(r["node"]["id"])
 
     # 2. Delete Pages belonging to this vault. Pages are 1:1 with their
     #    vault (id is "<vault>::<slug>") so the property check is sufficient.
-    for n in store.list_nodes(node_type=NODE_TYPE_PAGE, limit=100_000):
+    for n in store.list_nodes(node_type=NODE_TYPE_KNOWLEDGE_CONCEPT, limit=100_000):
         props = n.get("properties") or {}
         if props.get("vault") != vault_name:
             continue
@@ -334,7 +334,7 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
         except ValueError:
             inbound = []
         # If any other Vault still CONTAINS this source, leave it alone.
-        still_referenced = any(r["node"]["type"] == NODE_TYPE_VAULT for r in inbound)
+        still_referenced = any(r["node"]["type"] == NODE_TYPE_KNOWLEDGE_VAULT for r in inbound)
         if still_referenced:
             continue
         if store.delete_node(sid):
@@ -431,13 +431,13 @@ def write_vault_to_graph(
             vault_props["spawned_from"] = prev
     store.add_node(
         id=vault_id,
-        node_type=NODE_TYPE_VAULT,
+        node_type=NODE_TYPE_KNOWLEDGE_VAULT,
         name=meta.name,
         properties=vault_props,
     )
     nodes_written += 1
 
-    # 2. CorpusDoc nodes — one per ingested document. Use the AcquiredSource
+    # 2. KnowledgeDoc nodes — one per ingested document. Use the AcquiredSource
     #    metadata when present, otherwise fall back to .vault.json's
     #    IngestedSource (sha256 + original_name + ingested_at only).
     #    ``source_bodies`` collects each source's raw markdown along the way
@@ -450,7 +450,7 @@ def write_vault_to_graph(
         sid = corpus_doc_node_id(sha)
         acq = by_sha_acquired.get(sha)
         norm = by_sha_normalized.get(sha)
-        # CorpusDocs are shared across vaults by sha256 identity — vault
+        # KnowledgeDocs are shared across vaults by sha256 identity — vault
         # membership is expressed via the Vault -CONTAINS-> Source edge
         # (one edge per vault), NOT via a property on the Source itself. A
         # `vault` property would be wrong: the merge-on-write would overwrite
@@ -498,12 +498,12 @@ def write_vault_to_graph(
                 props[k] = existing_src_props[k]
         store.add_node(
             id=sid,
-            node_type=NODE_TYPE_CORPUS_DOC,
+            node_type=NODE_TYPE_KNOWLEDGE_DOC,
             name=ingested.original_name,
             properties=props,
         )
         nodes_written += 1
-        # Vault CONTAINS CorpusDoc.
+        # Vault CONTAINS KnowledgeDoc.
         store.merge_relationship(
             id=f"{vault_id}->CONTAINS->{sid}",
             rel_type=REL_TYPE_CONTAINS,
@@ -574,7 +574,7 @@ def write_vault_to_graph(
                     page_props[k] = existing_props[k]
         store.add_node(
             id=pid,
-            node_type=NODE_TYPE_PAGE,
+            node_type=NODE_TYPE_KNOWLEDGE_CONCEPT,
             name=p.title,
             properties=page_props,
         )

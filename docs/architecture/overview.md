@@ -57,17 +57,17 @@ Opt-in via `index --wiki`. The per-doc ingestion call extracts named entities fr
 | `Person` | "Karen Chen", "Vaswani et al." |
 | `Event` | "the 2024 release" |
 
-Edges: `DERIVED_FROM` (entity → CorpusDoc) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Entities derive from CorpusDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
+Edges: `DERIVED_FROM` (entity → KnowledgeDoc) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Entities derive from KnowledgeDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
 
 ### 3. Page (curated)
 
 Opt-in via `index --wiki`. The wiki Plan + Execute pipeline produces:
 
-- `Vault` — one per vault (scope: `local` or `global`)
-- `Page(kind="concept")` — multi-source curated narrative, body on disk
-- Labelled `CorpusDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`); the raw body stays in the corpus
+- `KnowledgeVault` — one per vault (scope: `local` or `global`)
+- `KnowledgeConcept(kind="concept")` — multi-source curated narrative, body on disk
+- Labelled `KnowledgeDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`); the raw body stays in the corpus
 
-Edges: `CONTAINS` (vault → page/doc), `CITES` (concept page → CorpusDoc, direct by sha), `LINKS_TO` (`[[Title]]` syntax in bodies, concept ↔ concept), `MENTIONS` (page or CorpusDoc → entity whose name appears in the page body or the doc's corpus markdown — connects layer 3 to layer 2), `MIRRORS` (CorpusDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
+Edges: `CONTAINS` (vault → page/doc), `CITES` (concept page → KnowledgeDoc, direct by sha), `LINKS_TO` (`[[Title]]` syntax in bodies, concept ↔ concept), `MENTIONS` (page or KnowledgeDoc → entity whose name appears in the page body or the doc's corpus markdown — connects layer 3 to layer 2), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
 The page layer is the closest thing OpenTrace has to a "human-readable wiki." Pages live on disk and are mirrored into the graph; disk is canonical and `vault attach` rebuilds the mirror.
 
@@ -80,7 +80,7 @@ The three layers form three **domains** in the cross-cutting analysis:
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
 entity domain   — Idea / Service / Module / Paper / Person / Event
-page domain     — Vault / Page / CorpusDoc
+page domain     — Vault / Page / KnowledgeDoc
 ```
 
 `opentraceai analyze` surfaces:
@@ -89,7 +89,7 @@ page domain     — Vault / Page / CorpusDoc
 - **Cross-domain bridges** — edges spanning code ↔ entity ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
 - **Cross-cutting communities** — communities whose members span ≥2 domains
 
-The `MENTIONS` edge is the explicit bridge between the entity and page domains, deduped against `DERIVED_FROM` so the two never restate the same doc↔entity pair — MENTIONS carries references, `DERIVED_FROM` carries origin. `MIRRORS` is the direct code ↔ page bridge — a `CorpusDoc` and its `File` twin reach each other in one hop.
+The `MENTIONS` edge is the explicit bridge between the entity and page domains, deduped against `DERIVED_FROM` so the two never restate the same doc↔entity pair — MENTIONS carries references, `DERIVED_FROM` carries origin. `MIRRORS` is the direct code ↔ page bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
 
 ## Components
 
@@ -121,7 +121,7 @@ Python package + CLI (`opentraceai`). Managed with [uv](https://docs.astral.sh/u
 
 ### Protobuf (`proto/`)
 
-Shared schema for code-graph types (regenerated into Python + TypeScript). Source of truth for `RepositoryNode` / `FileNode` / `VaultNode` / etc. — see `proto/opentrace/v1/code_graph.proto`.
+Shared schema for code-graph types (regenerated into Python + TypeScript). Source of truth for `RepositoryNode` / `FileNode` / `KnowledgeVaultNode` / etc. — see `proto/opentrace/v1/code_graph.proto`.
 
 ### Plugins
 
@@ -143,24 +143,24 @@ A typical full-stack run (`index ./repo myvault --wiki`):
 3. Ingest    → For each doc:
                • markitdown converts to markdown
                • Body persisted to .opentrace/corpus/<sha>.md
-               • CorpusDoc node created (corpus::<sha>); when the
+               • KnowledgeDoc node created (corpus::<sha>); when the
                  doc also produced a File node in the code walk, a
                  MIRRORS edge joins the twins and the repo-relative
-                 path is stamped on the CorpusDoc
+                 path is stamped on the KnowledgeDoc
 
 4. Resolve   → Cross-file call resolution → CALLS edges.
 
 5. Save      → All emitted nodes/edges land in the LadybugDB store.
 
 6. Build     → run_compile makes one DocExtraction LLM call per doc
-   pages       (CorpusDoc navigation label + entity graph with
+   pages       (KnowledgeDoc navigation label + entity graph with
                DERIVED_FROM edges + concept inventory), then Plan +
                Execute writes concept Page bodies to disk +
                graph mirror with CONTAINS / CITES / LINKS_TO +
                MENTIONS edges.
 
 7. Autoprune → Compare walked doc set against the existing graph;
-               delete orphan CorpusDocs + the entities anchored to
+               delete orphan KnowledgeDocs + the entities anchored to
                them; remove dangling CITES edges from concept pages,
                delete pages left with zero citations, stamp
                stale_since on the rest.

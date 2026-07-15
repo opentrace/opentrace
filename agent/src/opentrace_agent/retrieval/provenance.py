@@ -36,7 +36,7 @@ from typing import Any
 
 from opentrace_agent.store import GraphStore
 
-WIKI_NODE_TYPES = {"Vault", "Page", "CorpusDoc"}
+WIKI_NODE_TYPES = {"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"}
 CODE_NODE_TYPES = {"Repository", "Directory", "File", "Class", "Function", "Variable"}
 DERIVED_NODE_TYPES = {"Idea", "Service", "Module", "Paper", "Person", "Event"}
 
@@ -118,7 +118,7 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
     chain: list[dict[str, Any]] = []
     visited: set[str] = {node_id}
 
-    if node_type == "CorpusDoc":
+    if node_type == "KnowledgeDoc":
         chain.append(_source_link(node_id, props, store))
     else:
         # Walk CITES outgoing (depth-capped defensively; the schema is one
@@ -138,12 +138,12 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
             visited.add(nid)
             t = r["node"]["type"]
             p = r["node"].get("properties") or {}
-            if t == "CorpusDoc":
+            if t == "KnowledgeDoc":
                 chain.append(_source_link(nid, p, store))
-            elif t == "Page":
+            elif t == "KnowledgeConcept":
                 chain.append(
                     {
-                        "kind": "wiki_page",
+                        "kind": "knowledge_concept",
                         "id": nid,
                         "page_kind": p.get("kind"),
                         "title": r["node"].get("name"),
@@ -163,11 +163,11 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
 
 
 def _source_link(node_id: str, props: dict[str, Any], store: GraphStore | None = None) -> dict[str, Any]:
-    """Chain entry for a CorpusDoc. When *store* is given, follows the
+    """Chain entry for a KnowledgeDoc. When *store* is given, follows the
     outgoing MIRRORS edge (present for repo-walked docs whose extension also
     produced a File node) so the chain hands the caller a code-tree anchor."""
     link: dict[str, Any] = {
-        "kind": "corpus_doc",
+        "kind": "knowledge_doc",
         "id": node_id,
         "sha256": props.get("sha256"),
         "filename": props.get("filename"),
@@ -220,7 +220,7 @@ def _derived_provenance(store: GraphStore, node_id: str, props: dict[str, Any]) 
     for r in traversal:
         node = r.get("node") or {}
         rel = r.get("relationship") or {}
-        if node.get("type") != "CorpusDoc":
+        if node.get("type") != "KnowledgeDoc":
             continue
         rel_props = rel.get("properties") or {}
         transform = rel_props.get("transform") or transform

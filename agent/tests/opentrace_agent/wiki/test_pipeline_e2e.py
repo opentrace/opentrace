@@ -71,8 +71,8 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
     pytest.importorskip("real_ladybug")
     from opentrace_agent.store import GraphStore
     from opentrace_agent.wiki.ingest.graph_writer import (
-        NODE_TYPE_PAGE,
-        NODE_TYPE_VAULT,
+        NODE_TYPE_KNOWLEDGE_CONCEPT,
+        NODE_TYPE_KNOWLEDGE_VAULT,
         corpus_doc_node_id,
         page_node_id,
         vault_node_id,
@@ -95,10 +95,10 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
         assert (tmp_path / "testvault" / "pages" / "concept" / "ducks.md").exists()
 
         vault_node = graph_store.get_node(vault_node_id("testvault"))
-        assert vault_node is not None and vault_node["type"] == NODE_TYPE_VAULT
+        assert vault_node is not None and vault_node["type"] == NODE_TYPE_KNOWLEDGE_VAULT
 
         ducks_node = graph_store.get_node(page_node_id("testvault", "concept/ducks"))
-        assert ducks_node is not None and ducks_node["type"] == NODE_TYPE_PAGE
+        assert ducks_node is not None and ducks_node["type"] == NODE_TYPE_KNOWLEDGE_CONCEPT
         assert ducks_node["properties"]["kind"] == "concept"
 
         # The Source node carries its navigation label.

@@ -94,7 +94,7 @@ def grep(
                 "directory to enable grep, or fall back to search_graph",
             )
         root = Path(str(local_path))
-    elif scope_type == "Vault":
+    elif scope_type == "KnowledgeVault":
         from opentrace_agent.wiki.paths import (
             InvalidVaultName,
         )
@@ -245,7 +245,7 @@ def _resolve_file_node_id(store: GraphStore, scope_node: dict[str, Any], file_re
     scope_type = scope_node["type"]
     if scope_type == "Repository":
         return f"{scope_node['id']}/{file_rel_path}"
-    if scope_type == "Vault":
+    if scope_type == "KnowledgeVault":
         if file_rel_path.endswith(".md"):
             slug = file_rel_path[: -len(".md")]
         else:
@@ -258,6 +258,6 @@ def _resolve_file_node_id(store: GraphStore, scope_node: dict[str, Any], file_re
 
 def _structural_context(scope_type: str, scope_props: dict[str, Any]) -> dict[str, Any]:
     ctx: dict[str, Any] = {"scope_type": scope_type}
-    if scope_type == "Vault":
+    if scope_type == "KnowledgeVault":
         ctx["vault"] = scope_props.get("vault") or scope_props.get("name")
     return ctx

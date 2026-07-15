@@ -42,13 +42,13 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     sids = {}
     # Vault node — the discovery anchor for this vault.
     vault_id = vault_node_id(vault)
-    store.add_node(vault_id, "Vault", vault, properties={"vault": vault, "scope": "local"})
+    store.add_node(vault_id, "KnowledgeVault", vault, properties={"vault": vault, "scope": "local"})
     for i, sha in enumerate(["aaa", "bbb", "ccc"]):
         sid = f"corpus::{sha}"
         sids[sha] = sid
         store.add_node(
             sid,
-            "CorpusDoc",
+            "KnowledgeDoc",
             f"file{i}.md",
             properties={
                 "sha256": sha,
@@ -62,7 +62,7 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
         page_id = f"{vault}::solo-{sha}"
         store.add_node(
             page_id,
-            "Page",
+            "KnowledgeConcept",
             f"Solo {i}",
             properties={"vault": vault, "slug": f"concept/solo-{sha}", "kind": "concept"},
         )
@@ -75,7 +75,7 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     concept_id = f"{vault}::concept-x"
     store.add_node(
         concept_id,
-        "Page",
+        "KnowledgeConcept",
         "Concept X",
         properties={"vault": vault, "slug": "concept-x", "kind": "concept"},
     )

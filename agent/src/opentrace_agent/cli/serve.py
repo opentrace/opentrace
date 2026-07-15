@@ -329,7 +329,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
     async def get_source(request: Request) -> JSONResponse:
         """GET /api/source/{node_id} — a node's readable body.
 
-        Today only ``CorpusDoc`` nodes carry an on-disk body: the
+        Today only ``KnowledgeDoc`` nodes carry an on-disk body: the
         content-addressed corpus snapshot (markitdown-normalised markdown),
         referenced by the ``corpus_path`` property. This is what lets the UI
         read a source document the same way it reads a code file — by
@@ -1128,7 +1128,7 @@ def _vault_routes(
             # into this same store handle from a worker thread, and the
             # LadybugDB connection is not safe for concurrent access.
             with store_lock:
-                nodes = store.list_nodes("Vault", limit=10_000)
+                nodes = store.list_nodes("KnowledgeVault", limit=10_000)
             for v in nodes:
                 props = v.get("properties") or {}
                 if (props.get("scope") or "global") == "global":

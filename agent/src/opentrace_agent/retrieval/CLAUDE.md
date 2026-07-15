@@ -46,7 +46,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 - **`snippet`** — anchored on the first query token found in `name + summary`,
   windowed to ~200 chars
 - **`vault`** — read from the node's `vault` property (set by Phase 4
-  `graph_writer` on Vault/Page; null for code nodes and CorpusDocs)
+  `graph_writer` on Vault/Page; null for code nodes and KnowledgeDocs)
 - **`recency`** — `last_updated` property; null when not stamped
 - **`confidence`** — `confidence` property; null when not stamped
   (currently a placeholder; real wiki-synthesis confidence is future work)
@@ -58,9 +58,9 @@ unavailable (e.g. before the index is built).
 
 Two branches keyed off node type:
 
-- **Wiki** (`Vault` / `Page` / `CorpusDoc`) — returns the node's
+- **Wiki** (`KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc`) — returns the node's
   agent/model/session/confidence properties plus the `CITES` outgoing chain.
-  Concept page → CorpusDoc, direct by sha; each chain entry carries the
+  Concept page → KnowledgeDoc, direct by sha; each chain entry carries the
   MIRRORS File twin id when one exists.
 - **Code** (`Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`) — returns commit_sha + indexer_version from the per-repo
@@ -74,7 +74,7 @@ segments) — works for both `owner/repo/...` GitHub-style IDs and
 ## Grep semantics
 
 Scope-based: caller provides a `Repository` (must have `local_path`) or
-`Vault` (rooted at `OT_VAULT_ROOT/<name>/pages`). ripgrep is shelled out
+`KnowledgeVault` (rooted at `OT_VAULT_ROOT/<name>/pages`). ripgrep is shelled out
 with `--json --line-number --max-filesize=10M` and a 10s wall-time cap.
 When on-disk content is unavailable, returns a structured `mode="error"`
 response so the agent can fall back to `search_graph` for FTS over indexed

@@ -134,7 +134,7 @@ def find_entities_mentioned_by(store: GraphStore, page_id: str) -> list[dict[str
     symbol first to surface the relevant pages, then call this on each
     result to see what other entities those pages connect to.
 
-    For a CorpusDoc, the entities it was the *source* of carry no outgoing
+    For a KnowledgeDoc, the entities it was the *source* of carry no outgoing
     MENTIONS (that pair lives as ``entity -DERIVED_FROM-> doc``), so those
     are recovered via the doc's incoming DERIVED_FROM and unioned in.
     """
@@ -151,7 +151,7 @@ def find_entities_mentioned_by(store: GraphStore, page_id: str) -> list[dict[str
 
 
 def _mentions_to_pages(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
-    """Internal: content nodes (Page concept pages + CorpusDoc documents)
+    """Internal: content nodes (Page concept pages + KnowledgeDoc documents)
     that reference *node_id* (an entity).
 
     Unions two edges. MENTIONS covers pages and docs whose body names the
@@ -168,7 +168,7 @@ def _mentions_to_pages(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
     derived = store.traverse(node_id, direction="outgoing", max_depth=1, relationship_type="DERIVED_FROM")
     for r in (*incoming, *derived):
         n = r.get("node") or {}
-        if n.get("type") in ("Page", "CorpusDoc") and n.get("id") not in seen:
+        if n.get("type") in ("KnowledgeConcept", "KnowledgeDoc") and n.get("id") not in seen:
             seen.add(n.get("id"))
             out.append(n)
     return out

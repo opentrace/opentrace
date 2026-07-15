@@ -257,7 +257,7 @@ def _top_linked_concepts(store: GraphStore, top_n: int, vault_scope: str | None)
         if degree <= 0:
             continue
         node = store.get_node(nid)
-        if node is None or node["type"] != "Page":
+        if node is None or node["type"] != "KnowledgeConcept":
             continue
         props = node.get("properties") or {}
         if props.get("kind") != "concept":
@@ -297,7 +297,7 @@ def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -
             )
         except ValueError:
             contained = []
-        scope_source_ids = {r["node"]["id"] for r in contained if (r.get("node") or {}).get("type") == "CorpusDoc"}
+        scope_source_ids = {r["node"]["id"] for r in contained if (r.get("node") or {}).get("type") == "KnowledgeDoc"}
 
     result = store._conn.execute(
         "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = 'CITES' "
@@ -312,7 +312,7 @@ def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -
         if scope_source_ids is not None and nid not in scope_source_ids:
             continue
         node = store.get_node(nid)
-        if node is None or node["type"] != "CorpusDoc":
+        if node is None or node["type"] != "KnowledgeDoc":
             continue
         props = node.get("properties") or {}
         out.append(
@@ -338,7 +338,7 @@ def _cluster_sizes(store: GraphStore, vault_scope: str | None) -> dict[str, int]
     from opentrace_agent.store.graph_store import _parse_props
 
     result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'Page' AND n.properties CONTAINS 'cluster_id' "
+        "MATCH (n:Node) WHERE n.type = 'KnowledgeConcept' AND n.properties CONTAINS 'cluster_id' "
         "RETURN n.properties LIMIT 5000"
     )
     sizes: dict[str, int] = {}

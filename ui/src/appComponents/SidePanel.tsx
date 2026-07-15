@@ -46,7 +46,7 @@ import './SidePanel.css';
 
 export type SidePanelTab = 'filters' | 'discover' | 'history' | 'details';
 
-/** Node types whose source/body can be fetched and displayed. CorpusDoc is a
+/** Node types whose source/body can be fetched and displayed. KnowledgeDoc is a
  *  raw source document — its markitdown body is served from the corpus
  *  snapshot, read the same way as a code File. */
 const SOURCE_TYPES = new Set([
@@ -54,7 +54,7 @@ const SOURCE_TYPES = new Set([
   'Function',
   'Class',
   'PullRequest',
-  'CorpusDoc',
+  'KnowledgeDoc',
 ]);
 
 interface SidePanelProps {
@@ -203,16 +203,16 @@ export default function SidePanel({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // ─── Page body fetch ─────────────────────────────────────────────
-  // A Page node IS a concept page. Its body lives on disk (not in the
+  // A KnowledgeConcept node IS a concept page. Its body lives on disk (not in the
   // graph), so we fetch it from the vault REST API the same way source code
   // is fetched for a File node — and render it in the Details panel. We also
   // pull the vault's page list so `[[wiki-links]]` resolve to real slugs.
-  const [wikiPage, setPage] = useState<PageContent | null>(null);
+  const [concept, setConcept] = useState<PageContent | null>(null);
   const [wikiLoading, setWikiLoading] = useState(false);
   /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
   useEffect(() => {
-    if (!selectedNode || selectedNode.type !== 'Page') {
-      setPage(null);
+    if (!selectedNode || selectedNode.type !== 'KnowledgeConcept') {
+      setConcept(null);
       return;
     }
     // Wait for lazy props so we have vault + slug to address the page.
@@ -220,22 +220,22 @@ export default function SidePanel({
     const vault = resolvedProps?.vault as string | undefined;
     const slug = resolvedProps?.slug as string | undefined;
     if (!vault || !slug) {
-      setPage(null);
+      setConcept(null);
       return;
     }
     let cancelled = false;
     setWikiLoading(true);
-    setPage(null);
+    setConcept(null);
     // Scope is omitted — the server resolves the vault by name (local first,
     // then global), matching how a page node addresses its vault.
     Promise.all([getPageMarkdown(vault, slug), getVault(vault)])
       .then(([body, detail]) => {
-        if (!cancelled) setPage({ body, pages: detail.pages });
+        if (!cancelled) setConcept({ body, pages: detail.pages });
       })
       .catch((err) => {
         if (cancelled) return;
         console.warn('[SidePanel] wiki page fetch failed:', err);
-        setPage({ body: '', pages: [] });
+        setConcept({ body: '', pages: [] });
       })
       .finally(() => {
         if (!cancelled) setWikiLoading(false);
@@ -669,7 +669,7 @@ export default function SidePanel({
               edges={selectedNodeEdges}
               onSelectNode={handleSelectNodeId}
               onSelectEdge={handleSelectEdgeFromNode}
-              wikiPage={wikiPage}
+              concept={concept}
               wikiLoading={wikiLoading}
               onPageLink={handlePageLink}
             />

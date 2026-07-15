@@ -58,19 +58,19 @@ def seeded(store):
     # Wiki pages
     store.add_node(
         "vault::concept/auth-flow",
-        "Page",
+        "KnowledgeConcept",
         "Auth Flow",
         {"slug": "concept/auth-flow", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/sessions",
-        "Page",
+        "KnowledgeConcept",
         "Sessions",
         {"slug": "concept/sessions", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/unrelated",
-        "Page",
+        "KnowledgeConcept",
         "Unrelated",
         {"slug": "concept/unrelated", "vault": "vault", "kind": "concept"},
     )
@@ -149,19 +149,19 @@ def test_signature_stripping_and_substring_match(store):
     # Wiki pages
     store.add_node(
         "vault::concept/validators",
-        "Page",
+        "KnowledgeConcept",
         "Validators",
         {"slug": "concept/validators", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/decorators",
-        "Page",
+        "KnowledgeConcept",
         "Decorators",
         {"slug": "concept/decorators", "vault": "vault", "kind": "concept"},
     )
     store.add_node(
         "vault::concept/models",
-        "Page",
+        "KnowledgeConcept",
         "Models",
         {"slug": "concept/models", "vault": "vault", "kind": "concept"},
     )
@@ -182,9 +182,9 @@ def test_originating_doc_recovered_via_derived_from(store):
     """The doc an entity was extracted from carries no MENTIONS edge (that
     pair is DERIVED_FROM instead), but must still surface as a reference."""
     store.add_node("idea:Werkzeug", "Service", "Werkzeug", {"vault": "v"})
-    store.add_node("corpus::src", "CorpusDoc", "deploy.md", {"vault": "v"})
-    store.add_node("corpus::other", "CorpusDoc", "api.md", {"vault": "v"})
-    store.add_node("vault::concept/deploy", "Page", "Deploy", {"vault": "v"})
+    store.add_node("corpus::src", "KnowledgeDoc", "deploy.md", {"vault": "v"})
+    store.add_node("corpus::other", "KnowledgeDoc", "api.md", {"vault": "v"})
+    store.add_node("vault::concept/deploy", "KnowledgeConcept", "Deploy", {"vault": "v"})
     # deploy.md is the SOURCE of the entity → DERIVED_FROM, no MENTIONS.
     store.add_relationship("df1", "DERIVED_FROM", "idea:Werkzeug", "corpus::src")
     # api.md and a concept page merely mention it → MENTIONS.
@@ -205,7 +205,7 @@ def test_no_duplicate_when_both_edges_exist(store):
     """If a doc somehow has BOTH MENTIONS and DERIVED_FROM to an entity, the
     union dedupes it to one result."""
     store.add_node("idea:X", "Idea", "X", {"vault": "v"})
-    store.add_node("corpus::d", "CorpusDoc", "d.md", {"vault": "v"})
+    store.add_node("corpus::d", "KnowledgeDoc", "d.md", {"vault": "v"})
     store.add_relationship("df", "DERIVED_FROM", "idea:X", "corpus::d")
     store.add_relationship("mn", "MENTIONS", "corpus::d", "idea:X")
     pages = find_pages_mentioning(store, "idea:X")

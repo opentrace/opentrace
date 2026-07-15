@@ -12,14 +12,14 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `find_orphans` | Nodes of a type with no edges of a given type | "Functions never called" |
 | `find_via_relationship_to_type` | All `(A) -[edge]-> (B)` pairs for given types | "All Files that DEFINE Classes" |
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
-| `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM CorpusDoc) | "Where did this come from?" |
+| `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM KnowledgeDoc) | "Where did this come from?" |
 | `grep` | Regex match via ripgrep over a Repository or Vault scope | "Find this exact string in source" |
 | `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
 | `cross_domain_bridges` | Edges spanning code / entity / page domains | "What connects code and docs?" |
 | `find_communities_spanning_domains` | Communities whose members span ≥N domains | Cross-cutting topics |
-| `find_pages_mentioning` | Pages and CorpusDocs that MENTION a given entity (typed hits) | "Pages and docs discussing this concept" |
+| `find_pages_mentioning` | Pages and KnowledgeDocs that MENTION a given entity (typed hits) | "Pages and docs discussing this concept" |
 | `find_entities_mentioned_by` | Entities a Page MENTIONS | "What does this page reference?" |
 
 ## MCP tools
@@ -42,7 +42,7 @@ get_communities                         # listed clusters
 get_god_nodes                           # centrality hubs
 get_bridges                             # cross-community edges
 load_source                             # a node's underlying content — code from the
-                                        #  repo checkout, CorpusDoc bodies from the
+                                        #  repo checkout, KnowledgeDoc bodies from the
                                         #  corpus, Page bodies from the vault
 get_stats                               # node + edge counts by type
 ```
@@ -146,15 +146,15 @@ From `index --wiki` — flat LLM-extracted entities with no body:
 | `Person` | "Karen Chen", "Vaswani et al." |
 | `Event` | "the 2024 release", "the security incident" |
 
-### Page layer
+### Concept layer
 
 From `index --wiki` — curated markdown pages with bodies on disk:
 
 | Type | What it is |
 |---|---|
-| `Vault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` + `spawned_from` (repo id, when built by `index --wiki` over a repo) |
-| `Page` | A concept page (`kind="concept"` — the only kind), a multi-source narrative. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
-| `CorpusDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
+| `KnowledgeVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` + `spawned_from` (repo id, when built by `index --wiki` over a repo) |
+| `KnowledgeConcept` | A concept page (`kind="concept"` — the only kind), a multi-source narrative. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
+| `KnowledgeDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
 
 ### Auxiliary
 
@@ -168,16 +168,16 @@ From `index --wiki` — curated markdown pages with bodies on disk:
 
 | Edge | Source → Target | Meaning |
 |---|---|---|
-| `CONTAINS` | Directory → File, Repo → Directory, Vault → Page/CorpusDoc | Hierarchy |
+| `CONTAINS` | Directory → File, Repo → Directory, Vault → Page/KnowledgeDoc | Hierarchy |
 | `DEFINES` | File → Class/Function, Class → Function | Symbol definition |
 | `CALLS` | Function → Function | Resolved call |
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
-| `DERIVED_FROM` | Idea/Service/... → CorpusDoc | Entity provenance (with `transform="llm_extraction"`) |
-| `CITES` | Page(concept) → CorpusDoc | Direct wiki provenance (one hop, keyed by doc sha) |
+| `DERIVED_FROM` | Idea/Service/... → KnowledgeDoc | Entity provenance (with `transform="llm_extraction"`) |
+| `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha) |
 | `LINKS_TO` | Page → Page | Wiki-link in body (`[[Title]]`) |
-| `MENTIONS` | Page/CorpusDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name. Deduped against `DERIVED_FROM` — a doc gets no MENTIONS to an entity it was the extraction source of (that's the reverse `DERIVED_FROM` edge). `find_pages_mentioning` unions both |
-| `MIRRORS` | CorpusDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the CorpusDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
+| `MENTIONS` | Page/KnowledgeDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name. Deduped against `DERIVED_FROM` — a doc gets no MENTIONS to an entity it was the extraction source of (that's the reverse `DERIVED_FROM` edge). `find_pages_mentioning` unions both |
+| `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
 | `SEMANTIC_EDGE` | Idea/Service/... → Idea/Service/... | LLM-proposed relationship between entities, with confidence tier |
 | `MEMBER_OF_COMMUNITY` | any non-internal node → Community | Cluster membership |
@@ -192,7 +192,7 @@ overview(store, vault_scope="research")          # only nodes tagged with the re
 search(store, "diffusion", vault_scope="papers")  # FTS scoped to one vault
 ```
 
-`vault` is denormalised onto every `Vault` / `Page` / `CorpusDoc` / entity node so the filter is a simple property equality — no graph traversal needed.
+`vault` is denormalised onto every `KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc` / entity node so the filter is a simple property equality — no graph traversal needed.
 
 ## Confidence + provenance
 
@@ -205,8 +205,8 @@ Nodes carry typed confidence where appropriate:
 `provenance(node_id)` walks the right trust chain depending on node type:
 
 - **Code** — reads commit_sha + indexer version from the per-repo `IndexMetadata` node, plus file_path + line_range from the node
-- **Wiki** — walks `CITES` from a concept page directly to its CorpusDocs
-- **Derived** — walks `DERIVED_FROM` from an entity to its CorpusDoc
+- **Wiki** — walks `CITES` from a concept page directly to its KnowledgeDocs
+- **Derived** — walks `DERIVED_FROM` from an entity to its KnowledgeDoc
 
 Chain entries for ingested docs have `kind="corpus_doc"` and carry the doc's `path`; when the doc has a `MIRRORS` twin in the code tree, the entry also includes the mirrored `File` id in a `file` field.
 

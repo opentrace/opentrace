@@ -88,9 +88,9 @@ class TestWikiProvenance:
         assert result["wiki"]["confidence"] == 0.0
         # Chain goes straight to the source — no intermediate pages.
         kinds = [c["kind"] for c in result["wiki"]["chain"]]
-        assert "corpus_doc" in kinds
+        assert "knowledge_doc" in kinds
         # The Source entry should carry sha256 + filename.
-        source_entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "corpus_doc")
+        source_entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "knowledge_doc")
         assert source_entry["sha256"] == "sha1"
         assert source_entry["filename"] == "report.pdf"
 
@@ -101,7 +101,7 @@ class TestWikiProvenance:
         store.add_node("myrepo/docs/report.pdf", "File", "report.pdf", {"path": "docs/report.pdf"})
         store.add_relationship("m1", "MIRRORS", corpus_doc_node_id("sha1"), "myrepo/docs/report.pdf")
         result = provenance(store, page_node_id("kb", "concept/revenue"))
-        entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "corpus_doc")
+        entry = next(c for c in result["wiki"]["chain"] if c["kind"] == "knowledge_doc")
         assert entry["file"] == "myrepo/docs/report.pdf"
 
     def test_source_node_returns_self_chain(self, store):
@@ -109,7 +109,7 @@ class TestWikiProvenance:
         write_vault_to_graph(store, meta, bodies)
         result = provenance(store, corpus_doc_node_id("sha1"))
         assert result["kind"] == "wiki"
-        assert result["wiki"]["chain"][0]["kind"] == "corpus_doc"
+        assert result["wiki"]["chain"][0]["kind"] == "knowledge_doc"
         assert result["wiki"]["chain"][0]["sha256"] == "sha1"
 
     def test_unchanged_pages_keep_existing_provenance(self, store):

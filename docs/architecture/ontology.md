@@ -10,7 +10,7 @@ The graph organises into three domains:
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
 | **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
-| **page** | `Vault`, `Page`, `CorpusDoc` | `opentraceai index --wiki` (Plan + Execute) |
+| **page** | `KnowledgeVault`, `KnowledgeConcept`, `KnowledgeDoc` | `opentraceai index --wiki` (Plan + Execute) |
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -82,7 +82,7 @@ All entity-type nodes share the same shape:
 
 - `id` — `<source-stem>_<entity-slug>` (lowercased, [a-z0-9_])
 - `name` — human-readable label
-- `derived_from` — id of the `CorpusDoc` the entity came from
+- `derived_from` — id of the `KnowledgeDoc` the entity came from
 - `source_uri` — copied from the originating doc for quick reference
 - `vault` — vault name when produced via `--wiki`
 
@@ -90,9 +90,9 @@ The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Ev
 
 `Idea` is the catch-all bucket — anything the LLM names that doesn't fit a concrete type lands here.
 
-### Page domain
+### Knowledge domain
 
-#### `Vault`
+#### `KnowledgeVault`
 
 A named collection of compiled pages (one per disk vault dir).
 
@@ -104,9 +104,9 @@ A named collection of compiled pages (one per disk vault dir).
 - `spawned_from` — repo id when the vault was built by `index --wiki` over that repository (paired with the `DOCUMENTS` edge); empty for uploads/URL compiles and attached globals
 - `summary`, `vault`
 
-#### `Page`
+#### `KnowledgeConcept`
 
-A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `CorpusDoc` node (see below) with the raw body in the corpus.
+A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `KnowledgeDoc` node (see below) with the raw body in the corpus.
 
 - `id` — `<vault>::<slug>` (e.g. `kb::concept/revenue`)
 - `name` — page title
@@ -114,11 +114,11 @@ A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the 
 - `kind` (`"concept"`), `one_line_summary`, `revision`, `last_updated`
 - `vault` — owning vault name
 - Provenance (stamped at compile time): `agent`, `model`, `session`, `confidence` (0.0–1.0), `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- `stale_since` — ISO-8601 timestamp set by autoprune when a cited CorpusDoc was removed but the page still has other citations
+- `stale_since` — ISO-8601 timestamp set by autoprune when a cited KnowledgeDoc was removed but the page still has other citations
 
 `concept` pages default to `INFERRED` / 0.75 confidence (LLM synthesis across sources). The Execute prompt can self-rate; future work may surface `AMBIGUOUS` results.
 
-#### `CorpusDoc`
+#### `KnowledgeDoc`
 
 A raw ingested artifact — every doc ingested by `index --wiki` (wiki uploads included) uses this shape.
 
@@ -161,7 +161,7 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `Vault → Page/CorpusDoc` |
+| `CONTAINS` | parent → child | Hierarchy. `Repository → Directory`, `Directory → File`, `KnowledgeVault → KnowledgeConcept/KnowledgeDoc` |
 | `DEFINES` | container → symbol | `File → Class/Function`, `Class → Function`, `Class → Variable` |
 | `CALLS` | `Function → Function` | Resolved call via 7-strategy resolver |
 | `IMPORTS` | `File → Dependency` | Resolved import |
@@ -171,25 +171,25 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `DERIVED_FROM` | entity → CorpusDoc | Entity came from analyzing this doc. Carries `transform="llm_extraction"`. Walked by `retrieval.provenance` for the derived branch |
+| `DERIVED_FROM` | entity → KnowledgeDoc | Entity came from analyzing this doc. Carries `transform="llm_extraction"`. Walked by `retrieval.provenance` for the derived branch |
 | `SEMANTIC_EDGE` | entity → entity | LLM-proposed relationship. Carries `relation`, `confidence` tier, `confidence_score`, `source_file`, optional `source_location`, optional `weight` |
 
-Entities derive from CorpusDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
+Entities derive from KnowledgeDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
 
-### Page provenance
+### Knowledge provenance
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CITES` | concept page → CorpusDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes |
-| `LINKS_TO` | Page → Page | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
+| `CITES` | concept page → KnowledgeDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes |
+| `LINKS_TO` | KnowledgeConcept → KnowledgeConcept | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
 
 ### Cross-layer
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | Page/CorpusDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
-| `MIRRORS` | CorpusDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the CorpusDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
-| `DOCUMENTS` | Repository → Vault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
+| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
+| `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the KnowledgeDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
+| `DOCUMENTS` | Repository → KnowledgeVault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 
 ### Auxiliary
 
@@ -210,12 +210,12 @@ All confidence values snap to the discrete rubric, never the soft 0.5 default:
 
 `round_confidence(tier, score)` snaps an LLM-supplied score to the closest legal value.
 
-## Vault scope as a property
+## KnowledgeVault scope as a property
 
 Every node in the page or entity domain produced from a vault carries a `vault=<name>` property. Two consequences:
 
 - **Scoped retrieval is property equality.** Functions like `search(store, query, vault_scope="research")` filter by `node.properties.vault == "research"` — no graph traversal.
-- **Vault attach is per-vault.** Mirroring one vault into a graph touches only nodes with that vault tag. Different vaults can share a graph without interfering.
+- **KnowledgeVault attach is per-vault.** Mirroring one vault into a graph touches only nodes with that vault tag. Different vaults can share a graph without interfering.
 
 ## ID conventions summary
 
@@ -226,9 +226,9 @@ Every node in the page or entity domain produced from a vault carries a `vault=<
 | `<file>::<class>::<method>` | `Function` (method) |
 | `pkg:<registry>:<name>` | `Dependency` |
 | `<stem>_<entity-slug>` | Idea / Service / Module / Paper / Person / Event |
-| `vault::<name>` | `Vault` |
-| `<vault>::<kind_dir>/<base>` | `Page` (e.g. `kb::concept/revenue`) |
-| `corpus::<sha256>` | `CorpusDoc` |
+| `vault::<name>` | `KnowledgeVault` |
+| `<vault>::<kind_dir>/<base>` | `KnowledgeConcept` (e.g. `kb::concept/revenue`) |
+| `corpus::<sha256>` | `KnowledgeDoc` |
 | `_meta:index:<repo_id>` | `IndexMetadata` |
 
 The `corpus::` ID is content-hashed — identical content via different ingestion paths lands on one node.

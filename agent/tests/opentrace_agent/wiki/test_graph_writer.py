@@ -69,9 +69,9 @@ ladybug = pytest.importorskip("real_ladybug")
 
 from opentrace_agent.store import GraphStore  # noqa: E402
 from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
-    NODE_TYPE_PAGE,
-    NODE_TYPE_CORPUS_DOC,
-    NODE_TYPE_VAULT,
+    NODE_TYPE_KNOWLEDGE_CONCEPT,
+    NODE_TYPE_KNOWLEDGE_DOC,
+    NODE_TYPE_KNOWLEDGE_VAULT,
     REL_TYPE_CITES,
     REL_TYPE_CONTAINS,
     REL_TYPE_DOCUMENTS,
@@ -161,13 +161,13 @@ class TestWriteVaultToGraph:
         write_vault_to_graph(store, meta, bodies)
         node = store.get_node(vault_node_id("kb"))
         assert node is not None
-        assert node["type"] == NODE_TYPE_VAULT
+        assert node["type"] == NODE_TYPE_KNOWLEDGE_VAULT
         assert node["properties"]["vault"] == "kb"
 
     def test_writes_source_nodes(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
-        sources = store.list_nodes(NODE_TYPE_CORPUS_DOC)
+        sources = store.list_nodes(NODE_TYPE_KNOWLEDGE_DOC)
         shas = {s["properties"]["sha256"] for s in sources}
         assert shas == {"sha1", "sha2"}
 
@@ -194,7 +194,7 @@ class TestWriteVaultToGraph:
     def test_writes_page_nodes(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
-        pages = store.list_nodes(NODE_TYPE_PAGE)
+        pages = store.list_nodes(NODE_TYPE_KNOWLEDGE_CONCEPT)
         slugs = {p["properties"]["slug"] for p in pages}
         assert slugs == {"concept/revenue", "concept/costs"}
         for p in pages:
@@ -210,8 +210,8 @@ class TestWriteVaultToGraph:
             relationship_type=REL_TYPE_CONTAINS,
         )
         types = {c["node"]["type"] for c in children}
-        assert NODE_TYPE_PAGE in types
-        assert NODE_TYPE_CORPUS_DOC in types
+        assert NODE_TYPE_KNOWLEDGE_CONCEPT in types
+        assert NODE_TYPE_KNOWLEDGE_DOC in types
         # 2 sources + 2 pages = 4 children
         assert len(children) == 4
 
@@ -228,7 +228,7 @@ class TestWriteVaultToGraph:
         target_ids = {c["node"]["id"] for c in cited}
         assert target_ids == {corpus_doc_node_id("sha1"), corpus_doc_node_id("sha2")}
         # Every CITES target is a Source — no intermediate summary pages.
-        assert all(c["node"]["type"] == NODE_TYPE_CORPUS_DOC for c in cited)
+        assert all(c["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC for c in cited)
 
     def test_links_to_resolves_titles(self, store):
         meta, bodies = _make_meta()
@@ -261,15 +261,15 @@ class TestWriteVaultToGraph:
         ids = {r["node"]["id"] for r in incoming}
         # The concept page mentions "revenue" (in its body), and report.pdf's
         # raw markdown does too — both should carry MENTIONS edges.
-        assert NODE_TYPE_PAGE in by_type
-        assert NODE_TYPE_CORPUS_DOC in by_type
+        assert NODE_TYPE_KNOWLEDGE_CONCEPT in by_type
+        assert NODE_TYPE_KNOWLEDGE_DOC in by_type
         assert corpus_doc_node_id("sha1") in ids
 
     def test_idempotent_rewrite(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
         write_vault_to_graph(store, meta, bodies)  # second pass shouldn't dupe
-        pages = store.list_nodes(NODE_TYPE_PAGE)
+        pages = store.list_nodes(NODE_TYPE_KNOWLEDGE_CONCEPT)
         slugs = [p["properties"]["slug"] for p in pages]
         assert sorted(slugs) == sorted(set(slugs))
 
@@ -289,7 +289,7 @@ class TestWriteVaultToGraph:
             for r in store.traverse(
                 "idea::revenue", direction="incoming", max_depth=1, relationship_type=REL_TYPE_MENTIONS
             )
-            if r["node"]["type"] == NODE_TYPE_CORPUS_DOC
+            if r["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC
         }
         # sha1 suppressed (DERIVED_FROM covers it); the concept page's MENTIONS
         # (not a corpus doc) is unaffected.
@@ -402,8 +402,8 @@ class TestLinkCorpusDocMirrors:
         pdf_bytes = b"%PDF-fake"
         md_sha = hashlib.sha256(md_bytes).hexdigest()
         pdf_sha = hashlib.sha256(pdf_bytes).hexdigest()
-        store.add_node(corpus_doc_node_id(md_sha), NODE_TYPE_CORPUS_DOC, "usage.md", {"sha256": md_sha})
-        store.add_node(corpus_doc_node_id(pdf_sha), NODE_TYPE_CORPUS_DOC, "spec.pdf", {"sha256": pdf_sha})
+        store.add_node(corpus_doc_node_id(md_sha), NODE_TYPE_KNOWLEDGE_DOC, "usage.md", {"sha256": md_sha})
+        store.add_node(corpus_doc_node_id(pdf_sha), NODE_TYPE_KNOWLEDGE_DOC, "spec.pdf", {"sha256": pdf_sha})
         store.add_node("myrepo/docs/usage.md", "File", "usage.md", {"path": "docs/usage.md"})
         return md_bytes, pdf_bytes, md_sha
 
@@ -426,7 +426,7 @@ class TestLinkCorpusDocMirrors:
 
         rst_bytes = b"Quickstart\n==========\nbody"
         rst_sha = hashlib.sha256(rst_bytes).hexdigest()
-        store.add_node(corpus_doc_node_id(rst_sha), NODE_TYPE_CORPUS_DOC, "quickstart.rst", {"sha256": rst_sha})
+        store.add_node(corpus_doc_node_id(rst_sha), NODE_TYPE_KNOWLEDGE_DOC, "quickstart.rst", {"sha256": rst_sha})
         # Parent Directory exists from the code walk (it always does — the
         # walker creates Directory nodes for every non-excluded dir).
         store.add_node("myrepo/docs", "Directory", "docs", {"path": "docs"})
@@ -454,7 +454,7 @@ class TestLinkCorpusDocMirrors:
 
         data = b"deep doc"
         sha = hashlib.sha256(data).hexdigest()
-        store.add_node(corpus_doc_node_id(sha), NODE_TYPE_CORPUS_DOC, "notes.txt", {"sha256": sha})
+        store.add_node(corpus_doc_node_id(sha), NODE_TYPE_KNOWLEDGE_DOC, "notes.txt", {"sha256": sha})
 
         assert link_corpus_doc_mirrors(store, "myrepo", [("docs/guide/notes.txt", data)]) == 1
 
@@ -489,7 +489,7 @@ class TestLinkCorpusDocMirrors:
         node = store.get_node(corpus_doc_node_id("sha1"))
         props = dict(node["properties"])
         props["path"] = "docs/report.pdf"
-        store.add_node(corpus_doc_node_id("sha1"), NODE_TYPE_CORPUS_DOC, node["name"], props)
+        store.add_node(corpus_doc_node_id("sha1"), NODE_TYPE_KNOWLEDGE_DOC, node["name"], props)
 
         write_vault_to_graph(store, meta, bodies)  # re-mirror without normalized
         assert store.get_node(corpus_doc_node_id("sha1"))["properties"]["path"] == "docs/report.pdf"

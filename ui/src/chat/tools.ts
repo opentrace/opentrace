@@ -280,7 +280,7 @@ const grepSchema = z.object({
     .string()
     .describe(
       'Repository or Vault node ID whose on-disk subtree to search. ' +
-        'Use list_nodes(type="Repository") or list_nodes(type="Vault") to discover.',
+        'Use list_nodes(type="Repository") or list_nodes(type="KnowledgeVault") to discover.',
     ),
   fileFilter: z
     .string()
@@ -363,7 +363,7 @@ const FIND_VIA_DESC =
   'Find all (A, B) pairs where A is startType, B is targetType, and a ' +
   'relationship of edgeType points from A to B. Examples: ' +
   '("Function","CALLS","Endpoint") for "what hits the API"; ' +
-  '("Page","CITES","CorpusDoc") for "what wiki pages cite real documents." ' +
+  '("KnowledgeConcept","CITES","KnowledgeDoc") for "what wiki pages cite real documents." ' +
   'Cheaper than calling traverse_graph once per source node.';
 
 const COUNT_BY_DESC =
@@ -371,7 +371,7 @@ const COUNT_BY_DESC =
   'Without parentId: total count. With parentId: count of descendants of ' +
   'parent reachable via parentEdge (default CONTAINS) within maxHops. ' +
   'Examples: count_by("Function") for total function count; ' +
-  'count_by("Page", parentId="vault::kb", parentEdge="CONTAINS") for ' +
+  'count_by("KnowledgeConcept", parentId="vault::kb", parentEdge="CONTAINS") for ' +
   '"how many pages in the kb vault."';
 
 const GREP_DESC =

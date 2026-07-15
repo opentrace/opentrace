@@ -3385,7 +3385,7 @@ export class LadybugGraphStore implements GraphStore {
       };
     }
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const wikiTypes = new Set(['Vault', 'Page', 'CorpusDoc']);
+    const wikiTypes = new Set(['KnowledgeVault', 'KnowledgeConcept', 'KnowledgeDoc']);
     const codeTypes = new Set([
       'Repository',
       'Directory',
@@ -3437,9 +3437,9 @@ export class LadybugGraphStore implements GraphStore {
     const asString = (v: unknown): string | null =>
       typeof v === 'string' && v ? v : null;
 
-    if (nodeType === 'CorpusDoc') {
+    if (nodeType === 'KnowledgeDoc') {
       chain.push({
-        kind: 'source',
+        kind: 'knowledge_doc',
         id: nodeId,
         sha256: asString(props.sha256),
         filename: asString(props.filename),
@@ -3453,17 +3453,17 @@ export class LadybugGraphStore implements GraphStore {
         if (visited.has(id)) continue;
         visited.add(id);
         const p = (r.node.properties ?? {}) as Record<string, unknown>;
-        if (r.node.type === 'CorpusDoc') {
+        if (r.node.type === 'KnowledgeDoc') {
           chain.push({
-            kind: 'source',
+            kind: 'knowledge_doc',
             id,
             sha256: asString(p.sha256),
             filename: asString(p.filename),
             acquired_at: asString(p.acquired_at),
           });
-        } else if (r.node.type === 'Page') {
+        } else if (r.node.type === 'KnowledgeConcept') {
           chain.push({
-            kind: 'wiki_page',
+            kind: 'knowledge_concept',
             id,
             page_kind: asString(p.kind),
             title: r.node.name ?? null,
@@ -3628,10 +3628,10 @@ export class LadybugGraphStore implements GraphStore {
 
     // Recently-updated: pick from any node type carrying last_updated.
     // Since browser-side props vary by typed table, we only inspect node
-    // types that are likely to carry this field — Page today.
+    // types that are likely to carry this field — KnowledgeConcept today.
     const recentBucket: OverviewRecent[] = [];
-    const wikiPages = await this.listNodes('Page', 200).catch(() => []);
-    for (const p of wikiPages) {
+    const conceptNodes = await this.listNodes('KnowledgeConcept', 200).catch(() => []);
+    for (const p of conceptNodes) {
       const props = (p.properties ?? {}) as Record<string, unknown>;
       const last = props.last_updated;
       if (typeof last !== 'string') continue;

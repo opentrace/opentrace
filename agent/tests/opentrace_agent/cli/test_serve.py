@@ -94,7 +94,7 @@ class TestGetSource:
         (tmp_path / "corpus" / "abc123.md").write_text(body, encoding="utf-8")
         store.add_node(
             "corpus::abc123",
-            "CorpusDoc",
+            "KnowledgeDoc",
             "readme.md",
             {"corpus_path": "corpus/abc123.md", "filename": "readme.md", "sha256": "abc123"},
         )
@@ -129,7 +129,7 @@ class TestGetSource:
 
         store.add_node(
             "corpus::evil",
-            "CorpusDoc",
+            "KnowledgeDoc",
             "evil",
             {"corpus_path": "../../etc/passwd"},
         )
@@ -248,7 +248,7 @@ class TestVaultRoutes:
         # graph row to show up in the project view.
         store.add_node(
             "vault::attached-glob",
-            "Vault",
+            "KnowledgeVault",
             "attached-glob",
             {"vault": "attached-glob", "scope": "global"},
         )
@@ -309,7 +309,7 @@ class TestVaultRoutes:
         self._make_vault(tmp_path, "g2", "global", project_root=tmp_path)
         store.add_node(
             "vault::g1",
-            "Vault",
+            "KnowledgeVault",
             "g1",
             {"vault": "g1", "scope": "global"},
         )
@@ -367,9 +367,9 @@ class TestVaultRoutes:
         the name already exists in either scope; the resolved name is reported."""
         import json
 
-        import opentrace_agent.wiki as wiki_mod
         from starlette.testclient import TestClient
 
+        import opentrace_agent.wiki as wiki_mod
         from opentrace_agent.cli.serve import create_app
         from opentrace_agent.store import GraphStore
         from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase, WikiPipelineEvent
@@ -418,7 +418,7 @@ class TestVaultRoutes:
         self._make_vault(tmp_path, "g1", "global", project_root=tmp_path)
         store.add_node(
             "vault::g1",
-            "Vault",
+            "KnowledgeVault",
             "g1",
             {"vault": "g1", "scope": "global"},
         )
@@ -456,7 +456,7 @@ class TestVaultRoutes:
 
         self._make_vault(tmp_path, "v1", "local", project_root=tmp_path)
         # A local vault carries a scope="local" Vault row in the graph.
-        store.add_node("vault::v1", "Vault", "v1", {"vault": "v1", "scope": "local"})
+        store.add_node("vault::v1", "KnowledgeVault", "v1", {"vault": "v1", "scope": "local"})
 
         client = TestClient(create_app(store))
         resp = client.post("/api/vaults/v1/promote")
@@ -511,7 +511,7 @@ class TestVaultRoutes:
         monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
 
         self._make_vault(tmp_path, "g1", "global", project_root=tmp_path)
-        store.add_node("vault::g1", "Vault", "g1", {"vault": "g1", "scope": "global"})
+        store.add_node("vault::g1", "KnowledgeVault", "g1", {"vault": "g1", "scope": "global"})
 
         client = TestClient(create_app(store))
         resp = client.post("/api/vaults/g1/demote")
@@ -615,7 +615,7 @@ class TestVaultRoutes:
         monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
 
         self._make_vault_with_content(tmp_path, "gv", "global", project_root=tmp_path)
-        store.add_node("vault::gv", "Vault", "gv", {"vault": "gv", "scope": "global"})
+        store.add_node("vault::gv", "KnowledgeVault", "gv", {"vault": "gv", "scope": "global"})
 
         client = TestClient(create_app(store))
         resp = client.post("/api/vaults/gv/demote")
@@ -638,7 +638,7 @@ class TestVaultRoutes:
         monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "globals"))
 
         self._make_vault_with_content(tmp_path, "lv", "local", project_root=tmp_path)
-        store.add_node("vault::lv", "Vault", "lv", {"vault": "lv", "scope": "local"})
+        store.add_node("vault::lv", "KnowledgeVault", "lv", {"vault": "lv", "scope": "local"})
 
         client = TestClient(create_app(store))
         resp = client.post("/api/vaults/lv/promote")

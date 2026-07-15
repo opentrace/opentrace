@@ -164,9 +164,9 @@ class TestSessionStartOrientation:
         assert "Repository" in types
         assert "Function" in types
         # Wiki side present
-        assert "Vault" in types
-        assert "Page" in types
-        assert "CorpusDoc" in types
+        assert "KnowledgeVault" in types
+        assert "KnowledgeConcept" in types
+        assert "KnowledgeDoc" in types
         # Vault scope is null when not requested.
         assert result["vault_scope"] is None
 
@@ -174,7 +174,7 @@ class TestSessionStartOrientation:
         result = overview(seeded_store, top_n=10, vault_scope="kb")
         types = result["counts_by_type"]
         # Only vault-domain types appear under vault scope.
-        assert set(types).issubset({"Vault", "Page", "CorpusDoc"})
+        assert set(types).issubset({"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"})
         assert result["vault_scope"] == "kb"
 
 
@@ -186,7 +186,7 @@ class TestWikiCitationChain:
         # 1. Agent searches for the topic.
         s = search(seeded_store, "auth flow", limit=5)
         assert s["count"] >= 1
-        hits = [h for h in s["hits"] if h["type"] == "Page"]
+        hits = [h for h in s["hits"] if h["type"] == "KnowledgeConcept"]
         assert hits, "expected a Page hit"
         page_id = hits[0]["id"]
 
@@ -197,7 +197,7 @@ class TestWikiCitationChain:
         assert p["wiki"]["model"] == "claude-opus-4-7"
 
         # 3. Chain terminates at a Source node carrying sha + filename.
-        sources = [c for c in p["wiki"]["chain"] if c["kind"] == "corpus_doc"]
+        sources = [c for c in p["wiki"]["chain"] if c["kind"] == "knowledge_doc"]
         assert sources, "provenance chain must reach at least one Source"
         assert sources[0]["sha256"] == "spec-sha"
         assert sources[0]["filename"] == "spec.pdf"
@@ -252,7 +252,7 @@ class TestVaultGraphCounts:
     def test_count_by_under_vault(self, seeded_store):
         result = count_by(
             seeded_store,
-            "Page",
+            "KnowledgeConcept",
             parent_id=vault_node_id("kb"),
             parent_edge="CONTAINS",
             max_hops=1,

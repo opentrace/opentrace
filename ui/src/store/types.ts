@@ -337,16 +337,16 @@ export interface ProvenanceCode {
   line_range: [number, number] | null;
 }
 
-export interface ProvenanceChainSource {
-  kind: 'source';
+export interface ProvenanceChainDoc {
+  kind: 'knowledge_doc';
   id: string;
   sha256: string | null;
   filename: string | null;
   acquired_at: string | null;
 }
 
-export interface ProvenanceChainPage {
-  kind: 'wiki_page';
+export interface ProvenanceChainConcept {
+  kind: 'knowledge_concept';
   id: string;
   page_kind: string | null;
   title: string | null;
@@ -355,8 +355,8 @@ export interface ProvenanceChainPage {
 }
 
 export type ProvenanceChainEntry =
-  | ProvenanceChainSource
-  | ProvenanceChainPage;
+  | ProvenanceChainDoc
+  | ProvenanceChainConcept;
 
 export interface ProvenanceWiki {
   agent: string | null;

@@ -113,7 +113,7 @@ class TestEntityWriteOrdering:
             vault="v",
         )
         write_entity_nodes(store, nodes)
-        store.add_node(id="corpus::abc", node_type="CorpusDoc", name="r.md", properties={})
+        store.add_node(id="corpus::abc", node_type="KnowledgeDoc", name="r.md", properties={})
         write_entity_edges(store, rels)
         assert self._derived_from_count(store) == 1
         inc = store.traverse("corpus::abc", direction="incoming", max_depth=1, relationship_type="DERIVED_FROM")

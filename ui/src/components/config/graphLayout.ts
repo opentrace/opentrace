@@ -160,7 +160,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   // useForceLayout3d). The order encodes where a node with several homes
   // should live:
   //   DEFINES   — code containment (Repository → Directory → File → symbol)
-  //   MIRRORS   — a CorpusDoc anchors AT its File twin, draping the corpus
+  //   MIRRORS   — a KnowledgeDoc anchors AT its File twin, draping the corpus
   //               over the part of the repo it documents, instead of
   //               orbiting the vault
   //   DOCUMENTS — a repo-spawned Vault hangs off its Repository
@@ -171,7 +171,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   // it welds pages and docs into one clump. It, LINKS_TO, and MENTIONS stay
   // semantic cross-links (analogous to CALLS), not hierarchy.
   layoutEdgeType: ['DEFINES', 'MIRRORS', 'DOCUMENTS', 'CONTAINS'],
-  structuralTypes: ['Repository', 'Directory', 'Dependency', 'Vault'],
+  structuralTypes: ['Repository', 'Directory', 'Dependency', 'KnowledgeVault'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,

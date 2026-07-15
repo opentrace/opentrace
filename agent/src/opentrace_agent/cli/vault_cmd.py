@@ -173,7 +173,7 @@ def vault_list(global_only: bool, db_path: str | None) -> None:
     attached_by_name = {}
     if store is not None:
         try:
-            for v in store.list_nodes("Vault", limit=10_000):
+            for v in store.list_nodes("KnowledgeVault", limit=10_000):
                 props = v.get("properties") or {}
                 attached_by_name[props.get("vault") or v.get("name")] = props
         finally:

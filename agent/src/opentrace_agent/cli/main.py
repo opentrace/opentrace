@@ -814,7 +814,7 @@ def _run_wiki_compile_against_index(
     when no key set, anthropic→gemini→openai priority).
 
     When *repo_id* is set (directory index), every ingested doc gets a
-    ``CorpusDoc -MIRRORS-> File`` edge plus a ``path`` stamp, bridging the
+    ``KnowledgeDoc -MIRRORS-> File`` edge plus a ``path`` stamp, bridging the
     corpus layer and the code tree. Docs whose extension the code walk skips
     (.rst/.txt/.html/PDFs) get their File node created at link time.
     """

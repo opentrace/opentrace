@@ -55,7 +55,7 @@ def compute_walked_shas(walked_doc_paths: list[Path]) -> set[str]:
     """SHA-256 of raw file bytes for each walked doc path.
 
     Matches the scheme used by ``wiki/ingest/graph_writer.corpus_doc_node_id``
-    so the resulting CorpusDoc ids align with what the doc-ingestion pass writes.
+    so the resulting KnowledgeDoc ids align with what the doc-ingestion pass writes.
     """
     shas: set[str] = set()
     for p in walked_doc_paths:
@@ -82,7 +82,7 @@ def autoprune_after_index(
     ``scope_path`` — when set without ``vault_name``, scopes by source_uri
         prefix; otherwise deletion is vault-scoped.
 
-    Entities are anchored exclusively to CorpusDocs (``DERIVED_FROM``
+    Entities are anchored exclusively to KnowledgeDocs (``DERIVED_FROM``
     entity → corpus doc) — there is no code-side entity sweep because
     nothing creates code-derived entities today.
     """
@@ -192,8 +192,8 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
             max_depth=1,
             relationship_type="CONTAINS",
         )
-        return [r["node"] for r in results if (r.get("node") or {}).get("type") == "CorpusDoc"]
-    candidates = store.list_nodes("CorpusDoc", limit=10_000)
+        return [r["node"] for r in results if (r.get("node") or {}).get("type") == "KnowledgeDoc"]
+    candidates = store.list_nodes("KnowledgeDoc", limit=10_000)
     if scope_path is not None:
         prefix = str(scope_path.resolve())
         return [s for s in candidates if str((s.get("properties") or {}).get("source_uri") or "").startswith(prefix)]
@@ -203,7 +203,7 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
 def _pages_citing(store, source_id: str) -> list[dict[str, Any]]:
     """Return Page nodes that have a CITES edge to *source_id*."""
     incoming = store.traverse(source_id, direction="incoming", max_depth=1, relationship_type="CITES")
-    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "Page"]
+    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "KnowledgeConcept"]
 
 
 def _pages_in_vault(pages: list[dict[str, Any]], vault_name: str | None) -> list[dict[str, Any]]:
