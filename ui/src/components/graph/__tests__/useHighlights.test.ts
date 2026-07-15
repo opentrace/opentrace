@@ -131,6 +131,36 @@ describe('useHighlights', () => {
     expect(result.current.hopMap.get('c')).toBe(2);
   });
 
+  it('closes the neighborhood: highlights edges between frontier nodes', () => {
+    // Regression: BFS only highlighted the edge that first *reached* each node,
+    // so edges between two outermost (frontier) nodes were left dark and those
+    // nodes looked unconnected until the hop depth was raised. The close pass
+    // must highlight every edge between two highlighted nodes.
+    const graph = makeGraph();
+    const nodes: GraphNode[] = [
+      { id: 'a', name: 'A', type: 'Service' },
+      { id: 'b', name: 'B', type: 'Service' },
+      { id: 'c', name: 'C', type: 'Service' },
+    ];
+    // a→b, a→c are the BFS-tree edges (depth 0→1). b→c joins two frontier
+    // nodes — never traversed at hops=1, so previously un-highlighted.
+    const links: GraphLink[] = [
+      { source: 'a', target: 'b', label: 'CALLS' },
+      { source: 'a', target: 'c', label: 'CALLS' },
+      { source: 'b', target: 'c', label: 'CALLS' },
+    ];
+    const { result } = renderHook(() =>
+      useHighlights(graph, true, nodes, links, '', 'a', 1, emptyFilter()),
+    );
+    expect(result.current.highlightNodes.has('b')).toBe(true);
+    expect(result.current.highlightNodes.has('c')).toBe(true);
+    // The sibling edge between the two frontier nodes is now highlighted...
+    expect(result.current.highlightLinks.has('b-c')).toBe(true);
+    // ...alongside the tree edges.
+    expect(result.current.highlightLinks.has('a-b')).toBe(true);
+    expect(result.current.highlightLinks.has('a-c')).toBe(true);
+  });
+
   it('label nodes limited to min(2, hops)', () => {
     const graph = makeGraph();
     const nodes: GraphNode[] = [

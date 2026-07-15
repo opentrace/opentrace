@@ -474,11 +474,17 @@ function InternalGraphInteractionProvider({
   );
 
   // ─── Highlights (used by canvas + Discover panel hop colouring) ───────
+  // Feed the FILTERED (visible) graph, not the full one: otherwise BFS walks
+  // *through* hidden nodes — e.g. Dependency nodes are default-hidden via
+  // sub-types, so a selection would traverse main.py → (hidden dep) → every
+  // other file importing that dep, highlighting them via edges the renderer
+  // never draws (hidden endpoint) and leaving them looking edgeless. Using the
+  // same set the canvas renders keeps highlights and edges consistent.
   const highlights = useHighlights(
     null as never, // _graph — unused
     false, // _layoutReady — unused
-    graphData.nodes,
-    graphData.links,
+    filteredGraphData.nodes,
+    filteredGraphData.links,
     searchQuery,
     selectedNode?.id ?? null,
     hops,

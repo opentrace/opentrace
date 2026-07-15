@@ -174,6 +174,20 @@ export function useHighlights(
         });
         frontier = nextFrontier;
       }
+
+      // Close the neighborhood: the BFS above only highlights the edge that
+      // first *reached* each node, so the outermost (frontier) nodes end up
+      // with a single edge and everything they connect to within the selected
+      // set is left dark — they look unconnected until you raise the hop depth.
+      // Add every edge BETWEEN two highlighted nodes so the neighborhood shows
+      // all its internal structure at the current hop count.
+      for (const nodeId of highlightNodes) {
+        const edges = adjacency.get(nodeId);
+        if (!edges) continue;
+        for (const { neighbor, linkKey } of edges) {
+          if (highlightNodes.has(neighbor)) highlightLinks.add(linkKey);
+        }
+      }
     }
 
     return { highlightNodes, highlightLinks, labelNodes, hopMap };
