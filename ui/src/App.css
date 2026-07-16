@@ -1676,13 +1676,15 @@
 
   /* A clean right-aligned 3-column grid that flows all controls left-to-right
      (there are ~9, so 3 columns tile them into a tidy 3×3 block; the old
-     nth-child hacks assumed 4 and left a ragged, staircased layout). Items div
-     is always rendered open. */
+     nth-child hacks assumed 4 and left a ragged, staircased layout). Columns
+     are `auto` so they match the 44px touch-target button width — a fixed 36px
+     was narrower than the buttons, so they overlapped/touched. Items div is
+     always rendered open. */
   .graph-controls-items {
     display: grid;
-    grid-template-columns: repeat(3, 36px);
+    grid-template-columns: repeat(3, auto);
     justify-content: end;
-    gap: 6px;
+    gap: 8px;
   }
 
   .version-footer {
