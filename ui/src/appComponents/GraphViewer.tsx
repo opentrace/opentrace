@@ -30,6 +30,7 @@ import {
   type GraphPresetSettings,
 } from '@opentrace/components';
 import {
+  type CSSProperties,
   forwardRef,
   memo,
   useCallback,
@@ -51,6 +52,10 @@ import {
   GRAPH_SETTING_DEFAULTS,
 } from '../hooks/useGraphViewer';
 import type { GraphViewerImperativeHandle } from '../hooks/useGraphViewer';
+import {
+  LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD,
+  MIN_VISIBLE_EDGE_OPACITY,
+} from '../config/graphSettingDefaults';
 import ExportModal from './ExportModal';
 import {
   EmptyStateHeader,
@@ -266,6 +271,67 @@ const GraphViewer = memo(
         communityData,
       } = useGraphInteraction();
 
+      // ── Large-graph edge auto-hide ─────────────────────────────────
+      // Past LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD edges the edge cloud makes
+      // the graph unreadable, so edges start hidden (visual only — the force
+      // layout still uses every edge). This is a per-load overlay on top of
+      // the persisted `edgesVisible` preference, never written to storage,
+      // so small graphs keep the user's stored choice. A user re-enable
+      // (pill or physics panel) sticks for as long as the large graph is on
+      // screen — including the authoritative reload at the end of a live
+      // build — and everything resets once a smaller graph loads.
+      const [edgesAutoHidden, setEdgesAutoHidden] = useState(false);
+      const [edgePillDismissed, setEdgePillDismissed] = useState(false);
+      const edgesAutoHiddenRef = useRef(false);
+      const edgesUserOverrideRef = useRef(false);
+      useEffect(() => {
+        const large =
+          graphData.links.length > LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD;
+        const next = large && !edgesUserOverrideRef.current;
+        if (!large) {
+          edgesUserOverrideRef.current = false;
+
+          setEdgePillDismissed(false);
+        }
+        edgesAutoHiddenRef.current = next;
+
+        setEdgesAutoHidden((prev) => (prev === next ? prev : next));
+      }, [graphData.links.length]);
+
+      const effectiveEdgesVisible = v.settings.edgesVisible && !edgesAutoHidden;
+      /** User-initiated edge toggle: clears the auto-hide overlay for this
+       *  large graph before applying the (persisted) preference. Accepts
+       *  functional updaters (the physics panel's prop is a state setter);
+       *  they resolve against the EFFECTIVE visibility the panel displays. */
+      const setEdgesVisibleUser = useCallback(
+        (action: React.SetStateAction<boolean>) => {
+          const current =
+            v.settings.edgesVisible && !edgesAutoHiddenRef.current;
+          const visible =
+            typeof action === 'function' ? action(current) : action;
+          edgesUserOverrideRef.current = true;
+          edgesAutoHiddenRef.current = false;
+          setEdgesAutoHidden(false);
+          v.settings.setEdgesVisible(visible);
+          if (visible) {
+            // Some presets ship edgeOpacity: 0 (e.g. Onion), so just enabling
+            // edges would still render them invisible. Floor opacity to a
+            // faint-but-visible value (never lowering a higher setting) and
+            // push it to the renderer imperatively (prop effects only fire on
+            // a change), so "Show edges" always actually shows edges.
+            const nextOpacity = Math.max(
+              v.settings.edgeOpacity,
+              MIN_VISIBLE_EDGE_OPACITY,
+            );
+            if (nextOpacity !== v.settings.edgeOpacity) {
+              v.settings.setEdgeOpacity(nextOpacity);
+            }
+            v.canvasRef.current?.setEdgeOpacity?.(nextOpacity / 100);
+          }
+        },
+        [v.settings, v.canvasRef],
+      );
+
       // ── View presets ───────────────────────────────────────────────
       const [activePresetId, setActivePresetId] = useState<string | null>(
         () => {
@@ -336,7 +402,9 @@ const GraphViewer = memo(
           c?.setZoomSizeExponent?.(s.zoomSizeExponent);
           c?.setLabelScale?.(s.labelScale / 100);
           c?.setShowLabels?.(s.labelsVisible);
-          c?.setEdgesEnabled?.(s.edgesVisible);
+          // Preset edgesVisible is a stored preference; the large-graph
+          // auto-hide overlay stays in force until the user toggles edges.
+          c?.setEdgesEnabled?.(s.edgesVisible && !edgesAutoHiddenRef.current);
           c?.setShowCommunityLabels?.(s.communityLabelsVisible);
           // 3. Nebula is a worker-internal layout toggled separately;
           //    enabling it seeds + restarts the sim itself.
@@ -388,26 +456,24 @@ const GraphViewer = memo(
         });
       }, []);
 
-      // On the first graph load, restore the remembered preset (re-applied in
-      // full so options that don't persist — autorotate, color mode — are
-      // honored), or apply the default on a user's very first load. Runs once
-      // per mount; 'custom' means the user is hand-driving, so we leave the
-      // individually-persisted settings alone.
+      // Restore the remembered preset (re-applied in full so options that don't
+      // persist — autorotate, color mode — are honored), or apply the default on
+      // a user's very first load. `animate` is false in both call sites: the
+      // graph is either laying out fresh (first load) or building live, so a
+      // reseed/recenter would fight that motion. Returns false and leaves
+      // settings untouched when 'custom' is stored (the user is hand-driving).
       const presetAppliedRef = useRef(false);
-      useEffect(() => {
-        if (presetAppliedRef.current) return;
-        if (graphVersion === 0 || graphData.nodes.length === 0) return;
-        presetAppliedRef.current = true;
+      const restoreRememberedPreset = useCallback(() => {
         let stored: string | null = null;
         try {
           stored = localStorage.getItem(PRESET_STORAGE_KEY);
         } catch {
           // ignore
         }
-        if (stored === CUSTOM_PRESET) return;
+        if (stored === CUSTOM_PRESET) return false;
         const id = stored ?? DEFAULT_PRESET_ID;
         const preset = getPreset(id);
-        if (!preset) return;
+        if (!preset) return false;
         setActivePresetId(id);
         if (stored === null) {
           try {
@@ -417,7 +483,35 @@ const GraphViewer = memo(
           }
         }
         applyPresetSettings(preset.settings, false);
-      }, [graphVersion, graphData.nodes.length, applyPresetSettings]);
+        return true;
+      }, [applyPresetSettings]);
+
+      // On the first graph load, restore the remembered preset. Runs once per
+      // mount; the live-build path below owns this during streaming.
+      useEffect(() => {
+        if (presetAppliedRef.current) return;
+        if (graphVersion === 0 || graphData.nodes.length === 0) return;
+        presetAppliedRef.current = true;
+        restoreRememberedPreset();
+      }, [graphVersion, graphData.nodes.length, restoreRememberedPreset]);
+
+      // Apply the remembered preset (or Planet on a first-ever index) the moment
+      // a live build STARTS, so the graph grows directly into that layout's
+      // physics and 3D/color settings. Without this the build would settle with
+      // the generic defaults and only snap to the preset at the end — the
+      // jarring end-of-build re-layout. Marking presetAppliedRef here keeps the
+      // first-load effect above from re-applying (and reseeding) post-build.
+      const liveStreamPresetRef = useRef(false);
+      useEffect(() => {
+        if (!isStreaming) {
+          liveStreamPresetRef.current = false;
+          return;
+        }
+        if (liveStreamPresetRef.current) return;
+        liveStreamPresetRef.current = true;
+        presetAppliedRef.current = true;
+        restoreRememberedPreset();
+      }, [isStreaming, restoreRememberedPreset]);
 
       // Sync ambient motion (gentle perpetual drift) to the renderer. Re-applied
       // on each graph load (graphVersion) since a fresh layout resets the worker.
@@ -596,10 +690,15 @@ const GraphViewer = memo(
           // properties used by search, not the on-screen structure.)
           if (liveGrewRef.current) return;
           suppressNextFitRef.current = true;
-          loadGraph().finally(() => {
-            // Defensive reset: if loadGraph failed or was aborted, the
-            // graphVersion-driven auto-fit never fired and the flag would
-            // leak onto the next unrelated call.
+          // The flag is consumed (read-and-reset) by the graphVersion-driven
+          // auto-fit effect in useGraphViewer AFTER React commits the reload.
+          // Do NOT clear it in a `.finally` here: that runs in a microtask,
+          // before the commit, so the effect would still see the flag as
+          // false and auto-fit anyway (making the suppression dead code).
+          loadGraph().catch(() => {
+            // Load failed — no graphVersion bump, so the consumer never
+            // reads the flag. Reset it here so it can't leak onto the next
+            // unrelated load.
             suppressNextFitRef.current = false;
           });
         }
@@ -626,7 +725,12 @@ const GraphViewer = memo(
       // whenever the user hasn't expanded to the full modal.
       const showLivePanel = jobActive && !jobExpanded;
 
-      const graphWidth = showChat || showHelp ? width - chatWidth : width;
+      // The canvas is ALWAYS full-width now: the chat / help panels float over it
+      // as translucent overlays (like the left side panel) so the graph shines
+      // through them. `rightPanelInset` shifts the bottom-right graph controls
+      // clear of whichever right panel is open so they stay reachable.
+      const graphWidth = width;
+      const rightPanelInset = showChat || showHelp ? chatWidth : 0;
 
       // Auto-minimize once graph data has arrived (bridges "Loading graph..." modal
       // to the "Computing layout" overlay without flashing "no data").
@@ -717,7 +821,12 @@ const GraphViewer = memo(
       // --- Main graph viewport ---
 
       return (
-        <div className="graph-viewport">
+        <div
+          className="graph-viewport"
+          style={
+            { '--right-panel-inset': `${rightPanelInset}px` } as CSSProperties
+          }
+        >
           <GraphToolbar
             logo={
               <button
@@ -908,7 +1017,7 @@ const GraphViewer = memo(
             onStageClick={v.onStageClick}
             onNodeHover={onNodeHover}
             labelsVisible={v.settings.labelsVisible}
-            edgesEnabled={v.settings.edgesVisible}
+            edgesEnabled={effectiveEdgesVisible}
             communityLabelsVisible={v.settings.communityLabelsVisible}
             layoutMode={v.settings.layoutMode}
             zoomSizeExponent={v.settings.pixiZoomExponent}
@@ -939,6 +1048,32 @@ const GraphViewer = memo(
           )}
 
           <NodeHoverCard info={hoverInfo} />
+
+          {/* Large-graph notice: edges started hidden for readability. The
+              pill re-enables them in place; the × hides just the notice. */}
+          {edgesAutoHidden && !edgePillDismissed && (
+            <div className="graph-edges-hidden-pill" role="status">
+              <span>
+                Edges hidden ({graphData.links.length.toLocaleString()}) to keep
+                this large graph readable
+              </span>
+              <button
+                type="button"
+                className="graph-edges-hidden-pill__show"
+                onClick={() => setEdgesVisibleUser(true)}
+              >
+                Show edges
+              </button>
+              <button
+                type="button"
+                className="graph-edges-hidden-pill__dismiss"
+                aria-label="Dismiss"
+                onClick={() => setEdgePillDismissed(true)}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {/* Fetch-phase placeholder: a job is running but nothing has streamed
               into the canvas yet (initializing / fetching the archive), so the
@@ -973,8 +1108,8 @@ const GraphViewer = memo(
               setRepulsion={v.settings.setRepulsion}
               labelsVisible={v.settings.labelsVisible}
               setLabelsVisible={v.settings.setLabelsVisible}
-              edgesVisible={v.settings.edgesVisible}
-              setEdgesVisible={v.settings.setEdgesVisible}
+              edgesVisible={effectiveEdgesVisible}
+              setEdgesVisible={setEdgesVisibleUser}
               communityLabelsVisible={v.settings.communityLabelsVisible}
               setCommunityLabelsVisible={v.settings.setCommunityLabelsVisible}
               communitiesEnabled={v.settings.communitiesEnabled}
@@ -1070,7 +1205,9 @@ const GraphViewer = memo(
               c?.set3DTilt?.(D.mode3dTilt / 100);
               c?.set3DAutoRotate?.(true);
               c?.setShowLabels?.(D.labelsVisible);
-              c?.setEdgesEnabled?.(D.edgesVisible);
+              c?.setEdgesEnabled?.(
+                D.edgesVisible && !edgesAutoHiddenRef.current,
+              );
               c?.setShowCommunityLabels?.(D.communityLabelsVisible);
               // 3. Reheat physics + reset camera (the original behaviour).
               c?.reheat?.();

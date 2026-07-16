@@ -30,7 +30,12 @@
 import type { EmbedderConfig } from './types';
 
 type InMessage =
-  | { seq: number; type: 'init'; config: EmbedderConfig }
+  | {
+      seq: number;
+      type: 'init';
+      config: EmbedderConfig;
+      gpuPreferred?: boolean;
+    }
   | { seq: number; type: 'embed'; texts: string[] }
   | { seq: number; type: 'dispose' };
 
@@ -43,6 +48,19 @@ type OutMessage =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pipelineInstance: any = null;
 const dimension = 384;
+/** Which backend the loaded pipeline is running on. WebGPU can safely run the
+ *  whole batch in one parallel call; WASM stays per-text (batched WASM inference
+ *  can OOM in-browser). */
+let device: 'webgpu' | 'wasm' = 'wasm';
+
+/** WebGPU is available (dedicated workers expose navigator.gpu when supported). */
+function webGpuAvailable(): boolean {
+  return (
+    typeof navigator !== 'undefined' &&
+    'gpu' in navigator &&
+    !!(navigator as Navigator & { gpu?: unknown }).gpu
+  );
+}
 
 // Serializes embed work across messages. `handleEmbed` is sequential
 // *within* one message, but without this a second `embed` message could
@@ -51,13 +69,47 @@ const dimension = 384;
 // promise so only one runs at a time.
 let embedQueue: Promise<void> = Promise.resolve();
 
-async function handleInit(config: EmbedderConfig): Promise<number> {
-  const { pipeline } = await import('@huggingface/transformers');
+async function handleInit(
+  config: EmbedderConfig,
+  gpuPreferred: boolean,
+): Promise<number> {
+  const { pipeline, env } = await import('@huggingface/transformers');
+  // On a constrained device, run onnxruntime single-threaded. With COOP/COEP on
+  // (for LadybugDB's SharedArrayBuffer), onnxruntime otherwise spins up
+  // multi-threaded WASM backed by a SharedArrayBuffer sized for every thread —
+  // a big heap. One thread shrinks that peak (slower inference, but the embed
+  // step is far less likely to OOM the tab on top of the full graph).
+  if (!gpuPreferred) {
+    env.backends.onnx.wasm.numThreads = 1;
+  }
+  // Prefer WebGPU (typically 10–100× faster, and lets us batch) with fp32 — the
+  // always-present weights — but ONLY on non-constrained devices: fp32 is ~90MB
+  // vs the quantized ~23MB, too much to stack on a phone's already-full heap.
+  // Falls back to the quantized WASM path on any failure.
+  if (gpuPreferred && webGpuAvailable()) {
+    try {
+      pipelineInstance = await pipeline('feature-extraction', config.model, {
+        dtype: 'fp32',
+        device: 'webgpu',
+      });
+      device = 'webgpu';
+      console.info('[embedderWorker] using WebGPU (fp32)');
+      return dimension;
+    } catch (err) {
+      console.warn(
+        '[embedderWorker] WebGPU init failed, falling back to WASM:',
+        err,
+      );
+      pipelineInstance = null;
+    }
+  }
   pipelineInstance = await pipeline('feature-extraction', config.model, {
-    // Quantized model — same defaults as the main-thread version.
+    // Quantized model — small footprint, the default for phones + the fallback.
     dtype: 'q8',
     device: 'wasm',
   });
+  device = 'wasm';
+  console.info('[embedderWorker] using WASM (q8)');
   return dimension;
 }
 
@@ -65,20 +117,26 @@ async function handleEmbed(texts: string[]): Promise<Float32Array[]> {
   if (!pipelineInstance) {
     throw new Error('embedder worker not initialized');
   }
+  if (device === 'webgpu') {
+    // GPU runs the whole batch in parallel — one call instead of N. tolist()
+    // yields a correctly-shaped number[][] ([texts][dimension]) regardless of
+    // the tensor's internal layout, so we don't hand-slice a flat buffer.
+    const output = await pipelineInstance(texts, {
+      pooling: 'mean',
+      normalize: true,
+    });
+    const rows = output.tolist() as number[][];
+    return rows.map((v) => Float32Array.from(v));
+  }
+  // WASM: sequential per-text — batched WASM inference can OOM in-browser.
   const out: Float32Array[] = [];
-  // Sequential — same as the previous main-thread implementation,
-  // which noted in its comments that batch inference can OOM in
-  // browser WASM.
   for (const text of texts) {
     const output = await pipelineInstance(text, {
       pooling: 'mean',
       normalize: true,
     });
-    // `output.data` is the underlying typed array; reuse it as a
-    // transferable buffer to avoid copying through .tolist().
-    // .data on Tensor is the typed array view onto the model's
-    // output for this single text — slice() copies into a tight
-    // buffer that we can transfer out.
+    // `output.data` is the underlying typed array; slice() copies into a tight
+    // buffer we can transfer out.
     const data = output.data as Float32Array;
     out.push(new Float32Array(data));
   }
@@ -96,7 +154,7 @@ self.onmessage = async (e: MessageEvent<InMessage>) => {
   const msg = e.data;
   try {
     if (msg.type === 'init') {
-      const dim = await handleInit(msg.config);
+      const dim = await handleInit(msg.config, msg.gpuPreferred ?? false);
       const reply: OutMessage = {
         seq: msg.seq,
         type: 'init-done',

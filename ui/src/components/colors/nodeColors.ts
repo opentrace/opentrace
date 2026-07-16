@@ -47,6 +47,11 @@ const FALLBACK_KNOWN: Record<string, string> = {
   File: '#84cc16',
   Directory: '#06b6d4',
   Variable: '#f59e0b',
+  // Dependency is a first-class type themes may color (--graph-node-dependency,
+  // e.g. the brand palette). Without it here, getNodeColor never reads that var
+  // and Dependency nodes silently hash into the palette instead — and the
+  // legend (same function) would disagree with a theme that sets the var.
+  Dependency: '#3d97d4',
 };
 
 function djb2(str: string): number {

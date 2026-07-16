@@ -190,6 +190,9 @@ async function dispatch(msg: CallMessage): Promise<void> {
       case 'setLimits':
         value = await store.setLimits(args[0] as number, args[1] as number);
         break;
+      case 'setSkipSourceContent':
+        value = await store.setSkipSourceContent(args[0] as boolean);
+        break;
       case 'importBatch':
         value = await store.importBatch(args[0] as ImportBatchRequest);
         break;

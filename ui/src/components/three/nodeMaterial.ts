@@ -56,6 +56,7 @@ const VERTEX_SHADER = /* glsl */ `
   uniform float uSizeExp;     // zoomSizeExponent [0,1]
   uniform float uPerspective; // 1.0 = perspective (3D), 0.0 = ortho (2D)
   uniform float uHlScale;     // multiplier for highlighted nodes
+  uniform float uHlAlpha;     // alpha for highlighted nodes
   uniform float uDimScale;    // multiplier for dimmed nodes
   uniform float uDimAlpha;    // alpha for dimmed nodes
 
@@ -79,10 +80,11 @@ const VERTEX_SHADER = /* glsl */ `
     // Hover grows the node a touch so the click target is obvious. 1.3 must
     // match NODE_HOVER_SCALE.
     if (hovered) sizeMul *= 1.3;
-    // Solid nodes (only dimmed nodes are translucent). 0.9 used to make every
-    // node 10% see-through, which — combined with depthTest off — let nodes
-    // behind show through nodes in front.
-    vAlpha = dimmed ? uDimAlpha : 1.0;
+    // Highlighted nodes render airy (uHlAlpha < 1) so the enlarge + glow read
+    // as a soft beacon, not a heavy solid disc. Dimmed nodes are translucent.
+    // Everything else is solid — 0.9 used to make every node 10% see-through,
+    // which, combined with depthTest off, let nodes behind show through in front.
+    vAlpha = highlighted ? uHlAlpha : (dimmed ? uDimAlpha : 1.0);
 
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mv;
@@ -179,6 +181,7 @@ export interface NodeMaterialUniforms {
   uSizeExp: { value: number };
   uPerspective: { value: number };
   uHlScale: { value: number };
+  uHlAlpha: { value: number };
   uDimScale: { value: number };
   uDimAlpha: { value: number };
   uTexture: { value: Texture | null };
@@ -190,6 +193,7 @@ export function createNodeMaterial(
   pixelRatio: number,
   opts: {
     hlScale: number;
+    hlAlpha: number;
     dimScale: number;
     dimAlpha: number;
     /** Halo overlay pass for highlighted nodes: no depth write, drawn after
@@ -206,6 +210,7 @@ export function createNodeMaterial(
       uSizeExp: { value: 0.2 },
       uPerspective: { value: 0 },
       uHlScale: { value: opts.hlScale },
+      uHlAlpha: { value: opts.hlAlpha },
       uDimScale: { value: opts.dimScale },
       uDimAlpha: { value: opts.dimAlpha },
       uTexture: { value: null },

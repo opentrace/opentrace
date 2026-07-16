@@ -66,10 +66,18 @@ import type {
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 import { loadEmbedderConfig } from '../config/embedding';
+import {
+  isConstrainedDevice,
+  MOBILE_HEAVY_STAGE_MAX_FILES,
+} from '../config/device';
 
 // --- Tree-sitter lazy initialization ---
 
-let parsersReady = false;
+/** Singleton promise guard for parser initialization. `Parser.init()` is
+ *  global and async — concurrent calls corrupt web-tree-sitter state (see
+ *  ui/CLAUDE.md), so all callers must share one in-flight init. Cleared on
+ *  failure so a later retry can attempt init again. */
+let parsersInitPromise: Promise<void> | null = null;
 
 /** Map of parser key → WASM filename for all supported languages. */
 const PARSER_WASM_MAP: Record<string, string> = {
@@ -96,9 +104,18 @@ async function loadParser(wasmFile: string): Promise<Parser> {
   return parser;
 }
 
-async function ensureParsers(): Promise<void> {
-  if (parsersReady) return;
+function ensureParsers(): Promise<void> {
+  if (!parsersInitPromise) {
+    parsersInitPromise = initAllParsers().catch((err) => {
+      // Failed init must not be cached — clear so the next job retries.
+      parsersInitPromise = null;
+      throw err;
+    });
+  }
+  return parsersInitPromise;
+}
 
+async function initAllParsers(): Promise<void> {
   await Parser.init({
     locateFile: (file: string) => `/${file}`,
   });
@@ -128,7 +145,6 @@ async function ensureParsers(): Promise<void> {
   }
 
   initParsers(parserMap);
-  parsersReady = true;
 }
 
 // --- Phase mapping ---
@@ -409,13 +425,41 @@ export class BrowserJobService implements JobService {
         if (cancelled) return;
       }
 
-      this.store.storeSource(
-        repoTree.files.map((f) => ({
-          id: `${repoId}/${f.path}`,
-          path: f.path,
-          content: f.content,
-        })),
-      );
+      // Store source files for UI code viewing — in bounded chunks with an
+      // event-loop yield between them. One repo-sized call meant one giant
+      // synchronous pass in the store (per-file compression on the
+      // main-thread store; one huge structured-clone-retaining pump segment
+      // on the worker store) that froze the tab on Grafana-scale corpora.
+      // Call order = file order, so the store's internal chunk pump sees
+      // exactly the same file sequence as a single call.
+      // On a constrained device indexing a large repo, skip the SourceText
+      // full-text index (full source of every file, CSV-built + FTS-indexed) —
+      // the biggest store-write memory cost, which overflows the tab cap. Must
+      // be set BEFORE storeSource runs. Source viewing + the grep tool still
+      // work (they read the compressed source cache); only in-code content
+      // ranking in search is lost. Small/medium repos keep it.
+      const skipSourceFTSForMemory =
+        isConstrainedDevice() &&
+        repoTree.files.length > MOBILE_HEAVY_STAGE_MAX_FILES;
+      if (skipSourceFTSForMemory) {
+        await this.store.setSkipSourceContent?.(true);
+        debug.log(
+          'scanning',
+          `skipping source FTS — ${repoTree.files.length} files on a constrained device would exceed the tab memory cap; grep + source view still work`,
+        );
+      }
+
+      const SOURCE_STORE_CHUNK = 500;
+      for (let i = 0; i < repoTree.files.length; i += SOURCE_STORE_CHUNK) {
+        this.store.storeSource(
+          repoTree.files.slice(i, i + SOURCE_STORE_CHUNK).map((f) => ({
+            id: `${repoId}/${f.path}`,
+            path: f.path,
+            content: f.content,
+          })),
+        );
+        await new Promise((r) => setTimeout(r, 0));
+      }
 
       // 3. Run scanning stage (builds structural graph + lookup maps)
       debug.log('scanning', 'starting');
@@ -511,6 +555,10 @@ export class BrowserJobService implements JobService {
       for (const file of scanResult.parseableFiles) {
         fileContentMap.set(`${scanResult.repoId}/${file.path}`, file.content);
       }
+      // Captured BEFORE the memory-relief truncation below — the
+      // pipeline_done metadata reads this count, and `.length = 0` would
+      // otherwise make `filesProcessed` always 0.
+      const parseableFileCount = scanResult.parseableFiles.length;
       // Release raw file strings — source is compressed in the store's
       // sourceCache; parseable content now lives in fileContentMap.
       repoTree.files.length = 0;
@@ -733,9 +781,24 @@ export class BrowserJobService implements JobService {
       const resolveStage = new ResolveStage(extractionState);
       const summarizeStage = new SummarizeStage();
       storeStage = new StoreStage();
-      const embedStage = embedderConfig.enabled
-        ? new EmbedStage({ config: embedderConfig, store: this.store })
-        : null;
+      // On a constrained device (phone), a large repo's embedding stage loads an
+      // onnxruntime runtime on top of the already-resident graph and overflows
+      // the browser's per-tab memory cap (iOS Safari kills the tab ~1–1.5 GB) —
+      // so skip it above MOBILE_EMBED_MAX_FILES. The graph still indexes fully;
+      // search falls back to keyword (BM25). Small/medium repos still embed.
+      const skipEmbedForMemory =
+        isConstrainedDevice() &&
+        scanResult.fileNodes.length > MOBILE_HEAVY_STAGE_MAX_FILES;
+      if (skipEmbedForMemory) {
+        debug.log(
+          'embedding',
+          `skipped — ${scanResult.fileNodes.length} files on a constrained device would exceed the tab memory cap; keyword search still works`,
+        );
+      }
+      const embedStage =
+        embedderConfig.enabled && !skipEmbedForMemory
+          ? new EmbedStage({ config: embedderConfig, store: this.store })
+          : null;
 
       // Pre-feed scanning + symbol (DEFINES/IMPORTS) rels into the store stage.
       storeStage.addRelationships(scanningRels);
@@ -804,7 +867,11 @@ export class BrowserJobService implements JobService {
         });
         await this.store.flush();
         persistedNodes += nodes.length;
-        pushGraphDelta(nodes, []);
+        // No live-stream re-push here: every drained node was already
+        // streamed (structural seeds up front; symbols + new Dependency
+        // nodes via flushLiveBatch as they were parsed), and the consumer
+        // (useGraphData pushLiveBatch) drops already-seen ids — the
+        // duplicate delivery was pure event/allocation overhead.
       };
 
       /** Drain buffered relationships from the store stage and persist them. */
@@ -920,6 +987,16 @@ export class BrowserJobService implements JobService {
                   message: `Finalizing ${event.stage}`,
                 });
               }
+              // Pre-compute call resolution in event-loop-yielding slices
+              // BEFORE advancing the generator: the generator's next() runs
+              // resolveStage.flush() synchronously, and at Grafana scale a
+              // single resolveCalls pass over allCallInfo froze the main
+              // thread for seconds. The registries are complete here (all
+              // ticks processed), so the sliced result is byte-identical
+              // and flush() just returns it.
+              if (event.stage === 'resolve') {
+                await resolveStage.resolveSliced(() => cancelled);
+              }
               break;
             }
 
@@ -1023,6 +1100,11 @@ export class BrowserJobService implements JobService {
               return;
 
             case 'pipeline_done': {
+              // Cancellation may have landed while an earlier event handler
+              // was awaiting — don't write metadata or run embedding for a
+              // job the user already cancelled.
+              if (cancelled) return;
+
               const durationSeconds =
                 Math.round((performance.now() - pipelineStartTime) / 10) / 100;
               debug.log(
@@ -1048,38 +1130,42 @@ export class BrowserJobService implements JobService {
                       branch: repoTree.branch ?? repoTree.ref ?? '',
                       nodesCreated: persistedNodes,
                       relationshipsCreated: persistedRels,
-                      filesProcessed:
-                        scanResult?.parseableFiles?.length ??
-                        scanResult?.fileNodes?.length ??
-                        0,
+                      filesProcessed: parseableFileCount,
                     },
                   },
                 ],
                 relationships: [],
               });
               await this.store.flush();
+              if (cancelled) return;
 
               // Run embedding — model was pre-loaded during pipeline
-              if (embedStage && embedStage.total > 0) {
+              if (embedStage && embedStage.total > 0 && !cancelled) {
                 debug.log(
                   'embedding',
                   `starting ${embedStage.total} embeddings`,
                 );
-                await embedStage.settle((embedded, total) => {
-                  channel.push({
-                    ...emptyEvent(),
-                    kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
-                    phase: JobPhase.JOB_PHASE_EMBEDDING,
-                    message: `Embedded ${embedded} of ${total} nodes`,
-                    detail: {
-                      current: embedded,
-                      total,
-                      fileName: '',
-                      nodesCreated: 0,
-                      relationshipsCreated: 0,
-                    },
-                  });
-                });
+                await embedStage.settle(
+                  (embedded, total) => {
+                    channel.push({
+                      ...emptyEvent(),
+                      kind: JobEventKind.JOB_EVENT_KIND_PROGRESS,
+                      phase: JobPhase.JOB_PHASE_EMBEDDING,
+                      message: `Embedded ${embedded} of ${total} nodes`,
+                      detail: {
+                        current: embedded,
+                        total,
+                        fileName: '',
+                        nodesCreated: 0,
+                        relationshipsCreated: 0,
+                      },
+                    });
+                  },
+                  // Cancel stops WASM inference between batches — without
+                  // this, a cancelled job kept embedding for minutes.
+                  () => cancelled,
+                );
+                if (cancelled) return;
                 debug.log(
                   'embedding',
                   `completed: ${embedStage.embeddedCount} nodes embedded`,
@@ -1150,7 +1236,9 @@ export class BrowserJobService implements JobService {
       cancel() {
         cancelled = true;
         abortController.abort();
-        channel.close();
+        // Drop buffered events — a cancelled job's stale GRAPH_READY/DONE
+        // must not keep driving UI state after the user hit cancel.
+        channel.closeAndDrop();
       },
     };
   }
@@ -1242,7 +1330,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }
@@ -1305,7 +1393,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelRef.cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }
@@ -1342,7 +1430,7 @@ export class BrowserJobService implements JobService {
       [Symbol.asyncIterator]: () => channel[Symbol.asyncIterator](),
       cancel() {
         cancelRef.cancelled = true;
-        channel.close();
+        channel.closeAndDrop();
       },
     };
   }

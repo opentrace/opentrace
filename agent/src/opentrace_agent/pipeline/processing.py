@@ -51,6 +51,7 @@ from opentrace_agent.sources.code.import_analyzer import (
     analyze_go_imports,
     analyze_python_imports,
     analyze_typescript_imports,
+    build_go_dir_index,
     package_source_url,
 )
 
@@ -95,6 +96,12 @@ def processing(
         detail=ProgressDetail(current=0, total=total),
     )
 
+    # Precompute the Go package-directory index once per repo. Resolving a Go
+    # import against it is O(path depth) instead of O(|known_paths|) per
+    # import spec — the per-import full scan was ~5e8 iterations (minutes) on
+    # Grafana-scale repos (~15k files, ~6k Go).
+    go_dir_index = build_go_dir_index(scan.known_paths)
+
     registries = Registries()
     call_infos: list[CallInfo] = []
     derivation_infos: list[DerivationInfo] = []
@@ -124,12 +131,6 @@ def processing(
             errors.append(f"Could not read {fe.abs_path}: {exc}")
             continue
 
-        # Extract symbols
-        if isinstance(extractor, TSExtractor):
-            result = extractor.extract_for_extension(source_bytes, fe.extension)
-        else:
-            result = extractor.extract(source_bytes)
-
         file_id = fe.file_id
         file_path = fe.path
 
@@ -141,81 +142,111 @@ def processing(
         file_nodes: list[GraphNode] = []
         file_rels: list[GraphRelationship] = []
 
-        # Analyze imports using the SAME root_node (no re-parse!)
-        if result.root_node is not None:
-            import_result = _analyze_imports_from_node(
-                result.root_node,
-                result.language,
-                file_path,
-                scan.known_paths,
-                scan.go_module_path,
-            )
-            # Internal imports → registry + IMPORTS rels
-            if import_result.internal:
-                id_imports: dict[str, str] = {}
-                seen_target_files: set[str] = set()
-                for alias, target_path in import_result.internal.items():
-                    target_id = scan.path_to_file_id.get(target_path)
-                    if target_id:
-                        id_imports[alias] = target_id
-                        if target_id not in seen_target_files:
-                            seen_target_files.add(target_id)
-                            file_rels.append(
-                                GraphRelationship(
-                                    id=f"{file_id}->IMPORTS->{target_id}",
-                                    type="IMPORTS",
-                                    source_id=file_id,
-                                    target_id=target_id,
-                                    properties={},
-                                )
-                            )
-                if id_imports:
-                    registries.import_registry[file_id] = id_imports
+        # Extraction, import analysis, and symbol conversion all decode
+        # node bytes as UTF-8 (node.text.decode()); a single file in
+        # another encoding (e.g. latin-1) raises UnicodeDecodeError and
+        # must be skipped — not abort the whole index run.
+        try:
+            # Extract symbols
+            if isinstance(extractor, TSExtractor):
+                result = extractor.extract_for_extension(source_bytes, fe.extension)
+            else:
+                result = extractor.extract(source_bytes)
 
-            # External imports → Package nodes + IMPORTS rels
-            for pkg_name, pkg_id in import_result.external.items():
-                if pkg_id not in package_nodes:
-                    registry = pkg_id.split(":")[1]
-                    pkg_props: dict[str, str] = {"registry": registry}
-                    source_url = package_source_url(registry, pkg_name)
-                    if source_url:
-                        pkg_props["sourceUri"] = source_url
-                    package_nodes[pkg_id] = GraphNode(
-                        id=pkg_id,
-                        type="Dependency",
-                        name=pkg_name,
-                        properties=pkg_props,
-                    )
-                file_rels.append(
-                    GraphRelationship(
-                        id=f"{file_id}->IMPORTS->{pkg_id}",
-                        type="IMPORTS",
-                        source_id=file_id,
-                        target_id=pkg_id,
-                        properties={},
-                    )
+            # Analyze imports using the SAME root_node (no re-parse!)
+            if result.root_node is not None:
+                import_result = _analyze_imports_from_node(
+                    result.root_node,
+                    result.language,
+                    file_path,
+                    scan.known_paths,
+                    scan.go_module_path,
+                    go_dir_index=go_dir_index,
                 )
+                # Internal imports → registry + IMPORTS rels
+                if import_result.internal:
+                    id_imports: dict[str, str] = {}
+                    seen_target_files: set[str] = set()
+                    for alias, target_path in import_result.internal.items():
+                        target_id = scan.path_to_file_id.get(target_path)
+                        if target_id:
+                            id_imports[alias] = target_id
+                            if target_id not in seen_target_files:
+                                seen_target_files.add(target_id)
+                                file_rels.append(
+                                    GraphRelationship(
+                                        id=f"{file_id}->IMPORTS->{target_id}",
+                                        type="IMPORTS",
+                                        source_id=file_id,
+                                        target_id=target_id,
+                                        properties={},
+                                    )
+                                )
+                    if id_imports:
+                        registries.import_registry[file_id] = id_imports
 
-        for symbol in result.symbols:
-            nodes, rels, sym_infos, calls, derivs, c, f, v = _symbol_to_graph(
-                symbol,
-                file_id,
-                result.language,
-                registries,
-                emitted_ids,
-            )
-            file_nodes.extend(nodes)
-            file_rels.extend(rels)
-            total_classes += c
-            total_functions += f
-            total_variables += v
+                # External imports → Package nodes + IMPORTS rels. The Dependency
+                # node must ride in the SAME event as the first IMPORTS rel that
+                # references it: the saving adapter flushes rel batches mid-stage,
+                # and its FK filter permanently drops rels whose endpoints aren't
+                # in the DB yet — deferring package nodes to end-of-stage loses
+                # every File-[IMPORTS]->Dependency edge on multi-batch repos.
+                for pkg_name, pkg_id in import_result.external.items():
+                    if pkg_id not in package_nodes:
+                        registry = pkg_id.split(":")[1]
+                        pkg_props: dict[str, str] = {"registry": registry}
+                        source_url = package_source_url(registry, pkg_name)
+                        if source_url:
+                            pkg_props["sourceUri"] = source_url
+                        pkg_node = GraphNode(
+                            id=pkg_id,
+                            type="Dependency",
+                            name=pkg_name,
+                            properties=pkg_props,
+                        )
+                        package_nodes[pkg_id] = pkg_node
+                        file_nodes.append(pkg_node)
+                    file_rels.append(
+                        GraphRelationship(
+                            id=f"{file_id}->IMPORTS->{pkg_id}",
+                            type="IMPORTS",
+                            source_id=file_id,
+                            target_id=pkg_id,
+                            properties={},
+                        )
+                    )
 
-            # Register symbols
-            for si in sym_infos:
-                _register_symbol(si, registries)
+            for symbol in result.symbols:
+                nodes, rels, sym_infos, calls, derivs, c, f, v = _symbol_to_graph(
+                    symbol,
+                    file_id,
+                    result.language,
+                    registries,
+                    emitted_ids,
+                )
+                file_nodes.extend(nodes)
+                file_rels.extend(rels)
+                total_classes += c
+                total_functions += f
+                total_variables += v
 
-            call_infos.extend(calls)
-            derivation_infos.extend(derivs)
+                # Register symbols
+                for si in sym_infos:
+                    _register_symbol(si, registries)
+
+                call_infos.extend(calls)
+                derivation_infos.extend(derivs)
+        except Exception as exc:  # noqa: BLE001 — one bad file must not kill the run
+            # Dependency nodes first seen in this file were registered in
+            # the dedup map but will never be emitted — un-register them so
+            # the next importer re-emits the node (else its IMPORTS rels
+            # would be FK-dropped by the store).
+            for n in file_nodes:
+                if n.type == "Dependency":
+                    package_nodes.pop(n.id, None)
+            logger.warning("Skipping %s: extraction failed: %s", fe.abs_path, exc)
+            errors.append(f"Skipping {fe.abs_path}: extraction failed: {exc}")
+            continue
 
         files_processed += 1
         total_nodes += len(file_nodes)
@@ -228,18 +259,6 @@ def processing(
             detail=ProgressDetail(current=i + 1, total=total, file_name=fe.path),
             nodes=file_nodes if file_nodes else None,
             relationships=file_rels if file_rels else None,
-        )
-
-    # Emit deduplicated Package nodes
-    if package_nodes:
-        pkg_node_list = list(package_nodes.values())
-        total_nodes += len(pkg_node_list)
-        yield PipelineEvent(
-            kind=EventKind.STAGE_PROGRESS,
-            phase=Phase.PROCESSING,
-            message=f"Emitting {len(pkg_node_list)} package nodes",
-            detail=ProgressDetail(current=total, total=total),
-            nodes=pkg_node_list,
         )
 
     yield PipelineEvent(
@@ -271,12 +290,13 @@ def _analyze_imports_from_node(
     file_path: str,
     known_paths: set[str],
     go_module_path: str | None = None,
+    go_dir_index: dict[str, str] | None = None,
 ) -> ImportResult:
     """Run language-specific import analysis using the already-parsed root node."""
     if language == "python":
         return analyze_python_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     elif language == "go":
-        return analyze_go_imports(root_node, known_paths, go_module_path)  # type: ignore[arg-type]
+        return analyze_go_imports(root_node, known_paths, go_module_path, dir_index=go_dir_index)  # type: ignore[arg-type]
     elif language in ("typescript", "javascript"):
         return analyze_typescript_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     return ImportResult()
@@ -472,7 +492,13 @@ def _variables_to_graph(
     scope_vars = registries.variable_registry.setdefault(scope_id, {})
 
     for var in variables:
-        var_id = f"{scope_id}::{var.name}"
+        # `var:` namespaces the Variable id so it can't collide with a
+        # Function/Class node id in the same scope (e.g. `self.handler = None`
+        # in __init__ alongside `def handler(self)`, whose id is
+        # `{scope_id}::handler` when the signature is empty). Consumers only
+        # see these ids via the variable_registry / emitted nodes, and
+        # `id.split("::")[0]` still yields the file id.
+        var_id = f"{scope_id}::var:{var.name}"
         props: dict[str, str | int | bool | None] = {
             "language": language,
             "kind": var.kind,

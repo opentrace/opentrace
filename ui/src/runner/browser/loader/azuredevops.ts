@@ -47,9 +47,11 @@ export interface AzureDevOpsParsed {
 
 /** Parse org/project/repo from an Azure DevOps URL. */
 export function parseAzureDevOpsUrl(url: string): AzureDevOpsParsed | null {
+  // Repo names may contain dots (e.g. "my.repo") — mirror github.ts: stop
+  // only at a path separator / query / fragment, dropping a trailing ".git".
   // Format 1a: dev.azure.com/{org}/{project}/_git/{repo} (full, with separate project)
   const devFullMatch = url.match(
-    /dev\.azure\.com\/([^/]+)\/([^/]+)\/_git\/([^/.?#]+)/,
+    /dev\.azure\.com\/([^/]+)\/([^/]+)\/_git\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/,
   );
   if (devFullMatch) {
     return {
@@ -61,7 +63,9 @@ export function parseAzureDevOpsUrl(url: string): AzureDevOpsParsed | null {
   }
 
   // Format 1b: dev.azure.com/{org}/_git/{repo} (short, project = repo)
-  const devShortMatch = url.match(/dev\.azure\.com\/([^/]+)\/_git\/([^/.?#]+)/);
+  const devShortMatch = url.match(
+    /dev\.azure\.com\/([^/]+)\/_git\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/,
+  );
   if (devShortMatch) {
     return {
       org: devShortMatch[1],
@@ -73,7 +77,7 @@ export function parseAzureDevOpsUrl(url: string): AzureDevOpsParsed | null {
 
   // Format 2a: {org}.visualstudio.com/{project}/_git/{repo} (full)
   const vsFullMatch = url.match(
-    /([^/.]+)\.visualstudio\.com\/([^/]+)\/_git\/([^/.?#]+)/,
+    /([^/.]+)\.visualstudio\.com\/([^/]+)\/_git\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/,
   );
   if (vsFullMatch) {
     return {
@@ -86,7 +90,7 @@ export function parseAzureDevOpsUrl(url: string): AzureDevOpsParsed | null {
 
   // Format 2b: {org}.visualstudio.com/_git/{repo} (short, project = repo)
   const vsShortMatch = url.match(
-    /([^/.]+)\.visualstudio\.com\/_git\/([^/.?#]+)/,
+    /([^/.]+)\.visualstudio\.com\/_git\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/,
   );
   if (vsShortMatch) {
     return {
@@ -99,7 +103,7 @@ export function parseAzureDevOpsUrl(url: string): AzureDevOpsParsed | null {
 
   // Format 3: vs-ssh.visualstudio.com/v3/{org}/{project}/{repo}
   const sshMatch = url.match(
-    /vs-ssh\.visualstudio\.com\/v3\/([^/]+)\/([^/]+)\/([^/.?#]+)/,
+    /vs-ssh\.visualstudio\.com\/v3\/([^/]+)\/([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/,
   );
   if (sshMatch) {
     return {

@@ -22,7 +22,11 @@
   width: var(--settings-drawer-width, 420px);
   max-width: 100%;
   padding-top: 68px;
-  background: var(--background);
+  /* Translucent + blurred so the graph shines through, matching the chat /
+   * help / left side panels. */
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;

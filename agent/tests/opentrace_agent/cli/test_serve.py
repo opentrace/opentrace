@@ -103,3 +103,58 @@ class TestTraverse:
     def test_missing_body(self, client):
         resp = client.post("/api/traverse")
         assert resp.status_code == 400
+
+
+class TestIndexUrlReadOnlyStore:
+    """The serve store is opened read-only; a reindex must not write to it."""
+
+    def test_reindex_completes_on_read_only_store(self, tmp_path, monkeypatch):
+        import time
+
+        # Keep the worker's ~/.opentrace/repos writes inside tmp_path.
+        from pathlib import Path
+
+        from starlette.testclient import TestClient
+
+        from opentrace_agent.cli import main as cli_main
+        from opentrace_agent.cli.serve import create_app
+        from opentrace_agent.store import GraphStore
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+        db_path = str(tmp_path / "live.db")
+        seed = GraphStore(db_path)
+        seed.add_node("node-1", "Class", "UserService", {"language": "python"})
+        seed.close()
+
+        monkeypatch.setattr(cli_main, "_do_clone", lambda repo_url, clone_dir, ref, token: clone_dir)
+        monkeypatch.setattr(cli_main, "_update_existing_clone", lambda clone_dir, ref: None)
+        monkeypatch.setattr(cli_main, "_existing_clone_matches", lambda clone_dir, repo_url: True)
+        monkeypatch.setattr(cli_main, "_run_indexing_pipeline", lambda **kwargs: 0.01)
+
+        store = GraphStore(db_path, read_only=True)
+        app = create_app(store, db_path=db_path)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/index-url",
+            json={"repoUrl": "https://github.com/acme/demo", "reindex": True},
+        )
+        assert resp.status_code == 202
+        job_id = resp.json()["jobId"]
+
+        deadline = time.time() + 15
+        state = None
+        while time.time() < deadline:
+            state = client.get(f"/api/index-progress/{job_id}").json()
+            if state.get("done"):
+                break
+            time.sleep(0.05)
+
+        assert state is not None and state.get("done"), state
+        # Old code called delete_repo on the read-only store → RuntimeError.
+        assert state.get("error") is None, state
+        assert state.get("phase") == "done"
+
+        # Reads must still work after the job (store was reopened).
+        assert client.get("/api/stats").status_code == 200

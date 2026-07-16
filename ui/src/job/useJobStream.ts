@@ -84,6 +84,12 @@ export function useJobStream(
 ) {
   const [state, setState] = useState<JobState>(INITIAL_STATE);
   const streamRef = useRef<JobStream | null>(null);
+  // Generation counter guarding the consume loop. Bumped whenever the
+  // current stream is superseded (start/attach/cancel/reset), so a stale
+  // loop that is still draining buffered events from a dead job neither
+  // applies them to React state / onGraphDelta nor clears a streamRef it
+  // no longer owns.
+  const generationRef = useRef(0);
   const handlersRef = useRef(handlers);
   useEffect(() => {
     handlersRef.current = handlers;
@@ -93,10 +99,14 @@ export function useJobStream(
    *  events. Shared by `start` (new submissions) and `attach`
    *  (Fix #14 resume-after-reload). */
   const consumeStream = useCallback((stream: JobStream) => {
+    const generation = ++generationRef.current;
     streamRef.current = stream;
     (async () => {
       try {
         for await (const event of stream) {
+          // A newer stream (or cancel/reset) superseded this loop — stop
+          // applying this job's events to shared state.
+          if (generationRef.current !== generation) break;
           // Live-build: events carrying node/relationship batches feed the
           // building graph. A pure batch event (PROGRESS, no detail) has no
           // stage semantics — forward it and skip the switch.
@@ -240,13 +250,21 @@ export function useJobStream(
         // errors (e.g. stack overflow) need to be visible for debugging
         console.error('[useJobStream] stream error:', err);
       } finally {
-        streamRef.current = null;
+        // Only clear the ref if this loop still owns it — a superseded
+        // loop finishing late must not null out the NEW stream's ref.
+        if (generationRef.current === generation) {
+          streamRef.current = null;
+        }
       }
     })();
   }, []);
 
   const start = useCallback(
     async (message: JobMessage) => {
+      // Supersede any running consume loop NOW — the new stream is only
+      // created after an await, and the old loop must not pollute the new
+      // job's state (or the live graph) in the meantime.
+      generationRef.current++;
       streamRef.current?.cancel();
       setState({ ...INITIAL_STATE, status: 'running' });
       let stream: JobStream;
@@ -275,6 +293,7 @@ export function useJobStream(
         attachToServerIndexJob?: (id: string) => Promise<JobStream>;
       };
       if (!svc.attachToServerIndexJob) return;
+      generationRef.current++;
       streamRef.current?.cancel();
       setState({ ...INITIAL_STATE, status: 'running' });
       let stream: JobStream;
@@ -294,6 +313,9 @@ export function useJobStream(
   );
 
   const cancel = useCallback(() => {
+    // Supersede the consume loop so buffered events from the cancelled job
+    // can't resurrect the progress UI after the reset below.
+    generationRef.current++;
     streamRef.current?.cancel();
     streamRef.current = null;
     handlersRef.current?.onLiveEnd?.({ clear: true });
@@ -309,6 +331,7 @@ export function useJobStream(
 
   /** Return to idle state (dismiss completed job). */
   const reset = useCallback(() => {
+    generationRef.current++;
     streamRef.current?.cancel();
     streamRef.current = null;
     handlersRef.current?.onLiveEnd?.({ clear: true });
@@ -318,6 +341,7 @@ export function useJobStream(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      generationRef.current++;
       streamRef.current?.cancel();
     };
   }, []);

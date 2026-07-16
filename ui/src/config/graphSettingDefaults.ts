@@ -76,3 +76,21 @@ export const GRAPH_SETTING_DEFAULTS = {
 
 /** Shape of {@link GRAPH_SETTING_DEFAULTS}. */
 export type GraphSettingDefaults = typeof GRAPH_SETTING_DEFAULTS;
+
+/**
+ * Past this many edges the edge cloud makes the graph unreadable, so the
+ * viewer hides edges by default on load (visual only — the force layout
+ * still uses every edge, and the user can re-enable them at any time).
+ * The auto-hide is a per-load overlay on top of `edgesVisible`; it is
+ * never written to the persisted settings, so small graphs are unaffected.
+ */
+export const LARGE_GRAPH_EDGE_AUTOHIDE_THRESHOLD = 20_000;
+
+/**
+ * When the user explicitly re-enables edges (the "Show edges" pill, or the
+ * physics-panel toggle), floor the edge opacity to this percent so edges are
+ * actually visible. Some presets ship `edgeOpacity: 0` (e.g. Onion), where
+ * merely enabling edges would still render nothing. Applied as a floor
+ * (`max(current, this)`), so it never lowers an already-higher opacity.
+ */
+export const MIN_VISIBLE_EDGE_OPACITY = 5;

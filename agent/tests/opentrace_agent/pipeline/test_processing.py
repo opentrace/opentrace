@@ -210,6 +210,60 @@ def test_processing_populates_variable_registry(tmp_path: Path) -> None:
     assert len(proc.registries.variable_registry) > 0
 
 
+def test_variable_id_does_not_collide_with_method_id(tmp_path: Path) -> None:
+    """A field named like a zero-arg method must not reuse the method's node id.
+
+    `self.handler = None` in __init__ registers a class-scope Variable named
+    `handler`; `def handler(self, event)` (untyped param → empty type
+    signature) produces the Function id `{class_id}::handler` — without a
+    distinct Variable id namespace the two collide.
+    """
+    py_file = tmp_path / "svc.py"
+    py_file.write_text(
+        "class Service:\n"
+        "    def __init__(self):\n"
+        "        self.handler = None\n"
+        "\n"
+        "    def handler(self, event):\n"
+        "        pass\n"
+    )
+    repo_id = "test/repo"
+    scan = ScanResult(
+        repo_id=repo_id,
+        root_path=str(tmp_path),
+        file_entries=[
+            FileEntry(
+                file_id=f"{repo_id}/svc.py",
+                abs_path=str(py_file),
+                path="svc.py",
+                extension=".py",
+                language="python",
+            ),
+        ],
+        known_paths={"svc.py"},
+        path_to_file_id={"svc.py": f"{repo_id}/svc.py"},
+    )
+    ctx = PipelineContext()
+    out: StageResult[ProcessingOutput] = StageResult()
+
+    events = list(processing(scan, ctx, out))
+    all_nodes = []
+    for e in events:
+        if e.nodes:
+            all_nodes.extend(e.nodes)
+
+    # Function display names carry the signature (e.g. "handler()"),
+    # Variable names are bare.
+    func_ids = {n.id for n in all_nodes if n.type == "Function" and n.name.split("(")[0] == "handler"}
+    var_ids = {n.id for n in all_nodes if n.type == "Variable" and n.name == "handler"}
+    assert func_ids, "expected a Function node for handler()"
+    assert var_ids, "expected a Variable node for self.handler"
+    assert func_ids.isdisjoint(var_ids)
+    # No duplicate node ids overall
+    ids = [n.id for n in all_nodes]
+    assert len(ids) == len(set(ids))
+
+
 def test_processing_collects_derivation_infos(tmp_path: Path) -> None:
     """Derivation infos are collected for variables with derivations."""
     scan = _make_scan_result(tmp_path)

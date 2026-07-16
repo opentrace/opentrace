@@ -158,6 +158,30 @@ class GraphStore:
     def __init__(self, db_path: str, *, read_only: bool = False) -> None:
         self._db = ladybug.Database(db_path, read_only=read_only)
         self._conn = ladybug.Connection(self._db)
+        # In-memory mirrors of Node.id / RELATES.id, lazily loaded by the
+        # first bulk import (two full scans, once) and maintained by every
+        # write path afterwards. They replace three per-batch queries in
+        # _import_batch_via_copy — most importantly the rel-id DELETE, which
+        # full-scanned the growing rel table for every batch (~900 × ~90k
+        # no-op rows on a fresh Grafana-scale index).
+        #
+        # Memory: ~100k node ids + ~180k rel ids on a Grafana-scale index is
+        # tens of MB of Python strings — acceptable for an indexing process.
+        #
+        # Invariants (assumes this instance is the only writer — the pipeline
+        # writes single-threaded, see store CLAUDE.md):
+        #   * _node_ids, when not None, is EXACTLY the set of node ids in the
+        #     DB. A false positive would silently drop a node during
+        #     cross-batch dedup; a false negative merely costs a COPY failure
+        #     + MERGE-fallback retry.
+        #   * _rel_ids, when not None, is a SUPERSET of the rel ids in the
+        #     DB. Extra ids only cost a no-op DELETE; a missing id would skip
+        #     a load-bearing DELETE and duplicate edges on re-import.
+        # Write paths that can't cheaply uphold these (delete_repo, a
+        # rolled-back MERGE-fallback transaction) invalidate the mirror
+        # instead; it reloads on the next bulk import.
+        self._node_ids: set[str] | None = None
+        self._rel_ids: set[str] | None = None
         self._load_extensions()
         if not read_only:
             self._ensure_schema()
@@ -192,6 +216,28 @@ class GraphStore:
         except RuntimeError:
             pass  # index already exists
 
+    # -- id mirror ---------------------------------------------------------
+
+    def _ensure_id_mirror(self) -> None:
+        """Load the node/rel id mirrors from the DB if not yet initialized.
+
+        Two full scans, run once per store instance (or again after an
+        invalidation). On a fresh DB both scans are empty and effectively
+        free; on re-index/re-import they replace hundreds of per-batch scans.
+        """
+        if self._node_ids is None:
+            ids: set[str] = set()
+            res = self._conn.execute("MATCH (n:Node) RETURN n.id")
+            while res.has_next():
+                ids.add(str(res.get_next()[0]))
+            self._node_ids = ids
+        if self._rel_ids is None:
+            rids: set[str] = set()
+            res = self._conn.execute("MATCH ()-[r:RELATES]->() RETURN r.id")
+            while res.has_next():
+                rids.add(str(res.get_next()[0]))
+            self._rel_ids = rids
+
     # -- write -----------------------------------------------------------
 
     def add_node(
@@ -216,6 +262,8 @@ class GraphStore:
                 "search_text": search_text,
             },
         )
+        if self._node_ids is not None:
+            self._node_ids.add(id)
 
     def add_relationship(
         self,
@@ -238,6 +286,10 @@ class GraphStore:
                 "props": props_json,
             },
         )
+        # Superset semantics: record the id even though the CREATE silently
+        # no-ops when an endpoint is missing — extra ids are harmless.
+        if self._rel_ids is not None:
+            self._rel_ids.add(id)
 
     def merge_relationship(
         self,
@@ -308,13 +360,14 @@ class GraphStore:
 
           * **In-batch dedup** — pipeline can emit the same node id
             twice within one batch.
-          * **Cross-batch dedup** — query existing ids and drop them
-            from this batch so we don't violate the PK constraint
-            on rows that landed in a previous flush. Mirrors the
-            MERGE upsert semantics for the typical "no-op on re-emit"
-            case; updates to an existing node's name/properties are
-            dropped, which matches the indexer's intent (it emits the
-            same id with the same data).
+          * **Cross-batch dedup** — check existing ids (in-memory id
+            mirror, with a query fallback) and drop them from this
+            batch so we don't violate the PK constraint on rows that
+            landed in a previous flush. Mirrors the MERGE upsert
+            semantics for the typical "no-op on re-emit" case; updates
+            to an existing node's name/properties are dropped, which
+            matches the indexer's intent (it emits the same id with
+            the same data).
           * **Rel FK filter** — drop rels whose FROM/TO nodes aren't
             yet in the DB. They'll come back on the next batch once
             their nodes have landed.
@@ -332,6 +385,10 @@ class GraphStore:
         nodes_ok = 0
         rels_ok = 0
 
+        # Load the id mirrors once; afterwards existence checks are set
+        # lookups instead of per-batch queries/scans.
+        self._ensure_id_mirror()
+
         with _tempfile.TemporaryDirectory(prefix="opentrace-copy-") as tmpdir:
             if nodes:
                 # In-batch dedup by id, keep last.
@@ -343,12 +400,16 @@ class GraphStore:
                 candidate_ids = list(seen.keys())
                 existing_node_ids: set[str] = set()
                 if candidate_ids:
-                    res = self._conn.execute(
-                        "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
-                        parameters={"ids": candidate_ids},
-                    )
-                    while res.has_next():
-                        existing_node_ids.add(str(res.get_next()[0]))
+                    if self._node_ids is not None:
+                        existing_node_ids = self._node_ids.intersection(candidate_ids)
+                    else:
+                        # Query fallback — mirror unavailable.
+                        res = self._conn.execute(
+                            "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
+                            parameters={"ids": candidate_ids},
+                        )
+                        while res.has_next():
+                            existing_node_ids.add(str(res.get_next()[0]))
 
                 deduped = [n for nid, n in seen.items() if nid not in existing_node_ids]
 
@@ -367,6 +428,11 @@ class GraphStore:
                     # Column order matches the schema declaration:
                     # id, type, name, properties, search_text.
                     self._conn.execute(f"COPY Node FROM '{csv_path}' {copy_opts}")
+                    # Mirror update strictly after the COPY succeeded — the
+                    # node mirror must never contain an id that isn't in the
+                    # DB (see __init__ invariants).
+                    if self._node_ids is not None:
+                        self._node_ids.update(n["id"] for n in deduped)
                 nodes_ok = len(deduped)
 
             if relationships:
@@ -377,12 +443,16 @@ class GraphStore:
                     referenced.add(r["target_id"])
                 existing: set[str] = set()
                 if referenced:
-                    res = self._conn.execute(
-                        "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
-                        parameters={"ids": list(referenced)},
-                    )
-                    while res.has_next():
-                        existing.add(str(res.get_next()[0]))
+                    if self._node_ids is not None:
+                        existing = self._node_ids.intersection(referenced)
+                    else:
+                        # Query fallback — mirror unavailable.
+                        res = self._conn.execute(
+                            "MATCH (n:Node) WHERE n.id IN $ids RETURN n.id",
+                            parameters={"ids": list(referenced)},
+                        )
+                        while res.has_next():
+                            existing.add(str(res.get_next()[0]))
 
                 # In-batch dedup by id, keep last (matches node dedup above).
                 rel_seen: dict[str, dict[str, Any]] = {}
@@ -392,12 +462,28 @@ class GraphStore:
                 # Preserve merge-path idempotency: RELATES.id is not unique, so
                 # COPY would append duplicate logical edges on re-import. Delete
                 # any existing rels carrying these ids first, then re-insert.
+                # The DELETE full-scans the rel table, so only run it when some
+                # of the batch's ids can actually exist (per the mirror) —
+                # restricting the id list is behaviour-neutral because deleting
+                # a non-existent id is a no-op. On a fresh index this skips the
+                # DELETE entirely for every batch.
                 rel_ids = list(rel_seen.keys())
                 if rel_ids:
-                    self._conn.execute(
-                        "MATCH ()-[r:RELATES]->() WHERE r.id IN $ids DELETE r",
-                        parameters={"ids": rel_ids},
-                    )
+                    if self._rel_ids is not None:
+                        ids_to_delete = [rid for rid in rel_ids if rid in self._rel_ids]
+                    else:
+                        ids_to_delete = rel_ids
+                    if ids_to_delete:
+                        self._conn.execute(
+                            "MATCH ()-[r:RELATES]->() WHERE r.id IN $ids DELETE r",
+                            parameters={"ids": ids_to_delete},
+                        )
+                    # Pre-add the batch's rel ids (superset semantics): if the
+                    # COPY below fails midway, extra mirror ids only cost a
+                    # future no-op DELETE, whereas adding after the COPY could
+                    # miss ids on a partial failure.
+                    if self._rel_ids is not None:
+                        self._rel_ids.update(rel_ids)
 
                 clean_rels = [r for r in rel_seen.values() if r["source_id"] in existing and r["target_id"] in existing]
                 if clean_rels:
@@ -458,6 +544,10 @@ class GraphStore:
                 self._conn.execute("ROLLBACK")
             except Exception:
                 pass
+            # add_node updated the node mirror inside the rolled-back
+            # transaction, so it may now claim ids the DB doesn't have —
+            # invalidate and let the next bulk import reload it.
+            self._node_ids = None
             nodes_ok, errors = self._import_nodes_individually(nodes)
 
         self._conn.execute("BEGIN TRANSACTION")
@@ -482,6 +572,10 @@ class GraphStore:
                 self._conn.execute("ROLLBACK")
             except Exception:
                 pass
+            # The rolled-back transaction only removed/created rel rows; the
+            # rel mirror stays a superset either way, but reset it anyway —
+            # a reload is cheap on this already-exceptional path.
+            self._rel_ids = None
             rels_count, rel_errors = self._import_rels_individually(relationships)
             rels_ok = rels_count
             errors += rel_errors
@@ -864,6 +958,14 @@ class GraphStore:
             parameters={"repo_id": repo_id, "prefix": prefix, "meta_id": meta_id},
         )
 
+        # The ids of the detach-deleted relationships aren't derivable from
+        # the node-id prefix (any incident edge went with them), so the id
+        # mirrors can't be filtered in place — invalidate both and let the
+        # next bulk import reload them. Without this, a reindex would see
+        # every node as "already existing" and drop the whole import.
+        self._node_ids = None
+        self._rel_ids = None
+
         return {"nodes_deleted": nodes_deleted, "relationships_deleted": rels_deleted}
 
     # -- lifecycle -------------------------------------------------------
@@ -939,16 +1041,21 @@ class GraphStore:
     def list_relationships_for_nodes(
         self,
         node_ids: set[str],
-        limit: int = 10000,
+        limit: int | None = 10000,
     ) -> list[dict[str, Any]]:
-        """Return relationships where both endpoints are in *node_ids*."""
+        """Return relationships where both endpoints are in *node_ids*.
+
+        Pass ``limit=None`` for an unbounded listing (export needs every
+        edge — a silent cap produces disconnected archives).
+        """
         if not node_ids:
             return []
+        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
         result = self._conn.execute(
             "MATCH (a:Node)-[r:RELATES]->(b:Node) "
             "WHERE a.id IN $ids AND b.id IN $ids "
-            "RETURN r.id, r.type, r.properties, a.id, b.id "
-            f"LIMIT {limit}",
+            "RETURN r.id, r.type, r.properties, a.id, b.id"
+            f"{limit_clause}",
             parameters={"ids": list(node_ids)},
         )
         rels: list[dict[str, Any]] = []

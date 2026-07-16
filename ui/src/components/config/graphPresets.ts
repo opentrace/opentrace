@@ -164,8 +164,8 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCentering: 0,
       compactRadius: 39,
       edgeOpacity: 15,
-      // Displays as 50% on the "Zoom scaling" slider (0 = big, 1 = small).
-      zoomSizeExponent: 0.5,
+      // Displays as 20% on the "Zoom scaling" slider (0 = big, 1 = small).
+      zoomSizeExponent: 0.8,
       labelScale: 72,
       mode3dSpeed: 15,
       mode3dTilt: 35,

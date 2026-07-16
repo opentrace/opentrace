@@ -127,6 +127,10 @@ export interface GraphStore {
    *  Optional: ServerGraphStore is read-only and omits this. */
   deleteRepo?(repoId: string): Promise<void>;
   setLimits?(maxNodes: number, maxEdges: number): Promise<void>;
+  /** Skip staging source for the SourceText FTS table (memory saver for large
+   *  repos on constrained devices). Must be set before storeSource runs.
+   *  Optional: only LadybugStore builds source FTS. */
+  setSkipSourceContent?(skip: boolean): Promise<void>;
   importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse>;
   /** Flush any buffered writes to the backing store. No-op if unbuffered. */
   flush(): Promise<void>;
