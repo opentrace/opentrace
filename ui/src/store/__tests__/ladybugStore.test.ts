@@ -1078,3 +1078,31 @@ describe('LadybugGraphStore ensureReady retry', () => {
     expect(init).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('setSkipSourceContent — mobile source-FTS skip', () => {
+  const file = {
+    id: 'f1',
+    path: 'a.ts',
+    content: 'const x = 1;',
+    binary: false,
+  };
+
+  it('stages source for the SourceText FTS by default', () => {
+    const { store, s } = makeStoreWithMockEngine();
+    store.storeSource([file]);
+    expect(s.sourceCache.has('f1')).toBe(true); // viewing + grep
+    expect(s.sourceSnippets.has('f1')).toBe(true); // FTS staging
+    expect(s.pendingSnippetIds.has('f1')).toBe(true);
+  });
+
+  it('skips FTS staging but keeps the source cache when set', async () => {
+    const { store, s } = makeStoreWithMockEngine();
+    await store.setSkipSourceContent(true);
+    store.storeSource([file]);
+    // Source viewing + grep still work (they read sourceCache)…
+    expect(s.sourceCache.has('f1')).toBe(true);
+    // …but nothing is staged for the SourceText table / FTS index.
+    expect(s.sourceSnippets.has('f1')).toBe(false);
+    expect(s.pendingSnippetIds.has('f1')).toBe(false);
+  });
+});

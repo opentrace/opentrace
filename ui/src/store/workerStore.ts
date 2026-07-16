@@ -171,6 +171,10 @@ export class WorkerGraphStore implements GraphStore {
     return this.call<void>('setLimits', [maxNodes, maxEdges]);
   }
 
+  setSkipSourceContent(skip: boolean): Promise<void> {
+    return this.call<void>('setSkipSourceContent', [skip]);
+  }
+
   async importBatch(batch: ImportBatchRequest): Promise<ImportBatchResponse> {
     const result = await this.call<ImportBatchResponse>('importBatch', [batch]);
     // Count nodes actually created, not the batch size — the worker may reject

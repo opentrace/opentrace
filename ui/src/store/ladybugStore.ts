@@ -568,6 +568,13 @@ export class LadybugGraphStore implements GraphStore {
 
   // --- Source text for FTS indexing (populated by storeSource, consumed by flush) ---
   private sourceSnippets = new Map<string, string>();
+  /** When true, storeSource skips staging source for the SourceText table + its
+   *  FTS index — the biggest store-write memory cost. Set on constrained devices
+   *  indexing a large repo (see browserJobService): building the full-source FTS
+   *  over ~15k files overflows the mobile browser's per-tab memory cap. Source
+   *  viewing + the grep tool still work (both read the compressed sourceCache);
+   *  only in-code content ranking in search is lost. */
+  private skipSourceContent = false;
 
   // --- JS-side indexes ---
   private bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
@@ -947,6 +954,12 @@ export class LadybugGraphStore implements GraphStore {
     await this.ensureReady();
     this.maxVisNodes = maxNodes;
     this.maxVisEdges = maxEdges;
+  }
+
+  /** Skip staging source for the SourceText FTS table (see skipSourceContent).
+   *  Must be set before storeSource runs. */
+  async setSkipSourceContent(skip: boolean): Promise<void> {
+    this.skipSourceContent = skip;
   }
 
   async fetchGraph(query?: string, hops?: number): Promise<GraphData> {
@@ -2865,8 +2878,10 @@ export class LadybugGraphStore implements GraphStore {
         path: f.path,
         binary: f.binary,
       });
-      // Store truncated source for FTS indexing (flushed to SourceText table)
-      if (!f.binary && f.content) {
+      // Store truncated source for FTS indexing (flushed to SourceText table).
+      // Skipped on constrained devices for large repos — the full-source FTS is
+      // the biggest store-write memory cost and overflows the tab cap.
+      if (!this.skipSourceContent && !f.binary && f.content) {
         this.sourceSnippets.set(
           f.id,
           f.content.slice(0, MAX_SOURCE_TEXT_CHARS),

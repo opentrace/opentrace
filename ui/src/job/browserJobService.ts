@@ -66,7 +66,10 @@ import type {
 } from '@opentrace/components/pipeline';
 import { Parser, Language } from 'web-tree-sitter';
 import { loadEmbedderConfig } from '../config/embedding';
-import { isConstrainedDevice, MOBILE_EMBED_MAX_FILES } from '../config/device';
+import {
+  isConstrainedDevice,
+  MOBILE_HEAVY_STAGE_MAX_FILES,
+} from '../config/device';
 
 // --- Tree-sitter lazy initialization ---
 
@@ -429,6 +432,23 @@ export class BrowserJobService implements JobService {
       // on the worker store) that froze the tab on Grafana-scale corpora.
       // Call order = file order, so the store's internal chunk pump sees
       // exactly the same file sequence as a single call.
+      // On a constrained device indexing a large repo, skip the SourceText
+      // full-text index (full source of every file, CSV-built + FTS-indexed) —
+      // the biggest store-write memory cost, which overflows the tab cap. Must
+      // be set BEFORE storeSource runs. Source viewing + the grep tool still
+      // work (they read the compressed source cache); only in-code content
+      // ranking in search is lost. Small/medium repos keep it.
+      const skipSourceFTSForMemory =
+        isConstrainedDevice() &&
+        repoTree.files.length > MOBILE_HEAVY_STAGE_MAX_FILES;
+      if (skipSourceFTSForMemory) {
+        await this.store.setSkipSourceContent?.(true);
+        debug.log(
+          'scanning',
+          `skipping source FTS — ${repoTree.files.length} files on a constrained device would exceed the tab memory cap; grep + source view still work`,
+        );
+      }
+
       const SOURCE_STORE_CHUNK = 500;
       for (let i = 0; i < repoTree.files.length; i += SOURCE_STORE_CHUNK) {
         this.store.storeSource(
@@ -768,7 +788,7 @@ export class BrowserJobService implements JobService {
       // search falls back to keyword (BM25). Small/medium repos still embed.
       const skipEmbedForMemory =
         isConstrainedDevice() &&
-        scanResult.fileNodes.length > MOBILE_EMBED_MAX_FILES;
+        scanResult.fileNodes.length > MOBILE_HEAVY_STAGE_MAX_FILES;
       if (skipEmbedForMemory) {
         debug.log(
           'embedding',

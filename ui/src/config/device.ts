@@ -39,13 +39,14 @@ export function isConstrainedDevice(): boolean {
 }
 
 /**
- * On a constrained device, skip the in-browser embedding stage when the repo has
- * more than this many files. Embedding loads an onnxruntime model + inference
- * arena on top of the already-resident graph; on a big repo that overflows the
- * mobile browser's per-tab memory cap (iOS Safari/WebKit kills a tab at
- * ~1–1.5 GB regardless of device RAM) and the tab silently reloads. Below this
- * the graph is small enough that embedding still fits, so semantic search keeps
- * working on small/medium repos. Search degrades to keyword-only when skipped.
- * A conservative starting estimate — tune against real-device testing.
+ * On a constrained device, skip the memory-heavy indexing stages — embedding
+ * (onnxruntime model + inference arena) and the SourceText full-text index (full
+ * source of every file, CSV-built + FTS-indexed) — when the repo has more than
+ * this many files. On a big repo those stages overflow the mobile browser's
+ * per-tab memory cap (iOS Safari/WebKit kills a tab at ~1–1.5 GB regardless of
+ * device RAM) and the tab silently reloads. Below this the graph is small enough
+ * that they still fit, so semantic + in-code search keep working on small/medium
+ * repos. Search degrades to name/summary + grep when skipped. A conservative
+ * starting estimate — tune against real-device testing.
  */
-export const MOBILE_EMBED_MAX_FILES = 3000;
+export const MOBILE_HEAVY_STAGE_MAX_FILES = 3000;
