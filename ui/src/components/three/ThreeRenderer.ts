@@ -6135,6 +6135,12 @@ export class ThreeRenderer {
       sparked: new Uint8Array(n),
       sparkStride: Math.max(1, Math.ceil(n / BUILD_SPARK_BUDGET)),
     };
+    // Drop the curved bulk-edge overlay for the duration of the burst: it's a
+    // separate object whose alpha the build's edge-hiding doesn't touch, so it
+    // would stay visible while the straight edges collapse. Deactivating it here
+    // (shouldCurveEdges() is now false — buildAnim is set) re-adds the straight
+    // edgeLines the burst actually animates; curves are restored at finish.
+    this.syncCurvedEdges();
     this.requestRender();
   }
 
@@ -6154,6 +6160,9 @@ export class ThreeRenderer {
         this.nodeGeometry.getAttribute('position') as BufferAttribute
       ).needsUpdate = true;
     }
+    // Restore the curved edge overlay dropped at build start (before the edge
+    // refresh so the curve buffers get filled).
+    this.syncCurvedEdges();
     this.applyNodeStates();
     this.updateEdgeAlpha();
     this.updateEdgePositions();
@@ -6372,6 +6381,10 @@ export class ThreeRenderer {
       (
         this.nodeGeometry.getAttribute('position') as BufferAttribute
       ).needsUpdate = true;
+      // Restore the curved edge overlay (buildAnim is null → shouldCurveEdges
+      // true again) BEFORE the edge refresh so updateEdgeAlpha/Positions fill
+      // the curve buffers.
+      this.syncCurvedEdges();
       this.applyNodeStates();
       this.updateEdgeAlpha();
       this.updateEdgePositions();

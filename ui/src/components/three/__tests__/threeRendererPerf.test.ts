@@ -30,6 +30,7 @@ import { OrthographicCamera, Scene } from 'three';
 import { ThreeRenderer, type ThreeEdge } from '../ThreeRenderer';
 import { createNodeMaterial } from '../nodeMaterial';
 import { createEdgeMaterial } from '../edgeMaterial';
+import { createCurvedEdgeMaterial } from '../curvedEdgeMaterial';
 import type { GraphLink, GraphNode } from '../../graph/types';
 import {
   EDGE_OPACITY_DEFAULT,
@@ -872,5 +873,30 @@ describe('post-build settle interpolation', () => {
     r.updatePositionsFromBuffer(new Float64Array([100, 0, 0, 0, 200, 0]));
     // Raw path: the worker position is written straight to posArray.
     expect(r.posArray[0]).toBeCloseTo(100, 1);
+  });
+});
+
+describe('build replay drops + restores the curved edge overlay', () => {
+  it('deactivates curved edges during the burst and restores them after', async () => {
+    const r = makeRenderer({ camera: true });
+    // The headless harness doesn't wire the curved-edge material; syncCurvedEdges
+    // needs it to build the overlay.
+    r.curvedEdgeMaterial = createCurvedEdgeMaterial(0.16);
+    await setData(
+      r,
+      [node('a'), node('b'), node('c')],
+      [link('a', 'b'), link('b', 'c')],
+    );
+    r.syncCurvedEdges();
+    expect(r.curvedEdgesActive).toBe(true);
+
+    // Build start: curves are dropped so the straight edges (alpha-zeroed) drive
+    // the burst and actually disappear on collapse.
+    r.playBuildAnimation();
+    expect(r.curvedEdgesActive).toBe(false);
+
+    // Build end: curves come back.
+    r.stopBuildAnimation();
+    expect(r.curvedEdgesActive).toBe(true);
   });
 });
