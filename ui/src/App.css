@@ -1655,18 +1655,32 @@
     font-size: 0.75rem;
   }
 
+  /* Truncate the message with an ellipsis so "Show edges" + × stay INSIDE the
+     capped pill instead of sticking out past its edge. */
+  .graph-edges-hidden-pill > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .graph-edges-hidden-pill__show,
+  .graph-edges-hidden-pill__dismiss {
+    flex-shrink: 0;
+  }
+
   /* Collapse graph controls into a single button with popup */
   .graph-controls-trigger,
   .graph-controls-fullscreen {
     display: flex;
   }
 
-  /* A clean right-aligned 4-column grid that flows all controls left-to-right
-     (there are ~9, so the old nth-child hacks that assumed 4 left a ragged,
-     staircased layout). Items div is always rendered open. */
+  /* A clean right-aligned 3-column grid that flows all controls left-to-right
+     (there are ~9, so 3 columns tile them into a tidy 3×3 block; the old
+     nth-child hacks assumed 4 and left a ragged, staircased layout). Items div
+     is always rendered open. */
   .graph-controls-items {
     display: grid;
-    grid-template-columns: repeat(4, 36px);
+    grid-template-columns: repeat(3, 36px);
     justify-content: end;
     gap: 6px;
   }
