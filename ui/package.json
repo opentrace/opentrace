@@ -112,13 +112,13 @@
     }
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.0.0",
+    "@huggingface/transformers": "^5.14.1",
     "@ladybugdb/wasm-core": "0.15.2",
     "@langchain/anthropic": "^1.3.23",
     "@langchain/core": "^1.1.32",
     "@langchain/google-genai": "^2.1.26",
-    "@langchain/langgraph": "^1.2.2",
-    "@langchain/openai": "^1.3.0",
+    "@langchain/langgraph": "^1.2.9",
+    "@langchain/openai": "^2.46.0",
     "@types/three": "^0.184.1",
     "apache-arrow": "^21.1.0",
     "d3-force": "^3.0.0",
@@ -131,7 +131,7 @@
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
     "idb": "^8.0.3",
-    "mermaid": "^11.6.0",
+    "mermaid": "^11.15.0",
     "parquet-wasm": "^0.7.1",
     "prism-react-renderer": "^2.4.1",
     "react": "^18.0.0 || ^19.0.0",
@@ -149,10 +149,10 @@
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.52.0",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^19.2.7",
     "@types/d3-force": "^3.0.10",
     "@types/d3-quadtree": "^3.0.6",
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.5.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
@@ -166,7 +166,7 @@
     "ts-proto": "^2.11.5",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
-    "vite": "^7.3.1",
+    "vite": "^9.1.1",
     "vitest": "^3.2.1"
   }
 }
