@@ -23,11 +23,13 @@
  * so there is NO per-frame JS loop over nodes (the Pixi bottleneck at scale).
  *
  * Sizing model (2D):
- *   on-screen radius (px) = baseSize * zoom^sizeExponent
- * where `zoom` is the orthographic camera's px-per-world-unit — so exponent 0
- * = fixed screen size (big at overview) and 1 = world-tracking (small at
- * overview), matching the 3D branch's "0 = big, 1 = small". In perspective
- * (3D) mode the camera distance handles attenuation instead (uPerspective=1).
+ *   on-screen radius (px) = baseSize * mix(1, zoomNorm, 0.5) * 12^(0.3-exp)
+ * where `zoomNorm` is the ortho camera zoom NORMALIZED by the whole-graph fit
+ * (1.0 at the overview fit). Normalizing makes node size independent of the
+ * layout's world extent, so compact (Onion) and sprawling (Flat) layouts match
+ * — and the exponent uses the SAME geometric gain as the 3D branch (0 = large,
+ * 1 = small), so the "Zoom scaling" slider looks identical in both modes. In
+ * perspective (3D) mode the camera distance handles attenuation (uPerspective=1).
  */
 
 import {
@@ -105,11 +107,18 @@ const VERTEX_SHADER = /* glsl */ `
       float sizeGain = pow(12.0, 0.3 - uSizeExp);
       screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
-      // Ortho (2D): uSizeExp is the zoom-attenuation exponent — 0 keeps nodes
-      // at fixed screen size (reads BIG at overview), 1 makes them track the
-      // world scale (shrink fully when zoomed out). Matches the 3D branch's
-      // "0 = big, 1 = small" so the UI slider moves both modes the same way.
-      screenPx = base * 2.0 * pow(uZoom, uSizeExp) * uPixelRatio;
+      // Ortho (2D): uZoom is the camera zoom NORMALIZED by the whole-graph fit
+      // (1.0 at the overview fit), so node screen size is independent of the
+      // layout's world extent — a compact layout (Onion) and a sprawling one
+      // (Flat) render nodes the same size at their fit, matching 3D. Before
+      // this, pow(camZoom, exp) scaled size with the raw fit zoom, so the
+      // compact Onion layout (high fit zoom) rendered huge nodes at the same
+      // slider value. uSizeExp sets absolute size via the SAME geometric gain
+      // as the perspective branch (0 = large, 1 = small); the mild mix() adds a
+      // gentle zoom-in growth mirroring 3D's depth cue.
+      float zoomCue = mix(1.0, uZoom, 0.5);
+      float sizeGain = pow(12.0, 0.3 - uSizeExp);
+      screenPx = base * 2.0 * uPixelRatio * zoomCue * sizeGain;
     }
     // base <= ~0 means the node is mid build-animation reveal (size driven to
     // 0 before its "birth"); cull it. gl_PointSize 0.0 is NOT reliable — many
@@ -278,8 +287,11 @@ const PICK_VERTEX_SHADER = /* glsl */ `
       float sizeGain = pow(12.0, 0.3 - uSizeExp);
       screenPx = base * 2.0 * uPixelRatio * depthCue * sizeGain;
     } else {
-      // Keep in lockstep with the display shader's 2D sizing (see above).
-      screenPx = base * 2.0 * pow(uZoom, uSizeExp) * uPixelRatio;
+      // Keep in lockstep with the display shader's 2D sizing (see above):
+      // uZoom is the fit-normalized ortho zoom, size gain mirrors 3D.
+      float zoomCue = mix(1.0, uZoom, 0.5);
+      float sizeGain = pow(12.0, 0.3 - uSizeExp);
+      screenPx = base * 2.0 * uPixelRatio * zoomCue * sizeGain;
     }
     // Mirror the display shader: a node mid-reveal (base ~0) isn't pickable,
     // and discard in the fragment so a zero-size point can't leave a pick pixel.

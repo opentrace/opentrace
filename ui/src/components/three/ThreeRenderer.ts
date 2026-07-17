@@ -85,7 +85,6 @@ import {
   HOT_EDGE_SAG_FACTOR,
   HOT_EDGE_HALF_WIDTH,
   HOT_EDGE_GLOW_ALPHA,
-  HOT_EDGE_MAX,
   DOF_BLUR_RADIUS,
   CURVE_ALL_EDGES_SEGMENTS,
   CURVE_ALL_EDGES_MAX,
@@ -431,31 +430,6 @@ function cleanLabel(raw: string): string {
     : stripped;
 }
 
-/** Minimum distance from point (px,py) to line segment (ax,ay)→(bx,by). */
-function pointToSegmentDist(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 0.0001) {
-    const ex = px - ax;
-    const ey = py - ay;
-    return Math.sqrt(ex * ex + ey * ey);
-  }
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  const ex = px - cx;
-  const ey = py - cy;
-  return Math.sqrt(ex * ex + ey * ey);
-}
-
 /** Parse a CSS hex string ('#rgb' / '#rrggbb') into raw sRGB 0..1 channels.
  *
  * We deliberately bypass THREE.Color's color management here. The custom node /
@@ -789,6 +763,14 @@ export class ThreeRenderer {
    *  computed. Used to scale edge opacity by how far the user has zoomed in
    *  relative to the overview. */
   private lastFitZoom = 1;
+  /** Low-pass-smoothed `lastFitZoom` used ONLY as the 2D node-size reference.
+   *  `lastFitZoom` STEPS whenever the graph re-fits (every growth batch during a
+   *  live build, every filter/reflow), and dividing node size by it directly
+   *  made those steps show up as node-size jitter — the "choppy live build".
+   *  Easing the reference toward it (camZoom is already eased) keeps the size
+   *  ratio smooth. Converges to `lastFitZoom` at rest, so the settled
+   *  scale-independent size is unchanged. 0 = uninitialized (snap on first use). */
+  private sizeFitRef = 0;
   /** Currently selected node id (for zoom-to-selection), or null. */
   private selectedNodeId: string | null = null;
   /** Index of the node under the cursor (grows via NODE_STATE_HOVERED), -1
@@ -1108,7 +1090,11 @@ export class ThreeRenderer {
       this.traversalAnim === null &&
       !this.ambientActive &&
       !this.liveGrowActive &&
-      !this.postBuildSettle
+      !this.postBuildSettle &&
+      // Keep rendering while the node-size reference is still easing toward the
+      // current fit (else it would freeze mid-ease and leave nodes slightly
+      // mis-sized until the next interaction).
+      this.sizeRefSettled()
     )
       return;
     this.needsRender = false;
@@ -1151,12 +1137,25 @@ export class ThreeRenderer {
     if (this.traversalAnim) this.updateTraversalAnim(performance.now());
     if (this.ambientActive) this.updateAmbient(performance.now());
 
+    // Ease the size reference toward the live fit (snap on first use). camZoom
+    // is already eased, so a smoothed denominator keeps node size from STEPPING
+    // when lastFitZoom jumps each growth batch / reflow — the live-build judder.
+    this.sizeFitRef =
+      this.sizeFitRef <= 0
+        ? this.lastFitZoom
+        : this.sizeFitRef +
+          (this.lastFitZoom - this.sizeFitRef) * this.AUTO_FIT_FOLLOW_ALPHA;
+    const sizeRef = Math.max(this.sizeFitRef, 1e-6);
     // Keep the shader's zoom uniform in sync (size attenuation).
     for (const mat of [this.nodeMaterial, this.nodeHaloMaterial]) {
       if (!mat) continue;
       const u = mat.uniforms as unknown as NodeMaterialUniforms;
       u.uPerspective.value = 0;
-      u.uZoom.value = cam.zoom;
+      // Fit-normalized zoom (1.0 at the whole-graph overview) — see the 2D
+      // sizing model in nodeMaterial.ts. Uses the SMOOTHED fit reference so node
+      // size stays independent of layout world extent (Onion/Flat match at their
+      // fit) without stepping while the graph reorganizes.
+      u.uZoom.value = cam.zoom / sizeRef;
       u.uSizeExp.value = this.zoomSizeExponent;
     }
     if (this.edgeMaterial)
@@ -1376,6 +1375,16 @@ export class ThreeRenderer {
   /** A scalar "px-per-world-unit" usable for label LOD/size gates in both
    *  cameras: ortho zoom directly, or (in 3D) the perspective px/world at the
    *  current orbit-target distance. */
+  /** True once the smoothed size reference has caught up to the live fit, so the
+   *  render loop can idle again (see the 2D size-reference easing in frame()). */
+  private sizeRefSettled(): boolean {
+    if (this.mode3d) return true; // 3D size doesn't use the fit reference
+    if (this.sizeFitRef <= 0) return false; // needs a snap-in first
+    return (
+      Math.abs(this.sizeFitRef - this.lastFitZoom) <= this.lastFitZoom * 0.005
+    );
+  }
+
   private effectiveZoom(): number {
     if (this.mode3d && this.perspCamera && this.controls) {
       const dist = this.perspCamera.position.distanceTo(this.controls.target);
@@ -1638,15 +1647,19 @@ export class ThreeRenderer {
 
   /** Screen-size multiplier for a node's base size, mirroring the ACTUAL
    *  per-mode shader sizing (nodeMaterial vertex shader) so the label cull
-   *  judges what's really on screen. 2D: ortho attenuation `zoom^exp`. 3D:
-   *  depth cue at the orbit-target distance × the slider's size gain —
+   *  judges what's really on screen. 2D: fit-normalized zoom cue × size gain.
+   *  3D: depth cue at the orbit-target distance × the slider's size gain —
    *  `effectiveZoom()` is exactly the shader's `persp` for a node at the
    *  target depth, so `mix(1, persp, 0.5) = (1 + zoom) / 2`. */
   private labelSpriteRadiusFactor(zoom: number): number {
     if (this.mode3d) {
       return ((1 + zoom) / 2) * Math.pow(12, 0.3 - this.zoomSizeExponent);
     }
-    return Math.pow(zoom, this.zoomSizeExponent);
+    // Mirror nodeMaterial's 2D branch: SMOOTHED-fit-normalized zoom × the same
+    // gain, so the label gap tracks the node's real rendered radius.
+    const ref = this.sizeFitRef > 0 ? this.sizeFitRef : this.lastFitZoom;
+    const norm = zoom / Math.max(ref, 1e-6);
+    return ((1 + norm) / 2) * Math.pow(12, 0.3 - this.zoomSizeExponent);
   }
 
   /** Lightweight per-frame reposition of the already-chosen label set. */
@@ -1860,6 +1873,10 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
+    // Fresh dataset → snap the 2D size reference to the new graph's fit on first
+    // use rather than easing from the previous graph's (possibly very different)
+    // scale.
+    this.sizeFitRef = 0;
     // The hovered index refers to the old node array.
     this.hoveredNodeIndex = -1;
     // Drop any traversal walk + lit trail — the node/edge ids are about to change.
@@ -2197,31 +2214,26 @@ export class ThreeRenderer {
    *  `hotRibbonActive` so the bulk line set zeroes them (no double-draw). Above
    *  HOT_EDGE_MAX the ribbon bows out and the bulk lines keep the hot edges. */
   private syncHotEdgeList(): void {
-    const list = this.hotEdgeList;
-    list.length = 0;
+    // No separate glow ribbon. Highlighted edges are drawn by the SAME bulk edge
+    // object as everything else (brightened via edgeAlphaGeneral's absolute-alpha
+    // encoding), so a selected node's edges look identical in style to the
+    // unselected edges — thin 1px lines, not a fat ribbon. To keep them SHARP
+    // over the DOF blur, `updateEdgeLayers` moves the whole edge object to the
+    // sharp foreground layer while a highlight is active (DOF still blurs the
+    // background nodes). No ribbon, DOF preserved.
+    this.hotEdgeList.length = 0;
+    this.hotRibbonActive = false;
     this.hotEdgesOverflowed = false;
-    if (!this.hasHighlight) {
-      this.hotRibbonActive = false;
-      return;
-    }
-    for (let i = 0; i < this.edges.length; i++) {
-      const e = this.edges[i];
-      if (!this.edgeIsHot(e.key)) continue;
-      if (this.traversalPendingEdges.has(e.key)) continue; // not yet crossed
-      if (!this.nodeArray[e.sourceIdx]?.visible) continue;
-      if (!this.nodeArray[e.targetIdx]?.visible) continue;
-      list.push(e);
-      if (list.length > HOT_EDGE_MAX) {
-        // Too many to be worth a curved glow mesh — the bulk line set draws them
-        // (as bright straight chords). Flag it so DOF is skipped: those chords
-        // sit on the blurred layer and would otherwise smear.
-        list.length = 0;
-        this.hotRibbonActive = false;
-        this.hotEdgesOverflowed = true;
-        return;
-      }
-    }
-    this.hotRibbonActive = list.length > 0;
+  }
+
+  /** While a highlight is active, move the bulk edge object to the sharp DOF
+   *  foreground layer (1) so its brightened highlighted edges — and the dimmed
+   *  rest — render crisp over the blurred background, via the NORMAL edge
+   *  renderer (no ribbon). Off-highlight they live on the base layer (0). */
+  private updateEdgeLayers(): void {
+    const layer = this.hasHighlight ? 1 : 0;
+    this.edgeLines?.layers.set(layer);
+    this.curvedEdgeObject?.layers.set(layer);
   }
 
   /** Build / refresh the ribbon geometry from `hotEdgeList`. Topology (side
@@ -2401,6 +2413,11 @@ export class ThreeRenderer {
     const col = this.hotEdgeColorArray;
     const alp = this.hotEdgeAlphaArray;
     const hasTrail = this.traversalLitEdges.size > 0;
+    // Every strand glows at FULL strength, end to end — no per-strand alpha
+    // capping, no taper. The hot-edge material uses MAX ("lighten") blending, so
+    // overlapping strands at a dense hub take the brightest value instead of
+    // summing to a white blob; the pile-up problem is solved at the blend level.
+    const peakAlpha = HOT_EDGE_GLOW_ALPHA;
     for (let j = 0; j < edges.length; j++) {
       const e = edges[j];
       const lit = hasTrail && this.traversalLitEdges.has(e.key);
@@ -2409,19 +2426,12 @@ export class ThreeRenderer {
       const g = this.tmpColor.g;
       const b = this.tmpColor.b;
       const base = j * N * 2;
-      for (let i = 0; i < N; i++) {
-        const tt = i / (N - 1);
-        // Soften only the very tips (~4%) so the strand still visually reaches
-        // its nodes — a larger taper left a gap and the nodes looked unconnected.
-        const fade = Math.min(1, tt / 0.04) * Math.min(1, (1 - tt) / 0.04);
-        const a = HOT_EDGE_GLOW_ALPHA * fade;
-        for (let sdx = 0; sdx < 2; sdx++) {
-          const v = base + i * 2 + sdx;
-          col[v * 3] = r;
-          col[v * 3 + 1] = g;
-          col[v * 3 + 2] = b;
-          alp[v] = a;
-        }
+      const end = base + N * 2;
+      for (let v = base; v < end; v++) {
+        col[v * 3] = r;
+        col[v * 3 + 1] = g;
+        col[v * 3 + 2] = b;
+        alp[v] = peakAlpha;
       }
     }
   }
@@ -2501,6 +2511,7 @@ export class ThreeRenderer {
         this.curvedEdgesActive = true;
         this.applyEdgeDepthMode(); // sets depthTest / bias / renderOrder / mode
         this.flagCurvedEdgeBuffers();
+        this.updateEdgeLayers(); // sharp-layer while highlighting
         this.requestRender();
       }
     } else if (this.curvedEdgesActive) {
@@ -2509,6 +2520,7 @@ export class ThreeRenderer {
         this.scene.add(this.edgeLines);
       }
       this.curvedEdgesActive = false;
+      this.updateEdgeLayers();
       this.requestRender();
     }
   }
@@ -2588,9 +2600,11 @@ export class ThreeRenderer {
       this.clearHotEdges();
       return;
     }
-    // Resolve which hot edges (if any) the glow ribbon owns BEFORE the per-edge
-    // loop — edgeAlphaGeneral reads hotRibbonActive to zero those edges here.
+    // Resolve hot-edge state before the per-edge loop, and move the edge object
+    // to the sharp DOF layer while a highlight is active so highlighted edges
+    // render crisp (as normal thin lines) over the blurred background.
     this.syncHotEdgeList();
+    this.updateEdgeLayers();
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
@@ -2768,10 +2782,18 @@ export class ThreeRenderer {
     // are identical — same nodeInView, same margins, same camera. Built
     // lazily on the first drawable edge so states where nothing draws (edges
     // off / all alphas 0) pay no projections at all.
+    // While a highlight is active the edge object sits on the sharp DOF layer
+    // (see updateEdgeLayers). Drawing the dimmed, non-highlighted edges there
+    // too made every OTHER hub's dense edge-convergence show as a crisp "hot
+    // spot" instead of blurring into the background. So during a highlight the
+    // sharp layer draws ONLY the highlighted edges; the rest drop out (the
+    // graph's non-selected edges recede, like the blurred background nodes).
+    const hotOnly = this.hasHighlight;
     let view: Uint8Array | null = null;
     let ec = 0;
     for (let i = 0; i < this.edges.length; i++) {
       if (a[i * 2] <= 0) continue;
+      if (hotOnly && !this.edgeIsHot(this.edges[i].key)) continue;
       if (cull) {
         if (view === null) view = this.computeNodeViewFlags(mx, my);
         const e = this.edges[i];
@@ -2962,6 +2984,31 @@ export class ThreeRenderer {
     );
   }
 
+  /** Arm the snapshot interpolator for a layout REFLOW — a preset change
+   *  reseeds the force layout, which then streams fresh positions as it
+   *  reorganizes. Without this those throttled worker posts (~5–15Hz, scaled by
+   *  node count) write posArray raw, so the nodes step between posts while the
+   *  camera eases smoothly — the visible judder. This reuses the post-build
+   *  settle path: posts feed layoutPos (the targets) and the render loop lerps
+   *  posArray toward them every frame → 60fps motion. Cleared automatically when
+   *  the worker settles (setLayoutSettled) or a drag / build takes over.
+   *
+   *  Sets layoutSettled/ambientActive false up-front (mirroring the
+   *  setLayoutSettled(false) that the simRunning effect fires a beat later) so
+   *  the very first post is already interpolated rather than racing that effect. */
+  beginLayoutReflow(): void {
+    if (this.nodeArray.length === 0) return;
+    // A live build owns node motion with its own easing; don't fight it.
+    if (this.liveGrowActive || this.buildAnim !== null) return;
+    this.layoutSettled = false;
+    this.ambientActive = false;
+    this.postBuildSettle = true;
+    this.layoutInterpStart = 0;
+    this.layoutInterpDur = 0;
+    this.layoutInterpActive = false;
+    this.requestRender();
+  }
+
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const len = Math.min(this.nodeArray.length, Math.floor(buffer.length / 3));
     // During a build/live-build/post-build settle the layout streams into
@@ -3082,9 +3129,20 @@ export class ThreeRenderer {
   }
 
   /** User-adjustable edge visibility (Physics panel "Edge opacity" slider).
-   *  Multiplies the zoom-driven base; 1.0 = default behavior. */
+   *  Multiplies the zoom-driven base for normal edges; also scales the
+   *  absolute-alpha HOT (highlighted) edges via uHotOpacity so the slider
+   *  controls the selected node's edges too. 1.0 = default behavior. */
   setEdgeOpacity(multiplier: number): void {
     this.edgeOpacityMultiplier = Math.max(0, Math.min(2, multiplier));
+    const hot = this.edgeOpacityMultiplier;
+    if (this.edgeMaterial) this.edgeMaterial.uniforms.uHotOpacity.value = hot;
+    if (this.superEdgeMaterial)
+      this.superEdgeMaterial.uniforms.uHotOpacity.value = hot;
+    if (this.curvedEdgeMaterial)
+      (
+        this.curvedEdgeMaterial
+          .uniforms as unknown as CurvedEdgeMaterialUniforms
+      ).uHotOpacity.value = hot;
     this.requestRender();
   }
   private edgeOpacityMultiplier = 1;
@@ -3338,7 +3396,10 @@ export class ThreeRenderer {
       pu.uZoom.value = this.height / (2 * Math.tan((this.fov * Math.PI) / 360));
     } else {
       pu.uPerspective.value = 0;
-      pu.uZoom.value = cam.zoom;
+      // Match the display material's smoothed fit-normalized 2D zoom so the pick
+      // disc tracks the rendered node size.
+      const sizeRef = this.sizeFitRef > 0 ? this.sizeFitRef : this.lastFitZoom;
+      pu.uZoom.value = cam.zoom / Math.max(sizeRef, 1e-6);
     }
     pu.uSizeExp.value = this.zoomSizeExponent;
 
@@ -3416,47 +3477,6 @@ export class ThreeRenderer {
     if (id <= 0) return -1;
     if (id > SUPER_PICK_OFFSET) return -(id - SUPER_PICK_OFFSET - 1) - 2;
     return id - 1;
-  }
-
-  /** Nearest visible edge to a world point, within `maxDist` world units.
-   *  CPU point-to-segment over all edges — used for click selection (not
-   *  per-mousemove). */
-  private findEdgeAt(
-    worldX: number,
-    worldY: number,
-    maxDist: number,
-  ): ThreeEdge | null {
-    if (this.edges.length === 0 || !this.edgesEnabled) return null;
-    const pos = this.posArray;
-    let best: ThreeEdge | null = null;
-    let bestDist = maxDist;
-    for (const e of this.edges) {
-      if (this.hiddenLinkTypes.has(e.label)) continue;
-      const s = e.sourceIdx;
-      const t = e.targetIdx;
-      if (!this.nodeArray[s].visible || !this.nodeArray[t].visible) continue;
-      const sx = pos[s * 3];
-      const sy = pos[s * 3 + 1];
-      const tx = pos[t * 3];
-      const ty = pos[t * 3 + 1];
-      const d = pointToSegmentDist(worldX, worldY, sx, sy, tx, ty);
-      if (d < bestDist) {
-        bestDist = d;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  private buildSelectedEdge(edge: ThreeEdge): SelectedEdge {
-    return {
-      source: edge.sourceId,
-      target: edge.targetId,
-      label: edge.label,
-      properties: edge.graphLink.properties,
-      sourceNode: this.nodes.get(edge.sourceId)?.graphNode,
-      targetNode: this.nodes.get(edge.targetId)?.graphNode,
-    };
   }
 
   // ─── Interaction (pan / wheel / pick / drag) ──────────────────────
@@ -3642,19 +3662,10 @@ export class ThreeRenderer {
           const idx = this.pickNodeIndexAt(hx, hy);
           // Real nodes grow on hover (+ host tooltip); super-nodes don't.
           this.setHoveredNode(idx >= 0 ? idx : -1, hx, hy);
-          if (idx !== -1) {
-            // Node (idx >= 0) or super-node (idx <= -2) — both clickable.
-            canvas.style.cursor = 'pointer';
-          } else if (this.edgesEnabled && this.bp.edgeHoverHitTest) {
-            const w = this.screenToWorld(
-              e.clientX - rect.left,
-              e.clientY - rect.top,
-            );
-            const hit = this.findEdgeAt(w.x, w.y, 8 / this.zoomForHit());
-            canvas.style.cursor = hit ? 'pointer' : 'default';
-          } else {
-            canvas.style.cursor = 'default';
-          }
+          // Only nodes (and super-nodes) are clickable — edges are not, so the
+          // pointer cursor appears over nodes only (a pointer over an edge used
+          // to imply a click that now does nothing).
+          canvas.style.cursor = idx !== -1 ? 'pointer' : 'default';
           return;
         }
 
@@ -3799,23 +3810,14 @@ export class ThreeRenderer {
           if (this.mode3d && this.mode3dAutoRotate) this.set3DAutoRotate(false);
           this.callbacks.onNodeClick?.(this.nodeArray[idx].graphNode);
         } else {
-          // CPU edge hit-test only in 2D (screen→world plane is ill-defined
-          // under perspective).
-          const edge = this.mode3d
-            ? null
-            : this.findEdgeAt(
-                this.screenToWorld(sx, sy).x,
-                this.screenToWorld(sx, sy).y,
-                8 / this.zoomForHit(),
-              );
-          if (edge) {
-            this.callbacks.onEdgeClick?.(this.buildSelectedEdge(edge));
-          } else {
-            // Deliberately does NOT restart 3D auto-rotation: a click in the
-            // void is how users dismiss a selection, and having the scene
-            // start spinning on it read as a bug.
-            this.callbacks.onStageClick?.();
-          }
+          // Edges are NOT clickable — only nodes. Near a high-degree node the
+          // dense edges used to steal the click and select a relationship
+          // instead of the node, which read as a bug; a click that misses a
+          // node now just dismisses the current selection.
+          // Deliberately does NOT restart 3D auto-rotation: a click in the void
+          // is how users dismiss a selection, and having the scene start
+          // spinning on it read as a bug.
+          this.callbacks.onStageClick?.();
         }
       }
       this.pendingDragIndex = -1;
@@ -3826,11 +3828,6 @@ export class ThreeRenderer {
     // iOS Safari cancels pointers when the OS takes over a gesture — treat it
     // as a lift so pinch/pan state can't get stuck.
     canvas.addEventListener('pointercancel', onUp, { signal });
-  }
-
-  /** Current px-per-world-unit, for converting a pixel hit radius to world. */
-  private zoomForHit(): number {
-    return this.camera?.zoom ?? 1;
   }
 
   /** Pivot for the current 3D rotate gesture — the graph's own center,

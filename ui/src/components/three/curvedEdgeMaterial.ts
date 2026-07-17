@@ -79,12 +79,14 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   uniform float uOpacity;
+  uniform float uHotOpacity; // user edge-opacity slider, applied to hot edges too
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
     // Identical to edgeMaterial: aAlpha in (1,2] is ABSOLUTE (bypasses the
-    // global zoom/user opacity) for hot edges; otherwise scale by uOpacity.
-    float a = vAlpha > 1.0 ? min(vAlpha - 1.0, 1.0) : vAlpha * uOpacity;
+    // zoom-driven fade) for hot edges, but still scaled by the user's edge-opacity
+    // slider (uHotOpacity); otherwise scale by uOpacity.
+    float a = vAlpha > 1.0 ? min(vAlpha - 1.0, 1.0) * uHotOpacity : vAlpha * uOpacity;
     if (a <= 0.0) discard;
     gl_FragColor = vec4(vColor, a);
   }
@@ -92,6 +94,7 @@ const FRAGMENT_SHADER = /* glsl */ `
 
 export interface CurvedEdgeMaterialUniforms {
   uOpacity: { value: number };
+  uHotOpacity: { value: number };
   uSag: { value: number };
   uMode3d: { value: number };
   uDepthBias: { value: number };
@@ -101,6 +104,7 @@ export function createCurvedEdgeMaterial(sag: number): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uOpacity: { value: 1 },
+      uHotOpacity: { value: 1 },
       uSag: { value: sag },
       uMode3d: { value: 0 },
       uDepthBias: { value: 0 },

@@ -30,7 +30,7 @@
  * strands cross their glow sums like real light.
  */
 
-import { ShaderMaterial, AdditiveBlending, DoubleSide } from 'three';
+import { ShaderMaterial, NormalBlending, DoubleSide } from 'three';
 
 const VERTEX_SHADER = /* glsl */ `
   attribute float aSide;      // -1 / +1 : which side of the curve this vert sits
@@ -71,15 +71,15 @@ const FRAGMENT_SHADER = /* glsl */ `
   varying float vAlpha;
 
   void main() {
-    // Soft falloff across the ribbon width: bright at the centreline, fading to
-    // nothing at the rim — a glowing filament, not a flat stroke.
-    float edge = 1.0 - abs(vAcross);
-    float glow = pow(max(edge, 0.0), 2.0); // steeper falloff → slimmer bright core
-    float core = smoothstep(0.6, 1.0, edge); // brighter inner strand
-    vec3 color = min(vColor + core * 0.35, vec3(1.0));
-    float a = glow * vAlpha;
-    if (a < 0.004) discard; // additive: near-zero fragments add nothing
-    gl_FragColor = vec4(color, a);
+    // Render the highlighted edge as a PLAIN crisp line (like the normal bulk
+    // edges), not an additive glow: a solid core across most of the width with a
+    // soft anti-aliased rim. Normal (over) blending means overlapping strands at
+    // a hub just show the edge colour — they can NEVER sum past it, so there is
+    // no white blow-out at dense nodes (the whole reason the glow was replaced).
+    float across = abs(vAcross);
+    float a = (1.0 - smoothstep(0.55, 1.0, across)) * vAlpha;
+    if (a < 0.004) discard;
+    gl_FragColor = vec4(vColor, a);
   }
 `;
 
@@ -95,15 +95,14 @@ export function createHotEdgeMaterial(halfWidth: number): ShaderMaterial {
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     transparent: true,
-    // Additive so overlapping strands bloom together like light. depthTest is
-    // OFF: a highlight's strands should read as a continuous glowing filament,
-    // not blink in and out as each one sweeps behind the node cloud while the
-    // scene rotates (the "appear and disappear" flicker). DoubleSide because the
-    // screen-facing ribbon's winding flips with the curve direction — FrontSide
-    // would cull half the strands. Never writes depth (translucent glow).
+    // Normal ("over") blending, like the bulk edges — overlapping highlighted
+    // strands at a hub show the edge colour, never summing to a white blob.
+    // depthTest OFF so strands don't blink behind the node cloud while orbiting;
+    // DoubleSide because the screen-facing ribbon's winding flips with curve
+    // direction.
     side: DoubleSide,
     depthTest: false,
     depthWrite: false,
-    blending: AdditiveBlending,
+    blending: NormalBlending,
   });
 }

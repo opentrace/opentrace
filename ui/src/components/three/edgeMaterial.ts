@@ -55,15 +55,16 @@ const VERTEX_SHADER = /* glsl */ `
 
 const FRAGMENT_SHADER = /* glsl */ `
   uniform float uOpacity;
+  uniform float uHotOpacity; // user edge-opacity slider, applied to hot edges too
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
-    // aAlpha in (1, 2] is ABSOLUTE: alpha = value - 1, bypassing the global
-    // zoom/user opacity. Used for hot edges (chat-traversal trail / highlight
-    // neighborhood) so the lit path stays fully visible even when the preset
-    // keeps the edge layer faint or off (Planet 15%, Onion 0%) — WITHOUT
-    // raising the global opacity, which used to flash every edge on screen.
-    float a = vAlpha > 1.0 ? min(vAlpha - 1.0, 1.0) : vAlpha * uOpacity;
+    // aAlpha in (1, 2] is ABSOLUTE: alpha = value - 1, bypassing the zoom-driven
+    // fade so a hot edge (chat-traversal trail / highlight neighborhood) stays
+    // fully visible even when the preset keeps the edge layer faint (Planet 15%,
+    // Onion 0%). It IS still scaled by the user's "Edge opacity" slider
+    // (uHotOpacity) so that slider controls the highlighted edges as well.
+    float a = vAlpha > 1.0 ? min(vAlpha - 1.0, 1.0) * uHotOpacity : vAlpha * uOpacity;
     if (a <= 0.0) discard;
     gl_FragColor = vec4(vColor, a);
   }
@@ -73,8 +74,13 @@ export function createEdgeMaterial(): ShaderMaterial {
   return new ShaderMaterial({
     // uOpacity is a global multiplier the renderer drives by zoom: faint at the
     // overview (clusters read clearly), opaque when zoomed into a region.
-    // uDepthBias is set by applyEdgeDepthMode: ~1.5e-3 in 3D, 0 in 2D.
-    uniforms: { uOpacity: { value: 1 }, uDepthBias: { value: 0 } },
+    // uHotOpacity is the user's edge-opacity slider (1 = default), applied to the
+    // absolute-alpha hot edges. uDepthBias is set by applyEdgeDepthMode.
+    uniforms: {
+      uOpacity: { value: 1 },
+      uHotOpacity: { value: 1 },
+      uDepthBias: { value: 0 },
+    },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
     transparent: true,

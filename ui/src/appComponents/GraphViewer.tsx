@@ -606,6 +606,10 @@ const GraphViewer = memo(
       const [showExportModal, setShowExportModal] = useState(false);
       const [exporting, setExporting] = useState(false);
       const [showPhysicsPanel, setShowPhysicsPanel] = useState(false);
+      // The live indexing panel can be minimized to a compact chip; the job
+      // keeps running behind it. Reset whenever a job goes inactive so a new
+      // run always starts with the full panel visible (see effect below).
+      const [liveMinimized, setLiveMinimized] = useState(false);
       const physicsTriggerRef = useRef<HTMLButtonElement>(null);
 
       // Close the physics panel on a pointerdown outside the panel and
@@ -722,8 +726,16 @@ const GraphViewer = memo(
       const showFullModal = jobExpanded || jobState.status === 'error';
 
       // The compact live panel owns the running / building / enriching states
-      // whenever the user hasn't expanded to the full modal.
-      const showLivePanel = jobActive && !jobExpanded;
+      // whenever the user hasn't expanded to the full modal. Minimizing swaps
+      // the panel for a tiny restore chip without touching the job.
+      const showLivePanel = jobActive && !jobExpanded && !liveMinimized;
+      const showLiveChip = jobActive && !jobExpanded && liveMinimized;
+
+      // A finished/cancelled job should never leave the panel stuck minimized —
+      // clear the flag so the next run opens with the full panel.
+      useEffect(() => {
+        if (!jobActive) setLiveMinimized(false);
+      }, [jobActive]);
 
       // The canvas is ALWAYS full-width now: the chat / help panels float over it
       // as translucent overlays (like the left side panel) so the graph shines
@@ -951,8 +963,35 @@ const GraphViewer = memo(
               stages={INDEXING_STAGES}
               icon={toIndexingProps(jobState, activeRepoUrl).icon}
               onExpand={onJobExpand}
-              onCancel={onJobCancel}
+              onMinimize={() => setLiveMinimized(true)}
             />
+          )}
+
+          {showLiveChip && (
+            <div className="live-indexing-chip">
+              <button
+                type="button"
+                className="live-indexing-chip__restore"
+                onClick={() => setLiveMinimized(false)}
+                title="Show indexing progress"
+                aria-label="Show indexing progress"
+              >
+                <span className="live-indexing-chip__spinner" aria-hidden />
+                <span className="live-indexing-chip__count">
+                  <strong>{jobState.nodesCreated.toLocaleString()}</strong>{' '}
+                  nodes
+                </span>
+              </button>
+              <button
+                type="button"
+                className="live-indexing-chip__cancel"
+                onClick={onJobCancel}
+                title="Cancel indexing"
+                aria-label="Cancel indexing"
+              >
+                &times;
+              </button>
+            </div>
           )}
 
           {/* While fetching/parsing there's no graph yet — show a calm centered
