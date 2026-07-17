@@ -790,6 +790,10 @@ const ThreeGraphCanvasInner = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
           rendererRef.current?.clearTraversal();
         },
         reseedLayout: () => {
+          // Arm the snapshot interpolator BEFORE the reseed posts to the worker,
+          // so the reorganizing positions that stream back are eased to 60fps
+          // instead of stepping at the throttled post rate (preset-change judder).
+          rendererRef.current?.beginLayoutReflow();
           reseed();
         },
         setNebulaLayout: (enabled: boolean, baseMode = 'spread') => {

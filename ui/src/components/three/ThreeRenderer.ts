@@ -789,6 +789,14 @@ export class ThreeRenderer {
    *  computed. Used to scale edge opacity by how far the user has zoomed in
    *  relative to the overview. */
   private lastFitZoom = 1;
+  /** Low-pass-smoothed `lastFitZoom` used ONLY as the 2D node-size reference.
+   *  `lastFitZoom` STEPS whenever the graph re-fits (every growth batch during a
+   *  live build, every filter/reflow), and dividing node size by it directly
+   *  made those steps show up as node-size jitter — the "choppy live build".
+   *  Easing the reference toward it (camZoom is already eased) keeps the size
+   *  ratio smooth. Converges to `lastFitZoom` at rest, so the settled
+   *  scale-independent size is unchanged. 0 = uninitialized (snap on first use). */
+  private sizeFitRef = 0;
   /** Currently selected node id (for zoom-to-selection), or null. */
   private selectedNodeId: string | null = null;
   /** Index of the node under the cursor (grows via NODE_STATE_HOVERED), -1
@@ -1108,7 +1116,11 @@ export class ThreeRenderer {
       this.traversalAnim === null &&
       !this.ambientActive &&
       !this.liveGrowActive &&
-      !this.postBuildSettle
+      !this.postBuildSettle &&
+      // Keep rendering while the node-size reference is still easing toward the
+      // current fit (else it would freeze mid-ease and leave nodes slightly
+      // mis-sized until the next interaction).
+      this.sizeRefSettled()
     )
       return;
     this.needsRender = false;
@@ -1151,12 +1163,25 @@ export class ThreeRenderer {
     if (this.traversalAnim) this.updateTraversalAnim(performance.now());
     if (this.ambientActive) this.updateAmbient(performance.now());
 
+    // Ease the size reference toward the live fit (snap on first use). camZoom
+    // is already eased, so a smoothed denominator keeps node size from STEPPING
+    // when lastFitZoom jumps each growth batch / reflow — the live-build judder.
+    this.sizeFitRef =
+      this.sizeFitRef <= 0
+        ? this.lastFitZoom
+        : this.sizeFitRef +
+          (this.lastFitZoom - this.sizeFitRef) * this.AUTO_FIT_FOLLOW_ALPHA;
+    const sizeRef = Math.max(this.sizeFitRef, 1e-6);
     // Keep the shader's zoom uniform in sync (size attenuation).
     for (const mat of [this.nodeMaterial, this.nodeHaloMaterial]) {
       if (!mat) continue;
       const u = mat.uniforms as unknown as NodeMaterialUniforms;
       u.uPerspective.value = 0;
-      u.uZoom.value = cam.zoom;
+      // Fit-normalized zoom (1.0 at the whole-graph overview) — see the 2D
+      // sizing model in nodeMaterial.ts. Uses the SMOOTHED fit reference so node
+      // size stays independent of layout world extent (Onion/Flat match at their
+      // fit) without stepping while the graph reorganizes.
+      u.uZoom.value = cam.zoom / sizeRef;
       u.uSizeExp.value = this.zoomSizeExponent;
     }
     if (this.edgeMaterial)
@@ -1376,6 +1401,16 @@ export class ThreeRenderer {
   /** A scalar "px-per-world-unit" usable for label LOD/size gates in both
    *  cameras: ortho zoom directly, or (in 3D) the perspective px/world at the
    *  current orbit-target distance. */
+  /** True once the smoothed size reference has caught up to the live fit, so the
+   *  render loop can idle again (see the 2D size-reference easing in frame()). */
+  private sizeRefSettled(): boolean {
+    if (this.mode3d) return true; // 3D size doesn't use the fit reference
+    if (this.sizeFitRef <= 0) return false; // needs a snap-in first
+    return (
+      Math.abs(this.sizeFitRef - this.lastFitZoom) <= this.lastFitZoom * 0.005
+    );
+  }
+
   private effectiveZoom(): number {
     if (this.mode3d && this.perspCamera && this.controls) {
       const dist = this.perspCamera.position.distanceTo(this.controls.target);
@@ -1638,15 +1673,19 @@ export class ThreeRenderer {
 
   /** Screen-size multiplier for a node's base size, mirroring the ACTUAL
    *  per-mode shader sizing (nodeMaterial vertex shader) so the label cull
-   *  judges what's really on screen. 2D: ortho attenuation `zoom^exp`. 3D:
-   *  depth cue at the orbit-target distance × the slider's size gain —
+   *  judges what's really on screen. 2D: fit-normalized zoom cue × size gain.
+   *  3D: depth cue at the orbit-target distance × the slider's size gain —
    *  `effectiveZoom()` is exactly the shader's `persp` for a node at the
    *  target depth, so `mix(1, persp, 0.5) = (1 + zoom) / 2`. */
   private labelSpriteRadiusFactor(zoom: number): number {
     if (this.mode3d) {
       return ((1 + zoom) / 2) * Math.pow(12, 0.3 - this.zoomSizeExponent);
     }
-    return Math.pow(zoom, this.zoomSizeExponent);
+    // Mirror nodeMaterial's 2D branch: SMOOTHED-fit-normalized zoom × the same
+    // gain, so the label gap tracks the node's real rendered radius.
+    const ref = this.sizeFitRef > 0 ? this.sizeFitRef : this.lastFitZoom;
+    const norm = zoom / Math.max(ref, 1e-6);
+    return ((1 + norm) / 2) * Math.pow(12, 0.3 - this.zoomSizeExponent);
   }
 
   /** Lightweight per-frame reposition of the already-chosen label set. */
@@ -1860,6 +1899,10 @@ export class ThreeRenderer {
     this.buildAnim = null;
     this.buildPrepared = false;
     this.preparedSizes = null;
+    // Fresh dataset → snap the 2D size reference to the new graph's fit on first
+    // use rather than easing from the previous graph's (possibly very different)
+    // scale.
+    this.sizeFitRef = 0;
     // The hovered index refers to the old node array.
     this.hoveredNodeIndex = -1;
     // Drop any traversal walk + lit trail — the node/edge ids are about to change.
@@ -2962,6 +3005,31 @@ export class ThreeRenderer {
     );
   }
 
+  /** Arm the snapshot interpolator for a layout REFLOW — a preset change
+   *  reseeds the force layout, which then streams fresh positions as it
+   *  reorganizes. Without this those throttled worker posts (~5–15Hz, scaled by
+   *  node count) write posArray raw, so the nodes step between posts while the
+   *  camera eases smoothly — the visible judder. This reuses the post-build
+   *  settle path: posts feed layoutPos (the targets) and the render loop lerps
+   *  posArray toward them every frame → 60fps motion. Cleared automatically when
+   *  the worker settles (setLayoutSettled) or a drag / build takes over.
+   *
+   *  Sets layoutSettled/ambientActive false up-front (mirroring the
+   *  setLayoutSettled(false) that the simRunning effect fires a beat later) so
+   *  the very first post is already interpolated rather than racing that effect. */
+  beginLayoutReflow(): void {
+    if (this.nodeArray.length === 0) return;
+    // A live build owns node motion with its own easing; don't fight it.
+    if (this.liveGrowActive || this.buildAnim !== null) return;
+    this.layoutSettled = false;
+    this.ambientActive = false;
+    this.postBuildSettle = true;
+    this.layoutInterpStart = 0;
+    this.layoutInterpDur = 0;
+    this.layoutInterpActive = false;
+    this.requestRender();
+  }
+
   updatePositionsFromBuffer(buffer: Float64Array): void {
     const len = Math.min(this.nodeArray.length, Math.floor(buffer.length / 3));
     // During a build/live-build/post-build settle the layout streams into
@@ -3338,7 +3406,10 @@ export class ThreeRenderer {
       pu.uZoom.value = this.height / (2 * Math.tan((this.fov * Math.PI) / 360));
     } else {
       pu.uPerspective.value = 0;
-      pu.uZoom.value = cam.zoom;
+      // Match the display material's smoothed fit-normalized 2D zoom so the pick
+      // disc tracks the rendered node size.
+      const sizeRef = this.sizeFitRef > 0 ? this.sizeFitRef : this.lastFitZoom;
+      pu.uZoom.value = cam.zoom / Math.max(sizeRef, 1e-6);
     }
     pu.uSizeExp.value = this.zoomSizeExponent;
 

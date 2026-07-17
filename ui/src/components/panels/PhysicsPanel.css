@@ -18,7 +18,10 @@
 .physics-panel {
   position: absolute;
   bottom: 20px;
-  right: 68px;
+  /* Sit clear of the right-hand chat / help overlay when one is open — mirrors
+   * `.graph-controls`. Without the inset the panel stays pinned at 68px and the
+   * wider chat overlay (z-index 20) draws over it. */
+  right: calc(68px + var(--right-panel-inset, 0px));
   z-index: 10;
   width: var(--physics-panel-width, 240px);
   /* Height: auto until the user drags the top edge, then an explicit pixel
@@ -29,7 +32,7 @@
    * `bottom: 20px` anchors — so a stored width/height bigger than what
    * currently fits can't push the panel (and its top/left handles)
    * off-screen. */
-  max-width: calc(100vw - 76px);
+  max-width: calc(100vw - 76px - var(--right-panel-inset, 0px));
   max-height: min(80vh, calc(100vh - 28px));
   /* Overflow stays VISIBLE on the panel root so the resize handles
    * (which sit at top:-3 / left:-3 / right:-3 / bottom:-3, outside the
