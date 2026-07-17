@@ -68,10 +68,14 @@ export const HOT_EDGE_CURVE_SEGMENTS = 20;
 export const HOT_EDGE_SAG_FACTOR = 0.16;
 // Ribbon half-width in WORLD units (not pixels) so strands shrink with the
 // graph as you zoom out — a fixed pixel width made the additive glow pile into
-// one saturated blob at low zoom. Comparable to a small node radius.
-export const HOT_EDGE_HALF_WIDTH = 7;
-// Peak glow alpha at the centreline (additive). Ends taper to 0.
-export const HOT_EDGE_GLOW_ALPHA = 0.6;
+// one saturated blob at low zoom. Kept fairly thin so a hub's strands read as
+// distinct, traceable rays instead of merging into a washed-out fan; thinner
+// ribbons also overlap less, so they can stay bright without piling to white.
+export const HOT_EDGE_HALF_WIDTH = 5;
+// Opacity of a highlighted (selected-node) edge line. Rendered as a plain crisp
+// line under normal blending — overlapping strands at a hub just show the edge
+// colour, never summing to a white blob, so no per-strand/taper capping needed.
+export const HOT_EDGE_GLOW_ALPHA = 0.85;
 // Above this many hot edges the ribbon is skipped and they fall back to the
 // bulk line set — which, under DOF, is the BLURRED background, so this must be
 // high enough that a normal selection (incl. hops 3–4) stays in the sharp

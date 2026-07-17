@@ -85,7 +85,6 @@ import {
   HOT_EDGE_SAG_FACTOR,
   HOT_EDGE_HALF_WIDTH,
   HOT_EDGE_GLOW_ALPHA,
-  HOT_EDGE_MAX,
   DOF_BLUR_RADIUS,
   CURVE_ALL_EDGES_SEGMENTS,
   CURVE_ALL_EDGES_MAX,
@@ -429,31 +428,6 @@ function cleanLabel(raw: string): string {
   return stripped.length > LABEL_MAX_LENGTH
     ? stripped.slice(0, LABEL_MAX_LENGTH) + '…'
     : stripped;
-}
-
-/** Minimum distance from point (px,py) to line segment (ax,ay)→(bx,by). */
-function pointToSegmentDist(
-  px: number,
-  py: number,
-  ax: number,
-  ay: number,
-  bx: number,
-  by: number,
-): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq < 0.0001) {
-    const ex = px - ax;
-    const ey = py - ay;
-    return Math.sqrt(ex * ex + ey * ey);
-  }
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
-  const ex = px - cx;
-  const ey = py - cy;
-  return Math.sqrt(ex * ex + ey * ey);
 }
 
 /** Parse a CSS hex string ('#rgb' / '#rrggbb') into raw sRGB 0..1 channels.
@@ -2240,31 +2214,26 @@ export class ThreeRenderer {
    *  `hotRibbonActive` so the bulk line set zeroes them (no double-draw). Above
    *  HOT_EDGE_MAX the ribbon bows out and the bulk lines keep the hot edges. */
   private syncHotEdgeList(): void {
-    const list = this.hotEdgeList;
-    list.length = 0;
+    // No separate glow ribbon. Highlighted edges are drawn by the SAME bulk edge
+    // object as everything else (brightened via edgeAlphaGeneral's absolute-alpha
+    // encoding), so a selected node's edges look identical in style to the
+    // unselected edges — thin 1px lines, not a fat ribbon. To keep them SHARP
+    // over the DOF blur, `updateEdgeLayers` moves the whole edge object to the
+    // sharp foreground layer while a highlight is active (DOF still blurs the
+    // background nodes). No ribbon, DOF preserved.
+    this.hotEdgeList.length = 0;
+    this.hotRibbonActive = false;
     this.hotEdgesOverflowed = false;
-    if (!this.hasHighlight) {
-      this.hotRibbonActive = false;
-      return;
-    }
-    for (let i = 0; i < this.edges.length; i++) {
-      const e = this.edges[i];
-      if (!this.edgeIsHot(e.key)) continue;
-      if (this.traversalPendingEdges.has(e.key)) continue; // not yet crossed
-      if (!this.nodeArray[e.sourceIdx]?.visible) continue;
-      if (!this.nodeArray[e.targetIdx]?.visible) continue;
-      list.push(e);
-      if (list.length > HOT_EDGE_MAX) {
-        // Too many to be worth a curved glow mesh — the bulk line set draws them
-        // (as bright straight chords). Flag it so DOF is skipped: those chords
-        // sit on the blurred layer and would otherwise smear.
-        list.length = 0;
-        this.hotRibbonActive = false;
-        this.hotEdgesOverflowed = true;
-        return;
-      }
-    }
-    this.hotRibbonActive = list.length > 0;
+  }
+
+  /** While a highlight is active, move the bulk edge object to the sharp DOF
+   *  foreground layer (1) so its brightened highlighted edges — and the dimmed
+   *  rest — render crisp over the blurred background, via the NORMAL edge
+   *  renderer (no ribbon). Off-highlight they live on the base layer (0). */
+  private updateEdgeLayers(): void {
+    const layer = this.hasHighlight ? 1 : 0;
+    this.edgeLines?.layers.set(layer);
+    this.curvedEdgeObject?.layers.set(layer);
   }
 
   /** Build / refresh the ribbon geometry from `hotEdgeList`. Topology (side
@@ -2444,6 +2413,11 @@ export class ThreeRenderer {
     const col = this.hotEdgeColorArray;
     const alp = this.hotEdgeAlphaArray;
     const hasTrail = this.traversalLitEdges.size > 0;
+    // Every strand glows at FULL strength, end to end — no per-strand alpha
+    // capping, no taper. The hot-edge material uses MAX ("lighten") blending, so
+    // overlapping strands at a dense hub take the brightest value instead of
+    // summing to a white blob; the pile-up problem is solved at the blend level.
+    const peakAlpha = HOT_EDGE_GLOW_ALPHA;
     for (let j = 0; j < edges.length; j++) {
       const e = edges[j];
       const lit = hasTrail && this.traversalLitEdges.has(e.key);
@@ -2452,19 +2426,12 @@ export class ThreeRenderer {
       const g = this.tmpColor.g;
       const b = this.tmpColor.b;
       const base = j * N * 2;
-      for (let i = 0; i < N; i++) {
-        const tt = i / (N - 1);
-        // Soften only the very tips (~4%) so the strand still visually reaches
-        // its nodes — a larger taper left a gap and the nodes looked unconnected.
-        const fade = Math.min(1, tt / 0.04) * Math.min(1, (1 - tt) / 0.04);
-        const a = HOT_EDGE_GLOW_ALPHA * fade;
-        for (let sdx = 0; sdx < 2; sdx++) {
-          const v = base + i * 2 + sdx;
-          col[v * 3] = r;
-          col[v * 3 + 1] = g;
-          col[v * 3 + 2] = b;
-          alp[v] = a;
-        }
+      const end = base + N * 2;
+      for (let v = base; v < end; v++) {
+        col[v * 3] = r;
+        col[v * 3 + 1] = g;
+        col[v * 3 + 2] = b;
+        alp[v] = peakAlpha;
       }
     }
   }
@@ -2544,6 +2511,7 @@ export class ThreeRenderer {
         this.curvedEdgesActive = true;
         this.applyEdgeDepthMode(); // sets depthTest / bias / renderOrder / mode
         this.flagCurvedEdgeBuffers();
+        this.updateEdgeLayers(); // sharp-layer while highlighting
         this.requestRender();
       }
     } else if (this.curvedEdgesActive) {
@@ -2552,6 +2520,7 @@ export class ThreeRenderer {
         this.scene.add(this.edgeLines);
       }
       this.curvedEdgesActive = false;
+      this.updateEdgeLayers();
       this.requestRender();
     }
   }
@@ -2631,9 +2600,11 @@ export class ThreeRenderer {
       this.clearHotEdges();
       return;
     }
-    // Resolve which hot edges (if any) the glow ribbon owns BEFORE the per-edge
-    // loop — edgeAlphaGeneral reads hotRibbonActive to zero those edges here.
+    // Resolve hot-edge state before the per-edge loop, and move the edge object
+    // to the sharp DOF layer while a highlight is active so highlighted edges
+    // render crisp (as normal thin lines) over the blurred background.
     this.syncHotEdgeList();
+    this.updateEdgeLayers();
     const a = this.edgeAlphaArray;
     const enabled = this.edgesEnabled;
     const lod = this.lodEnabled && this.superList.length > 0;
@@ -2811,10 +2782,18 @@ export class ThreeRenderer {
     // are identical — same nodeInView, same margins, same camera. Built
     // lazily on the first drawable edge so states where nothing draws (edges
     // off / all alphas 0) pay no projections at all.
+    // While a highlight is active the edge object sits on the sharp DOF layer
+    // (see updateEdgeLayers). Drawing the dimmed, non-highlighted edges there
+    // too made every OTHER hub's dense edge-convergence show as a crisp "hot
+    // spot" instead of blurring into the background. So during a highlight the
+    // sharp layer draws ONLY the highlighted edges; the rest drop out (the
+    // graph's non-selected edges recede, like the blurred background nodes).
+    const hotOnly = this.hasHighlight;
     let view: Uint8Array | null = null;
     let ec = 0;
     for (let i = 0; i < this.edges.length; i++) {
       if (a[i * 2] <= 0) continue;
+      if (hotOnly && !this.edgeIsHot(this.edges[i].key)) continue;
       if (cull) {
         if (view === null) view = this.computeNodeViewFlags(mx, my);
         const e = this.edges[i];
@@ -3150,9 +3129,20 @@ export class ThreeRenderer {
   }
 
   /** User-adjustable edge visibility (Physics panel "Edge opacity" slider).
-   *  Multiplies the zoom-driven base; 1.0 = default behavior. */
+   *  Multiplies the zoom-driven base for normal edges; also scales the
+   *  absolute-alpha HOT (highlighted) edges via uHotOpacity so the slider
+   *  controls the selected node's edges too. 1.0 = default behavior. */
   setEdgeOpacity(multiplier: number): void {
     this.edgeOpacityMultiplier = Math.max(0, Math.min(2, multiplier));
+    const hot = this.edgeOpacityMultiplier;
+    if (this.edgeMaterial) this.edgeMaterial.uniforms.uHotOpacity.value = hot;
+    if (this.superEdgeMaterial)
+      this.superEdgeMaterial.uniforms.uHotOpacity.value = hot;
+    if (this.curvedEdgeMaterial)
+      (
+        this.curvedEdgeMaterial
+          .uniforms as unknown as CurvedEdgeMaterialUniforms
+      ).uHotOpacity.value = hot;
     this.requestRender();
   }
   private edgeOpacityMultiplier = 1;
@@ -3489,47 +3479,6 @@ export class ThreeRenderer {
     return id - 1;
   }
 
-  /** Nearest visible edge to a world point, within `maxDist` world units.
-   *  CPU point-to-segment over all edges — used for click selection (not
-   *  per-mousemove). */
-  private findEdgeAt(
-    worldX: number,
-    worldY: number,
-    maxDist: number,
-  ): ThreeEdge | null {
-    if (this.edges.length === 0 || !this.edgesEnabled) return null;
-    const pos = this.posArray;
-    let best: ThreeEdge | null = null;
-    let bestDist = maxDist;
-    for (const e of this.edges) {
-      if (this.hiddenLinkTypes.has(e.label)) continue;
-      const s = e.sourceIdx;
-      const t = e.targetIdx;
-      if (!this.nodeArray[s].visible || !this.nodeArray[t].visible) continue;
-      const sx = pos[s * 3];
-      const sy = pos[s * 3 + 1];
-      const tx = pos[t * 3];
-      const ty = pos[t * 3 + 1];
-      const d = pointToSegmentDist(worldX, worldY, sx, sy, tx, ty);
-      if (d < bestDist) {
-        bestDist = d;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  private buildSelectedEdge(edge: ThreeEdge): SelectedEdge {
-    return {
-      source: edge.sourceId,
-      target: edge.targetId,
-      label: edge.label,
-      properties: edge.graphLink.properties,
-      sourceNode: this.nodes.get(edge.sourceId)?.graphNode,
-      targetNode: this.nodes.get(edge.targetId)?.graphNode,
-    };
-  }
-
   // ─── Interaction (pan / wheel / pick / drag) ──────────────────────
 
   setCallbacks(callbacks: InteractionCallbacks): void {
@@ -3713,19 +3662,10 @@ export class ThreeRenderer {
           const idx = this.pickNodeIndexAt(hx, hy);
           // Real nodes grow on hover (+ host tooltip); super-nodes don't.
           this.setHoveredNode(idx >= 0 ? idx : -1, hx, hy);
-          if (idx !== -1) {
-            // Node (idx >= 0) or super-node (idx <= -2) — both clickable.
-            canvas.style.cursor = 'pointer';
-          } else if (this.edgesEnabled && this.bp.edgeHoverHitTest) {
-            const w = this.screenToWorld(
-              e.clientX - rect.left,
-              e.clientY - rect.top,
-            );
-            const hit = this.findEdgeAt(w.x, w.y, 8 / this.zoomForHit());
-            canvas.style.cursor = hit ? 'pointer' : 'default';
-          } else {
-            canvas.style.cursor = 'default';
-          }
+          // Only nodes (and super-nodes) are clickable — edges are not, so the
+          // pointer cursor appears over nodes only (a pointer over an edge used
+          // to imply a click that now does nothing).
+          canvas.style.cursor = idx !== -1 ? 'pointer' : 'default';
           return;
         }
 
@@ -3870,23 +3810,14 @@ export class ThreeRenderer {
           if (this.mode3d && this.mode3dAutoRotate) this.set3DAutoRotate(false);
           this.callbacks.onNodeClick?.(this.nodeArray[idx].graphNode);
         } else {
-          // CPU edge hit-test only in 2D (screen→world plane is ill-defined
-          // under perspective).
-          const edge = this.mode3d
-            ? null
-            : this.findEdgeAt(
-                this.screenToWorld(sx, sy).x,
-                this.screenToWorld(sx, sy).y,
-                8 / this.zoomForHit(),
-              );
-          if (edge) {
-            this.callbacks.onEdgeClick?.(this.buildSelectedEdge(edge));
-          } else {
-            // Deliberately does NOT restart 3D auto-rotation: a click in the
-            // void is how users dismiss a selection, and having the scene
-            // start spinning on it read as a bug.
-            this.callbacks.onStageClick?.();
-          }
+          // Edges are NOT clickable — only nodes. Near a high-degree node the
+          // dense edges used to steal the click and select a relationship
+          // instead of the node, which read as a bug; a click that misses a
+          // node now just dismisses the current selection.
+          // Deliberately does NOT restart 3D auto-rotation: a click in the void
+          // is how users dismiss a selection, and having the scene start
+          // spinning on it read as a bug.
+          this.callbacks.onStageClick?.();
         }
       }
       this.pendingDragIndex = -1;
@@ -3897,11 +3828,6 @@ export class ThreeRenderer {
     // iOS Safari cancels pointers when the OS takes over a gesture — treat it
     // as a lift so pinch/pan state can't get stuck.
     canvas.addEventListener('pointercancel', onUp, { signal });
-  }
-
-  /** Current px-per-world-unit, for converting a pixel hit radius to world. */
-  private zoomForHit(): number {
-    return this.camera?.zoom ?? 1;
   }
 
   /** Pivot for the current 3D rotate gesture — the graph's own center,
