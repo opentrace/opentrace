@@ -69,9 +69,9 @@ export const GRAPH_SETTING_DEFAULTS = {
   labelScale: 100,
   edgeOpacity: 100,
   communitiesEnabled: true,
-  // Gentle perpetual node drift after the layout settles. On by default; users
-  // can disable it (and it auto-eases on very large graphs).
-  ambientMotion: true,
+  // Gentle perpetual node drift after the layout settles. Off by default; users
+  // can enable it (and it auto-eases on very large graphs).
+  ambientMotion: false,
 };
 
 /** Shape of {@link GRAPH_SETTING_DEFAULTS}. */

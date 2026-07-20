@@ -225,6 +225,18 @@ interface InteractionCallbacks {
 
 const CLICK_THRESHOLD = 5; // px — distinguish click from drag
 
+// A 3D reframe sets the orbit distance from the visible-node bounds. If those
+// bounds are momentarily DEGENERATE — many nodes reported visible yet crammed
+// into ~zero extent (a fresh zero-initialised posArray, or a reseed before the
+// layout has spread) — the distance floors out and the camera lands INSIDE the
+// real graph: the whole graph appears to teleport/blow up. These thresholds
+// detect that collapsed state so reframes can skip/defer until the layout has
+// real extent. A radius at/near computeBounds3D's 0.5 floor means every node is
+// within ~`COLLAPSED_BOUNDS_RADIUS` units — implausible for this many real nodes
+// in a layout that spreads them hundreds of units apart, i.e. transient.
+const COLLAPSED_BOUNDS_RADIUS = 1; // world units — radius at/near the floor
+const COLLAPSED_BOUNDS_MIN_NODES = 4; // this many coincident visibles ⇒ collapsed
+
 // The label gate is PROXIMITY-ONLY: a full-graph overview shows NO labels and
 // names appear only as the camera closes in on nodes, regardless of how big
 // the "Zoom scaling" slider renders them (cranking node size must not flood
@@ -3149,7 +3161,11 @@ export class ThreeRenderer {
 
   zoomToFit(duration = 300): void {
     if (this.mode3d) {
-      this.reframe3D(this.computeBounds3D());
+      const b = this.computeBounds3D();
+      // Don't reframe off collapsed bounds (mid data-swap / reseed) — it would
+      // plant the camera inside the graph. Skip; a later call reframes cleanly.
+      if (this.bounds3DCollapsed(b.radius)) return;
+      this.reframe3D(b);
       return;
     }
     const target = this.computeFitTarget();
@@ -5073,6 +5089,29 @@ export class ThreeRenderer {
     return { center, radius };
   }
 
+  /** True when the 3D bounds are transiently DEGENERATE — several nodes report
+   *  visible yet occupy essentially no extent (radius at/near computeBounds3D's
+   *  floor). This happens for a beat after a data swap (zero-initialised
+   *  posArray) or a layout reseed, before real positions stream in. Reframing
+   *  from such bounds floors the orbit distance and drops the camera INSIDE the
+   *  real graph — the "whole graph teleports" bug. Callers skip/defer instead.
+   *  A genuinely tiny graph (1–3 nodes) is NOT flagged: it needs
+   *  COLLAPSED_BOUNDS_MIN_NODES coincident visibles, which only occurs when
+   *  positions haven't spread yet. */
+  private bounds3DCollapsed(radius: number): boolean {
+    if (radius > COLLAPSED_BOUNDS_RADIUS) return false;
+    let visible = 0;
+    for (let i = 0; i < this.nodeArray.length; i++) {
+      if (
+        this.nodeArray[i].visible &&
+        ++visible >= COLLAPSED_BOUNDS_MIN_NODES
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Smooth 3D camera follow for live-build: eases the orbit distance + target
    *  toward the LAYOUT-TARGET bounds (stable — not the animating render
    *  positions, which oscillate from the fly-out pop and would make the camera
@@ -5195,6 +5234,16 @@ export class ThreeRenderer {
       return false;
     }
     const b = this.computeBounds3D();
+    // Bounds collapsed for a beat (reseed / data swap before positions stream
+    // in): easing toward them would floor the distance and drop the camera
+    // inside the graph. Hold the current camera and keep the fit alive — the
+    // next frame with real extent resumes the ease. Reset the smoother so it
+    // re-seeds from the real radius rather than the collapsed one.
+    if (this.bounds3DCollapsed(b.radius)) {
+      f.init = false;
+      f.stableFrames = 0;
+      return true;
+    }
     // Low-pass BOTH the radius and the center: during the settle the positions
     // jitter frame to frame (a single flung node spikes the extent, and the
     // min/max midpoint swings as different nodes become the extremes), so
