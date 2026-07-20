@@ -81,6 +81,7 @@ import {
   EDGE_OPACITY_DEFAULT,
   EDGE_OPACITY_HIGHLIGHTED,
   EDGE_OPACITY_DIMMED,
+  HIGHLIGHT_EDGE_OPACITY_FLOOR,
   HOT_EDGE_CURVE_SEGMENTS,
   HOT_EDGE_SAG_FACTOR,
   HOT_EDGE_HALF_WIDTH,
@@ -3146,7 +3147,20 @@ export class ThreeRenderer {
    *  controls the selected node's edges too. 1.0 = default behavior. */
   setEdgeOpacity(multiplier: number): void {
     this.edgeOpacityMultiplier = Math.max(0, Math.min(2, multiplier));
-    const hot = this.edgeOpacityMultiplier;
+    this.applyHotEdgeOpacity();
+    this.requestRender();
+  }
+  private edgeOpacityMultiplier = 1;
+
+  /** Push the hot-edge multiplier (uHotOpacity) to every edge material. While a
+   *  selection/highlight is active it's floored to HIGHLIGHT_EDGE_OPACITY_FLOOR
+   *  so the lit neighborhood stands out even on faint-edge presets (Planet 15%,
+   *  Onion 0%); otherwise it tracks the user's slider. Call whenever the slider
+   *  OR hasHighlight changes. */
+  private applyHotEdgeOpacity(): void {
+    const hot = this.hasHighlight
+      ? Math.max(this.edgeOpacityMultiplier, HIGHLIGHT_EDGE_OPACITY_FLOOR)
+      : this.edgeOpacityMultiplier;
     if (this.edgeMaterial) this.edgeMaterial.uniforms.uHotOpacity.value = hot;
     if (this.superEdgeMaterial)
       this.superEdgeMaterial.uniforms.uHotOpacity.value = hot;
@@ -3155,9 +3169,7 @@ export class ThreeRenderer {
         this.curvedEdgeMaterial
           .uniforms as unknown as CurvedEdgeMaterialUniforms
       ).uHotOpacity.value = hot;
-    this.requestRender();
   }
-  private edgeOpacityMultiplier = 1;
 
   zoomToFit(duration = 300): void {
     if (this.mode3d) {
@@ -3929,6 +3941,7 @@ export class ThreeRenderer {
     this.highlightNodes = highlightNodes;
     this.highlightLinks = highlightLinks;
     this.hasHighlight = this.computeHasHighlight();
+    this.applyHotEdgeOpacity();
     this.applyNodeStates();
     this.updateEdgeAlpha();
     this.runNodeLabelCull();
@@ -6875,6 +6888,7 @@ export class ThreeRenderer {
    *  clears. */
   private refreshHotState(): void {
     this.hasHighlight = this.computeHasHighlight();
+    this.applyHotEdgeOpacity();
     this.applyNodeStates();
     this.updateEdgeAlpha();
     this.fillEdgeColors();

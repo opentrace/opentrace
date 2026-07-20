@@ -55,6 +55,13 @@ export const EDGE_OPACITY_DEFAULT = 0.78; // normal state
 // opacity. Kept airy so the lit path reads as a soft glow, not a heavy web.
 export const EDGE_OPACITY_HIGHLIGHTED = 0.5; // when part of a selected neighborhood
 export const EDGE_OPACITY_DIMMED = 0.08; // when another node is selected
+// While a selection/highlight is active, floor the hot-edge multiplier
+// (uHotOpacity) to this so the lit neighborhood is clearly visible even on
+// presets that keep the ambient edge layer faint (Planet 15%, Onion 0%) —
+// otherwise `EDGE_OPACITY_HIGHLIGHTED × preset-opacity` is nearly invisible.
+// Rendered hot alpha ≈ EDGE_OPACITY_HIGHLIGHTED × this (≈0.4). Only raises the
+// multiplier (max with the user's slider), never lowers it.
+export const HIGHLIGHT_EDGE_OPACITY_FLOOR = 0.8;
 
 // ─── Hot-edge glow ribbon ───────────────────────────────────────────────
 // Highlighted / chat-traversal edges render as soft, curved, additively-blended
