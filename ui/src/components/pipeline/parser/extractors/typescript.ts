@@ -32,6 +32,34 @@ const FUNCTION_TYPES = new Set([
 ]);
 const METHOD_TYPES = new Set(['method_definition', 'public_field_definition']);
 
+/** Higher-order component / wrapper calls whose function argument IS the real
+ *  component body. Without unwrapping these, `const C = forwardRef((p) => {…})`
+ *  extracts NO symbol — so every call the component makes (e.g. a React ref's
+ *  `rendererRef.current.foo()`) has no caller and never becomes a CALLS edge.
+ *  Handles nesting like `memo(forwardRef(fn))`. */
+const HOC_WRAPPERS = new Set([
+  'forwardRef',
+  'memo',
+  'React.forwardRef',
+  'React.memo',
+  'observer',
+]);
+
+/** React ref-wrapper type names: `useRef<T>()` / a var typed `RefObject<T>`
+ *  holds T on its `.current`, so calls read as `<var>.current.method()`. */
+const REF_WRAPPER_TYPES = new Set([
+  'RefObject',
+  'MutableRefObject',
+  'Ref',
+  'LegacyRef',
+]);
+const REF_FACTORY_CALLS = new Set([
+  'useRef',
+  'createRef',
+  'React.useRef',
+  'React.createRef',
+]);
+
 /** Extract a JSDoc/TSDoc comment from the preceding sibling of an AST node.
  *  Checks both the node itself and its parent (for `export_statement` wrapping). */
 function extractJSDoc(node: SyntaxNode): string | undefined {
@@ -176,7 +204,7 @@ function extractFunction(node: SyntaxNode): CodeSymbol | null {
     calls,
     receiverVar: null,
     receiverType: null,
-    paramTypes: null,
+    paramTypes: collectVarTypes(paramsNode, bodyNode),
     docs,
     typeSignature,
     returnType,
@@ -203,7 +231,7 @@ function extractMethod(node: SyntaxNode): CodeSymbol | null {
     calls,
     receiverVar: null,
     receiverType: null,
-    paramTypes: null,
+    paramTypes: collectVarTypes(paramsNode, bodyNode),
     docs,
     typeSignature,
     returnType,
@@ -227,6 +255,15 @@ function extractLexicalDeclaration(node: SyntaxNode): CodeSymbol[] {
       } else if (valueNode.type === 'class') {
         const sym = extractClassExpression(name, node, valueNode);
         if (sym) symbols.push(sym);
+      } else {
+        // HOC-wrapped component: `const C = forwardRef((p, r) => {…})` /
+        // `memo(forwardRef(fn))`. Unwrap to the inner function so the
+        // component's body (and every call it makes) is extracted.
+        const hocFn = unwrapHocFunction(valueNode);
+        if (hocFn) {
+          const sym = extractArrowFunction(name, node, hocFn);
+          if (sym) symbols.push(sym);
+        }
       }
     }
   }
@@ -255,7 +292,7 @@ function extractArrowFunction(
     calls,
     receiverVar: null,
     receiverType: null,
-    paramTypes: null,
+    paramTypes: collectVarTypes(paramsNode, bodyNode),
     docs,
     typeSignature,
     returnType,
@@ -361,4 +398,138 @@ function collectCalls(node: SyntaxNode): CallRef[] {
     calls.push(...collectCalls(child));
   }
   return calls;
+}
+
+/** Extract a bare class name from a type expression, or null if it isn't a
+ *  usable class-like name. Handles `: T` annotations, `A | null` unions,
+ *  `Foo<Bar>` generics, and qualified `a.b.C` names. PascalCase-gated to skip
+ *  primitives (`string`, `number`); the resolver additionally requires the name
+ *  to be a known class, so an interface/type-alias name here resolves to
+ *  nothing rather than a wrong edge. */
+function classNameFromType(raw: string): string | null {
+  const s = raw.replace(/^\s*:\s*/, '').trim();
+  const member = s
+    .split('|')
+    .map((p) => p.trim())
+    .find((p) => p && p !== 'null' && p !== 'undefined');
+  if (!member) return null;
+  // Strip generic args, then take the leaf of a qualified name.
+  const base = member.replace(/<.*$/, '').trim().split('.').pop();
+  if (!base) return null;
+  return /^[A-Z]/.test(base) ? base : null;
+}
+
+/** If a type expression is a React ref wrapper (`RefObject<Foo>`), return the
+ *  inner class name — the type held on `.current`. */
+function refWrapperInner(raw: string): string | null {
+  const s = raw.replace(/^\s*:\s*/, '').trim();
+  const m = s.match(/^([A-Za-z_$][\w$]*)\s*<(.+)>$/);
+  if (!m || !REF_WRAPPER_TYPES.has(m[1])) return null;
+  return classNameFromType(m[2]);
+}
+
+/** If a value is a ref factory call (`useRef<Foo>(…)`), return the inner class
+ *  name so the caller keys the type on `<var>.current`. */
+function refFactoryInner(valueNode: SyntaxNode | null): string | null {
+  if (!valueNode || valueNode.type !== 'call_expression') return null;
+  const fn = valueNode.childForFieldName('function');
+  if (!fn || !REF_FACTORY_CALLS.has(fn.text)) return null;
+  const typeArgs = valueNode.childForFieldName('type_arguments');
+  if (!typeArgs) return null;
+  for (const t of typeArgs.namedChildren) {
+    const inner = classNameFromType(t.text);
+    if (inner) return inner;
+  }
+  return null;
+}
+
+/** Recursively map local `const`/`let` declarations to class types within a
+ *  function body. Keys are the exact receiver text a call site produces, so a
+ *  ref keys on `${name}.current` and a plain instance on `${name}`. */
+function collectLocalVarTypes(
+  node: SyntaxNode,
+  map: Record<string, string>,
+): void {
+  if (node.type === 'variable_declarator') {
+    const nameNode = node.childForFieldName('name');
+    if (nameNode && nameNode.type === 'identifier') {
+      const name = nameNode.text;
+      const typeNode = node.childForFieldName('type');
+      const valueNode = node.childForFieldName('value');
+      // 1. Ref: `useRef<Foo>(…)` or a var typed `RefObject<Foo>` → foo on .current
+      const refInner =
+        refFactoryInner(valueNode) ??
+        (typeNode ? refWrapperInner(typeNode.text) : null);
+      if (refInner) {
+        map[`${name}.current`] = refInner;
+      } else if (typeNode) {
+        // 2. Annotated instance: `const r: Foo = …`
+        const t = classNameFromType(typeNode.text);
+        if (t) map[name] = t;
+      } else if (valueNode && valueNode.type === 'new_expression') {
+        // 3. Constructor: `const r = new Foo()`
+        const ctor = valueNode.childForFieldName('constructor');
+        if (ctor) {
+          const t = classNameFromType(ctor.text);
+          if (t) map[name] = t;
+        }
+      }
+    }
+  }
+  for (const child of node.children) collectLocalVarTypes(child, map);
+}
+
+/** Build a variable → class-type map for a function scope, powering the
+ *  resolver's type-hint strategy (Strategy 2.5) so `r.method()` and
+ *  `ref.current.method()` resolve to the class's methods. Captures typed
+ *  params, `new Foo()`/annotated locals, and React refs. Returns null when
+ *  empty so the symbol keeps `paramTypes: null` unless something was found. */
+function collectVarTypes(
+  paramsNode: SyntaxNode | null,
+  bodyNode: SyntaxNode | null,
+): Record<string, string> | null {
+  const map: Record<string, string> = {};
+
+  if (paramsNode) {
+    for (const child of paramsNode.namedChildren) {
+      if (
+        child.type === 'required_parameter' ||
+        child.type === 'optional_parameter'
+      ) {
+        const nameNode = child.childForFieldName('pattern');
+        const typeNode = child.childForFieldName('type');
+        if (nameNode && nameNode.type === 'identifier' && typeNode) {
+          const refInner = refWrapperInner(typeNode.text);
+          if (refInner) map[`${nameNode.text}.current`] = refInner;
+          else {
+            const t = classNameFromType(typeNode.text);
+            if (t) map[nameNode.text] = t;
+          }
+        }
+      }
+    }
+  }
+
+  if (bodyNode) collectLocalVarTypes(bodyNode, map);
+
+  return Object.keys(map).length > 0 ? map : null;
+}
+
+/** Unwrap HOC wrapper calls (`forwardRef`, `memo`, incl. nesting) to the inner
+ *  arrow/function that is the real component body, or null if `node` isn't such
+ *  a wrapper. */
+function unwrapHocFunction(node: SyntaxNode): SyntaxNode | null {
+  if (node.type === 'arrow_function' || node.type === 'function_expression') {
+    return node;
+  }
+  if (node.type !== 'call_expression') return null;
+  const fn = node.childForFieldName('function');
+  if (!fn || !HOC_WRAPPERS.has(fn.text)) return null;
+  const args = node.childForFieldName('arguments');
+  if (!args) return null;
+  for (const arg of args.namedChildren) {
+    const inner = unwrapHocFunction(arg);
+    if (inner) return inner;
+  }
+  return null;
 }
