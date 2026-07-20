@@ -26,6 +26,7 @@
  *   5. Constructor call → bare name matches class
  *   6. Intra-file bare call
  *   7. Cross-file bare call with unique match
+ *   8. Unresolved attribute call → unique class-method-name fallback
  */
 
 import type { CallRef, GraphRelationship } from '../types';
@@ -291,6 +292,31 @@ function resolveSingleCall(
     );
     if (crossFile.length === 1) {
       return { targetId: crossFile[0].id, confidence: 0.8 };
+    }
+  }
+
+  // Strategy 8: Unresolved attribute call → unique class-method-name fallback.
+  // The receiver couldn't be tied to a class by strategies 1–4 (e.g. it's an
+  // object field like `v.canvasRef.current` whose type would need cross-function
+  // inference we don't do). Last resort: if EXACTLY ONE class method with this
+  // exact name exists in the same language, resolve to it — unique ⇒
+  // unambiguous (mirrors Strategy 7 for bare calls). Distinctive names
+  // (zoomToFit, setAmbientMotion) resolve; common ones (get, update, render)
+  // stay unresolved because >1 class defines them. Low confidence.
+  //
+  // A class method's parentId is its class node id (`fileId::ClassName`, so it
+  // contains '::'); a top-level function/class's parentId is the bare fileId
+  // (no '::') — that check keeps this from resolving `obj.foo()` to a top-level
+  // function foo.
+  if (ref.kind === 'attribute') {
+    const methods = (nameRegistry.get(ref.name) ?? []).filter(
+      (c) =>
+        c.kind === 'function' &&
+        c.parentId.includes('::') &&
+        c.language === callerNode.language,
+    );
+    if (methods.length === 1) {
+      return { targetId: methods[0].id, confidence: 0.5 };
     }
   }
 

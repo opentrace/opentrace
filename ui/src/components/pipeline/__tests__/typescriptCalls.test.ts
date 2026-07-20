@@ -104,4 +104,45 @@ export const Canvas = forwardRef<HTMLDivElement, object>((props, ref) => {
     ]);
     expect(calls.some((c) => c.target_id.includes('doThing'))).toBe(false);
   });
+
+  it('resolves an object-field receiver via a unique class-method name (Strategy 8)', () => {
+    // `v.canvasRef.current.zoomToFit()` — the receiver type needs cross-function
+    // inference we don't do, but `zoomToFit` is a UNIQUE class method, so the
+    // fallback resolves it. `get()` is shared by two classes → stays unresolved.
+    const calls = callEdges([
+      {
+        path: 'renderer.ts',
+        content: `export class Renderer {
+  zoomToFit(): void {}
+  get(): number { return 1; }
+}
+`,
+      },
+      {
+        path: 'other.ts',
+        content: `export class Other {
+  get(): number { return 2; }
+}
+`,
+      },
+      {
+        path: 'viewer.ts',
+        content: `export function useViewer(): void {
+  const v = makeThing();
+  v.canvasRef.current.zoomToFit(); // unique method → resolves
+  v.canvasRef.current.get();       // ambiguous (2 classes) → unresolved
+}
+`,
+      },
+    ]);
+    expect(
+      calls.some(
+        (c) =>
+          c.source_id.includes('::useViewer') &&
+          c.target_id.includes('::Renderer::zoomToFit'),
+      ),
+    ).toBe(true);
+    // `get` is defined by both Renderer and Other → not unique → no edge.
+    expect(calls.some((c) => c.target_id.endsWith('::get'))).toBe(false);
+  });
 });
