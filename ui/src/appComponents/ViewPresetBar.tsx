@@ -61,9 +61,13 @@ export default function ViewPresetBar({
   const measureRef = useRef<() => void>(() => {});
   // `measure` is created once (in the mount effect) but must read the LATEST
   // inset — a right panel opening/closing re-renders this component, and the
-  // per-render effect below re-runs `measure`, which reads this ref.
+  // per-render effect below re-runs `measure` (via rAF, after this ref syncs),
+  // which reads this ref. Written in an effect (not during render) so measure()
+  // still sees the current value on the next scheduled pass.
   const rightInsetRef = useRef(rightInset);
-  rightInsetRef.current = rightInset;
+  useEffect(() => {
+    rightInsetRef.current = rightInset;
+  }, [rightInset]);
 
   useEffect(() => {
     const host = barRef.current?.parentElement;
