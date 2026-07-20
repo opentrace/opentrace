@@ -159,6 +159,10 @@ export interface GraphViewerProps {
   onToggleHelp: () => void;
   /** Node IDs found by chat tool results — highlighted when no other selection is active */
   chatHighlightNodes?: Set<string>;
+  /** Called when the user clicks empty canvas (the "void"), in addition to the
+   *  built-in selection clear. Lets the owner drop chat-driven highlights so a
+   *  void click deselects everything without closing or resetting the chat. */
+  onStageClick?: () => void;
   /** Animation settings from SettingsDrawer */
   animationSettings?: import('@opentrace/components').AnimationSettings;
   /** Additional React elements rendered in the toolbar's actions area (right side).
@@ -197,6 +201,7 @@ const GraphViewer = memo(
         showHelp,
         onToggleHelp,
         chatHighlightNodes,
+        onStageClick: onStageClickProp,
         animationSettings,
         toolbarActions,
         graphFullscreen,
@@ -245,6 +250,14 @@ const GraphViewer = memo(
           v.settings.compactRadius,
         ],
       );
+
+      // Void-click handler: run the built-in selection clear, then let the owner
+      // (App) drop chat-driven highlights too, so a click on empty canvas
+      // deselects everything at once.
+      const handleStageClick = useCallback(() => {
+        v.onStageClick();
+        onStageClickProp?.();
+      }, [v.onStageClick, onStageClickProp]);
 
       const {
         graphData,
@@ -627,6 +640,15 @@ const GraphViewer = memo(
             physicsTriggerRef.current.contains(target)
           )
             return;
+          // A click on the graph canvas should ONLY dismiss the panel — not
+          // select or deselect a node. The renderer starts every click from
+          // its own `pointerdown`, so swallowing this capture-phase event
+          // before it reaches the canvas leaves the renderer's `pointerDown`
+          // false and the following `pointerup` a no-op. Other outside clicks
+          // (toolbar buttons, pills) still fall through and behave normally.
+          if (target.closest('canvas')) {
+            e.stopPropagation();
+          }
           setShowPhysicsPanel(false);
         };
         document.addEventListener('pointerdown', onPointerDown, true);
@@ -1053,7 +1075,7 @@ const GraphViewer = memo(
             communityData={communityData}
             onNodeClick={v.onNodeClick}
             onEdgeClick={v.onLinkClick}
-            onStageClick={v.onStageClick}
+            onStageClick={handleStageClick}
             onNodeHover={onNodeHover}
             labelsVisible={v.settings.labelsVisible}
             edgesEnabled={effectiveEdgesVisible}
@@ -1083,6 +1105,7 @@ const GraphViewer = memo(
               presets={GRAPH_PRESETS}
               activePresetId={activePresetId}
               onSelectPreset={handleSelectPreset}
+              rightInset={rightPanelInset}
             />
           )}
 

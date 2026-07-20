@@ -52,6 +52,29 @@ export async function parsePython(source: string): Promise<SyntaxNode> {
   return tree.rootNode;
 }
 
+let tsParser: Parser | null = null;
+let tsxParser: Parser | null = null;
+
+export async function getTypeScriptParser(): Promise<Parser> {
+  await initTreeSitter();
+  if (!tsParser) {
+    tsParser = new Parser();
+    const buf = await readFile(getWasmPath('typescript'));
+    tsParser.setLanguage(await Language.load(buf));
+  }
+  return tsParser;
+}
+
+export async function getTsxParser(): Promise<Parser> {
+  await initTreeSitter();
+  if (!tsxParser) {
+    tsxParser = new Parser();
+    const buf = await readFile(getWasmPath('tsx'));
+    tsxParser.setLanguage(await Language.load(buf));
+  }
+  return tsxParser;
+}
+
 let phpParser: Parser | null = null;
 
 export async function getPhpParser(): Promise<Parser> {

@@ -193,6 +193,13 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
   // Edges whose endpoints haven't both arrived — held back (a dangling edge
   // crashes d3-force-3d), promoted once both ends exist.
   const liveDeferredLinks = useRef<GraphLink[]>([]);
+  // Node ids actually REVEALED into graphData so far. Nodes are metered (a chunk
+  // per flush) but links must not outrun them: the renderer's appendLiveEdges
+  // DROPS (no retry) any edge whose endpoint node isn't in yet, so a link is
+  // only flushed once BOTH endpoints have been revealed — otherwise most
+  // symbol-DEFINES (which stream interleaved with their nodes) are lost while
+  // CALLS (emitted after every node is revealed) survive.
+  const liveRevealedNodes = useRef<Set<string>>(new Set());
   const liveFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flushLive = useCallback(() => {
@@ -210,7 +217,20 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       Math.floor(liveSeenNodes.current.size * 0.05),
     );
     const ns = pn.splice(0, chunk);
-    const ls = pl.splice(0, pl.length);
+    const revealed = liveRevealedNodes.current;
+    for (const n of ns) revealed.add(n.id);
+    // Only flush links whose BOTH endpoints are already revealed. Nodes are
+    // metered, but the renderer's appendLiveEdges drops (without retry) any edge
+    // whose endpoint node isn't in yet — so links pointing at still-queued nodes
+    // must wait for a later flush (or the unmetered endLiveStream drain) rather
+    // than being flushed now and silently lost.
+    const ls: GraphLink[] = [];
+    const stillWaiting: GraphLink[] = [];
+    for (const l of pl) {
+      if (revealed.has(l.source) && revealed.has(l.target)) ls.push(l);
+      else stillWaiting.push(l);
+    }
+    livePendLinks.current = stillWaiting;
     setGraphData((prev) => ({
       nodes: ns.length ? prev.nodes.concat(ns) : prev.nodes,
       links: ls.length ? prev.links.concat(ls) : prev.links,
@@ -223,7 +243,10 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     // small graphs stay a fine 70ms wave; huge ones (Grafana) flush ~3×/s so
     // the main thread stays free for parsing. (The chunk grows too, so the
     // graph still keeps up — just in fewer, larger, cheaper-per-node batches.)
-    if (pn.length && !liveFlushTimer.current) {
+    if (
+      (pn.length || livePendLinks.current.length) &&
+      !liveFlushTimer.current
+    ) {
       const interval = Math.min(
         350,
         LIVE_FLUSH_MS + liveSeenNodes.current.size * 0.005,
@@ -244,6 +267,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
     livePendNodes.current = [];
     livePendLinks.current = [];
     liveDeferredLinks.current = [];
+    liveRevealedNodes.current = new Set();
     setError(null);
     setRefreshError(null);
     setGraphData({ nodes: [], links: [] });
@@ -386,6 +410,7 @@ export function useGraphData(onGraphLoaded?: () => void): GraphDataState {
       liveDeferredLinks.current = [];
       liveSeenNodes.current = new Set();
       liveSeenLinks.current = new Set();
+      liveRevealedNodes.current = new Set();
       setIsStreaming(false);
     },
     [store],

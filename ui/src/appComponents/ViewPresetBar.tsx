@@ -23,6 +23,11 @@ interface ViewPresetBarProps {
   /** Currently-applied preset id, or null/'custom' when hand-tweaked. */
   activePresetId: string | null;
   onSelectPreset: (id: string) => void;
+  /** Width (px) of an open right-hand overlay panel (chat / help). The graph
+   *  viewport is full-width and these panels float over its right edge, so the
+   *  bar must keep this much clearance from the host's right edge or it lands
+   *  UNDER the panel (the preset chips covering the chat header). 0 when none. */
+  rightInset?: number;
 }
 
 /** Shape/placement ladder, compacted by MEASURED proximity, not by fixed
@@ -45,6 +50,7 @@ export default function ViewPresetBar({
   presets,
   activePresetId,
   onSelectPreset,
+  rightInset = 0,
 }: ViewPresetBarProps) {
   const barRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<Anchor>({
@@ -53,6 +59,15 @@ export default function ViewPresetBar({
     right: 12,
   });
   const measureRef = useRef<() => void>(() => {});
+  // `measure` is created once (in the mount effect) but must read the LATEST
+  // inset — a right panel opening/closing re-renders this component, and the
+  // per-render effect below re-runs `measure` (via rAF, after this ref syncs),
+  // which reads this ref. Written in an effect (not during render) so measure()
+  // still sees the current value on the next scheduled pass.
+  const rightInsetRef = useRef(rightInset);
+  useEffect(() => {
+    rightInsetRef.current = rightInset;
+  }, [rightInset]);
 
   useEffect(() => {
     const host = barRef.current?.parentElement;
@@ -102,11 +117,12 @@ export default function ViewPresetBar({
         }
       }
 
-      // The bar is positioned inside the HOST (graph viewport), which can be
-      // narrower than the window-spanning header when a side panel is open —
-      // clamp the corridor's right edge to the host so the bar never lands
-      // outside (or gets clipped by) its own containing block.
-      const rightEdge = Math.min(clusterLeft, hostBox.right - 12);
+      // The bar is positioned inside the HOST (graph viewport). The graph is
+      // full-width and the chat/help panels float over its right edge, so clamp
+      // the corridor's right edge to the host MINUS any open panel — otherwise
+      // the bar lands under the panel (the chips covering the chat header).
+      const inset = rightInsetRef.current;
+      const rightEdge = Math.min(clusterLeft, hostBox.right - inset - 12);
 
       // Nearest header content LEFT of the corridor (typically the
       // node/edge counts badge) — the element the user watches the bar
@@ -138,11 +154,12 @@ export default function ViewPresetBar({
         right = Math.round(hostBox.right - rightEdge + 12);
       } else if (mode === 'under') {
         top = Math.round(headerBox.height) + 8;
-        right = 12;
+        right = inset + 12;
       } else {
-        // Compact shapes hang at the corner just below the action cluster.
+        // Compact shapes hang at the corner just below the action cluster,
+        // kept clear of any open right panel so they don't cover it.
         top = Math.round(clusterBottom - hostBox.top) + 6;
-        right = 12;
+        right = inset + 12;
       }
       // Referential bail-out: measure runs per render/mutation — identical
       // values must NOT produce a new state object (render loop otherwise).
