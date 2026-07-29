@@ -197,3 +197,162 @@ class TestLoadSource:
     def test_source_node_rejects_path_traversal(self, store):
         store.add_node("corpus::evil", "KnowledgeDoc", "x", {"corpus_path": "../../etc/passwd"})
         assert "error" in _call(store, "load_source", nodeId="corpus::evil")
+
+
+class TestReadVaultPage:
+    """Page reads must hand the agent the page's primary sources (CITES) and
+    the citation contract — cite the primary alongside the page, never the
+    page alone — so vault answers stay traceable to repo documents."""
+
+    def _vault_on_disk(self, tmp_path, body: str = "# Conflicts\n\nRule text.\n"):
+        vault_dir = tmp_path / ".opentrace" / "vaults" / "kb"
+        (vault_dir / "pages" / "concept").mkdir(parents=True)
+        (vault_dir / ".vault.json").write_text('{"name": "kb"}')
+        (vault_dir / "pages" / "concept" / "conflicts.md").write_text(body)
+        return vault_dir
+
+    @pytest.fixture()
+    def vault_store(self, tmp_path):
+        self._vault_on_disk(tmp_path)
+        s = GraphStore(str(tmp_path / ".opentrace" / "index.db"))
+        s.add_node(
+            "kb::concept/conflicts",
+            "KnowledgeConcept",
+            "Conflicts",
+            {"vault": "kb", "slug": "concept/conflicts", "kind": "concept"},
+        )
+        s.add_node(
+            "corpus::sha-auth",
+            "KnowledgeDoc",
+            "docs/AGENT-SETUP.md",
+            {"sha256": "sha-auth", "filename": "docs/AGENT-SETUP.md", "path": "docs/AGENT-SETUP.md", "status": "authoritative"},
+        )
+        s.add_node(
+            "corpus::sha-prop",
+            "KnowledgeDoc",
+            "openspec/proposal.md",
+            {"sha256": "sha-prop", "filename": "openspec/proposal.md", "status": "design_history"},
+        )
+        s.add_node("local/repo/docs/AGENT-SETUP.md", "File", "AGENT-SETUP.md")
+        s.add_relationship("c1", "CITES", "kb::concept/conflicts", "corpus::sha-auth")
+        s.add_relationship("c2", "CITES", "kb::concept/conflicts", "corpus::sha-prop")
+        s.add_relationship("m1", "MIRRORS", "corpus::sha-auth", "local/repo/docs/AGENT-SETUP.md")
+        yield s
+        s.close()
+
+    def test_returns_body_and_cited_sources(self, vault_store):
+        out = _call(vault_store, "read_vault_page", nodeId="kb::concept/conflicts")
+        assert "Rule text." in out["body"]
+        cited = {c["filename"]: c for c in out["cited_sources"]}
+        assert set(cited) == {"docs/AGENT-SETUP.md", "openspec/proposal.md"}
+        assert cited["docs/AGENT-SETUP.md"]["status"] == "authoritative"
+        assert cited["docs/AGENT-SETUP.md"]["file"] == "local/repo/docs/AGENT-SETUP.md"
+        assert cited["openspec/proposal.md"]["status"] == "design_history"
+        # Seam #2: epistemic framing travels with the payload.
+        assert out["nature"] == "documentation-synthesis"
+        assert "not its code" in out["provenance_note"]
+
+    def test_page_without_cites_returns_empty_list(self, tmp_path):
+        self._vault_on_disk(tmp_path)
+        s = GraphStore(str(tmp_path / ".opentrace" / "index.db"))
+        try:
+            s.add_node(
+                "kb::concept/conflicts",
+                "KnowledgeConcept",
+                "Conflicts",
+                {"vault": "kb", "slug": "concept/conflicts", "kind": "concept"},
+            )
+            out = _call(s, "read_vault_page", nodeId="kb::concept/conflicts")
+            assert out["cited_sources"] == []
+        finally:
+            s.close()
+
+    def test_load_source_concept_branch_carries_cited_sources(self, vault_store):
+        out = _call(vault_store, "load_source", nodeId="kb::concept/conflicts")
+        assert [c["filename"] for c in out["cited_sources"]]
+        # Seam #2 framing travels through the load_source dispatch too.
+        assert out["nature"] == "documentation-synthesis"
+
+    def test_epistemic_contract_pinned_in_docstring(self, vault_store):
+        # The docstring is the behavioural surface — agents read it to decide
+        # how to treat a page. Pin the seam-#2 contract's load-bearing phrases:
+        # the page is documentation (not a code oracle), and code-behavior
+        # claims must be confirmed against the code, not the page's cited docs.
+        import re
+
+        server = create_mcp_server(vault_store)
+        doc = server._tool_manager._tools["read_vault_page"].fn.__doc__
+        norm = re.sub(r"\s+", " ", doc).lower()
+        assert "faithful to the docs, not a statement about the code" in norm
+        assert "confirm the specific against the code" in norm
+        assert 'do not equate "the docs say x" with "the code does x"' in norm
+        assert "design_history" in norm
+
+
+class TestLoadSourceDocPaging:
+    """lineRange must work on doc/page bodies, and an unranged read of a huge
+    doc must return a usable head + continuation hint — the MCP client hard-
+    rejects oversized results, and a restricted session has no other way in
+    (observed: an arm dead-ended re-requesting a 91 KB DOCS.md)."""
+
+    def _doc(self, store, body: str, sha: str = "big"):
+        db_dir = Path(store.db_path).parent
+        (db_dir / "corpus").mkdir(parents=True, exist_ok=True)
+        (db_dir / "corpus" / f"{sha}.md").write_text(body)
+        store.add_node(
+            f"corpus::{sha}",
+            "KnowledgeDoc",
+            f"{sha}.md",
+            {"sha256": sha, "filename": f"{sha}.md", "corpus_path": f"corpus/{sha}.md"},
+        )
+        return f"corpus::{sha}"
+
+    def test_line_range_slices_doc_body(self, store):
+        nid = self._doc(store, "\n".join(f"line {i}" for i in range(1, 101)))
+        res = _call(store, "load_source", nodeId=nid, lineRange="10-12")
+        assert res["body"] == "line 10\nline 11\nline 12"
+        assert res["lineRange"] == "10-12"
+        assert res["totalLines"] == 100
+
+    def test_open_ended_range(self, store):
+        nid = self._doc(store, "\n".join(f"line {i}" for i in range(1, 6)))
+        res = _call(store, "load_source", nodeId=nid, lineRange="4-")
+        assert res["body"] == "line 4\nline 5"
+        assert res["lineRange"] == "4-5"
+
+    def test_small_doc_unranged_gets_total_lines_untruncated(self, store):
+        nid = self._doc(store, "a\nb\nc")
+        res = _call(store, "load_source", nodeId=nid)
+        assert res["body"] == "a\nb\nc"
+        assert res["totalLines"] == 3
+        assert "truncated" not in res
+
+    def test_huge_doc_unranged_returns_head_with_hint(self, store):
+        # ~90 KB doc (the DOCS.md shape): head must fit the cap, and the hint
+        # must tell the agent the exact lineRange to continue from.
+        nid = self._doc(store, "\n".join(f"line {i} " + "x" * 90 for i in range(1, 1001)))
+        res = _call(store, "load_source", nodeId=nid)
+        assert res["truncated"] is True
+        assert len(res["body"]) <= 40_000
+        assert res["totalLines"] == 1000
+        end = int(res["lineRange"].split("-")[1])
+        assert f'lineRange="{end + 1}-"' in res["hint"]
+        # And the hinted continuation actually works.
+        rest = _call(store, "load_source", nodeId=nid, lineRange=f"{end + 1}-")
+        assert rest["body"].splitlines()[0].startswith(f"line {end + 1} ")
+        assert rest["lineRange"] == f"{end + 1}-1000"
+
+    def test_improvised_separators_accepted(self, store):
+        # Agents improvise formats (observed: "1200, 1420"); commas/colons/
+        # whitespace must parse rather than silently returning the whole body.
+        nid = self._doc(store, "\n".join(f"line {i}" for i in range(1, 21)))
+        for spec in ("3, 5", "3:5", "3 5"):
+            res = _call(store, "load_source", nodeId=nid, lineRange=spec)
+            assert res["body"] == "line 3\nline 4\nline 5", spec
+
+    def test_unparseable_range_errors_loudly(self, store):
+        # A bad range must NOT fall back to the whole body (that turns a
+        # paging attempt into an oversized client-rejected response).
+        nid = self._doc(store, "\n".join(f"line {i}" for i in range(1, 21)))
+        res = _call(store, "load_source", nodeId=nid, lineRange="ten to twenty")
+        assert "error" in res and "lineRange" in res["error"]

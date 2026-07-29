@@ -34,6 +34,39 @@ class AcquiredSource:
     sha256: str
     name: str
     data: bytes
+    status: str = "authoritative"
+
+
+# Path components that mark a doc as design history: proposals, specs, ADRs —
+# records of intent, not descriptions of current behaviour. Synthesis treats
+# them differently (see execute.py's status labels): compiling a superseded
+# proposal as present-tense fact is how vaults end up confidently wrong.
+_DESIGN_HISTORY_DIRS = {
+    "openspec",
+    "adr",
+    "adrs",
+    "rfc",
+    "rfcs",
+    "proposals",
+    "changes",
+    "design-docs",
+    "design_docs",
+}
+_ARCHIVE_DIRS = {"archive", "archived"}
+
+
+def classify_doc_status(rel_path: str) -> str:
+    """Classify a repo-relative doc path as ``authoritative`` (current
+    documentation — the default), ``design_history`` (proposal/spec/ADR
+    trees, CHANGELOGs), or ``design_history_archived`` (design history under
+    an archive folder, likely superseded)."""
+    parts = rel_path.replace("\\", "/").lower().split("/")
+    dirs = set(parts[:-1])
+    if not (dirs & _DESIGN_HISTORY_DIRS or parts[-1].startswith("changelog")):
+        return "authoritative"
+    if dirs & _ARCHIVE_DIRS:
+        return "design_history_archived"
+    return "design_history"
 
 
 def _sha256(data: bytes) -> str:
@@ -63,7 +96,7 @@ def acquire(
         elif sha in meta.sources:
             skipped += 1
         else:
-            out.append(AcquiredSource(sha256=sha, name=item.name, data=item.data))
+            out.append(AcquiredSource(sha256=sha, name=item.name, data=item.data, status=item.status))
             seen_in_batch.add(sha)
             new_count += 1
         yield WikiPipelineEvent(

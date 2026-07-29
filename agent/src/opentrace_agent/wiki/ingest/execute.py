@@ -54,31 +54,54 @@ EMIT_PAGE_SCHEMA = {
     },
 }
 
-CREATE_SYSTEM = """You write a single page of a markdown wiki.
+# Grounding + source-status rules shared by both synthesis prompts. Every rule
+# here exists because a benchmark caught its absence: ungrounded "well-known"
+# numbers with invented citations (prior lore), and superseded design proposals
+# compiled as present-tense fact.
+_GROUNDING_RULES = """\
+Grounding — the supplied source documents are your ONLY source of facts:
+- Every factual claim must come from the supplied sources. You may recognise
+  this project; use NOTHING you know about it from outside these sources — no
+  benchmark numbers, version history, or marketing claims from memory.
+- Specifics (numbers, quotes, headings, section names) must actually appear in
+  a supplied source. Never round, extrapolate, or "recall" a figure.
+- When the sources don't cover something, say the sources don't specify it —
+  that is correct output, not a failure. Prefer omission over inference.
+- Name a source document in prose ONLY to attribute a claim that document
+  actually contains (provenance is tracked structurally, so you do not emit
+  citation links).
+
+Source status — each source is labelled in its header:
+- [current documentation] describes the system as it is. When sources
+  conflict, current documentation wins.
+- [design proposal or spec ...] records INTENT and may be superseded by the
+  implementation. Frame its content as design intent ("the proposal
+  specified ..."), never as present-tense system behaviour. If a topic is
+  covered ONLY by design-history sources, say so explicitly on the page.
+- [... added by relevance scan] marks supplementary context pulled in by a
+  keyword match rather than the planner — draw on it where relevant, but
+  don't let it redefine the page's scope.
+"""
+
+CREATE_SYSTEM = f"""You write a single page of a markdown wiki.
 
 This is a CONCEPT page that synthesises across multiple source documents.
-Provenance is tracked structurally (the page is linked to every source it
-was synthesised from), so you do NOT emit citation links. When attribution
-matters in prose, name the source document naturally (e.g. "the migration
-guide notes ...").
 
+{_GROUNDING_RULES}
 Rules:
 - The first line of markdown_body MUST be an H1 equal to the supplied page_title (no leading frontmatter).
 - Use [[Page Title]] to reference a related concept page from the neighbour list — match the title verbatim.
 - Do NOT invent links to titles that aren't in the neighbour list, and do NOT
   wiki-link source documents — [[...]] is for neighbour concept pages only.
-- Keep prose factual and grounded in the supplied source documents.
 - one_line_summary should be a single declarative sentence, < 200 chars.
 - Return both markdown_body and one_line_summary via the emit_page tool.
 """
 
-EXTEND_SYSTEM = """You revise a single page of a markdown wiki.
+EXTEND_SYSTEM = f"""You revise a single page of a markdown wiki.
 
-This is a CONCEPT page. Provenance is tracked structurally (the page is
-linked to every source it was synthesised from), so you do NOT emit
-citation links. When attribution matters in prose, name the source
-document naturally.
+This is a CONCEPT page.
 
+{_GROUNDING_RULES}
 Rules:
 - Preserve the existing factual content unless the new sources directly contradict it.
 - Merge the new sources' contributions into the existing structure.
@@ -122,20 +145,41 @@ def _neighbour_block(
     return "Neighbour pages (link as [[Title]]):\n" + "\n".join(lines)
 
 
-def _sources_block(sources: list[NormalizedSource], shas: list[str]) -> str:
+# Header labels per source status (see _GROUNDING_RULES for how the LLM is
+# told to rank them).
+_STATUS_LABELS = {
+    "authoritative": "current documentation",
+    "design_history": "design proposal or spec — describes intent, may be superseded by the implementation",
+    "design_history_archived": "design proposal or spec — describes intent, may be superseded by the implementation; archived",
+}
+
+
+def _sources_block(
+    sources: list[NormalizedSource],
+    shas: list[str],
+    augmented_shas: list[str] | None = None,
+) -> str:
     """Render the cited sources for a synthesis prompt.
 
     Synthesis reads the RAW source body (post-markitdown) — grounding each
     concept page in the full source, as the LLM-wiki pattern intends, yields
     more accurate, detailed pages than working from any lossy distillation.
+
+    Each header carries the source's epistemic status label, and sources the
+    plan-time relevance scan added (vs the concept clusterer) are marked so
+    the LLM treats them as supplementary context.
     """
     by_sha = {s.sha256: s for s in sources}
+    augmented = set(augmented_shas or [])
     blocks = []
     for sha in shas:
         s = by_sha.get(sha)
         if s is None:
             continue
-        blocks.append(f"--- {s.original_name} ---\n{s.markdown}")
+        label = _STATUS_LABELS.get(s.status, _STATUS_LABELS["authoritative"])
+        if sha in augmented:
+            label += "; added by relevance scan"
+        blocks.append(f"--- {s.original_name} [{label}] ---\n{s.markdown}")
     return "\n\n".join(blocks)
 
 
@@ -185,7 +229,7 @@ def _execute_create(
         f"page_title: {item.title}\n\n"
         f"{_neighbour_block(meta, pending_creates=pending_creates, exclude_title=item.title)}\n\n"
         f"{_sections_block(item.sections)}"
-        f"Source documents:\n{_sources_block(sources, item.source_shas)}\n\n"
+        f"Source documents:\n{_sources_block(sources, item.source_shas, item.augmented_shas)}\n\n"
         "Call emit_page."
     )
     result = llm.call_tool(
@@ -233,7 +277,7 @@ def _execute_extend(
         f"{_neighbour_block(meta, exclude_slug=page_meta.slug, pending_creates=pending_creates)}\n\n"
         f"Plan rationale: {item.rationale}\n\n"
         f"{_sections_block(item.sections)}"
-        f"New source documents to merge in:\n{_sources_block(sources, item.source_shas)}\n\n"
+        f"New source documents to merge in:\n{_sources_block(sources, item.source_shas, item.augmented_shas)}\n\n"
         "Call emit_page with the FULL replacement page."
     )
     result = llm.call_tool(

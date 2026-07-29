@@ -63,6 +63,11 @@ class SourceInput:
 
     name: str
     data: bytes
+    # Epistemic status: "authoritative" (current documentation, the default),
+    # "design_history" (proposals/specs/ADRs — intent, not behaviour), or
+    # "design_history_archived". Stamped by classify_doc_status on repo walks;
+    # synthesis ranks conflicting sources by it.
+    status: str = "authoritative"
 
 
 @dataclass
@@ -79,6 +84,8 @@ class NormalizedSource:
     # filename plus the LLM's one-sentence description of the document.
     title: str = ""
     one_line_summary: str = ""
+    # Epistemic status, carried from SourceInput (see there).
+    status: str = "authoritative"
 
 
 @dataclass
@@ -88,6 +95,9 @@ class PlanCreate:
     rationale: str = ""
     # Sub-topics this page absorbs, written as sections (not separate pages).
     sections: list[str] = field(default_factory=list)
+    # Subset of source_shas added by the plan-time relevance scan (not the
+    # concept clusterer) — marked as supplementary in the synthesis prompt.
+    augmented_shas: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -96,6 +106,7 @@ class PlanExtend:
     source_shas: list[str]
     rationale: str = ""
     sections: list[str] = field(default_factory=list)
+    augmented_shas: list[str] = field(default_factory=list)
 
 
 @dataclass

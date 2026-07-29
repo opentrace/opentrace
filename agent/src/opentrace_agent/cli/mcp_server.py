@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import traceback
 from typing import Any
 
@@ -207,16 +208,77 @@ def _read_file_slice(abs_path, start_line: int | None, end_line: int | None) -> 
     }
 
 
+# Unranged doc/page reads are head-capped to this many chars. The MCP CLIENT
+# rejects tool results over its own token cap (~25k tokens) outright, telling
+# the agent to read a spill file with tools a restricted session may not have —
+# a dead end (observed: an arm stuck re-requesting DOCS.md, 91 KB). A capped
+# head + explicit lineRange continuation always fits and always gives the
+# agent a way forward. Sized for the worst case: table-heavy markdown
+# tokenizes at ~2.5 chars/token (a 64 KB head was still rejected), so 40 KB
+# ≈ 16k tokens leaves margin for the JSON envelope.
+DOC_BODY_HEAD_CHARS = 40_000
+
+
+def _slice_doc_body(result: dict[str, Any], start_line: int | None, end_line: int | None) -> dict[str, Any]:
+    """Apply a 1-based inclusive line slice to a doc/page read result.
+
+    With a range: return exactly those lines plus ``lineRange``/``totalLines``.
+    Without one: return the whole body when small, else the head that fits
+    ``DOC_BODY_HEAD_CHARS`` with ``truncated`` + a continuation hint. Error
+    results (no ``body``) pass through untouched.
+    """
+    body = result.get("body")
+    if not isinstance(body, str):
+        return result
+    lines = body.split("\n")
+    total = len(lines)
+    if start_line is not None:
+        s = max(1, start_line)
+        e = min(end_line, total) if end_line is not None else total
+        return {**result, "body": "\n".join(lines[s - 1 : e]), "lineRange": f"{s}-{e}", "totalLines": total}
+    if len(body) <= DOC_BODY_HEAD_CHARS:
+        return {**result, "totalLines": total}
+    used = 0
+    cut = 0
+    for line in lines:
+        used += len(line) + 1
+        if used > DOC_BODY_HEAD_CHARS:
+            break
+        cut += 1
+    cut = max(1, cut)
+    return {
+        **result,
+        "body": "\n".join(lines[:cut]),
+        "lineRange": f"1-{cut}",
+        "totalLines": total,
+        "truncated": True,
+        "hint": f'body is {total} lines; pass lineRange="{cut + 1}-" (or smaller chunks) to read the rest',
+    }
+
+
+class InvalidLineRange(ValueError):
+    """A non-empty lineRange that couldn't be parsed. Callers surface this as
+    a loud error — silently falling back to the whole body turns an agent's
+    paging attempt into an oversized response the MCP client rejects."""
+
+
 def _parse_line_range(spec: str) -> tuple[int | None, int | None]:
-    """Parse ``"10-25"`` / ``"10-"`` / ``"10"`` into ``(start, end)``."""
+    """Parse ``"10-25"`` / ``"10-"`` / ``"10"`` into ``(start, end)``.
+
+    Tolerates ``,`` / ``:`` / whitespace as the separator (agents improvise
+    formats); raises :class:`InvalidLineRange` on anything unparseable.
+    """
     spec = (spec or "").strip()
     if not spec:
         return None, None
-    if "-" in spec:
-        a, _, b = spec.partition("-")
-        return (_to_int(a.strip()), _to_int(b.strip()))
-    n = _to_int(spec)
-    return n, n
+    m = re.fullmatch(r"(\d+)\s*(?:[-,:]|\s)\s*(\d+)?", spec) or re.fullmatch(r"(\d+)", spec)
+    if not m:
+        raise InvalidLineRange(f'invalid lineRange {spec!r} — use "10-25", "10-", or "10"')
+    start = int(m.group(1))
+    if m.re.groups == 1:
+        return start, start
+    end = int(m.group(2)) if m.group(2) else None
+    return start, end
 
 
 def _load_code_source(
@@ -296,6 +358,35 @@ def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> d
     }
 
 
+def _cited_sources(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
+    """The KnowledgeDocs a concept page CITES — its primary sources.
+
+    Surfaced on every page read so agents can cite the primary document
+    alongside the page instead of the page alone (a page is a compiled
+    synthesis, not a repo document). Reuses the provenance chain-entry
+    builder so the MIRRORS File twin comes along; adds the doc's epistemic
+    ``status`` so agents can prefer authoritative docs over design history.
+    Failures degrade to an empty list — citation hints must never break a
+    page read.
+    """
+    from opentrace_agent.retrieval.provenance import _source_link
+
+    try:
+        traversal = store.traverse(node_id, direction="outgoing", max_depth=1, relationship_type="CITES")
+    except Exception:
+        return []
+    cited = []
+    for r in traversal:
+        n = r.get("node") or {}
+        if n.get("type") != "KnowledgeDoc":
+            continue
+        props = _props(n)
+        link = _source_link(n.get("id"), props, store)
+        link["status"] = props.get("status") or "authoritative"
+        cited.append(link)
+    return cited
+
+
 def _read_concept_body(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
     """Resolve and read a ``KnowledgeConcept`` node's markdown body from disk."""
     from pathlib import Path
@@ -327,6 +418,17 @@ def _read_concept_body(store: GraphStore, node: dict[str, Any], node_id: str) ->
         "slug": slug,
         "scope": scope,
         "body": page_path.read_text(),
+        "cited_sources": _cited_sources(store, node_id),
+        # Epistemic framing travels with the content so an agent that skims
+        # the tool docstring still learns this is documentation knowledge, not
+        # a code oracle. See the "Epistemic contract" in read_vault_page.
+        "nature": "documentation-synthesis",
+        "provenance_note": (
+            "Reflects the repository's documentation, not its code. "
+            "Authoritative for what the docs say/design/intend; for any "
+            "code-behavior claim (wiring, exact values, provenance, "
+            "prod-vs-test), confirm against the code before asserting it."
+        ),
     }
 
 
@@ -793,7 +895,35 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         location via local-then-global scope lookup, rooted at the graph's
         project directory (the parent of ``.opentrace/``).
 
-        Returns ``{nodeId, vault, slug, scope, body}``.
+        Returns ``{nodeId, vault, slug, scope, body, cited_sources,
+        nature, provenance_note}``. ``cited_sources`` lists the primary
+        documents this page was compiled from (``{id, filename, path, status,
+        file}``; read them with ``load_source``).
+
+        **Epistemic contract — what this is:** a synthesis of what this repo's
+        *documentation* says about a concept. It is faithful to the docs, NOT
+        a statement about the code. Documentation can lag, simplify, or
+        diverge from the implementation.
+
+        **How to use it:**
+
+        - For questions about what the project *documents, designs, decides,
+          or intends* — this page and its ``cited_sources`` are the authority.
+          Answer from them and cite them.
+        - For questions about what the *code actually does* (behavior, wiring,
+          exact values, provenance, prod-vs-test) — a page statement is
+          evidence of what's *documented*, not proof of current behavior.
+          Confirm the specific against the code (``search_graph`` /
+          ``load_source`` on the code node) before asserting it. Do NOT equate
+          "the docs say X" with "the code does X".
+        - Verifying against this page's own ``cited_sources`` proves nothing
+          about the code — the page already reflects them faithfully. Only the
+          code settles code behavior.
+        - ``cited_sources`` carries each source's ``status``; a claim resting
+          only on ``design_history`` is *intent*, not shipped behavior. Prefer
+          ``status: authoritative`` sources.
+        - Don't count vault pages as repo documents when a question asks about
+          the repo's own files.
         """
         if not store:
             return NO_INDEX_MSG
@@ -818,16 +948,24 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
         - **Code** nodes (``Function`` / ``Class`` / ``File`` / ``Variable`` /
           …) → source read from the indexed repo checkout. Defaults to the
-          node's own recorded line range; pass ``lineRange`` (``"10-25"``,
-          ``"10-"``, or ``"10"``) to override, or read a whole ``File``.
+          node's own recorded line range.
         - **KnowledgeDoc** nodes (ingested docs) → the document body from the
           content-addressed corpus snapshot (``corpus/<sha>.md``), independent
           of the working tree.
         - **KnowledgeConcept** nodes → the compiled markdown page body (same as
-          ``read_vault_page``).
+          ``read_vault_page``, including ``cited_sources`` and its epistemic
+          contract: the page reflects the *documentation*, not the code; it is
+          authoritative for what the docs say/design/intend, but any
+          code-behavior claim must be confirmed against the code — not against
+          the page's own cited docs — before you assert it).
 
-        Returns ``{nodeId, type, body, …}``; ``body`` is soft-capped and
-        flagged with ``truncated``/``totalChars`` when very large.
+        ``lineRange`` (``"10-25"``, ``"10-"``, or ``"10"``) works on EVERY
+        node type — use it to page through large documents and pages. An
+        unranged read of a large doc returns the head plus ``truncated``,
+        ``totalLines``, and a ``hint`` with the lineRange to continue from —
+        follow it rather than re-requesting the whole body.
+
+        Returns ``{nodeId, type, body, …}``.
         """
         if not store:
             return NO_INDEX_MSG
@@ -836,11 +974,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             if not node:
                 return json.dumps({"error": f"node not found: {nodeId}"})
             node_type = node.get("type")
+            try:
+                start_line, end_line = _parse_line_range(lineRange)
+            except InvalidLineRange as e:
+                return json.dumps({"error": str(e)})
             if node_type == "KnowledgeDoc":
-                return _dump_body_result(_load_corpus_doc(store, node, nodeId))
+                return _dump_body_result(_slice_doc_body(_load_corpus_doc(store, node, nodeId), start_line, end_line))
             if node_type == "KnowledgeConcept":
-                return _dump_body_result(_read_concept_body(store, node, nodeId))
-            start_line, end_line = _parse_line_range(lineRange)
+                return _dump_body_result(_slice_doc_body(_read_concept_body(store, node, nodeId), start_line, end_line))
             return _dump_body_result(_load_code_source(store, node, nodeId, start_line, end_line))
         except Exception as e:
             return _error_response("load_source", e)

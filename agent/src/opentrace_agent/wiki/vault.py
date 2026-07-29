@@ -41,6 +41,9 @@ class IngestedSource:
     # its labels for a later ``vault attach`` to mirror onto Source nodes.
     title: str = ""
     one_line_summary: str = ""
+    # Epistemic status ("authoritative" | "design_history" |
+    # "design_history_archived"); default keeps old .vault.json loadable.
+    status: str = "authoritative"
 
 
 @dataclass

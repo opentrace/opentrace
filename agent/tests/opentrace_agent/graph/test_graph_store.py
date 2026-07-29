@@ -52,6 +52,25 @@ class TestBuildSearchText:
         assert "A module" in text
         assert "src/x.py" in text
 
+    def test_includes_one_line_summary(self):
+        # KnowledgeConcept pages store their gloss under one_line_summary.
+        text = build_search_text("Auth", "KnowledgeConcept", {"one_line_summary": "how staff sign in"})
+        assert "how staff sign in" in text
+
+    def test_includes_description(self):
+        # Wiki entity nodes (Idea/Service/Event/Paper) store their gloss under
+        # description — index it so entities are findable by content, not name.
+        text = build_search_text("Engram", "Service", {"description": "persistent memory system"})
+        assert "persistent memory system" in text
+
+    def test_includes_all_gloss_keys_together(self):
+        text = build_search_text(
+            "n", "KnowledgeDoc",
+            {"summary": "a", "one_line_summary": "b", "description": "c", "path": "p"},
+        )
+        for token in ("a", "b", "c", "p"):
+            assert token in text.split()
+
     def test_ignores_other_properties(self):
         text = build_search_text("y", "File", {"language": "python"})
         assert "python" not in text

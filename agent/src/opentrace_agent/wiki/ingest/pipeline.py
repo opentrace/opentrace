@@ -32,9 +32,10 @@ from opentrace_agent.wiki.ingest.execute import execute as _execute
 from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
 from opentrace_agent.wiki.ingest.normalize import normalize as _normalize
 from opentrace_agent.wiki.ingest.persist import persist as _persist
-from opentrace_agent.wiki.ingest.resolve import concepts_to_plan, resolve
+from opentrace_agent.wiki.ingest.resolve import augment_plan_sources, concepts_to_plan, resolve
 from opentrace_agent.wiki.ingest.sources import AcquiredSource
 from opentrace_agent.wiki.ingest.sources import acquire as _acquire
+from opentrace_agent.wiki.ingest.verify import strip_ungrounded_numerics
 from opentrace_agent.wiki.ingest.types import (
     CompiledPage,
     ConceptMention,
@@ -312,6 +313,18 @@ def run_compile(
             },
         )
 
+        # Widen each planned page's reading list by mechanical term matching —
+        # a doc whose mentions clustered under an adjacent concept can still be
+        # decisive for this page (it may hold the current rule a design doc
+        # superseded). No LLM calls; see augment_plan_sources.
+        for page_label, added_names in augment_plan_sources(plan_obj, normalized):
+            yield WikiPipelineEvent(
+                kind=WikiEventKind.STAGE_PROGRESS,
+                phase=WikiPhase.PLANNING,
+                message=f"Relevance scan added {len(added_names)} source(s) to {page_label}",
+                detail={"page": page_label, "added": added_names},
+            )
+
         # Execute. Concept synthesis reads the RAW source bodies (the corpus
         # markdown carried on each NormalizedSource), not the digest summaries —
         # grounding each page in the full source yields more accurate synthesis
@@ -321,6 +334,26 @@ def run_compile(
             yield from _execute(plan_obj, normalized, meta, pages_path, client, pages)
 
         compiled = pages
+
+        # Verify (mechanical, no LLM): numeric claims no cited source contains
+        # are stripped before persist so both disk and the graph mirror (which
+        # re-reads disk below) get the corrected bodies. Cited sources outside
+        # this batch are read back from the corpus when present.
+        if compiled:
+            from opentrace_agent.sources.markdown.source_io import _safe_corpus_filename
+
+            sha_to_body = {n.sha256: n.markdown for n in normalized}
+            for page in compiled:
+                for sha in page.source_shas:
+                    if sha in sha_to_body:
+                        continue
+                    corpus_file = cdir / _safe_corpus_filename(sha)
+                    if corpus_file.exists():
+                        try:
+                            sha_to_body[sha] = corpus_file.read_text(encoding="utf-8")
+                        except OSError:
+                            pass
+            yield from strip_ungrounded_numerics(compiled, sha_to_body)
 
         # Persist. Runs even with zero new pages — the acquired sources and
         # their metadata still need recording (persist updates meta.sources,

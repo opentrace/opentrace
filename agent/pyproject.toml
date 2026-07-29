@@ -19,7 +19,9 @@ classifiers = [
 ]
 dependencies = [
     "gitpython>=3.1",
-    "tree-sitter>=0.24",
+    # Cap below 0.26: core 0.26.0 segfaults on node access with the grammar
+    # wheels below (built for <=0.25). Lift only after grammars are 0.26-ready.
+    "tree-sitter>=0.24,<0.26",
     "tree-sitter-python",
     "tree-sitter-typescript",
     "tree-sitter-go",

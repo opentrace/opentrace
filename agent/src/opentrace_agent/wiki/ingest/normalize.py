@@ -118,7 +118,7 @@ def normalize(
                 errors=[err],
             )
             continue
-        out.append(NormalizedSource(sha256=src.sha256, original_name=src.name, markdown=text))
+        out.append(NormalizedSource(sha256=src.sha256, original_name=src.name, markdown=text, status=src.status))
         yield WikiPipelineEvent(
             kind=WikiEventKind.STAGE_PROGRESS,
             phase=WikiPhase.NORMALIZING,

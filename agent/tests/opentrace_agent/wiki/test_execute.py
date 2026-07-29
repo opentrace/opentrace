@@ -49,6 +49,32 @@ class TestSourcesBlock:
     def test_skips_unknown_sha(self):
         assert _sources_block([], ["missing"]) == ""
 
+    def test_authoritative_status_label(self):
+        block = _sources_block([self._src("aaa", "docs/guide.md", "body")], ["aaa"])
+        assert "[current documentation]" in block
+
+    def test_design_history_status_label(self):
+        src = NormalizedSource(
+            sha256="bbb", original_name="openspec/p.md", markdown="body", status="design_history"
+        )
+        block = _sources_block([src], ["bbb"])
+        assert "design proposal or spec" in block
+        assert "superseded" in block
+
+    def test_archived_design_history_label(self):
+        src = NormalizedSource(
+            sha256="ccc", original_name="openspec/archive/p.md", markdown="body", status="design_history_archived"
+        )
+        assert "; archived" in _sources_block([src], ["ccc"])
+
+    def test_augmented_source_marked(self):
+        planned = self._src("aaa", "planned.md", "body a")
+        scanned = self._src("bbb", "scanned.md", "body b")
+        block = _sources_block([planned, scanned], ["aaa", "bbb"], augmented_shas=["bbb"])
+        # Only the relevance-scan source carries the marker.
+        assert block.count("added by relevance scan") == 1
+        assert "scanned.md [current documentation; added by relevance scan]" in block
+
 
 class TestForceH1:
     def test_replaces_existing_h1(self):

@@ -193,6 +193,7 @@ def persist(
             contributed_to=contributed,
             title=getattr(norm, "title", "") or "",
             one_line_summary=getattr(norm, "one_line_summary", "") or "",
+            status=src.status,
         )
 
     meta.last_compiled_at = now

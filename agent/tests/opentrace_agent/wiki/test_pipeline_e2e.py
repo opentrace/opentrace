@@ -386,3 +386,65 @@ def test_single_source_concept_below_floor_makes_no_page(tmp_path, fake_llm, mon
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
     assert meta.pages == {}
     assert _sha(src.data) in meta.sources  # the source itself is still recorded
+
+
+def test_source_status_persisted_and_mirrored(tmp_path, fake_llm):
+    pytest.importorskip("real_ladybug")
+    from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki.ingest.graph_writer import corpus_doc_node_id
+
+    src = SourceInput(
+        name="openspec/changes/foo/proposal.md",
+        data=b"# Proposal\nConflict thresholds design.",
+        status="design_history",
+    )
+    llm = fake_llm(
+        [
+            _extraction("Proposal", concepts=[{"topic": "conflicts", "subject": "engram", "gloss": "g"}]),
+            _resolve({"title": "Conflicts", "topic": "conflicts", "subject": "engram"}),
+            _page("Conflicts", "Threshold design."),
+        ]
+    )
+    db_path = str(tmp_path / "graph.db")
+    graph_store = GraphStore(db_path)
+    try:
+        list(run_compile("v", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store))
+        node = graph_store.get_node(corpus_doc_node_id(_sha(src.data)))
+        assert node["properties"]["status"] == "design_history"
+    finally:
+        graph_store.close()
+
+    # And it survives in .vault.json for disk-only reloads / re-mirrors.
+    meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
+    assert meta.sources[_sha(src.data)].status == "design_history"
+
+
+def test_ungrounded_numeric_claim_stripped_before_persist(tmp_path, fake_llm):
+    # The synthesis output fabricates a 17x figure that appears in no source —
+    # the verify stage must strip it before the body reaches disk.
+    src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl.")
+    llm = fake_llm(
+        [
+            _extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}]),
+            _resolve({"title": "Ducks", "topic": "ducks", "subject": "fauna"}),
+            _page("Ducks", "Ducks are waterfowl.\nDucks fly 17x faster than geese."),
+        ]
+    )
+    events = list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    page = (tmp_path / "v" / "pages" / "concept" / "ducks.md").read_text()
+    assert "17x" not in page
+    assert "waterfowl" in page
+    assert any("Stripped 1 ungrounded" in (e.message or "") for e in events)
+
+
+def test_grounded_numeric_claim_survives(tmp_path, fake_llm):
+    src = SourceInput(name="perf.md", data=b"# Perf\nBenchmarked at 17x faster.")
+    llm = fake_llm(
+        [
+            _extraction("Perf", concepts=[{"topic": "perf", "subject": "core", "gloss": "g"}]),
+            _resolve({"title": "Perf", "topic": "perf", "subject": "core"}),
+            _page("Perf", "The core is 17x faster."),
+        ]
+    )
+    list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    assert "17x" in (tmp_path / "v" / "pages" / "concept" / "perf.md").read_text()

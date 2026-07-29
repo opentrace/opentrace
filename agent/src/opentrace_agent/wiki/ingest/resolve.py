@@ -38,13 +38,16 @@ never crashes or silently drops mentions.
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
 from dataclasses import replace
 from typing import Any
 
 from opentrace_agent.wiki.ingest.types import (
     PAGE_KIND_CONCEPT,
     ConceptMention,
+    NormalizedSource,
     Plan,
     PlanCreate,
     PlanExtend,
@@ -554,3 +557,97 @@ def concepts_to_plan(resolved: list[ResolvedConcept], meta: VaultMetadata) -> Pl
                 min_sources,
             )
     return Plan(creates=creates, extends=extends)
+
+
+# --- Plan-time source augmentation (mechanical, no LLM) ----------------------
+#
+# The clusterer assigns each doc's mentions to pages by (topic, subject) label.
+# When a doc inventories related content under a *different* label, the page it
+# contradicts/completes never sees it (benchmark proof case: the one doc with
+# the correct behaviour was filed under an adjacent concept, so every page kept
+# the superseded rule). This pass widens each synthesis call's reading list by
+# plain term matching so relevant-but-misfiled docs can't be structurally
+# invisible. Clustering itself is untouched.
+
+AUGMENT_CAP = 3  # max sources added per page
+AUGMENT_MIN_SCORE = 0.35  # min fraction of the page's term weight a doc must match
+
+_AUGMENT_STOPWORDS = frozenset(
+    "the a an and or of to in for on with by from as at is are was were be been "
+    "this that these those it its how what when why which who all any not no "
+    "does do did can could should would may might will into over under between "
+    "via per each both more most other same new use used using".split()
+)
+
+
+def _augment_cap() -> int:
+    """``OT_WIKI_AUGMENT_CAP`` overrides AUGMENT_CAP; 0 disables the pass."""
+    raw = os.environ.get("OT_WIKI_AUGMENT_CAP", "").strip()
+    try:
+        return max(0, int(raw)) if raw else AUGMENT_CAP
+    except ValueError:
+        return AUGMENT_CAP
+
+
+def _terms(*texts: str) -> set[str]:
+    """Distinctive lowercase tokens (identifiers kept whole via ``_``)."""
+    toks: set[str] = set()
+    for text in texts:
+        toks.update(re.findall(r"[a-z0-9_]{3,}", text.lower()))
+    return toks - _AUGMENT_STOPWORDS
+
+
+def augment_plan_sources(
+    plan: Plan,
+    normalized: list[NormalizedSource],
+) -> list[tuple[str, list[str]]]:
+    """Widen each planned page's cited sources by IDF-weighted term matching.
+
+    For every create/extend: terms from the page title + sections are scored
+    against each not-yet-cited doc — score = matched term weight / total term
+    weight — and docs above ``AUGMENT_MIN_SCORE`` (top ``AUGMENT_CAP``) are
+    appended to ``source_shas`` (honest CITES provenance) and recorded in
+    ``augmented_shas`` (marked as supplementary in the synthesis prompt).
+
+    Mutates *plan* in place; returns ``(page label, [added doc names])`` per
+    augmented page for progress reporting.
+    """
+    cap = _augment_cap()
+    if cap == 0 or not normalized:
+        return []
+
+    doc_tokens = {n.sha256: _terms(n.markdown) for n in normalized}
+    name_by_sha = {n.sha256: n.original_name for n in normalized}
+    n_docs = len(doc_tokens)
+
+    def idf(term: str) -> float:
+        df = sum(1 for toks in doc_tokens.values() if term in toks)
+        return math.log(1 + n_docs / df) if df else 0.0
+
+    report: list[tuple[str, list[str]]] = []
+    items: list[tuple[str, PlanCreate | PlanExtend]] = [(c.title, c) for c in plan.creates] + [
+        (x.page_slug, x) for x in plan.extends
+    ]
+    for label, item in items:
+        page_terms = _terms(label.replace("-", " ").replace("/", " "), *item.sections)
+        weights = {t: idf(t) for t in page_terms}
+        weights = {t: w for t, w in weights.items() if w > 0}  # drop terms in no doc
+        total = sum(weights.values())
+        if not total:
+            continue
+        cited = set(item.source_shas)
+        scored = sorted(
+            (
+                (sum(w for t, w in weights.items() if t in toks) / total, sha)
+                for sha, toks in doc_tokens.items()
+                if sha not in cited
+            ),
+            key=lambda s: (-s[0], name_by_sha[s[1]]),
+        )
+        added = [sha for score, sha in scored[:cap] if score >= AUGMENT_MIN_SCORE]
+        if not added:
+            continue
+        item.source_shas.extend(added)
+        item.augmented_shas.extend(added)
+        report.append((label, [name_by_sha[sha] for sha in added]))
+    return report

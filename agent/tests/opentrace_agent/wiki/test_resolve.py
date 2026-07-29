@@ -18,10 +18,18 @@ min-sources floor, and the create/extend diff against the vault."""
 from __future__ import annotations
 
 from opentrace_agent.wiki.ingest.resolve import (
+    augment_plan_sources,
     concepts_to_plan,
     resolve,
 )
-from opentrace_agent.wiki.ingest.types import ConceptMention, ResolvedConcept
+from opentrace_agent.wiki.ingest.types import (
+    ConceptMention,
+    NormalizedSource,
+    Plan,
+    PlanCreate,
+    PlanExtend,
+    ResolvedConcept,
+)
 from opentrace_agent.wiki.vault import PageMeta, VaultMetadata
 
 
@@ -229,3 +237,80 @@ class TestConceptsToPlan:
         meta = VaultMetadata.empty("v")
         plan = concepts_to_plan([self._resolved("Solo", ["a"])], meta)
         assert len(plan.creates) == 1
+
+
+class TestAugmentPlanSources:
+    """The plan-time relevance scan — a doc whose mentions clustered under an
+    adjacent concept must still reach the synthesis calls it's decisive for
+    (benchmark: the one doc with the correct rule was filed elsewhere, so every
+    page kept the superseded one)."""
+
+    def _norm(self, sha: str, name: str, markdown: str) -> NormalizedSource:
+        return NormalizedSource(sha256=sha, original_name=name, markdown=markdown)
+
+    def _plan(self, *, shas: list[str], sections: list[str] | None = None) -> Plan:
+        return Plan(
+            creates=[
+                PlanCreate(
+                    title="Conflict detection",
+                    source_shas=shas,
+                    sections=sections or ["mem_judge verdicts", "supersedes guard"],
+                )
+            ]
+        )
+
+    def test_misfiled_doc_with_matching_terms_is_added(self):
+        cited = self._norm("a", "proposal.md", "conflict detection via mem_judge; supersedes verdicts")
+        misfiled = self._norm("b", "AGENT-SETUP.md", "mem_judge verdicts: supersedes needs conflict guard")
+        unrelated = self._norm("c", "deploy.md", "kubernetes helm charts and ingress rules")
+        plan = self._plan(shas=["a"])
+        report = augment_plan_sources(plan, [cited, misfiled, unrelated])
+        assert plan.creates[0].source_shas == ["a", "b"]
+        assert plan.creates[0].augmented_shas == ["b"]
+        assert report == [("Conflict detection", ["AGENT-SETUP.md"])]
+
+    def test_unrelated_docs_stay_out(self):
+        cited = self._norm("a", "proposal.md", "conflict detection via mem_judge")
+        unrelated = self._norm("c", "deploy.md", "kubernetes helm charts and ingress rules")
+        plan = self._plan(shas=["a"])
+        assert augment_plan_sources(plan, [cited, unrelated]) == []
+        assert plan.creates[0].source_shas == ["a"]
+        assert plan.creates[0].augmented_shas == []
+
+    def test_already_cited_docs_not_duplicated(self):
+        cited = self._norm("a", "proposal.md", "conflict detection mem_judge supersedes verdicts guard")
+        plan = self._plan(shas=["a"])
+        assert augment_plan_sources(plan, [cited]) == []
+        assert plan.creates[0].source_shas == ["a"]
+
+    def test_cap_respected(self, monkeypatch):
+        monkeypatch.setenv("OT_WIKI_AUGMENT_CAP", "1")
+        text = "conflict detection mem_judge verdicts supersedes guard"
+        docs = [self._norm(s, f"{s}.md", text) for s in ("a", "b", "c", "d")]
+        plan = self._plan(shas=["a"])
+        augment_plan_sources(plan, docs)
+        assert len(plan.creates[0].augmented_shas) == 1
+
+    def test_zero_cap_disables(self, monkeypatch):
+        monkeypatch.setenv("OT_WIKI_AUGMENT_CAP", "0")
+        docs = [
+            self._norm("a", "a.md", "conflict detection"),
+            self._norm("b", "b.md", "conflict detection mem_judge verdicts supersedes guard"),
+        ]
+        plan = self._plan(shas=["a"])
+        assert augment_plan_sources(plan, docs) == []
+
+    def test_extends_augmented_via_slug_terms(self):
+        cited = self._norm("a", "old.md", "conflict detection basics")
+        match = self._norm("b", "new.md", "conflict detection mem_judge verdicts supersedes guard rules")
+        plan = Plan(
+            extends=[
+                PlanExtend(
+                    page_slug="concept/conflict-detection",
+                    source_shas=["a"],
+                    sections=["mem_judge verdicts", "supersedes guard"],
+                )
+            ]
+        )
+        augment_plan_sources(plan, [cited, match])
+        assert plan.extends[0].augmented_shas == ["b"]

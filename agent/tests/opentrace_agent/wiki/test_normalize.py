@@ -91,3 +91,9 @@ class TestNormalizeStage:
         assert not any(e.kind == WikiEventKind.ERROR for e in events)
         assert len(out) == 1
         assert "Config — options" in out[0].markdown
+
+    def test_status_survives_normalization(self):
+        src = AcquiredSource(sha256="s1", name="openspec/p.md", data=b"body", status="design_history")
+        out: list = []
+        list(normalize([src], out))
+        assert out[0].status == "design_history"

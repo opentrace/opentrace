@@ -379,6 +379,7 @@ def _run_indexing_pipeline(
     vault_scope: str = "local",
     no_prune: bool = False,
     refresh_stale_pages: bool = False,
+    exclude_design_history: bool = False,
     on_event: "Callable[[object], None] | None" = None,
 ) -> float:
     """Run the four-stage pipeline with atomic-write staging.
@@ -454,6 +455,7 @@ def _run_indexing_pipeline(
                         vault_name=vault_name or _default_vault_name(source_path),
                         vault_scope=vault_scope,
                         repo_id=repo_id,
+                        exclude_design_history=exclude_design_history,
                         verbose=verbose,
                     )
 
@@ -568,6 +570,17 @@ def _run_indexing_pipeline(
         "via ``opentraceai vault refresh-stale-pages``."
     ),
 )
+@click.option(
+    "--wiki-exclude-design-history",
+    "exclude_design_history",
+    is_flag=True,
+    help=(
+        "Skip design-history docs (openspec/ADR/RFC/proposal trees, "
+        "CHANGELOGs) during --wiki ingestion instead of compiling them with "
+        "a design-history status label. Use when a repo's design record "
+        "drowns out its real documentation."
+    ),
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def index(
     path: str,
@@ -579,6 +592,7 @@ def index(
     global_scope: bool,
     no_prune: bool,
     refresh_stale_pages: bool,
+    exclude_design_history: bool,
     verbose: bool,
 ) -> None:
     """Index a local codebase into a LadybugDB knowledge graph."""
@@ -589,6 +603,8 @@ def index(
 
     if refresh_stale_pages and not wiki:
         raise click.ClickException("--refresh-stale-pages requires --wiki (or a vault name).")
+    if exclude_design_history and not wiki:
+        raise click.ClickException("--wiki-exclude-design-history requires --wiki (or a vault name).")
 
     # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
     # before opening the staging DB / acquiring locks, rather than mid-pipeline.
@@ -642,6 +658,7 @@ def index(
         vault_scope="global" if global_scope else "local",
         no_prune=no_prune,
         refresh_stale_pages=refresh_stale_pages,
+        exclude_design_history=exclude_design_history,
     )
 
     click.echo(f"Done in {elapsed:.1f}s.")
@@ -792,6 +809,47 @@ def _resolve_index_vault_name(
     return unique_vault_name(vault_name, project_root=project_root)
 
 
+def _collect_wiki_inputs(source_path: Path, *, exclude_design_history: bool = False) -> list["SourceInput"]:
+    """Walk *source_path* for doc files and build SourceInputs, stamping each
+    with its epistemic status (``classify_doc_status``). Directories excluded
+    from the code walk are excluded here too. With *exclude_design_history*,
+    design-history docs (proposal/spec/ADR trees, CHANGELOGs) are dropped
+    instead of typed."""
+    from opentrace_agent.sources.code.directory_walker import (
+        DOC_EXTENSIONS,
+        EXCLUDED_DIRS,
+    )
+    from opentrace_agent.wiki import SourceInput
+    from opentrace_agent.wiki.ingest.sources import classify_doc_status
+
+    inputs: list[SourceInput] = []
+    if source_path.is_file():
+        if source_path.suffix.lower() in DOC_EXTENSIONS:
+            inputs.append(SourceInput(name=source_path.name, data=source_path.read_bytes()))
+        return inputs
+    for dirpath, dirnames, filenames in os.walk(source_path):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
+        for filename in sorted(filenames):
+            ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            if ext not in DOC_EXTENSIONS:
+                continue
+            abs_file = Path(dirpath) / filename
+            # Pass the path RELATIVE to the walked root, not the bare
+            # basename — corpora routinely repeat filenames across folders
+            # (every package dir has a README.md / index.md). The relative
+            # path lets the summariser disambiguate otherwise-identical page
+            # titles so bare [[Readme]] wiki-links don't render broken.
+            rel_name = os.path.relpath(abs_file, source_path)
+            status = classify_doc_status(rel_name)
+            if exclude_design_history and status != "authoritative":
+                continue
+            try:
+                inputs.append(SourceInput(name=rel_name, data=abs_file.read_bytes(), status=status))
+            except OSError as exc:
+                click.echo(f"  Skipped {rel_name}: {exc}", err=True)
+    return inputs
+
+
 def _run_wiki_compile_against_index(
     *,
     graph_store,
@@ -799,6 +857,7 @@ def _run_wiki_compile_against_index(
     vault_name: str,
     vault_scope: str = "local",
     repo_id: str | None = None,
+    exclude_design_history: bool = False,
     verbose: bool,
 ) -> None:
     """Run the wiki Plan+Execute pipeline against doc files under *source_path*.
@@ -819,35 +878,10 @@ def _run_wiki_compile_against_index(
     (.rst/.txt/.html/PDFs) get their File node created at link time.
     """
     from opentrace_agent.cli.vault_cmd import _autodetect_provider
-    from opentrace_agent.sources.code.directory_walker import (
-        DOC_EXTENSIONS,
-        EXCLUDED_DIRS,
-    )
-    from opentrace_agent.wiki import SourceInput, run_compile
+    from opentrace_agent.wiki import run_compile
 
     # Collect doc files via the same classification the walker uses.
-    inputs: list[SourceInput] = []
-    if source_path.is_file():
-        if source_path.suffix.lower() in DOC_EXTENSIONS:
-            inputs.append(SourceInput(name=source_path.name, data=source_path.read_bytes()))
-    else:
-        for dirpath, dirnames, filenames in os.walk(source_path):
-            dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
-            for filename in sorted(filenames):
-                ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-                if ext not in DOC_EXTENSIONS:
-                    continue
-                abs_file = Path(dirpath) / filename
-                # Pass the path RELATIVE to the walked root, not the bare
-                # basename — corpora routinely repeat filenames across folders
-                # (every package dir has a README.md / index.md). The relative
-                # path lets the summariser disambiguate otherwise-identical page
-                # titles so bare [[Readme]] wiki-links don't render broken.
-                rel_name = os.path.relpath(abs_file, source_path)
-                try:
-                    inputs.append(SourceInput(name=rel_name, data=abs_file.read_bytes()))
-                except OSError as exc:
-                    click.echo(f"  Skipped {rel_name}: {exc}", err=True)
+    inputs = _collect_wiki_inputs(source_path, exclude_design_history=exclude_design_history)
 
     if not inputs:
         click.echo(f"  --wiki: no doc files found under {source_path}.")

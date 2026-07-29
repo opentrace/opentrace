@@ -200,6 +200,20 @@ class TestWriteVaultToGraph:
         for p in pages:
             assert p["properties"]["vault"] == "kb"
 
+    def test_page_one_liner_is_fts_indexed(self, store):
+        # A KnowledgeConcept must be findable by its gloss, not just its title:
+        # build_search_text reads ``one_line_summary`` directly, so topic
+        # queries reach the page instead of only matching code symbols by name.
+        from opentrace_agent.store.graph_store import build_search_text
+
+        meta, bodies = _make_meta()
+        write_vault_to_graph(store, meta, bodies)
+        node = store.get_node(page_node_id("kb", "concept/revenue"))
+        props = node["properties"]
+        assert props["one_line_summary"] == "Aggregated revenue topic."
+        search_text = build_search_text(node["name"], node["type"], props)
+        assert "Aggregated revenue topic." in search_text
+
     def test_vault_contains_pages_and_sources(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)

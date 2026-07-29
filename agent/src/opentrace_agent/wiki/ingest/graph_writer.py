@@ -488,12 +488,16 @@ def write_vault_to_graph(
         if one_liner:
             props["one_line_summary"] = one_liner
             props["summary"] = one_liner
+        # Epistemic status: this run's classification, else .vault.json's.
+        status = getattr(norm, "status", "") or getattr(ingested, "status", "")
+        if status:
+            props["status"] = status
         # ``add_node`` overwrites the full property blob, and this loop runs
         # over ALL of meta.sources on every mirror — sources not (re)ingested
         # this run have no AcquiredSource/NormalizedSource, so carry their
         # previously-written values forward instead of wiping them.
         existing_src_props = (store.get_node(sid) or {}).get("properties") or {}
-        for k in ("size_bytes", "content_type", "corpus_path", "title", "one_line_summary", "summary", "path"):
+        for k in ("size_bytes", "content_type", "corpus_path", "title", "one_line_summary", "summary", "path", "status"):
             if k not in props and k in existing_src_props:
                 props[k] = existing_src_props[k]
         store.add_node(
@@ -546,6 +550,8 @@ def write_vault_to_graph(
             "slug": p.slug,
             "vault": meta.name,
             "kind": p.kind,
+            # ``build_search_text`` indexes ``one_line_summary`` directly, so a
+            # page is FTS-findable by its gloss, not just its title.
             "one_line_summary": p.one_line_summary,
             "revision": p.revision,
             "last_updated": p.last_updated,
