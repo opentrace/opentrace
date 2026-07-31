@@ -1,8 +1,19 @@
 # Wiki
 
-Knowledge-compilation pipeline that turns raw doc files into a folder of interconnected markdown pages (the "vault") and mirrors the result into the graph store. Driven by ``opentraceai index --wiki`` — there is no separate ``wiki compile`` command anymore.
+Doc-ingestion pipeline that indexes raw doc files into the graph store (the "vault") and, optionally, compiles cross-document concept pages. Driven by ``opentraceai index --wiki`` — there is no separate ``wiki compile`` command anymore.
 
-This is now the **single doc-ingestion path**: the one per-doc LLM call (`doc_extraction.py`) emits the KnowledgeDoc's navigation label (title + one-line summary), the concept inventory, AND the knowledge-graph entities + edges in a single shot. There are **no per-document wiki pages** — the raw doc body lives in the corpus and is read directly (`load_source`); concept pages are the only page kind. The entities are merged (`pipeline/entity_merge.py`) and mirrored to the graph alongside the vault. The old standalone `pipeline/entity_extraction.py` stage has been removed.
+This is the **single doc-ingestion path**: the one per-doc LLM call (`doc_extraction.py`) emits the KnowledgeDoc's navigation label (title + one-line summary), the concept inventory, AND the knowledge-graph entities + edges in a single shot. There are **no per-document wiki pages** — the raw doc body lives in the corpus and is read directly (`load_source`). The entities are merged (`pipeline/entity_merge.py`) and mirrored to the graph alongside the vault. The old standalone `pipeline/entity_extraction.py` stage has been removed.
+
+## Corpus-only is the default; synthesis is opt-in
+
+`run_compile(..., synthesize_pages=False)` is the default, and the CLI only sets it True under `--wiki-concept-pages`. So a plain `index --wiki` runs **Acquire → Normalize → Extract → Persist → Mirror** and stops: labelled KnowledgeDoc nodes, the entity graph, doc↔doc `LINKS_TO`, `MIRRORS` File twins, epistemic `status`, bodies verbatim in the corpus. No `KnowledgeConcept` nodes, no `pages/concept/*.md`, no `CITES` edges, and no flagship LLM calls beyond the per-doc extraction.
+
+The agent-facing contract for this layer lives in `cli/mcp_server.py` and is load-bearing — the benchmark showed a capability the tools don't advertise is a capability that doesn't exist:
+
+- **`load_source` on a KnowledgeDoc returns `status` + `statusNote`** alongside the body, plus `title`/`path`/`summary`. It originally returned filename/sha/body only, so the epistemic label was invisible at the moment of reading and the arm never once distinguished a proposal from shipped behaviour. A label that doesn't travel with the text does nothing.
+- **`list_nodes` names the doc types** (`KnowledgeDoc`, `KnowledgeConcept`, the entity types) and states that it — not ranked `search_graph` — is what can establish absence. The arm called it *zero* times in 201 tool calls while the code arm called it 9×, and lost the corpus-enumeration question, because the docstring listed only code types.
+
+Why the default flipped: synthesizing a page restates its sources in the model's own voice, which can strip their hedges, tense, and attribution — a failure mode a verbatim body structurally cannot have (four successive grounding patches all chased instances of it). And concept pages have not been shown to beat reading the labelled documents directly: on the code-Q&A benchmark the arm that read raw docs scored 98.6% while the vault arm lost ground when pages were consulted. So the corpus layer — whose value *is* measured (retrieval, labels, status) — ships on by default, and synthesis has to earn its way back in. Everything under Resolve/Execute/Verify below therefore only runs under `--wiki-concept-pages`.
 
 ## Layout
 
@@ -23,18 +34,28 @@ ingest/
   doc_extraction.py   — Extract + Map: 1 LLM call/doc → KnowledgeDoc label (title
                         + one-liner) AND that doc's concept inventory
                         (topic/subject/gloss) AND the entity graph
-  resolve.py          — Resolve stage: cluster concept mentions into concept
-                        pages by (topic, subject); diff vs vault → create/extend
-                        plan (OT_WIKI_CONCEPT_MIN_SOURCES floor)
-  execute.py          — Synthesis stage: per-action create/extend LLM calls
+  resolve.py          — Resolve stage (--wiki-concept-pages only): cluster
+                        concept mentions into concept pages by (topic, subject);
+                        diff vs vault → create/extend plan
+                        (OT_WIKI_CONCEPT_MIN_SOURCES floor)
+  execute.py          — Synthesis stage (--wiki-concept-pages only): per-action
+                        create/extend LLM calls
   persist.py          — Persist stage: atomic disk writes + .vault.json update
   graph_writer.py     — Mirror vault to graph: Vault/Page/KnowledgeDoc +
-                        CONTAINS/CITES/LINKS_TO/MENTIONS + MIRRORS edges
+                        CONTAINS/CITES/LINKS_TO/MENTIONS + MIRRORS edges;
+                        parse_doc_links() + link_doc_to_doc_links() for the
+                        authors' own doc→doc references
   pipeline.py         — Composer (sync generator); accepts scope= + project_root=
-                        + graph_store=; also exports refresh_stale_pages()
+                        + graph_store= + synthesize_pages=; also exports
+                        refresh_stale_pages()
 ```
 
 ## Concept discovery (Map → Resolve → Synthesise)
+
+**Opt-in — everything in this section runs only under `--wiki-concept-pages`**
+(`run_compile(synthesize_pages=True)`). The Map step is the exception: it is
+folded into the per-doc extraction call and so runs on every compile, costing
+nothing extra.
 
 Concept pages are discovered by inventorying concepts per document, then
 clustering them — not by one planner call enumerating everything (which
@@ -101,10 +122,12 @@ multi-entity corpus keeps its entities distinct.
 ```
 <project>/.opentrace/vaults/<name>/   # local scope (default for --wiki)
 ~/.opentrace/vaults/<name>/           # global scope; override root via $OT_VAULT_ROOT
-  pages/concept/<base>.md         # multi-source synthesis pages (only kind)
+  pages/concept/<base>.md         # synthesis pages — --wiki-concept-pages only
   .vault.json
   .compile-log/<iso-ts>.json
 ```
+
+A default (corpus-only) compile writes `.vault.json` + `.compile-log/` and leaves `pages/` empty — the doc bodies live in the corpus dir described below, not in the vault.
 
 Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept is the only page kind; the kind folder stays so a future kind slots in without a layout migration. Generated by `wiki.slugify.unique_slug(title, kind=...)`; the folder name comes from `kind_dir(kind)`.
 
@@ -148,8 +171,10 @@ place).
 - `KnowledgeConcept` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
 - `KnowledgeDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so KnowledgeDocs are FTS-findable by label), and `path` (repo-relative) when the doc came from a repo walk. Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
 - `CONTAINS` — Vault → Page, Vault → KnowledgeDoc.
-- `CITES` — concept page → KnowledgeDoc, direct by sha (one hop; no intermediate pages).
-- `LINKS_TO` — per `[[Title]]` occurrence in any page body (concept ↔ concept).
+- `CITES` — concept page → KnowledgeDoc, direct by sha (one hop; no intermediate pages). `--wiki-concept-pages` only.
+- `LINKS_TO` — two distinct producers, same edge type:
+  - **KnowledgeDoc → KnowledgeDoc** — the authors' *own* cross-references, parsed mechanically (no LLM) from each doc's relative markdown links, reference-style definitions, and raw HTML anchors by `parse_doc_links` and written by `link_doc_to_doc_links` in the same post-compile step as MIRRORS. The doc-side analogue of the code graph's import edges: it records structure a human declared, never anything a model inferred. Targets resolve against the linking doc's own directory (`/docs/x.md` is treated as repo-root-relative); external URLs, fragment-only links, and paths escaping the repo root are dropped, and resolution itself is the filter — a link to a `.py` file or an image finds no KnowledgeDoc and is skipped. Repo-walked runs only (needs repo-relative paths).
+  - **KnowledgeConcept → KnowledgeConcept** — per `[[Title]]` occurrence in a page body. `--wiki-concept-pages` only.
 - `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `KnowledgeDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `KnowledgeDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim) — see `write_vault_to_graph(derived_pairs=...)`. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
 - `MIRRORS` — KnowledgeDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults). Entities always anchor to KnowledgeDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
 - `DOCUMENTS` — Repository → Vault, written by `link_vault_to_repo` in the same `index --wiki` post-compile step as MIRRORS. Marks the vault as spawned from that repo (paired with the `spawned_from` vault property). Attached globals and dropped-file compiles never get it — they live alongside a repo without documenting it.
@@ -160,13 +185,21 @@ Graph-write failures are caught and emitted as non-fatal warnings — the on-dis
 opentraceai vault attach <name>
 ```
 
-## Wiki-link parser
+## Link parsers
 
-`graph_writer.parse_wiki_links(body)` extracts targets from `[[Title]]` and `[[Title|alias]]` Obsidian-style forms. Targets are stripped of whitespace and deduped in document order. The renderer in `ui/src/components/wiki/` uses the same syntax.
+Two parsers, one per producer of `LINKS_TO` (see the graph-mirror section):
+
+**`graph_writer.parse_wiki_links(body)`** — page ↔ page. Extracts targets from `[[Title]]` and `[[Title|alias]]` Obsidian-style forms. Targets are stripped of whitespace and deduped in document order. The renderer in `ui/src/components/wiki/` uses the same syntax.
 
 Resolution accepts both bare and kinded forms: `[[Title]]` matches unambiguously when only one kind has that title; `[[concept/Title]]` always resolves to the named kind. Bare targets whose title appears in multiple kinds drop to "broken" so the page surfaces the ambiguity rather than silently picking one.
 
+**`graph_writer.parse_doc_links(body)`** — doc → doc, and the one that runs by default. Extracts in-repo relative targets from inline markdown links (`[t](./guide.md)`, angle-bracket and `%20` forms included), reference-style definitions (`[g]: docs/guide.md`), and raw HTML anchors. Fragments and query strings are stripped (`guide.md#setup` → `guide.md`); external targets (`http:`, `mailto:`, protocol-relative `//`) and fragment-only links are dropped; results are deduped in document order.
+
+`link_doc_to_doc_links(store, named_blobs)` then resolves each target against the linking doc's own directory via `posixpath` (leading `/` means repo-root-relative), drops anything normalizing outside the repo root, and merges one edge per distinct target pair — so `guide.md`, `./guide.md`, and `guide.md#top` collapse to a single edge, and self-links are skipped. Bodies come from the corpus (post-markitdown, so an `.html` doc's anchors are already markdown) with a raw-bytes decode as fallback. Docs dropped by the content gate have no node and are silently skipped.
+
 ## Stale tracking + refresh
+
+Only relevant to vaults that have concept pages (compiled under `--wiki-concept-pages`); a corpus-only vault has nothing to go stale.
 
 Autoprune (in `pipeline/autoprune.py`) stamps `stale_since=<iso-timestamp>` on concept pages whose cited KnowledgeDoc was removed but the page has other remaining citations. Pages with no remaining citations are deleted entirely. No LLM cost during pruning.
 
@@ -186,6 +219,8 @@ For wiki nodes, `retrieval.provenance(node_id)` walks the `CITES` chain:
 
 ## Still deferred
 
+- **Whether concept pages earn a place on the agent path at all.** The settling experiment is a corpus-only arm vs a full-vault arm on the same benchmark; until it runs, `--wiki-concept-pages` is an experiment flag, not a recommended mode. Watch specifically for misses where two docs share a theme but neither an extracted entity nor an author link connects them — that gap is what a concept node would close.
+- **Concepts as bodiless graph nodes** — the safe salvage of the concept map if the gap above shows up: key a node on `(topic, subject)` from the mentions the extraction call already produces, hang each doc's own gloss on the doc→concept edge, and never fuse the glosses into one prose body. Structure without restatement. `resolve.py`'s clustering would survive as node-merging (exact-match keying fragments: "validation" vs "data validation").
 - Pages are LLM-managed. Human edits to `pages/<slug>.md` are not preserved across compilations (next compile overwrites).
 - Per-page LLM self-rated confidence — the rubric is wired but pages always default to `INFERRED`/0.75 today. Future: have Execute return a per-page tier.
 - Production blob store — currently local disk ([OT-1745](https://linear.app/opentrace/issue/OT-1745)).
@@ -197,6 +232,10 @@ User-facing references (keep in lockstep with this file):
 
 - `docs/getting-started/wiki.md` — end-to-end vault workflow
 - `docs/getting-started/indexing.md` — `index --wiki` flags
+- `docs/getting-started/install-cli.md` — first-run examples
 - `docs/reference/vault-commands.md` — `vault` subcommand reference
 - `docs/reference/cli-flags.md` — full flag list
+- `docs/reference/graph-tools.md` — MCP tools + REST routes
+- `docs/reference/wiki-providers.md` — LLM backends + model roles
 - `docs/architecture/ontology.md` — node + edge type catalog
+- `docs/architecture/overview.md` — the four layers + data flow

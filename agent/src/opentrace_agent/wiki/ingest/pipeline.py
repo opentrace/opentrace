@@ -118,6 +118,7 @@ def run_compile(
     project_root: Path | str | None = None,
     llm: WikiLLM | None = None,
     graph_store: Any = None,
+    synthesize_pages: bool = False,
 ) -> Iterator[WikiPipelineEvent]:
     """Compile uploaded files into the named vault.
 
@@ -142,6 +143,17 @@ def run_compile(
     Failures during the graph write are caught and surfaced as a warning
     event so the on-disk vault stays valid even if the graph mirror falls
     behind. Re-sync from disk via ``opentraceai vault attach``.
+
+    ``synthesize_pages`` (default False) gates the Resolve → Execute →
+    Verify half of the pipeline — the stages that cluster concept mentions
+    and write synthesized concept pages. The default is **corpus-only**: the
+    documents are indexed (KnowledgeDoc nodes with navigation labels and
+    epistemic status, the entity graph, doc↔doc links, MIRRORS twins) and
+    read back raw via ``load_source``, with no LLM prose restating them.
+    Synthesis is opt-in because a compiled page can strip a source's hedges,
+    tense, and attribution — the failure mode raw bodies structurally cannot
+    have. Concept-page value on the agent path is unmeasured; see
+    ``--wiki-concept-pages``.
     """
     ensure_vault_layout(vault_name, vault_root, scope=scope, project_root=project_root)
     meta_path = metadata_path(vault_name, vault_root, scope=scope, project_root=project_root)
@@ -285,75 +297,82 @@ def run_compile(
                 detail={"entities": len(entity_nodes), "relationships": len(entity_rels)},
             )
 
-        # Resolve — cluster the per-document concept mentions (gathered during
-        # summarisation) into concept pages. Each cluster unions every source
-        # that mentioned the concept, so cross-document concepts surface even
-        # when no single doc is "about" them. Runs on the flagship `client`
-        # (semantic clustering is reasoning); diffed against the vault and
-        # filtered by the min-sources floor into a create/extend plan.
-        yield WikiPipelineEvent(
-            kind=WikiEventKind.STAGE_START,
-            phase=WikiPhase.PLANNING,
-            message=f"Resolving concepts from {len(concept_mentions)} mention(s)",
-            total=len(concept_mentions),
-        )
-        resolved = resolve(concept_mentions, client)
-        plan_obj = concepts_to_plan(resolved, meta)
-        yield WikiPipelineEvent(
-            kind=WikiEventKind.STAGE_STOP,
-            phase=WikiPhase.PLANNING,
-            message=(
-                f"Plan: {len(plan_obj.creates)} create, "
-                f"{len(plan_obj.extends)} extend (from {len(resolved)} concept(s))"
-            ),
-            detail={
-                "creates": len(plan_obj.creates),
-                "extends": len(plan_obj.extends),
-                "concepts": len(resolved),
-            },
-        )
-
-        # Widen each planned page's reading list by mechanical term matching —
-        # a doc whose mentions clustered under an adjacent concept can still be
-        # decisive for this page (it may hold the current rule a design doc
-        # superseded). No LLM calls; see augment_plan_sources.
-        for page_label, added_names in augment_plan_sources(plan_obj, normalized):
+        # Resolve → Execute → Verify: the synthesis half, opt-in via
+        # ``synthesize_pages``. Skipped by default so a compile indexes the
+        # corpus without generating prose that restates it. The concept
+        # mentions gathered above are still collected either way — they cost
+        # nothing extra (same extraction call) and a later compile with
+        # synthesis on can use them.
+        pages: list[CompiledPage] = []
+        if synthesize_pages:
+            # Resolve — cluster the per-document concept mentions (gathered during
+            # summarisation) into concept pages. Each cluster unions every source
+            # that mentioned the concept, so cross-document concepts surface even
+            # when no single doc is "about" them. Runs on the flagship `client`
+            # (semantic clustering is reasoning); diffed against the vault and
+            # filtered by the min-sources floor into a create/extend plan.
             yield WikiPipelineEvent(
-                kind=WikiEventKind.STAGE_PROGRESS,
+                kind=WikiEventKind.STAGE_START,
                 phase=WikiPhase.PLANNING,
-                message=f"Relevance scan added {len(added_names)} source(s) to {page_label}",
-                detail={"page": page_label, "added": added_names},
+                message=f"Resolving concepts from {len(concept_mentions)} mention(s)",
+                total=len(concept_mentions),
+            )
+            resolved = resolve(concept_mentions, client)
+            plan_obj = concepts_to_plan(resolved, meta)
+            yield WikiPipelineEvent(
+                kind=WikiEventKind.STAGE_STOP,
+                phase=WikiPhase.PLANNING,
+                message=(
+                    f"Plan: {len(plan_obj.creates)} create, "
+                    f"{len(plan_obj.extends)} extend (from {len(resolved)} concept(s))"
+                ),
+                detail={
+                    "creates": len(plan_obj.creates),
+                    "extends": len(plan_obj.extends),
+                    "concepts": len(resolved),
+                },
             )
 
-        # Execute. Concept synthesis reads the RAW source bodies (the corpus
-        # markdown carried on each NormalizedSource), not the digest summaries —
-        # grounding each page in the full source yields more accurate synthesis
-        # than re-distilling a lossy digest. See _sources_block.
-        pages: list[CompiledPage] = []
-        if plan_obj.creates or plan_obj.extends:
-            yield from _execute(plan_obj, normalized, meta, pages_path, client, pages)
+            # Widen each planned page's reading list by mechanical term matching —
+            # a doc whose mentions clustered under an adjacent concept can still be
+            # decisive for this page (it may hold the current rule a design doc
+            # superseded). No LLM calls; see augment_plan_sources.
+            for page_label, added_names in augment_plan_sources(plan_obj, normalized):
+                yield WikiPipelineEvent(
+                    kind=WikiEventKind.STAGE_PROGRESS,
+                    phase=WikiPhase.PLANNING,
+                    message=f"Relevance scan added {len(added_names)} source(s) to {page_label}",
+                    detail={"page": page_label, "added": added_names},
+                )
+
+            # Execute. Concept synthesis reads the RAW source bodies (the corpus
+            # markdown carried on each NormalizedSource), not the digest summaries —
+            # grounding each page in the full source yields more accurate synthesis
+            # than re-distilling a lossy digest. See _sources_block.
+            if plan_obj.creates or plan_obj.extends:
+                yield from _execute(plan_obj, normalized, meta, pages_path, client, pages)
+
+            # Verify (mechanical, no LLM): numeric claims no cited source contains
+            # are stripped before persist so both disk and the graph mirror (which
+            # re-reads disk below) get the corrected bodies. Cited sources outside
+            # this batch are read back from the corpus when present.
+            if pages:
+                from opentrace_agent.sources.markdown.source_io import _safe_corpus_filename
+
+                sha_to_body = {n.sha256: n.markdown for n in normalized}
+                for page in pages:
+                    for sha in page.source_shas:
+                        if sha in sha_to_body:
+                            continue
+                        corpus_file = cdir / _safe_corpus_filename(sha)
+                        if corpus_file.exists():
+                            try:
+                                sha_to_body[sha] = corpus_file.read_text(encoding="utf-8")
+                            except OSError:
+                                pass
+                yield from strip_ungrounded_numerics(pages, sha_to_body)
 
         compiled = pages
-
-        # Verify (mechanical, no LLM): numeric claims no cited source contains
-        # are stripped before persist so both disk and the graph mirror (which
-        # re-reads disk below) get the corrected bodies. Cited sources outside
-        # this batch are read back from the corpus when present.
-        if compiled:
-            from opentrace_agent.sources.markdown.source_io import _safe_corpus_filename
-
-            sha_to_body = {n.sha256: n.markdown for n in normalized}
-            for page in compiled:
-                for sha in page.source_shas:
-                    if sha in sha_to_body:
-                        continue
-                    corpus_file = cdir / _safe_corpus_filename(sha)
-                    if corpus_file.exists():
-                        try:
-                            sha_to_body[sha] = corpus_file.read_text(encoding="utf-8")
-                        except OSError:
-                            pass
-            yield from strip_ungrounded_numerics(compiled, sha_to_body)
 
         # Persist. Runs even with zero new pages — the acquired sources and
         # their metadata still need recording (persist updates meta.sources,
@@ -387,9 +406,7 @@ def run_compile(
                 # (corpus_doc_id, entity_id) pairs from the DERIVED_FROM edges,
                 # so the mirror's MENTIONS pass can skip the redundant reverse
                 # edge for a doc↔entity pair provenance already covers.
-                derived_pairs = {
-                    (r.target_id, r.source_id) for r in entity_rels if r.type == "DERIVED_FROM"
-                }
+                derived_pairs = {(r.target_id, r.source_id) for r in entity_rels if r.type == "DERIVED_FROM"}
                 stats = write_vault_to_graph(
                     graph_store,
                     meta,
@@ -425,13 +442,18 @@ def run_compile(
                     errors=[f"{type(e).__name__}: {e}"],
                 )
 
+        if synthesize_pages:
+            done_message = f"Compile complete — {len(acquired)} new source(s), {len(pages)} concept page(s)"
+        else:
+            done_message = f"Compile complete — {len(acquired)} new source(s) indexed (corpus-only, no concept pages)"
         yield WikiPipelineEvent(
             kind=WikiEventKind.DONE,
             phase=WikiPhase.PERSISTING,
-            message=(f"Compile complete — {len(acquired)} new source(s), {len(pages)} concept page(s)"),
+            message=done_message,
             detail={
                 "pages": len(pages),
                 "new_sources": len(acquired),
+                "synthesize_pages": synthesize_pages,
             },
         )
 

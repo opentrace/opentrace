@@ -132,33 +132,147 @@ def link_corpus_doc_mirrors(
     Returns the number of MIRRORS edges written.
     """
     import hashlib
+    from collections import defaultdict
+
+    from opentrace_agent.wiki.ingest.sources import classify_doc_status
+
+    # Content-addressed identity means N paths with identical bytes collapse to
+    # ONE KnowledgeDoc. Stamping `path` per blob made the LAST writer win, so a
+    # node could end up carrying an archived path while its `status` came from
+    # the live one — the two disagreed, and a trace reader (me) mis-read which
+    # document the agent had opened. Group by sha first, then stamp once.
+    by_sha: dict[str, list[str]] = defaultdict(list)
+    for rel_path, data in named_blobs:
+        by_sha[hashlib.sha256(data).hexdigest()].append(rel_path)
 
     edges = 0
-    for rel_path, data in named_blobs:
-        sha = hashlib.sha256(data).hexdigest()
+    for sha, paths in by_sha.items():
         cid = corpus_doc_node_id(sha)
-        fid = f"{repo_id}/{rel_path}"
         corpus_node = store.get_node(cid)
         if corpus_node is None:
-            continue
-        if store.get_node(fid) is None:
-            _ensure_file_twin(store, repo_id, rel_path)
-        store.merge_relationship(
-            id=f"{cid}->MIRRORS->{fid}",
-            rel_type=REL_TYPE_MIRRORS,
-            source_id=cid,
-            target_id=fid,
+            continue  # content-gated out of the vault
+        for rel_path in paths:
+            fid = f"{repo_id}/{rel_path}"
+            if store.get_node(fid) is None:
+                _ensure_file_twin(store, repo_id, rel_path)
+            store.merge_relationship(
+                id=f"{cid}->MIRRORS->{fid}",
+                rel_type=REL_TYPE_MIRRORS,
+                source_id=cid,
+                target_id=fid,
+            )
+            edges += 1
+        # Primary path = the most *current* copy, so `path` and `status` agree.
+        # An archived duplicate must not make the live document look superseded.
+        ranked = sorted(
+            paths,
+            key=lambda p: (
+                classify_doc_status(p) != "authoritative",
+                classify_doc_status(p) == "design_history_archived",
+                len(p),
+            ),
         )
-        edges += 1
+        primary = ranked[0]
         props = dict(corpus_node.get("properties") or {})
-        if props.get("path") != rel_path:
-            props["path"] = rel_path
+        changed = False
+        if props.get("path") != primary:
+            props["path"] = primary
+            changed = True
+        status = classify_doc_status(primary)
+        if props.get("status") != status:
+            props["status"] = status
+            changed = True
+        # Record every path this content lives at, so "which file is this?" is
+        # answerable and a duplicate is visible rather than silently erased.
+        if len(paths) > 1 and props.get("paths") != sorted(paths):
+            props["paths"] = sorted(paths)
+            changed = True
+        if changed:
             store.add_node(
                 id=cid,
                 node_type=NODE_TYPE_KNOWLEDGE_DOC,
-                name=corpus_node.get("name") or rel_path,
+                name=corpus_node.get("name") or primary,
                 properties=props,
             )
+    return edges
+
+
+def link_doc_to_doc_links(
+    store: GraphStore,
+    named_blobs: list[tuple[str, bytes]],
+) -> int:
+    """Write ``KnowledgeDoc -LINKS_TO-> KnowledgeDoc`` for authors' own links.
+
+    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` — the same
+    list :func:`link_corpus_doc_mirrors` consumes, so every repo-walked doc
+    of this run is in scope. For each doc we parse its body's relative links
+    (see :func:`parse_doc_links`), resolve them against the linking doc's own
+    directory, and merge an edge when the target resolves to another
+    KnowledgeDoc in the same walk.
+
+    This is the doc-side counterpart of the code graph's import edges: it
+    records structure the *author* declared, never anything a model inferred.
+    Link resolution is the filter — a link to a code file or an image finds no
+    KnowledgeDoc and is silently skipped, so no extension allowlist is needed.
+
+    Bodies are read from the corpus (post-markitdown markdown, so an .html
+    doc's anchors are already markdown links); when the corpus body is
+    unavailable we fall back to decoding the raw bytes. Targets that escape
+    the repo root are dropped.
+
+    Returns the number of LINKS_TO edges written.
+    """
+    import hashlib
+    import posixpath
+
+    # Resolve every walked doc to its node, keeping a path→id index for
+    # lookup. Two paths with identical content share one sha (hence one
+    # node); both keys point at it.
+    by_path: dict[str, str] = {}
+    docs: list[tuple[str, str, dict[str, Any]]] = []
+    for rel_path, data in named_blobs:
+        sha = hashlib.sha256(data).hexdigest()
+        cid = corpus_doc_node_id(sha)
+        node = store.get_node(cid)
+        if node is None:
+            continue  # content-gated out of the vault
+        by_path[rel_path] = cid
+        docs.append((rel_path, cid, {"props": node.get("properties") or {}, "raw": data}))
+
+    edges = 0
+    seen_pairs: set[tuple[str, str]] = set()
+    for rel_path, cid, extra in docs:
+        body = _read_corpus_body(store, (extra["props"] or {}).get("corpus_path"))
+        if not body:
+            try:
+                body = extra["raw"].decode("utf-8", errors="ignore")
+            except (AttributeError, UnicodeError):
+                continue
+        if not body:
+            continue
+        base_dir = posixpath.dirname(rel_path)
+        for target in parse_doc_links(body):
+            if target.startswith("/"):
+                # Repo-root-relative (``/docs/guide.md``).
+                resolved = posixpath.normpath(target.lstrip("/"))
+            else:
+                resolved = posixpath.normpath(posixpath.join(base_dir, target))
+            if resolved.startswith(".."):
+                continue  # escapes the repo root
+            tgt = by_path.get(resolved)
+            if tgt is None or tgt == cid:
+                continue
+            pair = (cid, tgt)
+            if pair in seen_pairs:
+                continue  # two spellings of the same target
+            seen_pairs.add(pair)
+            store.merge_relationship(
+                id=f"{cid}->LINKS_TO->{tgt}",
+                rel_type=REL_TYPE_LINKS_TO,
+                source_id=cid,
+                target_id=tgt,
+            )
+            edges += 1
     return edges
 
 
@@ -261,6 +375,57 @@ def parse_wiki_links(body: str) -> list[str]:
     out: list[str] = []
     for m in _WIKI_LINK_RE.finditer(body):
         target = m.group(1).strip()
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        out.append(target)
+    return out
+
+
+# Inline markdown link: [text](target "optional title") — angle-bracket form
+# ``[t](<a b.md>)`` included. Image links (``![alt](x.png)``) match too; they
+# resolve to no KnowledgeDoc, so they fall out at lookup time.
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<([^>]+)>|\[[^\]]*\]\(\s*([^)\s]+)")
+# Reference-style definition: ``[label]: path/to/doc.md "title"``.
+_MD_REF_DEF_RE = re.compile(r"^[ \t]{0,3}\[[^\]^\]]+\]:[ \t]*<?([^\s>]+)>?", re.MULTILINE)
+# HTML anchor — covers a raw .html doc read before markitdown normalization.
+_HTML_HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+# Anything with a URI scheme (http:, mailto:, tel:) or protocol-relative //.
+_EXTERNAL_TARGET_RE = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.\-]*:|//)")
+
+
+def parse_doc_links(body: str) -> list[str]:
+    """Extract in-repo relative link targets an author wrote in a document.
+
+    Covers markdown inline links, reference-style definitions, and raw HTML
+    anchors. External targets (``http:``, ``mailto:``, protocol-relative
+    ``//``) and pure fragments (``#section``) are dropped; fragments and
+    query strings are stripped from the rest, and ``%20`` escapes are
+    decoded. Returns targets in document order, deduplicated.
+
+    These are the doc-side analogue of an ``import`` statement — the
+    author's own declaration that one document depends on another. Purely
+    mechanical: no LLM, no inference.
+    """
+    from urllib.parse import unquote
+
+    seen: set[str] = set()
+    out: list[str] = []
+    candidates: list[str] = []
+    for m in _MD_LINK_RE.finditer(body):
+        candidates.append(m.group(1) or m.group(2) or "")
+    candidates.extend(m.group(1) for m in _MD_REF_DEF_RE.finditer(body))
+    candidates.extend(m.group(1) for m in _HTML_HREF_RE.finditer(body))
+
+    for raw in candidates:
+        target = (raw or "").strip()
+        if not target or target.startswith("#"):
+            continue
+        if _EXTERNAL_TARGET_RE.match(target):
+            continue
+        # Drop fragment + query — ``guide.md#setup`` is a link to guide.md.
+        target = target.split("#", 1)[0].split("?", 1)[0]
+        target = unquote(target).strip()
         if not target or target in seen:
             continue
         seen.add(target)
@@ -497,7 +662,16 @@ def write_vault_to_graph(
         # this run have no AcquiredSource/NormalizedSource, so carry their
         # previously-written values forward instead of wiping them.
         existing_src_props = (store.get_node(sid) or {}).get("properties") or {}
-        for k in ("size_bytes", "content_type", "corpus_path", "title", "one_line_summary", "summary", "path", "status"):
+        for k in (
+            "size_bytes",
+            "content_type",
+            "corpus_path",
+            "title",
+            "one_line_summary",
+            "summary",
+            "path",
+            "status",
+        ):
             if k not in props and k in existing_src_props:
                 props[k] = existing_src_props[k]
         store.add_node(

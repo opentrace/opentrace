@@ -159,6 +159,13 @@ Hard rules:
 - one_line_summary describes the DOCUMENT in one sentence (e.g. "RFP response
   from Midwest Beef Co outlining proposed pricing and delivery terms") — what a
   reader scanning a list would need to decide whether to open it.
+- Describe what the document IS ABOUT; never restate what it CLAIMS as if the
+  claim were fact. The label is a signpost to the document, not a substitute
+  for reading it, and a document can be out of date or merely proposed.
+  Write "Proposal for a token-bucket rate limiter on the public API", NOT
+  "The public API rate-limits at 100 requests per second". Reach for
+  describes / proposes / specifies / records rather than asserting the
+  content in your own voice.
 - Do not introduce facts that aren't in the source — no outside knowledge.
 - Do not distort numbers or proper nouns.
 

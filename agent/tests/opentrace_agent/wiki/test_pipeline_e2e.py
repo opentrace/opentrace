@@ -90,7 +90,11 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
     db_path = str(tmp_path / "graph.db")
     graph_store = GraphStore(db_path)
     try:
-        events = list(run_compile("testvault", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store))
+        events = list(
+            run_compile(
+                "testvault", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store, synthesize_pages=True
+            )
+        )
 
         assert (tmp_path / "testvault" / "pages" / "concept" / "ducks.md").exists()
 
@@ -122,7 +126,7 @@ def test_first_compile_creates_pages(tmp_path, fake_llm):
         ]
     )
 
-    events = list(run_compile("testvault", [src], vault_root=tmp_path, llm=llm))
+    events = list(run_compile("testvault", [src], vault_root=tmp_path, llm=llm, synthesize_pages=True))
 
     kinds = [(e.phase, e.kind) for e in events]
     assert (WikiPhase.ACQUIRING, WikiEventKind.STAGE_START) in kinds
@@ -176,7 +180,7 @@ def test_extend_path_updates_existing_page(tmp_path, fake_llm):
             _page("Ducks", "Ducks are waterfowl."),
         ]
     )
-    list(run_compile("v", [src1], vault_root=tmp_path, llm=create))
+    list(run_compile("v", [src1], vault_root=tmp_path, llm=create, synthesize_pages=True))
 
     # Second source about the same concept → Resolve emits "Ducks" again; it
     # already has a page → EXTEND (the existing-concept match ignores the floor).
@@ -187,7 +191,7 @@ def test_extend_path_updates_existing_page(tmp_path, fake_llm):
             _page("Ducks", "Ducks are waterfowl. Mallards are common."),
         ]
     )
-    list(run_compile("v", [src2], vault_root=tmp_path, llm=extend))
+    list(run_compile("v", [src2], vault_root=tmp_path, llm=extend, synthesize_pages=True))
 
     page = (tmp_path / "v" / "pages" / "concept" / "ducks.md").read_text()
     assert "Mallards" in page
@@ -221,7 +225,7 @@ def test_execute_sees_sibling_creates_as_neighbours(tmp_path, fake_llm):
         ]
     )
 
-    list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    list(run_compile("v", [src], vault_root=tmp_path, llm=llm, synthesize_pages=True))
 
     # Calls: #0 extraction, #1 resolve, #2 Foo create, #3 Bar create.
     assert len(llm.calls) == 4
@@ -266,7 +270,7 @@ def test_concept_synthesis_reads_raw_body(tmp_path, fake_llm):
             _page("Ducks"),
         ]
     )
-    list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    list(run_compile("v", [src], vault_root=tmp_path, llm=llm, synthesize_pages=True))
 
     concept_tool, concept_user = llm.calls[-1]
     assert concept_tool == "emit_page"
@@ -289,7 +293,7 @@ def test_cross_document_concept_merges_sources(tmp_path, fake_llm, monkeypatch):
             _page("Validation"),
         ]
     )
-    list(run_compile("v", [src1, src2], vault_root=tmp_path, llm=llm))
+    list(run_compile("v", [src1, src2], vault_root=tmp_path, llm=llm, synthesize_pages=True))
 
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
     concepts = {s for s, p in meta.pages.items() if p.kind == "concept"}
@@ -430,7 +434,7 @@ def test_ungrounded_numeric_claim_stripped_before_persist(tmp_path, fake_llm):
             _page("Ducks", "Ducks are waterfowl.\nDucks fly 17x faster than geese."),
         ]
     )
-    events = list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    events = list(run_compile("v", [src], vault_root=tmp_path, llm=llm, synthesize_pages=True))
     page = (tmp_path / "v" / "pages" / "concept" / "ducks.md").read_text()
     assert "17x" not in page
     assert "waterfowl" in page
@@ -446,5 +450,63 @@ def test_grounded_numeric_claim_survives(tmp_path, fake_llm):
             _page("Perf", "The core is 17x faster."),
         ]
     )
-    list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+    list(run_compile("v", [src], vault_root=tmp_path, llm=llm, synthesize_pages=True))
     assert "17x" in (tmp_path / "v" / "pages" / "concept" / "perf.md").read_text()
+
+
+def test_corpus_only_is_the_default(tmp_path, fake_llm):
+    """Without ``synthesize_pages`` the compile indexes the corpus and stops.
+
+    The FakeLLM is scripted with ONLY the per-doc extraction call, so any
+    resolve/synthesis call would exhaust it and fail — proving the synthesis
+    half never runs (and costs nothing).
+    """
+    src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl.")
+    llm = fake_llm([_extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}])])
+
+    events = list(run_compile("v", [src], vault_root=tmp_path, llm=llm))
+
+    # No pages on disk, none in metadata.
+    assert not (tmp_path / "v" / "pages" / "concept").exists()
+    meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
+    assert meta.pages == {}
+
+    # The document itself IS indexed, with its navigation label.
+    sha = _sha(src.data)
+    assert sha in meta.sources
+    assert meta.sources[sha].one_line_summary == "Summary of Ducks."
+
+    done = events[-1]
+    assert done.kind == WikiEventKind.DONE
+    assert done.detail["synthesize_pages"] is False
+    assert "corpus-only" in done.message
+    # Planning never started.
+    assert WikiPhase.PLANNING not in {e.phase for e in events}
+
+
+def test_corpus_only_mirror_writes_docs_but_no_concepts(tmp_path, fake_llm):
+    """The graph mirror of a corpus-only compile has KnowledgeDocs, no KnowledgeConcepts."""
+    pytest.importorskip("real_ladybug")
+    from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki.ingest.graph_writer import (
+        NODE_TYPE_KNOWLEDGE_CONCEPT,
+        corpus_doc_node_id,
+    )
+
+    src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl.", status="design_history")
+    llm = fake_llm([_extraction("Ducks", concepts=[{"topic": "ducks", "subject": "fauna", "gloss": "waterfowl"}])])
+
+    graph_store = GraphStore(str(tmp_path / "graph.db"))
+    try:
+        list(run_compile("v", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store))
+
+        assert graph_store.list_nodes(NODE_TYPE_KNOWLEDGE_CONCEPT) == []
+
+        doc = graph_store.get_node(corpus_doc_node_id(_sha(src.data)))
+        assert doc is not None
+        # Label + epistemic status are what make it findable and honest.
+        assert doc["properties"]["title"] == "Ducks"
+        assert doc["properties"]["summary"] == "Summary of Ducks."
+        assert doc["properties"]["status"] == "design_history"
+    finally:
+        graph_store.close()

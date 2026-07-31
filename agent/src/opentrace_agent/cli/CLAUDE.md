@@ -9,8 +9,12 @@ main.py          — Click root group + the unified index command:
                    • code-only walk (plain `index`; no LLM calls)
                    • --wiki [VAULT_NAME] [--global] — unified doc ingestion:
                      ONE LLM call/doc → KnowledgeDoc label + entities
-                     (Idea/Service/… + edges) + concept inventory, then
-                     cross-document concept-page synthesis
+                     (Idea/Service/… + edges) + concept inventory; docs are
+                     linked to File twins (MIRRORS) and to each other by the
+                     authors' own relative links (LINKS_TO), and bodies stay
+                     verbatim in the corpus. Corpus-only — no synthesis
+                   • --wiki-concept-pages — additionally synthesise
+                     cross-document concept pages (opt-in; see wiki/CLAUDE.md)
                    • --no-prune / --refresh-stale-pages for cleanup behaviour
 vault_cmd.py     — vault list / show / attach / detach / promote / demote / refresh-stale-pages
 analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
@@ -58,7 +62,7 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 
 - `GET /api/vaults?view=project|global` — project view returns local vaults + globals attached to this project; global view lists every global with an `attached` flag.
 - `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` — optional `?scope=local|global` to disambiguate; legacy flat disk layouts are migrated on read.
-- `POST /api/vaults/{vault}/compile` — multipart upload; accepts a `scope` form field (default `local`) and an `on_conflict` form field (`append` default = compile into the named vault in place; `suffix` = new-vault compile, auto-renames `flask` → `flask-1` if the name is taken in either scope). The stream reports the resolved `vault_name` in each event. Globals are written disk-only — no graph mirror. Runs the (blocking) pipeline in a threadpool via a sync-generator body, so concurrent reads (e.g. `GET /api/vaults`) stay responsive; graph writes are serialized against reads with the store lock.
+- `POST /api/vaults/{vault}/compile` — multipart upload. Corpus-only: the route doesn't pass `synthesize_pages`, so REST/UI compiles index documents without generating concept pages (same default as `index --wiki`). Accepts a `scope` form field (default `local`) and an `on_conflict` form field (`append` default = compile into the named vault in place; `suffix` = new-vault compile, auto-renames `flask` → `flask-1` if the name is taken in either scope). The stream reports the resolved `vault_name` in each event. Globals are written disk-only — no graph mirror. Runs the (blocking) pipeline in a threadpool via a sync-generator body, so concurrent reads (e.g. `GET /api/vaults`) stay responsive; graph writes are serialized against reads with the store lock.
 - `POST /api/vaults/{vault}/attach` / `POST /api/vaults/{vault}/detach` — mirror a global vault into this project's graph (and copy its corpus into `<project>/.opentrace/corpus/`) / remove the mirror.
 - `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `KnowledgeVault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.
 - `DELETE /api/vaults/{vault}?scope=...` — delete from disk (and graph) for the given scope.

@@ -380,6 +380,7 @@ def _run_indexing_pipeline(
     no_prune: bool = False,
     refresh_stale_pages: bool = False,
     exclude_design_history: bool = False,
+    synthesize_pages: bool = False,
     on_event: "Callable[[object], None] | None" = None,
 ) -> float:
     """Run the four-stage pipeline with atomic-write staging.
@@ -444,10 +445,10 @@ def _run_indexing_pipeline(
                 # --- Phase 3: unified doc ingestion when --wiki is set ---
                 # The code pipeline above is code-only now. The wiki doc pass
                 # reads the doc files into SourceInputs and, in ONE LLM call per
-                # doc, produces the Source labels, the knowledge-graph
-                # entities/edges, and the concept inventory (synthesised into
-                # concept Pages) — all into the same staging DB; the
-                # atomic swap covers them together.
+                # doc, produces the KnowledgeDoc labels, the knowledge-graph
+                # entities/edges, and the concept inventory — all into the same
+                # staging DB; the atomic swap covers them together. Concept-page
+                # synthesis only runs under --wiki-concept-pages.
                 if wiki:
                     _run_wiki_compile_against_index(
                         graph_store=graph_store,
@@ -456,6 +457,7 @@ def _run_indexing_pipeline(
                         vault_scope=vault_scope,
                         repo_id=repo_id,
                         exclude_design_history=exclude_design_history,
+                        synthesize_pages=synthesize_pages,
                         verbose=verbose,
                     )
 
@@ -526,14 +528,31 @@ def _run_indexing_pipeline(
     is_flag=True,
     help=(
         "Ingest doc files (PDF/DOCX/MD/HTML/...) alongside code: ONE LLM call "
-        "per doc produces the Source's navigation label, the knowledge-graph "
-        "entities (Idea / Service / Module / Paper / Person / Event + "
-        "relationships), and the concept inventory, then synthesises "
-        "cross-document concept pages under ~/.opentrace/vaults/<vault>/. The "
-        "vault name defaults to the path basename; pass it as a second "
-        "positional to override (e.g. ``index ./papers research``). Requires a "
-        "configured LLM key — fails fast if missing. Plain ``index`` (no "
-        "--wiki) stays code-only."
+        "per doc produces the KnowledgeDoc's navigation label and the "
+        "knowledge-graph entities (Idea / Service / Module / Paper / Person / "
+        "Event + relationships); docs are linked to their File twins "
+        "(MIRRORS), to each other by the authors' own relative links "
+        "(LINKS_TO), and stamped with an epistemic status (authoritative vs "
+        "design_history). Doc bodies are kept verbatim in the corpus and read "
+        "back via ``load_source`` — nothing is rewritten. The vault name "
+        "defaults to the path basename; pass it as a second positional to "
+        "override (e.g. ``index ./papers research``). Requires a configured "
+        "LLM key — fails fast if missing. Plain ``index`` (no --wiki) stays "
+        "code-only."
+    ),
+)
+@click.option(
+    "--wiki-concept-pages",
+    "synthesize_pages",
+    is_flag=True,
+    help=(
+        "Also synthesise cross-document concept pages into the vault "
+        "(KnowledgeConcept nodes + pages/concept/*.md). Off by default: a "
+        "compiled page restates its sources in the model's own voice, which "
+        "can drop their hedges, tense, and attribution — risk the verbatim "
+        "corpus doesn't carry — and concept pages have not yet been shown to "
+        "beat reading the labelled documents directly. Costs ~1 resolve call "
+        "plus ~0.5 synthesis calls per doc. Only meaningful with --wiki."
     ),
 )
 @click.option(
@@ -593,6 +612,7 @@ def index(
     no_prune: bool,
     refresh_stale_pages: bool,
     exclude_design_history: bool,
+    synthesize_pages: bool,
     verbose: bool,
 ) -> None:
     """Index a local codebase into a LadybugDB knowledge graph."""
@@ -605,6 +625,8 @@ def index(
         raise click.ClickException("--refresh-stale-pages requires --wiki (or a vault name).")
     if exclude_design_history and not wiki:
         raise click.ClickException("--wiki-exclude-design-history requires --wiki (or a vault name).")
+    if synthesize_pages and not wiki:
+        raise click.ClickException("--wiki-concept-pages requires --wiki (or a vault name).")
 
     # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
     # before opening the staging DB / acquiring locks, rather than mid-pipeline.
@@ -633,6 +655,7 @@ def index(
             verbose=verbose,
             vault_name=resolved_vault,
             vault_scope="global" if global_scope else "local",
+            synthesize_pages=synthesize_pages,
         )
         click.echo(f"Done in {elapsed:.1f}s.")
         return
@@ -659,6 +682,7 @@ def index(
         no_prune=no_prune,
         refresh_stale_pages=refresh_stale_pages,
         exclude_design_history=exclude_design_history,
+        synthesize_pages=synthesize_pages,
     )
 
     click.echo(f"Done in {elapsed:.1f}s.")
@@ -858,9 +882,10 @@ def _run_wiki_compile_against_index(
     vault_scope: str = "local",
     repo_id: str | None = None,
     exclude_design_history: bool = False,
+    synthesize_pages: bool = False,
     verbose: bool,
 ) -> None:
-    """Run the wiki Plan+Execute pipeline against doc files under *source_path*.
+    """Run the wiki doc-ingestion pipeline against doc files under *source_path*.
 
     Reuses the DirectoryWalker's DOC_EXTENSIONS classification to discover
     the same files the entity-extraction stage saw, builds them into
@@ -875,7 +900,12 @@ def _run_wiki_compile_against_index(
     When *repo_id* is set (directory index), every ingested doc gets a
     ``KnowledgeDoc -MIRRORS-> File`` edge plus a ``path`` stamp, bridging the
     corpus layer and the code tree. Docs whose extension the code walk skips
-    (.rst/.txt/.html/PDFs) get their File node created at link time.
+    (.rst/.txt/.html/PDFs) get their File node created at link time. The
+    authors' own relative links between docs become ``LINKS_TO`` edges in the
+    same pass.
+
+    *synthesize_pages* additionally compiles cross-document concept pages
+    (off by default — see ``run_compile``).
     """
     from opentrace_agent.cli.vault_cmd import _autodetect_provider
     from opentrace_agent.wiki import run_compile
@@ -898,9 +928,7 @@ def _run_wiki_compile_against_index(
     # previous run (so a re-index updates it in place — even if its name was
     # auto-suffixed to dodge a collision), otherwise mint a name that doesn't
     # clash with any existing vault in either scope.
-    vault_name = _resolve_index_vault_name(
-        vault_name, scope=vault_scope, project_root=project_root, repo_id=repo_id
-    )
+    vault_name = _resolve_index_vault_name(vault_name, scope=vault_scope, project_root=project_root, repo_id=repo_id)
 
     scope_label = "global" if vault_scope == "global" else "local"
     click.echo(f"  --wiki: ingesting {len(inputs)} doc(s) into {scope_label} vault {vault_name!r} ...")
@@ -908,14 +936,16 @@ def _run_wiki_compile_against_index(
     provider = _autodetect_provider()
 
     # Pre-flight cost estimate. The unified doc pass is ONE call per source
-    # (summary + entities + concept inventory), plus 1 resolve call and a share
-    # of concept-page synthesis (~0.5 per source). Token assumption: 4k input /
-    # 1k output per LLM call.
+    # (summary + entities + concept inventory). With --wiki-concept-pages it
+    # also pays 1 resolve call and a share of page synthesis (~0.5 per
+    # source). Token assumption: 4k input / 1k output per LLM call.
     from opentrace_agent.sources._llm_common import BACKENDS
 
     cfg = BACKENDS.get(provider)
     if cfg is not None:
-        est_calls = len(inputs) + 1 + max(1, len(inputs) // 2)
+        est_calls = len(inputs)
+        if synthesize_pages:
+            est_calls += 1 + max(1, len(inputs) // 2)
         est_input_tokens = est_calls * 4_000
         est_output_tokens = est_calls * 1_000
         est_cost = (
@@ -943,6 +973,7 @@ def _run_wiki_compile_against_index(
         scope=vault_scope,
         project_root=project_root,
         graph_store=mirror_target,
+        synthesize_pages=synthesize_pages,
     ):
         # Stage boundaries + completion + errors always print so users can see
         # the wiki phase progressing. Per-unit progress prints for the slow
@@ -966,17 +997,23 @@ def _run_wiki_compile_against_index(
     if repo_id is not None and mirror_target is not None:
         from opentrace_agent.wiki.ingest.graph_writer import (
             link_corpus_doc_mirrors,
+            link_doc_to_doc_links,
             link_vault_to_repo,
         )
 
+        named_blobs = [(inp.name, inp.data) for inp in inputs]
+
         # Every ingested doc gets a MIRRORS edge to its File twin + path stamp.
-        linked = link_corpus_doc_mirrors(
-            mirror_target,
-            repo_id,
-            [(inp.name, inp.data) for inp in inputs],
-        )
+        linked = link_corpus_doc_mirrors(mirror_target, repo_id, named_blobs)
         if linked:
             click.echo(f"    wiki: linked {linked} doc(s) to their File nodes (MIRRORS)")
+
+        # The authors' own cross-references between docs — markdown relative
+        # links parsed mechanically into KnowledgeDoc -LINKS_TO-> KnowledgeDoc,
+        # the doc-side analogue of the code graph's import edges.
+        doc_links = link_doc_to_doc_links(mirror_target, named_blobs)
+        if doc_links:
+            click.echo(f"    wiki: linked {doc_links} doc-to-doc reference(s) (LINKS_TO)")
 
         # The vault itself spawned from this repo — record that as a
         # Repository -DOCUMENTS-> Vault edge + spawned_from stamp.
@@ -1072,6 +1109,7 @@ def _run_single_source_pipeline(
     verbose: bool,
     vault_name: str,
     vault_scope: str = "local",
+    synthesize_pages: bool = False,
 ) -> float:
     """Index a single URL or local file as one SourceInput.
 
@@ -1127,10 +1165,11 @@ def _run_single_source_pipeline(
             with GraphStore(staging_db) as graph_store:
                 t0 = time.monotonic()
 
-                # One unified per-doc pass: summary + entities + concept
-                # inventory, then (for ≥2-source concepts) synthesis. A lone
-                # source produces a summary page + entities; the wiki owns
-                # Source + entity-node creation.
+                # One unified per-doc pass: label + entities + concept
+                # inventory. The doc body itself is kept verbatim in the
+                # corpus; concept-page synthesis is opt-in
+                # (--wiki-concept-pages) and needs ≥2 sources anyway, so a
+                # lone doc yields a labelled KnowledgeDoc + its entities.
                 project_root = Path(staging_db).parent.parent
                 inputs = [SourceInput(name=display_name, data=raw_bytes)]
                 click.echo(f"  --wiki: ingesting 1 doc into {vault_scope} vault {vault_name!r} ...")
@@ -1140,7 +1179,7 @@ def _run_single_source_pipeline(
 
                 cfg = BACKENDS.get(provider)
                 if cfg is not None:
-                    est_calls = 1 + 1  # 1 unified doc call + ~1 synthesis
+                    est_calls = 2 if synthesize_pages else 1  # unified doc call (+ ~1 synthesis)
                     est_cost = (
                         est_calls * 4_000 / 1_000_000 * cfg.pricing_input_per_million
                         + est_calls * 1_000 / 1_000_000 * cfg.pricing_output_per_million
@@ -1156,6 +1195,7 @@ def _run_single_source_pipeline(
                     scope=vault_scope,
                     project_root=project_root,
                     graph_store=graph_store,
+                    synthesize_pages=synthesize_pages,
                 ):
                     if event.kind in (
                         WikiEventKind.STAGE_START,

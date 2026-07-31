@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from opentrace_agent.wiki.ingest.graph_writer import parse_wiki_links
+from opentrace_agent.wiki.ingest.graph_writer import parse_doc_links, parse_wiki_links
 
 # ---------------------------------------------------------------------------
 # Pure parser tests (no DB required)
@@ -61,6 +61,39 @@ class TestParseWikiLinks:
         assert parse_wiki_links("[[]]") == []
 
 
+class TestParseDocLinks:
+    """The authors' own relative links — the doc-side analogue of imports."""
+
+    def test_inline_markdown_links(self):
+        body = "See [the guide](./guide.md) and [the spec](../specs/api.md)."
+        assert parse_doc_links(body) == ["./guide.md", "../specs/api.md"]
+
+    def test_strips_fragment_and_query(self):
+        body = "[setup](guide.md#setup) and [again](guide.md?raw=1)"
+        assert parse_doc_links(body) == ["guide.md"]
+
+    def test_skips_external_and_anchor_only(self):
+        body = "[web](https://example.com/x.md) [mail](mailto:a@b.c) [top](#intro) [proto](//cdn/x.md)"
+        assert parse_doc_links(body) == []
+
+    def test_reference_style_definition(self):
+        body = 'Read [the guide][g].\n\n[g]: docs/guide.md "The Guide"\n'
+        assert parse_doc_links(body) == ["docs/guide.md"]
+
+    def test_html_anchor(self):
+        assert parse_doc_links('<a href="notes/design.html">design</a>') == ["notes/design.html"]
+
+    def test_angle_bracket_and_percent_escape(self):
+        assert parse_doc_links("[x](<my doc.md>)") == ["my doc.md"]
+        assert parse_doc_links("[x](my%20doc.md)") == ["my doc.md"]
+
+    def test_title_attribute_not_captured(self):
+        assert parse_doc_links('[x](guide.md "A Title")') == ["guide.md"]
+
+    def test_no_links(self):
+        assert parse_doc_links("plain prose, no links at all") == []
+
+
 # ---------------------------------------------------------------------------
 # Integrated graph-write tests (require real_ladybug)
 # ---------------------------------------------------------------------------
@@ -81,6 +114,7 @@ from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
     corpus_doc_node_id,
     delete_vault_from_graph,
     link_corpus_doc_mirrors,
+    link_doc_to_doc_links,
     link_vault_to_repo,
     page_node_id,
     vault_node_id,
@@ -549,3 +583,142 @@ class TestLinkVaultToRepo:
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)  # plain re-mirror
         assert store.get_node(vault_node_id("kb"))["properties"]["spawned_from"] == "myrepo"
+
+
+class TestLinkDocToDocLinks:
+    """``KnowledgeDoc -LINKS_TO-> KnowledgeDoc`` from authors' own references."""
+
+    @staticmethod
+    def _seed(store, files: dict[str, bytes]) -> dict[str, str]:
+        """Create a KnowledgeDoc node per file. Returns {rel_path: sha}."""
+        import hashlib
+
+        shas = {}
+        for rel_path, data in files.items():
+            sha = hashlib.sha256(data).hexdigest()
+            shas[rel_path] = sha
+            store.add_node(
+                corpus_doc_node_id(sha),
+                NODE_TYPE_KNOWLEDGE_DOC,
+                rel_path.rsplit("/", 1)[-1],
+                {"sha256": sha},
+            )
+        return shas
+
+    def _targets(self, store, sha):
+        out = store.traverse(
+            corpus_doc_node_id(sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_LINKS_TO
+        )
+        return sorted(r["node"]["id"] for r in out)
+
+    def test_relative_link_resolved_against_linking_doc_dir(self, store):
+        files = {
+            "docs/index.md": b"Start at [the guide](guide.md), then [the API](../api/spec.md).",
+            "docs/guide.md": b"# Guide",
+            "api/spec.md": b"# Spec",
+        }
+        shas = self._seed(store, files)
+        assert link_doc_to_doc_links(store, list(files.items())) == 2
+        assert self._targets(store, shas["docs/index.md"]) == sorted(
+            [corpus_doc_node_id(shas["docs/guide.md"]), corpus_doc_node_id(shas["api/spec.md"])]
+        )
+
+    def test_repo_root_relative_link(self, store):
+        files = {"docs/index.md": b"See [spec](/api/spec.md).", "api/spec.md": b"# Spec"}
+        shas = self._seed(store, files)
+        assert link_doc_to_doc_links(store, list(files.items())) == 1
+        assert self._targets(store, shas["docs/index.md"]) == [corpus_doc_node_id(shas["api/spec.md"])]
+
+    def test_link_to_non_doc_is_skipped(self, store):
+        """Resolution is the filter — a link to code or an image finds no KnowledgeDoc."""
+        files = {
+            "docs/index.md": b"See [the code](../src/app.py) and ![shot](img/x.png).",
+            "docs/guide.md": b"# Guide",
+        }
+        self._seed(store, files)
+        assert link_doc_to_doc_links(store, list(files.items())) == 0
+
+    def test_external_links_ignored(self, store):
+        files = {"README.md": b"[site](https://example.com) [mail](mailto:x@y.z)", "docs/guide.md": b"# Guide"}
+        self._seed(store, files)
+        assert link_doc_to_doc_links(store, list(files.items())) == 0
+
+    def test_self_link_and_duplicate_spellings_deduped(self, store):
+        files = {
+            "docs/index.md": b"[self](index.md) [a](guide.md) [b](./guide.md) [c](guide.md#top)",
+            "docs/guide.md": b"# Guide",
+        }
+        shas = self._seed(store, files)
+        # One edge only: self-link dropped, three spellings of guide.md collapse.
+        assert link_doc_to_doc_links(store, list(files.items())) == 1
+        assert self._targets(store, shas["docs/index.md"]) == [corpus_doc_node_id(shas["docs/guide.md"])]
+
+    def test_escaping_repo_root_dropped(self, store):
+        files = {"docs/index.md": b"[outside](../../secrets.md)", "docs/guide.md": b"# Guide"}
+        self._seed(store, files)
+        assert link_doc_to_doc_links(store, list(files.items())) == 0
+
+    def test_content_gated_doc_skipped(self, store):
+        """A blob with no KnowledgeDoc node (dropped by the content gate) is not a target."""
+        files = {"docs/index.md": b"[empty](empty.md)", "docs/empty.md": b""}
+        self._seed(store, {"docs/index.md": files["docs/index.md"]})  # only index gets a node
+        assert link_doc_to_doc_links(store, list(files.items())) == 0
+
+    def test_idempotent(self, store):
+        files = {"docs/index.md": b"[g](guide.md)", "docs/guide.md": b"# Guide"}
+        shas = self._seed(store, files)
+        link_doc_to_doc_links(store, list(files.items()))
+        link_doc_to_doc_links(store, list(files.items()))
+        assert len(self._targets(store, shas["docs/index.md"])) == 1
+
+
+class TestDuplicateContentStamping:
+    """Byte-identical files share ONE KnowledgeDoc (content-addressed id).
+
+    Stamping `path` per blob let the LAST writer win, so a node could carry an
+    archived path while its `status` came from the live one — the two
+    disagreed, and that made a transcript unreadable: it looked like an agent
+    had opened a superseded spec when the graph simply had one node for both.
+    """
+
+    def _seed(self, store, body: bytes):
+        import hashlib
+
+        sha = hashlib.sha256(body).hexdigest()
+        store.add_node(corpus_doc_node_id(sha), NODE_TYPE_KNOWLEDGE_DOC, "spec.md", {"sha256": sha})
+        return sha
+
+    def test_live_copy_wins_and_status_agrees(self, store):
+        body = b"# Spec\nidentical in both copies\n"
+        sha = self._seed(store, body)
+        link_corpus_doc_mirrors(
+            store,
+            "repo",
+            [("openspec/changes/archive/2026-04-27-audit/spec.md", body), ("openspec/changes/audit/spec.md", body)],
+        )
+        p = store.get_node(corpus_doc_node_id(sha))["properties"]
+        assert p["path"] == "openspec/changes/audit/spec.md", "archived duplicate must not win"
+        assert p["status"] == "design_history", "status must describe the path it is stamped with"
+
+    def test_every_path_is_recorded(self, store):
+        body = b"# Spec\nidentical\n"
+        sha = self._seed(store, body)
+        link_corpus_doc_mirrors(store, "repo", [("a/spec.md", body), ("b/spec.md", body)])
+        assert store.get_node(corpus_doc_node_id(sha))["properties"]["paths"] == ["a/spec.md", "b/spec.md"]
+
+    def test_one_mirrors_edge_per_path(self, store):
+        body = b"# Spec\nidentical\n"
+        sha = self._seed(store, body)
+        n = link_corpus_doc_mirrors(store, "repo", [("a/spec.md", body), ("b/spec.md", body)])
+        assert n == 2
+        out = store.traverse(
+            corpus_doc_node_id(sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_MIRRORS
+        )
+        assert {r["node"]["id"] for r in out} == {"repo/a/spec.md", "repo/b/spec.md"}
+
+    def test_unique_content_keeps_its_single_path_and_no_paths_key(self, store):
+        body = b"# Unique\n"
+        sha = self._seed(store, body)
+        link_corpus_doc_mirrors(store, "repo", [("docs/guide.md", body)])
+        p = store.get_node(corpus_doc_node_id(sha))["properties"]
+        assert p["path"] == "docs/guide.md" and "paths" not in p
