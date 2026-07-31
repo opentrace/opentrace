@@ -71,6 +71,7 @@ from opentrace_agent.store import GraphStore
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4000
+NODE_TYPE_KNOWLEDGE_DOC_NAME = "KnowledgeDoc"
 
 
 def _truncate(text: str, limit: int = MAX_RESULT_CHARS) -> str:
@@ -80,7 +81,102 @@ def _truncate(text: str, limit: int = MAX_RESULT_CHARS) -> str:
 
 
 def _json_response(data: Any) -> str:
-    return _truncate(json.dumps(data, default=str))
+    """Serialize a tool result, keeping it parseable when it must be shortened.
+
+    An oversized list is shortened by dropping whole ITEMS into the shared
+    ``{items, returned, offset, hasMore, hint}`` window (see
+    :func:`_json_list_window`), so the agent gets valid JSON plus an explicit
+    signal that its view is partial. String-slicing a JSON document — the old
+    behaviour, still the fallback for non-list payloads — cuts mid-token: 25
+    KnowledgeDocs serialized to 21,586 chars, got sliced at 4,000, and the
+    agent received a ``JSONDecodeError`` instead of a partial answer."""
+    text = json.dumps(data, default=str)
+    if len(text) <= MAX_RESULT_CHARS:
+        return text
+    if isinstance(data, list):
+        return _json_list_window(data, offset=0, more=False, budget=MAX_RESULT_CHARS)
+    if isinstance(data, dict):
+        shrunk = _shrink_dominant_list(data, MAX_RESULT_CHARS)
+        if shrunk is not None:
+            return shrunk
+    return json.dumps(
+        {
+            "truncated": True,
+            "totalChars": len(text),
+            "hint": (
+                "payload too large to return whole; narrow the request (lower limit, add filters, or use a lineRange)"
+            ),
+            "head": text[: max(0, MAX_RESULT_CHARS - 400)],
+        }
+    )
+
+
+def _shrink_dominant_list(data: dict[str, Any], budget: int) -> str | None:
+    """Shrink a dict payload by dropping entries from its largest list field.
+
+    Returns the serialized JSON, or ``None`` when the dict holds no list worth
+    shedding (caller then falls back to the string-head envelope).
+
+    This is the fix for the most common corruption in practice: ``search_graph``
+    returns ``{hits, count, query}`` and ``get_node`` returns ``{node,
+    neighbours}`` — both dicts, so both previously fell through to
+    string-slicing. Measured on one 15-question benchmark run, **39% of
+    search_graph results and 78% of get_node results reached the agent as
+    unparseable JSON**, which is what drove it to re-issue the same query in
+    slightly different words over and over."""
+    list_keys = [k for k, v in data.items() if isinstance(v, list) and v]
+    if not list_keys:
+        return None
+    key = max(list_keys, key=lambda k: len(json.dumps(data[k], default=str)))
+    items = data[key]
+    kept = list(items)
+    while kept:
+        kept.pop()
+        payload = {**data, key: kept}
+        dropped = len(items) - len(kept)
+        payload["returned"] = len(kept)
+        payload["total"] = len(items)
+        payload["hasMore"] = True
+        payload["hint"] = (
+            f"{dropped} of {len(items)} {key} omitted to fit the response cap — narrow the request to see the rest"
+        )
+        if isinstance(data.get("count"), int):
+            payload["count"] = len(kept)
+        text = json.dumps(payload, default=str)
+        if len(text) <= budget:
+            return text
+    return None
+
+
+def _population_note(store: GraphStore, node_type: str, edge_type: str) -> dict[str, Any]:
+    """Describe the set an existence/absence answer was computed over.
+
+    Absence claims are only as good as their population. This makes the
+    boundary explicit at the point of use rather than leaving the caller to
+    assume the graph covers everything on disk.
+    """
+    try:
+        population = len(store.list_nodes(node_type=node_type, limit=100_000))
+    except Exception:
+        population = None
+    note: dict[str, Any] = {
+        "nodeType": node_type,
+        "edgeType": edge_type,
+        "population": population,
+        "meaning": (
+            f"computed over the {population if population is not None else '?'} {node_type} "
+            "node(s) in this graph, not over the filesystem"
+        ),
+    }
+    if node_type == NODE_TYPE_KNOWLEDGE_DOC_NAME:
+        note["caveat"] = (
+            "KnowledgeDocs cover only files the doc pass ingested — other extensions and "
+            "empty/low-content files are absent, and byte-identical files share ONE node "
+            "(see its `paths`). A document can therefore look unlinked because the "
+            "document that links to it is not in the graph. Confirm an absence claim "
+            "against the files with grep before asserting it."
+        )
+    return note
 
 
 def _error_response(tool_name: str, e: Exception) -> str:
@@ -118,7 +214,15 @@ NO_INDEX_MSG = json.dumps(
 # ``_json_response`` applies to structured results. We still bound them so a
 # pathological multi-MB file can't blow the response budget; an agent that
 # needs more should request a narrower line range.
-MAX_SOURCE_BODY_CHARS = 200_000
+# ONE cap for every body read, whichever node type you came in through.
+# These were 200_000 (File → disk) and 40_000 (KnowledgeDoc → corpus), so the
+# same 90 KB document returned 2.26x more text via its File twin than via its
+# KnowledgeDoc. That asymmetry is invisible to the caller and it decided a
+# benchmark question: reading DOCS.md whole, one arm saw the two /conflicts
+# routes that only appear there; the arm on the doc path read it in slices and
+# reported the discrepancy as absent. A doc layer must never see less of a
+# document than the code layer does.
+MAX_SOURCE_BODY_CHARS = 40_000
 
 
 def _props(node: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +234,147 @@ def _props(node: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             return {}
     return p
+
+
+MAX_LIST_RESULT_CHARS = 20000
+
+_COMPACT_PROP_KEYS = ("path", "title", "status", "kind", "vault", "language", "extension")
+_COMPACT_GLOSS_KEYS = ("one_line_summary", "summary")
+_COMPACT_GLOSS_CHARS = 120
+
+
+def _compact_node(node: dict[str, Any]) -> dict[str, Any]:
+    """Project a node to the fields that matter when scanning a list.
+
+    Use ``get_node`` or ``load_source`` for the full record; pass
+    ``verbose=True`` to ``list_nodes`` to opt back into whole property blobs."""
+    props = _props(node)
+    out: dict[str, Any] = {"id": node.get("id"), "type": node.get("type"), "name": node.get("name")}
+    for k in _COMPACT_PROP_KEYS:
+        if (v := props.get(k)) not in (None, ""):
+            out[k] = v
+    for k in _COMPACT_GLOSS_KEYS:
+        v = props.get(k)
+        if isinstance(v, str) and v.strip():
+            t = v.strip()
+            out["summary"] = t if len(t) <= _COMPACT_GLOSS_CHARS else t[: _COMPACT_GLOSS_CHARS - 1] + "…"
+            break
+    return out
+
+
+def _json_list_window(items: list[Any], *, offset: int, more: bool, budget: int = MAX_LIST_RESULT_CHARS) -> str:
+    """Serialize a list window as valid JSON, dropping items until it fits.
+
+    ALWAYS returns the same object shape — ``{items, returned, offset,
+    hasMore, hint}`` — never a bare list. A shape that varied with whether
+    more data existed was a footgun: ``list_nodes(limit=1)`` returned an
+    object while ``limit=1000`` returned a list, so any caller writing
+    ``result[0]`` broke exactly when the set was bigger than the window
+    (it broke 8 tests the moment it shipped).
+
+    ``hasMore`` is the completeness signal: false means this really is the
+    whole set, which is what makes an absence claim safe. Items are dropped
+    whole to fit the budget — a JSON document is never string-sliced."""
+    kept = list(items)
+    while True:
+        dropped = len(items) - len(kept)
+        has_more = more or dropped > 0
+        payload = {
+            "items": kept,
+            "returned": len(kept),
+            "offset": offset,
+            "hasMore": has_more,
+            "hint": (
+                f"more available — repeat with offset={offset + len(kept)}"
+                + (f" ({dropped} item(s) dropped to fit the response cap)" if dropped else "")
+                if has_more
+                else "end of set — this is every match"
+            ),
+        }
+        text = json.dumps(payload, default=str)
+        if len(text) <= budget:
+            return text
+        if not kept:
+            return json.dumps(
+                {
+                    "items": [],
+                    "returned": 0,
+                    "offset": offset,
+                    "hasMore": True,
+                    "hint": "individual items exceed the response cap; fetch them singly with get_node",
+                }
+            )
+        kept.pop()
+
+
+def _graph_has_docs(store: GraphStore | None) -> bool:
+    """True when this index contains at least one KnowledgeDoc.
+
+    Cheap (LIMIT 1) and evaluated once per server, so the tool surface can
+    describe the graph it is actually pointed at."""
+    if store is None:
+        return False
+    try:
+        return bool(store.list_nodes(node_type=NODE_TYPE_KNOWLEDGE_DOC_NAME, limit=1))
+    except Exception:
+        return False
+
+
+_DOC_TYPES_NOTE = """
+
+    Documentation types (this index HAS them):
+
+    * ``KnowledgeDoc`` — one node per indexed document. Listing these
+      enumerates the documentation corpus: each carries ``title``,
+      ``one_line_summary``, ``path``, and ``status``. This is the reliable way
+      to answer "every document that…" — read candidates with ``load_source``.
+    * ``KnowledgeConcept`` — compiled concept pages; often none (they are
+      opt-in). An empty list is normal.
+    * ``Idea`` / ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``
+      — entities extracted from the docs.
+
+    ``filters`` matches on node properties, so scoping works too — e.g.
+    ``type="KnowledgeDoc", filters={"status": "design_history"}`` lists only
+    proposals/specs/ADRs, and ``{"status": "authoritative"}`` only current
+    documentation."""
+
+_DOC_HITS_NOTE = """
+
+    This index also contains documentation, so a hit may be:
+
+    * ``KnowledgeDoc`` — an indexed document, matched on its title, its
+      one-line summary, and its path. Read the VERBATIM text with
+      ``load_source`` on the hit's id; that response also carries the
+      document's epistemic ``status`` (current documentation vs
+      proposal/spec). Such a hit may carry ``fileTwin``: the id of the ``File``
+      node for the same document, if you want the code-tree view. Each
+      document appears at most ONCE — the doc node and its File twin are
+      merged into a single hit.
+    * ``Idea`` / ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``
+      — an entity extracted from the docs. These often rank highly because
+      their names are short; an entity is a signpost, not an answer. Follow it
+      to the documents with ``find_pages_mentioning`` (or ``traverse_graph``
+      over ``MENTIONS`` / ``DERIVED_FROM``).
+    * ``KnowledgeConcept`` — a compiled concept page, when the vault has any.
+
+    ``nodeTypes`` accepts these as a comma-separated filter, e.g.
+    ``nodeTypes="KnowledgeDoc"`` to search documents only."""
+
+_DOC_EDGES_NOTE = """
+
+    Documentation edges (this index HAS them):
+
+    * ``LINKS_TO`` — between ``KnowledgeDoc`` nodes, a relative link one
+      document's AUTHOR wrote to another. The doc-side analogue of imports:
+      use it for reading paths, hub documents, and "what references this doc".
+      (Also connects concept pages to each other, when pages exist.)
+    * ``MIRRORS`` — ``KnowledgeDoc`` → the ``File`` twin for the same
+      document; the one-hop join between the doc layer and the code tree.
+    * ``MENTIONS`` — a document or page → an entity it references.
+    * ``DERIVED_FROM`` — an entity → the document it was extracted from.
+      "Every doc referencing X" = incoming ``MENTIONS`` ∪ outgoing
+      ``DERIVED_FROM`` on X.
+    * ``CITES`` — a concept page → its source documents (pages only)."""
 
 
 def _to_int(v: Any) -> int | None:
@@ -149,11 +394,20 @@ def _dump_body_result(result: dict[str, Any]) -> str:
     """
     body = result.get("body")
     if isinstance(body, str) and len(body) > MAX_SOURCE_BODY_CHARS:
+        # Cut on a line boundary and say how to continue — a bare slice leaves
+        # the agent with no way forward, which is how one arm dead-ended
+        # re-requesting a 91 KB file.
+        head = body[:MAX_SOURCE_BODY_CHARS]
+        cut = head.rfind("\n")
+        if cut > 0:
+            head = head[:cut]
+        lines_shown = head.count("\n") + 1
         result = {
             **result,
-            "body": body[:MAX_SOURCE_BODY_CHARS],
+            "body": head,
             "truncated": True,
             "totalChars": len(body),
+            "hint": f'showed the first {lines_shown} lines; pass lineRange="{lines_shown + 1}-" to continue',
         }
     return json.dumps(result, default=str)
 
@@ -216,7 +470,7 @@ def _read_file_slice(abs_path, start_line: int | None, end_line: int | None) -> 
 # agent a way forward. Sized for the worst case: table-heavy markdown
 # tokenizes at ~2.5 chars/token (a 64 KB head was still rejected), so 40 KB
 # ≈ 16k tokens leaves margin for the JSON envelope.
-DOC_BODY_HEAD_CHARS = 40_000
+DOC_BODY_HEAD_CHARS = MAX_SOURCE_BODY_CHARS  # same budget for both paths — see above
 
 
 def _slice_doc_body(result: dict[str, Any], start_line: int | None, end_line: int | None) -> dict[str, Any]:
@@ -330,8 +584,31 @@ def _load_code_source(
     return {"nodeId": node_id, "type": node.get("type"), **result}
 
 
+# What each epistemic status means for a reader, spelled out at read time so
+# the label travels with the document body rather than sitting unseen on a node.
+_STATUS_NOTES = {
+    "authoritative": (
+        "Current documentation. Still a doc, not the code — verify exact behaviour against the implementation."
+    ),
+    "design_history": (
+        "Design proposal / spec / ADR / changelog — describes INTENT and may be "
+        "superseded by the implementation. A claim resting only on this is what "
+        "was proposed, NOT what ships. Confirm against code or an authoritative "
+        "doc before stating it as current behaviour."
+    ),
+    "design_history_archived": (
+        "Archived design proposal / spec — describes intent, likely superseded. "
+        "Treat as historical record, not current behaviour."
+    ),
+}
+
+
 def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
-    """Read a ``KnowledgeDoc`` node's body from the content-addressed corpus snapshot."""
+    """Read a ``KnowledgeDoc`` node's body from the content-addressed corpus snapshot.
+
+    The returned payload carries the document's epistemic ``status`` and a
+    plain-language ``statusNote`` alongside the body — the label is useless if
+    it isn't present at the moment the agent reads the text."""
     from pathlib import Path
 
     props = _props(node)
@@ -348,14 +625,26 @@ def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> d
     body_path = Path(str(db_path)).parent / corpus_rel
     if not body_path.exists():
         return {"error": f"corpus file not found: {body_path}"}
-    return {
+    out: dict[str, Any] = {
         "nodeId": node_id,
         "type": "KnowledgeDoc",
         "filename": props.get("filename"),
         "sha256": props.get("sha256"),
         "contentType": props.get("content_type"),
-        "body": body_path.read_text(encoding="utf-8"),
     }
+    if title := props.get("title"):
+        out["title"] = title
+    if path := props.get("path"):
+        out["path"] = path
+    if summary := props.get("one_line_summary"):
+        out["summary"] = summary
+    # Epistemic status travels WITH the body: a label the agent can't see at
+    # the moment of reading does nothing.
+    status = props.get("status") or "authoritative"
+    out["status"] = status
+    out["statusNote"] = _STATUS_NOTES.get(status, _STATUS_NOTES["authoritative"])
+    out["body"] = body_path.read_text(encoding="utf-8")
+    return out
 
 
 def _cited_sources(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
@@ -447,14 +736,20 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         nodeTypes: str = "",
         vaultScope: str = "",
     ) -> str:
-        """Ranked FTS search across graph nodes.
+        """Ranked FTS search across graph nodes — code AND documentation.
 
         Returns ``{hits, count, query}`` where each hit is
         ``{id, type, name, snippet, score, vault, recency, confidence}``. The
         ``vault`` / ``recency`` / ``confidence`` fields are populated where
         the underlying property is set on the node; otherwise ``null``.
         Optional ``vaultScope`` restricts hits to a single vault by name.
-        """
+
+        (Documentation hit types are appended to this description by
+        ``_DOC_HITS_NOTE`` only when the open index contains them.)
+
+        Results are RANKED AND TRUNCATED, so this tool cannot show that
+        something is absent. For "list every…" / "which X have no Y" /
+        whole-corpus questions, use ``list_nodes`` instead."""
         if not store:
             logger.info("search_graph called but no index exists")
             return NO_INDEX_MSG
@@ -481,21 +776,47 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _error_response("search_graph", e)
 
     @server.tool()
-    def list_nodes(type: str, limit: int = 50, filters: dict[str, Any] | None = None) -> str:
-        """List nodes of a specific type.
+    def list_nodes(
+        type: str, limit: int = 50, filters: dict[str, Any] | None = None, offset: int = 0, verbose: bool = False
+    ) -> str:
+        """List every node of a type — the exhaustive counterpart to ``search_graph``.
 
-        Valid types include: Repository, Class, Function, File, Directory,
-        Package, Module, Service, Endpoint, Database.
-        """
+        Use this whenever a question asks for completeness ("list every…",
+        "which X have no Y…", "across the whole repository…"). ``search_graph``
+        is ranked and truncated, so it CANNOT establish that something is
+        absent; this can.
+
+        Code types: Repository, Class, Function, File, Directory, Package,
+        Module, Service, Endpoint, Database. ``filters`` is an EXACT match on a
+        node property — not a prefix or glob, so ``{"path": "cmd/engram"}``
+        matches nothing; to scope by a path fragment use ``grep`` or
+        ``search_graph``. (Documentation node types are appended to this
+        description by ``_DOC_TYPES_NOTE`` only when the open index contains
+        them.)
+
+        Returns ``{items, returned, offset, hasMore, hint}``. **``hasMore:
+        false`` is the completeness signal** — it means these really are all
+        the matches, which is what makes "there is no X" safe to assert. When
+        it's true, page on with ``offset`` (the ``hint`` gives the next value)
+        or narrow with ``filters``; never conclude absence from a partial page.
+
+        Each item is a compact projection — ``id``, ``type``, ``name`` plus
+        triage fields (``path``, ``title``, ``status``, ``summary``, …) — so a
+        whole corpus fits in one response. Pass ``verbose=True`` for full
+        property blobs, or use ``get_node`` / ``load_source`` on one id."""
         if not store:
             logger.info("list_nodes called but no index exists")
             return NO_INDEX_MSG
         logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
         try:
             limit = min(limit, 1000)
-            nodes = store.list_nodes(node_type=type, filters=filters, limit=limit)
-            logger.debug("list_nodes → %d results", len(nodes))
-            return _json_response(nodes)
+            offset = max(0, offset)
+            nodes = store.list_nodes(node_type=type, filters=filters, limit=offset + limit + 1)
+            total_seen = len(nodes)
+            window = nodes[offset : offset + limit]
+            logger.debug("list_nodes → %d results (offset=%d)", len(window), offset)
+            items = window if verbose else [_compact_node(n) for n in window]
+            return _json_list_window(items, offset=offset, more=total_seen > offset + len(window))
         except Exception as e:
             return _error_response("list_nodes", e)
 
@@ -554,11 +875,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         single type, e.g. 'CALLS') or ``edgeTypes`` (a comma-separated set,
         e.g. 'CALLS,IMPORTS'). When both are given, ``edgeTypes`` wins.
 
+        Code edges: ``CALLS``, ``IMPORTS``, ``DEFINES``, ``CONTAINS``,
+        ``INHERITS_FROM``. (Documentation edge types are appended to this
+        description by ``_DOC_EDGES_NOTE`` only when the index contains them.)
+
         Optional ``vaultScope`` restricts traversal to nodes whose ``vault``
         property matches the given vault name. ``confidenceThreshold`` (0.0-1.0)
         skips relationships whose ``properties.confidence`` falls below the
-        threshold; values <= 0 disable the filter.
-        """
+        threshold; values <= 0 disable the filter."""
         if not store:
             logger.info("traverse_graph called but no index exists")
             return NO_INDEX_MSG
@@ -635,7 +959,18 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             logger.info("find_orphans called but no index exists")
             return NO_INDEX_MSG
         try:
-            return _json_response(_find_orphans(store, nodeType, edgeType, direction=direction, limit=limit))
+            result = _find_orphans(store, nodeType, edgeType, direction=direction, limit=limit)
+            # An orphan set is only meaningful against the population it was
+            # computed over, and for documents that population is NOT the repo:
+            # only files the doc pass ingested become KnowledgeDocs (extension
+            # filter + content gate), and byte-identical files collapse to one
+            # node. Measured on one repo: 189 KnowledgeDocs for 401 .md files.
+            # Without this the caller reads subset-truth as whole-truth — which
+            # is exactly how an agent reported documents as unlinked when the
+            # linking document simply wasn't in the graph.
+            if isinstance(result, dict):
+                result["scope"] = _population_note(store, nodeType, edgeType)
+            return _json_response(result)
         except ValueError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -858,7 +1193,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         the returned ``id`` to fetch the page body. KnowledgeDoc documents are
         not pages — find them via ``search_graph`` / ``find_pages_mentioning``
         and read them with ``load_source``.
-        """
+
+        **An empty list is normal, not an error.** Concept pages are opt-in
+        (``index --wiki --wiki-concept-pages``); a default doc ingestion
+        indexes the documents themselves without synthesizing pages. The
+        vault's knowledge is then in its KnowledgeDoc nodes and entities —
+        reach it via ``search_graph`` (titles, one-line summaries, entity
+        descriptions) and ``load_source``, and follow ``LINKS_TO`` between
+        KnowledgeDocs for the authors' own cross-references."""
         if not store:
             return NO_INDEX_MSG
         try:
@@ -1065,5 +1407,17 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _json_response(result)
         except Exception as e:
             return _error_response("find_cross_cutting_communities", e)
+
+    # Only advertise the documentation types when this index has them: on a
+    # code-only graph the doc copy makes an agent chase a layer that isn't there.
+    if _graph_has_docs(store):
+        for tool_name, note in (
+            ("list_nodes", _DOC_TYPES_NOTE),
+            ("search_graph", _DOC_HITS_NOTE),
+            ("traverse_graph", _DOC_EDGES_NOTE),
+        ):
+            tool = server._tool_manager._tools.get(tool_name)
+            if tool is not None and getattr(tool, "description", None):
+                tool.description = tool.description.rstrip() + note
 
     return server

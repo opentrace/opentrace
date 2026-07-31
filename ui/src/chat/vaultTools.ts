@@ -72,9 +72,10 @@ export function makeVaultTools() {
     {
       name: 'list_vaults',
       description:
-        'List all knowledge vaults attached to this project. Each vault is a ' +
-        'collection of LLM-compiled markdown pages produced from uploaded files. ' +
-        'Use this first to discover what knowledge is available before reading pages. ' +
+        'List all knowledge vaults attached to this project. A vault is a ' +
+        'collection of ingested documents (searchable via search_graph, read ' +
+        'verbatim via load_source), optionally with compiled concept pages. ' +
+        'Use this first to discover what knowledge is available. ' +
         'Returns: {vaults: string[]}.',
       schema: listVaultsSchema,
     },
@@ -103,7 +104,11 @@ export function makeVaultTools() {
       description:
         'List the pages in a vault as {slug, title, one-line summary}. Use ' +
         'these summaries to decide which page(s) to read in detail with ' +
-        'read_vault_page. Returns: {name, pages: [{slug, title, summary, revision}]}.',
+        'read_vault_page. An empty list is normal, not an error: concept ' +
+        'pages are opt-in, and a vault normally holds the documents ' +
+        'themselves rather than compiled pages — reach those with ' +
+        'search_graph (KnowledgeDoc titles and summaries) and load_source. ' +
+        'Returns: {name, pages: [{slug, title, summary, revision}]}.',
       schema: listVaultPagesSchema,
     },
   );

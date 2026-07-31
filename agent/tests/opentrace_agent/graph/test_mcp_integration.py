@@ -78,21 +78,27 @@ def indexed_python_store(tmp_path_factory):
 
 
 def _call_tool(store: GraphStore, tool_name: str, **kwargs) -> dict | list:
-    """Create an MCP server, call a tool by name, parse the JSON response."""
+    """Create an MCP server, call a tool by name, parse the JSON response.
+
+    Enumeration tools return a ``{items, returned, offset, hasMore, hint}``
+    window; this unwraps it to the bare list these structural tests assert on.
+    The window's own contract is covered in ``test_mcp_knowledge_tools.py``.
+    """
     server = create_mcp_server(store)
     tool = server._tool_manager._tools[tool_name]
     result = tool.fn(**kwargs)
-    # The MCP server truncates large responses which can break JSON.
-    # Strip the truncation suffix and try to parse.
+    # Non-list payloads over the 4 KB cap are still string-truncated, which can
+    # cut mid-token; list windows are now shortened item-wise and always parse.
     if "\n...[truncated" in result:
         result = result[: result.index("\n...[truncated")]
-        # Try to recover valid JSON by closing open arrays/objects
         try:
             return json.loads(result)
         except json.JSONDecodeError:
-            # Can't recover — just return the parsed prefix as empty
             pytest.skip("Response truncated mid-JSON")
-    return json.loads(result)
+    parsed = json.loads(result)
+    if isinstance(parsed, dict) and isinstance(parsed.get("items"), list) and "hasMore" in parsed:
+        return parsed["items"]
+    return parsed
 
 
 # ---------------------------------------------------------------------------

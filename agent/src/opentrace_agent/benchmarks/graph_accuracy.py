@@ -253,7 +253,7 @@ class GraphAccuracyBenchmark:
     # OT-1732 Search returns ``{hits, count, query}``). For list-shaped
     # assertions, we transparently unwrap so existing task suites keep
     # working as new tools join the surface.
-    _LIST_RESULT_KEYS = ("hits", "results", "nodes", "orphans", "pairs", "path")
+    _LIST_RESULT_KEYS = ("items", "hits", "results", "nodes", "orphans", "pairs", "path")
 
     def _check_assertion(self, result: Any, assertion: dict[str, Any]) -> str | None:
         """Check a single assertion against tool output. Returns failure message or None."""

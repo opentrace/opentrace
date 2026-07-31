@@ -262,3 +262,88 @@ class TestCountBy:
         result = count_by(store, "Function", parent_id="missing")
         assert result["count"] == 0
         assert "parent node not found" in result["error"]
+
+
+class TestDocFileTwinCollapse:
+    """A document indexed with docs exists twice — as the File the code walk saw
+    and as the KnowledgeDoc the doc pass created — and both are FTS-indexed, so
+    one document could take two result slots.
+
+    Measured on a 25-doc index before this collapse: 8 of 12 queries returned
+    the same document twice in the top 5, and the File outranked its own
+    KnowledgeDoc in 15 of 22 pairs (BM25 length normalisation — the File's
+    short search_text beats the KnowledgeDoc's identical tokens *plus* a gloss).
+    """
+
+    @staticmethod
+    def _twinned(store, *, mirrored: bool = True):
+        """One document as both File and KnowledgeDoc, optionally MIRRORS-joined."""
+        store.add_node(
+            "corpus::sha-cx",
+            "KnowledgeDoc",
+            "browser-requirements.md",
+            {
+                "sha256": "sha-cx",
+                "filename": "browser-requirements.md",
+                "path": "docs/browser-requirements.md",
+                "summary": "cross-origin isolation requirements for the browser build",
+            },
+        )
+        store.add_node(
+            "repo/docs/browser-requirements.md",
+            "File",
+            "browser-requirements.md",
+            {"path": "docs/browser-requirements.md"},
+        )
+        if mirrored:
+            store.add_relationship("mir-cx", "MIRRORS", "corpus::sha-cx", "repo/docs/browser-requirements.md")
+
+    def test_pair_collapses_to_the_knowledge_doc(self, store):
+        from opentrace_agent.retrieval import search
+
+        self._twinned(store)
+        hits = search(store, "cross-origin isolation browser requirements", limit=10)["hits"]
+        ids = [h["id"] for h in hits]
+        assert "corpus::sha-cx" in ids
+        assert "repo/docs/browser-requirements.md" not in ids  # slot freed
+        doc = next(h for h in hits if h["id"] == "corpus::sha-cx")
+        # The File twin stays reachable in one hop.
+        assert doc["fileTwin"] == "repo/docs/browser-requirements.md"
+
+    def test_untwinned_file_and_doc_both_survive(self, store):
+        """Without a MIRRORS edge they're unrelated nodes — never merge them."""
+        from opentrace_agent.retrieval import search
+
+        self._twinned(store, mirrored=False)
+        hits = search(store, "cross-origin isolation browser requirements", limit=10)["hits"]
+        ids = [h["id"] for h in hits]
+        assert "corpus::sha-cx" in ids
+        assert "repo/docs/browser-requirements.md" in ids
+
+    def test_collapse_frees_a_slot_before_truncation(self, store):
+        """Collapsing after the cut would free nothing — that's the whole point."""
+        from opentrace_agent.retrieval import search
+
+        self._twinned(store)
+        # A third, weaker match that should be pulled in by the freed slot.
+        store.add_node(
+            "corpus::sha-tr",
+            "KnowledgeDoc",
+            "troubleshooting.md",
+            {"sha256": "sha-tr", "filename": "troubleshooting.md", "summary": "browser isolation errors"},
+        )
+        hits = search(store, "cross-origin isolation browser requirements", limit=2)["hits"]
+        assert len(hits) == 2
+        ids = [h["id"] for h in hits]
+        # The freed slot went to the OTHER document, not to the twin File.
+        assert "repo/docs/browser-requirements.md" not in ids
+        assert set(ids) == {"corpus::sha-cx", "corpus::sha-tr"}
+
+    def test_doc_gets_file_twin_even_when_twin_not_in_results(self, store):
+        """The annotation is useful regardless of whether the File also matched."""
+        from opentrace_agent.retrieval import search
+
+        self._twinned(store)
+        hits = search(store, "cross-origin isolation", limit=10, node_types=["KnowledgeDoc"])["hits"]
+        doc = next(h for h in hits if h["id"] == "corpus::sha-cx")
+        assert doc["fileTwin"] == "repo/docs/browser-requirements.md"

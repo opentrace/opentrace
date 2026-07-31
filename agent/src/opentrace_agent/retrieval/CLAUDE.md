@@ -50,6 +50,25 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 - **`recency`** — `last_updated` property; null when not stamped
 - **`confidence`** — `confidence` property; null when not stamped
   (currently a placeholder; real wiki-synthesis confidence is future work)
+- **`fileTwin`** — on a `KnowledgeDoc` hit, the id of the `File` node it
+  `MIRRORS` (absent when there is none), so the code-tree view stays one hop away
+
+**Doc/File twin collapse.** An indexed document is two nodes — the `File` the
+code walk saw and the `KnowledgeDoc` the doc pass created — and both are
+FTS-indexed, so one document could take two result slots. `_collapse_doc_file_twins`
+merges each pair into a single `KnowledgeDoc` hit (it carries title, summary,
+and `status`), promoted to whichever of the two ranked better and annotated with
+`fileTwin`. It runs **before** the `limit` cut so the freed slot is actually
+reused — collapsing afterwards would free nothing. Pairing follows the MIRRORS
+edge, never a path-string match, so same-named docs in different repos don't merge.
+
+Measured on a 25-doc index: duplicates in the top 5 went from 8/12 queries to
+0/12, and `KnowledgeDoc` reached the top 3 on 10/12. The root cause of the
+inversion is worth knowing — BM25 normalises by length, so the `File`'s short
+`search_text` outscores the `KnowledgeDoc`'s *identical tokens plus a gloss*
+(it beat its own twin in 15 of 22 pairs). **Enriching a node demotes it**, which
+is also why short-named entity nodes outrank glossed docs. A field-weighted
+ranking would fix the class of problem; this collapse fixes the worst instance.
 
 Falls back to `GraphStore.search_nodes` substring matching when FTS is
 unavailable (e.g. before the index is built).
