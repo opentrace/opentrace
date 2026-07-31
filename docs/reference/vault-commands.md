@@ -4,12 +4,12 @@
 
 ## Concept refresher
 
-A **vault** is a folder of LLM-curated markdown pages produced from one or more documents. Two storage scopes:
+A **vault** is an indexed collection of documents — labelled, linked, and searchable, with the bodies kept verbatim in the corpus. Synthesized concept pages are opt-in via `index --wiki --wiki-concept-pages`, so many vaults have no pages at all. Two storage scopes:
 
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeConcept` + `KnowledgeDoc` nodes). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeDoc` nodes, plus `KnowledgeConcept` nodes when the vault has pages). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
 
 ## `vault list`
 
@@ -59,7 +59,7 @@ opentraceai vault attach <name> --scope global     # disambiguate on collision
 opentraceai vault attach <name> --db <path>        # explicit graph DB
 ```
 
-Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + page files from disk and writes `KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc` nodes + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
+Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + any page files from disk and writes `KnowledgeVault` / `KnowledgeDoc` nodes (plus `KnowledgeConcept` for vaults that have pages) + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
 
 When to use:
 
@@ -111,7 +111,7 @@ opentraceai vault refresh-stale-pages                     # all stale pages in t
 opentraceai vault refresh-stale-pages --provider gemini   # specific LLM
 ```
 
-Re-runs Plan + Execute for concept pages stamped `stale_since` by autoprune. Pages become stale when a cited doc is removed but the page still has other citations — they're kept (no LLM cost) but flagged so you can refresh on demand.
+Re-runs synthesis for existing concept pages stamped `stale_since` by autoprune. Pages become stale when a cited doc is removed but the page still has other citations — they're kept (no LLM cost) but flagged so you can refresh on demand. Only relevant for vaults compiled with `--wiki-concept-pages`; a corpus-only vault has no pages to refresh.
 
 `refresh-stale-pages` is also available inline on `index`:
 
@@ -125,7 +125,8 @@ opentraceai index ./papers research --wiki --refresh-stale-pages
 <project>/.opentrace/vaults/<name>/   # local
 ~/.opentrace/vaults/<name>/           # global (override with $OT_VAULT_ROOT)
 
-  pages/concept/<base>.md             # multi-source synthesis pages
+  pages/concept/<base>.md             # multi-source synthesis pages —
+                                      #  only with --wiki-concept-pages
   .vault.json                         # page metadata, source labels + sha256 dedup state
   .compile-log/<ts>.json              # per-compile audit log
 ```
@@ -139,7 +140,7 @@ The doc corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed b
 
 `vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `KnowledgeDoc.corpus_path` resolves under `<project>/.opentrace/` like any local KnowledgeDoc.
 
-Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept pages are the only page kind, so everything lives under `concept/`. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route.
+Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept pages are the only page kind, so everything lives under `concept/`. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route. A corpus-only vault has no slugs — read its documents through `load_source` / the source routes instead.
 
 The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it — including each doc's navigation label (`title` + one-line summary), so attached KnowledgeDocs keep their labels; re-compiling against the same vault uses its `source_shas` to dedup.
 

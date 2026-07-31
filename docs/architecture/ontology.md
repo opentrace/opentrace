@@ -10,7 +10,10 @@ The graph organises into three domains:
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
 | **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
-| **page** | `KnowledgeVault`, `KnowledgeConcept`, `KnowledgeDoc` | `opentraceai index --wiki` (Plan + Execute) |
+| **page** | `KnowledgeVault`, `KnowledgeDoc` | `opentraceai index --wiki` (doc ingestion) |
+| **page** | `KnowledgeConcept` | `opentraceai index --wiki --wiki-concept-pages` (Resolve + Execute) — opt-in |
+
+`--wiki` on its own is corpus-only: it indexes the documents (labels, epistemic status, entity graph, doc↔doc links, `File` twins) and keeps their bodies verbatim. Concept pages, and the `CITES` edges that back them, appear only under `--wiki-concept-pages`.
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -94,7 +97,7 @@ The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Ev
 
 #### `KnowledgeVault`
 
-A named collection of compiled pages (one per disk vault dir).
+A named collection of ingested documents — and, with `--wiki-concept-pages`, the concept pages compiled from them (one vault node per disk vault dir).
 
 - `id` — `vault::<name>`
 - `name` — display name
@@ -106,7 +109,7 @@ A named collection of compiled pages (one per disk vault dir).
 
 #### `KnowledgeConcept`
 
-A single page in a vault. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `KnowledgeDoc` node (see below) with the raw body in the corpus.
+A single synthesized page in a vault. **Only produced under `--wiki-concept-pages`** — a plain `index --wiki` is corpus-only and creates no `KnowledgeConcept` nodes. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `KnowledgeDoc` node (see below) with the raw body in the corpus.
 
 - `id` — `<vault>::<slug>` (e.g. `kb::concept/revenue`)
 - `name` — page title
@@ -129,6 +132,7 @@ A raw ingested artifact — every doc ingested by `index --wiki` (wiki uploads i
 - `sha256`, `filename`, `content_type` (MIME), `size_bytes`, `acquired_at`
 - `corpus_path` — relative path to the body file in `.opentrace/corpus/` (readable via the `load_source` tool)
 - `path` — repo-relative path, stamped (alongside the `MIRRORS` edge) when the doc came from a repo walk
+- `status` — epistemic label from the doc's location: `authoritative` (current documentation), `design_history` (openspec / ADR / RFC / proposal trees, CHANGELOGs), or `design_history_archived` (design history under an archive folder, likely superseded)
 - `source_uri` — original URL when ingested from web; file path when from disk
 - `vault` — owning vault name (set when produced via `--wiki`)
 
@@ -180,14 +184,15 @@ Entities derive from KnowledgeDocs; if code-derived entities are ever introduced
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CITES` | concept page → KnowledgeDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes |
-| `LINKS_TO` | KnowledgeConcept → KnowledgeConcept | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug |
+| `CITES` | concept page → KnowledgeDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes. Only exists when concept pages do — i.e. under `--wiki-concept-pages` |
+| `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's **author** wrote to another doc — the doc-side analogue of the code graph's `IMPORTS`. Parsed mechanically (no LLM) from markdown inline links, reference-style definitions, and HTML anchors by `graph_writer.parse_doc_links`, then resolved against the linking doc's own directory; repo-root-relative targets (`/docs/x.md`) are supported. External URLs, bare `#fragment` targets, paths escaping the repo root, and targets that aren't another indexed doc produce no edge. Written on repo-walked `--wiki` runs that mirror to the graph — like `MIRRORS` it needs repo-relative paths, so single-file / URL compiles and disk-only global vaults get no doc↔doc edges |
+| `LINKS_TO` | KnowledgeConcept → KnowledgeConcept | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug. Only under `--wiki-concept-pages` |
 
 ### Cross-layer
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Concept-page body or doc corpus markdown contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
+| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Doc corpus markdown (or a concept-page body, when pages exist) contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the KnowledgeDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
 | `DOCUMENTS` | Repository → KnowledgeVault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 

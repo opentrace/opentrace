@@ -92,8 +92,9 @@ The package installs as `opentraceai`, but the CLI binary is `opentrace` (shorte
 
 ```bash
 opentrace index /path/to/repo                          # index a code repo
-opentrace index /path/to/repo --wiki                   # also ingest docs: entities + wiki vault
-opentrace index /path/docs foo --wiki                  # compile a curated wiki vault named foo
+opentrace index /path/to/repo --wiki                   # also ingest docs: entities + doc corpus
+opentrace index /path/docs foo --wiki                  # index docs into a vault named foo
+opentrace index /path/docs foo --wiki --wiki-concept-pages   # ...plus synthesized concept pages
 opentrace vault list                                   # vaults visible from current project
 opentrace cluster && opentrace analyze                 # community detection + cross-cutting analysis
 opentrace mcp                                          # start an MCP server over stdio

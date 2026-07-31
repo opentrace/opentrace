@@ -1,6 +1,6 @@
 # Wiki Providers
 
-OpenTrace's wiki/vault compiler turns documents into a folder of interconnected markdown pages by driving an LLM through a structured Plan + Execute loop. Five providers are supported, all BYOK — your key is sent only to the provider you select, never to OpenTrace servers.
+OpenTrace's wiki/vault compiler uses an LLM to label and index your documents into the graph — one call per doc — and, under `--wiki-concept-pages`, to synthesize cross-document concept pages on top. Five providers are supported, all BYOK — your key is sent only to the provider you select, never to OpenTrace servers.
 
 ## Anthropic
 
@@ -139,7 +139,7 @@ Each backend supports a per-backend model override env var:
 | `OT_LLM_MODEL_KIMI` | Kimi's default model |
 | `OT_LLM_MODEL_LOCAL` | Local server's default model |
 
-The same registry drives every LLM call in `index --wiki` — per-doc ingestion and concept-page synthesis alike — so an override applies consistently.
+The same registry drives every LLM call in `index --wiki` — per-doc ingestion and, under `--wiki-concept-pages`, concept-page synthesis alike — so an override applies consistently.
 
 ## UI flow
 

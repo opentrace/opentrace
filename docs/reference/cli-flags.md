@@ -32,10 +32,11 @@ opentraceai index [PATH] [OPTIONS]
 | `--db PATH` | path | auto | Database path. Auto-discovered by walking up from cwd looking for `.opentrace/index.db`, stopping at the git root |
 | `--repo-id ID` | string | basename | Repository ID stamped on nodes (defaults to directory name) |
 | `--batch-size N` | int | 200 | Items per save batch |
-| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label, its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges), and a concept inventory; Plan + Execute then synthesise cross-document `KnowledgeConcept` nodes + bodies on disk under a vault. Every repo-walked doc gets a `MIRRORS` edge to its `File` twin (created at link time when the code walk skipped the extension). Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
+| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label, its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges), and a concept inventory. A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
+| `--wiki-concept-pages` | flag | off | Also synthesise cross-document concept pages: `KnowledgeConcept` nodes, `pages/concept/*.md` bodies on disk, `CITES` edges to the cited docs, and page ↔ page `LINKS_TO` wiki-links. Off by default — a synthesized page restates its sources in the model's own voice, which can drop their hedges, tense, and attribution, and concept pages have not yet been shown to beat reading the labelled documents directly. Requires `--wiki` (or a `VAULT_NAME` positional) |
 | `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki` |
 | `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
-| `--refresh-stale-pages` | flag | off | After autoprune, regenerate concept pages stamped `stale_since` against their remaining citations. Requires `--wiki` (or a `VAULT_NAME` positional) |
+| `--refresh-stale-pages` | flag | off | After autoprune, regenerate existing concept pages stamped `stale_since` against their remaining citations. Requires `--wiki` (or a `VAULT_NAME` positional); only does anything for a vault that already has pages |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
 
 ### Common combinations
@@ -44,14 +45,17 @@ opentraceai index [PATH] [OPTIONS]
 # Cheap, fast — code structure only
 opentraceai index ./repo
 
-# Compile a local curated vault from docs (labels + entities + pages)
+# Index docs into a local vault (labels + entities + doc links, bodies verbatim)
 opentraceai index ./docs --wiki                     # vault auto-named
 opentraceai index ./docs myvault --wiki             # explicit name
+
+# Same, plus synthesized cross-document concept pages
+opentraceai index ./docs myvault --wiki --wiki-concept-pages
 
 # Compile a global vault visible from other projects
 opentraceai index ./papers refs --wiki --global
 
-# Full stack — code + entities + pages + MIRRORS/MENTIONS edges
+# Full stack — code + entities + doc corpus + MIRRORS/LINKS_TO/MENTIONS edges
 opentraceai index ./ myproject --wiki
 
 # Re-build a vault, regenerate stale pages in the same run
@@ -68,7 +72,8 @@ opentraceai index https://arxiv.org/abs/1706.03762 --wiki
 
 | Flag | LLM cost when set |
 |---|---|
-| `--wiki` | ~1 call per new doc + Plan (1) + Execute (~5–15 concept pages). Sha dedup skips unchanged docs |
+| `--wiki` | ~1 call per new doc. Sha dedup skips unchanged docs. The link / twin / status passes are mechanical — 0 |
+| `--wiki-concept-pages` | On top of `--wiki`: ~1 resolve call + ~0.5 synthesis calls per doc |
 | `--refresh-stale-pages` | 1 call per stale page being regenerated |
 | All others | 0 |
 

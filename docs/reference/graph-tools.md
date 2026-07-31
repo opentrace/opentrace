@@ -87,6 +87,8 @@ DELETE /api/vaults/{vault}?scope=local|global
 
 `view=project` (default) returns local vaults from cwd plus globals already attached to this project's graph; `view=global` lists every global on the machine with an `attached` flag. The `?scope=` query param disambiguates when a name exists in both scopes — when omitted, the server resolves local-first.
 
+`POST /compile` is **corpus-only**, matching the CLI default: it indexes the uploaded documents (labels, entity graph, doc links, verbatim bodies) and does not synthesize concept pages. Page synthesis is CLI-only today, via `index --wiki --wiki-concept-pages`.
+
 The UI's `ServerGraphStore` consumes these. See [Browser](../getting-started/install-browser.md) for setup.
 
 ## Python API
@@ -148,12 +150,12 @@ From `index --wiki` — flat LLM-extracted entities with no body:
 
 ### Concept layer
 
-From `index --wiki` — curated markdown pages with bodies on disk:
+From `index --wiki` — the indexed documents themselves, bodies verbatim in the corpus:
 
 | Type | What it is |
 |---|---|
 | `KnowledgeVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` + `spawned_from` (repo id, when built by `index --wiki` over a repo) |
-| `KnowledgeConcept` | A concept page (`kind="concept"` — the only kind), a multi-source narrative. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
+| `KnowledgeConcept` | A concept page (`kind="concept"` — the only kind), a multi-source synthesized narrative. **Only produced under `index --wiki --wiki-concept-pages`** — a plain `--wiki` run is corpus-only. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
 | `KnowledgeDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
 
 ### Auxiliary
@@ -174,8 +176,9 @@ From `index --wiki` — curated markdown pages with bodies on disk:
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
 | `DERIVED_FROM` | Idea/Service/... → KnowledgeDoc | Entity provenance (with `transform="llm_extraction"`) |
-| `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha) |
-| `LINKS_TO` | Page → Page | Wiki-link in body (`[[Title]]`) |
+| `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha). Only with `--wiki-concept-pages` |
+| `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's author wrote to another doc — parsed mechanically (no LLM) from markdown links, reference definitions, and HTML anchors, resolved against the linking doc's directory. The doc-side analogue of `IMPORTS`. External URLs, bare fragments, and out-of-repo targets are dropped |
+| `LINKS_TO` | Page → Page | Wiki-link in a page body (`[[Title]]`). Only with `--wiki-concept-pages` |
 | `MENTIONS` | Page/KnowledgeDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name. Deduped against `DERIVED_FROM` — a doc gets no MENTIONS to an entity it was the extraction source of (that's the reverse `DERIVED_FROM` edge). `find_pages_mentioning` unions both |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
