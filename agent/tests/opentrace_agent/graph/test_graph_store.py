@@ -65,7 +65,8 @@ class TestBuildSearchText:
 
     def test_includes_all_gloss_keys_together(self):
         text = build_search_text(
-            "n", "KnowledgeDoc",
+            "n",
+            "KnowledgeDoc",
             {"summary": "a", "one_line_summary": "b", "description": "c", "path": "p"},
         )
         for token in ("a", "b", "c", "p"):
@@ -796,3 +797,72 @@ class TestKnowledgeGraph:
         store.save_membership("m2", "n2", "ca")
         store.add_relationship("r1", "CALLS", "n1", "n2")
         assert store.list_cross_community_bridges() == []
+
+
+class TestFtsSearchOrdering:
+    """``_fts_search`` must return best-first — every caller truncates the list."""
+
+    def test_results_sorted_by_score_descending(self, store):
+        # Several nodes matching "isolation" to differing degrees: an exact-name
+        # match, a gloss match, and weak incidental matches.
+        store.add_node("e1", "Idea", "Cross-Origin Isolation", {"description": "isolation of origins"})
+        store.add_node(
+            "d1",
+            "KnowledgeDoc",
+            "browser-requirements.md",
+            {"summary": "Cross-origin isolation requirements for the browser build", "path": "docs/browser.md"},
+        )
+        store.add_node("n1", "Function", "isolate", {"summary": "unrelated isolation helper"})
+        store.add_node("n2", "Function", "spawn", {"summary": "mentions isolation once in passing"})
+        store.add_node("n3", "Class", "Sandbox", {"summary": "isolation boundary for plugins"})
+
+        results = store._fts_search("cross-origin isolation", 10)
+        scores = [score for _, score in results]
+        assert scores == sorted(scores, reverse=True), f"not best-first: {results}"
+
+    def test_sorts_rows_the_connection_returns_out_of_order(self, store):
+        """The real regression: ``top :=`` picks the top-N but doesn't order them.
+
+        A small fixture can't reproduce the DB's internal row order (it happens
+        to come back sorted), so this drives ``_fts_search`` with a connection
+        whose rows are deliberately unsorted — the shape observed on a real
+        25-doc index, where a KnowledgeDoc scoring 4.308 arrived last behind
+        hits scoring 1.4 and was cut off by every caller's limit.
+        """
+
+        # A small custom class, not MagicMock — MagicMock can't intercept
+        # __getattr__ on the result object (see agent/CLAUDE.md).
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = list(rows)
+
+            def has_next(self):
+                return bool(self._rows)
+
+            def get_next(self):
+                return self._rows.pop(0)
+
+        class FakeConn:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def execute(self, *_args, **_kwargs):
+                return FakeResult(self._rows)
+
+        unsorted_rows = [
+            ["svc-opentrace", 4.605],
+            ["idea-cross-origin", 3.864],
+            ["idea-sab", 4.462],
+            ["svc-uv", 1.498],
+            ["doc-browser-reqs", 4.308],  # arrived last on the real index
+        ]
+        real_conn = store._conn
+        store._conn = FakeConn(unsorted_rows)
+        try:
+            results = store._fts_search("cross-origin isolation", 10)
+        finally:
+            store._conn = real_conn  # so the fixture's close() still works
+        scores = [score for _, score in results]
+        assert scores == sorted(scores, reverse=True), f"not best-first: {results}"
+        # And the consequence that actually bit: the doc survives a limit of 3.
+        assert "doc-browser-reqs" in [nid for nid, _ in results[:3]]

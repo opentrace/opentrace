@@ -1361,7 +1361,16 @@ class GraphStore:
     # -- private helpers -------------------------------------------------
 
     def _fts_search(self, query: str, limit: int) -> list[tuple[str, float]]:
-        """Run FTS query and return list of (node_id, score)."""
+        """Run FTS query and return ``(node_id, score)`` sorted best-first.
+
+        ``top := $limit`` selects the top-N by relevance but does NOT
+        guarantee the *row order* is sorted by score, so we sort here. This
+        matters because every caller truncates the list to its own smaller
+        limit: unsorted, a top-scoring node could be dropped in favour of a
+        much weaker one that merely arrived earlier. (Observed: a query where
+        the second-best hit, a KnowledgeDoc, came back last behind six hits
+        scoring a third as high — invisible at any sane limit.)
+        """
         result = self._conn.execute(
             "CALL QUERY_FTS_INDEX('Node', 'node_fts', $query, top := $limit) RETURN node.id, score",
             parameters={"query": query, "limit": limit},
@@ -1370,6 +1379,7 @@ class GraphStore:
         while result.has_next():
             row = result.get_next()
             results.append((str(row[0]), float(row[1])))
+        results.sort(key=lambda r: r[1], reverse=True)
         return results
 
     def _get_neighbors(self, node_id: str, direction: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:

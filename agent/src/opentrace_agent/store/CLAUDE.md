@@ -51,10 +51,21 @@ Queries are parameterized (`$param`) — never string-format user input into Cyp
 
 ## Search
 
-Full-text search runs across `name`, `summary`, and `path` properties via
-`_fts_search` (`CALL QUERY_FTS_INDEX` with Porter stemmer). There's no
-semantic / vector search at this layer — that's handled in the UI's
-`src/store/search/` (BM25 + vector + RRF) for browser-mode indexing.
+Full-text search runs across `name`, `summary`, `one_line_summary`,
+`description`, and `path` properties via `_fts_search`
+(`CALL QUERY_FTS_INDEX` with Porter stemmer) — see `build_search_text` for
+the exact key list. There's no semantic / vector search at this layer —
+that's handled in the UI's `src/store/search/` (BM25 + vector + RRF) for
+browser-mode indexing.
+
+**`_fts_search` sorts its rows by score before returning.** `top := $limit`
+selects the top-N by relevance but does not order them, and every caller
+(`retrieval.search`, `search_nodes`, MCP `search_graph`) truncates to a
+smaller limit — so without the sort a top-scoring node is dropped in favour
+of a weaker one that merely arrived first. Don't remove it: on a real
+25-doc index the second-best hit came back last, behind hits scoring a
+third as high, making labelled `KnowledgeDoc` nodes effectively
+undiscoverable at any sane limit.
 
 ## Traverse extensions (OT-1732 Phase 3)
 
