@@ -168,9 +168,21 @@ accuracy + cost fixes, `FINDINGS.md`, `regrade.sh` + `compare_grades.py`,
 
 ## Open decisions
 
-1. **OT-1732 scope still lists concept pages.** The pages run is the worst result
-   on record (−10.2pp). Recommendation: **drop** rather than defer.
-2. **The only experiment left worth running:** put the docs *outside* the repo —
+1. **OT-1732 success criterion 1 is not met** — and the ticket is in review.
+   It reads: *"quality **matching or exceeding** what the same agent achieves
+   over a folder of markdown files."* That is exactly what runs 4–6 measured, and
+   the answer is no, for in-repo docs. (The ticket's *scope* is the seven MCP
+   retrieval primitives; it never listed concept pages — an earlier version of
+   this document said it did, wrongly.) Recorded as a comment on the ticket
+   2026-07-31. The decision to make explicitly: re-scope criterion 1 to the
+   out-of-repo case, or accept the negative for in-repo docs. Note the seven
+   primitives themselves are built and working — it's the comparison bar that
+   fails, not the tools.
+2. **Concept pages: recommend dropping rather than deferring.** Not because a
+   ticket lists them, but because the pages variant is the worst result on record
+   (−10.2pp) and the mechanism is understood: restating a source in the model's
+   own voice strips its hedges, tense and attribution.
+3. **The only experiment left worth running:** put the docs *outside* the repo —
    ingest a docs site or wiki export not present on disk — so the control
    genuinely cannot reach them. Needs a question set written against those docs.
    This is a different experiment, not another run of this one.

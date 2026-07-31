@@ -250,8 +250,13 @@ Consequences for anyone working in this module:
 
 - **Concept pages: recommend dropping, not deferring.** The pages variant is the
   worst result on record (88.4% vs a 98.6% control, −10.2pp) — see
-  VALUE-ASSESSMENT.md. `--wiki-concept-pages` remains an experiment flag; OT-1732's
-  scope still lists pages as a deliverable and should be updated.
+  VALUE-ASSESSMENT.md. `--wiki-concept-pages` remains an experiment flag.
+- **OT-1732's success criterion 1 is not met.** It asks for "quality matching or
+  exceeding what the same agent achieves over a folder of markdown files"; for
+  in-repo docs the measured answer is no. Its *scope* is the seven MCP retrieval
+  primitives, which are built and working — the comparison bar is what fails.
+  Recorded on the ticket 2026-07-31; the open decision is whether to re-scope that
+  criterion to the out-of-repo case.
 - **Concepts as bodiless graph nodes** — the safe salvage of the concept map if the gap above shows up: key a node on `(topic, subject)` from the mentions the extraction call already produces, hang each doc's own gloss on the doc→concept edge, and never fuse the glosses into one prose body. Structure without restatement. `resolve.py`'s clustering would survive as node-merging (exact-match keying fragments: "validation" vs "data validation").
 - Pages are LLM-managed. Human edits to `pages/<slug>.md` are not preserved across compilations (next compile overwrites).
 - Per-page LLM self-rated confidence — the rubric is wired but pages always default to `INFERRED`/0.75 today. Future: have Execute return a per-page tier.
