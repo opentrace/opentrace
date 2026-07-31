@@ -217,9 +217,41 @@ For wiki nodes, `retrieval.provenance(node_id)` walks the `CITES` chain:
 
 `agent`/`model`/`session`/`confidence` provenance is stamped at the page level.
 
+## Measured value — read this before optimising anything here
+
+**[VALUE-ASSESSMENT.md](VALUE-ASSESSMENT.md)** is the self-contained finding from
+six A/B benchmark runs (~$165). Short version: for docs that already live in the
+repo, read by a frontier model that can open files, this layer shows **no
+detectable answer-quality benefit and ~18% higher cost**. Three clean runs, all
+negative, sign stable across both arm slots.
+
+The mechanistic reason matters more than the scores, because it doesn't depend on
+the benchmark being trustworthy: every component here is either inferable from the
+path (the gloss, the status), noisier than the raw text (the entity graph), or a
+lossy subset of it (`LINKS_TO` covers 189 of 401 files) — because the source is
+already perfectly indexed by the filesystem. An index earns its keep by
+substituting for expensive search, and in-repo that search is nearly free.
+
+Consequences for anyone working in this module:
+
+- `--wiki` is opt-in and nothing needs unshipping. What's bounded is the *claim*:
+  "your docs in one graph with your code" is supported; "better answers" is not.
+- **Don't re-attempt these** — both worked technically and changed no outcome:
+  annotating `find_orphans` with its population (the agent read the caveat, used
+  it correctly, still lost the question), and levelling the File/KnowledgeDoc read
+  caps (fixed the diagnosed question, verdict unchanged).
+- The benchmark **cannot detect benefit** — the control arm sits at 97–99%. Treat
+  "no significant difference" from it as uninformative, not as evidence of absence.
+- The untested case is the one the feature was designed for: docs *outside* the
+  repo, or a corpus too large to sweep. That needs a new question set, not another
+  run.
+
 ## Still deferred
 
-- **Whether concept pages earn a place on the agent path at all.** The settling experiment is a corpus-only arm vs a full-vault arm on the same benchmark; until it runs, `--wiki-concept-pages` is an experiment flag, not a recommended mode. Watch specifically for misses where two docs share a theme but neither an extracted entity nor an author link connects them — that gap is what a concept node would close.
+- **Concept pages: recommend dropping, not deferring.** The pages variant is the
+  worst result on record (88.4% vs a 98.6% control, −10.2pp) — see
+  VALUE-ASSESSMENT.md. `--wiki-concept-pages` remains an experiment flag; OT-1732's
+  scope still lists pages as a deliverable and should be updated.
 - **Concepts as bodiless graph nodes** — the safe salvage of the concept map if the gap above shows up: key a node on `(topic, subject)` from the mentions the extraction call already produces, hang each doc's own gloss on the doc→concept edge, and never fuse the glosses into one prose body. Structure without restatement. `resolve.py`'s clustering would survive as node-merging (exact-match keying fragments: "validation" vs "data validation").
 - Pages are LLM-managed. Human edits to `pages/<slug>.md` are not preserved across compilations (next compile overwrites).
 - Per-page LLM self-rated confidence — the rubric is wired but pages always default to `INFERRED`/0.75 today. Future: have Execute return a per-page tier.
