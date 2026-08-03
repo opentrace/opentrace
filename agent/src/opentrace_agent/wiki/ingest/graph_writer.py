@@ -110,26 +110,24 @@ def corpus_doc_node_id(sha256: str) -> str:
     return f"corpus::{sha256}"
 
 
-def link_corpus_doc_mirrors(
+def stamp_doc_paths(
     store: GraphStore,
-    repo_id: str,
     named_blobs: list[tuple[str, bytes]],
+    *,
+    status_override: str | None = None,
 ) -> int:
-    """Link KnowledgeDocs to the File nodes for the same repo-walked documents.
+    """Stamp root-relative ``path`` (+ ``paths`` for duplicate content, +
+    ``status``) onto the KnowledgeDoc for each blob.
 
-    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` for every doc
-    the wiki pass ingested from a repo walk. For each, the KnowledgeDoc id is the
-    sha256 of the raw bytes (same scheme as :func:`corpus_doc_node_id` /
-    ``autoprune.compute_walked_shas``) and the File id is
-    ``<repo_id>/<rel_path>``. A ``KnowledgeDoc -MIRRORS-> File`` edge is merged
-    (idempotent) and the repo-relative ``path`` is stamped onto the KnowledgeDoc
-    so the twins are mutually navigable. When the code walk didn't create the
-    File node (extensions outside INCLUDED_EXTENSIONS — .rst/.txt/.html/PDFs),
-    it is created here (see :func:`_ensure_file_twin`) so every repo-walked
-    KnowledgeDoc has a File twin. Blobs that never became a KnowledgeDoc
+    Pure property stamping — no File nodes, no MIRRORS edges — so it serves
+    both repo walks (via :func:`link_corpus_doc_mirrors`) and bare-folder
+    ingests (``vault ingest``), where the walked root plays the repo-root
+    role. *status_override* replaces the path-derived ``classify_doc_status``
+    heuristic; without that threading, post-compile stamping would silently
+    undo an explicit ``--status``. Blobs that never became a KnowledgeDoc
     (content-gated) are skipped silently.
 
-    Returns the number of MIRRORS edges written.
+    Returns the number of docs whose properties changed.
     """
     import hashlib
     from collections import defaultdict
@@ -145,23 +143,12 @@ def link_corpus_doc_mirrors(
     for rel_path, data in named_blobs:
         by_sha[hashlib.sha256(data).hexdigest()].append(rel_path)
 
-    edges = 0
+    stamped = 0
     for sha, paths in by_sha.items():
         cid = corpus_doc_node_id(sha)
         corpus_node = store.get_node(cid)
         if corpus_node is None:
             continue  # content-gated out of the vault
-        for rel_path in paths:
-            fid = f"{repo_id}/{rel_path}"
-            if store.get_node(fid) is None:
-                _ensure_file_twin(store, repo_id, rel_path)
-            store.merge_relationship(
-                id=f"{cid}->MIRRORS->{fid}",
-                rel_type=REL_TYPE_MIRRORS,
-                source_id=cid,
-                target_id=fid,
-            )
-            edges += 1
         # Primary path = the most *current* copy, so `path` and `status` agree.
         # An archived duplicate must not make the live document look superseded.
         ranked = sorted(
@@ -178,7 +165,7 @@ def link_corpus_doc_mirrors(
         if props.get("path") != primary:
             props["path"] = primary
             changed = True
-        status = classify_doc_status(primary)
+        status = status_override or classify_doc_status(primary)
         if props.get("status") != status:
             props["status"] = status
             changed = True
@@ -194,6 +181,55 @@ def link_corpus_doc_mirrors(
                 name=corpus_node.get("name") or primary,
                 properties=props,
             )
+            stamped += 1
+    return stamped
+
+
+def link_corpus_doc_mirrors(
+    store: GraphStore,
+    repo_id: str,
+    named_blobs: list[tuple[str, bytes]],
+) -> int:
+    """Link KnowledgeDocs to the File nodes for the same repo-walked documents.
+
+    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` for every doc
+    the wiki pass ingested from a repo walk. For each, the KnowledgeDoc id is the
+    sha256 of the raw bytes (same scheme as :func:`corpus_doc_node_id` /
+    ``autoprune.compute_walked_shas``) and the File id is
+    ``<repo_id>/<rel_path>``. A ``KnowledgeDoc -MIRRORS-> File`` edge is merged
+    (idempotent), and :func:`stamp_doc_paths` stamps the repo-relative ``path``
+    onto the KnowledgeDoc so the twins are mutually navigable. When the code
+    walk didn't create the File node (extensions outside INCLUDED_EXTENSIONS —
+    .rst/.txt/.html/PDFs), it is created here (see :func:`_ensure_file_twin`)
+    so every repo-walked KnowledgeDoc has a File twin. Blobs that never became
+    a KnowledgeDoc (content-gated) are skipped silently.
+
+    Returns the number of MIRRORS edges written.
+    """
+    import hashlib
+    from collections import defaultdict
+
+    by_sha: dict[str, list[str]] = defaultdict(list)
+    for rel_path, data in named_blobs:
+        by_sha[hashlib.sha256(data).hexdigest()].append(rel_path)
+
+    edges = 0
+    for sha, paths in by_sha.items():
+        cid = corpus_doc_node_id(sha)
+        if store.get_node(cid) is None:
+            continue  # content-gated out of the vault
+        for rel_path in paths:
+            fid = f"{repo_id}/{rel_path}"
+            if store.get_node(fid) is None:
+                _ensure_file_twin(store, repo_id, rel_path)
+            store.merge_relationship(
+                id=f"{cid}->MIRRORS->{fid}",
+                rel_type=REL_TYPE_MIRRORS,
+                source_id=cid,
+                target_id=fid,
+            )
+            edges += 1
+    stamp_doc_paths(store, named_blobs)
     return edges
 
 
@@ -869,6 +905,15 @@ def _write_mentions_edges(
     genuine cross-reference) are still written. Consumers that want "every
     doc referencing X" union MENTIONS with incoming DERIVED_FROM.
 
+    *derived_pairs* alone is NOT sufficient: it covers only docs extracted
+    THIS run, while every doc in ``meta.sources`` is re-matched on every
+    mirror — so on a re-compile, an old doc's own derived entities would no
+    longer be recognized and MENTIONS would restate every DERIVED_FROM in
+    the vault. The skip-set is therefore unioned with each doc's incoming
+    ``DERIVED_FROM`` edges already in the graph, and any violating MENTIONS
+    edge a previous (buggy) compile wrote is deleted — edge ids are
+    deterministic, so existing graphs self-heal on their next compile.
+
     Only operates on entities tagged with this vault (so vault scope is
     preserved). Uses whole-word matching via ``\\b...\\b`` regex.
 
@@ -912,11 +957,25 @@ def _write_mentions_edges(
                 for eid in by_name_cs.get(match.group(0), []):
                     targets.add(eid)
 
-        for eid in targets:
-            # Skip when DERIVED_FROM already encodes this doc↔entity pair —
-            # the reverse MENTIONS would be redundant.
-            if (node_id, eid) in derived_pairs:
-                continue
+        # Everything this doc originated, from BOTH sources of truth: this
+        # run's extraction (derived_pairs) and the graph's existing
+        # DERIVED_FROM edges (prior runs — re-mirrors re-match every doc,
+        # not just the ones extracted this run).
+        derived_here = {eid for (nid, eid) in derived_pairs if nid == node_id}
+        try:
+            for r in store.traverse(node_id, direction="incoming", max_depth=1, relationship_type="DERIVED_FROM"):
+                derived_here.add(r["node"]["id"])
+        except Exception:  # noqa: BLE001 — a doc node not yet written has no edges
+            pass
+
+        # Self-heal: a violating MENTIONS edge written by an earlier compile
+        # (before the graph-side dedup existed) has a deterministic id —
+        # delete it rather than leaving the restated claim in place.
+        stale = [f"{node_id}->MENTIONS->{eid}" for eid in (targets & derived_here)]
+        if stale:
+            store.delete_relationships_by_ids(stale)
+
+        for eid in targets - derived_here:
             store.merge_relationship(
                 id=f"{node_id}->MENTIONS->{eid}",
                 rel_type=REL_TYPE_MENTIONS,

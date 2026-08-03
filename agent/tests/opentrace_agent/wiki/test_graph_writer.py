@@ -117,6 +117,7 @@ from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
     link_doc_to_doc_links,
     link_vault_to_repo,
     page_node_id,
+    stamp_doc_paths,
     vault_node_id,
     write_vault_to_graph,
 )
@@ -439,6 +440,59 @@ class TestDeleteVaultFromGraph:
         # We only ever delete Vault / Page / Source by id or by
         # vault property — code nodes are out of scope.
         assert store.get_node("repo-1") is not None
+
+
+class TestStampDocPaths:
+    """Path/status stamping WITHOUT File twins — the `vault ingest` half of
+    what link_corpus_doc_mirrors does for repo walks."""
+
+    def _seed(self, store, body: bytes = b"# Doc\nbody\n"):
+        import hashlib
+
+        sha = hashlib.sha256(body).hexdigest()
+        store.add_node(corpus_doc_node_id(sha), NODE_TYPE_KNOWLEDGE_DOC, "doc.md", {"sha256": sha})
+        return body, sha
+
+    def test_stamps_path_and_status_but_no_file_or_mirrors(self, store):
+        body, sha = self._seed(store)
+        assert stamp_doc_paths(store, [("docs/guide.md", body)]) == 1
+        props = store.get_node(corpus_doc_node_id(sha))["properties"]
+        assert props["path"] == "docs/guide.md"
+        assert props["status"] == "authoritative"
+        assert props["sha256"] == sha  # existing props preserved
+        mirrors = store.traverse(
+            corpus_doc_node_id(sha), direction="outgoing", max_depth=1, relationship_type=REL_TYPE_MIRRORS
+        )
+        assert mirrors == []
+        assert store.list_nodes("File") == []
+
+    def test_status_override_beats_path_heuristic(self, store):
+        body, sha = self._seed(store)
+        stamp_doc_paths(store, [("docs/guide.md", body)], status_override="design_history")
+        props = store.get_node(corpus_doc_node_id(sha))["properties"]
+        assert props["status"] == "design_history"
+
+    def test_duplicate_content_primary_is_most_current(self, store):
+        body, sha = self._seed(store)
+        stamp_doc_paths(
+            store,
+            [("openspec/changes/archive/2026-04-27-audit/spec.md", body), ("openspec/changes/audit/spec.md", body)],
+        )
+        props = store.get_node(corpus_doc_node_id(sha))["properties"]
+        assert props["path"] == "openspec/changes/audit/spec.md"
+        assert props["status"] == "design_history"
+        assert props["paths"] == sorted(
+            ["openspec/changes/archive/2026-04-27-audit/spec.md", "openspec/changes/audit/spec.md"]
+        )
+
+    def test_content_gated_blob_skipped(self, store):
+        # Bytes were content-gated — no KnowledgeDoc node exists.
+        assert stamp_doc_paths(store, [("readme.md", b"# hi")]) == 0
+
+    def test_returns_changed_count_so_second_call_is_zero(self, store):
+        body, _ = self._seed(store)
+        assert stamp_doc_paths(store, [("docs/guide.md", body)]) == 1
+        assert stamp_doc_paths(store, [("docs/guide.md", body)]) == 0
 
 
 class TestLinkCorpusDocMirrors:
