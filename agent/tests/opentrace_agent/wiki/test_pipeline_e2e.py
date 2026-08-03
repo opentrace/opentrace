@@ -315,11 +315,15 @@ def test_empty_content_source_is_skipped(tmp_path, fake_llm):
             _page("Real"),
         ]
     )
-    list(run_compile("v", [real, blank], vault_root=tmp_path, llm=llm))
+    events = list(run_compile("v", [real, blank], vault_root=tmp_path, llm=llm))
 
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
     assert _sha(real.data) in meta.sources
     assert _sha(blank.data) not in meta.sources  # skipped entirely — no Source node either
+    # The gate's skip count travels as structured detail (the CLI summary
+    # reads it), not just message text.
+    gate_events = [e for e in events if e.detail and "low_content_skipped" in e.detail]
+    assert [e.detail["low_content_skipped"] for e in gate_events] == [1]
 
 
 def test_unified_call_emits_entities_into_graph(tmp_path, fake_llm):

@@ -39,9 +39,11 @@ from opentrace_agent.cli.workspace import (
 )
 
 if TYPE_CHECKING:
-    # Imported lazily at runtime (real_ladybug is a heavy native dep); only the
-    # type annotations need the name at module scope.
+    # Imported lazily at runtime (real_ladybug is a heavy native dep, and the
+    # wiki stack pulls the LLM SDKs); only the type annotations need the names
+    # at module scope.
     from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki import SourceInput
 
 # ---------------------------------------------------------------------------
 # Database discovery
@@ -833,12 +835,22 @@ def _resolve_index_vault_name(
     return unique_vault_name(vault_name, project_root=project_root)
 
 
-def _collect_wiki_inputs(source_path: Path, *, exclude_design_history: bool = False) -> list["SourceInput"]:
+def _collect_wiki_inputs(
+    source_path: Path,
+    *,
+    exclude_design_history: bool = False,
+    status_override: str | None = None,
+    extensions: frozenset[str] | None = None,
+) -> list["SourceInput"]:
     """Walk *source_path* for doc files and build SourceInputs, stamping each
     with its epistemic status (``classify_doc_status``). Directories excluded
     from the code walk are excluded here too. With *exclude_design_history*,
     design-history docs (proposal/spec/ADR trees, CHANGELOGs) are dropped
-    instead of typed."""
+    instead of typed. *status_override* replaces the heuristic status on every
+    surviving input (exclusion still uses the heuristic, so combining the two
+    means "drop the ADR trees, force the rest"). *extensions* overrides the
+    walked extension set (default ``DOC_EXTENSIONS``); ``vault ingest`` passes
+    a wider set — if you change it there, change the prune walk with it."""
     from opentrace_agent.sources.code.directory_walker import (
         DOC_EXTENSIONS,
         EXCLUDED_DIRS,
@@ -846,16 +858,24 @@ def _collect_wiki_inputs(source_path: Path, *, exclude_design_history: bool = Fa
     from opentrace_agent.wiki import SourceInput
     from opentrace_agent.wiki.ingest.sources import classify_doc_status
 
+    if extensions is None:
+        extensions = DOC_EXTENSIONS
     inputs: list[SourceInput] = []
     if source_path.is_file():
-        if source_path.suffix.lower() in DOC_EXTENSIONS:
-            inputs.append(SourceInput(name=source_path.name, data=source_path.read_bytes()))
+        if source_path.suffix.lower() in extensions:
+            inputs.append(
+                SourceInput(
+                    name=source_path.name,
+                    data=source_path.read_bytes(),
+                    status=status_override or "authoritative",
+                )
+            )
         return inputs
     for dirpath, dirnames, filenames in os.walk(source_path):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
         for filename in sorted(filenames):
             ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            if ext not in DOC_EXTENSIONS:
+            if ext not in extensions:
                 continue
             abs_file = Path(dirpath) / filename
             # Pass the path RELATIVE to the walked root, not the bare
@@ -867,11 +887,50 @@ def _collect_wiki_inputs(source_path: Path, *, exclude_design_history: bool = Fa
             status = classify_doc_status(rel_name)
             if exclude_design_history and status != "authoritative":
                 continue
+            status = status_override or status
             try:
                 inputs.append(SourceInput(name=rel_name, data=abs_file.read_bytes(), status=status))
             except OSError as exc:
                 click.echo(f"  Skipped {rel_name}: {exc}", err=True)
     return inputs
+
+
+def _echo_wiki_cost_estimate(
+    provider: str,
+    inputs: list["SourceInput"],
+    *,
+    synthesize_pages: bool = False,
+    indent: str = "    ",
+) -> None:
+    """Pre-flight per-extension breakdown + cost estimate for a doc ingestion.
+
+    The unified doc pass is ONE call per source (summary + entities + concept
+    inventory). With concept pages it also pays 1 resolve call and a share of
+    page synthesis (~0.5 per source). Token assumption: 4k input / 1k output
+    per LLM call. The extension breakdown prints first so a folder full of
+    image attachments is visible as "84 × .png" BEFORE the money is spent.
+    """
+    from collections import Counter
+
+    from opentrace_agent.sources._llm_common import BACKENDS
+
+    counts = Counter(Path(inp.name).suffix.lower() or "(no ext)" for inp in inputs)
+    breakdown = ", ".join(f"{n} × {ext}" for ext, n in counts.most_common())
+    click.echo(f"{indent}{breakdown}")
+
+    cfg = BACKENDS.get(provider)
+    if cfg is None:
+        return
+    est_calls = len(inputs)
+    if synthesize_pages:
+        est_calls += 1 + max(1, len(inputs) // 2)
+    est_input_tokens = est_calls * 4_000
+    est_output_tokens = est_calls * 1_000
+    est_cost = (
+        est_input_tokens / 1_000_000 * cfg.pricing_input_per_million
+        + est_output_tokens / 1_000_000 * cfg.pricing_output_per_million
+    )
+    click.echo(f"{indent}via {provider} (~${est_cost:.2f} estimated)")
 
 
 def _run_wiki_compile_against_index(
@@ -935,24 +994,7 @@ def _run_wiki_compile_against_index(
 
     provider = _autodetect_provider()
 
-    # Pre-flight cost estimate. The unified doc pass is ONE call per source
-    # (summary + entities + concept inventory). With --wiki-concept-pages it
-    # also pays 1 resolve call and a share of page synthesis (~0.5 per
-    # source). Token assumption: 4k input / 1k output per LLM call.
-    from opentrace_agent.sources._llm_common import BACKENDS
-
-    cfg = BACKENDS.get(provider)
-    if cfg is not None:
-        est_calls = len(inputs)
-        if synthesize_pages:
-            est_calls += 1 + max(1, len(inputs) // 2)
-        est_input_tokens = est_calls * 4_000
-        est_output_tokens = est_calls * 1_000
-        est_cost = (
-            est_input_tokens / 1_000_000 * cfg.pricing_input_per_million
-            + est_output_tokens / 1_000_000 * cfg.pricing_output_per_million
-        )
-        click.echo(f"    via {provider} (~${est_cost:.2f} estimated)")
+    _echo_wiki_cost_estimate(provider, inputs, synthesize_pages=synthesize_pages)
 
     from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase
 

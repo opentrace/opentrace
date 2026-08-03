@@ -45,7 +45,7 @@ from opentrace_agent.wiki.paths import (
 
 @click.group()
 def vault() -> None:
-    """Vault management — attach, detach, list, promote, demote, refresh-stale-pages."""
+    """Vault management — ingest, attach, detach, list, promote, demote, refresh-stale-pages."""
 
 
 # ---------------------------------------------------------------------------
@@ -533,3 +533,410 @@ def vault_refresh_stale_pages(
         click.echo("No stale pages found.")
     else:
         click.echo(f"Refreshed {regenerated} stale page(s).")
+
+
+# ---------------------------------------------------------------------------
+# vault ingest — bare-folder doc ingestion (no git repo required)
+# ---------------------------------------------------------------------------
+
+
+def _ingest_extensions() -> frozenset[str]:
+    """The extension set ``vault ingest`` walks: ``DOC_EXTENSIONS`` + ``.json``.
+
+    Ingest folders are data-as-docs — a fleet inventory or supplier export in
+    JSON is a document here, the same way ``.csv`` already is. Ingest-specific
+    by design: on a repo walk ``.json`` is code/config the code walk already
+    owns, so ``index --wiki`` is unchanged.
+    """
+    from opentrace_agent.sources.code.directory_walker import DOC_EXTENSIONS
+
+    return DOC_EXTENSIONS | {".json"}
+
+
+def _walk_ingest_files(folder: Path) -> tuple[list[Path], list[str]]:
+    """One walk, two outputs: doc files to ingest (abs paths) and the
+    folder-relative names of files SKIPPED by the extension filter.
+
+    The skip list exists because silence here is a coverage lie — a summary
+    that says "14 docs indexed" over a 15-file folder reads as complete, and
+    nothing downstream can reveal the file that never entered the graph.
+    Directory exclusions (``.git``, ``.opentrace``, ...) are not reported:
+    hiding our own index dir isn't a coverage gap.
+    """
+    from opentrace_agent.sources.code.directory_walker import EXCLUDED_DIRS
+
+    exts = _ingest_extensions()
+    walked: list[Path] = []
+    skipped: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
+        for filename in sorted(filenames):
+            ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            abs_file = Path(dirpath) / filename
+            if ext in exts:
+                walked.append(abs_file)
+            else:
+                skipped.append(os.path.relpath(abs_file, folder))
+    return walked, skipped
+
+
+def _walked_doc_shas(folder: Path) -> set[str]:
+    """sha256 of every doc file currently under *folder* (full ingest-extension
+    walk, no design-history exclusion) — the keep-set both prune passes use.
+
+    MUST walk the same extension set as the ingest itself: a doc ingested
+    under an extension this walk can't see would be pruned as "deleted" on
+    the very next run. Deliberately ignores ``--exclude-design-history``:
+    exclusion means "don't ingest these", not "delete what a previous run
+    ingested", and the graph-side autoprune walks the full set too — the two
+    prunes must agree on the population or they'd fight across runs.
+    """
+    from opentrace_agent.pipeline.autoprune import compute_walked_shas
+
+    walked, _ = _walk_ingest_files(folder)
+    return compute_walked_shas(walked)
+
+
+def _prune_vault_meta_sources(meta_path: Path, vault_name: str, keep_shas: set[str]) -> int:
+    """Drop ``.vault.json`` source entries for docs deleted from the folder.
+
+    Graph-side autoprune removes their KnowledgeDoc nodes, but every compile
+    re-mirrors ALL of ``meta.sources`` — so without this, a deleted doc is
+    resurrected on each re-ingest and re-deleted by that run's prune, and the
+    metadata grows forever. Sources still cited by a page are kept (defensive:
+    corpus-only vaults have no pages). Returns the number of entries dropped.
+    """
+    from opentrace_agent.wiki.vault import load_metadata, save_metadata
+
+    try:
+        meta = load_metadata(meta_path, name=vault_name)
+    except (OSError, ValueError):
+        return 0
+    cited = {sha for page in meta.pages.values() for sha in (page.source_shas or [])}
+    doomed = [sha for sha in meta.sources if sha not in keep_shas and sha not in cited]
+    for sha in doomed:
+        del meta.sources[sha]
+    if doomed:
+        save_metadata(meta_path, meta)
+    return len(doomed)
+
+
+@vault.command("ingest")
+@click.argument("folder", type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path))
+@click.argument("vault_name", required=False, default=None)
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="Graph DB to mirror into. Auto-discovered if omitted (local scope only).",
+)
+@click.option(
+    "--scope",
+    type=click.Choice(["local", "global"]),
+    default="local",
+    help="Vault scope. Global vaults are written disk-only; attach them to a project later.",
+)
+@click.option(
+    "--provider",
+    type=click.Choice(["anthropic", "gemini", "openai", "kimi", "local"]),
+    default=None,
+    help="LLM backend for the per-doc labelling call. Auto-detected from env keys if omitted.",
+)
+@click.option("--api-key", default=None)
+@click.option("--model", default=None)
+@click.option("--base-url", default=None)
+@click.option(
+    "--status",
+    "status_override",
+    type=click.Choice(["authoritative", "design_history", "design_history_archived"]),
+    default=None,
+    help="Force this epistemic status on every doc, overriding the path heuristic.",
+)
+@click.option(
+    "--exclude-design-history",
+    is_flag=True,
+    help="Skip proposal/spec/ADR trees and CHANGELOGs instead of labelling them.",
+)
+@click.option("--no-prune", is_flag=True, help="Keep vault entries for docs deleted from the folder.")
+@click.option("-v", "--verbose", is_flag=True, help="Show per-file progress for cheap stages too.")
+def vault_ingest(
+    folder: Path,
+    vault_name: str | None,
+    db_path: str | None,
+    scope: str,
+    provider: str | None,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    status_override: str | None,
+    exclude_design_history: bool,
+    no_prune: bool,
+    verbose: bool,
+) -> None:
+    """Ingest a folder of doc files into a searchable vault.
+
+    Walks FOLDER (a Confluence/Notion/docs-site export, a downloads dir —
+    any bare folder; no git repo required) for doc files (HTML, PDF, DOCX,
+    Markdown, ...), normalizes each to markdown, labels it with ONE LLM call
+    (title + one-line summary + entities), and indexes it as KnowledgeDoc
+    nodes an agent can search through the graph. Bodies stay verbatim in the
+    corpus. Corpus-only: no concept pages are synthesized.
+
+    Re-running on the same folder updates the same vault in place: unchanged
+    files are skipped (content-addressed), deleted files are pruned (unless
+    --no-prune). VAULT_NAME defaults to the folder's name.
+    """
+    from opentrace_agent.cli.main import (
+        _collect_wiki_inputs,
+        _echo_wiki_cost_estimate,
+        _resolve_index_vault_name,
+    )
+    from opentrace_agent.wiki import run_compile
+    from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase
+    from opentrace_agent.wiki.paths import metadata_path, vault_dir
+    from opentrace_agent.wiki.slugify import base_slug
+    from opentrace_agent.wiki.vault import load_metadata, save_metadata
+
+    folder = folder.resolve()
+
+    # Preflight the LLM backend before touching disk or DB — a missing key
+    # should fail here, not after a vault dir was created.
+    if provider is None:
+        provider = _autodetect_provider()
+
+    store = None
+    if scope == "local":
+        if db_path is not None:
+            # An explicit --db may point into a directory that doesn't exist
+            # yet (a fresh scratch project, a benchmark arm dir). Create the
+            # parent rather than letting the DB engine fail on it — same
+            # spirit as the auto-create below. Discovery-based opens never
+            # hit this (find_db only returns DBs that exist).
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        store = _open_graph_store(db_path)
+        if store is None:
+            # No project here yet — a dir of docs IS a valid project, no repo
+            # or code walk required. Create a fresh docs-only graph next to
+            # the vault so the ingest is searchable immediately instead of
+            # silently downgrading to disk-only.
+            from opentrace_agent.store import GraphStore
+
+            new_db = Path.cwd() / ".opentrace" / "index.db"
+            new_db.parent.mkdir(parents=True, exist_ok=True)
+            store = GraphStore(str(new_db))
+            click.echo(f"No graph DB found — created a docs-only graph at {new_db}.")
+    else:
+        click.echo(
+            "Global scope: vault is written disk-only. Path stamping and "
+            "doc-to-doc links are graph writes, so attached copies won't have "
+            "them — use a local ingest if you need those."
+        )
+
+    try:
+        # The vault must live next to the graph DB so one `.opentrace/` dir
+        # holds both the graph and its vaults (same reasoning as index --wiki).
+        project_root = Path(store.db_path).parent.parent if store is not None else Path.cwd()
+
+        # `dir::<abs path>` plays the repo-id role: re-ingesting the same
+        # folder finds the vault it produced before (idempotent re-runs),
+        # even when the name was auto-suffixed on first creation. Repo ids
+        # (`<dirname>` / `owner/repo`) never contain `::`, so no collision.
+        dir_id = f"dir::{folder}"
+        if not vault_name:
+            vault_name = base_slug(folder.name) or "docs"
+        vault_name = _resolve_index_vault_name(vault_name, scope=scope, project_root=project_root, repo_id=dir_id)
+
+        inputs = _collect_wiki_inputs(
+            folder,
+            exclude_design_history=exclude_design_history,
+            status_override=status_override,
+            extensions=_ingest_extensions(),
+        )
+        _, not_walked = _walk_ingest_files(folder)
+        if not inputs:
+            click.echo(f"No doc files found under {folder}.")
+            if not_walked:
+                click.echo(f"({len(not_walked)} file(s) skipped by type: {', '.join(sorted(not_walked)[:10])})")
+            return
+
+        click.echo(f"Ingesting {len(inputs)} doc(s) from {folder} into {scope} vault {vault_name!r} ...")
+        _echo_wiki_cost_estimate(provider, inputs, indent="  ")
+
+        # LLM-bound stages get per-unit progress by default; cheap stages
+        # (hashing, normalizing) stay --verbose-only. PLANNING/EXECUTING never
+        # run here (corpus-only), so EXTRACTING is the only slow phase.
+        progress_phases = {WikiPhase.EXTRACTING}
+        summary: dict[str, int] = {
+            "new": 0,
+            "duplicates": 0,
+            "normalize_errors": 0,
+            "low_content_skipped": 0,
+            "entities": 0,
+            "relationships": 0,
+        }
+        mirror_stats: dict[str, int] = {}
+
+        try:
+            for event in run_compile(
+                vault_name=vault_name,
+                inputs=inputs,
+                api_key=api_key,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                scope=scope,
+                project_root=project_root,
+                graph_store=store,
+            ):
+                detail = event.detail or {}
+                if event.kind == WikiEventKind.STAGE_STOP:
+                    if event.phase == WikiPhase.ACQUIRING:
+                        summary["new"] = detail.get("new", 0)
+                        summary["duplicates"] = detail.get("skipped", 0)
+                    elif event.phase == WikiPhase.NORMALIZING and event.errors:
+                        summary["normalize_errors"] = len(event.errors)
+                    elif event.phase == WikiPhase.EXTRACTING:
+                        summary["entities"] = detail.get("entities", 0)
+                        summary["relationships"] = detail.get("relationships", 0)
+                summary["low_content_skipped"] += detail.get("low_content_skipped", 0)
+                if "nodes_written" in detail:
+                    mirror_stats = detail
+
+                if event.kind in (WikiEventKind.STAGE_START, WikiEventKind.STAGE_STOP, WikiEventKind.DONE):
+                    click.echo(f"  {event.message}")
+                elif event.kind == WikiEventKind.ERROR:
+                    click.echo(f"  ERROR: {event.message}", err=True)
+                elif event.kind == WikiEventKind.STAGE_PROGRESS and (verbose or event.phase in progress_phases):
+                    counter = f"[{event.current}/{event.total}] " if event.total else ""
+                    click.echo(f"  {counter}{event.message}")
+        except RuntimeError as e:
+            # Per-vault flock contention ("vault busy — another compile ...").
+            raise click.ClickException(str(e)) from e
+
+        # Bridge into the graph: stamp folder-relative paths (navigation +
+        # FTS) and the authors' own doc-to-doc links. Property/edge writes
+        # only — deliberately NO File twins, MIRRORS, or DOCUMENTS here:
+        # there is no repo, and the KnowledgeDoc IS the document.
+        stamped = doc_links = 0
+        if store is not None:
+            from opentrace_agent.wiki.ingest.graph_writer import (
+                link_doc_to_doc_links,
+                stamp_doc_paths,
+            )
+
+            named_blobs = [(inp.name, inp.data) for inp in inputs]
+            stamped = stamp_doc_paths(store, named_blobs, status_override=status_override)
+            doc_links = link_doc_to_doc_links(store, named_blobs)
+
+        # Persist the folder→vault link on disk (both scopes, graph or not)
+        # so a future re-ingest reuses this vault instead of suffixing anew.
+        mp = metadata_path(vault_name, scope=scope, project_root=project_root)  # type: ignore[arg-type]
+        try:
+            meta = load_metadata(mp, name=vault_name)
+            if meta.spawned_from != dir_id:
+                meta.spawned_from = dir_id
+                save_metadata(mp, meta)
+        except OSError as exc:
+            click.echo(f"  could not stamp spawned_from on {vault_name!r}: {exc}", err=True)
+
+        pruned_sources = pruned_meta = 0
+        if not no_prune:
+            keep_shas = _walked_doc_shas(folder)
+            if store is not None:
+                from opentrace_agent.pipeline.autoprune import autoprune_after_index
+
+                report = autoprune_after_index(
+                    store,
+                    walked_doc_shas=keep_shas,
+                    vault_name=vault_name,
+                    scope_path=folder,
+                    db_path=store.db_path,
+                )
+                pruned_sources = report.sources_deleted
+                if report.sources_deleted or report.entities_deleted:
+                    click.echo(
+                        f"  pruned {report.sources_deleted} deleted doc(s), "
+                        f"{report.entities_deleted} derived entities, "
+                        f"{report.corpus_files_deleted} corpus file(s)"
+                    )
+            pruned_meta = _prune_vault_meta_sources(mp, vault_name, keep_shas)
+
+        _echo_ingest_summary(
+            vault_name=vault_name,
+            scope=scope,
+            vault_path=vault_dir(vault_name, scope=scope, project_root=project_root),  # type: ignore[arg-type]
+            n_inputs=len(inputs),
+            summary=summary,
+            mirror_stats=mirror_stats,
+            stamped=stamped,
+            doc_links=doc_links,
+            pruned=pruned_sources or pruned_meta,
+            mirrored=store is not None,
+            not_walked=not_walked,
+        )
+    finally:
+        if store is not None:
+            store.close()
+
+
+def _echo_ingest_summary(
+    *,
+    vault_name: str,
+    scope: str,
+    vault_path: Path,
+    n_inputs: int,
+    summary: dict[str, int],
+    mirror_stats: dict[str, int],
+    stamped: int,
+    doc_links: int,
+    pruned: int,
+    mirrored: bool,
+    not_walked: list[str] | None = None,
+) -> None:
+    """The payoff screen — what the user got for the ingest, plus next step."""
+    click.echo()
+    click.echo(f"✓ {scope} vault {vault_name!r} — {n_inputs} doc(s) walked, {summary['new']} new")
+
+    # Coverage must be explicit: an agent (and the person reading this) can't
+    # distinguish "fully indexed" from "indexed except what was silently
+    # dropped" — the exact gap the vault benchmark punished.
+    if not_walked:
+        from collections import Counter
+
+        by_ext = Counter(Path(n).suffix.lower() or "(no ext)" for n in not_walked)
+        counts = ", ".join(f"{c} × {ext}" for ext, c in by_ext.most_common())
+        names = f" ({', '.join(sorted(not_walked))})" if len(not_walked) <= 5 else ""
+        click.echo(f"  not walked (unsupported type): {counts}{names}")
+
+    skipped_bits = []
+    if summary["duplicates"]:
+        skipped_bits.append(f"{summary['duplicates']} unchanged (already ingested)")
+    if summary["normalize_errors"]:
+        skipped_bits.append(f"{summary['normalize_errors']} failed normalization")
+    if summary["low_content_skipped"]:
+        skipped_bits.append(f"{summary['low_content_skipped']} empty/low-content")
+    if skipped_bits:
+        click.echo(f"  skipped: {', '.join(skipped_bits)}")
+
+    if summary["entities"] or summary["relationships"]:
+        click.echo(f"  entities: {summary['entities']} ({summary['relationships']} relationship(s))")
+    if doc_links or stamped:
+        click.echo(f"  graph: {stamped} path(s) stamped, {doc_links} doc-to-doc link(s) (LINKS_TO)")
+    if mirror_stats:
+        click.echo(
+            f"  mirror: {mirror_stats.get('nodes_written', 0)} nodes, "
+            f"{mirror_stats.get('rels_written', 0)} rels, "
+            f"{mirror_stats.get('entities_written', 0)} entities"
+        )
+    if pruned:
+        click.echo(f"  pruned: {pruned} doc(s) no longer in the folder")
+    click.echo(f"  on disk: {vault_path}")
+
+    if mirrored:
+        click.echo(
+            "  Next: agents can search it now (`search_graph` via the OpenTrace "
+            f"MCP server); browse with `opentraceai vault show {vault_name}`."
+        )
+    else:
+        click.echo(f"  Next: attach it to a project — cd <project> && opentraceai vault attach {vault_name}")

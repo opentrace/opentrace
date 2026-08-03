@@ -197,6 +197,7 @@ def run_compile(
                 kind=WikiEventKind.STAGE_PROGRESS,
                 phase=WikiPhase.NORMALIZING,
                 message=f"Skipped {before - len(normalized)} empty/low-content source(s) (< {min_chars} chars)",
+                detail={"low_content_skipped": before - len(normalized)},
             )
 
         if not normalized:

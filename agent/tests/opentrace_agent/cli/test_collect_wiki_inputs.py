@@ -41,3 +41,24 @@ def test_exclude_design_history_drops_them(tmp_path):
     inputs = _collect_wiki_inputs(_repo(tmp_path), exclude_design_history=True)
     names = {i.name for i in inputs}
     assert names == {"README.md", "docs/guide.md"}
+
+
+def test_status_override_stamps_every_input(tmp_path):
+    inputs = _collect_wiki_inputs(_repo(tmp_path), status_override="design_history")
+    assert len(inputs) == 4
+    assert {i.status for i in inputs} == {"design_history"}
+
+
+def test_status_override_with_exclusion_drops_then_forces(tmp_path):
+    """Exclusion uses the path heuristic; the override applies to survivors —
+    "drop the ADR trees, force the rest"."""
+    inputs = _collect_wiki_inputs(_repo(tmp_path), exclude_design_history=True, status_override="design_history")
+    assert {i.name for i in inputs} == {"README.md", "docs/guide.md"}
+    assert {i.status for i in inputs} == {"design_history"}
+
+
+def test_status_override_applies_to_single_file(tmp_path):
+    f = tmp_path / "note.md"
+    f.write_text("# Note")
+    (single,) = _collect_wiki_inputs(f, status_override="design_history_archived")
+    assert single.status == "design_history_archived"
