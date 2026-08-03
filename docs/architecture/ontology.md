@@ -10,10 +10,12 @@ The graph organises into three domains:
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
 | **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
-| **page** | `KnowledgeVault`, `KnowledgeDoc` | `opentraceai index --wiki` (doc ingestion) |
-| **page** | `KnowledgeConcept` | `opentraceai index --wiki --wiki-concept-pages` (Resolve + Execute) — opt-in |
+| **page** | `KnowledgeVault`, `KnowledgeDoc` | `opentraceai index --wiki` / `vault ingest` (doc ingestion) |
+| **page** | `KnowledgeConcept` | nothing — see below |
 
-`--wiki` on its own is corpus-only: it indexes the documents (labels, epistemic status, entity graph, doc↔doc links, `File` twins) and keeps their bodies verbatim. Concept pages, and the `CITES` edges that back them, appear only under `--wiki-concept-pages`.
+Doc ingestion is corpus-only: it indexes the documents (labels, epistemic status, entity graph, doc↔doc links, `File` twins) and keeps their bodies verbatim.
+
+`KnowledgeConcept` and the `CITES` edges that back it remain valid types, but **nothing produces them**. They came from a concept-page synthesis stage removed on 2026-08-03 (it measured 88.4% against a 98.6% control — restating a source strips its hedges, tense, and attribution). The types stay in the ontology because a vault compiled before the removal still has pages on disk, and a re-compile must keep mirroring them rather than dropping them from the graph.
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -97,7 +99,7 @@ The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Ev
 
 #### `KnowledgeVault`
 
-A named collection of ingested documents — and, with `--wiki-concept-pages`, the concept pages compiled from them (one vault node per disk vault dir).
+A named collection of ingested documents (one vault node per disk vault dir), plus any legacy concept pages the vault still carries.
 
 - `id` — `vault::<name>`
 - `name` — display name
@@ -109,17 +111,17 @@ A named collection of ingested documents — and, with `--wiki-concept-pages`, t
 
 #### `KnowledgeConcept`
 
-A single synthesized page in a vault. **Only produced under `--wiki-concept-pages`** — a plain `index --wiki` is corpus-only and creates no `KnowledgeConcept` nodes. Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `KnowledgeDoc` node (see below) with the raw body in the corpus.
+A single synthesized page in a vault. **Nothing produces these** — synthesis was removed 2026-08-03, so only a vault compiled before then has any. Those pages keep being read from disk and mirrored, so the type is still live in the read path (`vault show --page`, `read_vault_page`, `provenance`, the UI renderer). Body lives on disk under `pages/<slug>.md`, where the slug is `<kind_dir>/<base>` — e.g. `concept/usage.md`. Concept pages are the only page kind: per-doc content isn't paged, it lives on the labelled `KnowledgeDoc` node (see below) with the raw body in the corpus.
 
 - `id` — `<vault>::<slug>` (e.g. `kb::concept/revenue`)
 - `name` — page title
 - `slug` — `<kind_dir>/<base>` (e.g. `concept/revenue`)
 - `kind` (`"concept"`), `one_line_summary`, `revision`, `last_updated`
 - `vault` — owning vault name
-- Provenance (stamped at compile time): `agent`, `model`, `session`, `confidence` (0.0–1.0), `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- `stale_since` — ISO-8601 timestamp set by autoprune when a cited KnowledgeDoc was removed but the page still has other citations
+- Provenance (stamped when the page was compiled): `agent`, `model`, `session`, `confidence` (0.0–1.0), `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
+- `stale_since` — ISO-8601 timestamp set by autoprune when a cited KnowledgeDoc was removed but the page still has other citations. There is no refresh path; delete the page instead
 
-`concept` pages default to `INFERRED` / 0.75 confidence (LLM synthesis across sources). The Execute prompt can self-rate; future work may surface `AMBIGUOUS` results.
+`concept` pages carry `INFERRED` / 0.75 confidence — a fixed value, never self-rated.
 
 #### `KnowledgeDoc`
 
@@ -184,15 +186,15 @@ Entities derive from KnowledgeDocs; if code-derived entities are ever introduced
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `CITES` | concept page → KnowledgeDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes. Only exists when concept pages do — i.e. under `--wiki-concept-pages` |
+| `CITES` | concept page → KnowledgeDoc | Direct provenance link, keyed by doc sha (one hop). `retrieval.provenance` walks this for wiki nodes. Only exists where concept pages do — legacy vaults; nothing writes new ones |
 | `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's **author** wrote to another doc — the doc-side analogue of the code graph's `IMPORTS`. Parsed mechanically (no LLM) from markdown inline links, reference-style definitions, and HTML anchors by `graph_writer.parse_doc_links`, then resolved against the linking doc's own directory; repo-root-relative targets (`/docs/x.md`) are supported. External URLs, bare `#fragment` targets, paths escaping the repo root, and targets that aren't another indexed doc produce no edge. Written on repo-walked `--wiki` runs that mirror to the graph — like `MIRRORS` it needs repo-relative paths, so single-file / URL compiles and disk-only global vaults get no doc↔doc edges |
-| `LINKS_TO` | KnowledgeConcept → KnowledgeConcept | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug. Only under `--wiki-concept-pages` |
+| `LINKS_TO` | KnowledgeConcept → KnowledgeConcept | `[[Title]]` wiki-link in a page body. Pages reference each other by title; graph_writer resolves to slug. Legacy vaults only |
 
 ### Cross-layer
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Doc corpus markdown (or a concept-page body, when pages exist) contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
+| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Doc corpus markdown (or a legacy concept-page body, when pages exist) contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the KnowledgeDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
 | `DOCUMENTS` | Repository → KnowledgeVault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 
@@ -210,7 +212,7 @@ All confidence values snap to the discrete rubric, never the soft 0.5 default:
 | Tier | Score set | When |
 |---|---|---|
 | `EXTRACTED` | `{1.0}` | The source states the relationship itself — a reader could point at the line that asserts it |
-| `INFERRED` | `{0.55, 0.65, 0.75, 0.85, 0.95}` | Concluded from context rather than from any explicit statement. Usually right, weighted below EXTRACTED. `concept` pages default to 0.75 |
+| `INFERRED` | `{0.55, 0.65, 0.75, 0.85, 0.95}` | Concluded from context rather than from any explicit statement. Usually right, weighted below EXTRACTED. Legacy `concept` pages sit at 0.75 |
 | `AMBIGUOUS` | `{0.1, 0.15, 0.2, 0.25, 0.3}` | A candidate the producer could neither confirm nor rule out — kept so review tooling can surface it rather than lose it |
 
 `round_confidence(tier, score)` snaps an LLM-supplied score to the closest legal value.

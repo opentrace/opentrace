@@ -19,8 +19,9 @@ from disk between runs. Scoped to the walk's path and vault so partial indexes
 don't blast away other repos' data.
 
 Concept pages that lose a citation get ``stale_since`` stamped instead of
-being regenerated — refresh is opt-in via ``opentraceai vault refresh-stale-pages``
-or ``index --wiki --refresh-stale-pages`` (Phase 8). Zero LLM calls during
+being regenerated. Nothing regenerates page bodies any more (concept-page
+synthesis was removed 2026-08-03), so a stale stamp on a legacy page is a
+marker to delete or ignore it, not a refresh cue. Zero LLM calls during
 autoprune; the expensive part stays explicit.
 
 See the architecture doc (``docs/architecture/ingestion-unification.md``)

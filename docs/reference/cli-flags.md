@@ -32,12 +32,13 @@ opentraceai index [PATH] [OPTIONS]
 | `--db PATH` | path | auto | Database path. Auto-discovered by walking up from cwd looking for `.opentrace/index.db`, stopping at the git root |
 | `--repo-id ID` | string | basename | Repository ID stamped on nodes (defaults to directory name) |
 | `--batch-size N` | int | 200 | Items per save batch |
-| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label, its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges), and a concept inventory. A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
-| `--wiki-concept-pages` | flag | off | Also synthesise cross-document concept pages: `KnowledgeConcept` nodes, `pages/concept/*.md` bodies on disk, `CITES` edges to the cited docs, and page ↔ page `LINKS_TO` wiki-links. Off by default — a synthesized page restates its sources in the model's own voice, which can drop their hedges, tense, and attribution, and concept pages have not yet been shown to beat reading the labelled documents directly. Requires `--wiki` (or a `VAULT_NAME` positional) |
+| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label and its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges). A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
 | `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki` |
 | `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
-| `--refresh-stale-pages` | flag | off | After autoprune, regenerate existing concept pages stamped `stale_since` against their remaining citations. Requires `--wiki` (or a `VAULT_NAME` positional); only does anything for a vault that already has pages |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
+
+!!! note "Removed 2026-08-03"
+    `--wiki-concept-pages` and `--refresh-stale-pages` no longer exist. Concept-page synthesis was removed after it measured 88.4% against a 98.6% control on the doc-Q&A benchmark; corpus `grep` answers the same cross-document questions with verbatim, pre-labelled lines. Vaults compiled before the removal keep their pages and stay readable via `vault show --page`.
 
 ### Common combinations
 
@@ -49,17 +50,11 @@ opentraceai index ./repo
 opentraceai index ./docs --wiki                     # vault auto-named
 opentraceai index ./docs myvault --wiki             # explicit name
 
-# Same, plus synthesized cross-document concept pages
-opentraceai index ./docs myvault --wiki --wiki-concept-pages
-
 # Compile a global vault visible from other projects
 opentraceai index ./papers refs --wiki --global
 
 # Full stack — code + entities + doc corpus + MIRRORS/LINKS_TO/MENTIONS edges
 opentraceai index ./ myproject --wiki
-
-# Re-build a vault, regenerate stale pages in the same run
-opentraceai index ./papers research --wiki --refresh-stale-pages
 
 # Re-walk without destroying orphans
 opentraceai index ./repo --wiki --no-prune
@@ -73,8 +68,6 @@ opentraceai index https://arxiv.org/abs/1706.03762 --wiki
 | Flag | LLM cost when set |
 |---|---|
 | `--wiki` | ~1 call per new doc. Sha dedup skips unchanged docs. The link / twin / status passes are mechanical — 0 |
-| `--wiki-concept-pages` | On top of `--wiki`: ~1 resolve call + ~0.5 synthesis calls per doc |
-| `--refresh-stale-pages` | 1 call per stale page being regenerated |
 | All others | 0 |
 
 Pre-flight estimate is printed when any LLM flag is set.
@@ -91,7 +84,6 @@ opentraceai vault attach NAME [--scope local|global] [--db PATH]
 opentraceai vault detach NAME [--db PATH]
 opentraceai vault promote NAME
 opentraceai vault demote NAME
-opentraceai vault refresh-stale-pages [NAME] [--db PATH] [--provider X]
 ```
 
 ### `vault ingest`
@@ -123,7 +115,7 @@ Ingest a bare folder of doc files (a Confluence/Notion/docs-site export — no g
 | Flag | Description |
 |---|---|
 | `--scope local\|global` | Disambiguate when a vault exists in both scopes. Local wins by default |
-| `--page SLUG` | Print one page body to stdout instead of the index |
+| `--page SLUG` | Print one page body to stdout instead of the index. Only vaults compiled before 2026-08-03 have pages |
 
 ### `vault attach`
 
@@ -133,18 +125,6 @@ Ingest a bare folder of doc files (a Confluence/Notion/docs-site export — no g
 | `--db PATH` | Graph DB to write the mirror into |
 
 Errors with a list of visible vaults if `NAME` doesn't exist locally or globally.
-
-### `vault refresh-stale-pages`
-
-Takes an optional positional `NAME` to scope to one vault; without it, refreshes every stale page in the graph.
-
-| Flag | Description |
-|---|---|
-| `--db PATH` | Graph DB |
-| `--provider X` | LLM provider (anthropic / gemini / openai / kimi / local). Default uses autodetect |
-| `--api-key KEY` | Provider API key override |
-| `--model NAME` | Model override |
-| `--base-url URL` | For `--provider local`, the server's base URL |
 
 ## `opentraceai cluster`
 

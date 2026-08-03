@@ -1,12 +1,14 @@
 # Wiki Providers
 
-OpenTrace's wiki/vault compiler uses an LLM to label and index your documents into the graph — one call per doc — and, under `--wiki-concept-pages`, to synthesize cross-document concept pages on top. Five providers are supported, all BYOK — your key is sent only to the provider you select, never to OpenTrace servers.
+OpenTrace's wiki/vault compiler uses an LLM to label and index your documents into the graph. That is **one call per document** and the only LLM work the compiler does — bodies are never rewritten. Five providers are supported, all BYOK — your key is sent only to the provider you select, never to OpenTrace servers.
+
+Because the one call is a compact extraction task (a one-line summary + an entity inventory) rather than prose generation, it runs on each backend's **cheap tier** by default.
 
 ## Anthropic
 
 Claude model family.
 
-**Default model:** `claude-sonnet-4-6`
+**Model:** `claude-haiku-4-5` for doc ingestion (`claude-sonnet-4-6` is the backend default, used where a caller asks for the flagship tier)
 
 Supply the key via the `ANTHROPIC_API_KEY` env var:
 
@@ -21,7 +23,7 @@ Get a key at the [Anthropic Console](https://platform.claude.com/settings/keys).
 
 Gemini model family.
 
-**Default model:** `gemini-2.5-flash`
+**Model:** `gemini-2.5-flash` for doc ingestion (`gemini-2.5-pro` is the backend default)
 
 Supply the key via `GEMINI_API_KEY` (or `GOOGLE_API_KEY` — the SDK accepts both):
 
@@ -38,7 +40,7 @@ Get a key at [Google AI Studio](https://aistudio.google.com/apikey).
 
 GPT and reasoning models.
 
-**Default model:** `gpt-4.1-mini`
+**Model:** `gpt-4.1-mini` for doc ingestion (`gpt-4.1` is the backend default)
 
 ```bash
 export OPENAI_API_KEY=sk-...
@@ -51,7 +53,7 @@ Get a key at the [OpenAI Platform](https://platform.openai.com/api-keys).
 
 Kimi models via Moonshot's OpenAI-compatible endpoint.
 
-**Default model:** `kimi-k2.6`
+**Default model:** `kimi-k2.6` (no separate cheap tier — one model for everything)
 **Base URL:** `https://api.moonshot.ai/v1` (auto-set)
 
 ```bash
@@ -75,10 +77,10 @@ export OT_LLM_PROVIDER=local   # required when paid keys are also set
 opentraceai index ./papers myvault --wiki
 ```
 
-Commands that *do* take per-call provider flags (e.g. `vault refresh-stale-pages`) still accept `--provider local --base-url ... --model ...` for one-off overrides.
+Commands that take per-call provider flags (e.g. `vault ingest`) accept `--provider local --base-url ... --model ...` for one-off overrides.
 
 !!! note "Tool-calling support varies"
-    Local models without OpenAI-compatible function calling will fail at the Plan stage. Pick a model whose card lists tool-calling support.
+    The extraction call uses forced tool-calling for structured output, so a local model without OpenAI-compatible function calling will fail. Pick a model whose card lists tool-calling support.
 
 ## Provider auto-detection
 
@@ -139,7 +141,13 @@ Each backend supports a per-backend model override env var:
 | `OT_LLM_MODEL_KIMI` | Kimi's default model |
 | `OT_LLM_MODEL_LOCAL` | Local server's default model |
 
-The same registry drives every LLM call in `index --wiki` — per-doc ingestion and, under `--wiki-concept-pages`, concept-page synthesis alike — so an override applies consistently.
+There is also a role-specific override, checked **ahead** of the per-backend var:
+
+| Variable | Overrides |
+|---|---|
+| `OT_WIKI_SUMMARY_MODEL` | The model used for the per-doc extraction call — i.e. the only LLM call `index --wiki` / `vault ingest` makes |
+
+Two sibling role vars exist in the registry (`OT_EXTRACTION_MODEL`, `OT_WIKI_MODEL`) but no code path in the current pipeline reads them — they were the flagship/synthesis tier for the concept-page stage that was removed. Setting them has no effect on doc ingestion.
 
 ## UI flow
 

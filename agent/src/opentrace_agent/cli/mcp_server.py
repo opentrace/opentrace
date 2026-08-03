@@ -1217,7 +1217,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         and read them with ``load_source``.
 
         **An empty list is normal, not an error.** Concept pages are opt-in
-        (``index --wiki --wiki-concept-pages``); a default doc ingestion
+        (``index --wiki``); a default doc ingestion
         indexes the documents themselves without synthesizing pages. The
         vault's knowledge is then in its KnowledgeDoc nodes and entities —
         reach it via ``search_graph`` (titles, one-line summaries, entity

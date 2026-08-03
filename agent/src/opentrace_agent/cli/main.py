@@ -380,9 +380,7 @@ def _run_indexing_pipeline(
     vault_name: str | None = None,
     vault_scope: str = "local",
     no_prune: bool = False,
-    refresh_stale_pages: bool = False,
     exclude_design_history: bool = False,
-    synthesize_pages: bool = False,
     on_event: "Callable[[object], None] | None" = None,
 ) -> float:
     """Run the four-stage pipeline with atomic-write staging.
@@ -448,9 +446,9 @@ def _run_indexing_pipeline(
                 # The code pipeline above is code-only now. The wiki doc pass
                 # reads the doc files into SourceInputs and, in ONE LLM call per
                 # doc, produces the KnowledgeDoc labels, the knowledge-graph
-                # entities/edges, and the concept inventory — all into the same
+                # entities/edges — all into the same
                 # staging DB; the atomic swap covers them together. Concept-page
-                # synthesis only runs under --wiki-concept-pages.
+                # compile. Nothing is synthesized.
                 if wiki:
                     _run_wiki_compile_against_index(
                         graph_store=graph_store,
@@ -459,7 +457,6 @@ def _run_indexing_pipeline(
                         vault_scope=vault_scope,
                         repo_id=repo_id,
                         exclude_design_history=exclude_design_history,
-                        synthesize_pages=synthesize_pages,
                         verbose=verbose,
                     )
 
@@ -473,18 +470,6 @@ def _run_indexing_pipeline(
                         source_path=source_path,
                         vault_name=vault_name,
                         db_path=staging_db,
-                        verbose=verbose,
-                    )
-
-                # --- Phase 8: --refresh-stale-pages runs Plan+Execute against
-                # concept pages stamped stale_since by autoprune. Shares
-                # the same refresh_stale_pages helper that
-                # ``vault refresh-stale-pages`` uses, so both surfaces produce
-                # identical output. Cost: one LLM call per stale page.
-                if refresh_stale_pages and wiki:
-                    _run_refresh_stale_after_index(
-                        graph_store=graph_store,
-                        vault_name=vault_name,
                         verbose=verbose,
                     )
 
@@ -544,20 +529,6 @@ def _run_indexing_pipeline(
     ),
 )
 @click.option(
-    "--wiki-concept-pages",
-    "synthesize_pages",
-    is_flag=True,
-    help=(
-        "Also synthesise cross-document concept pages into the vault "
-        "(KnowledgeConcept nodes + pages/concept/*.md). Off by default: a "
-        "compiled page restates its sources in the model's own voice, which "
-        "can drop their hedges, tense, and attribution — risk the verbatim "
-        "corpus doesn't carry — and concept pages have not yet been shown to "
-        "beat reading the labelled documents directly. Costs ~1 resolve call "
-        "plus ~0.5 synthesis calls per doc. Only meaningful with --wiki."
-    ),
-)
-@click.option(
     "--global",
     "global_scope",
     is_flag=True,
@@ -577,18 +548,6 @@ def _run_indexing_pipeline(
         "state for sources that disappeared from disk between runs "
         "(scope-limited to the walked path / vault); this flag preserves "
         "orphans for inspection."
-    ),
-)
-@click.option(
-    "--refresh-stale-pages",
-    "refresh_stale_pages",
-    is_flag=True,
-    help=(
-        "After autoprune marks concept pages stale (because their cited "
-        "Sources were removed), automatically re-run synthesis against the "
-        "remaining citations to regenerate them. Only meaningful with --wiki. "
-        "Without this flag, stale pages stay stamped and you can refresh later "
-        "via ``opentraceai vault refresh-stale-pages``."
     ),
 )
 @click.option(
@@ -612,9 +571,7 @@ def index(
     vault_name: str | None,
     global_scope: bool,
     no_prune: bool,
-    refresh_stale_pages: bool,
     exclude_design_history: bool,
-    synthesize_pages: bool,
     verbose: bool,
 ) -> None:
     """Index a local codebase into a LadybugDB knowledge graph."""
@@ -623,12 +580,8 @@ def index(
     # A vault-name positional implies doc ingestion (--wiki).
     wiki = wiki_flag or vault_name is not None
 
-    if refresh_stale_pages and not wiki:
-        raise click.ClickException("--refresh-stale-pages requires --wiki (or a vault name).")
     if exclude_design_history and not wiki:
         raise click.ClickException("--wiki-exclude-design-history requires --wiki (or a vault name).")
-    if synthesize_pages and not wiki:
-        raise click.ClickException("--wiki-concept-pages requires --wiki (or a vault name).")
 
     # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
     # before opening the staging DB / acquiring locks, rather than mid-pipeline.
@@ -657,7 +610,6 @@ def index(
             verbose=verbose,
             vault_name=resolved_vault,
             vault_scope="global" if global_scope else "local",
-            synthesize_pages=synthesize_pages,
         )
         click.echo(f"Done in {elapsed:.1f}s.")
         return
@@ -682,40 +634,10 @@ def index(
         vault_name=resolved_vault,
         vault_scope="global" if global_scope else "local",
         no_prune=no_prune,
-        refresh_stale_pages=refresh_stale_pages,
         exclude_design_history=exclude_design_history,
-        synthesize_pages=synthesize_pages,
     )
 
     click.echo(f"Done in {elapsed:.1f}s.")
-
-
-def _run_refresh_stale_after_index(
-    *,
-    graph_store,
-    vault_name: str | None,
-    verbose: bool,
-) -> None:
-    """Re-run Plan+Execute against any Pages stamped stale_since this run.
-
-    Delegates to ``wiki.ingest.pipeline.refresh_stale_pages`` (the same
-    helper backing ``opentraceai vault refresh-stale-pages``) so both surfaces
-    produce identical output. Reuses the wiki autodetect for LLM key
-    resolution.
-    """
-    from opentrace_agent.cli.vault_cmd import _autodetect_provider
-    from opentrace_agent.wiki.ingest.pipeline import refresh_stale_pages
-
-    provider = _autodetect_provider()
-    regenerated = refresh_stale_pages(
-        graph_store,
-        vault_name=vault_name,
-        provider=provider,
-    )
-    if regenerated:
-        click.echo(f"  --refresh-stale-pages: regenerated {regenerated} page(s).")
-    elif verbose:
-        click.echo("  --refresh-stale-pages: no stale pages found.")
 
 
 def _run_autoprune_after_index(
@@ -899,16 +821,14 @@ def _echo_wiki_cost_estimate(
     provider: str,
     inputs: list["SourceInput"],
     *,
-    synthesize_pages: bool = False,
     indent: str = "    ",
 ) -> None:
     """Pre-flight per-extension breakdown + cost estimate for a doc ingestion.
 
-    The unified doc pass is ONE call per source (summary + entities + concept
-    inventory). With concept pages it also pays 1 resolve call and a share of
-    page synthesis (~0.5 per source). Token assumption: 4k input / 1k output
-    per LLM call. The extension breakdown prints first so a folder full of
-    image attachments is visible as "84 × .png" BEFORE the money is spent.
+    The doc pass is ONE call per source (summary + entities). Token
+    assumption: 4k input / 1k output per LLM call. The extension breakdown
+    prints first so a folder full of image attachments is visible as
+    "84 × .png" BEFORE the money is spent.
     """
     from collections import Counter
 
@@ -922,8 +842,6 @@ def _echo_wiki_cost_estimate(
     if cfg is None:
         return
     est_calls = len(inputs)
-    if synthesize_pages:
-        est_calls += 1 + max(1, len(inputs) // 2)
     est_input_tokens = est_calls * 4_000
     est_output_tokens = est_calls * 1_000
     est_cost = (
@@ -941,7 +859,6 @@ def _run_wiki_compile_against_index(
     vault_scope: str = "local",
     repo_id: str | None = None,
     exclude_design_history: bool = False,
-    synthesize_pages: bool = False,
     verbose: bool,
 ) -> None:
     """Run the wiki doc-ingestion pipeline against doc files under *source_path*.
@@ -963,8 +880,6 @@ def _run_wiki_compile_against_index(
     authors' own relative links between docs become ``LINKS_TO`` edges in the
     same pass.
 
-    *synthesize_pages* additionally compiles cross-document concept pages
-    (off by default — see ``run_compile``).
     """
     from opentrace_agent.cli.vault_cmd import _autodetect_provider
     from opentrace_agent.wiki import run_compile
@@ -994,14 +909,14 @@ def _run_wiki_compile_against_index(
 
     provider = _autodetect_provider()
 
-    _echo_wiki_cost_estimate(provider, inputs, synthesize_pages=synthesize_pages)
+    _echo_wiki_cost_estimate(provider, inputs)
 
     from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase
 
     # Stages whose per-unit progress is worth showing by default — the
     # LLM-bound ones the user is actually waiting on. Cheap stages (hashing,
     # normalizing) stay --verbose-only so they don't spam the output.
-    _progress_phases = {WikiPhase.EXTRACTING, WikiPhase.PLANNING, WikiPhase.EXECUTING}
+    _progress_phases = {WikiPhase.EXTRACTING}
 
     # Globals are disk-only at compile time — attach them to a project's
     # graph via ``opentraceai vault attach`` (or the UI's Global-tab "+"
@@ -1015,7 +930,6 @@ def _run_wiki_compile_against_index(
         scope=vault_scope,
         project_root=project_root,
         graph_store=mirror_target,
-        synthesize_pages=synthesize_pages,
     ):
         # Stage boundaries + completion + errors always print so users can see
         # the wiki phase progressing. Per-unit progress prints for the slow
@@ -1151,13 +1065,12 @@ def _run_single_source_pipeline(
     verbose: bool,
     vault_name: str,
     vault_scope: str = "local",
-    synthesize_pages: bool = False,
 ) -> float:
     """Index a single URL or local file as one SourceInput.
 
     Skips the DirectoryWalker (no Repository/Directory/File nodes). Builds a
     SourceInput from raw bytes and runs the unified wiki doc pass against it
-    (one LLM call → summary + entities + concept inventory), persists into the
+    (one LLM call → summary + entities), persists into the
     staging DB, and atomically swaps. Returns elapsed seconds.
 
     Autoprune intentionally doesn't run here — single-source ingest doesn't
@@ -1207,11 +1120,9 @@ def _run_single_source_pipeline(
             with GraphStore(staging_db) as graph_store:
                 t0 = time.monotonic()
 
-                # One unified per-doc pass: label + entities + concept
-                # inventory. The doc body itself is kept verbatim in the
-                # corpus; concept-page synthesis is opt-in
-                # (--wiki-concept-pages) and needs ≥2 sources anyway, so a
-                # lone doc yields a labelled KnowledgeDoc + its entities.
+                # One unified per-doc pass: label + entities. The doc body
+                # itself is kept verbatim in the corpus, so a lone doc yields a
+                # labelled KnowledgeDoc + its entities and nothing else.
                 project_root = Path(staging_db).parent.parent
                 inputs = [SourceInput(name=display_name, data=raw_bytes)]
                 click.echo(f"  --wiki: ingesting 1 doc into {vault_scope} vault {vault_name!r} ...")
@@ -1221,7 +1132,7 @@ def _run_single_source_pipeline(
 
                 cfg = BACKENDS.get(provider)
                 if cfg is not None:
-                    est_calls = 2 if synthesize_pages else 1  # unified doc call (+ ~1 synthesis)
+                    est_calls = 1  # one unified doc call
                     est_cost = (
                         est_calls * 4_000 / 1_000_000 * cfg.pricing_input_per_million
                         + est_calls * 1_000 / 1_000_000 * cfg.pricing_output_per_million
@@ -1237,7 +1148,6 @@ def _run_single_source_pipeline(
                     scope=vault_scope,
                     project_root=project_root,
                     graph_store=graph_store,
-                    synthesize_pages=synthesize_pages,
                 ):
                     if event.kind in (
                         WikiEventKind.STAGE_START,

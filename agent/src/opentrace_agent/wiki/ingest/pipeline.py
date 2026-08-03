@@ -27,23 +27,18 @@ from typing import Any
 from opentrace_agent.sources._llm_common import resolve_model
 from opentrace_agent.wiki.ingest.doc_extraction import extract_docs as _extract_docs
 from opentrace_agent.wiki.ingest.entities import write_entity_edges, write_entity_nodes
-from opentrace_agent.wiki.ingest.execute import _wiki_concurrency
-from opentrace_agent.wiki.ingest.execute import execute as _execute
 from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
 from opentrace_agent.wiki.ingest.normalize import normalize as _normalize
 from opentrace_agent.wiki.ingest.persist import persist as _persist
-from opentrace_agent.wiki.ingest.resolve import augment_plan_sources, concepts_to_plan, resolve
 from opentrace_agent.wiki.ingest.sources import AcquiredSource
 from opentrace_agent.wiki.ingest.sources import acquire as _acquire
-from opentrace_agent.wiki.ingest.verify import strip_ungrounded_numerics
 from opentrace_agent.wiki.ingest.types import (
-    CompiledPage,
-    ConceptMention,
     NormalizedSource,
     SourceInput,
     WikiEventKind,
     WikiPhase,
     WikiPipelineEvent,
+    _wiki_concurrency,
 )
 from opentrace_agent.wiki.llm import (
     PROVIDER_ANTHROPIC,
@@ -118,7 +113,6 @@ def run_compile(
     project_root: Path | str | None = None,
     llm: WikiLLM | None = None,
     graph_store: Any = None,
-    synthesize_pages: bool = False,
 ) -> Iterator[WikiPipelineEvent]:
     """Compile uploaded files into the named vault.
 
@@ -144,16 +138,13 @@ def run_compile(
     event so the on-disk vault stays valid even if the graph mirror falls
     behind. Re-sync from disk via ``opentraceai vault attach``.
 
-    ``synthesize_pages`` (default False) gates the Resolve → Execute →
-    Verify half of the pipeline — the stages that cluster concept mentions
-    and write synthesized concept pages. The default is **corpus-only**: the
-    documents are indexed (KnowledgeDoc nodes with navigation labels and
-    epistemic status, the entity graph, doc↔doc links, MIRRORS twins) and
-    read back raw via ``load_source``, with no LLM prose restating them.
-    Synthesis is opt-in because a compiled page can strip a source's hedges,
-    tense, and attribution — the failure mode raw bodies structurally cannot
-    have. Concept-page value on the agent path is unmeasured; see
-    ``--wiki-concept-pages``.
+    The compile is **corpus-only**: documents are indexed (KnowledgeDoc nodes
+    with navigation labels and epistemic status, the entity graph, doc↔doc
+    links, MIRRORS twins) and read back raw via ``load_source`` or swept
+    verbatim by ``grep``. Nothing is synthesized. Concept-page synthesis was
+    removed — it measured 88.4% against a 98.6% control (-10.2pp, the worst
+    result on record) because restating a source strips its hedges, tense,
+    and attribution, a failure mode a verbatim body structurally cannot have.
     """
     ensure_vault_layout(vault_name, vault_root, scope=scope, project_root=project_root)
     meta_path = metadata_path(vault_name, vault_root, scope=scope, project_root=project_root)
@@ -243,40 +234,37 @@ def run_compile(
                     file_name=src.original_name,
                 )
 
-        client: WikiLLM = llm or make_llm(provider, api_key=api_key, model=model, base_url=base_url)
-        # Per-doc extraction is a compact inventory — run it on the cheap tier
-        # (role="wiki_summary", overridable via OT_WIKI_SUMMARY_MODEL) while plan
-        # + synthesis keep the flagship `client`. When a caller injects `llm`
-        # (tests), reuse it for both rather than spinning a second backend.
+        # Per-doc extraction is a compact inventory, so it runs on the cheap
+        # tier by default (role="wiki_summary", overridable via
+        # OT_WIKI_SUMMARY_MODEL). An explicit *model* from the caller wins — it
+        # used to reach only the flagship synthesis client, which no longer
+        # makes any call, so honouring it here is what keeps `--model` from
+        # being silently inert. When a caller injects `llm` (tests), use it.
+        extraction_model = model or resolve_model(provider, None, role="wiki_summary")
         extraction_client: WikiLLM = llm or make_llm(
             provider,
             api_key=api_key,
-            model=resolve_model(provider, None, role="wiki_summary"),
+            model=extraction_model,
             base_url=base_url,
         )
 
-        # One shared adaptive limiter across both clients (cheap extraction +
-        # flagship resolve/synthesis). Starts at OT_WIKI_CONCURRENCY and ratchets
-        # down on provider throttling so a high default stays safe on low API
-        # tiers. Only wired for real backends — an injected `llm` (tests) gates
-        # via the ThreadPoolExecutor alone.
+        # Adaptive limiter: starts at OT_WIKI_CONCURRENCY and ratchets down on
+        # provider throttling so a high default stays safe on low API tiers.
+        # Only wired for real backends — an injected `llm` (tests) gates via
+        # the ThreadPoolExecutor alone.
         if llm is None:
-            limiter = AdaptiveLimiter(_wiki_concurrency())
-            client._limiter = limiter  # type: ignore[attr-defined]
-            extraction_client._limiter = limiter  # type: ignore[attr-defined]
+            extraction_client._limiter = AdaptiveLimiter(_wiki_concurrency())  # type: ignore[attr-defined]
 
         # Per-doc extraction — stamps each source's navigation label (title +
-        # one-liner, mirrored onto its Source node) and inventories the doc's
-        # concepts + entities. No per-document wiki pages: the raw body stays
-        # in the corpus, readable via load_source.
-        concept_mentions: list[ConceptMention] = []
+        # one-liner, mirrored onto its KnowledgeDoc node) and inventories the
+        # doc's entities. No per-document wiki pages: the raw body stays in the
+        # corpus, readable via load_source and greppable verbatim.
         entity_nodes: list = []
         entity_rels: list = []
         yield from _extract_docs(
             normalized,
             meta,
             extraction_client,
-            concept_mentions,
             entity_nodes,
             entity_rels,
         )
@@ -298,88 +286,12 @@ def run_compile(
                 detail={"entities": len(entity_nodes), "relationships": len(entity_rels)},
             )
 
-        # Resolve → Execute → Verify: the synthesis half, opt-in via
-        # ``synthesize_pages``. Skipped by default so a compile indexes the
-        # corpus without generating prose that restates it. The concept
-        # mentions gathered above are still collected either way — they cost
-        # nothing extra (same extraction call) and a later compile with
-        # synthesis on can use them.
-        pages: list[CompiledPage] = []
-        if synthesize_pages:
-            # Resolve — cluster the per-document concept mentions (gathered during
-            # summarisation) into concept pages. Each cluster unions every source
-            # that mentioned the concept, so cross-document concepts surface even
-            # when no single doc is "about" them. Runs on the flagship `client`
-            # (semantic clustering is reasoning); diffed against the vault and
-            # filtered by the min-sources floor into a create/extend plan.
-            yield WikiPipelineEvent(
-                kind=WikiEventKind.STAGE_START,
-                phase=WikiPhase.PLANNING,
-                message=f"Resolving concepts from {len(concept_mentions)} mention(s)",
-                total=len(concept_mentions),
-            )
-            resolved = resolve(concept_mentions, client)
-            plan_obj = concepts_to_plan(resolved, meta)
-            yield WikiPipelineEvent(
-                kind=WikiEventKind.STAGE_STOP,
-                phase=WikiPhase.PLANNING,
-                message=(
-                    f"Plan: {len(plan_obj.creates)} create, "
-                    f"{len(plan_obj.extends)} extend (from {len(resolved)} concept(s))"
-                ),
-                detail={
-                    "creates": len(plan_obj.creates),
-                    "extends": len(plan_obj.extends),
-                    "concepts": len(resolved),
-                },
-            )
-
-            # Widen each planned page's reading list by mechanical term matching —
-            # a doc whose mentions clustered under an adjacent concept can still be
-            # decisive for this page (it may hold the current rule a design doc
-            # superseded). No LLM calls; see augment_plan_sources.
-            for page_label, added_names in augment_plan_sources(plan_obj, normalized):
-                yield WikiPipelineEvent(
-                    kind=WikiEventKind.STAGE_PROGRESS,
-                    phase=WikiPhase.PLANNING,
-                    message=f"Relevance scan added {len(added_names)} source(s) to {page_label}",
-                    detail={"page": page_label, "added": added_names},
-                )
-
-            # Execute. Concept synthesis reads the RAW source bodies (the corpus
-            # markdown carried on each NormalizedSource), not the digest summaries —
-            # grounding each page in the full source yields more accurate synthesis
-            # than re-distilling a lossy digest. See _sources_block.
-            if plan_obj.creates or plan_obj.extends:
-                yield from _execute(plan_obj, normalized, meta, pages_path, client, pages)
-
-            # Verify (mechanical, no LLM): numeric claims no cited source contains
-            # are stripped before persist so both disk and the graph mirror (which
-            # re-reads disk below) get the corrected bodies. Cited sources outside
-            # this batch are read back from the corpus when present.
-            if pages:
-                from opentrace_agent.sources.markdown.source_io import _safe_corpus_filename
-
-                sha_to_body = {n.sha256: n.markdown for n in normalized}
-                for page in pages:
-                    for sha in page.source_shas:
-                        if sha in sha_to_body:
-                            continue
-                        corpus_file = cdir / _safe_corpus_filename(sha)
-                        if corpus_file.exists():
-                            try:
-                                sha_to_body[sha] = corpus_file.read_text(encoding="utf-8")
-                            except OSError:
-                                pass
-                yield from strip_ungrounded_numerics(pages, sha_to_body)
-
-        compiled = pages
-
-        # Persist. Runs even with zero new pages — the acquired sources and
-        # their metadata still need recording (persist updates meta.sources,
-        # including the extraction-stamped labels), and the graph mirror
-        # below still needs the Source nodes, labels, and entities.
-        yield from _persist(compiled, acquired, meta, pages_path, meta_path, log_path, normalized=normalized)
+        # Persist. Always zero pages now (synthesis was removed) — but the
+        # acquired sources and their metadata still need recording (persist
+        # updates meta.sources, including the extraction-stamped labels), and
+        # the graph mirror below still needs the KnowledgeDoc nodes, labels,
+        # and entities.
+        yield from _persist([], acquired, meta, pages_path, meta_path, log_path, normalized=normalized)
 
         # Mirror the post-compile state into the graph if a store is given.
         # Disk-write has already succeeded, so failures here are non-fatal.
@@ -393,7 +305,7 @@ def run_compile(
                 # (concept pages → INFERRED) — see _confidence_for_kind there.
                 provenance = {
                     "agent": "opentrace-wiki-compiler",
-                    "model": model or _default_model_for(provider),
+                    "model": extraction_model,
                     "session": str(uuid.uuid4()),
                 }
                 # Persist entity NODES first so the vault mirror's MENTIONS
@@ -403,7 +315,9 @@ def run_compile(
                 # write_vault_to_graph creates, and merge_relationship
                 # silently drops an edge whose target doesn't exist yet.
                 entities_written = write_entity_nodes(graph_store, entity_nodes)
-                compiled_slugs = {p.slug for p in compiled}
+                # No pages are compiled any more, so none get fresh provenance
+                # stamped; legacy pages keep whatever they already carry.
+                compiled_slugs: set[str] = set()
                 # (corpus_doc_id, entity_id) pairs from the DERIVED_FROM edges,
                 # so the mirror's MENTIONS pass can skip the redundant reverse
                 # edge for a doc↔entity pair provenance already covers.
@@ -443,210 +357,30 @@ def run_compile(
                     errors=[f"{type(e).__name__}: {e}"],
                 )
 
-        if synthesize_pages:
-            done_message = f"Compile complete — {len(acquired)} new source(s), {len(pages)} concept page(s)"
-        else:
-            done_message = f"Compile complete — {len(acquired)} new source(s) indexed (corpus-only, no concept pages)"
+        done_message = f"Compile complete — {len(acquired)} new source(s) indexed"
         yield WikiPipelineEvent(
             kind=WikiEventKind.DONE,
             phase=WikiPhase.PERSISTING,
             message=done_message,
-            detail={
-                "pages": len(pages),
-                "new_sources": len(acquired),
-                "synthesize_pages": synthesize_pages,
-            },
+            detail={"new_sources": len(acquired)},
         )
-
-
-def refresh_stale_pages(
-    graph_store,
-    *,
-    vault_name: str | None = None,
-    vault_root: Path | None = None,
-    provider: str = PROVIDER_ANTHROPIC,
-    api_key: str | None = None,
-    model: str | None = None,
-    base_url: str | None = None,
-) -> int:
-    """Re-run Plan+Execute against Pages with ``stale_since`` stamped.
-
-    Used by both ``opentraceai vault refresh-stale-pages`` and the
-    ``index --wiki --refresh-stale-pages`` flag, sharing the regeneration
-    pass so both surfaces produce identical output.
-
-    Returns the number of pages regenerated. Skips pages that have no
-    remaining ``CITES`` edges (they should have been deleted by autoprune;
-    we double-check as a safety net).
-    """
-    from opentrace_agent.wiki.ingest.execute import _execute_extend
-    from opentrace_agent.wiki.ingest.types import PlanExtend
-
-    # Find all stale Page(kind="concept") nodes in scope.
-    stale_pages = _find_stale_pages(graph_store, vault_name=vault_name)
-    if not stale_pages:
-        return 0
-
-    client = make_llm(provider, api_key=api_key, model=model, base_url=base_url)
-    regenerated = 0
-
-    # A vault's scope (local|global) decides which on-disk root holds its
-    # pages. We can't assume global — when the stale pages belong to a local
-    # vault, paths must resolve under the project root (parent of the graph
-    # DB's .opentrace/ dir).
-    db_parent = Path(graph_store.db_path).resolve().parent.parent if getattr(graph_store, "db_path", None) else None
-
-    for page in stale_pages:
-        page_props = page.get("properties") or {}
-        slug = page_props.get("slug")
-        page_vault = page_props.get("vault")
-        if not slug or not page_vault:
-            continue
-
-        # Remaining CITES — these are the still-live citations the page
-        # should be regenerated against.
-        remaining_source_shas = _remaining_source_shas_for_page(graph_store, page["id"])
-        if not remaining_source_shas:
-            continue  # autoprune should have deleted; skip defensively
-
-        # Resolve scope from the Vault node, fall back to local since
-        # that's the common case.
-        from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
-
-        wv = graph_store.get_node(vault_node_id(page_vault))
-        wv_scope = ((wv or {}).get("properties") or {}).get("scope", "local")
-        path_kwargs: dict[str, Any] = {"scope": wv_scope}
-        if wv_scope == "local" and db_parent is not None:
-            path_kwargs["project_root"] = db_parent
-
-        meta = load_metadata(metadata_path(page_vault, vault_root, **path_kwargs), name=page_vault)
-        pages_path = pages_dir(page_vault, vault_root, **path_kwargs)
-        normalized = _read_corpus_bodies_for_shas(graph_store, remaining_source_shas)
-
-        item = PlanExtend(
-            page_slug=slug,
-            source_shas=remaining_source_shas,
-            rationale="refresh-stale-pages: source removed",
-        )
-
-        try:
-            compiled = _execute_extend(item, normalized, meta, pages_path, [], client)
-        except Exception:  # noqa: BLE001
-            logger.exception("refresh-stale-pages: failed to regenerate %s", page["id"])
-            continue
-
-        if compiled is None:
-            continue
-
-        # Write the new body to disk. Slug carries a ``<kind_dir>/`` prefix
-        # so the parent folder may not exist yet on a fresh vault.
-        page_path = pages_path / f"{compiled.slug}.md"
-        page_path.parent.mkdir(parents=True, exist_ok=True)
-        page_path.write_text(compiled.markdown_body)
-
-        # Clear stale_since on success + bump revision.
-        new_props = dict(page_props)
-        new_props.pop("stale_since", None)
-        new_props["revision"] = compiled.revision
-        graph_store.add_node(
-            id=page["id"],
-            node_type=page["type"],
-            name=page.get("name") or "",
-            properties=new_props,
-        )
-        regenerated += 1
-
-    return regenerated
-
-
-def _find_stale_pages(graph_store, *, vault_name: str | None) -> list[dict]:
-    """Return Page nodes with stale_since stamped, scoped to *vault_name* when given."""
-    pages = graph_store.list_nodes("KnowledgeConcept", limit=10_000)
-    out = []
-    for p in pages:
-        props = p.get("properties") or {}
-        if not props.get("stale_since"):
-            continue
-        if props.get("kind") != "concept":
-            continue
-        if vault_name and props.get("vault") != vault_name:
-            continue
-        out.append(p)
-    return out
-
-
-def _remaining_source_shas_for_page(graph_store, page_id: str) -> list[str]:
-    """Walk outgoing CITES edges from a page to remaining Source shas.
-
-    Concept pages CITE Source nodes directly (one hop). Dedup on sha.
-    """
-    traversal = graph_store.traverse(page_id, direction="outgoing", max_depth=1, relationship_type="CITES")
-    shas: list[str] = []
-    seen: set[str] = set()
-    for r in traversal:
-        node = r.get("node") or {}
-        if node.get("type") != "KnowledgeDoc":
-            continue
-        sha = (node.get("properties") or {}).get("sha256")
-        if sha and sha not in seen:
-            seen.add(sha)
-            shas.append(sha)
-    return shas
-
-
-def _read_corpus_bodies_for_shas(graph_store, shas: list[str]):
-    """Reconstruct NormalizedSource-like records for refresh-stale-pages Plan execution.
-
-    The corpus already holds the bodies; we just need to wrap them so
-    ``_emit_page_body`` can consume them.
-    """
-    from opentrace_agent.wiki.ingest.types import NormalizedSource
-
-    out = []
-    db_dir = Path(getattr(graph_store, "db_path", "")).parent if getattr(graph_store, "db_path", None) else None
-    for sha in shas:
-        source_node = graph_store.get_node(f"corpus::{sha}")
-        if source_node is None or db_dir is None:
-            continue
-        props = source_node.get("properties") or {}
-        corpus_rel = props.get("corpus_path")
-        if not corpus_rel:
-            continue
-        body_path = db_dir / corpus_rel
-        try:
-            body = body_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        out.append(
-            NormalizedSource(
-                sha256=sha,
-                original_name=props.get("filename") or sha,
-                markdown=body,
-            )
-        )
-    return out
-
-
-def _default_model_for(provider: str) -> str:
-    """Resolve the default model for *provider* via the shared BACKENDS registry.
-
-    Used by the provenance record so it reflects the model that actually
-    ran when the caller didn't pass one explicitly.
-    """
-    from opentrace_agent.sources._llm_common import resolve_model
-
-    return resolve_model(provider, None)
 
 
 def _read_all_page_bodies(meta: VaultMetadata, pages_path: Path) -> dict[str, str]:
-    """Read every page body referenced by *meta* from disk into a slug→body map."""
+    """Read every page body referenced by *meta* from disk into a slug→body map.
+
+    Always empty for vaults compiled after concept-page synthesis was removed.
+    Retained because a vault compiled BEFORE that removal still carries pages
+    in ``.vault.json``, and a re-compile must keep mirroring them rather than
+    dropping them from the graph.
+    """
     bodies: dict[str, str] = {}
     for slug in meta.pages.keys():
         path = pages_path / f"{slug}.md"
         try:
             bodies[slug] = path.read_text()
         except OSError:
-            # Page missing on disk despite metadata — record empty body so
+            # Page missing on disk despite metadata — record empty body so the
             # graph writer at least creates the node + skips LINKS_TO parsing.
             bodies[slug] = ""
     return bodies

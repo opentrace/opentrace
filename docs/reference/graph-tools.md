@@ -13,7 +13,7 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `find_via_relationship_to_type` | All `(A) -[edge]-> (B)` pairs for given types | "All Files that DEFINE Classes" |
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
 | `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM KnowledgeDoc) | "Where did this come from?" |
-| `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus (normalized bodies, hits joined to doc id/title/status) + compiled pages | "Find this exact string in source" / "prove no document mentions X" |
+| `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus (normalized bodies, hits joined to doc id/title/status; plus legacy pages if the vault has any) | "Find this exact string in source" / "prove no document mentions X" / "what does every doc say about X" |
 | `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
@@ -91,7 +91,7 @@ DELETE /api/vaults/{vault}?scope=local|global
 
 `view=project` (default) returns local vaults from cwd plus globals already attached to this project's graph; `view=global` lists every global on the machine with an `attached` flag. The `?scope=` query param disambiguates when a name exists in both scopes — when omitted, the server resolves local-first.
 
-`POST /compile` is **corpus-only**, matching the CLI default: it indexes the uploaded documents (labels, entity graph, doc links, verbatim bodies) and does not synthesize concept pages. Page synthesis is CLI-only today, via `index --wiki --wiki-concept-pages`.
+`POST /compile` is **corpus-only**, like every other compile path: it indexes the uploaded documents (labels, entity graph, doc links, verbatim bodies) and synthesizes nothing. The `pages` routes serve legacy concept pages from vaults compiled before synthesis was removed; they return an empty list for a vault compiled since.
 
 The UI's `ServerGraphStore` consumes these. See [Browser](../getting-started/install-browser.md) for setup.
 
@@ -159,7 +159,7 @@ From `index --wiki` — the indexed documents themselves, bodies verbatim in the
 | Type | What it is |
 |---|---|
 | `KnowledgeVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` + `spawned_from` (repo id, when built by `index --wiki` over a repo) |
-| `KnowledgeConcept` | A concept page (`kind="concept"` — the only kind), a multi-source synthesized narrative. **Only produced under `index --wiki --wiki-concept-pages`** — a plain `--wiki` run is corpus-only. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
+| `KnowledgeConcept` | A concept page (`kind="concept"` — the only kind), a multi-source synthesized narrative. **Nothing produces these any more** — synthesis was removed 2026-08-03; a vault compiled before then keeps its pages, and they stay readable and mirrored. Body on disk; `confidence` / `confidence_tier` / `stale_since` stamped |
 | `KnowledgeDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
 
 ### Auxiliary
@@ -180,9 +180,9 @@ From `index --wiki` — the indexed documents themselves, bodies verbatim in the
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
 | `DERIVED_FROM` | Idea/Service/... → KnowledgeDoc | Entity provenance (with `transform="llm_extraction"`) |
-| `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha). Only with `--wiki-concept-pages` |
+| `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha). Legacy only — no compile writes these now, but `provenance` still walks them for pre-2026-08-03 vaults |
 | `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's author wrote to another doc — parsed mechanically (no LLM) from markdown links, reference definitions, and HTML anchors, resolved against the linking doc's directory. The doc-side analogue of `IMPORTS`. External URLs, bare fragments, and out-of-repo targets are dropped |
-| `LINKS_TO` | Page → Page | Wiki-link in a page body (`[[Title]]`). Only with `--wiki-concept-pages` |
+| `LINKS_TO` | Page → Page | Wiki-link in a page body (`[[Title]]`). Legacy only — reachable solely from pages a pre-2026-08-03 compile left behind |
 | `MENTIONS` | Page/KnowledgeDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name. Deduped against `DERIVED_FROM` — a doc gets no MENTIONS to an entity it was the extraction source of (that's the reverse `DERIVED_FROM` edge). `find_pages_mentioning` unions both |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
@@ -206,13 +206,13 @@ search(store, "diffusion", vault_scope="papers")  # FTS scoped to one vault
 Nodes carry typed confidence where appropriate:
 
 - **Entities** — `confidence` (numeric 0.0–1.0) + `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- **Pages** — same fields, plus `stale_since` set by autoprune when a cited doc is removed
+- **Pages** — same fields, plus `stale_since` set by autoprune when a cited doc is removed. Legacy vaults only
 - **Edges** — confidence stamped on `SEMANTIC_EDGE` and `CALLS` (resolver confidence)
 
 `provenance(node_id)` walks the right trust chain depending on node type:
 
 - **Code** — reads commit_sha + indexer version from the per-repo `IndexMetadata` node, plus file_path + line_range from the node
-- **Wiki** — walks `CITES` from a concept page directly to its KnowledgeDocs
+- **Wiki** — walks `CITES` from a legacy concept page directly to its KnowledgeDocs (a KnowledgeDoc returns its own metadata; that's the only wiki case a current vault produces)
 - **Derived** — walks `DERIVED_FROM` from an entity to its KnowledgeDoc
 
 Chain entries for ingested docs have `kind="corpus_doc"` and carry the doc's `path`; when the doc has a `MIRRORS` twin in the code tree, the entry also includes the mirrored `File` id in a `file` field.

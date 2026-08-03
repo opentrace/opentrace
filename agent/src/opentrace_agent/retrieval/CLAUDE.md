@@ -36,7 +36,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 | Node-fetch     | (in `cli/mcp_server.py::get_node`)             | Wraps `GraphStore.get_node` + `traverse(depth=1)`; adds `target_summary` per neighbour |
 | Traversal      | (in `GraphStore.traverse`)                     | Edge-type set, vault scope, confidence threshold |
 | Provenance     | `provenance.provenance`                        | Code + wiki branches; null payload for unknown types |
-| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path, or a Vault's corpus bodies + pages |
+| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path, or a Vault's corpus bodies (plus legacy `pages/` if present) |
 | Query (typed)  | `paths.find_path`, `paths.find_via_relationship_to_type`, `existence.find_orphans`, `counts.count_by` | Replaces the spec's raw-Cypher escape hatch — convention-compliant typed templates |
 
 ## Search semantics
@@ -48,8 +48,9 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 - **`vault`** — read from the node's `vault` property (set by Phase 4
   `graph_writer` on Vault/Page; null for code nodes and KnowledgeDocs)
 - **`recency`** — `last_updated` property; null when not stamped
-- **`confidence`** — `confidence` property; null when not stamped
-  (currently a placeholder; real wiki-synthesis confidence is future work)
+- **`confidence`** — `confidence` property; null when not stamped. Only legacy
+  concept pages ever carried it (a fixed `INFERRED`/0.75), so in practice this
+  is null on everything a current compile writes
 - **`fileTwin`** — on a `KnowledgeDoc` hit, the id of the `File` node it
   `MIRRORS` (absent when there is none), so the code-tree view stays one hop away
 
@@ -98,7 +99,10 @@ Two branches keyed off node type:
 - **Wiki** (`KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc`) — returns the node's
   agent/model/session/confidence properties plus the `CITES` outgoing chain.
   Concept page → KnowledgeDoc, direct by sha; each chain entry carries the
-  MIRRORS File twin id when one exists.
+  MIRRORS File twin id when one exists. The `KnowledgeConcept` branch only
+  fires for vaults compiled before concept-page synthesis was removed —
+  nothing writes pages or `CITES` edges now, so a current vault's wiki
+  provenance is always the KnowledgeDoc's own metadata.
 - **Code** (`Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`) — returns commit_sha + indexer_version from the per-repo
   `IndexMetadata` node (`_meta:index:{repoId}`), plus file_path + line_range
@@ -116,12 +120,15 @@ Scope-based: caller provides a `Repository` (must have `local_path`) or a
 unavailable, returns a structured `mode="error"` response so the agent can
 fall back to `search_graph` for FTS over indexed metadata.
 
-**A vault grep sweeps the CORPUS first** — every member KnowledgeDoc's
-normalized markdown body — then compiled `pages/` when the vault has any.
-This is the exhaustiveness primitive: ranked search finds the best documents,
-grep establishes what's true of every document (the folder arm won benchmark
-coverage questions with exactly this capability; see the wiki CLAUDE.md's
-measured-value section). Three details are load-bearing:
+**A vault grep sweeps the CORPUS** — every member KnowledgeDoc's normalized
+markdown body — then legacy `pages/` if a pre-removal compile left any (no
+current vault has them). This is the exhaustiveness primitive: ranked search
+finds the best documents, grep establishes what's true of every document (the
+folder arm won benchmark coverage questions with exactly this capability; see the
+wiki CLAUDE.md's measured-value section). It is also what replaced concept-page
+synthesis for "what does the corpus say about X" — verbatim lines from every
+doc, pre-labelled, instead of a paraphrase layer. Three details are
+load-bearing:
 
 - **Membership via `CONTAINS`, not the directory.** The corpus dir is shared
   and sha-keyed across vaults; grepping it raw would leak other vaults' docs.

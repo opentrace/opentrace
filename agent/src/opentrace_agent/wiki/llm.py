@@ -297,7 +297,7 @@ def _resolve_key(explicit: str | None, backend: str) -> str:
 def _default_model(backend: str) -> str:
     """Resolve the default model for *backend* via the shared registry.
 
-    Uses the ``wiki`` role so synthesis keeps the flagship model (and honours
+    Uses the ``wiki`` role kept for callers that want the flagship model (and honours
     ``OT_WIKI_MODEL``) rather than dropping to the cheap extraction tier.
     """
     return resolve_model(backend, None, role="wiki")

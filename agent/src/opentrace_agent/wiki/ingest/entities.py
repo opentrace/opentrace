@@ -15,7 +15,7 @@
 """Entity wiring for the unified doc pass.
 
 The single per-doc ``emit_page`` call now returns ``entities`` and ``edges``
-alongside the summary + concept inventory (see ``doc_extraction.py``). This
+alongside the summary (see ``doc_extraction.py``). This
 module turns that into graph primitives — ``Idea``/``Service``/… nodes (each
 carrying the new one-line ``description``), a ``DERIVED_FROM`` edge back to the
 ``KnowledgeDoc``, and ``SEMANTIC_EDGE`` entity↔entity edges — reusing the validation

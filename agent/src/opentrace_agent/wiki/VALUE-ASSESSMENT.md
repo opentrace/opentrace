@@ -75,6 +75,33 @@ consistent with *no difference*.
 The wiki arm also consistently did **more** work: 222 vs 197 searches and 212 vs
 148 tool calls on comparable runs, at ~18% higher cost.
 
+### The `concepts` field was competing with the entity inventory (2026-08-03)
+
+A separate, much cheaper measurement (48 docs, two runs per variant, ~$1), run
+when concept-page synthesis was removed. The question: does dropping the per-doc
+`concepts` field from the extraction schema cost anything, given both fields come
+out of the same call?
+
+It doesn't — it *pays*. Removing the field raised entity yield ~20%:
+
+| | entities | edges | `idea` (mean) | `event` (mean) | `service` (mean) |
+|---|---|---|---|---|---|
+| with `concepts` | 386 / 352 | 332 / 296 | 35.5 | 15 | 237.5 |
+| without | 432 / 450 | 369 / 379 | 69 | 29.5 | 237 |
+
+The entity and edge ranges do not overlap across variants. The gain is
+concentrated almost entirely in `idea` and `event` while `service` — the
+mechanically-obvious type — is flat, which is the signature of the two fields
+contending for the same content rather than of a general quality shift.
+Run-to-run noise for reference: two identical-config runs differed by 34 entities
+and agreed on only ~65% of labels (Jaccard 0.65), so the cross-variant effect is
+well outside noise.
+
+**Consequences.** Recurring themes now surface as `idea` entities, which is where
+they belonged, so a separate concept layer has nothing left to add. Fields in one
+extraction schema are **not independent** — adding one costs the others attention.
+Measure before adding a third.
+
 ---
 
 ## Why this is probably not just an instrument artifact
@@ -178,10 +205,17 @@ accuracy + cost fixes, `FINDINGS.md`, `regrade.sh` + `compare_grades.py`,
    out-of-repo case, or accept the negative for in-repo docs. Note the seven
    primitives themselves are built and working — it's the comparison bar that
    fails, not the tools.
-2. **Concept pages: recommend dropping rather than deferring.** Not because a
-   ticket lists them, but because the pages variant is the worst result on record
-   (−10.2pp) and the mechanism is understood: restating a source in the model's
-   own voice strips its hedges, tense and attribution.
+2. ~~**Concept pages: recommend dropping rather than deferring.**~~ **DONE
+   2026-08-03 — dropped.** The recommendation stood on the pages variant being
+   the worst result on record (−10.2pp) with an understood mechanism: restating a
+   source in the model's own voice strips its hedges, tense and attribution.
+   Removed: page synthesis (`resolve.py`, `execute.py`, `verify.py`), the per-doc
+   `concepts` field, `refresh_stale_pages()`, `--wiki-concept-pages`,
+   `--refresh-stale-pages`, `OT_WIKI_CONCEPT_MIN_SOURCES`. The **read** surface
+   survives (`vault show --page`, `read_vault_page`/`list_vault_pages`, `CITES`
+   provenance, the UI renderer) so vaults compiled before this still show their
+   pages; nothing produces new ones. The salvage option — concepts as bodiless
+   graph nodes — was closed at the same time, see the measurement below.
 3. **The only experiment left worth running:** put the docs *outside* the repo —
    ingest a docs site or wiki export not present on disk — so the control
    genuinely cannot reach them. Needs a question set written against those docs.

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OpenTrace builds a single knowledge graph that holds three layers of information about your project. Code structure comes from tree-sitter; doc labels and entities come from LLM extraction over documents whose bodies stay verbatim; synthesized narratives are an opt-in extra. Edges connect them.
+OpenTrace builds a single knowledge graph that holds three layers of information about your project. Code structure comes from tree-sitter; doc labels and entities come from LLM extraction over documents whose bodies stay verbatim. Nothing is synthesized — no layer is written in the model's own prose. Edges connect them.
 
 ## Component layout
 
@@ -59,7 +59,7 @@ Opt-in via `index --wiki`. The per-doc ingestion call extracts named entities fr
 
 Edges: `DERIVED_FROM` (entity → KnowledgeDoc) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Entities derive from KnowledgeDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
 
-### 3. Page (documents, and optionally concept pages)
+### 3. Page (the indexed documents)
 
 Opt-in via `index --wiki`. The doc-ingestion pipeline produces:
 
@@ -68,9 +68,9 @@ Opt-in via `index --wiki`. The doc-ingestion pipeline produces:
 
 Edges: `CONTAINS` (vault → page/doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MENTIONS` (KnowledgeDoc or page → entity whose name appears in the doc's corpus markdown or the page body — connects layer 3 to layer 2), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
-`--wiki-concept-pages` adds a synthesis half on top: `KnowledgeConcept(kind="concept")` nodes — multi-source curated narratives with bodies on disk — plus `CITES` (concept page → KnowledgeDoc, direct by sha) and page ↔ page `LINKS_TO` from `[[Title]]` wiki-links. It's opt-in because a synthesized page restates its sources in the model's own voice, which can drop their hedges, tense, and attribution, and concept pages have not yet been shown to beat reading the labelled documents directly.
+There is no synthesis half. `KnowledgeConcept(kind="concept")` nodes — multi-source narratives with bodies on disk, plus `CITES` (concept page → KnowledgeDoc) and page ↔ page `LINKS_TO` from `[[Title]]` wiki-links — were produced by an opt-in `--wiki-concept-pages` flag until 2026-08-03. It was removed: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution, and it measured 88.4% against a 98.6% control on the doc-Q&A benchmark. Cross-document questions are answered by corpus `grep` instead — verbatim lines from every doc, pre-labelled with title and status.
 
-Concept pages live on disk and are mirrored into the graph; disk is canonical and `vault attach` rebuilds the mirror.
+The node and edge types remain valid so a vault compiled before the removal keeps its pages: they stay on disk (canonical), stay mirrored into the graph, and `vault attach` still rebuilds that mirror.
 
 See [Ontology](ontology.md) for the full node + edge reference.
 
@@ -113,7 +113,7 @@ Python package + CLI (`opentraceai`). Managed with [uv](https://docs.astral.sh/u
 | Command | Purpose |
 |---|---|
 | `index` | Build/refresh the graph from code, docs, or both. See [Indexing](../getting-started/indexing.md) |
-| `vault` | Manage compiled vaults — list, show, attach, detach, promote, demote, refresh-stale-pages |
+| `vault` | Ingest a bare doc folder, and manage compiled vaults — ingest, list, show, attach, detach, promote, demote |
 | `cluster` / `analyze` | Community detection + cross-cutting analysis |
 | `export-graph` | Deterministic projections — graphml, obsidian, report |
 | `watch` / `hook` | Filesystem watcher + git post-commit hook for incremental re-indexes |
@@ -155,19 +155,17 @@ A typical full-stack run (`index ./repo myvault --wiki`):
 
 6. Index     → run_compile makes one DocExtraction LLM call per doc
    docs        (KnowledgeDoc navigation label + entity graph with
-               DERIVED_FROM edges + concept inventory), then writes
+               DERIVED_FROM edges — and nothing else), then writes
                the graph mirror with CONTAINS / MENTIONS edges, the
                authors' own doc→doc LINKS_TO edges, and the epistemic
                status stamps. Bodies stay verbatim in the corpus.
-               With --wiki-concept-pages, Resolve + Execute also
-               write concept Page bodies to disk plus their CITES
-               and page↔page LINKS_TO edges.
+               This is the only LLM stage; nothing is synthesized.
 
 7. Autoprune → Compare walked doc set against the existing graph;
                delete orphan KnowledgeDocs + the entities anchored to
-               them; for vaults with pages, remove dangling CITES
-               edges from concept pages, delete pages left with zero
-               citations, stamp stale_since on the rest.
+               them; for legacy vaults that still have pages, remove
+               dangling CITES edges from concept pages, delete pages
+               left with zero citations, stamp stale_since on the rest.
 ```
 
 `opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community / Hyperedge nodes (cluster) or just print analysis (analyze).
@@ -180,18 +178,18 @@ A typical full-stack run (`index ./repo myvault --wiki`):
   index.db.wal                        # write-ahead log
   corpus/<sha>.md                     # raw doc bodies, sha-keyed
   vaults/<name>/                      # local vaults (scope=local)
-    pages/concept/<base>.md           # multi-source synthesis pages —
-                                      #  only with --wiki-concept-pages
+    pages/concept/<base>.md           # legacy concept pages — vaults
+                                      #  compiled before 2026-08-03 only
     .vault.json
     .compile-log/<ts>.json
 
 ~/.opentrace/vaults/<name>/           # global vaults (scope=global)
-  pages/concept/<base>.md
+  pages/concept/<base>.md             # legacy only, as above
   .vault.json
   .compile-log/<ts>.json
 ```
 
-Disk is canonical for page bodies + doc bodies. The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
+Disk is canonical for doc bodies (and legacy page bodies). The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
 
 ## Conventions
 

@@ -14,22 +14,27 @@
 
 """DocExtraction stage — one LLM call per newly-ingested source.
 
-Runs after Normalize, before Plan. Each new document gets a single
-extraction call that emits:
+Runs after Normalize. Each new document gets a single extraction call that
+emits:
 
-* a one-line summary + display title — stamped on the ``Source`` node as
-  its navigation label (what agents see in neighbour listings and search
-  hits before deciding to ``load_source`` the body),
-* the document's concept inventory (topic / subject / gloss) — input to
-  the Resolve stage's cross-document concept clustering,
+* a one-line summary + display title — stamped on the ``KnowledgeDoc`` node
+  as its navigation label (what agents see in search hits and listings
+  before deciding to ``load_source`` the body),
 * the entity graph (typed entities + edges) — merged and mirrored into
   the knowledge graph.
 
-There is no per-document wiki page. The raw post-markitdown body lives in
-the corpus (``Source.corpus_path``) and is read directly — by concept
-synthesis (which grounds pages in full sources) and by agents via the
-``load_source`` MCP tool. Concept pages cite sources via ``CITES`` edges
-to the ``Source`` node, not via wiki-links to a summary page.
+There is no per-document wiki page and no synthesis. The raw
+post-markitdown body lives in the corpus (``KnowledgeDoc.corpus_path``) and
+is read directly by agents via the ``load_source`` MCP tool, or swept
+verbatim via ``grep``.
+
+A prior version also asked for a per-doc "concept inventory"
+(topic/subject/gloss) to feed cross-document page synthesis. That was
+removed: synthesis is gone, and the field was measurably *competing* with
+the entity inventory for the same content — dropping it raised entity yield
+~20%, concentrated almost entirely in ``idea`` (35 -> 69 over 48 docs,
+two runs each, non-overlapping ranges). Recurring themes now surface as
+``idea`` entities, which is where they belonged.
 """
 
 from __future__ import annotations
@@ -40,18 +45,17 @@ import re
 from collections.abc import Iterator
 
 from opentrace_agent.wiki.ingest.entities import build_entities
-from opentrace_agent.wiki.ingest.execute import _wiki_concurrency
 from opentrace_agent.wiki.ingest.types import (
-    ConceptMention,
     NormalizedSource,
     WikiEventKind,
     WikiPhase,
     WikiPipelineEvent,
+    _wiki_concurrency,
 )
 from opentrace_agent.wiki.llm import WikiLLM
 from opentrace_agent.wiki.vault import VaultMetadata
 
-# Output budget we request per extraction call. A one-liner + concept/entity
+# Output budget we request per extraction call. A one-liner + entity
 # inventory is small, so this is modest; the client clamps it to the backend's
 # hard cap (BackendConfig.max_output_tokens) regardless.
 EXTRACTION_MAX_TOKENS = 4000
@@ -66,7 +70,7 @@ DEFAULT_MAX_DOC_CHARS = 120_000
 _HEADING_RE = re.compile(r"^#{1,6} ", re.MULTILINE)
 
 DOC_EXTRACTION_SCHEMA = {
-    "description": "Emit the one-line summary, concept inventory, and entity graph for a document.",
+    "description": "Emit the one-line summary and entity graph for a document.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -76,35 +80,6 @@ DOC_EXTRACTION_SCHEMA = {
                     "One sentence describing the document — used as its navigation label in "
                     "listings and search results."
                 ),
-            },
-            "concepts": {
-                "type": "array",
-                "description": (
-                    "The document's MAIN recurring concepts, for cross-document synthesis — the handful "
-                    "of key themes a reader would say it is about, NOT an exhaustive enumeration of every "
-                    "minor mention or list entry."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "topic": {
-                            "type": "string",
-                            "description": "The subject matter, e.g. 'validation', 'security', 'pricing'.",
-                        },
-                        "subject": {
-                            "type": "string",
-                            "description": (
-                                "The real-world entity the concept is a property OF — the product or "
-                                "system being documented (e.g. 'pydantic', 'Acme Software'), NOT this file."
-                            ),
-                        },
-                        "gloss": {
-                            "type": "string",
-                            "description": "One line: what THIS document specifically says about the topic.",
-                        },
-                    },
-                    "required": ["topic", "subject", "gloss"],
-                },
             },
             "entities": {
                 "type": "array",
@@ -153,7 +128,7 @@ DOC_EXTRACTION_SYSTEM = """You are reading a single uploaded document for a know
 
 The raw document is retained and readable in full, so you do NOT restate its
 content. Your job is a compact inventory: a one-line summary (its navigation
-label), the document's main concepts, and the named entities it is about.
+label) and the named entities the document is about.
 
 Hard rules:
 - one_line_summary describes the DOCUMENT in one sentence (e.g. "RFP response
@@ -169,23 +144,14 @@ Hard rules:
 - Do not introduce facts that aren't in the source — no outside knowledge.
 - Do not distort numbers or proper nouns.
 
-Concept inventory (the `concepts` field):
-- List the document's MAIN concepts — its key recurring themes — so a later
-  stage can synthesise cross-document concept pages. Capture the real themes, not
-  every minor mention: a list- or table-style doc (e.g. a table of supported
-  types) still has only a few actual concepts, not one per row.
-- For each concept give: `topic` (the subject matter), `subject` (the real-world
-  entity it is a property OF — the product/system being documented, NOT this
-  file), and a one-line `gloss` of what THIS document says about it.
-- Name the subject as you find it in THIS document; a later stage reconciles
-  subjects across the whole corpus (folding sub-components into their system,
-  keeping distinct entities apart), so you don't need to guess the corpus shape.
-- Two documents about the SAME topic and SAME subject describe one shared
-  concept; the same topic about a DIFFERENT subject is a different concept.
-
 Entity inventory (the `entities` + `edges` fields):
 - Extract the named entities the document is ABOUT — things a reader would call
   a subject of the doc, not every named token. Give each a one-line `description`.
+- Include the document's recurring THEMES as entities in their own right (typed
+  `idea`) when the document is genuinely about them — a standard, a methodology,
+  a named process. These are the abstractions that let two documents about the
+  same subject matter be found together, so don't skip them in favour of only
+  concrete named systems.
 - Pick the closest `type`:
   - idea:    a concept, technique, algorithm, pattern, or methodology
   - service: a runnable system, product, command, external tool, or API
@@ -205,21 +171,6 @@ Entity inventory (the `entities` + `edges` fields):
 
 - Return every field via the emit_extraction tool in a single call.
 """
-
-
-def _parse_concepts(result: dict, source_sha: str) -> list[ConceptMention]:
-    """Defensively parse the ``concepts`` array from an emit_extraction response
-    into ConceptMentions, stamping the document's sha. Malformed/missing → []."""
-    mentions: list[ConceptMention] = []
-    for c in result.get("concepts") or []:
-        if not isinstance(c, dict):
-            continue
-        topic = (c.get("topic") or "").strip()
-        subject = (c.get("subject") or "").strip()
-        gloss = (c.get("gloss") or "").strip()
-        if topic and subject:
-            mentions.append(ConceptMention(topic=topic, subject=subject, gloss=gloss, source_sha=source_sha))
-    return mentions
 
 
 def _title_from_filename(name: str) -> str:
@@ -363,26 +314,14 @@ def _chunk_markdown(md: str, max_chars: int) -> list[str]:
 def _merge_chunk_results(results: list[dict]) -> dict:
     """Merge per-chunk emit_extraction payloads into one document-level result.
 
-    The one-line summary is the first non-empty one; concepts/entities/edges
-    are unioned with a light dedup so the doc's counts and downstream inputs
+    The one-line summary is the first non-empty one; entities/edges are
+    unioned with a light dedup so the doc's counts and downstream inputs
     aren't inflated by content that spanned a chunk boundary.
     """
     if len(results) == 1:
         return results[0]
 
     one_liner = next((s for r in results if (s := str(r.get("one_line_summary", "")).strip())), "")
-
-    concepts: list[dict] = []
-    seen_c: set[tuple[str, str]] = set()
-    for r in results:
-        for c in r.get("concepts") or []:
-            if not isinstance(c, dict):
-                continue
-            key = ((c.get("topic") or "").strip().lower(), (c.get("subject") or "").strip().lower())
-            if key == ("", "") or key in seen_c:
-                continue
-            seen_c.add(key)
-            concepts.append(c)
 
     entities: list[dict] = []
     seen_e: set[tuple[str, str]] = set()
@@ -414,7 +353,6 @@ def _merge_chunk_results(results: list[dict]) -> dict:
 
     return {
         "one_line_summary": one_liner,
-        "concepts": concepts,
         "entities": entities,
         "edges": edges,
     }
@@ -424,18 +362,16 @@ def extract_docs(
     sources: list[NormalizedSource],
     meta: VaultMetadata,
     llm: WikiLLM,
-    mentions_out: list[ConceptMention] | None = None,
     entity_nodes_out: list | None = None,
     entity_rels_out: list | None = None,
 ) -> Iterator[WikiPipelineEvent]:
     """Run the per-doc extraction call for each newly-ingested source.
 
     Stamps ``title`` + ``one_line_summary`` onto each ``NormalizedSource``
-    in place (the graph writer copies them onto the ``Source`` node as its
-    navigation label). When *mentions_out* / *entity_nodes_out* /
-    *entity_rels_out* are given, the parsed ConceptMentions and entity
-    nodes/edges are appended to them for the downstream Resolve and
-    entity-merge stages. Everything comes from ONE LLM call per document.
+    in place (the graph writer copies them onto the ``KnowledgeDoc`` node as
+    its navigation label). When *entity_nodes_out* / *entity_rels_out* is
+    given, the parsed entity nodes/edges are appended to them for the
+    downstream entity-merge stage. Both come from ONE LLM call per document.
     """
     total = len(sources)
     yield WikiPipelineEvent(
@@ -490,7 +426,7 @@ def extract_docs(
 
     # Each source is independent — extract concurrently. Emit a progress event
     # as each call COMPLETES (so the user sees live movement, not one burst at
-    # the end), surfacing the per-doc entity + concept counts. Label stamping
+    # the end), surfacing the per-doc entity counts. Label stamping
     # and accumulation happen in a second pass in INPUT order so results stay
     # deterministic regardless of completion order.
     results_by_sha: dict[str, tuple[NormalizedSource, str, dict]] = {}
@@ -502,12 +438,11 @@ def extract_docs(
             results_by_sha[src.sha256] = (src, title, result)
             done += 1
             n_ent = len(result.get("entities") or []) if isinstance(result, dict) else 0
-            n_con = len(result.get("concepts") or []) if isinstance(result, dict) else 0
             parts_note = f" ({n_parts} parts)" if n_parts > 1 else ""
             yield WikiPipelineEvent(
                 kind=WikiEventKind.STAGE_PROGRESS,
                 phase=WikiPhase.EXTRACTING,
-                message=f"Extracted {src.original_name} → {n_ent} entities, {n_con} concepts{parts_note}",
+                message=f"Extracted {src.original_name} → {n_ent} entities{parts_note}",
                 current=done,
                 total=total,
                 file_name=src.original_name,
@@ -517,8 +452,6 @@ def extract_docs(
         src, title, result = results_by_sha[src.sha256]
         src.title = title
         src.one_line_summary = str(result.get("one_line_summary", ""))
-        if mentions_out is not None:
-            mentions_out.extend(_parse_concepts(result, src.sha256))
         if entity_nodes_out is not None or entity_rels_out is not None:
             nodes, rels = build_entities(
                 result,
@@ -534,7 +467,7 @@ def extract_docs(
     yield WikiPipelineEvent(
         kind=WikiEventKind.STAGE_STOP,
         phase=WikiPhase.EXTRACTING,
-        message=f"Extracted labels, concepts, and entities from {total} doc(s)",
+        message=f"Extracted labels and entities from {total} doc(s)",
         current=total,
         total=total,
     )

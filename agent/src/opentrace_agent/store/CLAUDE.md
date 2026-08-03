@@ -38,7 +38,8 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 ### OT-1732 additions
 
 - Node types: `KnowledgeVault`, `KnowledgeConcept`, `KnowledgeDoc` (vault domain — see `wiki/CLAUDE.md`)
-- Rel types: `LINKS_TO` (wiki-link), `CITES` (wiki provenance), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
+- Rel types: `LINKS_TO` (doc→doc author links, and page→page in legacy vaults), `CITES` (wiki provenance), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
+- **`KnowledgeConcept` and `CITES` remain valid types but nothing produces them** — concept-page synthesis was removed 2026-08-03. They stay in the schema so vaults compiled before that keep mirroring and reading their pages. Don't "clean up" the types; a re-compile of a legacy vault still writes them.
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
 
 ## Property Marshalling
@@ -78,7 +79,8 @@ undiscoverable at any sane limit.
   Page; KnowledgeDocs are vault-scoped via CONTAINS edges)
 - `confidence_threshold: float | None` — when >0, rel `properties.confidence`
   below this is filtered out (matches the resolver-stamped `CALLS` confidence
-  today; wiki-side `confidence` is currently a placeholder per OT-1744)
+  today; wiki-side `confidence` was only ever a fixed placeholder on concept
+  pages, which nothing produces any more)
 
 ## Pitfalls
 

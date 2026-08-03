@@ -624,7 +624,7 @@ def write_vault_to_graph(
     }
     # ``spawned_from`` is stamped by link_vault_to_repo AFTER the mirror on
     # ``index --wiki`` runs; carry it forward here so re-mirrors that don't
-    # go through the linker (refresh-stale-pages, backfill) don't wipe it.
+    # go through the linker (e.g. vault attach) don't wipe it.
     existing_vault = store.get_node(vault_id)
     if existing_vault is not None:
         prev = (existing_vault.get("properties") or {}).get("spawned_from")

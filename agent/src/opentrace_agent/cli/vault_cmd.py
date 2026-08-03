@@ -45,7 +45,7 @@ from opentrace_agent.wiki.paths import (
 
 @click.group()
 def vault() -> None:
-    """Vault management — ingest, attach, detach, list, promote, demote, refresh-stale-pages."""
+    """Vault management — ingest, attach, detach, list, show, promote, demote."""
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +451,7 @@ def _move_vault_scope(vault_name: str, *, src: Scope, dst: Scope) -> None:
         raise click.ClickException(str(exc))
     click.echo(f"Moved vault {vault_name!r}: {src} → {dst}")
 
-    # Auto-refresh THIS project's graph mirror so autoprune/refresh-stale
+    # Auto-refresh THIS project's graph mirror so autoprune
     # see the new scope without the user remembering a follow-up step.
     # Best-effort: if the current cwd doesn't sit in a graph (no DB), skip
     # silently — the disk move already succeeded.
@@ -472,67 +472,6 @@ def _move_vault_scope(vault_name: str, *, src: Scope, dst: Scope) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# `vault refresh-stale-pages`
-# ---------------------------------------------------------------------------
-
-
-@vault.command("refresh-stale-pages")
-@click.argument("vault_name", required=False, default=None)
-@click.option(
-    "--db",
-    "db_path",
-    default=None,
-    type=click.Path(),
-    help="Graph DB. Auto-discovered if omitted.",
-)
-@click.option(
-    "--provider",
-    type=click.Choice(["anthropic", "gemini", "openai", "kimi", "local"]),
-    default=None,
-)
-@click.option("--api-key", default=None)
-@click.option("--model", default=None)
-@click.option("--base-url", default=None)
-def vault_refresh_stale_pages(
-    vault_name: str | None,
-    db_path: str | None,
-    provider: str | None,
-    api_key: str | None,
-    model: str | None,
-    base_url: str | None,
-) -> None:
-    """Re-run Plan+Execute for concept pages stamped ``stale_since``.
-
-    Autoprune stamps pages stale when their cited Sources are removed.
-    This command regenerates them against the remaining citations. No-op
-    when no pages are stale.
-    """
-    from opentrace_agent.wiki.ingest.pipeline import refresh_stale_pages
-
-    if provider is None:
-        provider = _autodetect_provider()
-
-    graph_store = _open_graph_store(db_path)
-    if graph_store is None:
-        raise click.ClickException("no graph DB available — pass --db or run from inside an indexed repo")
-
-    try:
-        regenerated = refresh_stale_pages(
-            graph_store,
-            vault_name=vault_name,
-            provider=provider,
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-        )
-    finally:
-        graph_store.close()
-
-    if regenerated == 0:
-        click.echo("No stale pages found.")
-    else:
-        click.echo(f"Refreshed {regenerated} stale page(s).")
 
 
 # ---------------------------------------------------------------------------

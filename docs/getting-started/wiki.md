@@ -2,7 +2,7 @@
 
 A **vault** is an indexed collection of documents — papers, design docs, transcripts, notebooks — mirrored into the same knowledge graph as your code, so retrieval tools can pull from both surfaces.
 
-By default a vault is a **document corpus**: each doc gets a navigation label, an epistemic status, entity edges, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Synthesized concept pages are an opt-in extra (`--wiki-concept-pages`).
+A vault is a **document corpus**: each doc gets a navigation label, an epistemic status, entity edges, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Nothing is summarized into new prose; there is no synthesis step.
 
 Vaults are produced two ways, sharing one pipeline:
 
@@ -29,7 +29,7 @@ What happens (either entry point):
 
 1. The walker discovers PDF / DOCX / Markdown / HTML / etc. under the folder, and prints a per-extension count + cost estimate **before** any LLM spend
 2. Each doc is converted to markdown via markitdown, body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults, `~/.opentrace/corpus/<sha>.md` for globals)
-3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph and concept inventory. No page is written — the raw body stays in the corpus, readable via the `load_source` tool
+3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph. Nothing is written in the model's own voice — the raw body stays in the corpus, readable via the `load_source` tool
 4. Mechanical passes (no LLM) finish the corpus: a folder-relative `path` stamp, a `LINKS_TO` edge for every relative link an author wrote from one doc to another, and an epistemic `status` stamp (`authoritative` / `design_history` / `design_history_archived`; force one for a whole folder with `vault ingest --status`). Repo walks (`index --wiki`) additionally get a `MIRRORS` edge to each doc's `File` twin — `vault ingest` builds no code tree, so the KnowledgeDoc *is* the document
 5. The vault metadata lives at `<project>/.opentrace/vaults/<name>/` and everything is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
 
@@ -39,34 +39,26 @@ Inspect it:
 
 ```bash
 opentraceai vault list                          # local + global vaults visible here
-opentraceai vault show papers                   # vault index (docs, and pages if any)
+opentraceai vault show papers                   # vault index (docs, and legacy pages if any)
 ```
 
 ## Doc-to-doc links
 
 The `LINKS_TO` edges between `KnowledgeDoc` nodes are the doc-side analogue of the code graph's import edges: they record structure the **author** declared, not anything a model inferred. They're parsed mechanically out of each doc body — markdown inline links, reference-style definitions, and raw HTML anchors — then resolved against the linking doc's own directory. Repo-root-relative targets (`/docs/guide.md`) work too. External URLs, bare `#fragment` targets, and paths that escape the repo root are dropped, and a link that doesn't resolve to another indexed doc (a code file, an image) simply produces no edge.
 
-## Opt in to concept pages
+## Corpus-wide questions
 
-```bash
-opentraceai index ./papers --wiki --wiki-concept-pages
-```
+To ask what *every* document says about something, grep the corpus rather than read a summary of it. The [`grep` retrieval tool](../reference/graph-tools.md) (MCP + `POST /api/retrieval/grep`) sweeps every member doc's normalized body and returns matching lines already labelled with the doc's title and epistemic status.
 
-This adds a synthesis half on top of the corpus:
+Earlier versions of OpenTrace synthesized cross-document "concept pages" for this. They were **removed on 2026-08-03**: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution — something a verbatim body cannot do — and they measured 88.4% against a 98.6% control on the doc-Q&A benchmark, the worst result recorded. Verbatim grep hits answer the same question without the paraphrase layer.
 
-1. A `Resolve` LLM call identifies concept-level themes across docs. A theme needs at least 2 supporting docs (`OT_WIKI_CONCEPT_MIN_SOURCES`) to get a page — single-doc content stays reachable through its labelled KnowledgeDoc node, so paging it would just duplicate the doc
-2. An `Execute` LLM call writes one `KnowledgeConcept(kind="concept")` per theme, each citing its KnowledgeDocs directly via `CITES` edges
-3. Page bodies land at `<project>/.opentrace/vaults/papers/pages/concept/` and are mirrored into the graph alongside the docs
+!!! note "Vaults compiled before the removal"
+    Nothing produces concept pages any more, but a vault that already has them keeps them — the pages stay on disk, stay mirrored into the graph, and stay readable:
 
-Extra cost is roughly 1 resolve call plus 0.5 synthesis calls per doc.
-
-It's off by default for two reasons: a synthesized page restates its sources in the model's own voice, which can drop their hedges, tense, and attribution — something a verbatim body cannot do — and concept pages have not yet been shown to beat reading the labelled documents directly.
-
-Read one:
-
-```bash
-opentraceai vault show papers --page concept/<base>   # one page body to stdout
-```
+    ```bash
+    opentraceai vault show papers                          # lists docs, and pages if any
+    opentraceai vault show papers --page concept/<base>    # one page body to stdout
+    ```
 
 ## Vault scopes — local vs global
 
@@ -116,7 +108,6 @@ Re-running `index <path> NAME --wiki` against the same vault is incremental:
 
 - Docs whose sha256 already exists in the vault are skipped (no LLM call)
 - New docs get labelled and extracted (one LLM call each)
-- With `--wiki-concept-pages`, Resolve reconsiders the corpus and may extend existing concept pages or create new ones
 
 ```bash
 opentraceai index ./papers research --wiki
@@ -164,16 +155,11 @@ Note: graph mirrors that pointed at the old scope are now stale. Run `vault atta
 By default, re-running `index --wiki` detects docs that disappeared from disk between runs and cleans them up:
 
 - The orphaned `KnowledgeDoc` node + its body in `corpus/` are deleted
-- If the vault has concept pages, ones that cited the removed doc have the dangling citation removed:
+- If the vault carries legacy concept pages, ones that cited the removed doc have the dangling citation removed:
     - If the page still has other citations → kept, stamped `stale_since=<timestamp>`
     - If the page has no remaining citations → deleted entirely
 
-Stale pages don't auto-regenerate (zero LLM cost during pruning). Refresh them on demand:
-
-```bash
-opentraceai vault refresh-stale-pages research                     # standalone
-opentraceai index ./papers research --wiki --refresh-stale-pages   # inline
-```
+Pruning costs no LLM calls. A page stamped `stale_since` can't be regenerated — nothing writes page bodies any more — so delete it if it bothers you.
 
 To opt out of pruning on a particular run (e.g. you're partially re-indexing):
 
@@ -193,8 +179,8 @@ opentraceai vault list
 #   global  refs            (not attached to current graph)
 
 opentraceai vault list --global-only   # every global on the machine
-opentraceai vault show research        # page index for one vault
-opentraceai vault show research --page concept/some-base   # print one page body to stdout
+opentraceai vault show research        # doc index for one vault (plus pages, if it has legacy ones)
+opentraceai vault show research --page concept/some-base   # print one legacy page body to stdout
 ```
 
 A `STALE` row means the disk vault has been re-compiled since this graph last mirrored it (typically because the vault is global and another project recompiled). Run `vault attach <name>` to refresh.
@@ -213,9 +199,8 @@ What you get from a single command:
 - `LINKS_TO` edges between KnowledgeDocs for the links the docs' authors wrote to each other
 - A `DOCUMENTS` edge joining the `Repository` to the vault it spawned (plus a `spawned_from` stamp on the vault) — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
 - Flat entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from LLM extraction over the ingested docs
-- `MENTIONS` edges connecting docs (and pages, when present) to the entities they discuss (matched against raw corpus markdown and page bodies)
+- `MENTIONS` edges connecting docs (and legacy pages, when present) to the entities they discuss (matched against raw corpus markdown and page bodies)
 - `DERIVED_FROM` edges connecting entities to the KnowledgeDoc they came from
-- With `--wiki-concept-pages`: synthesized wiki pages (`KnowledgeConcept`) about cross-document themes, plus their `CITES` edges
 
 Then surface cross-cutting structure:
 
@@ -230,17 +215,17 @@ opentraceai analyze            # god nodes + bridges + cross-domain bridges + cr
 <project>/.opentrace/vaults/<name>/        # local vault root
 ~/.opentrace/vaults/<name>/                # global vault root (override with $OT_VAULT_ROOT)
 
-  pages/concept/<base>.md          — multi-source synthesis pages
-                                     (only with --wiki-concept-pages)
+  pages/concept/<base>.md          — legacy concept pages, if the vault was
+                                     compiled before 2026-08-03
   .vault.json                      — page metadata, source labels + sha256 dedup state
   .compile-log/<ts>.json           — per-compile audit log
 ```
 
-A corpus-only vault (the default) has no `pages/` content — the documents' own bodies live in the sibling `corpus/<sha>.md` dir instead.
+A vault compiled today has no `pages/` content — the documents' own bodies live in the sibling `corpus/<sha>.md` dir instead.
 
-When pages do exist, slugs are `<kind_dir>/<base>` — e.g. `concept/usage`. Concept pages are the only page kind, so everything lives under the `concept/` folder. Open the vault in Obsidian and pages show up there; `[[wiki-links]]` in page bodies point concept-to-concept only. Source attribution isn't a wiki-link — it's the structural `CITES` edge from each concept page to the `KnowledgeDoc` nodes it drew from.
+Where legacy pages exist, slugs are `<kind_dir>/<base>` — e.g. `concept/usage`. Concept pages are the only page kind, so everything lives under the `concept/` folder. Open the vault in Obsidian and pages show up there; `[[wiki-links]]` in page bodies point concept-to-concept only. Source attribution isn't a wiki-link — it's the structural `CITES` edge from each concept page to the `KnowledgeDoc` nodes it drew from.
 
-Disk is the source of truth for page bodies; the knowledge graph holds metadata and relationships. `vault attach` can always rebuild a graph mirror from disk — doc navigation labels are persisted in `.vault.json`, so attached mirrors keep them.
+Disk is the source of truth for bodies; the knowledge graph holds metadata and relationships. `vault attach` can always rebuild a graph mirror from disk — doc navigation labels are persisted in `.vault.json`, so attached mirrors keep them.
 
 ## What's next
 

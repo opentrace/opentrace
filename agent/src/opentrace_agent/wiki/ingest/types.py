@@ -88,67 +88,9 @@ class NormalizedSource:
     status: str = "authoritative"
 
 
-@dataclass
-class PlanCreate:
-    title: str
-    source_shas: list[str]
-    rationale: str = ""
-    # Sub-topics this page absorbs, written as sections (not separate pages).
-    sections: list[str] = field(default_factory=list)
-    # Subset of source_shas added by the plan-time relevance scan (not the
-    # concept clusterer) — marked as supplementary in the synthesis prompt.
-    augmented_shas: list[str] = field(default_factory=list)
 
 
-@dataclass
-class PlanExtend:
-    page_slug: str
-    source_shas: list[str]
-    rationale: str = ""
-    sections: list[str] = field(default_factory=list)
-    augmented_shas: list[str] = field(default_factory=list)
 
-
-@dataclass
-class Plan:
-    creates: list[PlanCreate] = field(default_factory=list)
-    extends: list[PlanExtend] = field(default_factory=list)
-
-
-@dataclass
-class ConceptMention:
-    """A single concept noted in one source document (the Map stage output).
-
-    Concepts are qualified by ``(topic, subject)``: ``topic`` is the recurring
-    subject matter ("validation", "security"), ``subject`` is the real-world
-    entity the concept is a property *of* ("pydantic", "Acme Software") — the
-    product/system being documented, not the file it appears in. The Resolve
-    stage clusters mentions, merging only when BOTH match.
-    """
-
-    topic: str
-    subject: str
-    gloss: str  # one line: what THIS document says about the concept
-    source_sha: str
-
-
-@dataclass
-class ResolvedConcept:
-    """A concept cluster surviving Resolve — becomes one concept page.
-
-    ``source_shas`` is the union of every document whose mention joined this
-    cluster (across all its sections), so the synthesis stage knows which
-    sources to draw across. ``sections`` is the outline of finer sub-topics this
-    page absorbs — each is written as a section of the one page rather than its
-    own page, so nothing is dropped, just placed at the right level.
-    """
-
-    title: str  # canonical, subject-qualified when needed ("Security of Acme")
-    topic: str
-    subject: str
-    source_shas: list[str]
-    rationale: str = ""
-    sections: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -161,3 +103,19 @@ class CompiledPage:
     revision: int
     is_new: bool
     kind: str = PAGE_KIND_CONCEPT
+
+
+def _wiki_concurrency() -> int:
+    """Worker count for the parallel per-doc extraction loop.
+
+    ``OT_WIKI_CONCURRENCY`` overrides the default of 8; always at least 1.
+    8 suits a healthy paid API tier; WikiLLM's retry/backoff absorbs the extra
+    429s a lower tier may see — drop it if throttled.
+    """
+    import os
+
+    raw = os.environ.get("OT_WIKI_CONCURRENCY", "").strip()
+    try:
+        return max(1, int(raw)) if raw else 8
+    except ValueError:
+        return 8
