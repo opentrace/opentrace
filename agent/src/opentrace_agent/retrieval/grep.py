@@ -94,9 +94,9 @@ def grep(
     """
     max_results = max(1, min(max_results, MAX_RESULTS_CAP))
 
-    scope_node = store.get_node(scope_id)
+    scope_node = _resolve_scope(store, scope_id)
     if scope_node is None:
-        return _err(scope_id, f"scope node not found: {scope_id}")
+        return _err(scope_id, _unknown_scope_message(store, scope_id))
     scope_type = scope_node["type"]
 
     if scope_type == "Repository":
@@ -309,6 +309,52 @@ def _grep_vault(
             )
 
     return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": "ripgrep"}
+
+
+def _resolve_scope(store: GraphStore, scope_id: str) -> dict[str, Any] | None:
+    """Find the scope node for *scope_id*, accepting a plain NAME as well as an id.
+
+    A vault's node id is ``vault::<name>``, which is not what any discovery
+    path hands back: ``list_vaults`` returns bare names. Measured consequence —
+    an agent grepped ``scopeId="vault"``, got "scope node not found", called
+    ``list_vaults``, used the name it was given, and got the same error again;
+    it then abandoned grep and read 21 documents one at a time to answer a
+    question one sweep would have answered. A tool whose id format can't be
+    discovered from the tools that list its scopes is a tool that doesn't get
+    used, so resolve the forms callers actually have.
+    """
+    node = store.get_node(scope_id)
+    if node is not None:
+        return node
+    # Bare vault name → vault::<name>.
+    node = store.get_node(f"vault::{scope_id}")
+    if node is not None:
+        return node
+    # Bare repo name → the Repository node whose name matches.
+    try:
+        for repo in store.list_nodes("Repository", limit=1000):
+            if (repo.get("name") or "") == scope_id:
+                return repo
+    except Exception:  # noqa: BLE001 — no Repository table in a docs-only graph
+        pass
+    return None
+
+
+def _unknown_scope_message(store: GraphStore, scope_id: str) -> str:
+    """Explain an unresolvable scope by NAMING the scopes that do exist."""
+    options: list[str] = []
+    for node_type in ("KnowledgeVault", "Repository"):
+        try:
+            for n in store.list_nodes(node_type, limit=50):
+                options.append(n["id"])
+        except Exception:  # noqa: BLE001 — type may not exist in this graph
+            continue
+    if options:
+        return f"scope node not found: {scope_id}. Valid scopes in this graph: {', '.join(sorted(options))}"
+    return (
+        f"scope node not found: {scope_id}. This graph has no Repository or KnowledgeVault "
+        "node to scope a grep to."
+    )
 
 
 def _err(scope_id: str, message: str) -> dict[str, Any]:

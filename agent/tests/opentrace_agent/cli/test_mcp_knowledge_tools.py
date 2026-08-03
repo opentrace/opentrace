@@ -844,3 +844,40 @@ class TestSearchGraphEntityDefault:
         self._seed(store)
         r = _call(store, "search_graph", query="engram", nodeTypes="KnowledgeDoc")
         assert {h["id"] for h in r["hits"]} == {"corpus::sha-en"}
+
+
+class TestFindPagesMentioningWrongIdType:
+    """An empty result must mean "nothing mentions this entity", never "you
+    passed the wrong kind of id" — the two are indistinguishable to an agent,
+    and conflating them cost a benchmark run 21 brute-force document reads."""
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        s = GraphStore(str(tmp_path / "fpm.db"))
+        s.add_node("corpus::abc", "KnowledgeDoc", "guide.md", {"sha256": "abc", "title": "Guide"})
+        s.add_node("idea:Cold Chain", "Idea", "Cold Chain", {"derived_from": "corpus::abc"})
+        s.merge_relationship(
+            id="corpus::abc->MENTIONS->idea:Cold Chain",
+            rel_type="MENTIONS",
+            source_id="corpus::abc",
+            target_id="idea:Cold Chain",
+        )
+        yield s
+        s.close()
+
+    def test_doc_id_is_a_usage_error_not_an_empty_result(self, store):
+        out = _call(store, "find_pages_mentioning", entityId="corpus::abc")
+        assert "error" in out
+        assert "KnowledgeDoc" in out["error"]
+        assert "find_entities_mentioned_by" in out["hint"]
+        assert "count" not in out  # must NOT look like a legitimate zero
+
+    def test_unknown_id_explains_how_to_find_entity_ids(self, store):
+        out = _call(store, "find_pages_mentioning", entityId="corpus::nope")
+        assert "error" in out and "no node with id" in out["error"]
+        assert "search_graph" in out["hint"]
+
+    def test_real_entity_id_still_works(self, store):
+        out = _call(store, "find_pages_mentioning", entityId="idea:Cold Chain")
+        assert out["count"] == 1
+        assert out["pages"][0]["id"] == "corpus::abc"

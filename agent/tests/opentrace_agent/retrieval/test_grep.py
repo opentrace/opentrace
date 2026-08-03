@@ -255,6 +255,37 @@ class TestGrepVaultCorpusScope:
         assert result["mode"] == "error"
         assert "no on-disk content" in result["error"]
 
+    def test_bare_vault_name_resolves(self, store, tmp_path):
+        """`list_vaults` hands back bare names, so a bare name must work as a
+        scope. It previously didn't: an agent looked the name up, passed it
+        here, got "scope node not found" a second time, and fell back to
+        reading 21 documents one at a time."""
+        self._seed_vault(store, tmp_path)
+        by_id = grep(store, "capacity", scope_id="vault::kb")
+        by_name = grep(store, "capacity", scope_id="kb")
+        assert by_name["mode"] == "ripgrep"
+        assert {m["node_id"] for m in by_name["matches"]} == {m["node_id"] for m in by_id["matches"]}
+
+    def test_bare_repo_name_resolves(self, store, fixture_repo):
+        store.add_node("myorg/myrepo", "Repository", "myrepo", {"local_path": str(fixture_repo)})
+        result = grep(store, "hello", scope_id="myrepo")
+        assert result["mode"] == "ripgrep"
+        assert result["count"] >= 2
+
+    def test_unknown_scope_names_the_valid_ones(self, store, tmp_path):
+        """The error has to be actionable — the whole failure was an agent
+        unable to guess the id format."""
+        self._seed_vault(store, tmp_path)
+        result = grep(store, "x", scope_id="vault")
+        assert result["mode"] == "error"
+        assert "Valid scopes in this graph" in result["error"]
+        assert "vault::kb" in result["error"]
+
+    def test_unknown_scope_in_empty_graph_says_so(self, store):
+        result = grep(store, "x", scope_id="nope")
+        assert result["mode"] == "error"
+        assert "no Repository or KnowledgeVault" in result["error"]
+
     def test_line_numbers_refer_to_normalized_body(self, store, tmp_path):
         self._seed_vault(store, tmp_path)
         result = grep(store, "T-2207", scope_id="vault::kb")

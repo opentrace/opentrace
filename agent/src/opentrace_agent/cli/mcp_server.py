@@ -1049,7 +1049,10 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     ) -> str:
         """Regex grep over the on-disk content reachable from a scope node.
 
-        ``scopeId`` is a Repository (with local_path set) or KnowledgeVault id.
+        ``scopeId`` accepts a Repository or KnowledgeVault **id or plain
+        name** — `"my-docs"`, `"vault::my-docs"`, and a repo's name all
+        resolve, so a name from `list_vaults` / `get_stats` can be passed
+        straight through. An unresolvable scope lists the valid ones.
         A vault grep sweeps EVERY member document's full normalized body (plus
         compiled pages, when present) — use it to establish exhaustive claims
         about content ("no document mentions X", "every place Y appears"),
@@ -1375,6 +1378,39 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         if not store:
             return NO_INDEX_MSG
         try:
+            # An empty result must mean "nothing mentions this entity", never
+            # "you passed the wrong kind of id". Measured failure: an agent
+            # passed a KnowledgeDoc id here, got `count: 0` with no
+            # explanation, reasonably read it as a true negative, and fell
+            # back to opening documents one at a time. A wrong-type id is a
+            # usage error and has to say so.
+            target = store.get_node(entityId)
+            if target is None:
+                return json.dumps(
+                    {
+                        "entityId": entityId,
+                        "error": f"no node with id {entityId!r} in this graph",
+                        "hint": "find entity ids with search_graph(nodeTypes=\"Idea,Service,Module,Paper,Person,Event\") or list_nodes.",
+                    }
+                )
+            target_type = target.get("type") or ""
+            if target_type in ("KnowledgeDoc", "KnowledgeConcept", "KnowledgeVault"):
+                return json.dumps(
+                    {
+                        "entityId": entityId,
+                        "error": (
+                            f"{entityId!r} is a {target_type}, not an entity — this tool maps an "
+                            "ENTITY to the documents mentioning it, so a document id has nothing "
+                            "to resolve."
+                        ),
+                        "hint": (
+                            "For the entities THIS document mentions, use "
+                            "find_entities_mentioned_by. For other documents on the same subject, "
+                            "take one of those entity ids and pass it here. To sweep the corpus by "
+                            "text instead, use grep."
+                        ),
+                    }
+                )
             pages = _find_pages_mentioning(store, entityId)
             # Trim each hit to the agent-essential fields and bypass the
             # 4 KB truncation cap — find_pages_mentioning can legitimately
