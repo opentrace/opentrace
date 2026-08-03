@@ -4,7 +4,10 @@ A **vault** is an indexed collection of documents — papers, design docs, trans
 
 By default a vault is a **document corpus**: each doc gets a navigation label, an epistemic status, entity edges, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Synthesized concept pages are an opt-in extra (`--wiki-concept-pages`).
 
-Vaults are produced by the same `opentraceai index` command that handles code — no separate compile step. Pass `--wiki` and you get a vault.
+Vaults are produced two ways, sharing one pipeline:
+
+- **`opentraceai vault ingest <folder>`** — a bare folder of doc files: a Confluence/Notion export, a docs-site checkout, a directory of PDFs. No git repo, no prior `opentraceai index` — if no graph DB exists yet, a docs-only one is created at `./.opentrace/index.db`. The docs-only front door: `cd docs-dump && opentraceai vault ingest .` is the whole setup.
+- **`opentraceai index --wiki`** — the same `index` command that handles code. Docs found during the repo walk are ingested alongside the code graph and linked to it (`MIRRORS` File twins).
 
 ## Prerequisites
 
@@ -15,19 +18,22 @@ Vaults are produced by the same `opentraceai index` command that handles code �
 ## Compile your first vault
 
 ```bash
-# Single folder of docs → local vault
+# A folder of exported docs → local vault (no repo required)
+opentraceai vault ingest ~/Downloads/confluence-export
+
+# Or: docs discovered while indexing a repo
 opentraceai index ./papers --wiki
 ```
 
-What happens:
+What happens (either entry point):
 
-1. The walker discovers PDF / DOCX / Markdown / HTML / etc. under `./papers`
+1. The walker discovers PDF / DOCX / Markdown / HTML / etc. under the folder, and prints a per-extension count + cost estimate **before** any LLM spend
 2. Each doc is converted to markdown via markitdown, body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults, `~/.opentrace/corpus/<sha>.md` for globals)
 3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph and concept inventory. No page is written — the raw body stays in the corpus, readable via the `load_source` tool
-4. Mechanical passes (no LLM) finish the corpus: a `MIRRORS` edge to each directory-walked doc's `File` twin, a `LINKS_TO` edge for every relative link an author wrote from one doc to another, and an epistemic `status` stamp (`authoritative` / `design_history` / `design_history_archived`)
-5. The vault metadata lives at `<project>/.opentrace/vaults/papers/` and everything is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
+4. Mechanical passes (no LLM) finish the corpus: a folder-relative `path` stamp, a `LINKS_TO` edge for every relative link an author wrote from one doc to another, and an epistemic `status` stamp (`authoritative` / `design_history` / `design_history_archived`; force one for a whole folder with `vault ingest --status`). Repo walks (`index --wiki`) additionally get a `MIRRORS` edge to each doc's `File` twin — `vault ingest` builds no code tree, so the KnowledgeDoc *is* the document
+5. The vault metadata lives at `<project>/.opentrace/vaults/<name>/` and everything is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
 
-What you have at this point is a labelled, linked, searchable corpus of the documents as their authors wrote them — no synthesized prose anywhere.
+What you have at this point is a labelled, linked, searchable corpus of the documents as their authors wrote them — no synthesized prose anywhere. Search hits on `KnowledgeDoc` nodes carry `title` / `status` / `one_line_summary` / `path` inline, so an agent can pick which documents to open without reading each one first.
 
 Inspect it:
 

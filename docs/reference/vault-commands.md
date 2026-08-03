@@ -1,6 +1,6 @@
 # Vault Commands
 
-`opentraceai vault` is the management surface for compiled wiki vaults. Compilation itself lives on `opentraceai index --wiki` — see [Indexing](../getting-started/indexing.md). These commands handle the *post-compile* operations: listing, inspecting, attaching to graphs, moving between scopes.
+`opentraceai vault` is the management surface for wiki vaults, plus the ingestion entry point for doc collections that aren't a repo: `vault ingest` compiles a bare folder of exported docs, while repo-walked compilation lives on `opentraceai index --wiki` — see [Indexing](../getting-started/indexing.md). The remaining commands handle *post-compile* operations: listing, inspecting, attaching to graphs, moving between scopes.
 
 ## Concept refresher
 
@@ -9,7 +9,31 @@ A **vault** is an indexed collection of documents — labelled, linked, and sear
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeDoc` nodes, plus `KnowledgeConcept` nodes when the vault has pages). The disk vault is rebuilt by re-running `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeDoc` nodes, plus `KnowledgeConcept` nodes when the vault has pages). The disk vault is rebuilt by re-running `vault ingest` / `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+
+## `vault ingest`
+
+```bash
+opentraceai vault ingest ~/Downloads/confluence-export
+opentraceai vault ingest ./docs-dump kb --status design_history
+opentraceai vault ingest ./handbook --scope global
+```
+
+Ingests a **bare folder of doc files** — a Confluence/Notion/SharePoint export, a docs-site checkout, a folder of PDFs — into a corpus-only vault. No git repo required, and unlike `index --wiki` it builds no code tree: the KnowledgeDoc *is* the document (no `File` twins, no `MIRRORS`).
+
+What each doc gets:
+
+- markitdown normalization (HTML/PDF/DOCX/PPTX/... → markdown), body verbatim in the corpus, readable via `load_source`. The walked set is the repo walk's doc extensions **plus `.json`** — in an export folder, structured data (a fleet inventory, a config dump) is a document the same way `.csv` already is
+- a navigation label from one LLM call — `title` + one-line summary — plus the extracted entity graph
+- a folder-relative `path` stamp (searchable, and the navigation key when export filenames are opaque)
+- an epistemic `status` from the path heuristic, or forced for the whole folder with `--status`
+- `LINKS_TO` edges for the relative links its author wrote, resolved against the folder root
+
+**Scope semantics.** `--scope local` (default) mirrors into the current project's graph (auto-discovered, or `--db`). When no graph DB exists — you're standing in a bare folder of docs, no repo, nothing indexed — one is **created on the spot** at `./.opentrace/index.db`, so a dir of docs is a complete project by itself: `cd docs-dump && opentraceai vault ingest .` and it's searchable. `--scope global` writes disk-only, like the serve upload route — attach it to a project with `vault attach`. Note the attach path can't reconstruct `path` stamps or `LINKS_TO` (they're graph writes made at ingest time), so prefer a local ingest when you need those.
+
+**Re-ingest is idempotent.** The folder's absolute path is recorded as `spawned_from` (`dir::<path>`), so re-running updates the same vault: unchanged files are skipped by content hash, new files are labelled, and files deleted from the folder are pruned from the graph, corpus, and vault metadata (`--no-prune` to keep them).
+
+The ingest ends with a summary — docs by extension, skips, entities, links, mirror stats — and a per-extension count + cost estimate is printed up front, *before* the LLM spend starts. Coverage is explicit: files the walker skipped as unsupported types are listed (`not walked (unsupported type): 1 × .xyz (...)`) rather than silently omitted, so "N docs indexed" never quietly means "N of M".
 
 ## `vault list`
 

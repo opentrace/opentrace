@@ -16,7 +16,22 @@ main.py          — Click root group + the unified index command:
                    • --wiki-concept-pages — additionally synthesise
                      cross-document concept pages (opt-in; see wiki/CLAUDE.md)
                    • --no-prune / --refresh-stale-pages for cleanup behaviour
-vault_cmd.py     — vault list / show / attach / detach / promote / demote / refresh-stale-pages
+vault_cmd.py     — vault ingest / list / show / attach / detach / promote / demote /
+                   refresh-stale-pages. `vault ingest <folder>` is the docs-only
+                   ingestion path: walks a bare folder (no git repo), corpus-only
+                   compile, stamps folder-relative `path` + author LINKS_TO edges,
+                   but builds NO code tree — no File twins, MIRRORS, or DOCUMENTS.
+                   Idempotent re-runs via spawned_from = "dir::<abs folder>";
+                   deleted docs are pruned (graph autoprune + meta.sources).
+                   Needs no existing project: when find_db comes up empty, a
+                   docs-only graph is created at ./.opentrace/index.db.
+                   Walks DOC_EXTENSIONS + .json (data-as-docs; ingest-specific —
+                   `_ingest_extensions()`); the prune keep-set MUST use the same
+                   set or a doc ingested under an added extension is deleted as
+                   "removed" on the next run (`_walk_ingest_files` is the single
+                   walker both use). Files skipped by type are REPORTED in the
+                   summary, never silent ("14 docs" over a 15-file folder must
+                   not read as full coverage)
 analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
 cluster_cmd.py   — community detection (Leiden → Louvain fallback)
 export_graph.py  — graphml / obsidian / report exporters (deterministic, no LLM)

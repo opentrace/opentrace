@@ -36,7 +36,7 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
 | Node-fetch     | (in `cli/mcp_server.py::get_node`)             | Wraps `GraphStore.get_node` + `traverse(depth=1)`; adds `target_summary` per neighbour |
 | Traversal      | (in `GraphStore.traverse`)                     | Edge-type set, vault scope, confidence threshold |
 | Provenance     | `provenance.provenance`                        | Code + wiki branches; null payload for unknown types |
-| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path or Vault pages_dir |
+| Grep           | `grep.grep`                                    | ripgrep over Repository.local_path, or a Vault's corpus bodies + pages |
 | Query (typed)  | `paths.find_path`, `paths.find_via_relationship_to_type`, `existence.find_orphans`, `counts.count_by` | Replaces the spec's raw-Cypher escape hatch — convention-compliant typed templates |
 
 ## Search semantics
@@ -70,8 +70,26 @@ inversion is worth knowing — BM25 normalises by length, so the `File`'s short
 is also why short-named entity nodes outrank glossed docs. A field-weighted
 ranking would fix the class of problem; this collapse fixes the worst instance.
 
+**Doc-hit triage fields.** `KnowledgeDoc` hits carry `title` / `status` /
+`one_line_summary` (≤120 chars, matching `list_nodes`'s compact projection) /
+`path` inline, so an agent picks which docs to open from the results alone
+instead of paying a `load_source` round-trip per hit. Other node types stay
+lean.
+
+**Entity exclusion (`exclude_llm_entities`).** The second instance of the
+BM25 problem above: doc-extracted entities (Idea/Service/Module/Paper/Person/
+Event) took ~half the top-3 slots on the same 25-doc index, crowding out the
+labelled docs they came from. With the flag on (the MCP `search_graph`
+default when no `nodeTypes` is passed), they're filtered pre-cut (the 3x
+over-fetch refills the slots) and counted in `entities_excluded`. The
+discriminator is `_is_llm_entity` — entity type AND a `derived_from`/`vault`
+property — because "Service"/"Module" are also legacy runtime types that must
+keep appearing. An explicit `node_types` filter always wins, and the REST
+route / UI keep the flag off.
+
 Falls back to `GraphStore.search_nodes` substring matching when FTS is
-unavailable (e.g. before the index is built).
+unavailable (e.g. before the index is built); the fallback applies the same
+entity filter.
 
 ## Provenance semantics
 
@@ -92,12 +110,31 @@ segments) — works for both `owner/repo/...` GitHub-style IDs and
 
 ## Grep semantics
 
-Scope-based: caller provides a `Repository` (must have `local_path`) or
-`KnowledgeVault` (rooted at `OT_VAULT_ROOT/<name>/pages`). ripgrep is shelled out
-with `--json --line-number --max-filesize=10M` and a 10s wall-time cap.
-When on-disk content is unavailable, returns a structured `mode="error"`
-response so the agent can fall back to `search_graph` for FTS over indexed
-metadata.
+Scope-based: caller provides a `Repository` (must have `local_path`) or a
+`KnowledgeVault`. ripgrep is shelled out with `--json --line-number
+--max-filesize=10M` and a 10s wall-time cap. When on-disk content is
+unavailable, returns a structured `mode="error"` response so the agent can
+fall back to `search_graph` for FTS over indexed metadata.
+
+**A vault grep sweeps the CORPUS first** — every member KnowledgeDoc's
+normalized markdown body — then compiled `pages/` when the vault has any.
+This is the exhaustiveness primitive: ranked search finds the best documents,
+grep establishes what's true of every document (the folder arm won benchmark
+coverage questions with exactly this capability; see the wiki CLAUDE.md's
+measured-value section). Three details are load-bearing:
+
+- **Membership via `CONTAINS`, not the directory.** The corpus dir is shared
+  and sha-keyed across vaults; grepping it raw would leak other vaults' docs.
+- **Resolution via each doc's `corpus_path`** (relative to the DB dir) —
+  never by parsing corpus filenames. Docs whose body isn't on this machine
+  (metadata-only mirrors) are skipped, not fatal.
+- **Hits are joined back to the KnowledgeDoc**: `node_id` (`corpus::<sha>`),
+  display `file_path` (the doc's folder/repo-relative path, never the sha
+  name), `title`, `status`, with line numbers referring to the normalized
+  body — exactly what `load_source` returns. `file_filter` matches the
+  display path. A corpus sweep therefore returns *pre-labelled* matches,
+  which is what makes it better than grepping the raw export (where PDFs and
+  HTML grep badly and hits carry no labels).
 
 No FTS-over-bodies fallback inside the graph: graph DBs are not blob stores
 (LadybugDB caps STRING properties at ~4 KB), and bodies live in their natural

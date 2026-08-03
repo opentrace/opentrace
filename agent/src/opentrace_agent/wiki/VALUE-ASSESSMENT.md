@@ -186,6 +186,17 @@ accuracy + cost fixes, `FINDINGS.md`, `regrade.sh` + `compare_grades.py`,
    ingest a docs site or wiki export not present on disk — so the control
    genuinely cannot reach them. Needs a question set written against those docs.
    This is a different experiment, not another run of this one.
+   **First datapoint (2026-07-31):** a purpose-built harness now exists
+   (`vault-benchmark-2/out-of-repo/`) — vault-only arm vs native-tools-over-raw-
+   folder arm, blind grading, leak checks. Run 1 on the 15-doc smoke fixture:
+   97.3% vs 97.7%, a tie inside noise, as pre-registered for a clean well-named
+   corpus. Read as **sufficiency, not superiority**: an arm with zero file
+   access matched full file access on quality at comparable cost — the first
+   measured support for the access claim. Superiority (better/quicker/cheaper
+   than grep) remains unshown; the informative fixture (real messy export, 50+
+   docs, opaque names) has not been run. The exhaustiveness weakness recurred
+   (a confident false-negative on the coverage question — third benchmark in a
+   row).
 
 ## Traps that will mislead a fresh session
 

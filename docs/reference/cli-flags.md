@@ -84,6 +84,7 @@ Pre-flight estimate is printed when any LLM flag is set.
 Vault management. See [Vault Commands](vault-commands.md) for the conceptual reference.
 
 ```
+opentraceai vault ingest FOLDER [NAME] [--scope local|global] [--db PATH] [--status X] [...]
 opentraceai vault list [--global-only] [--db PATH]
 opentraceai vault show NAME [--scope local|global] [--page SLUG]
 opentraceai vault attach NAME [--scope local|global] [--db PATH]
@@ -92,6 +93,23 @@ opentraceai vault promote NAME
 opentraceai vault demote NAME
 opentraceai vault refresh-stale-pages [NAME] [--db PATH] [--provider X]
 ```
+
+### `vault ingest`
+
+Ingest a bare folder of doc files (a Confluence/Notion/docs-site export — no git repo required) into a corpus-only vault. `NAME` defaults to the folder's name; re-running on the same folder updates the same vault in place.
+
+| Flag | Description |
+|---|---|
+| `--scope local\|global` | `local` (default) mirrors into the project graph; `global` writes disk-only — attach later with `vault attach` |
+| `--db PATH` | Graph DB to mirror into. Auto-discovered if omitted; created at `./.opentrace/index.db` when none exists (local scope only) |
+| `--provider X` | LLM provider (anthropic / gemini / openai / kimi / local). Default uses autodetect |
+| `--api-key KEY` | Provider API key override |
+| `--model NAME` | Model override |
+| `--base-url URL` | For `--provider local`, the server's base URL |
+| `--status X` | Force an epistemic status (`authoritative` / `design_history` / `design_history_archived`) on every doc, overriding the path heuristic |
+| `--exclude-design-history` | Skip proposal/spec/ADR trees and CHANGELOGs instead of labelling them |
+| `--no-prune` | Keep vault entries for docs deleted from the folder |
+| `-v` | Per-file progress for cheap stages too |
 
 ### `vault list`
 

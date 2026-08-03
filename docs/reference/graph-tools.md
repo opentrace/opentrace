@@ -6,14 +6,14 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 
 | Primitive | What it returns | Use it for |
 |---|---|---|
-| `search` | Ranked FTS hits with snippets + vault/recency/confidence | "Find anything called X" |
+| `search` | Ranked FTS hits with snippets + vault/recency/confidence; `KnowledgeDoc` hits carry `title`/`status`/`one_line_summary`/`path` inline for triage without opening the doc | "Find anything called X" |
 | `overview` | <500-token corpus orientation: counts + top concepts + recently-updated | Agent session priming |
 | `find_path` | Shortest path between two nodes (Python BFS, no networkx dep) | "How are these two connected?" |
 | `find_orphans` | Nodes of a type with no edges of a given type | "Functions never called" |
 | `find_via_relationship_to_type` | All `(A) -[edge]-> (B)` pairs for given types | "All Files that DEFINE Classes" |
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
 | `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM KnowledgeDoc) | "Where did this come from?" |
-| `grep` | Regex match via ripgrep over a Repository or Vault scope | "Find this exact string in source" |
+| `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus (normalized bodies, hits joined to doc id/title/status) + compiled pages | "Find this exact string in source" / "prove no document mentions X" |
 | `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
@@ -27,7 +27,11 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 The MCP server (`opentraceai mcp`) exposes each primitive as a tool. The Claude Code plugin auto-discovers them.
 
 ```
-search_graph                            # ranked FTS over names + summary
+search_graph                            # ranked FTS over names + summary. KnowledgeDoc
+                                        #  hits carry title/status/one_line_summary/path;
+                                        #  doc-extracted entity nodes are excluded by
+                                        #  default (short names outrank the docs they
+                                        #  came from) — opt in via nodeTypes
 get_node                                # full node by id + immediate neighbors
 list_nodes                              # paginated by type
 traverse_graph                          # BFS with direction, max depth, rel-type filter

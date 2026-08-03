@@ -1,6 +1,6 @@
 # Wiki
 
-Doc-ingestion pipeline that indexes raw doc files into the graph store (the "vault") and, optionally, compiles cross-document concept pages. Driven by ``opentraceai index --wiki`` — there is no separate ``wiki compile`` command anymore.
+Doc-ingestion pipeline that indexes raw doc files into the graph store (the "vault") and, optionally, compiles cross-document concept pages. Two CLI entry points share the pipeline: ``opentraceai index --wiki`` (repo walks — docs linked to the code tree) and ``opentraceai vault ingest <folder>`` (bare folders of exported docs — no git repo, no code tree; see `cli/vault_cmd.py`). There is no separate ``wiki compile`` command anymore.
 
 This is the **single doc-ingestion path**: the one per-doc LLM call (`doc_extraction.py`) emits the KnowledgeDoc's navigation label (title + one-line summary), the concept inventory, AND the knowledge-graph entities + edges in a single shot. There are **no per-document wiki pages** — the raw doc body lives in the corpus and is read directly (`load_source`). The entities are merged (`pipeline/entity_merge.py`) and mirrored to the graph alongside the vault. The old standalone `pipeline/entity_extraction.py` stage has been removed.
 
@@ -44,7 +44,12 @@ ingest/
   graph_writer.py     — Mirror vault to graph: Vault/Page/KnowledgeDoc +
                         CONTAINS/CITES/LINKS_TO/MENTIONS + MIRRORS edges;
                         parse_doc_links() + link_doc_to_doc_links() for the
-                        authors' own doc→doc references
+                        authors' own doc→doc references; stamp_doc_paths()
+                        stamps root-relative path/paths/status WITHOUT File
+                        twins (the `vault ingest` half of what
+                        link_corpus_doc_mirrors does for repo walks; takes
+                        status_override so --status survives the post-compile
+                        stamp instead of being re-derived from the path)
   pipeline.py         — Composer (sync generator); accepts scope= + project_root=
                         + graph_store= + synthesize_pages=; also exports
                         refresh_stale_pages()
@@ -159,7 +164,13 @@ must stay idempotent, so `index --wiki` reuses the vault it produced before
 (matched by `spawned_from`) rather than suffixing anew — see the CLI's
 `_resolve_index_vault_name`. `VaultMetadata.spawned_from` (persisted in
 `.vault.json`) is the stable repo→vault key that makes this work even when the
-name was suffixed on first creation. The serve compile route takes an
+name was suffixed on first creation. `vault ingest` uses the same mechanism with
+`spawned_from = "dir::<abs folder path>"` — repo ids never contain `::`, so the
+two producers can't collide. Its re-ingest also prunes: graph-side via
+`autoprune_after_index`, and disk-side `_prune_vault_meta_sources` drops
+`meta.sources` entries for deleted docs (every compile re-mirrors ALL of
+`meta.sources`, so without the meta prune a deleted doc is resurrected each run
+and the metadata grows forever). The serve compile route takes an
 `on_conflict` form field (`suffix` for a new-vault compile, `append` to update in
 place).
 
@@ -167,16 +178,16 @@ place).
 
 `run_compile(graph_store=..., scope="local"|"global")` mirrors the post-compile vault state into the graph after disk writes succeed:
 
-- `KnowledgeVault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id) when the vault was built by `index --wiki` over a repo. `spawned_from` is stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors.
+- `KnowledgeVault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id, or `dir::<abs path>` for `vault ingest` folders) when the vault was built over a walked source. For repos it's stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors; `vault ingest` stamps it directly on the disk metadata.
 - `KnowledgeConcept` nodes — id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`). Carries `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated`. Pages compiled this run get `agent`/`model`/`session` provenance stamped plus `confidence` + `confidence_tier` (concept → INFERRED/0.75). Pages not in `compiled_slugs` keep their existing provenance.
-- `KnowledgeDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so KnowledgeDocs are FTS-findable by label), and `path` (repo-relative) when the doc came from a repo walk. Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
+- `KnowledgeDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so KnowledgeDocs are FTS-findable by label), and `path` (root-relative) when the doc came from a walked source — repo-relative on `index --wiki`, folder-relative on `vault ingest` (stamped by `stamp_doc_paths`, which both producers share; the ingest path passes `status_override` through so `--status` isn't undone by the stamp's path heuristic). Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
 - `CONTAINS` — Vault → Page, Vault → KnowledgeDoc.
 - `CITES` — concept page → KnowledgeDoc, direct by sha (one hop; no intermediate pages). `--wiki-concept-pages` only.
 - `LINKS_TO` — two distinct producers, same edge type:
-  - **KnowledgeDoc → KnowledgeDoc** — the authors' *own* cross-references, parsed mechanically (no LLM) from each doc's relative markdown links, reference-style definitions, and raw HTML anchors by `parse_doc_links` and written by `link_doc_to_doc_links` in the same post-compile step as MIRRORS. The doc-side analogue of the code graph's import edges: it records structure a human declared, never anything a model inferred. Targets resolve against the linking doc's own directory (`/docs/x.md` is treated as repo-root-relative); external URLs, fragment-only links, and paths escaping the repo root are dropped, and resolution itself is the filter — a link to a `.py` file or an image finds no KnowledgeDoc and is skipped. Repo-walked runs only (needs repo-relative paths).
+  - **KnowledgeDoc → KnowledgeDoc** — the authors' *own* cross-references, parsed mechanically (no LLM) from each doc's relative markdown links, reference-style definitions, and raw HTML anchors by `parse_doc_links` and written by `link_doc_to_doc_links` in the same post-compile step as MIRRORS. The doc-side analogue of the code graph's import edges: it records structure a human declared, never anything a model inferred. Targets resolve against the linking doc's own directory (`/docs/x.md` is treated as repo-root-relative); external URLs, fragment-only links, and paths escaping the repo root are dropped, and resolution itself is the filter — a link to a `.py` file or an image finds no KnowledgeDoc and is skipped. Runs whenever the ingest has root-relative paths — repo walks (`index --wiki`, repo root) and folder ingests (`vault ingest`, folder root standing in for it) — but not single-file/URL/dropped-file compiles.
   - **KnowledgeConcept → KnowledgeConcept** — per `[[Title]]` occurrence in a page body. `--wiki-concept-pages` only.
-- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `KnowledgeDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `KnowledgeDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim) — see `write_vault_to_graph(derived_pairs=...)`. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
-- `MIRRORS` — KnowledgeDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults). Entities always anchor to KnowledgeDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
+- `MENTIONS` — per entity name match in a concept-page body OR a document's raw corpus markdown (case-insensitive except for Person). Bridges content ↔ entity layers: `Page → entity` and `KnowledgeDoc → entity`. Matching over raw bodies gives per-document granularity with better coverage than any summary (the raw body is a superset). **Deduped against `DERIVED_FROM`**: a `KnowledgeDoc → entity` MENTIONS is skipped when that entity was extracted *from* that doc (`entity -DERIVED_FROM-> doc` already encodes it, and is the stronger claim). The skip-set is `derived_pairs` (this run's extractions) **unioned with the doc's incoming `DERIVED_FROM` edges already in the graph** — derived_pairs alone breaks on re-compiles, which re-match every doc in `meta.sources` while derived_pairs covers only the docs extracted that run (found live: a re-ingest restated every doc's own entities as MENTIONS). Violating edges from earlier compiles are deleted in the same pass (deterministic edge ids), so graphs self-heal on their next compile. So MENTIONS from a doc is exactly the entities it references but did NOT originate. Consumers wanting "every doc referencing X" union MENTIONS with incoming `DERIVED_FROM` (the `retrieval.cross_cutting` helpers do this).
+- `MIRRORS` — KnowledgeDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults, and `vault ingest` folders — deliberately: there's no repo, the KnowledgeDoc IS the document, so ingest stamps `path` via `stamp_doc_paths` without creating File twins). Entities always anchor to KnowledgeDocs (`DERIVED_FROM`); if code-derived entities are ever introduced they anchor to File, and MIRRORS keeps the two worlds joined.
 - `DOCUMENTS` — Repository → Vault, written by `link_vault_to_repo` in the same `index --wiki` post-compile step as MIRRORS. Marks the vault as spawned from that repo (paired with the `spawned_from` vault property). Attached globals and dropped-file compiles never get it — they live alongside a repo without documenting it.
 
 Graph-write failures are caught and emitted as non-fatal warnings — the on-disk vault stays valid. Recover with:
@@ -242,9 +253,20 @@ Consequences for anyone working in this module:
   caps (fixed the diagnosed question, verdict unchanged).
 - The benchmark **cannot detect benefit** — the control arm sits at 97–99%. Treat
   "no significant difference" from it as uninformative, not as evidence of absence.
-- The untested case is the one the feature was designed for: docs *outside* the
-  repo, or a corpus too large to sweep. That needs a new question set, not another
-  run.
+- The designed-for case — docs *outside* the repo — now has a harness
+  (`vault-benchmark-2/out-of-repo/`) and one smoke datapoint (2026-07-31,
+  15-doc clean corpus): a vault-ONLY arm (no file tools at all) tied full
+  native file access on quality at comparable cost. That supports
+  **sufficiency** (vault-only ≈ having the files — the access claim), not
+  superiority; the informative fixture (real messy export, 50+ docs) hasn't
+  been run. Recurring measured weakness across all benchmarks: exhaustiveness
+  on coverage questions (ranked retrieval + selective reading stops early;
+  the arm calls `list_nodes` and still under-reads). The pre-registered
+  response shipped 2026-07-31: `retrieval/grep.py` now sweeps a vault's
+  CORPUS (every member doc's normalized body, hits joined to doc
+  id/title/status — see retrieval/CLAUDE.md), giving a vault-only agent the
+  same exhaustive contact the folder arm won those questions with. Effect on
+  coverage questions is not yet re-measured.
 
 ## Still deferred
 
