@@ -343,19 +343,21 @@ _DOC_HITS_NOTE = """
     This index also contains documentation, so a hit may be:
 
     * ``KnowledgeDoc`` — an indexed document, matched on its title, its
-      one-line summary, and its path. Read the VERBATIM text with
-      ``load_source`` on the hit's id; that response also carries the
-      document's epistemic ``status`` (current documentation vs
-      proposal/spec). Such a hit may carry ``fileTwin``: the id of the ``File``
-      node for the same document, if you want the code-tree view. Each
-      document appears at most ONCE — the doc node and its File twin are
-      merged into a single hit.
-    * ``Idea`` / ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``
-      — an entity extracted from the docs. These often rank highly because
-      their names are short; an entity is a signpost, not an answer. Follow it
-      to the documents with ``find_pages_mentioning`` (or ``traverse_graph``
-      over ``MENTIONS`` / ``DERIVED_FROM``).
+      one-line summary, and its path. The hit itself carries ``title``,
+      ``status`` (current documentation vs proposal/spec), ``one_line_summary``
+      and ``path`` — triage on those, then read the VERBATIM text with
+      ``load_source`` on the ids worth opening. Such a hit may carry
+      ``fileTwin``: the id of the ``File`` node for the same document, if you
+      want the code-tree view. Each document appears at most ONCE — the doc
+      node and its File twin are merged into a single hit.
     * ``KnowledgeConcept`` — a compiled concept page, when the vault has any.
+
+    Entities extracted from the docs (``Idea`` / ``Service`` / ``Module`` /
+    ``Paper`` / ``Person`` / ``Event``) are NOT returned by default: their
+    short names outrank the documents they came from, and an entity is a
+    signpost, not an answer. Ask for them explicitly via ``nodeTypes``, or
+    follow ``find_pages_mentioning`` / ``traverse_graph`` (``MENTIONS`` /
+    ``DERIVED_FROM``) from a document.
 
     ``nodeTypes`` accepts these as a comma-separated filter, e.g.
     ``nodeTypes="KnowledgeDoc"`` to search documents only."""
@@ -744,8 +746,10 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         the underlying property is set on the node; otherwise ``null``.
         Optional ``vaultScope`` restricts hits to a single vault by name.
 
-        (Documentation hit types are appended to this description by
-        ``_DOC_HITS_NOTE`` only when the open index contains them.)
+        (Documentation hit types — including the per-hit triage fields on
+        document hits and the extracted-entity exclusion default — are
+        appended to this description by ``_DOC_HITS_NOTE`` only when the open
+        index contains them.)
 
         Results are RANKED AND TRUNCATED, so this tool cannot show that
         something is absent. For "list every…" / "which X have no Y" /
@@ -770,7 +774,16 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
                 limit=limit,
                 node_types=node_types,
                 vault_scope=scope,
+                exclude_llm_entities=node_types is None,
             )
+            excluded = result.get("entities_excluded", 0)
+            if excluded:
+                result["hint"] = (
+                    f"{excluded} extracted-entity hit(s) "
+                    "(Idea/Service/Module/Paper/Person/Event) excluded by "
+                    "default — pass nodeTypes to include them, or reach "
+                    "entities via traverse_graph (MENTIONS/DERIVED_FROM)."
+                )
             return _json_response(result)
         except Exception as e:
             return _error_response("search_graph", e)
@@ -1037,6 +1050,15 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Regex grep over the on-disk content reachable from a scope node.
 
         ``scopeId`` is a Repository (with local_path set) or KnowledgeVault id.
+        A vault grep sweeps EVERY member document's full normalized body (plus
+        compiled pages, when present) — use it to establish exhaustive claims
+        about content ("no document mentions X", "every place Y appears"),
+        the way ``list_nodes`` establishes existence; ranked ``search_graph``
+        cannot show absence. Vault matches come back joined to their document:
+        ``node_id`` (pass to ``load_source``), display ``file_path``,
+        ``title``, ``status``, with line numbers referring to the normalized
+        body ``load_source`` returns.
+
         Returns matches with file_path, line_number, line_text, and
         structural_context. Falls back to a structured error when the scope
         has no on-disk content available; agent should then fall back to

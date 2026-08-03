@@ -18,7 +18,15 @@ Scopes are nodes whose subtree has on-disk content the agent can search:
 
 - ``Repository`` with ``local_path`` set (local-directory indexes; cloned
   remote repos don't carry one).
-- ``Vault`` (always rooted under ``OT_VAULT_ROOT/<name>/pages``).
+- ``KnowledgeVault`` — the vault's document CORPUS (each member
+  KnowledgeDoc's normalized markdown body, resolved via its ``corpus_path``)
+  plus its compiled ``pages/`` when the vault has concept pages. The corpus
+  sweep is what makes exhaustive content claims possible for an agent whose
+  only access is the graph: ranked search finds the best documents, grep
+  establishes what's true of EVERY document. Corpus hits arrive joined back
+  to their KnowledgeDoc — node id, display path, title, epistemic status —
+  and their line numbers refer to the normalized body (exactly what
+  ``load_source`` returns).
 
 ripgrep is invoked via ``subprocess.run`` with ``--json`` for structured
 output. ``rg`` is expected on ``PATH``; missing-binary cases return a
@@ -44,6 +52,8 @@ MAX_RESULTS_CAP = 5000
 # Cap subprocess wall-time so a runaway pattern can't hang the MCP server.
 RG_TIMEOUT_SEC = 10
 
+_NO_RG_MSG = "ripgrep ('rg') not on PATH — install ripgrep or use search_graph for FTS over indexed name/summary"
+
 
 def grep(
     store: GraphStore,
@@ -59,10 +69,13 @@ def grep(
     Parameters
     ----------
     scope_id
-        ID of a ``Repository`` or ``Vault`` node — the node whose
-        on-disk subtree is searched.
+        ID of a ``Repository`` or ``KnowledgeVault`` node — the node whose
+        on-disk content is searched.
     file_filter
-        Optional substring; only files whose path contains it are searched.
+        Optional substring; only files whose (display) path contains it are
+        searched. For vault corpus hits this matches the document's
+        folder/repo-relative path or filename, never the content-addressed
+        corpus filename.
     case_sensitive
         Default ``False``. Maps to ripgrep's ``-i``.
     max_results
@@ -74,8 +87,10 @@ def grep(
         ``{"matches": [Match, ...], "count": N, "scope": str, "mode": "ripgrep"|"error"}``
         where each Match is
         ``{node_id, file_path, line_number, line_text, structural_context}``.
-        On failure the result has ``mode="error"`` and an ``error`` string
-        explaining why; ``matches`` is empty.
+        Vault-corpus matches additionally carry ``title`` and ``status`` so a
+        sweep's hits are triageable without a follow-up read. On failure the
+        result has ``mode="error"`` and an ``error`` string explaining why;
+        ``matches`` is empty.
     """
     max_results = max(1, min(max_results, MAX_RESULTS_CAP))
 
@@ -83,76 +98,217 @@ def grep(
     if scope_node is None:
         return _err(scope_id, f"scope node not found: {scope_id}")
     scope_type = scope_node["type"]
-    scope_props = scope_node.get("properties") or {}
 
     if scope_type == "Repository":
-        local_path = scope_props.get("local_path")
-        if not local_path:
-            return _err(
-                scope_id,
-                "Repository has no local_path — re-index from a local "
-                "directory to enable grep, or fall back to search_graph",
-            )
-        root = Path(str(local_path))
-    elif scope_type == "KnowledgeVault":
-        from opentrace_agent.wiki.paths import (
-            InvalidVaultName,
+        return _grep_repository(
+            store,
+            scope_node,
+            pattern,
+            file_filter=file_filter,
+            case_sensitive=case_sensitive,
+            max_results=max_results,
         )
-        from opentrace_agent.wiki.paths import (
-            pages_dir as _pages_dir,
+    if scope_type == "KnowledgeVault":
+        return _grep_vault(
+            store,
+            scope_node,
+            pattern,
+            file_filter=file_filter,
+            case_sensitive=case_sensitive,
+            max_results=max_results,
         )
+    return _err(
+        scope_id,
+        f"unsupported scope type {scope_type!r} — must be Repository or Vault",
+    )
 
-        # Vault id format is ``vault::<name>``. Strip the prefix.
-        vault_name = scope_node["name"] or scope_id.replace("vault::", "", 1)
-        try:
-            root = _pages_dir(vault_name)
-        except InvalidVaultName as e:
-            return _err(scope_id, f"invalid vault name: {e}")
-    else:
+
+def _grep_repository(
+    store: GraphStore,
+    scope_node: dict[str, Any],
+    pattern: str,
+    *,
+    file_filter: str | None,
+    case_sensitive: bool,
+    max_results: int,
+) -> dict[str, Any]:
+    scope_id = scope_node["id"]
+    scope_props = scope_node.get("properties") or {}
+    local_path = scope_props.get("local_path")
+    if not local_path:
         return _err(
             scope_id,
-            f"unsupported scope type {scope_type!r} — must be Repository or Vault",
+            "Repository has no local_path — re-index from a local "
+            "directory to enable grep, or fall back to search_graph",
         )
-
+    root = Path(str(local_path))
     if not root.exists() or not root.is_dir():
         return _err(scope_id, f"scope path is not a directory on disk: {root}")
 
     rg = shutil.which("rg")
     if rg is None:
-        return _err(
-            scope_id,
-            "ripgrep ('rg') not on PATH — install ripgrep or use search_graph for FTS over indexed name/summary",
-        )
+        return _err(scope_id, _NO_RG_MSG)
 
-    matches = _run_ripgrep(
+    raw = _run_ripgrep(
         rg=rg,
         pattern=pattern,
-        root=root,
-        file_filter=file_filter,
+        targets=[str(root)],
+        glob=f"*{file_filter}*" if file_filter else None,
         case_sensitive=case_sensitive,
         max_results=max_results,
     )
-
-    # Enrich with structural context — the File node id and (for vault
-    # scopes) the vault name.
-    enriched: list[dict[str, Any]] = []
-    for m in matches:
-        enriched.append(
+    matches: list[dict[str, Any]] = []
+    for m in raw:
+        try:
+            rel = str(Path(m["file_path"]).relative_to(root))
+        except ValueError:
+            rel = m["file_path"]
+        matches.append(
             {
-                "node_id": _resolve_file_node_id(store, scope_node, m["file_path"]),
-                "file_path": m["file_path"],
+                # File node IDs follow ``{repoId}/{path}`` per the indexer convention.
+                "node_id": f"{scope_id}/{rel}",
+                "file_path": rel,
                 "line_number": m["line_number"],
                 "line_text": m["line_text"],
-                "structural_context": _structural_context(scope_type, scope_props),
+                "structural_context": {"scope_type": "Repository"},
             }
         )
+    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": "ripgrep"}
 
-    return {
-        "matches": enriched,
-        "count": len(enriched),
-        "scope": scope_id,
-        "mode": "ripgrep",
-    }
+
+def _grep_vault(
+    store: GraphStore,
+    scope_node: dict[str, Any],
+    pattern: str,
+    *,
+    file_filter: str | None,
+    case_sensitive: bool,
+    max_results: int,
+) -> dict[str, Any]:
+    """Grep a vault's corpus (member docs' normalized bodies) + compiled pages.
+
+    The corpus half is the load-bearing one: membership comes from the
+    vault's ``CONTAINS`` edges (the shared, sha-keyed corpus dir may hold
+    other vaults' documents), each member resolves through its own
+    ``corpus_path`` (the canonical pointer — never parse corpus filenames),
+    and every hit is joined back to its KnowledgeDoc so the sweep's output is
+    pre-labelled. Docs whose corpus file isn't on this machine (e.g. a
+    metadata-only mirror) are skipped rather than failing the sweep.
+    """
+    scope_id = scope_node["id"]
+    vault_name = scope_node["name"] or scope_id.replace("vault::", "", 1)
+
+    # Pages layer — present only for vaults compiled with concept pages.
+    # Resolve the vault whichever scope it lives in (local first, then
+    # global); the previous global-only lookup silently missed local vaults.
+    pages_root: Path | None = None
+    try:
+        from opentrace_agent.wiki.paths import InvalidVaultName, resolve_vault_scope
+
+        try:
+            found = resolve_vault_scope(vault_name)
+            if found is not None:
+                candidate = found[1] / "pages"
+                if candidate.is_dir():
+                    pages_root = candidate
+        except InvalidVaultName as e:
+            return _err(scope_id, f"invalid vault name: {e}")
+    except Exception:  # noqa: BLE001 — pages are optional; the corpus can still be swept
+        pages_root = None
+
+    # Corpus layer — the vault's member documents.
+    db_dir = Path(store.db_path).resolve().parent
+    corpus_by_abs: dict[str, dict[str, Any]] = {}
+    for r in store.traverse(scope_id, direction="outgoing", max_depth=1, relationship_type="CONTAINS"):
+        node = r["node"]
+        if node.get("type") != "KnowledgeDoc":
+            continue
+        nprops = node.get("properties") or {}
+        corpus_rel = nprops.get("corpus_path")
+        if not corpus_rel:
+            continue
+        display = nprops.get("path") or nprops.get("filename") or node.get("name") or str(corpus_rel)
+        if file_filter and file_filter not in display:
+            continue
+        abs_path = (db_dir / str(corpus_rel)).resolve()
+        if not abs_path.is_file():
+            continue
+        corpus_by_abs[str(abs_path)] = {
+            "node_id": node["id"],
+            "display": display,
+            "title": nprops.get("title"),
+            "status": nprops.get("status"),
+        }
+
+    if pages_root is None and not corpus_by_abs:
+        return _err(
+            scope_id,
+            "vault has no on-disk content to grep — no member document bodies "
+            "reachable from this DB and no compiled pages. Use search_graph / "
+            "load_source instead",
+        )
+
+    rg = shutil.which("rg")
+    if rg is None:
+        return _err(scope_id, _NO_RG_MSG)
+
+    matches: list[dict[str, Any]] = []
+
+    # Corpus first — the document layer is the reason to grep a vault.
+    if corpus_by_abs:
+        raw = _run_ripgrep(
+            rg=rg,
+            pattern=pattern,
+            targets=sorted(corpus_by_abs),
+            glob=None,  # membership + file_filter already selected the files
+            case_sensitive=case_sensitive,
+            max_results=max_results,
+        )
+        for m in raw:
+            doc = corpus_by_abs.get(m["file_path"])
+            if doc is None:
+                continue
+            matches.append(
+                {
+                    "node_id": doc["node_id"],
+                    "file_path": doc["display"],
+                    "line_number": m["line_number"],
+                    "line_text": m["line_text"],
+                    "title": doc["title"],
+                    "status": doc["status"],
+                    "structural_context": {"scope_type": "KnowledgeVault", "vault": vault_name, "layer": "corpus"},
+                }
+            )
+            if len(matches) >= max_results:
+                break
+
+    if pages_root is not None and len(matches) < max_results:
+        raw = _run_ripgrep(
+            rg=rg,
+            pattern=pattern,
+            targets=[str(pages_root)],
+            glob=f"*{file_filter}*" if file_filter else None,
+            case_sensitive=case_sensitive,
+            max_results=max_results - len(matches),
+        )
+        for m in raw:
+            try:
+                rel = str(Path(m["file_path"]).relative_to(pages_root))
+            except ValueError:
+                rel = m["file_path"]
+            slug = rel[: -len(".md")] if rel.endswith(".md") else rel
+            matches.append(
+                {
+                    # Page id is ``<vault>::<slug>``.
+                    "node_id": f"{vault_name}::{slug}",
+                    "file_path": rel,
+                    "line_number": m["line_number"],
+                    "line_text": m["line_text"],
+                    "structural_context": {"scope_type": "KnowledgeVault", "vault": vault_name, "layer": "pages"},
+                }
+            )
+
+    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": "ripgrep"}
 
 
 def _err(scope_id: str, message: str) -> dict[str, Any]:
@@ -163,12 +319,17 @@ def _run_ripgrep(
     *,
     rg: str,
     pattern: str,
-    root: Path,
-    file_filter: str | None,
+    targets: list[str],
+    glob: str | None,
     case_sensitive: bool,
     max_results: int,
 ) -> list[dict[str, Any]]:
-    """Spawn ripgrep with ``--json`` and parse line-match events into a list."""
+    """Spawn ripgrep with ``--json`` over *targets* (dirs and/or files).
+
+    Returns matches whose ``file_path`` is exactly the path ripgrep printed
+    (absolute when the target was absolute) — callers relativize or join back
+    to their own identity maps.
+    """
     cmd: list[str] = [
         rg,
         "--json",
@@ -180,10 +341,9 @@ def _run_ripgrep(
     ]
     if not case_sensitive:
         cmd.append("--ignore-case")
-    if file_filter:
-        # ripgrep glob: `*<filter>*` so a substring matches.
-        cmd.extend(["--glob", f"*{file_filter}*"])
-    cmd.extend(["--", pattern, str(root)])
+    if glob:
+        cmd.extend(["--glob", glob])
+    cmd.extend(["--", pattern, *targets])
 
     try:
         proc = subprocess.run(
@@ -216,15 +376,9 @@ def _run_ripgrep(
         path = (data.get("path") or {}).get("text", "")
         text = (data.get("lines") or {}).get("text", "").rstrip("\n")
         line_no = int(data.get("line_number") or 0)
-        # Path comes back absolute; relativize to the scope root for stable
-        # display, falling back to the raw path if it falls outside.
-        try:
-            rel = str(Path(path).relative_to(root))
-        except ValueError:
-            rel = path
         matches.append(
             {
-                "file_path": rel,
+                "file_path": path,
                 "line_number": line_no,
                 "line_text": text,
             }
@@ -232,32 +386,3 @@ def _run_ripgrep(
         if len(matches) >= max_results:
             break
     return matches
-
-
-def _resolve_file_node_id(store: GraphStore, scope_node: dict[str, Any], file_rel_path: str) -> str | None:
-    """Best-effort lookup of the File node id for a hit's relative path.
-
-    For a ``Repository``-scoped grep, file node IDs follow
-    ``{repoId}/{path}`` per the indexer convention. For ``Vault``
-    scopes, hits are markdown pages whose slug == filename minus ``.md``;
-    we map that to a ``Page`` node id.
-    """
-    scope_type = scope_node["type"]
-    if scope_type == "Repository":
-        return f"{scope_node['id']}/{file_rel_path}"
-    if scope_type == "KnowledgeVault":
-        if file_rel_path.endswith(".md"):
-            slug = file_rel_path[: -len(".md")]
-        else:
-            slug = file_rel_path
-        # Page id is ``<vault>::<slug>``. Vault name lives on the scope node.
-        vault_name = scope_node.get("name") or ""
-        return f"{vault_name}::{slug}"
-    return None
-
-
-def _structural_context(scope_type: str, scope_props: dict[str, Any]) -> dict[str, Any]:
-    ctx: dict[str, Any] = {"scope_type": scope_type}
-    if scope_type == "KnowledgeVault":
-        ctx["vault"] = scope_props.get("vault") or scope_props.get("name")
-    return ctx

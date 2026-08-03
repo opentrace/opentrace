@@ -170,6 +170,99 @@ class TestGrepRepositoryScope:
 
 
 # ---------------------------------------------------------------------------
+# KnowledgeVault scope — the corpus sweep (exhaustiveness primitive)
+# ---------------------------------------------------------------------------
+
+
+class TestGrepVaultCorpusScope:
+    """Vault grep sweeps member docs' normalized bodies, joined back to their
+    KnowledgeDoc identity. Membership comes from CONTAINS edges — the shared
+    sha-keyed corpus dir may hold other vaults' documents."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_vault_root(self, tmp_path, monkeypatch):
+        # The pages-layer lookup resolves vault names against real disk roots;
+        # pin it to an empty dir so a same-named vault on the dev machine
+        # can't leak pages hits into these corpus-only tests.
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "no-vaults"))
+
+    def _seed_vault(self, store, tmp_path):
+        # GraphStore lives at tmp_path/grepdb, so db_dir == tmp_path and the
+        # corpus sits at tmp_path/corpus — mirroring <db_dir>/corpus/<sha>.md.
+        corpus = tmp_path / "corpus"
+        corpus.mkdir(exist_ok=True)
+        store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb", "scope": "local"})
+
+        def add_doc(sha: str, path: str, body: str, *, member: bool = True, status: str = "authoritative"):
+            (corpus / f"{sha}.md").write_text(body)
+            store.add_node(
+                f"corpus::{sha}",
+                "KnowledgeDoc",
+                path.rsplit("/", 1)[-1],
+                {
+                    "sha256": sha,
+                    "corpus_path": f"corpus/{sha}.md",
+                    "path": path,
+                    "title": path.rsplit("/", 1)[-1].removesuffix(".md").title(),
+                    "status": status,
+                },
+            )
+            if member:
+                store.merge_relationship(
+                    id=f"vault::kb->CONTAINS->corpus::{sha}",
+                    rel_type="CONTAINS",
+                    source_id="vault::kb",
+                    target_id=f"corpus::{sha}",
+                )
+
+        add_doc("aaa1", "guides/cold-chain.md", "# Cold chain\nTrailer T-2207 is at capacity.\n")
+        add_doc("bbb2", "specs/dc7.md", "# DC-7\nNo capacity concerns this quarter.\n", status="design_history")
+        # Same corpus dir, DIFFERENT (hypothetical) vault — no CONTAINS edge.
+        add_doc("ccc3", "other/foreign.md", "capacity capacity capacity\n", member=False)
+        return corpus
+
+    def test_corpus_hits_join_back_to_docs(self, store, tmp_path):
+        self._seed_vault(store, tmp_path)
+        result = grep(store, "capacity", scope_id="vault::kb")
+        assert result["mode"] == "ripgrep"
+        by_node = {m["node_id"]: m for m in result["matches"]}
+        assert set(by_node) == {"corpus::aaa1", "corpus::bbb2"}, "non-member doc must not leak into the sweep"
+        hit = by_node["corpus::aaa1"]
+        assert hit["file_path"] == "guides/cold-chain.md"  # display path, never the sha filename
+        assert hit["title"] == "Cold-Chain"
+        assert hit["status"] == "authoritative"
+        assert hit["structural_context"] == {"scope_type": "KnowledgeVault", "vault": "kb", "layer": "corpus"}
+        assert by_node["corpus::bbb2"]["status"] == "design_history"
+
+    def test_file_filter_matches_display_path_not_sha(self, store, tmp_path):
+        self._seed_vault(store, tmp_path)
+        result = grep(store, "capacity", scope_id="vault::kb", file_filter="guides")
+        assert {m["node_id"] for m in result["matches"]} == {"corpus::aaa1"}
+        # A filter on the content-addressed name matches nothing — that name
+        # is an implementation detail the agent never sees.
+        assert grep(store, "capacity", scope_id="vault::kb", file_filter="aaa1")["count"] == 0
+
+    def test_missing_corpus_file_is_skipped_not_fatal(self, store, tmp_path):
+        corpus = self._seed_vault(store, tmp_path)
+        (corpus / "aaa1.md").unlink()  # e.g. a metadata-only mirror
+        result = grep(store, "capacity", scope_id="vault::kb")
+        assert result["mode"] == "ripgrep"
+        assert {m["node_id"] for m in result["matches"]} == {"corpus::bbb2"}
+
+    def test_no_content_at_all_is_a_structured_error(self, store):
+        store.add_node("vault::empty", "KnowledgeVault", "empty", {"vault": "empty"})
+        result = grep(store, "x", scope_id="vault::empty")
+        assert result["mode"] == "error"
+        assert "no on-disk content" in result["error"]
+
+    def test_line_numbers_refer_to_normalized_body(self, store, tmp_path):
+        self._seed_vault(store, tmp_path)
+        result = grep(store, "T-2207", scope_id="vault::kb")
+        (m,) = result["matches"]
+        assert m["line_number"] == 2  # line 2 of the corpus markdown — what load_source returns
+
+
+# ---------------------------------------------------------------------------
 # Performance — within 2x native ripgrep on a fixture repo
 # ---------------------------------------------------------------------------
 

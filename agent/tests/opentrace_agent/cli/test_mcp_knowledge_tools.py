@@ -785,3 +785,62 @@ class TestAbsenceClaimsCarryTheirPopulation:
         r = _call(store, "find_orphans", nodeType="Function", edgeType="CALLS")
         assert isinstance(r["scope"]["population"], int)
         assert "caveat" not in r["scope"]
+
+
+class TestSearchGraphEntityDefault:
+    """The MCP surface excludes doc-extracted entities from search_graph by
+    default (their short names outrank the labelled docs they came from) and
+    says so via a hint. An explicit nodeTypes always wins — including asking
+    for the entity types themselves."""
+
+    @staticmethod
+    def _seed(store):
+        store.add_node(
+            "ent::engram",
+            "Idea",
+            "engram",
+            {"derived_from": "corpus::sha-en", "description": "the engram project"},
+        )
+        store.add_node(
+            "corpus::sha-en",
+            "KnowledgeDoc",
+            "engram-overview.md",
+            {
+                "sha256": "sha-en",
+                "title": "Engram Overview",
+                "status": "authoritative",
+                "one_line_summary": "engram overview of the project",
+                "summary": "engram overview of the project",
+                "path": "docs/engram-overview.md",
+            },
+        )
+        store.add_node("svc::engram-api", "Service", "engram-api", {})  # runtime, no derived_from
+
+    def test_default_excludes_entities_and_hints(self, store):
+        self._seed(store)
+        r = _call(store, "search_graph", query="engram")
+        types_by_id = {h["id"]: h["type"] for h in r["hits"]}
+        assert "ent::engram" not in types_by_id
+        assert "svc::engram-api" in types_by_id, "runtime Service must not be caught by the entity filter"
+        assert "corpus::sha-en" in types_by_id
+        assert "nodeTypes" in r.get("hint", "")
+
+    def test_node_types_opt_in_returns_entities(self, store):
+        self._seed(store)
+        r = _call(store, "search_graph", query="engram", nodeTypes="Idea")
+        assert {h["id"] for h in r["hits"]} == {"ent::engram"}
+        assert "hint" not in r
+
+    def test_doc_hits_carry_triage_fields(self, store):
+        self._seed(store)
+        r = _call(store, "search_graph", query="engram overview")
+        doc = next(h for h in r["hits"] if h["id"] == "corpus::sha-en")
+        assert doc["title"] == "Engram Overview"
+        assert doc["status"] == "authoritative"
+        assert doc["one_line_summary"] == "engram overview of the project"
+        assert doc["path"] == "docs/engram-overview.md"
+
+    def test_knowledge_doc_type_filter_unaffected(self, store):
+        self._seed(store)
+        r = _call(store, "search_graph", query="engram", nodeTypes="KnowledgeDoc")
+        assert {h["id"] for h in r["hits"]} == {"corpus::sha-en"}

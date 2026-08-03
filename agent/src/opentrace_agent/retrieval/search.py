@@ -30,6 +30,31 @@ from opentrace_agent.store import GraphStore
 DEFAULT_LIMIT = 25
 LIMIT_CAP = 200
 SNIPPET_LEN = 200
+# Matches cli/mcp_server.py's list_nodes compact projection so the two doc
+# surfaces truncate the label identically.
+_TRIAGE_GLOSS_CHARS = 120
+
+# Node types the --wiki doc pass extracts from document text. Redefined here
+# (like provenance.py does) rather than imported from sources/markdown —
+# retrieval must not depend on the extraction stack. Two of these names
+# collide with legacy runtime types ("Service", "Module"), so type alone
+# can't identify an extracted entity — see _is_llm_entity.
+_LLM_ENTITY_TYPES = frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"})
+
+
+def _is_llm_entity(node: dict[str, Any]) -> bool:
+    """True when *node* is a doc-extracted entity, not a runtime node.
+
+    Extracted entities always carry ``derived_from`` (stamped unconditionally
+    at build time) and usually ``vault``; runtime Service/Cluster/... nodes
+    carry neither. Measured motivation: entities' short search_text wins BM25
+    over labelled docs (length normalisation), taking ~half the top-3 slots
+    on a 25-doc index — content-free hits an agent then has to wade through.
+    """
+    if node.get("type") not in _LLM_ENTITY_TYPES:
+        return False
+    props = node.get("properties") or {}
+    return "derived_from" in props or "vault" in props
 
 
 def search(
@@ -38,21 +63,33 @@ def search(
     limit: int = DEFAULT_LIMIT,
     node_types: list[str] | None = None,
     vault_scope: str | None = None,
+    exclude_llm_entities: bool = False,
 ) -> dict[str, Any]:
     """Ranked FTS search with snippets + spec-shaped metadata.
+
+    With *exclude_llm_entities*, doc-extracted entity nodes are filtered out
+    of the results (see :func:`_is_llm_entity`) and counted in
+    ``entities_excluded``. Ignored when *node_types* is set — an explicit
+    type filter always wins, including asking for the entity types themselves.
 
     Returns
     -------
     dict
-        ``{"hits": [SearchHit, ...], "count": N, "query": str}`` where each
-        hit is ``{id, type, name, snippet, score, vault, recency, confidence}``.
-        ``vault`` / ``recency`` / ``confidence`` are ``None`` when the
-        underlying property isn't set on the node.
+        ``{"hits": [SearchHit, ...], "count": N, "query": str,
+        "entities_excluded": M}`` where each hit is ``{id, type, name,
+        snippet, score, vault, recency, confidence}``; ``KnowledgeDoc`` hits
+        additionally carry ``title`` / ``status`` / ``one_line_summary``
+        (≤120 chars) / ``path`` so they can be triaged without opening the
+        doc. ``vault`` / ``recency`` / ``confidence`` are ``None`` when the
+        underlying property isn't set on the node. ``entities_excluded`` is
+        present only when *exclude_llm_entities* applied.
     """
     from opentrace_agent.store.constants import INTERNAL_NODE_TYPES
 
     limit = max(1, min(limit, LIMIT_CAP))
     type_filter = set(node_types) if node_types else None
+    drop_entities = exclude_llm_entities and type_filter is None
+    entities_excluded = 0
 
     try:
         fts = store._fts_search(query, limit * 3)
@@ -63,14 +100,22 @@ def search(
         # Fall back to the existing substring path so the caller still gets
         # something useful when FTS is unavailable. Drop scores in that case.
         nodes = store.search_nodes(query, node_types=node_types, limit=limit)
+        if drop_entities:
+            kept = [n for n in nodes if not _is_llm_entity(n)]
+            entities_excluded = len(nodes) - len(kept)
+            nodes = kept
         hits = [_hit_from_node(store, n, score=None, query=query) for n in nodes]
         if vault_scope is not None:
             hits = [h for h in hits if h["vault"] == vault_scope]
-        return {"hits": hits, "count": len(hits), "query": query}
+        result = {"hits": hits, "count": len(hits), "query": query}
+        if drop_entities:
+            result["entities_excluded"] = entities_excluded
+        return result
 
     # Materialise candidates first (still ranked), then collapse File /
     # KnowledgeDoc twins BEFORE truncating to `limit` — collapsing after the
-    # cut would free no slot, which is the entire point.
+    # cut would free no slot, which is the entire point. Entity exclusion
+    # also runs pre-cut so the freed slots refill from the 3x over-fetch.
     candidates: list[dict[str, Any]] = []
     for node_id, score in fts:
         node = store.get_node(node_id)
@@ -80,13 +125,19 @@ def search(
             continue
         if type_filter and node["type"] not in type_filter:
             continue
+        if drop_entities and _is_llm_entity(node):
+            entities_excluded += 1
+            continue
         hit = _hit_from_node(store, node, score=score, query=query)
         if vault_scope is not None and hit["vault"] != vault_scope:
             continue
         candidates.append(hit)
 
     hits = _collapse_doc_file_twins(store, candidates)[:limit]
-    return {"hits": hits, "count": len(hits), "query": query}
+    result = {"hits": hits, "count": len(hits), "query": query}
+    if drop_entities:
+        result["entities_excluded"] = entities_excluded
+    return result
 
 
 def _collapse_doc_file_twins(store: GraphStore, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -178,7 +229,7 @@ def _hit_from_node(
     except (TypeError, ValueError):
         confidence = None
 
-    return {
+    hit = {
         "id": node["id"],
         "type": node["type"],
         "name": node["name"],
@@ -188,6 +239,20 @@ def _hit_from_node(
         "recency": recency,
         "confidence": confidence,
     }
+
+    # KnowledgeDoc hits carry their navigation label inline so an agent can
+    # triage results WITHOUT a load_source round-trip per hit — the snippet
+    # alone can't say what a document is, whether it's current
+    # (status: design proposal vs live docs), or where it lives.
+    if node["type"] == "KnowledgeDoc":
+        one = props.get("one_line_summary") or props.get("summary") or ""
+        hit["title"] = props.get("title") or None
+        hit["status"] = props.get("status") or None
+        if len(one) > _TRIAGE_GLOSS_CHARS:
+            one = one[: _TRIAGE_GLOSS_CHARS - 1] + "…"
+        hit["one_line_summary"] = one or None
+        hit["path"] = props.get("path") or None
+    return hit
 
 
 def _snippet(node: dict[str, Any], props: dict[str, Any], query: str) -> str:

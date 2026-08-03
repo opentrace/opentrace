@@ -347,3 +347,135 @@ class TestDocFileTwinCollapse:
         hits = search(store, "cross-origin isolation", limit=10, node_types=["KnowledgeDoc"])["hits"]
         doc = next(h for h in hits if h["id"] == "corpus::sha-cx")
         assert doc["fileTwin"] == "repo/docs/browser-requirements.md"
+
+
+class TestSearchTriageFields:
+    """KnowledgeDoc hits carry their navigation label inline — title, status,
+    one-liner, path — so an agent picks which docs to open from the results
+    alone instead of paying a load_source round-trip per hit."""
+
+    @staticmethod
+    def _doc(store, *, one_liner: str = "How authentication works."):
+        store.add_node(
+            "corpus::sha-tf",
+            "KnowledgeDoc",
+            "auth-guide.md",
+            {
+                "sha256": "sha-tf",
+                "title": "Auth Guide",
+                "status": "authoritative",
+                "one_line_summary": one_liner,
+                "summary": one_liner,
+                "path": "docs/auth-guide.md",
+            },
+        )
+
+    def test_doc_hit_carries_triage_fields(self, store):
+        from opentrace_agent.retrieval import search
+
+        self._doc(store)
+        hits = search(store, "authentication guide", limit=10)["hits"]
+        doc = next(h for h in hits if h["id"] == "corpus::sha-tf")
+        assert doc["title"] == "Auth Guide"
+        assert doc["status"] == "authoritative"
+        assert doc["one_line_summary"] == "How authentication works."
+        assert doc["path"] == "docs/auth-guide.md"
+
+    def test_gloss_truncated_to_compact_width(self, store):
+        from opentrace_agent.retrieval import search
+        from opentrace_agent.retrieval.search import _TRIAGE_GLOSS_CHARS
+
+        long = "authentication " + "x" * 300
+        self._doc(store, one_liner=long)
+        hits = search(store, "authentication guide", limit=10)["hits"]
+        doc = next(h for h in hits if h["id"] == "corpus::sha-tf")
+        assert len(doc["one_line_summary"]) == _TRIAGE_GLOSS_CHARS
+        assert doc["one_line_summary"].endswith("…")
+
+    def test_code_hits_stay_lean(self, store):
+        """Only KnowledgeDoc hits grow the label fields."""
+        from opentrace_agent.retrieval import search
+
+        _seed(store)
+        hits = search(store, "handle", limit=10)["hits"]
+        fn = next(h for h in hits if h["id"] == "fn-handle")
+        assert "title" not in fn and "status" not in fn
+
+
+class TestEntityExclusion:
+    """Doc-extracted entities' short names win BM25 over the labelled docs
+    they came from (measured: ~half the top-3 slots on a 25-doc index), so
+    the MCP surface excludes them by default. The discriminator is the
+    ``derived_from``/``vault`` property, NOT the type name — "Service" and
+    "Module" are also legacy runtime types that must keep appearing."""
+
+    @staticmethod
+    def _seed_entities(store):
+        # An extracted entity (short name — wins BM25) + the doc it came from.
+        store.add_node(
+            "ent::engram",
+            "Idea",
+            "engram",
+            {"derived_from": "corpus::sha-en", "description": "the engram project"},
+        )
+        store.add_node(
+            "corpus::sha-en",
+            "KnowledgeDoc",
+            "engram-overview.md",
+            {"sha256": "sha-en", "title": "Engram Overview", "summary": "engram overview of the project"},
+        )
+        # A runtime Service node — same type namespace as entity Services,
+        # but no derived_from/vault: must never be filtered.
+        store.add_node("svc::engram-api", "Service", "engram-api", {})
+        # An extracted entity that HAPPENS to be a Service.
+        store.add_node(
+            "ent::engram-svc",
+            "Service",
+            "engram-worker",
+            {"derived_from": "corpus::sha-en", "vault": "kb"},
+        )
+
+    def test_default_keeps_entities(self, store):
+        from opentrace_agent.retrieval import search
+
+        self._seed_entities(store)
+        result = search(store, "engram", limit=10)
+        ids = {h["id"] for h in result["hits"]}
+        assert "ent::engram" in ids
+        assert "entities_excluded" not in result
+
+    def test_exclusion_drops_entities_keeps_docs_and_runtime_nodes(self, store):
+        from opentrace_agent.retrieval import search
+
+        self._seed_entities(store)
+        result = search(store, "engram", limit=10, exclude_llm_entities=True)
+        ids = {h["id"] for h in result["hits"]}
+        assert "ent::engram" not in ids
+        assert "ent::engram-svc" not in ids  # entity Service: dropped
+        assert "svc::engram-api" in ids  # runtime Service: kept
+        assert "corpus::sha-en" in ids
+        assert result["entities_excluded"] == 2
+
+    def test_explicit_type_filter_wins_over_exclusion(self, store):
+        from opentrace_agent.retrieval import search
+
+        self._seed_entities(store)
+        result = search(store, "engram", limit=10, node_types=["Idea"], exclude_llm_entities=True)
+        assert {h["id"] for h in result["hits"]} == {"ent::engram"}
+        assert "entities_excluded" not in result
+
+    def test_substring_fallback_also_filters(self, store, monkeypatch):
+        """FTS unavailable → the search_nodes fallback applies the same filter."""
+        from opentrace_agent.retrieval import search
+
+        self._seed_entities(store)
+
+        def _boom(*a, **k):
+            raise RuntimeError("no fts")
+
+        monkeypatch.setattr(store, "_fts_search", _boom)
+        result = search(store, "engram", limit=10, exclude_llm_entities=True)
+        ids = {h["id"] for h in result["hits"]}
+        assert "ent::engram" not in ids
+        assert "corpus::sha-en" in ids
+        assert result["entities_excluded"] >= 1
