@@ -71,6 +71,11 @@ from opentrace_agent.store import GraphStore
 logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 4000
+# List-shaped enumeration responses get a larger budget than the general cap:
+# their whole value is completeness, so trading bytes for a complete set is the
+# right trade. Used by list_nodes and grep alike.
+MAX_LIST_RESULT_CHARS = 20000
+_GREP_SNIPPET_CHARS = 100  # per-line snippet when a full-text grep response won't fit
 NODE_TYPE_KNOWLEDGE_DOC_NAME = "KnowledgeDoc"
 
 
@@ -148,7 +153,7 @@ def _shrink_dominant_list(data: dict[str, Any], budget: int) -> str | None:
     return None
 
 
-def _fit_grep_response(result: dict[str, Any], budget: int = MAX_RESULT_CHARS) -> str:
+def _fit_grep_response(result: dict[str, Any], budget: int = MAX_LIST_RESULT_CHARS) -> str:
     """Serialize a grep result, degrading LINE DETAIL but never dropping documents.
 
     grep is the exhaustiveness primitive: the answer to "which documents
@@ -167,11 +172,23 @@ def _fit_grep_response(result: dict[str, Any], budget: int = MAX_RESULT_CHARS) -
     `node_id`, `title`, `status` and `structural_context` were repeated on
     every match rather than stated once per document.
 
-    Degradation ladder, applied only as needed:
-      1. full line text per match
-      2. line numbers only (text dropped)
-      3. per-document match counts only
-    A document is never removed, so the set answer survives at every level.
+    Budget is ``MAX_LIST_RESULT_CHARS``, not the general cap: this is a
+    list-shaped enumeration response, exactly like ``list_nodes``, which has
+    had the larger budget all along. Running grep on the small cap is what
+    forced the degradation below to fire on a routine 31-document sweep.
+
+    Degradation ladder, applied only as needed. ``node_id`` and ``path`` are
+    NEVER dropped — an entry the agent cannot pass to ``load_source`` is a
+    result it cannot act on, which is worse than a shorter list. (Learned the
+    hard way: an earlier ladder shed ``node_id`` first, and the arm answered a
+    31-document sweep with 3 reads because nothing in the response was
+    addressable.)
+      0. + title, status, full line text
+      1. + title, status, line snippets (first 100 chars)
+      2. + title, status, line numbers only
+      3. + status, per-document match count
+      4. per-document match count
+      5. documents trimmed, with an explicit ``hasMore`` + omitted count
     """
     if result.get("mode") == "error" or not result.get("matches"):
         return _json_response(result)
@@ -203,30 +220,57 @@ def _fit_grep_response(result: dict[str, Any], budget: int = MAX_RESULT_CHARS) -
         out = dict(base)
         shaped = []
         for d in docs:
-            e = {k: d[k] for k in ("node_id", "path", "title", "status") if k in d}
+            e = {k: d[k] for k in ("node_id", "path") if k in d}
+            if level <= 2 and "title" in d:
+                e["title"] = d["title"]
+            if level <= 3 and "status" in d:
+                e["status"] = d["status"]
             if level == 0:
                 e["lines"] = d["lines"]
             elif level == 1:
+                # Snippets: enough to judge relevance without the full line.
+                e["lines"] = [
+                    {"line": ln["line"], "text": (ln["text"] or "")[:_GREP_SNIPPET_CHARS]} for ln in d["lines"]
+                ]
+            elif level == 2:
                 e["lines"] = [ln["line"] for ln in d["lines"]]
             else:
                 e["match_count"] = len(d["lines"])
             shaped.append(e)
         out["documents"] = shaped
-        if level == 1:
-            out["detail"] = "line numbers only — line text omitted to fit the response cap; every matched document is listed"
-        elif level == 2:
-            out["detail"] = "per-document match counts only — line detail omitted to fit the response cap; every matched document is listed"
+        detail = {
+            1: "line text shortened to snippets to fit the response cap; every matched document is listed",
+            2: "line text omitted (line numbers kept) to fit the response cap; every matched document is listed",
+            3: "line detail and titles omitted to fit the response cap; every matched document is listed",
+            4: "match counts only to fit the response cap; every matched document is listed",
+        }.get(level)
+        if detail:
+            out["detail"] = detail
         return out
 
-    for level in (0, 1, 2):
+    for level in (0, 1, 2, 3, 4):
         text = json.dumps(_payload(level), default=str)
         if len(text) <= budget:
             return text
-    # Even counts-only overflowed: keep the document paths, which are the answer.
-    minimal = dict(base)
-    minimal["documents"] = [d.get("path") for d in docs]
-    minimal["detail"] = "document paths only — all line detail omitted to fit the response cap"
-    return json.dumps(minimal, default=str)[:budget]
+    # Even id+path+count for every document overflowed. Only now trim the
+    # document list, and say so — a silently short set is the one outcome an
+    # exhaustiveness tool must never produce.
+    entries = _payload(4)["documents"]
+    kept = list(entries)
+    while kept:
+        kept.pop()
+        payload = dict(base)
+        payload["documents"] = kept
+        payload["returned_documents"] = len(kept)
+        payload["hasMore"] = True
+        payload["detail"] = (
+            f"{len(entries) - len(kept)} of {len(entries)} matched documents omitted to fit the "
+            "response cap — narrow with fileFilter, or treat this set as INCOMPLETE"
+        )
+        text = json.dumps(payload, default=str)
+        if len(text) <= budget:
+            return text
+    return json.dumps({**base, "documents": [], "hasMore": True, "detail": "response cap too small"})
 
 
 def _population_note(store: GraphStore, node_type: str, edge_type: str) -> dict[str, Any]:
@@ -317,7 +361,6 @@ def _props(node: dict[str, Any]) -> dict[str, Any]:
     return p
 
 
-MAX_LIST_RESULT_CHARS = 20000
 
 _COMPACT_PROP_KEYS = ("path", "title", "status", "kind", "vault", "language", "extension")
 _COMPACT_GLOSS_KEYS = ("one_line_summary", "summary")

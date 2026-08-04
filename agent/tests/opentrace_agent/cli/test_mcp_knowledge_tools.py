@@ -922,12 +922,35 @@ class TestGrepResponseFitting:
         assert out["documents"][0]["lines"][0]["text"]
         assert "detail" not in out
 
+    def test_routine_sweep_stays_complete_and_actionable(self):
+        """The invariant for a routine sweep (31 of 48 documents, ~120 matches —
+        measured shape from a real run): every document listed, every entry
+        addressable, and text still present even if shortened to snippets.
+
+        grep runs on the LIST budget (20 KB), not the general 4 KB cap. On the
+        small cap this exact sweep degraded all the way to bare paths with no
+        node_ids, and the arm — unable to address any hit — answered a
+        31-document question with 3 reads and 38 flailing greps."""
+        out = self._fit(self._matches(31, 4))
+        assert out["matched_documents"] == 31
+        assert len(out["documents"]) == 31
+        first = out["documents"][0]
+        assert "node_id" in first and "path" in first, "hits must stay addressable"
+        assert first["lines"], "some line signal must survive (snippets or line numbers)"
+
+    def test_small_sweep_keeps_untruncated_text(self):
+        out = self._fit(self._matches(6, 2))
+        assert "detail" not in out
+        assert len(out["documents"][0]["lines"][0]["text"]) == 120
+
     def test_oversized_result_keeps_every_document(self):
-        out = self._fit(self._matches(18, 3))
-        assert out["matched_documents"] == 18
-        assert len(out["documents"]) == 18, "documents must never be dropped"
-        assert out["total_matches"] == 54
+        out = self._fit(self._matches(60, 20, text_len=400))
+        assert out["matched_documents"] == 60
+        assert len(out["documents"]) == 60, "documents must never be dropped"
         assert "detail" in out  # says what was degraded
+        # Degradation never costs addressability — an entry you can't pass to
+        # load_source is one you can't act on.
+        assert all("node_id" in d and "path" in d for d in out["documents"])
 
     def test_extreme_result_still_lists_all_documents(self):
         out = self._fit(self._matches(60, 10, text_len=400))
@@ -937,13 +960,22 @@ class TestGrepResponseFitting:
         assert "doc59.md" in paths
 
     def test_response_stays_within_budget_and_parses(self):
-        from opentrace_agent.cli.mcp_server import MAX_RESULT_CHARS, _fit_grep_response
+        from opentrace_agent.cli.mcp_server import MAX_LIST_RESULT_CHARS, _fit_grep_response
 
         raw = _fit_grep_response(
             {"matches": self._matches(40, 8, text_len=300), "count": 320, "scope": "vault::v", "mode": "python"}
         )
-        assert len(raw) <= MAX_RESULT_CHARS
+        assert len(raw) <= MAX_LIST_RESULT_CHARS
         json.loads(raw)  # must be parseable, not a sliced string
+
+    def test_extreme_overflow_trims_documents_but_says_so(self):
+        """Only when even id+path+count per document overflows may the document
+        list be cut — and then it must be flagged, never silently short."""
+        out = self._fit(self._matches(4000, 2, text_len=200))
+        assert out["hasMore"] is True
+        assert out["returned_documents"] == len(out["documents"]) < out["matched_documents"]
+        assert "INCOMPLETE" in out["detail"]
+        assert all("node_id" in d for d in out["documents"])
 
     def test_error_and_empty_results_pass_through(self):
         from opentrace_agent.cli.mcp_server import _fit_grep_response
