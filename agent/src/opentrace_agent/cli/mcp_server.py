@@ -752,8 +752,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         index contains them.)
 
         Results are RANKED AND TRUNCATED, so this tool cannot show that
-        something is absent. For "list every…" / "which X have no Y" /
-        whole-corpus questions, use ``list_nodes`` instead."""
+        something is absent, and re-issuing it with reworded queries does not
+        fix that — each query is another ranked sample, so a document that
+        phrased the idea unexpectedly stays invisible however many times you
+        ask. For whole-corpus questions use the exhaustive tool that matches
+        what you're enumerating: ``list_nodes`` for NODES ("list every
+        document", "which X have no Y"), ``grep`` for CONTENT ("which sites
+        face a capacity problem" → sweep ``"constraint|shortage|capacity"``
+        once over every body)."""
         if not store:
             logger.info("search_graph called but no index exists")
             return NO_INDEX_MSG
@@ -1055,9 +1061,20 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         straight through. An unresolvable scope lists the valid ones.
         A vault grep sweeps EVERY member document's full normalized body (plus
         compiled pages, when present) — use it to establish exhaustive claims
-        about content ("no document mentions X", "every place Y appears"),
-        the way ``list_nodes`` establishes existence; ranked ``search_graph``
-        cannot show absence. Vault matches come back joined to their document:
+        about CONTENT, the way ``list_nodes`` establishes existence of nodes;
+        ranked ``search_graph`` can do neither.
+
+        This covers concept-shaped sweeps, not just exact strings. When the
+        answer is spread over documents that each word it differently, pass an
+        alternation of the vocabulary they might use rather than issuing
+        repeated ``search_graph`` queries and hoping one surfaces the right
+        document — e.g. ``"constraint|shortage|capacity"`` for "which sites
+        face a capacity problem", or ``"supersede[sd]?|replaces|deprecated"``
+        for "what has been replaced". One sweep over 48 documents is cheaper
+        than six ranked searches and, unlike them, it cannot silently miss a
+        document that used an unexpected synonym.
+
+        Vault matches come back joined to their document:
         ``node_id`` (pass to ``load_source``), display ``file_path``,
         ``title``, ``status``, with line numbers referring to the normalized
         body ``load_source`` returns.
