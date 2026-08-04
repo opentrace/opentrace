@@ -37,8 +37,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +54,8 @@ MAX_RESULTS_CAP = 5000
 # Cap subprocess wall-time so a runaway pattern can't hang the MCP server.
 RG_TIMEOUT_SEC = 10
 
-_NO_RG_MSG = "ripgrep ('rg') not on PATH — install ripgrep or use search_graph for FTS over indexed name/summary"
+# Matches ripgrep's --max-filesize=10M so both engines skip the same files.
+_MAX_SCAN_FILESIZE = 10 * 1024 * 1024
 
 
 def grep(
@@ -145,12 +148,7 @@ def _grep_repository(
     if not root.exists() or not root.is_dir():
         return _err(scope_id, f"scope path is not a directory on disk: {root}")
 
-    rg = shutil.which("rg")
-    if rg is None:
-        return _err(scope_id, _NO_RG_MSG)
-
-    raw = _run_ripgrep(
-        rg=rg,
+    raw = _search_files(
         pattern=pattern,
         targets=[str(root)],
         glob=f"*{file_filter}*" if file_filter else None,
@@ -173,7 +171,7 @@ def _grep_repository(
                 "structural_context": {"scope_type": "Repository"},
             }
         )
-    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": "ripgrep"}
+    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": _engine()}
 
 
 def _grep_vault(
@@ -248,16 +246,11 @@ def _grep_vault(
             "load_source instead",
         )
 
-    rg = shutil.which("rg")
-    if rg is None:
-        return _err(scope_id, _NO_RG_MSG)
-
     matches: list[dict[str, Any]] = []
 
     # Corpus first — the document layer is the reason to grep a vault.
     if corpus_by_abs:
-        raw = _run_ripgrep(
-            rg=rg,
+        raw = _search_files(
             pattern=pattern,
             targets=sorted(corpus_by_abs),
             glob=None,  # membership + file_filter already selected the files
@@ -283,8 +276,7 @@ def _grep_vault(
                 break
 
     if pages_root is not None and len(matches) < max_results:
-        raw = _run_ripgrep(
-            rg=rg,
+        raw = _search_files(
             pattern=pattern,
             targets=[str(pages_root)],
             glob=f"*{file_filter}*" if file_filter else None,
@@ -308,7 +300,7 @@ def _grep_vault(
                 }
             )
 
-    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": "ripgrep"}
+    return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": _engine()}
 
 
 def _resolve_scope(store: GraphStore, scope_id: str) -> dict[str, Any] | None:
@@ -359,6 +351,97 @@ def _unknown_scope_message(store: GraphStore, scope_id: str) -> str:
 
 def _err(scope_id: str, message: str) -> dict[str, Any]:
     return {"matches": [], "count": 0, "scope": scope_id, "mode": "error", "error": message}
+
+
+def _engine() -> str:
+    """Which scanner backs this call — ``"ripgrep"`` or ``"python"``."""
+    return "ripgrep" if shutil.which("rg") else "python"
+
+
+def _search_files(
+    *,
+    pattern: str,
+    targets: list[str],
+    glob: str | None,
+    case_sensitive: bool,
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """Regex-scan *targets*, preferring ripgrep and falling back to Python.
+
+    ripgrep is an optional accelerator, NOT a requirement. It used to be
+    required, and the consequence was invisible: `rg` is absent from plenty of
+    environments (and on the machine this was developed on it existed only as a
+    shell function, so ``shutil.which`` never saw it), which made every vault
+    grep return "ripgrep not on PATH". The tool that exists to answer
+    exhaustiveness questions therefore never ran once in three benchmark runs,
+    and the arm fell back to opening documents one at a time. The unit tests
+    missed it because they hunt for a vendored `rg` and prepend it to PATH —
+    validating a path production could not take.
+
+    A vault corpus is a few dozen small normalized markdown files, so a pure
+    Python scan is entirely adequate there; the fallback keeps large repo
+    scopes working too, just slower.
+    """
+    rg = shutil.which("rg")
+    if rg is not None:
+        return _run_ripgrep(
+            rg=rg,
+            pattern=pattern,
+            targets=targets,
+            glob=glob,
+            case_sensitive=case_sensitive,
+            max_results=max_results,
+        )
+    return _run_python_scan(
+        pattern=pattern,
+        targets=targets,
+        glob=glob,
+        case_sensitive=case_sensitive,
+        max_results=max_results,
+    )
+
+
+def _iter_scan_files(targets: list[str], glob: str | None) -> Iterator[Path]:
+    """Yield the files a scan should read, expanding directory targets."""
+    needle = glob.strip("*") if glob else None
+    for t in targets:
+        p = Path(t)
+        candidates: Iterable[Path] = [p] if p.is_file() else (q for q in p.rglob("*") if q.is_file())
+        for f in candidates:
+            if needle and needle not in str(f):
+                continue
+            yield f
+
+
+def _run_python_scan(
+    *,
+    pattern: str,
+    targets: list[str],
+    glob: str | None,
+    case_sensitive: bool,
+    max_results: int,
+) -> list[dict[str, Any]]:
+    """ripgrep-free regex scan. Same output shape as :func:`_run_ripgrep`."""
+    try:
+        rx = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
+    except re.error as e:
+        logger.warning("invalid grep pattern %r: %s", pattern, e)
+        return []
+
+    matches: list[dict[str, Any]] = []
+    for f in _iter_scan_files(targets, glob):
+        try:
+            if f.stat().st_size > _MAX_SCAN_FILESIZE:
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), start=1):
+            if rx.search(line):
+                matches.append({"file_path": str(f), "line_number": i, "line_text": line.rstrip("\n")})
+                if len(matches) >= max_results:
+                    return matches
+    return matches
 
 
 def _run_ripgrep(

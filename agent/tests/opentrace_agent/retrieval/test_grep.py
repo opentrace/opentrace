@@ -48,13 +48,16 @@ def _find_rg() -> str | None:
     return None
 
 
+# ripgrep is an OPTIONAL accelerator — grep falls back to a Python scan. This
+# module must therefore NOT skip when `rg` is missing: doing exactly that is
+# what hid a real defect for three benchmark runs. `rg` existed here only as a
+# shell function, so `shutil.which` never saw it and every vault grep returned
+# "ripgrep not on PATH" in production, while these tests passed by prepending a
+# vendored binary to PATH — validating a path production could not take.
+# Only the ripgrep-vs-native perf comparison needs the real binary.
 _RG = _find_rg()
-if _RG is None:
-    pytest.skip("ripgrep ('rg') not available", allow_module_level=True)
-
-# Ensure the retrieval module's `shutil.which("rg")` finds the same binary
-# we're about to test against.
-os.environ["PATH"] = os.path.dirname(_RG) + os.pathsep + os.environ.get("PATH", "")
+if _RG is not None:
+    os.environ["PATH"] = os.path.dirname(_RG) + os.pathsep + os.environ.get("PATH", "")
 
 from opentrace_agent.retrieval import grep  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
@@ -298,6 +301,7 @@ class TestGrepVaultCorpusScope:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(_RG is None, reason="needs a real ripgrep binary to compare against")
 class TestGrepPerformance:
     """OT-1732 success criterion: grep within 2x of native ripgrep."""
 
@@ -333,3 +337,71 @@ class TestGrepPerformance:
             f"grep wrapper too slow: {wrapper_elapsed * 1000:.0f}ms vs "
             f"native rg {native_elapsed * 1000:.0f}ms (2x ratio: {floor * 2 * 1000:.0f}ms)"
         )
+
+
+# ---------------------------------------------------------------------------
+# ripgrep-free operation — the fallback that makes grep work everywhere
+# ---------------------------------------------------------------------------
+
+
+class TestGrepWithoutRipgrep:
+    """`rg` absent must degrade to a Python scan, not to an error.
+
+    Regression guard for a defect that survived three benchmark runs: grep
+    hard-required ripgrep, `shutil.which("rg")` returned None on the dev
+    machine (it was a shell function), so the vault-sweep primitive returned
+    "ripgrep not on PATH" every single time and the arm answered coverage
+    questions by opening documents one at a time instead.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_ripgrep(self, monkeypatch):
+        # grep.py calls shutil.which at call time, so patching the shared
+        # module object reaches it. (The dotted-string form doesn't work here:
+        # retrieval/__init__ re-exports `grep` the FUNCTION, shadowing the
+        # module name for monkeypatch's importer.)
+        monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    @pytest.fixture(autouse=True)
+    def _isolated_vault_root(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OT_VAULT_ROOT", str(tmp_path / "no-vaults"))
+
+    def test_vault_corpus_sweep_works(self, store, tmp_path):
+        TestGrepVaultCorpusScope()._seed_vault(store, tmp_path)
+        result = grep(store, "capacity", scope_id="vault::kb")
+        assert result["mode"] == "python"
+        assert {m["node_id"] for m in result["matches"]} == {"corpus::aaa1", "corpus::bbb2"}
+        # Hits stay joined to doc identity — the whole point of a corpus sweep.
+        hit = next(m for m in result["matches"] if m["node_id"] == "corpus::aaa1")
+        assert hit["file_path"] == "guides/cold-chain.md"
+        assert hit["title"] == "Cold-Chain"
+        assert hit["line_number"] == 2
+
+    def test_repository_scope_works(self, store, fixture_repo):
+        store.add_node("myorg/myrepo", "Repository", "myrepo", {"local_path": str(fixture_repo)})
+        result = grep(store, "hello", scope_id="myorg/myrepo")
+        assert result["mode"] == "python"
+        assert "src/main.py" in {m["file_path"] for m in result["matches"]}
+
+    def test_case_sensitivity_and_regex_honoured(self, store, fixture_repo):
+        store.add_node("myorg/myrepo", "Repository", "myrepo", {"local_path": str(fixture_repo)})
+        ci = grep(store, "hello", scope_id="myorg/myrepo")
+        cs = grep(store, "HELLO", scope_id="myorg/myrepo", case_sensitive=True)
+        assert len(ci["matches"]) > len(cs["matches"])
+        assert all("HELLO" in m["line_text"] for m in cs["matches"])
+        alt = grep(store, "greet|connect", scope_id="myorg/myrepo")
+        assert {m["file_path"] for m in alt["matches"]} == {"src/main.py", "src/db.py"}
+
+    def test_max_results_and_file_filter_honoured(self, store, tmp_path):
+        root = tmp_path / "big"
+        (root / "sub").mkdir(parents=True)
+        (root / "many.txt").write_text("\n".join("foo" for _ in range(50)))
+        (root / "sub" / "other.txt").write_text("foo\n")
+        store.add_node("o/big", "Repository", "big", {"local_path": str(root)})
+        assert grep(store, "foo", scope_id="o/big", max_results=10)["count"] == 10
+        only = grep(store, "foo", scope_id="o/big", file_filter="sub")
+        assert {m["file_path"] for m in only["matches"]} == {"sub/other.txt"}
+
+    def test_invalid_regex_is_not_a_crash(self, store, fixture_repo):
+        store.add_node("myorg/myrepo", "Repository", "myrepo", {"local_path": str(fixture_repo)})
+        assert grep(store, "([unclosed", scope_id="myorg/myrepo")["count"] == 0
