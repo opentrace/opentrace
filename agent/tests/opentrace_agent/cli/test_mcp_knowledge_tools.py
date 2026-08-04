@@ -1000,3 +1000,49 @@ class TestListNodesBackwardCompatibility:
         the docstring steers absence questions to paged=True."""
         out = _call(store, "list_nodes", type="KnowledgeDoc")
         assert isinstance(out, list)
+
+
+class TestListNodesLegacyShapePreserved:
+    """`list_nodes` predates the vault work, so its DEFAULT response shape must
+    stay what it always was: a plain JSON array of full nodes.
+
+    The compact `{items, returned, offset, hasMore, hint}` window is an
+    addition, opt-in via `paged=True`. Changing the default would break
+    consumers that were here first — a modification to shipped behaviour, which
+    belongs in its own change rather than riding along with docs retrieval.
+    """
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        s = GraphStore(str(tmp_path / "legacy.db"))
+        for i in range(3):
+            s.add_node(f"r/f{i}.py", "File", f"f{i}.py", {"path": f"src/f{i}.py", "extension": ".py"})
+        yield s
+        s.close()
+
+    def test_default_returns_plain_array_of_full_nodes(self, store):
+        out = _call(store, "list_nodes", type="File", limit=10)
+        assert isinstance(out, list), "default shape must stay a bare JSON array"
+        assert len(out) == 3
+        # Full records, not the compact projection.
+        assert "properties" in out[0]
+        assert out[0]["properties"]["extension"] == ".py"
+
+    def test_default_has_no_window_envelope(self, store):
+        out = _call(store, "list_nodes", type="File", limit=10)
+        assert not isinstance(out, dict)  # no items/returned/hasMore wrapper
+
+    def test_paged_opts_into_the_window(self, store):
+        out = _call(store, "list_nodes", type="File", limit=10, paged=True)
+        assert isinstance(out, dict)
+        assert out["hasMore"] is False
+        assert len(out["items"]) == 3
+        assert "properties" not in out["items"][0]  # compact projection
+
+    def test_offset_implies_paging(self, store):
+        """A non-zero offset is meaningless in the bare-array shape, so it
+        implies the window rather than being silently ignored."""
+        out = _call(store, "list_nodes", type="File", limit=1, offset=1)
+        assert isinstance(out, dict)
+        assert out["offset"] == 1
+        assert len(out["items"]) == 1
