@@ -881,3 +881,74 @@ class TestFindPagesMentioningWrongIdType:
         out = _call(store, "find_pages_mentioning", entityId="idea:Cold Chain")
         assert out["count"] == 1
         assert out["pages"][0]["id"] == "corpus::abc"
+
+
+class TestGrepResponseFitting:
+    """grep answers "which documents", so truncation must shed line detail, never
+    documents.
+
+    Regression guard for the defect that produced run 5's coverage loss: a
+    sweep matched 39 lines across 18 documents, the generic 4 KB truncation
+    kept 8 matches and dropped 10+ documents outright, and the arm concluded
+    the thing it was looking for did not exist. The evidence was retrieved and
+    then discarded in transport.
+    """
+
+    @staticmethod
+    def _matches(n_docs: int, per_doc: int, text_len: int = 120):
+        return [
+            {
+                "node_id": "corpus::" + "a" * 60 + str(d),
+                "file_path": f"doc{d}.md",
+                "line_number": ln,
+                "line_text": "x" * text_len,
+                "title": f"Doc {d}",
+                "status": "authoritative",
+                "structural_context": {"scope_type": "KnowledgeVault", "vault": "v", "layer": "corpus"},
+            }
+            for d in range(n_docs)
+            for ln in range(per_doc)
+        ]
+
+    def _fit(self, matches):
+        from opentrace_agent.cli.mcp_server import _fit_grep_response
+
+        payload = {"matches": matches, "count": len(matches), "scope": "vault::v", "mode": "python"}
+        return json.loads(_fit_grep_response(payload))
+
+    def test_small_result_keeps_full_line_text(self):
+        out = self._fit(self._matches(2, 2))
+        assert out["matched_documents"] == 2
+        assert out["documents"][0]["lines"][0]["text"]
+        assert "detail" not in out
+
+    def test_oversized_result_keeps_every_document(self):
+        out = self._fit(self._matches(18, 3))
+        assert out["matched_documents"] == 18
+        assert len(out["documents"]) == 18, "documents must never be dropped"
+        assert out["total_matches"] == 54
+        assert "detail" in out  # says what was degraded
+
+    def test_extreme_result_still_lists_all_documents(self):
+        out = self._fit(self._matches(60, 10, text_len=400))
+        assert out["matched_documents"] == 60
+        assert len(out["documents"]) == 60
+        paths = [d if isinstance(d, str) else d.get("path") for d in out["documents"]]
+        assert "doc59.md" in paths
+
+    def test_response_stays_within_budget_and_parses(self):
+        from opentrace_agent.cli.mcp_server import MAX_RESULT_CHARS, _fit_grep_response
+
+        raw = _fit_grep_response(
+            {"matches": self._matches(40, 8, text_len=300), "count": 320, "scope": "vault::v", "mode": "python"}
+        )
+        assert len(raw) <= MAX_RESULT_CHARS
+        json.loads(raw)  # must be parseable, not a sliced string
+
+    def test_error_and_empty_results_pass_through(self):
+        from opentrace_agent.cli.mcp_server import _fit_grep_response
+
+        err = json.loads(_fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "error", "error": "nope"}))
+        assert err["mode"] == "error" and err["error"] == "nope"
+        empty = json.loads(_fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "python"}))
+        assert empty["count"] == 0

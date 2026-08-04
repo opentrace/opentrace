@@ -148,6 +148,87 @@ def _shrink_dominant_list(data: dict[str, Any], budget: int) -> str | None:
     return None
 
 
+def _fit_grep_response(result: dict[str, Any], budget: int = MAX_RESULT_CHARS) -> str:
+    """Serialize a grep result, degrading LINE DETAIL but never dropping documents.
+
+    grep is the exhaustiveness primitive: the answer to "which documents
+    discuss X" is the document SET, and every line is supporting detail. The
+    generic truncation path optimises for the opposite — it sheds whole list
+    entries, which for grep means shedding documents.
+
+    Measured consequence: a sweep matched 39 lines across 18 documents, the
+    4 KB cap kept 8 and dropped the rest, and the arm — reading `count: 8` and
+    a hint advising it to "narrow the request" — concluded no such constraint
+    existed. The evidence had been retrieved and then discarded in transport,
+    and the advice to narrow made it worse, since each narrowed sweep is a
+    different biased sample of the corpus.
+
+    Grouping by document also removes the redundancy that caused the overflow:
+    `node_id`, `title`, `status` and `structural_context` were repeated on
+    every match rather than stated once per document.
+
+    Degradation ladder, applied only as needed:
+      1. full line text per match
+      2. line numbers only (text dropped)
+      3. per-document match counts only
+    A document is never removed, so the set answer survives at every level.
+    """
+    if result.get("mode") == "error" or not result.get("matches"):
+        return _json_response(result)
+
+    by_doc: dict[str, dict[str, Any]] = {}
+    for m in result["matches"]:
+        key = m.get("node_id") or m.get("file_path") or ""
+        doc = by_doc.setdefault(
+            key,
+            {
+                "node_id": m.get("node_id"),
+                "path": m.get("file_path"),
+                "title": m.get("title"),
+                "status": m.get("status"),
+                "lines": [],
+            },
+        )
+        doc["lines"].append({"line": m.get("line_number"), "text": m.get("line_text")})
+
+    docs = [{k: v for k, v in d.items() if v is not None} for d in by_doc.values()]
+    base = {
+        "scope": result.get("scope"),
+        "mode": result.get("mode"),
+        "matched_documents": len(docs),
+        "total_matches": result.get("count"),
+    }
+
+    def _payload(level: int) -> dict[str, Any]:
+        out = dict(base)
+        shaped = []
+        for d in docs:
+            e = {k: d[k] for k in ("node_id", "path", "title", "status") if k in d}
+            if level == 0:
+                e["lines"] = d["lines"]
+            elif level == 1:
+                e["lines"] = [ln["line"] for ln in d["lines"]]
+            else:
+                e["match_count"] = len(d["lines"])
+            shaped.append(e)
+        out["documents"] = shaped
+        if level == 1:
+            out["detail"] = "line numbers only — line text omitted to fit the response cap; every matched document is listed"
+        elif level == 2:
+            out["detail"] = "per-document match counts only — line detail omitted to fit the response cap; every matched document is listed"
+        return out
+
+    for level in (0, 1, 2):
+        text = json.dumps(_payload(level), default=str)
+        if len(text) <= budget:
+            return text
+    # Even counts-only overflowed: keep the document paths, which are the answer.
+    minimal = dict(base)
+    minimal["documents"] = [d.get("path") for d in docs]
+    minimal["detail"] = "document paths only — all line detail omitted to fit the response cap"
+    return json.dumps(minimal, default=str)[:budget]
+
+
 def _population_note(store: GraphStore, node_type: str, edge_type: str) -> dict[str, Any]:
     """Describe the set an existence/absence answer was computed over.
 
@@ -1088,7 +1169,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             logger.info("grep called but no index exists")
             return NO_INDEX_MSG
         try:
-            return _json_response(
+            return _fit_grep_response(
                 _grep(
                     store,
                     pattern,
