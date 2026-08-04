@@ -2,7 +2,7 @@
 
 OpenTrace's wiki/vault compiler uses an LLM to label and index your documents into the graph. That is **one call per document** and the only LLM work the compiler does — bodies are never rewritten. Five providers are supported, all BYOK — your key is sent only to the provider you select, never to OpenTrace servers.
 
-Because the one call is a compact extraction task (a one-line summary + an entity inventory) rather than prose generation, it runs on each backend's **cheap tier** by default.
+Because the one call is a compact extraction task (a single one-line summary) rather than prose generation, it runs on each backend's **cheap tier** by default.
 
 ## Anthropic
 

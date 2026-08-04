@@ -1,6 +1,15 @@
 # Sources
 
-Source discovery and language-specific symbol extraction. A **Source** is a category (e.g. `code`); a **Loader** is a provider implementation under that source. Today only `code/` is populated.
+Source discovery and language-specific symbol extraction. A **Source** is a category (e.g. `code`); a **Loader** is a provider implementation under that source.
+
+`code/` holds the tree-sitter symbol extractors documented below. `markdown/` is
+**doc plumbing only**: URL/file fetching, markitdown conversion, LLM backend
+clients, and the on-disk corpus store. Its LLM entity/edge extraction
+(`extractor.py`, `prompts.py`, with `ENTITY_PROMPT` / `SEMANTIC_EDGE_PROMPT` /
+`HYPEREDGE_PROMPT` and the confidence rubric) was **removed 2026-08-04** along
+with the entity layer it fed — see `../wiki/CLAUDE.md`. The one remaining LLM
+call over a document lives in `wiki/ingest/doc_extraction.py` and asks for a
+one-line summary.
 
 ## Layout
 

@@ -40,6 +40,7 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 - Node types: `KnowledgeVault`, `KnowledgeConcept`, `KnowledgeDoc` (vault domain — see `wiki/CLAUDE.md`)
 - Rel types: `LINKS_TO` (doc→doc author links, and page→page in legacy vaults), `CITES` (wiki provenance), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
 - **`KnowledgeConcept` and `CITES` remain valid types but nothing produces them** — concept-page synthesis was removed 2026-08-03. They stay in the schema so vaults compiled before that keep mirroring and reading their pages. Don't "clean up" the types; a re-compile of a legacy vault still writes them.
+- **`Idea` / `Paper` / `Person` / `Event` and the `DERIVED_FROM` / `SEMANTIC_EDGE` / `MENTIONS` rel types are likewise valid-but-unwritten** — the LLM-extracted entity layer was removed 2026-08-04 (see `wiki/CLAUDE.md` for the five measurements behind that). Same rule: **do not remove them from `constants.py`, the proto, or `gen/`.** Leaving them keeps graphs built before the removal readable, and `Service` / `Module` are in any case pre-existing legacy *runtime* types that non-wiki code still writes. `GraphStore.save_semantic_edge` survives for the same reason and has no current caller.
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
 
 ## Property Marshalling

@@ -32,7 +32,7 @@ opentraceai index [PATH] [OPTIONS]
 | `--db PATH` | path | auto | Database path. Auto-discovered by walking up from cwd looking for `.opentrace/index.db`, stopping at the git root |
 | `--repo-id ID` | string | basename | Repository ID stamped on nodes (defaults to directory name) |
 | `--batch-size N` | int | 200 | Items per save batch |
-| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label and its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes + `DERIVED_FROM` edges). A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
+| `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label — a one-line summary, with the `title` derived mechanically from the filename — and nothing else. A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
 | `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki` |
 | `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
@@ -46,14 +46,14 @@ opentraceai index [PATH] [OPTIONS]
 # Cheap, fast — code structure only
 opentraceai index ./repo
 
-# Index docs into a local vault (labels + entities + doc links, bodies verbatim)
+# Index docs into a local vault (labels + doc links, bodies verbatim)
 opentraceai index ./docs --wiki                     # vault auto-named
 opentraceai index ./docs myvault --wiki             # explicit name
 
 # Compile a global vault visible from other projects
 opentraceai index ./papers refs --wiki --global
 
-# Full stack — code + entities + doc corpus + MIRRORS/LINKS_TO/MENTIONS edges
+# Full stack — code + doc corpus + MIRRORS/LINKS_TO edges
 opentraceai index ./ myproject --wiki
 
 # Re-walk without destroying orphans

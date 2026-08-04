@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoprune — sweep orphan Sources / entities / pages after a walk.
+"""Autoprune — sweep orphan Sources / pages after a walk.
 
 Runs after ``index --wiki`` to remove graph state for files that disappeared
 from disk between runs. Scoped to the walk's path and vault so partial indexes
 don't blast away other repos' data.
+
+A third sweep deleted LLM-extracted entities left orphaned by a removed
+document. It went with the entity layer on 2026-08-04 (see the wiki
+CLAUDE.md) — nothing produces those nodes any more.
 
 Concept pages that lose a citation get ``stale_since`` stamped instead of
 being regenerated. Nothing regenerates page bodies any more (concept-page
@@ -45,7 +49,6 @@ class AutopruneReport:
     """Counts surfaced after autoprune runs. Useful for the CLI summary."""
 
     sources_deleted: int = 0
-    entities_deleted: int = 0
     pages_deleted: int = 0
     pages_marked_stale: int = 0
     cites_edges_removed: int = 0
@@ -75,17 +78,13 @@ def autoprune_after_index(
     scope_path: Path | None,
     db_path: str | None,
 ) -> AutopruneReport:
-    """Delete graph state for docs/entities/pages absent from this walk.
+    """Delete graph state for docs/pages absent from this walk.
 
     ``walked_doc_shas`` — sha256 of raw bytes for every doc surfaced this run.
     ``vault_name`` — when set (``--wiki`` was used), scopes deletion
         to nodes carrying ``vault=<vault_name>``.
     ``scope_path`` — when set without ``vault_name``, scopes by source_uri
         prefix; otherwise deletion is vault-scoped.
-
-    Entities are anchored exclusively to KnowledgeDocs (``DERIVED_FROM``
-    entity → corpus doc) — there is no code-side entity sweep because
-    nothing creates code-derived entities today.
     """
     report = AutopruneReport()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -116,7 +115,7 @@ def autoprune_after_index(
                 except OSError as exc:
                     logger.warning("autoprune: could not delete %s (%s)", target, exc)
 
-    # --- 3. For each orphan Source: find dependent pages + entities ---
+    # --- 3. For each orphan Source: find dependent pages ---
     # Track which concept pages we've already stamped this run so the
     # counter reflects unique-page-count, not edge-removal-count. A
     # concept page that cites multiple removed sources is still one
@@ -133,19 +132,8 @@ def autoprune_after_index(
         # pruned by this vault's pass.
         page_ids_citing = _pages_in_vault(_pages_citing(store, sid), vault_name)
 
-        # Find entities derived from this Source (DERIVED_FROM entity → source)
-        derived_entities = _entities_derived_from(store, sid)
-
         # Delete the Source node + its edges.
         _delete_node_and_edges(store, sid)
-
-        # Delete entities whose DERIVED_FROM edge to *sid* leaves them with no
-        # remaining DERIVED_FROM target. (Multi-source entities — entities
-        # cited from another live Source — stay.)
-        for ent_id in derived_entities:
-            if not _entity_still_has_derived_from(store, ent_id):
-                _delete_node_and_edges(store, ent_id)
-                report.entities_deleted += 1
 
         # For each page that cited this Source: drop the dangling edge, then
         # delete the page when it has no citations left, else stamp it stale.
@@ -218,69 +206,9 @@ def _pages_in_vault(pages: list[dict[str, Any]], vault_name: str | None) -> list
     return [p for p in pages if (p.get("properties") or {}).get("vault") == vault_name]
 
 
-def _entities_derived_from(store, source_id: str) -> list[str]:
-    """Return entity ids whose DERIVED_FROM points at *source_id*."""
-    incoming = store.traverse(source_id, direction="incoming", max_depth=1, relationship_type="DERIVED_FROM")
-    return [r["node"]["id"] for r in incoming if r.get("node")]
-
-
-def _entity_still_has_derived_from(store, entity_id: str) -> bool:
-    """True when an entity still has at least one DERIVED_FROM edge."""
-    outgoing = store.traverse(entity_id, direction="outgoing", max_depth=1, relationship_type="DERIVED_FROM")
-    return any(r.get("relationship", {}).get("type") == "DERIVED_FROM" for r in outgoing)
-
-
 def _remaining_cites_count(store, page_id: str) -> int:
     outgoing = store.traverse(page_id, direction="outgoing", max_depth=1, relationship_type="CITES")
     return sum(1 for r in outgoing if r.get("relationship", {}).get("type") == "CITES")
-
-
-def _has_orphan_code_entities(store, walked_file_ids: set[str]) -> bool:
-    """Cheap check before the expensive entity walk — any code entity at all?"""
-    # If walked_file_ids is empty, code wasn't part of this run; skip the sweep.
-    return bool(walked_file_ids)
-
-
-def _prune_entities_for_missing_files(store, walked_file_ids: set[str], scope_path: Path | None) -> int:
-    """Delete entities derived from File nodes that aren't in *walked_file_ids*.
-
-    Only operates when scope_path is set (entity_extraction was scoped to a
-    walk path). Avoids global graph stomping.
-    """
-    if scope_path is None:
-        return 0
-
-    deleted = 0
-    # Find File nodes that match the scope but aren't in walked_file_ids.
-    files = store.list_nodes("File", limit=50_000)
-    scope_prefix = str(scope_path.resolve())
-    candidate_orphans = [
-        f
-        for f in files
-        if (f.get("properties") or {}).get("path")
-        and str(scope_prefix) in (f.get("properties") or {}).get("source_uri", "")
-        and f["id"] not in walked_file_ids
-    ]
-    # We don't delete File nodes themselves — re-indexing handles that.
-    # Just clean up their derived entities.
-    for f in candidate_orphans:
-        derived = _entities_derived_from(store, f["id"])
-        for ent_id in derived:
-            if not _entity_still_has_derived_from_anything_else(store, ent_id, f["id"]):
-                _delete_node_and_edges(store, ent_id)
-                deleted += 1
-    return deleted
-
-
-def _entity_still_has_derived_from_anything_else(store, entity_id: str, excluded_target: str) -> bool:
-    outgoing = store.traverse(entity_id, direction="outgoing", max_depth=1, relationship_type="DERIVED_FROM")
-    for r in outgoing:
-        if r.get("relationship", {}).get("type") != "DERIVED_FROM":
-            continue
-        target = r.get("node", {}).get("id")
-        if target and target != excluded_target:
-            return True
-    return False
 
 
 # ---------------------------------------------------------------------------

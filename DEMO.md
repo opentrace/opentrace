@@ -459,7 +459,9 @@ You can smoke-test the protocol without a real client:
 Look for a `serverInfo` object and a `tools` array. Available tools:
 
 - Original: `search_graph`, `list_nodes`, `traverse`, `get_node`, `query`
-- New in wikiv3: `list_vaults`, `list_vault_pages`, `read_vault_page`, `find_pages_mentioning`, `find_entities_mentioned_by`, `find_cross_cutting_communities`, `provenance`, `find_orphans`, `grep`, `get_god_nodes`
+- New in wikiv3: `list_vaults`, `list_vault_pages`, `read_vault_page`, `find_cross_cutting_communities`, `provenance`, `find_orphans`, `grep`, `get_god_nodes`
+
+  (`find_pages_mentioning` / `find_entities_mentioned_by` were removed 2026-08-04 with the LLM-extracted entity layer they traversed — `grep` answers "which documents discuss X" instead.)
 
 For a real demo, configure your MCP client to point at `opentraceai mcp` and ask it a question like "what concepts span multiple sources in opentrace-demo?" — it should pick `find_cross_cutting_communities` unprompted.
 

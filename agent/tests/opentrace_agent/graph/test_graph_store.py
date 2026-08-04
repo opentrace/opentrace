@@ -58,8 +58,8 @@ class TestBuildSearchText:
         assert "how staff sign in" in text
 
     def test_includes_description(self):
-        # Wiki entity nodes (Idea/Service/Event/Paper) store their gloss under
-        # description — index it so entities are findable by content, not name.
+        # Some legacy node types store their gloss under description — index
+        # it so those nodes stay findable by content, not just by name.
         text = build_search_text("Engram", "Service", {"description": "persistent memory system"})
         assert "persistent memory system" in text
 

@@ -85,20 +85,6 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
     for sid in sids.values():
         store.add_relationship(f"{concept_id}->CITES->{sid}", "CITES", concept_id, sid, properties={"vault": vault})
 
-    # An entity derived from one of the sources.
-    store.add_node(
-        "idea_thing",
-        "Idea",
-        "Thing",
-        properties={"vault": vault, "derived_from": sids["aaa"]},
-    )
-    store.add_relationship(
-        "derived:idea_thing->corpus::aaa",
-        "DERIVED_FROM",
-        "idea_thing",
-        sids["aaa"],
-        properties={"transform": "llm_extraction"},
-    )
     return sids
 
 
@@ -166,19 +152,6 @@ class TestAutoprune:
                 db_path=str(tmp_path / "db"),
             )
             assert store.get_node("v::concept-x") is None
-
-    def test_orphan_entity_deleted_when_source_removed(self, tmp_path):
-        with GraphStore(str(tmp_path / "db")) as store:
-            _seed(store)
-            autoprune_after_index(
-                store,
-                walked_doc_shas={"bbb", "ccc"},  # aaa removed
-                vault_name="v",
-                scope_path=tmp_path,
-                db_path=str(tmp_path / "db"),
-            )
-            # idea_thing derived only from aaa (now removed) → deleted.
-            assert store.get_node("idea_thing") is None
 
     def test_scope_safety_other_vaults_untouched(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:

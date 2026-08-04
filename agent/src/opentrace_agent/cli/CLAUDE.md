@@ -8,12 +8,12 @@ Click-based command-line interface for the `opentraceai` binary. Also hosts the 
 main.py          — Click root group + the unified index command:
                    • code-only walk (plain `index`; no LLM calls)
                    • --wiki [VAULT_NAME] [--global] — unified doc ingestion:
-                     ONE LLM call/doc → KnowledgeDoc label + entities
-                     (Idea/Service/… + edges); docs are linked to File twins
-                     (MIRRORS) and to each other by the authors' own relative
-                     links (LINKS_TO), and bodies stay verbatim in the corpus.
-                     Corpus-only — nothing is synthesized and there is no flag
-                     to make it synthesize (see wiki/CLAUDE.md)
+                     ONE LLM call/doc → the KnowledgeDoc's one-line summary;
+                     docs are linked to File twins (MIRRORS) and to each other
+                     by the authors' own relative links (LINKS_TO), and bodies
+                     stay verbatim in the corpus. Corpus-only — nothing is
+                     synthesized, and no entity layer is extracted (both
+                     removed; see wiki/CLAUDE.md)
                    • --no-prune for cleanup behaviour
 vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
                    demote. `vault ingest <folder>` is the docs-only
@@ -32,6 +32,7 @@ vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
                    summary, never silent ("14 docs" over a 15-file folder must
                    not read as full coverage)
 analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
+                   (all Community-based; needs `opentraceai cluster` first)
 cluster_cmd.py   — community detection (Leiden → Louvain fallback)
 export_graph.py  — graphml / obsidian / report exporters (deterministic, no LLM)
 serve.py         — Starlette HTTP server; REST API consumed by the UI
@@ -81,7 +82,9 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 - `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `KnowledgeVault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.
 - `DELETE /api/vaults/{vault}?scope=...` — delete from disk (and graph) for the given scope.
 
-MCP tools mirror the same primitives plus the cross-cutting helpers (`find_pages_mentioning`, `find_entities_mentioned_by`, `find_cross_cutting_communities`). Tool list lives in `plugins/claude-code/CLAUDE.md`.
+MCP tools mirror the same primitives plus `find_cross_cutting_communities`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
+
+`find_pages_mentioning` and `find_entities_mentioned_by` were **removed 2026-08-04** with the LLM-extracted entity layer they traversed (`MENTIONS` / `DERIVED_FROM`) — see wiki/CLAUDE.md. "Which documents discuss X" is answered by `grep` (exhaustive, verbatim, pre-labelled), not by a traversal. Don't re-add them: three benchmark runs measured zero usage of the entity nodes they walked to.
 
 ## Adding a Subcommand
 

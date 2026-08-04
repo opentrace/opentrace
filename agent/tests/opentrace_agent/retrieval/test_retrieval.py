@@ -402,16 +402,15 @@ class TestSearchTriageFields:
         assert "title" not in fn and "status" not in fn
 
 
-class TestEntityExclusion:
-    """Doc-extracted entities' short names win BM25 over the labelled docs
-    they came from (measured: ~half the top-3 slots on a 25-doc index), so
-    the MCP surface excludes them by default. The discriminator is the
-    ``derived_from``/``vault`` property, NOT the type name — "Service" and
-    "Module" are also legacy runtime types that must keep appearing."""
+class TestLegacyEntityNodesStayReadable:
+    """The LLM-extracted entity layer was removed 2026-08-04 and nothing writes
+    these node types any more, but a graph built before then still contains
+    them — search must keep returning them rather than filtering them out.
+    (`search` briefly had an ``exclude_llm_entities`` flag for the crowding
+    problem; the layer that caused it is gone, so the flag is too.)"""
 
     @staticmethod
-    def _seed_entities(store):
-        # An extracted entity (short name — wins BM25) + the doc it came from.
+    def _seed(store):
         store.add_node(
             "ent::engram",
             "Idea",
@@ -424,58 +423,21 @@ class TestEntityExclusion:
             "engram-overview.md",
             {"sha256": "sha-en", "title": "Engram Overview", "summary": "engram overview of the project"},
         )
-        # A runtime Service node — same type namespace as entity Services,
-        # but no derived_from/vault: must never be filtered.
+        # A runtime Service node — same type namespace, no derived_from/vault.
         store.add_node("svc::engram-api", "Service", "engram-api", {})
-        # An extracted entity that HAPPENS to be a Service.
-        store.add_node(
-            "ent::engram-svc",
-            "Service",
-            "engram-worker",
-            {"derived_from": "corpus::sha-en", "vault": "kb"},
-        )
 
-    def test_default_keeps_entities(self, store):
+    def test_legacy_entities_and_runtime_nodes_both_surface(self, store):
         from opentrace_agent.retrieval import search
 
-        self._seed_entities(store)
+        self._seed(store)
         result = search(store, "engram", limit=10)
         ids = {h["id"] for h in result["hits"]}
-        assert "ent::engram" in ids
+        assert {"ent::engram", "svc::engram-api", "corpus::sha-en"} <= ids
         assert "entities_excluded" not in result
 
-    def test_exclusion_drops_entities_keeps_docs_and_runtime_nodes(self, store):
+    def test_type_filter_still_reaches_them(self, store):
         from opentrace_agent.retrieval import search
 
-        self._seed_entities(store)
-        result = search(store, "engram", limit=10, exclude_llm_entities=True)
-        ids = {h["id"] for h in result["hits"]}
-        assert "ent::engram" not in ids
-        assert "ent::engram-svc" not in ids  # entity Service: dropped
-        assert "svc::engram-api" in ids  # runtime Service: kept
-        assert "corpus::sha-en" in ids
-        assert result["entities_excluded"] == 2
-
-    def test_explicit_type_filter_wins_over_exclusion(self, store):
-        from opentrace_agent.retrieval import search
-
-        self._seed_entities(store)
-        result = search(store, "engram", limit=10, node_types=["Idea"], exclude_llm_entities=True)
+        self._seed(store)
+        result = search(store, "engram", limit=10, node_types=["Idea"])
         assert {h["id"] for h in result["hits"]} == {"ent::engram"}
-        assert "entities_excluded" not in result
-
-    def test_substring_fallback_also_filters(self, store, monkeypatch):
-        """FTS unavailable → the search_nodes fallback applies the same filter."""
-        from opentrace_agent.retrieval import search
-
-        self._seed_entities(store)
-
-        def _boom(*a, **k):
-            raise RuntimeError("no fts")
-
-        monkeypatch.setattr(store, "_fts_search", _boom)
-        result = search(store, "engram", limit=10, exclude_llm_entities=True)
-        ids = {h["id"] for h in result["hits"]}
-        assert "ent::engram" not in ids
-        assert "corpus::sha-en" in ids
-        assert result["entities_excluded"] >= 1

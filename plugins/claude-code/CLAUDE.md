@@ -97,7 +97,7 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 | `traverse_graph` | Walk relationships (outgoing/incoming/both) with depth control |
 | `load_source` | Read a node's underlying content — code from the repo checkout (with line ranges), `KnowledgeDoc` bodies from the corpus snapshot, `KnowledgeConcept` bodies from the vault |
 | `read_vault_page` | Read a concept page's markdown body by node id |
-| `find_pages_mentioning` | Entity/symbol → the Pages and KnowledgeDocs that discuss it (typed hits) |
+| `grep` | Regex sweep over a repo checkout or a vault's whole document corpus — the exhaustive counterpart to ranked `search_graph`. Use it for "which documents discuss X" (there is no doc→topic edge to traverse; the entity layer that provided one was removed 2026-08-04) |
 | `provenance` | Trust chain — concept page → cited `KnowledgeDoc` artefacts (+ MIRRORS File twin when present); code → commit + line range |
 
 ## Database Convention

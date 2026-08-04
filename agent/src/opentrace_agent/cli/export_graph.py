@@ -154,9 +154,9 @@ def _display_name(node: dict) -> str:
 
     Beyond whitespace cleanup, also strips function/method/class signature
     noise so ``def foo(*, a, b):`` renders as ``foo`` and ``class Bar(Base):``
-    renders as ``Bar``. Other node types (Idea, Service, etc.) pass through
+    renders as ``Bar``. Other node types (Service, Cluster, etc.) pass through
     untouched — names like ``"GPT-4 (OpenAI)"`` are allowed to keep their
-    parens because they're not signatures, they're real entity names.
+    parens because they're not signatures, they're real names.
     """
     name = _clean_name(node.get("name"))
     if not name:
@@ -486,7 +486,7 @@ def report_cmd(db_path: str | None, output: str) -> None:
         )
     else:
         bridge_page.append("(none — run `opentraceai cluster` to assign communities)")
-    bridge_page += ["", "## Cross-domain (code ↔ entity ↔ page)"]
+    bridge_page += ["", "## Cross-domain (code ↔ page)"]
     if domain_bridges:
         bridge_page.extend(
             f"- {b['source_name']} ({b['source_domain']}/{b['source_type']}) "

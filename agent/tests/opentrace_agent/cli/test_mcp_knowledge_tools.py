@@ -502,15 +502,20 @@ class TestPreExistingToolsAdvertiseDocLayer:
         assert "load_source" in doc and "status" in doc
         # fileTwin is emitted by the twin collapse — it must be documented.
         assert "filetwin" in doc
-        # Entities rank high but are signposts, not answers.
-        assert "signpost" in doc
+        # A hit is a pointer to text, so the tools that read it must be named.
+        assert "grep" in doc
         # And ranked search cannot prove absence — point at list_nodes.
         assert "list_nodes" in doc
 
     def test_traverse_graph_names_doc_edges(self, store):
         doc = self._doc(store, "traverse_graph")
-        for edge in ("links_to", "mirrors", "mentions", "derived_from"):
+        for edge in ("links_to", "mirrors", "cites"):
             assert edge in doc, f"{edge} missing from traverse_graph docstring"
+        # No doc→topic edge exists any more, so the docstring must not imply
+        # one — "which docs mention X" has to route to grep instead.
+        for gone in ("mentions", "derived_from"):
+            assert gone not in doc, f"{gone} is no longer written; advertising it invents a capability"
+        assert "grep" in doc
 
 
 class TestListNodesEnumeration:
@@ -787,11 +792,11 @@ class TestAbsenceClaimsCarryTheirPopulation:
         assert "caveat" not in r["scope"]
 
 
-class TestSearchGraphEntityDefault:
-    """The MCP surface excludes doc-extracted entities from search_graph by
-    default (their short names outrank the labelled docs they came from) and
-    says so via a hint. An explicit nodeTypes always wins — including asking
-    for the entity types themselves."""
+class TestSearchGraphDocHits:
+    """search_graph over a doc-bearing index: document hits carry their triage
+    fields, and legacy node types left over from the removed entity layer are
+    returned like anything else (no filtering — the layer that made filtering
+    worthwhile is gone)."""
 
     @staticmethod
     def _seed(store):
@@ -816,20 +821,19 @@ class TestSearchGraphEntityDefault:
         )
         store.add_node("svc::engram-api", "Service", "engram-api", {})  # runtime, no derived_from
 
-    def test_default_excludes_entities_and_hints(self, store):
+    def test_default_returns_docs_and_legacy_nodes_alike(self, store):
         self._seed(store)
         r = _call(store, "search_graph", query="engram")
         types_by_id = {h["id"]: h["type"] for h in r["hits"]}
-        assert "ent::engram" not in types_by_id
-        assert "svc::engram-api" in types_by_id, "runtime Service must not be caught by the entity filter"
         assert "corpus::sha-en" in types_by_id
-        assert "nodeTypes" in r.get("hint", "")
+        assert "svc::engram-api" in types_by_id
+        assert "ent::engram" in types_by_id, "a pre-existing graph's nodes stay reachable"
+        assert "hint" not in r
 
-    def test_node_types_opt_in_returns_entities(self, store):
+    def test_node_types_filter_reaches_legacy_types(self, store):
         self._seed(store)
         r = _call(store, "search_graph", query="engram", nodeTypes="Idea")
         assert {h["id"] for h in r["hits"]} == {"ent::engram"}
-        assert "hint" not in r
 
     def test_doc_hits_carry_triage_fields(self, store):
         self._seed(store)
@@ -844,43 +848,6 @@ class TestSearchGraphEntityDefault:
         self._seed(store)
         r = _call(store, "search_graph", query="engram", nodeTypes="KnowledgeDoc")
         assert {h["id"] for h in r["hits"]} == {"corpus::sha-en"}
-
-
-class TestFindPagesMentioningWrongIdType:
-    """An empty result must mean "nothing mentions this entity", never "you
-    passed the wrong kind of id" — the two are indistinguishable to an agent,
-    and conflating them cost a benchmark run 21 brute-force document reads."""
-
-    @pytest.fixture()
-    def store(self, tmp_path):
-        s = GraphStore(str(tmp_path / "fpm.db"))
-        s.add_node("corpus::abc", "KnowledgeDoc", "guide.md", {"sha256": "abc", "title": "Guide"})
-        s.add_node("idea:Cold Chain", "Idea", "Cold Chain", {"derived_from": "corpus::abc"})
-        s.merge_relationship(
-            id="corpus::abc->MENTIONS->idea:Cold Chain",
-            rel_type="MENTIONS",
-            source_id="corpus::abc",
-            target_id="idea:Cold Chain",
-        )
-        yield s
-        s.close()
-
-    def test_doc_id_is_a_usage_error_not_an_empty_result(self, store):
-        out = _call(store, "find_pages_mentioning", entityId="corpus::abc")
-        assert "error" in out
-        assert "KnowledgeDoc" in out["error"]
-        assert "find_entities_mentioned_by" in out["hint"]
-        assert "count" not in out  # must NOT look like a legitimate zero
-
-    def test_unknown_id_explains_how_to_find_entity_ids(self, store):
-        out = _call(store, "find_pages_mentioning", entityId="corpus::nope")
-        assert "error" in out and "no node with id" in out["error"]
-        assert "search_graph" in out["hint"]
-
-    def test_real_entity_id_still_works(self, store):
-        out = _call(store, "find_pages_mentioning", entityId="idea:Cold Chain")
-        assert out["count"] == 1
-        assert out["pages"][0]["id"] == "corpus::abc"
 
 
 class TestGrepResponseFitting:

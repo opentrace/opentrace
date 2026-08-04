@@ -618,7 +618,7 @@ def vault_ingest(
     Walks FOLDER (a Confluence/Notion/docs-site export, a downloads dir —
     any bare folder; no git repo required) for doc files (HTML, PDF, DOCX,
     Markdown, ...), normalizes each to markdown, labels it with ONE LLM call
-    (title + one-line summary + entities), and indexes it as KnowledgeDoc
+    (a one-line summary; the title is derived from the filename), and indexes it as KnowledgeDoc
     nodes an agent can search through the graph. Bodies stay verbatim in the
     corpus. Corpus-only: no concept pages are synthesized.
 
@@ -711,10 +711,9 @@ def vault_ingest(
             "duplicates": 0,
             "normalize_errors": 0,
             "low_content_skipped": 0,
-            "entities": 0,
-            "relationships": 0,
         }
         mirror_stats: dict[str, int] = {}
+        llm_usage: dict[str, int] | None = None
 
         try:
             for event in run_compile(
@@ -735,12 +734,11 @@ def vault_ingest(
                         summary["duplicates"] = detail.get("skipped", 0)
                     elif event.phase == WikiPhase.NORMALIZING and event.errors:
                         summary["normalize_errors"] = len(event.errors)
-                    elif event.phase == WikiPhase.EXTRACTING:
-                        summary["entities"] = detail.get("entities", 0)
-                        summary["relationships"] = detail.get("relationships", 0)
                 summary["low_content_skipped"] += detail.get("low_content_skipped", 0)
                 if "nodes_written" in detail:
                     mirror_stats = detail
+                if "llm_usage" in detail:
+                    llm_usage = detail["llm_usage"]
 
                 if event.kind in (WikiEventKind.STAGE_START, WikiEventKind.STAGE_STOP, WikiEventKind.DONE):
                     click.echo(f"  {event.message}")
@@ -793,10 +791,9 @@ def vault_ingest(
                     db_path=store.db_path,
                 )
                 pruned_sources = report.sources_deleted
-                if report.sources_deleted or report.entities_deleted:
+                if report.sources_deleted:
                     click.echo(
                         f"  pruned {report.sources_deleted} deleted doc(s), "
-                        f"{report.entities_deleted} derived entities, "
                         f"{report.corpus_files_deleted} corpus file(s)"
                     )
             pruned_meta = _prune_vault_meta_sources(mp, vault_name, keep_shas)
@@ -813,6 +810,8 @@ def vault_ingest(
             pruned=pruned_sources or pruned_meta,
             mirrored=store is not None,
             not_walked=not_walked,
+            llm_usage=llm_usage,
+            provider=provider,
         )
     finally:
         if store is not None:
@@ -832,6 +831,8 @@ def _echo_ingest_summary(
     pruned: int,
     mirrored: bool,
     not_walked: list[str] | None = None,
+    llm_usage: dict[str, int] | None = None,
+    provider: str | None = None,
 ) -> None:
     """The payoff screen — what the user got for the ingest, plus next step."""
     click.echo()
@@ -858,18 +859,38 @@ def _echo_ingest_summary(
     if skipped_bits:
         click.echo(f"  skipped: {', '.join(skipped_bits)}")
 
-    if summary["entities"] or summary["relationships"]:
-        click.echo(f"  entities: {summary['entities']} ({summary['relationships']} relationship(s))")
     if doc_links or stamped:
         click.echo(f"  graph: {stamped} path(s) stamped, {doc_links} doc-to-doc link(s) (LINKS_TO)")
     if mirror_stats:
         click.echo(
             f"  mirror: {mirror_stats.get('nodes_written', 0)} nodes, "
-            f"{mirror_stats.get('rels_written', 0)} rels, "
-            f"{mirror_stats.get('entities_written', 0)} entities"
+            f"{mirror_stats.get('rels_written', 0)} rels"
         )
     if pruned:
         click.echo(f"  pruned: {pruned} doc(s) no longer in the folder")
+
+    # Billed actuals next to where the pre-flight ESTIMATE printed, so the two
+    # confront each other on every run. Token counts are the provider's own;
+    # the dollar figure converts them at our listed extraction-tier rates
+    # (provider prices can drift, so it's approximate — but grounded, unlike
+    # the estimate, whose assumptions once ran 6.5x stale with nothing to
+    # contradict them). Absent when nothing was billed (all-duplicate re-runs)
+    # or when a test injects a usage-less fake client.
+    if llm_usage and provider:
+        from opentrace_agent.sources._llm_common import extraction_pricing
+
+        pricing = extraction_pricing(provider)
+        cost_note = ""
+        if pricing is not None:
+            actual = (
+                llm_usage["input_tokens"] / 1_000_000 * pricing[0]
+                + llm_usage["output_tokens"] / 1_000_000 * pricing[1]
+            )
+            cost_note = f" · ~${actual:.2f} billed"
+        click.echo(
+            f"  llm: {llm_usage['input_tokens']:,} in / {llm_usage['output_tokens']:,} out "
+            f"across {llm_usage['calls']} call(s){cost_note}"
+        )
     click.echo(f"  on disk: {vault_path}")
 
     if mirrored:

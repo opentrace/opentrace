@@ -18,9 +18,12 @@ The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
 source of truth for the vault's filesystem state. This module mirrors the
 *same* state into the graph as :class:`Vault`, :class:`Page`, and
 :class:`KnowledgeDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
-KnowledgeDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links),
-``MENTIONS`` (page/KnowledgeDoc → entity), and ``MIRRORS`` (KnowledgeDoc → File
-twin) relationships.
+KnowledgeDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links, and
+KnowledgeDoc → KnowledgeDoc author links), and ``MIRRORS`` (KnowledgeDoc →
+File twin) relationships.
+
+``MENTIONS`` (content → LLM-extracted entity) was written here until
+2026-08-04, when the entity layer was removed — see the wiki CLAUDE.md.
 
 Graph writes run *after* disk writes succeed, and any failure here is
 caught and logged so the on-disk vault stays valid even if the graph
@@ -79,7 +82,6 @@ NODE_TYPE_KNOWLEDGE_DOC = "KnowledgeDoc"
 REL_TYPE_CONTAINS = "CONTAINS"
 REL_TYPE_CITES = "CITES"
 REL_TYPE_LINKS_TO = "LINKS_TO"
-REL_TYPE_MENTIONS = "MENTIONS"
 REL_TYPE_MIRRORS = "MIRRORS"
 REL_TYPE_DOCUMENTS = "DOCUMENTS"
 
@@ -88,10 +90,6 @@ REL_TYPE_DOCUMENTS = "DOCUMENTS"
 NODE_TYPE_FILE = "File"
 NODE_TYPE_DIRECTORY = "Directory"
 REL_TYPE_DEFINES = "DEFINES"
-
-# Entity node types eligible as MENTIONS targets — flat entity types
-# produced by ``--wiki``.
-_MENTION_ENTITY_TYPES = frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"})
 
 # ---------------------------------------------------------------------------
 # ID conventions
@@ -559,7 +557,6 @@ def write_vault_to_graph(
     compiled_slugs: set[str] | None = None,
     normalized: list[Any] | None = None,
     scope: str = "global",
-    derived_pairs: set[tuple[str, str]] | None = None,
 ) -> dict[str, int]:
     """Mirror *meta* + *page_bodies* into the graph as a fresh consistent slice.
 
@@ -641,12 +638,8 @@ def write_vault_to_graph(
     # 2. KnowledgeDoc nodes — one per ingested document. Use the AcquiredSource
     #    metadata when present, otherwise fall back to .vault.json's
     #    IngestedSource (sha256 + original_name + ingested_at only).
-    #    ``source_bodies`` collects each source's raw markdown along the way
-    #    (in-memory for sources normalized this run, corpus file otherwise)
-    #    for the MENTIONS pass in step 6.
     by_sha_acquired: dict[str, AcquiredSource] = {s.sha256: s for s in (acquired or [])}
     by_sha_normalized: dict[str, Any] = {n.sha256: n for n in (normalized or [])}
-    source_bodies: dict[str, str] = {}
     for sha, ingested in meta.sources.items():
         sid = corpus_doc_node_id(sha)
         acq = by_sha_acquired.get(sha)
@@ -725,13 +718,6 @@ def write_vault_to_graph(
             target_id=sid,
         )
         rels_written += 1
-        norm_markdown = getattr(norm, "markdown", "") if norm is not None else ""
-        if norm_markdown:
-            source_bodies[sid] = norm_markdown
-        else:
-            body = _read_corpus_body(store, props.get("corpus_path"))
-            if body:
-                source_bodies[sid] = body
 
     # 3. Page nodes — one per slug. Maintain title→slug for LINKS_TO
     #    resolution. Slugs live under ``<kind_dir>/<base>``; we track both
@@ -841,20 +827,6 @@ def write_vault_to_graph(
             )
             rels_written += 1
 
-    # 6. MENTIONS edges — bridge the entity layer to the content layer.
-    #    For each entity (Idea/Service/Module/Paper/Person/Event) in this
-    #    vault, find pages AND sources whose body contains the entity name
-    #    as a whole word — matching over the raw source markdown gives docs
-    #    the same per-document entity bridge that summary pages used to
-    #    carry (with better coverage: the raw body is a superset of any
-    #    summary). Case-insensitive except for Person (case-sensitive
-    #    avoids matching "Karen" inside arbitrary lowercase prose).
-    mention_bodies: dict[str, str] = {
-        page_node_id(meta.name, slug): body for slug, body in page_bodies.items() if slug in meta.pages
-    }
-    mention_bodies.update(source_bodies)
-    rels_written += _write_mentions_edges(store, meta, mention_bodies, derived_pairs=derived_pairs)
-
     logger.debug(
         "vault graph write complete: %d nodes, %d rels (vault=%s)",
         nodes_written,
@@ -868,8 +840,8 @@ def _read_corpus_body(store: GraphStore, corpus_rel: str | None) -> str | None:
     """Read a source's corpus markdown given its DB-relative ``corpus_path``.
 
     Returns ``None`` when the path is unset, escapes the DB directory, or
-    the file is unreadable — callers treat a missing body as "no MENTIONS
-    pass for this source", never an error.
+    the file is unreadable — callers treat a missing body as "nothing to read
+    for this source", never an error.
     """
     from pathlib import Path
 
@@ -882,138 +854,3 @@ def _read_corpus_body(store: GraphStore, corpus_rel: str | None) -> str | None:
         return (Path(str(db_path)).parent / corpus_rel).read_text(encoding="utf-8")
     except OSError:
         return None
-
-
-def _write_mentions_edges(
-    store: GraphStore,
-    meta: VaultMetadata,
-    bodies_by_node_id: dict[str, str],
-    derived_pairs: set[tuple[str, str]] | None = None,
-) -> int:
-    """Write MENTIONS edges from content nodes (Page / Source) to entity
-    nodes whose names appear in the body.
-
-    *bodies_by_node_id* maps a graph node id to the text to scan — page
-    markdown for Pages, raw corpus markdown for Sources.
-
-    *derived_pairs* is the set of ``(corpus_doc_id, entity_id)`` pairs the
-    entity extraction produced a ``DERIVED_FROM`` edge for. A MENTIONS edge
-    for such a pair is skipped — ``entity -DERIVED_FROM-> doc`` is the
-    stronger claim ("extracted from") and already encodes that the doc is
-    about the entity, so the reverse ``doc -MENTIONS-> entity`` would just
-    restate it. Mentions of an entity by a doc it was NOT derived from (the
-    genuine cross-reference) are still written. Consumers that want "every
-    doc referencing X" union MENTIONS with incoming DERIVED_FROM.
-
-    *derived_pairs* alone is NOT sufficient: it covers only docs extracted
-    THIS run, while every doc in ``meta.sources`` is re-matched on every
-    mirror — so on a re-compile, an old doc's own derived entities would no
-    longer be recognized and MENTIONS would restate every DERIVED_FROM in
-    the vault. The skip-set is therefore unioned with each doc's incoming
-    ``DERIVED_FROM`` edges already in the graph, and any violating MENTIONS
-    edge a previous (buggy) compile wrote is deleted — edge ids are
-    deterministic, so existing graphs self-heal on their next compile.
-
-    Only operates on entities tagged with this vault (so vault scope is
-    preserved). Uses whole-word matching via ``\\b...\\b`` regex.
-
-    Returns the number of edges written. No-op when no entities exist in
-    the vault (the common case when ``--wiki`` wasn't used).
-    """
-    derived_pairs = derived_pairs or set()
-    entities = _vault_entities(store, meta.name)
-    if not entities:
-        return 0
-
-    # Build a regex matching any entity name, case-insensitive for non-Person.
-    # Person names get their own pattern (case-sensitive) so "Karen" doesn't
-    # match every casual mention.
-    case_insensitive_entities = [e for e in entities if e["type"] != "Person"]
-    case_sensitive_entities = [e for e in entities if e["type"] == "Person"]
-
-    ci_pattern = _build_name_pattern([e["name"] for e in case_insensitive_entities], case_sensitive=False)
-    cs_pattern = _build_name_pattern([e["name"] for e in case_sensitive_entities], case_sensitive=True)
-
-    # Map lowercased / cased name → list of entity node ids (multiple
-    # entities can share a name, especially across types — emit edges to
-    # all matching).
-    by_name_ci: dict[str, list[str]] = {}
-    for e in case_insensitive_entities:
-        by_name_ci.setdefault(e["name"].lower(), []).append(e["id"])
-    by_name_cs: dict[str, list[str]] = {}
-    for e in case_sensitive_entities:
-        by_name_cs.setdefault(e["name"], []).append(e["id"])
-
-    rels_written = 0
-    for node_id, body in bodies_by_node_id.items():
-        targets: set[str] = set()
-
-        if ci_pattern is not None:
-            for match in ci_pattern.finditer(body):
-                for eid in by_name_ci.get(match.group(0).lower(), []):
-                    targets.add(eid)
-        if cs_pattern is not None:
-            for match in cs_pattern.finditer(body):
-                for eid in by_name_cs.get(match.group(0), []):
-                    targets.add(eid)
-
-        # Everything this doc originated, from BOTH sources of truth: this
-        # run's extraction (derived_pairs) and the graph's existing
-        # DERIVED_FROM edges (prior runs — re-mirrors re-match every doc,
-        # not just the ones extracted this run).
-        derived_here = {eid for (nid, eid) in derived_pairs if nid == node_id}
-        try:
-            for r in store.traverse(node_id, direction="incoming", max_depth=1, relationship_type="DERIVED_FROM"):
-                derived_here.add(r["node"]["id"])
-        except Exception:  # noqa: BLE001 — a doc node not yet written has no edges
-            pass
-
-        # Self-heal: a violating MENTIONS edge written by an earlier compile
-        # (before the graph-side dedup existed) has a deterministic id —
-        # delete it rather than leaving the restated claim in place.
-        stale = [f"{node_id}->MENTIONS->{eid}" for eid in (targets & derived_here)]
-        if stale:
-            store.delete_relationships_by_ids(stale)
-
-        for eid in targets - derived_here:
-            store.merge_relationship(
-                id=f"{node_id}->MENTIONS->{eid}",
-                rel_type=REL_TYPE_MENTIONS,
-                source_id=node_id,
-                target_id=eid,
-            )
-            rels_written += 1
-
-    return rels_written
-
-
-def _vault_entities(store: GraphStore, vault_name: str) -> list[dict[str, Any]]:
-    """Return entity-type nodes whose ``vault`` property matches *vault_name*."""
-    out: list[dict[str, Any]] = []
-    for ntype in _MENTION_ENTITY_TYPES:
-        try:
-            rows = store.list_nodes(ntype, filters={"vault": vault_name}, limit=10_000)
-        except Exception:  # noqa: BLE001 — some types may not exist in this DB
-            continue
-        for r in rows:
-            if r.get("name"):
-                out.append({"id": r["id"], "type": ntype, "name": r["name"]})
-    return out
-
-
-def _build_name_pattern(names: list[str], *, case_sensitive: bool) -> "re.Pattern[str] | None":
-    """Compile a whole-word-matching regex from a list of names.
-
-    Names containing regex metacharacters are escaped. Longer names go
-    first so the matcher prefers "Karen Chen" over "Karen" when both
-    exist. Empty input returns ``None``.
-    """
-    if not names:
-        return None
-    sorted_names = sorted({n for n in names if n}, key=len, reverse=True)
-    if not sorted_names:
-        return None
-    escaped = [re.escape(n) for n in sorted_names]
-    pattern = r"\b(?:" + "|".join(escaped) + r")\b"
-    flags = 0 if case_sensitive else re.IGNORECASE
-    return re.compile(pattern, flags)

@@ -445,10 +445,9 @@ def _run_indexing_pipeline(
                 # --- Phase 3: unified doc ingestion when --wiki is set ---
                 # The code pipeline above is code-only now. The wiki doc pass
                 # reads the doc files into SourceInputs and, in ONE LLM call per
-                # doc, produces the KnowledgeDoc labels, the knowledge-graph
-                # entities/edges — all into the same
-                # staging DB; the atomic swap covers them together. Concept-page
-                # compile. Nothing is synthesized.
+                # doc, produces the KnowledgeDoc labels — into the same staging
+                # DB, so the atomic swap covers code and docs together.
+                # Nothing is synthesized.
                 if wiki:
                     _run_wiki_compile_against_index(
                         graph_store=graph_store,
@@ -460,7 +459,7 @@ def _run_indexing_pipeline(
                         verbose=verbose,
                     )
 
-                # --- Phase 4: autoprune orphan sources/entities/pages ---
+                # --- Phase 4: autoprune orphan sources/pages ---
                 # Sweep state for files that disappeared between this run
                 # and the previous one. Scoped to the walked path / vault
                 # so partial indexes don't blast away other repos' data.
@@ -515,9 +514,8 @@ def _run_indexing_pipeline(
     is_flag=True,
     help=(
         "Ingest doc files (PDF/DOCX/MD/HTML/...) alongside code: ONE LLM call "
-        "per doc produces the KnowledgeDoc's navigation label and the "
-        "knowledge-graph entities (Idea / Service / Module / Paper / Person / "
-        "Event + relationships); docs are linked to their File twins "
+        "per doc produces the KnowledgeDoc's navigation label (title + "
+        "one-line summary); docs are linked to their File twins "
         "(MIRRORS), to each other by the authors' own relative links "
         "(LINKS_TO), and stamped with an epistemic status (authoritative vs "
         "design_history). Doc bodies are kept verbatim in the corpus and read "
@@ -690,14 +688,12 @@ def _run_autoprune_after_index(
     if any(
         [
             report.sources_deleted,
-            report.entities_deleted,
             report.pages_deleted,
             report.pages_marked_stale,
         ]
     ):
         click.echo(
             f"  Autoprune: -{report.sources_deleted} sources, "
-            f"-{report.entities_deleted} entities, "
             f"-{report.pages_deleted} concept pages, "
             f"{report.pages_marked_stale} stale-marked, "
             f"-{report.corpus_files_deleted} corpus files"
@@ -817,6 +813,13 @@ def _collect_wiki_inputs(
     return inputs
 
 
+# Token assumptions behind every doc-ingestion cost estimate. Input is a rough
+# average document; output is one sentence, which is all the extraction schema
+# asks for since concepts and entities were removed. Keep these two together so
+# the second-guessing happens in one place.
+INPUT_TOKENS_PER_DOC = 4_000
+OUTPUT_TOKENS_PER_DOC = 100
+
 def _echo_wiki_cost_estimate(
     provider: str,
     inputs: list["SourceInput"],
@@ -825,30 +828,64 @@ def _echo_wiki_cost_estimate(
 ) -> None:
     """Pre-flight per-extension breakdown + cost estimate for a doc ingestion.
 
-    The doc pass is ONE call per source (summary + entities). Token
-    assumption: 4k input / 1k output per LLM call. The extension breakdown
-    prints first so a folder full of image attachments is visible as
-    "84 × .png" BEFORE the money is spent.
+    The extension breakdown prints first so a folder full of image attachments
+    is visible as "84 × .png" BEFORE the money is spent.
+
+    The doc pass is ONE call per source emitting ONE field (the one-line
+    summary), and it runs on the backend's extraction tier — so the estimate
+    must use that tier's pricing, not the flagship pair. Getting either wrong
+    is not cosmetic: this line exists so someone can decide whether to spend,
+    and it previously overstated a 48-doc ingest at ~$1.30 against an actual
+    ~$0.20 — flagship rates (~3x) on top of a 1k-output assumption left over
+    from when this call also emitted concepts and an entity graph (~20x on the
+    output half).
+
+    Cost is now dominated by INPUT — the unavoidable cost of the model reading
+    each document once. If a field is ever added back to the extraction schema,
+    revisit OUTPUT_TOKENS_PER_DOC with it.
     """
     from collections import Counter
 
-    from opentrace_agent.sources._llm_common import BACKENDS
+    from opentrace_agent.sources._llm_common import extraction_pricing
 
     counts = Counter(Path(inp.name).suffix.lower() or "(no ext)" for inp in inputs)
     breakdown = ", ".join(f"{n} × {ext}" for ext, n in counts.most_common())
     click.echo(f"{indent}{breakdown}")
 
-    cfg = BACKENDS.get(provider)
-    if cfg is None:
+    pricing = extraction_pricing(provider)
+    if pricing is None:
         return
+    price_in, price_out = pricing
     est_calls = len(inputs)
-    est_input_tokens = est_calls * 4_000
-    est_output_tokens = est_calls * 1_000
     est_cost = (
-        est_input_tokens / 1_000_000 * cfg.pricing_input_per_million
-        + est_output_tokens / 1_000_000 * cfg.pricing_output_per_million
+        est_calls * INPUT_TOKENS_PER_DOC / 1_000_000 * price_in
+        + est_calls * OUTPUT_TOKENS_PER_DOC / 1_000_000 * price_out
     )
     click.echo(f"{indent}via {provider} (~${est_cost:.2f} estimated)")
+
+
+def _echo_llm_actuals(event, provider: str, indent: str = "    ") -> None:
+    """Print billed-token actuals from a DONE event, when the run made LLM calls.
+
+    The counterpart to :func:`_echo_wiki_cost_estimate`: the estimate prints
+    before spending, this prints what was actually billed after — so a stale
+    estimate assumption is contradicted on the very next run rather than
+    surviving until someone re-derives the arithmetic by hand.
+    """
+    usage = (event.detail or {}).get("llm_usage")
+    if not usage:
+        return
+    from opentrace_agent.sources._llm_common import extraction_pricing
+
+    pricing = extraction_pricing(provider)
+    cost_note = ""
+    if pricing is not None:
+        actual = usage["input_tokens"] / 1_000_000 * pricing[0] + usage["output_tokens"] / 1_000_000 * pricing[1]
+        cost_note = f" · ~${actual:.2f} billed"
+    click.echo(
+        f"{indent}llm actuals: {usage['input_tokens']:,} in / {usage['output_tokens']:,} out "
+        f"across {usage['calls']} call(s){cost_note}"
+    )
 
 
 def _run_wiki_compile_against_index(
@@ -864,7 +901,7 @@ def _run_wiki_compile_against_index(
     """Run the wiki doc-ingestion pipeline against doc files under *source_path*.
 
     Reuses the DirectoryWalker's DOC_EXTENSIONS classification to discover
-    the same files the entity-extraction stage saw, builds them into
+    the doc files, builds them into
     ``SourceInput`` objects, and feeds them to ``wiki.ingest.pipeline.
     run_compile`` against the given vault. ``graph_store`` is the staging
     DB the index pipeline is already writing to — the wiki pipeline
@@ -933,14 +970,16 @@ def _run_wiki_compile_against_index(
     ):
         # Stage boundaries + completion + errors always print so users can see
         # the wiki phase progressing. Per-unit progress prints for the slow
-        # LLM stages by default (with an [n/total] counter like the entity
-        # stage); cheap stages stay --verbose-only.
+        # LLM stages by default (with an [n/total] counter); cheap stages
+        # stay --verbose-only.
         if event.kind in (
             WikiEventKind.STAGE_START,
             WikiEventKind.STAGE_STOP,
             WikiEventKind.DONE,
         ):
             click.echo(f"    wiki: {event.message}")
+            if event.kind == WikiEventKind.DONE:
+                _echo_llm_actuals(event, provider)
         elif event.kind == WikiEventKind.ERROR:
             click.echo(f"    wiki ERROR: {event.message}", err=True)
         elif event.kind == WikiEventKind.STAGE_PROGRESS and (verbose or event.phase in _progress_phases):
@@ -1070,7 +1109,7 @@ def _run_single_source_pipeline(
 
     Skips the DirectoryWalker (no Repository/Directory/File nodes). Builds a
     SourceInput from raw bytes and runs the unified wiki doc pass against it
-    (one LLM call → summary + entities), persists into the
+    (one LLM call → the one-line summary), persists into the
     staging DB, and atomically swaps. Returns elapsed seconds.
 
     Autoprune intentionally doesn't run here — single-source ingest doesn't
@@ -1120,24 +1159,18 @@ def _run_single_source_pipeline(
             with GraphStore(staging_db) as graph_store:
                 t0 = time.monotonic()
 
-                # One unified per-doc pass: label + entities. The doc body
-                # itself is kept verbatim in the corpus, so a lone doc yields a
-                # labelled KnowledgeDoc + its entities and nothing else.
+                # One unified per-doc pass: the navigation label. The doc
+                # body itself is kept verbatim in the corpus, so a lone doc
+                # yields a labelled KnowledgeDoc and nothing else.
                 project_root = Path(staging_db).parent.parent
                 inputs = [SourceInput(name=display_name, data=raw_bytes)]
                 click.echo(f"  --wiki: ingesting 1 doc into {vault_scope} vault {vault_name!r} ...")
                 provider = _autodetect_provider_for_compile()
 
-                from opentrace_agent.sources._llm_common import BACKENDS
-
-                cfg = BACKENDS.get(provider)
-                if cfg is not None:
-                    est_calls = 1  # one unified doc call
-                    est_cost = (
-                        est_calls * 4_000 / 1_000_000 * cfg.pricing_input_per_million
-                        + est_calls * 1_000 / 1_000_000 * cfg.pricing_output_per_million
-                    )
-                    click.echo(f"    via {provider} (~${est_cost:.2f} estimated)")
+                # One implementation, not a second copy of the arithmetic — the
+                # duplicate is exactly why this site was still pricing at
+                # flagship rates with a 1k-output assumption.
+                _echo_wiki_cost_estimate(provider, inputs)
 
                 from opentrace_agent.wiki.ingest.types import WikiEventKind
 
@@ -1155,6 +1188,8 @@ def _run_single_source_pipeline(
                         WikiEventKind.DONE,
                     ):
                         click.echo(f"    wiki: {event.message}")
+                        if event.kind == WikiEventKind.DONE:
+                            _echo_llm_actuals(event, provider)
                     elif event.kind == WikiEventKind.ERROR:
                         click.echo(f"    wiki ERROR: {event.message}", err=True)
                     elif verbose:
@@ -2997,4 +3032,4 @@ def path(
 # Note: the standalone ``opentraceai ingest`` command was removed in the
 # ingestion-unification work. Single-file/URL ingestion goes through
 # ``opentraceai index --wiki <path>``, which routes the source through the
-# unified wiki doc pass (one LLM call → summary + entities + concept pages).
+# unified wiki doc pass (one LLM call → the doc's one-line summary).

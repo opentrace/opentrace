@@ -53,9 +53,9 @@ def core_pipeline(
     if ctx.cancelled or proc_out.value is None:
         return
 
-    # Doc entity extraction is no longer a pipeline stage — docs are handled
-    # entirely by the unified wiki doc-ingestion pass (one LLM call per doc
-    # yields summary + concepts + entities). The code pipeline is code-only.
+    # Doc ingestion is not a pipeline stage — docs are handled entirely by the
+    # unified wiki doc-ingestion pass (one LLM call per doc yields its one-line
+    # summary). The code pipeline is code-only.
     result_out: StageResult[PipelineResult] = StageResult()
     yield from resolving(proc_out.value, ctx, result_out)
 

@@ -111,8 +111,8 @@ EXTENSION_LANGUAGE_MAP: dict[str, str] = {
 }
 
 # File extensions surfaced as docs when ``walk_docs=True``. These are the
-# formats markitdown knows how to convert to markdown — used by the entity
-# extraction stage to feed bodies to the LLM extractor. Kept in lockstep
+# formats markitdown knows how to convert to markdown — used by the wiki
+# doc-ingestion pass to feed bodies to the LLM. Kept in lockstep
 # with ``sources/markdown/loader.py::_EXT_TO_TYPE``.
 DOC_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -130,7 +130,7 @@ DOC_EXTENSIONS: frozenset[str] = frozenset(
         ".rst",
         # Plain-text passthrough (no markitdown conversion). ``.md`` is
         # intentionally included even though it's also in INCLUDED_EXTENSIONS;
-        # walk_docs surfaces it as a doc entry too so entity extraction can
+        # walk_docs surfaces it as a doc entry too so doc ingestion can
         # operate on doc-style markdown without losing the existing File node.
         ".md",
         ".markdown",
@@ -158,7 +158,7 @@ class DocFileEntry:
 
     Separate from :class:`FileEntry` because docs don't have a stable
     ``file_id`` at scan time — the Source node id is derived from the
-    markitdown'd body content, computed in the entity-extraction stage.
+    markitdown'd body content, computed in the doc-ingestion pass.
     """
 
     abs_path: str
@@ -201,8 +201,8 @@ class DirectoryWalker:
             default_branch: Branch that was cloned.
             walk_docs: When True, also surface non-code doc files
                 (PDF/DOCX/MD/TXT/RST/HTML/...) into ``WalkResult.doc_file_entries``
-                so the entity-extraction pipeline stage can route them through
-                markitdown + LLM extraction. Off by default to keep the cheap
+                so the wiki doc-ingestion pass can route them through
+                markitdown + the LLM. Off by default to keep the cheap
                 ``opentraceai index`` path unchanged.
 
         Returns:
@@ -270,7 +270,7 @@ class DirectoryWalker:
                 # Doc-file surfacing — independent of the code path. Files
                 # only-in-DOC_EXTENSIONS (e.g. .pdf) get a DocFileEntry but
                 # NOT a File node. Files in both sets (e.g. .md) get a File
-                # node *and* a DocFileEntry, so the entity-extraction stage
+                # node *and* a DocFileEntry, so the doc-ingestion pass
                 # can produce a Source mirror alongside the structural File.
                 if walk_docs and ext in DOC_EXTENSIONS:
                     rel_doc = str(rel_dir / filename) if rel_dir_str else filename

@@ -7,7 +7,7 @@ dict. The MCP server, REST routes, and the UI chat tool all wrap these.
 ## Files
 
 ```
-__init__.py    — Public API; re-exports the 8 functions
+__init__.py    — Public API; re-exports the read-only primitives
 search.py      — Ranked FTS with snippets + vault/recency/confidence metadata
 overview.py    — <500-token orientation: counts + top concepts + recently-updated
 paths.py       — find_path (Python-composed BFS) + find_via_relationship_to_type
@@ -67,8 +67,9 @@ Measured on a 25-doc index: duplicates in the top 5 went from 8/12 queries to
 0/12, and `KnowledgeDoc` reached the top 3 on 10/12. The root cause of the
 inversion is worth knowing — BM25 normalises by length, so the `File`'s short
 `search_text` outscores the `KnowledgeDoc`'s *identical tokens plus a gloss*
-(it beat its own twin in 15 of 22 pairs). **Enriching a node demotes it**, which
-is also why short-named entity nodes outrank glossed docs. A field-weighted
+(it beat its own twin in 15 of 22 pairs). **Enriching a node demotes it** — the
+same inversion that let short-named extracted entity nodes outrank the glossed
+docs they came from, one of the reasons that layer was removed. A field-weighted
 ranking would fix the class of problem; this collapse fixes the worst instance.
 
 **Doc-hit triage fields.** `KnowledgeDoc` hits carry `title` / `status` /
@@ -77,24 +78,24 @@ ranking would fix the class of problem; this collapse fixes the worst instance.
 instead of paying a `load_source` round-trip per hit. Other node types stay
 lean.
 
-**Entity exclusion (`exclude_llm_entities`).** The second instance of the
-BM25 problem above: doc-extracted entities (Idea/Service/Module/Paper/Person/
-Event) took ~half the top-3 slots on the same 25-doc index, crowding out the
-labelled docs they came from. With the flag on (the MCP `search_graph`
-default when no `nodeTypes` is passed), they're filtered pre-cut (the 3x
-over-fetch refills the slots) and counted in `entities_excluded`. The
-discriminator is `_is_llm_entity` — entity type AND a `derived_from`/`vault`
-property — because "Service"/"Module" are also legacy runtime types that must
-keep appearing. An explicit `node_types` filter always wins, and the REST
-route / UI keep the flag off.
+**No entity exclusion any more.** `search` used to take an
+`exclude_llm_entities` flag (MCP-default-on) because doc-extracted entities —
+the second instance of the BM25 problem above — took ~half the top-3 slots on
+the same 25-doc index, crowding out the labelled docs they came from. The layer
+that produced them was **removed 2026-08-04** (see the wiki CLAUDE.md), so the
+flag, its `_is_llm_entity` discriminator, and the `entities_excluded` counter
+are gone with it. Nodes of those types in a pre-existing graph are returned like
+any other node — there is nothing left to filter, and hiding a legacy graph's
+contents would be worse than ranking it.
 
 Falls back to `GraphStore.search_nodes` substring matching when FTS is
-unavailable (e.g. before the index is built); the fallback applies the same
-entity filter.
+unavailable (e.g. before the index is built).
 
 ## Provenance semantics
 
-Two branches keyed off node type:
+Two branches keyed off node type (a third, `derived`, walked `DERIVED_FROM`
+from an LLM-extracted entity to its source document — removed 2026-08-04 with
+the entity layer; those node types now return `kind="unknown"`):
 
 - **Wiki** (`KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc`) — returns the node's
   agent/model/session/confidence properties plus the `CITES` outgoing chain.

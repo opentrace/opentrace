@@ -49,8 +49,8 @@ def build_search_text(name: str, node_type: str, properties: dict[str, Any]) -> 
 
     The gloss lives under different property names across node types —
     ``summary`` (KnowledgeDoc/Vault, code augmentations), ``one_line_summary``
-    (KnowledgeConcept pages), ``description`` (wiki entity nodes: Idea/Service/
-    Event/Paper/…). We index all of them so every node is findable by its
+    (KnowledgeConcept pages), ``description`` (legacy nodes written by other
+    producers). We index all of them so every node is findable by its
     content, not just its name: without this, a topic query only matches the
     name token and wiki-derived nodes (whose names are slugs) never surface
     against code symbols that match by exact name. Duplicates across keys are
@@ -981,7 +981,12 @@ class GraphStore:
         source_location: str = "",
         weight: float = 1.0,
     ) -> None:
-        """Upsert a SEMANTIC_EDGE relationship derived by LLM extraction."""
+        """Upsert a SEMANTIC_EDGE relationship.
+
+        Unused by any current producer: the LLM-extracted entity layer that
+        wrote these was removed on 2026-08-04 (see the wiki CLAUDE.md). Kept
+        so a graph built before then stays writable and readable — the edge
+        type is still in the proto schema."""
         self.merge_relationship(
             id=id,
             rel_type=REL_TYPE_SEMANTIC_EDGE,

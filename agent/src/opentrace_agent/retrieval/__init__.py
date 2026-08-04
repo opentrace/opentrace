@@ -26,10 +26,6 @@ from opentrace_agent.retrieval.communities import (
     list_communities,
 )
 from opentrace_agent.retrieval.counts import count_by
-from opentrace_agent.retrieval.cross_cutting import (
-    find_entities_mentioned_by,
-    find_pages_mentioning,
-)
 from opentrace_agent.retrieval.cross_domain import (
     cross_domain_bridges,
     find_communities_spanning_domains,
@@ -46,9 +42,7 @@ __all__ = [
     "cross_community_bridges",
     "cross_domain_bridges",
     "find_communities_spanning_domains",
-    "find_entities_mentioned_by",
     "find_orphans",
-    "find_pages_mentioning",
     "find_path",
     "find_via_relationship_to_type",
     "god_nodes",

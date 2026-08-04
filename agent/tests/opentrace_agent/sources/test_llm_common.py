@@ -105,7 +105,7 @@ class TestModelParity:
 
 
 class TestRoleModelResolution:
-    """The ``role`` arg lets entity extraction run a cheap model while wiki
+    """The ``role`` arg lets strict extraction run a cheap model while wiki
     synthesis keeps the flagship one, each with its own override env var."""
 
     @pytest.fixture(autouse=True)

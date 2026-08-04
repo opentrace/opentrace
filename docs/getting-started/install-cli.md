@@ -58,7 +58,7 @@ Some commands require optional dependency groups. Install them via the bracket s
 
 | Extra | What it pulls in | Required for |
 |---|---|---|
-| `graph` | `networkx`, `markitdown[all]`, `faster-whisper`, `yt-dlp`, `anthropic`, `openai` | Doc ingestion (PDF/DOCX/MD/HTML/...), entity extraction, community detection, vault compilation, audio/video transcription, URL fetching |
+| `graph` | `networkx`, `markitdown[all]`, `faster-whisper`, `yt-dlp`, `anthropic`, `openai` | Doc ingestion (PDF/DOCX/MD/HTML/...), community detection, vault compilation, audio/video transcription, URL fetching |
 | `graph-leiden` | `graspologic` (Python < 3.13) | The Leiden community detection algorithm. Without it, `opentraceai cluster` falls back to Louvain — slightly different output, not broken |
 | `graph-watch` | `watchdog` | `opentraceai watch` |
 
@@ -92,7 +92,7 @@ The package installs as `opentraceai`, but the CLI binary is `opentrace` (shorte
 
 ```bash
 opentrace index /path/to/repo                          # index a code repo
-opentrace index /path/to/repo --wiki                   # also ingest docs: entities + doc corpus
+opentrace index /path/to/repo --wiki                   # also ingest docs into a labelled corpus
 opentrace index /path/docs foo --wiki                  # index docs into a vault named foo
 opentrace vault ingest /path/docs                      # docs-only: no repo required
 opentrace vault list                                   # vaults visible from current project

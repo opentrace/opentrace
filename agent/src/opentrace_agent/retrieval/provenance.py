@@ -14,7 +14,7 @@
 
 """OT-1732 Provenance — return the trust chain for a node.
 
-Three branches keyed off node type / edges:
+Two branches keyed off node type / edges:
 
 * **Wiki** (``Vault`` / ``Page`` / ``Source``) — agent/model/session/
   confidence stamped at compile time plus the CITES chain to the original
@@ -23,11 +23,11 @@ Three branches keyed off node type / edges:
   ``Variable``) — ``commit_sha`` / ``indexer_version`` from the per-repo
   ``IndexMetadata`` node written by ``opentraceai index``; file path and line
   range come from the node itself.
-* **Derived** (entities created by ``opentraceai ingest``: ``Concept`` /
-  ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``) — walk the
-  outgoing ``DERIVED_FROM`` edge to the ``Source`` they came out of and
-  surface that Source's metadata + the ``transform`` discriminator
-  (e.g. ``"llm_extraction"``) recorded on the edge.
+
+A third **derived** branch walked ``DERIVED_FROM`` from an LLM-extracted
+entity back to the document it came out of. It went with the entity layer on
+2026-08-04 (see the wiki CLAUDE.md); nothing produces those nodes any more, so
+their type now falls through to ``kind="unknown"``.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ from opentrace_agent.store import GraphStore
 
 WIKI_NODE_TYPES = {"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"}
 CODE_NODE_TYPES = {"Repository", "Directory", "File", "Class", "Function", "Variable"}
-DERIVED_NODE_TYPES = {"Idea", "Service", "Module", "Paper", "Person", "Event"}
 
 
 def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
@@ -47,9 +46,9 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
     Returns
     -------
     dict
-        ``{node_id, node_type, kind, code, wiki, derived}`` where ``kind``
-        is one of ``"code"``, ``"wiki"``, ``"derived"``, or ``"unknown"``.
-        The unused sub-payloads are ``null``.
+        ``{node_id, node_type, kind, code, wiki}`` where ``kind``
+        is one of ``"code"``, ``"wiki"``, or ``"unknown"``.
+        The unused sub-payload is ``null``.
     """
     node = store.get_node(node_id)
     if node is None:
@@ -59,7 +58,6 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
             "kind": "unknown",
             "code": None,
             "wiki": None,
-            "derived": None,
             "error": f"node not found: {node_id}",
         }
 
@@ -73,7 +71,6 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
             "kind": "wiki",
             "code": None,
             "wiki": _wiki_provenance(store, node_id, ntype, props),
-            "derived": None,
         }
     if ntype in CODE_NODE_TYPES:
         return {
@@ -82,16 +79,6 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
             "kind": "code",
             "code": _code_provenance(store, node_id, ntype, props),
             "wiki": None,
-            "derived": None,
-        }
-    if ntype in DERIVED_NODE_TYPES:
-        return {
-            "node_id": node_id,
-            "node_type": ntype,
-            "kind": "derived",
-            "code": None,
-            "wiki": None,
-            "derived": _derived_provenance(store, node_id, props),
         }
     return {
         "node_id": node_id,
@@ -99,7 +86,6 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
         "kind": "unknown",
         "code": None,
         "wiki": None,
-        "derived": None,
     }
 
 
@@ -185,61 +171,6 @@ def _source_link(node_id: str, props: dict[str, Any], store: GraphStore | None =
                 link["file"] = n.get("id")
                 break
     return link
-
-
-# ---------------------------------------------------------------------------
-# Derived-from provenance (opentraceai ingest entities)
-# ---------------------------------------------------------------------------
-
-
-def _derived_provenance(store: GraphStore, node_id: str, props: dict[str, Any]) -> dict[str, Any]:
-    """Return ``{source, transform, source_uri, derived_from}`` for a derived entity.
-
-    Walks the outgoing ``DERIVED_FROM`` edge to the originating ``Source`` and
-    surfaces that Source's metadata. The ``transform`` field on the edge
-    distinguishes how the entity was extracted (``llm_extraction`` for
-    `opentraceai ingest` today). When the edge or target is missing, returns
-    ``source=None`` so callers can detect orphaned entities rather than
-    crashing.
-    """
-    # Cheap signals already on the node — these were stamped at ingest time
-    # so consumers don't have to traverse to learn the immediate Source.
-    derived_from = props.get("derived_from")
-    source_uri = props.get("source_uri")
-
-    chain: list[dict[str, Any]] = []
-    target: dict[str, Any] | None = None
-    transform: str | None = None
-
-    traversal = store.traverse(
-        node_id,
-        direction="outgoing",
-        max_depth=1,
-        relationship_type="DERIVED_FROM",
-    )
-    for r in traversal:
-        node = r.get("node") or {}
-        rel = r.get("relationship") or {}
-        if node.get("type") != "KnowledgeDoc":
-            continue
-        rel_props = rel.get("properties") or {}
-        transform = rel_props.get("transform") or transform
-        sp = node.get("properties") or {}
-        link = _source_link(node["id"], sp, store)
-        link["content_type"] = sp.get("content_type")
-        link["source_uri"] = sp.get("source_uri") or source_uri
-        link["corpus_path"] = sp.get("corpus_path")
-        chain.append(link)
-        if target is None:
-            target = link
-
-    return {
-        "source": target,
-        "transform": transform,
-        "source_uri": source_uri,
-        "derived_from": derived_from,
-        "chain": chain,
-    }
 
 
 # ---------------------------------------------------------------------------

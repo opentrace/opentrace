@@ -4,11 +4,12 @@
 
 ## The mental model
 
-The graph holds three layers:
+The graph holds two layers:
 
 1. **Code layer** — `File`, `Class`, `Function`, `Variable` nodes from tree-sitter. Always produced.
-2. **Entity layer** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from LLM extraction over ingested docs. Produced by `--wiki`.
-3. **Doc layer** — labelled `KnowledgeDoc` nodes, linked to each other by the authors' own links and to their `File` twins, bodies kept verbatim in the corpus. Produced by `--wiki`.
+2. **Doc layer** — labelled `KnowledgeDoc` nodes, linked to each other by the authors' own links and to their `File` twins, bodies kept verbatim in the corpus. Produced by `--wiki`.
+
+An LLM-extracted **entity layer** (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes over doc bodies) was **removed on 2026-08-04**: three benchmark runs measured zero agent usage of it once corpus `grep` existed, while it crowded labelled documents out of the top search slots, fragmented single concepts across several nodes, and re-extracted only ~65% consistently between runs. Whole-corpus questions are answered by `grep`; see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced).
 
 One flag turns on both LLM layers: `--wiki`. There is no synthesis layer — doc bodies are never rewritten.
 
@@ -34,10 +35,10 @@ What happens:
 2. Doc files (PDF, DOCX, PPTX, XLSX, CSV, HTML, MD, TXT, RST, images via OCR, audio/video via transcription) discovered and converted via markitdown
 3. Each doc → `KnowledgeDoc` node (`corpus::<sha>`), body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults and any compile that mirrors to a graph; `~/.opentrace/corpus/<sha>.md` for `--global` compiles, which `vault attach` later copies into a project)
 4. Every repo-walked doc's KnowledgeDoc gets a `MIRRORS` edge to its `File` twin and a repo-relative `path` property — the corpus layer and the code tree join in one hop. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created during linking. Docs not from a repo walk (uploads, URLs) have no edge
-5. One LLM call per doc emits the KnowledgeDoc's navigation label (`title` + one-line summary) and its entity graph (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes with `DERIVED_FROM` edges back to the doc, `SEMANTIC_EDGE` between entities) — and nothing else; the raw body stays in the corpus
+5. One LLM call per doc emits the KnowledgeDoc's navigation label — a one-line summary, plus a `title` derived mechanically from the filename — and nothing else; the raw body stays in the corpus
 6. Every relative link an author wrote between docs becomes a `KnowledgeDoc -LINKS_TO-> KnowledgeDoc` edge — parsed mechanically from markdown links, reference definitions, and HTML anchors, with no LLM involved. This is the doc-side analogue of the code layer's import edges: it records structure the author declared. Links are resolved against the linking doc's own directory (repo-root-relative `/docs/x.md` also works); external URLs, bare `#fragments`, and paths that escape the repo root are dropped, as is anything that doesn't resolve to another indexed doc
 7. Each doc is stamped with an epistemic `status` — `authoritative`, `design_history`, or `design_history_archived` — so retrieval can tell current docs from the design record
-8. Graph mirror has `KnowledgeVault` + `KnowledgeDoc` nodes plus `CONTAINS` / `MENTIONS` / `LINKS_TO` / `MIRRORS` edges, and a `DOCUMENTS` edge from the `Repository` to the vault it spawned
+8. Graph mirror has `KnowledgeVault` + `KnowledgeDoc` nodes plus `CONTAINS` / `LINKS_TO` / `MIRRORS` edges, and a `DOCUMENTS` edge from the `Repository` to the vault it spawned
 
 The result is a labelled, linked, searchable corpus of the documents themselves — **read verbatim** via `load_source`, never rewritten. Nothing is synthesized.
 
@@ -57,7 +58,7 @@ Cost: ~1 LLM call per doc. Pre-flight estimate is printed before any call runs.
 
 | Flag | What it does |
 |---|---|
-| `--wiki` | Walks docs + runs the doc-ingestion pipeline: one LLM call per doc (navigation label + entity graph), then the mechanical link pass (`MIRRORS` File twins, doc→doc `LINKS_TO`, epistemic `status`). Corpus-only — bodies stay verbatim, nothing is synthesized. Implies a vault |
+| `--wiki` | Walks docs + runs the doc-ingestion pipeline: one LLM call per doc (its navigation label), then the mechanical link pass (`MIRRORS` File twins, doc→doc `LINKS_TO`, epistemic `status`). Corpus-only — bodies stay verbatim, nothing is synthesized. Implies a vault |
 | `[VAULT_NAME]` (2nd positional) | Override the auto-derived vault name (defaults to path basename / repo name / file stem / URL slug). Implies `--wiki` when given. Names are unique across scopes — a genuinely new vault whose name is already taken (locally *or* globally) is auto-suffixed `-1`, `-2`, …; re-indexing the same repo reuses the vault it made before rather than suffixing again |
 | `--global` | Compile the vault into `~/.opentrace/vaults/` instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki`. Disk only — run `vault attach <name>` to mirror into this project's graph |
 
@@ -93,7 +94,6 @@ arXiv abstract URLs are auto-rewritten to the PDF.
 Default-on for `--wiki`. When you re-run on a path:
 
 - KnowledgeDocs the walked set lost since the last run → deleted from graph + corpus body deleted from disk
-- Orphaned entities (no remaining `DERIVED_FROM` to a surviving KnowledgeDoc) → deleted
 - If the vault carries legacy concept pages, a `concept` page that cited a deleted doc has the dangling `CITES` edge removed, then:
     - **Still has other citations** → kept, stamped `stale_since=<timestamp>`. There is no regeneration path — nothing writes page bodies any more
     - **No remaining citations** → deleted entirely

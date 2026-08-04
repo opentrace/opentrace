@@ -12,15 +12,15 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `find_orphans` | Nodes of a type with no edges of a given type | "Functions never called" |
 | `find_via_relationship_to_type` | All `(A) -[edge]-> (B)` pairs for given types | "All Files that DEFINE Classes" |
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
-| `provenance` | Trust chain — code (commit_sha + line range), wiki (CITES chain), or derived (DERIVED_FROM KnowledgeDoc) | "Where did this come from?" |
+| `provenance` | Trust chain — code (commit_sha + line range) or wiki (CITES chain) | "Where did this come from?" |
 | `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus (normalized bodies, hits joined to doc id/title/status; plus legacy pages if the vault has any) | "Find this exact string in source" / "prove no document mentions X" / "what does every doc say about X" |
 | `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
-| `cross_domain_bridges` | Edges spanning code / entity / page domains | "What connects code and docs?" |
+| `cross_domain_bridges` | Edges spanning code / page domains | "What connects code and docs?" |
 | `find_communities_spanning_domains` | Communities whose members span ≥N domains | Cross-cutting topics |
-| `find_pages_mentioning` | Pages and KnowledgeDocs that MENTION a given entity (typed hits) | "Pages and docs discussing this concept" |
-| `find_entities_mentioned_by` | Entities a Page MENTIONS | "What does this page reference?" |
+
+`find_pages_mentioning` and `find_entities_mentioned_by` were removed on 2026-08-04 with the entity layer they traversed. **"Which documents discuss X" is a `grep` sweep** — exhaustive, verbatim, and pre-labelled with each doc's title and status, rather than a traversal into LLM-guessed entity nodes. See [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced) for why.
 
 ## MCP tools
 
@@ -28,10 +28,8 @@ The MCP server (`opentraceai mcp`) exposes each primitive as a tool. The Claude 
 
 ```
 search_graph                            # ranked FTS over names + summary. KnowledgeDoc
-                                        #  hits carry title/status/one_line_summary/path;
-                                        #  doc-extracted entity nodes are excluded by
-                                        #  default (short names outrank the docs they
-                                        #  came from) — opt in via nodeTypes
+                                        #  hits carry title/status/one_line_summary/path
+                                        #  so you can triage without opening each doc
 get_node                                # full node by id + immediate neighbors
 list_nodes                              # all nodes of a type. Default: a plain
                                         #  array of full nodes. paged=True adds
@@ -96,7 +94,7 @@ DELETE /api/vaults/{vault}?scope=local|global
 
 `view=project` (default) returns local vaults from cwd plus globals already attached to this project's graph; `view=global` lists every global on the machine with an `attached` flag. The `?scope=` query param disambiguates when a name exists in both scopes — when omitted, the server resolves local-first.
 
-`POST /compile` is **corpus-only**, like every other compile path: it indexes the uploaded documents (labels, entity graph, doc links, verbatim bodies) and synthesizes nothing. The `pages` routes serve legacy concept pages from vaults compiled before synthesis was removed; they return an empty list for a vault compiled since.
+`POST /compile` is **corpus-only**, like every other compile path: it indexes the uploaded documents (labels, doc links, verbatim bodies) and synthesizes nothing. The `pages` routes serve legacy concept pages from vaults compiled before synthesis was removed; they return an empty list for a vault compiled since.
 
 The UI's `ServerGraphStore` consumes these. See [Browser](../getting-started/install-browser.md) for setup.
 
@@ -114,8 +112,6 @@ from opentrace_agent.retrieval import (
     cross_community_bridges,
     cross_domain_bridges,
     find_communities_spanning_domains,
-    find_pages_mentioning,
-    find_entities_mentioned_by,
 )
 
 with GraphStore(".opentrace/index.db") as store:
@@ -144,18 +140,9 @@ From `opentraceai index` (always produced):
 | `Variable` | A field / parameter / module-level variable |
 | `Dependency` | An external package from a manifest (`package.json`, `pyproject.toml`, etc.) |
 
-### Entity layer
+### Entity layer (no longer produced)
 
-From `index --wiki` — flat LLM-extracted entities with no body:
-
-| Type | Examples |
-|---|---|
-| `Idea` | "Authentication", "Diffusion Models", "Rate Limiting" — abstract concepts |
-| `Service` | "auth-service", "billing-api" |
-| `Module` | "TokenBucket", "AuthMiddleware" |
-| `Paper` | "Attention Is All You Need", arXiv IDs |
-| `Person` | "Karen Chen", "Vaswani et al." |
-| `Event` | "the 2024 release", "the security incident" |
+`index --wiki` used to extract flat, bodiless entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from every doc. **Removed 2026-08-04** — three benchmark runs measured zero agent usage of them once corpus `grep` existed, and they cost: crowding labelled documents out of the top search slots, ~65% run-to-run stability, one concept fragmenting into several nodes, and the same real-world thing landing under two types. The types stay valid so pre-removal graphs remain readable; nothing writes them. (`Service` and `Module` are separately in use as runtime types.)
 
 ### Concept layer
 
@@ -172,7 +159,7 @@ From `index --wiki` — the indexed documents themselves, bodies verbatim in the
 | Type | What it is |
 |---|---|
 | `Community` | Cluster detected by `opentraceai cluster` |
-| `Hyperedge` | Group relationship of 3+ entities |
+| `Hyperedge` | Group relationship of 3+ entities. No longer produced — went with the entity layer |
 | `IndexMetadata` | Per-repo provenance record (commit sha, index version) |
 
 ## Edge types
@@ -184,16 +171,16 @@ From `index --wiki` — the indexed documents themselves, bodies verbatim in the
 | `CALLS` | Function → Function | Resolved call |
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
-| `DERIVED_FROM` | Idea/Service/... → KnowledgeDoc | Entity provenance (with `transform="llm_extraction"`) |
+| `DERIVED_FROM` | Variable → Variable/Function | Code-side derivation, resolved by the pipeline. Also written entity → KnowledgeDoc by the entity layer removed 2026-08-04 — legacy graphs only |
 | `CITES` | Page(concept) → KnowledgeDoc | Direct wiki provenance (one hop, keyed by doc sha). Legacy only — no compile writes these now, but `provenance` still walks them for pre-2026-08-03 vaults |
 | `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's author wrote to another doc — parsed mechanically (no LLM) from markdown links, reference definitions, and HTML anchors, resolved against the linking doc's directory. The doc-side analogue of `IMPORTS`. External URLs, bare fragments, and out-of-repo targets are dropped |
 | `LINKS_TO` | Page → Page | Wiki-link in a page body (`[[Title]]`). Legacy only — reachable solely from pages a pre-2026-08-03 compile left behind |
-| `MENTIONS` | Page/KnowledgeDoc → Idea/Service/... | Page body or doc corpus markdown references an entity name. Deduped against `DERIVED_FROM` — a doc gets no MENTIONS to an entity it was the extraction source of (that's the reverse `DERIVED_FROM` edge). `find_pages_mentioning` unions both |
+| `MENTIONS` | Page/KnowledgeDoc → Idea/Service/... | **No longer produced** — went with the entity layer on 2026-08-04. Use `grep` for "which documents discuss X" |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
-| `SEMANTIC_EDGE` | Idea/Service/... → Idea/Service/... | LLM-proposed relationship between entities, with confidence tier |
+| `SEMANTIC_EDGE` | Idea/Service/... → Idea/Service/... | **No longer produced** — went with the entity layer on 2026-08-04 |
 | `MEMBER_OF_COMMUNITY` | any non-internal node → Community | Cluster membership |
-| `PARTICIPATES_IN` | Idea/Service/... → Hyperedge | Group-relationship membership |
+| `PARTICIPATES_IN` | Idea/Service/... → Hyperedge | Group-relationship membership. **No longer produced** |
 
 ## Vault-scoped retrieval
 
@@ -204,21 +191,21 @@ overview(store, vault_scope="research")          # only nodes tagged with the re
 search(store, "diffusion", vault_scope="papers")  # FTS scoped to one vault
 ```
 
-`vault` is denormalised onto every `KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc` / entity node so the filter is a simple property equality — no graph traversal needed.
+`vault` is denormalised onto every `KnowledgeVault` / `KnowledgeConcept` / `KnowledgeDoc` node so the filter is a simple property equality — no graph traversal needed.
 
 ## Confidence + provenance
 
 Nodes carry typed confidence where appropriate:
 
-- **Entities** — `confidence` (numeric 0.0–1.0) + `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`)
-- **Pages** — same fields, plus `stale_since` set by autoprune when a cited doc is removed. Legacy vaults only
-- **Edges** — confidence stamped on `SEMANTIC_EDGE` and `CALLS` (resolver confidence)
+- **Pages** — `confidence` (numeric 0.0–1.0) + `confidence_tier` (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`), plus `stale_since` set by autoprune when a cited doc is removed. Legacy vaults only
+- **Edges** — confidence stamped on `CALLS` (resolver confidence)
 
 `provenance(node_id)` walks the right trust chain depending on node type:
 
 - **Code** — reads commit_sha + indexer version from the per-repo `IndexMetadata` node, plus file_path + line_range from the node
 - **Wiki** — walks `CITES` from a legacy concept page directly to its KnowledgeDocs (a KnowledgeDoc returns its own metadata; that's the only wiki case a current vault produces)
-- **Derived** — walks `DERIVED_FROM` from an entity to its KnowledgeDoc
+
+A third `derived` branch walked `DERIVED_FROM` from an LLM-extracted entity to its source document. It was removed 2026-08-04 with the entity layer; those node types now return `kind="unknown"`.
 
 Chain entries for ingested docs have `kind="corpus_doc"` and carry the doc's `path`; when the doc has a `MIRRORS` twin in the code tree, the entry also includes the mirrored `File` id in a `file` field.
 

@@ -54,6 +54,16 @@ Consumers (CLI, UI via `serve.py`) iterate the generator to drive progress UI. E
 
 Use `collect_pipeline()` for tests (drains the generator, returns final `PipelineResult`). Use `run_pipeline()` for fire-and-forget. Use `core_pipeline()` when you need the raw event stream.
 
+## Autoprune
+
+`autoprune.py` is not a pipeline stage — it runs after `index --wiki` / `vault
+ingest` to delete graph state for docs that disappeared from disk. It sweeps
+orphan `KnowledgeDoc` nodes, their corpus bodies, and legacy concept pages
+(deleted when they lose every citation, otherwise stamped `stale_since`). Its
+third sweep — deleting LLM-extracted entities orphaned by a removed doc — was
+removed 2026-08-04 with the entity layer itself, along with
+`pipeline/entity_merge.py`; see `../wiki/CLAUDE.md`.
+
 ## Pitfalls
 
 - **Cancellation is cooperative.** Stages check `ctx.cancelled` between units; an in-progress tree-sitter parse cannot be interrupted. Don't expect sub-second cancel latency on large files.

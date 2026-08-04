@@ -245,6 +245,12 @@ message HyperedgeNode {
 // Source and target are arbitrary graph nodes. The `relation` field is a
 // free-form verb naming the edge type (e.g. "calls", "cites", "depends_on",
 // "rationale_for").
+//
+// NOTE (2026-08-04): no producer writes these any more. The LLM-extracted
+// entity layer that emitted them was removed after three benchmark runs
+// measured zero agent usage of the resulting nodes — see
+// agent/src/opentrace_agent/wiki/CLAUDE.md. The message is retained so graphs
+// built before then stay readable; do not remove or renumber it.
 message SemanticEdgeRel {
   string         id               = 1;
   string         source_id        = 2;
@@ -390,12 +396,16 @@ message DocumentsRel {
 // MentionsRel links a KnowledgeConcept or KnowledgeDoc (which have bodies) to an
 // Idea/Service/Module/Paper/Person/Event entity whose name appears in the
 // body — page markdown for KnowledgeConcepts, raw corpus markdown for KnowledgeDocs.
-// Bridges the content layers with the flat-entity layer so cross-cutting
-// queries work — "which pages or documents discuss this concept?".
+// Bridged the content layers with the flat-entity layer so cross-cutting
+// queries worked — "which pages or documents discuss this concept?".
 //
-// Written by the wiki ingest graph_writer after each compile; uses
-// whole-word name matching against the vault's entity set
-// (case-insensitive except for Person types).
+// NOTE (2026-08-04): no producer writes these any more. The wiki ingest
+// graph_writer wrote them by whole-word matching against the vault's entity
+// set, and that entity layer was removed after three benchmark runs measured
+// zero agent usage of it — "which documents discuss X" is now answered by a
+// corpus `grep` sweep instead. See agent/src/opentrace_agent/wiki/CLAUDE.md.
+// The message is retained so graphs built before then stay readable; do not
+// remove or renumber it.
 message MentionsRel {
   string id        = 1;
   string source_id = 2;   // KnowledgeConcept or KnowledgeDoc

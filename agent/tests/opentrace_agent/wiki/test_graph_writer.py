@@ -109,7 +109,6 @@ from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
     REL_TYPE_CONTAINS,
     REL_TYPE_DOCUMENTS,
     REL_TYPE_LINKS_TO,
-    REL_TYPE_MENTIONS,
     REL_TYPE_MIRRORS,
     corpus_doc_node_id,
     delete_vault_from_graph,
@@ -293,27 +292,6 @@ class TestWriteVaultToGraph:
         targets = {o["node"]["properties"]["slug"] for o in outgoing}
         assert "concept/costs" in targets
 
-    def test_mentions_from_pages_and_sources(self, store):
-        # Entity in this vault whose name appears in a page body AND in a
-        # source's raw markdown.
-        store.add_node("idea::revenue", "Idea", "revenue", {"vault": "kb"})
-        meta, bodies = _make_meta()
-        write_vault_to_graph(store, meta, bodies, normalized=_normalized())
-
-        incoming = store.traverse(
-            "idea::revenue",
-            direction="incoming",
-            max_depth=1,
-            relationship_type=REL_TYPE_MENTIONS,
-        )
-        by_type = {r["node"]["type"] for r in incoming}
-        ids = {r["node"]["id"] for r in incoming}
-        # The concept page mentions "revenue" (in its body), and report.pdf's
-        # raw markdown does too — both should carry MENTIONS edges.
-        assert NODE_TYPE_KNOWLEDGE_CONCEPT in by_type
-        assert NODE_TYPE_KNOWLEDGE_DOC in by_type
-        assert corpus_doc_node_id("sha1") in ids
-
     def test_idempotent_rewrite(self, store):
         meta, bodies = _make_meta()
         write_vault_to_graph(store, meta, bodies)
@@ -321,28 +299,6 @@ class TestWriteVaultToGraph:
         pages = store.list_nodes(NODE_TYPE_KNOWLEDGE_CONCEPT)
         slugs = [p["properties"]["slug"] for p in pages]
         assert sorted(slugs) == sorted(set(slugs))
-
-    def test_derived_pairs_skip_redundant_doc_mention(self, store):
-        """A doc↔entity pair covered by DERIVED_FROM gets no reverse MENTIONS,
-        but the same entity's mention by a DIFFERENT doc still does."""
-        store.add_node("idea::revenue", "Idea", "revenue", {"vault": "kb"})
-        meta, bodies = _make_meta()
-        # "revenue" appears in report.pdf (sha1) AND memo (sha2 body says
-        # nothing) — actually both source markdowns; mark sha1 as the entity's
-        # derivation source so its MENTIONS is suppressed.
-        derived = {(corpus_doc_node_id("sha1"), "idea::revenue")}
-        write_vault_to_graph(store, meta, bodies, normalized=_normalized(), derived_pairs=derived)
-
-        srcs = {
-            r["node"]["id"]
-            for r in store.traverse(
-                "idea::revenue", direction="incoming", max_depth=1, relationship_type=REL_TYPE_MENTIONS
-            )
-            if r["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC
-        }
-        # sha1 suppressed (DERIVED_FROM covers it); the concept page's MENTIONS
-        # (not a corpus doc) is unaffected.
-        assert corpus_doc_node_id("sha1") not in srcs
 
 
 class TestDeleteVaultFromGraph:

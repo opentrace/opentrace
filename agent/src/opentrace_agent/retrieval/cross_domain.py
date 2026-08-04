@@ -18,7 +18,14 @@ After Phase 5 the graph contains three coexisting domains:
 
 * **code** — `Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`
-* **entity** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`
+* **entity** — `Idea` / `Paper` / `Person` / `Event`. Empty on any graph this
+  repo builds today: the LLM-extracted entity layer was removed on
+  2026-08-04 (see the wiki CLAUDE.md). The domain is kept so pre-removal
+  graphs still classify correctly. `Service` and `Module` were deliberately
+  dropped from it — the extractor reused those two existing type names, but
+  they are code/runtime types written by other producers, so leaving them
+  here would classify a runtime `Service` node as an entity on every new
+  graph.
 * **page** — `Vault` / `Page` / `Source`
 
 This module surfaces the bridges across those domains — the "AuthMiddleware
@@ -36,7 +43,7 @@ from opentrace_agent.store import GraphStore
 # retrieval-layer concept — the store doesn't care about domains.
 DOMAINS: dict[str, frozenset[str]] = {
     "code": frozenset({"Repository", "Directory", "File", "Class", "Function", "Variable"}),
-    "entity": frozenset({"Idea", "Service", "Module", "Paper", "Person", "Event"}),
+    "entity": frozenset({"Idea", "Paper", "Person", "Event"}),
     "page": frozenset({"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"}),
 }
 

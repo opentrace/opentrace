@@ -9,13 +9,22 @@ The graph organises into three domains:
 | Domain | What lives there | Produced by |
 |---|---|---|
 | **code** | `Repository`, `Directory`, `File`, `Class`, `Function`, `Variable`, `Dependency` | `opentraceai index` (tree-sitter) |
-| **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | `opentraceai index --wiki` (per-doc LLM ingestion) |
 | **page** | `KnowledgeVault`, `KnowledgeDoc` | `opentraceai index --wiki` / `vault ingest` (doc ingestion) |
 | **page** | `KnowledgeConcept` | nothing — see below |
+| **entity** | `Idea`, `Service`, `Module`, `Paper`, `Person`, `Event` | nothing — see below |
 
-Doc ingestion is corpus-only: it indexes the documents (labels, epistemic status, entity graph, doc↔doc links, `File` twins) and keeps their bodies verbatim.
+Doc ingestion is corpus-only: it indexes the documents (labels, epistemic status, doc↔doc links, `File` twins) and keeps their bodies verbatim.
 
-`KnowledgeConcept` and the `CITES` edges that back it remain valid types, but **nothing produces them**. They came from a concept-page synthesis stage removed on 2026-08-03 (it measured 88.4% against a 98.6% control — restating a source strips its hedges, tense, and attribution). The types stay in the ontology because a vault compiled before the removal still has pages on disk, and a re-compile must keep mirroring them rather than dropping them from the graph.
+### Types that remain valid but are no longer produced
+
+Two layers were measured and removed. Their node and edge types stay in the ontology so a graph built before the removal is still readable, and a re-compile of such a graph keeps mirroring what it already has. **Nothing writes them on a fresh index.**
+
+- **`KnowledgeConcept` + `CITES` — removed 2026-08-03.** A concept-page synthesis stage produced them. It measured 88.4% against a 98.6% control: restating a source strips its hedges, tense, and attribution.
+- **The entity domain (`Idea`, `Paper`, `Person`, `Event`) + `DERIVED_FROM`, `SEMANTIC_EDGE`, `MENTIONS`, `Hyperedge`, `PARTICIPATES_IN` — removed 2026-08-04.** An LLM pass extracted typed entities from each document and linked them. Five measurements retired it: **zero agent usage across three benchmark runs** once corpus `grep` existed; entity nodes **crowded labelled documents out of the top search slots** (short names win BM25); extraction was only **~65% stable run to run**; names **fragmented one concept into five nodes** ("Cold chain", "Cold-chain integrity", "Cold-chain monitoring", …); and the same real-world thing landed under **two different types** (`Midwest Beef Co` as both `Service` and `Person`). "Which documents discuss X" is now answered by `grep` over the corpus — exhaustive, verbatim, and pre-labelled with each doc's title and status.
+
+  Note that `Service` and `Module` are *also* pre-existing runtime node types written by other producers, so those two names remain in active use.
+
+What replaced both: the document itself. A `KnowledgeDoc` carries a title, a one-line summary, and an epistemic `status`; its normalized body is verbatim in the corpus, readable with `load_source`, enumerable with `list_nodes`, and sweepable with `grep`.
 
 Auxiliary types (`Community`, `Hyperedge`, `IndexMetadata`) are produced by cluster / analyze / index-bookkeeping and aren't part of any domain.
 
@@ -81,9 +90,9 @@ External package from a manifest (`package.json`, `pyproject.toml`, `go.mod`, et
 - `id` — `pkg:<registry>:<name>`
 - `version`, `registry`
 
-### Entity domain
+### Entity domain (no longer produced)
 
-All entity-type nodes share the same shape:
+Retained for reading graphs built before 2026-08-04 — see [above](#types-that-remain-valid-but-are-no-longer-produced). All entity-type nodes share the same shape:
 
 - `id` — `<source-stem>_<entity-slug>` (lowercased, [a-z0-9_])
 - `name` — human-readable label
@@ -91,9 +100,7 @@ All entity-type nodes share the same shape:
 - `source_uri` — copied from the originating doc for quick reference
 - `vault` — vault name when produced via `--wiki`
 
-The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) is the node type itself.
-
-`Idea` is the catch-all bucket — anything the LLM names that doesn't fit a concrete type lands here.
+The type discriminator (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) is the node type itself, with `Idea` as the catch-all bucket.
 
 ### Knowledge domain
 
@@ -148,7 +155,7 @@ A cluster detected by Leiden or Louvain.
 
 #### `Hyperedge`
 
-A set of three or more entities that act as one unit (a workflow, a layered design, a recurring theme). Proposed by an LLM pass that runs after entity extraction.
+A set of three or more entities that act as one unit (a workflow, a layered design, a recurring theme). Proposed by an LLM pass that ran after entity extraction — **no longer produced** (see [above](#types-that-remain-valid-but-are-no-longer-produced)).
 
 - `id`, `name`, `relation`, `confidence` (tier), `confidence_score`, `source_file`
 
@@ -173,14 +180,16 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 | `IMPORTS` | `File → Dependency` | Resolved import |
 | `DEPENDS_ON` | `Repository → Dependency` | Manifest dependency |
 
-### Entity provenance
+### Entity provenance (no longer produced)
+
+Retained for reading graphs built before 2026-08-04 — see [above](#types-that-remain-valid-but-are-no-longer-produced).
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `DERIVED_FROM` | entity → KnowledgeDoc | Entity came from analyzing this doc. Carries `transform="llm_extraction"`. Walked by `retrieval.provenance` for the derived branch |
+| `DERIVED_FROM` | entity → KnowledgeDoc | Entity came from analyzing this doc. Carries `transform="llm_extraction"` |
 | `SEMANTIC_EDGE` | entity → entity | LLM-proposed relationship. Carries `relation`, `confidence` tier, `confidence_score`, `source_file`, optional `source_location`, optional `weight` |
 
-Entities derive from KnowledgeDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
+`DERIVED_FROM` is also written between `Variable` nodes by the code pipeline's derivation resolution — that use is unaffected and current.
 
 ### Knowledge provenance
 
@@ -194,7 +203,7 @@ Entities derive from KnowledgeDocs; if code-derived entities are ever introduced
 
 | Edge | From → To | Meaning |
 |---|---|---|
-| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | Doc corpus markdown (or a legacy concept-page body, when pages exist) contains the entity's name as a whole word. Bridges page ↔ entity layers. Cheap (no LLM) — written post-build via name match. Deduped against `DERIVED_FROM`: the doc an entity was extracted *from* gets no reverse MENTIONS (that pair is the stronger `entity → doc` provenance edge), so a doc's MENTIONS are the entities it references but did not originate. "Every doc referencing X" = MENTIONS ∪ incoming `DERIVED_FROM` |
+| `MENTIONS` | KnowledgeConcept/KnowledgeDoc → entity | **No longer produced** (see [above](#types-that-remain-valid-but-are-no-longer-produced)). Bridged the page and entity layers by matching an entity's name in a doc body. Use `grep` for "which documents discuss X" |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the KnowledgeDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
 | `DOCUMENTS` | Repository → KnowledgeVault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 
@@ -203,7 +212,7 @@ Entities derive from KnowledgeDocs; if code-derived entities are ever introduced
 | Edge | From → To | Meaning |
 |---|---|---|
 | `MEMBER_OF_COMMUNITY` | any node → Community | Cluster membership |
-| `PARTICIPATES_IN` | entity → Hyperedge | Group-relationship membership |
+| `PARTICIPATES_IN` | entity → Hyperedge | Group-relationship membership. **No longer produced** |
 
 ## Confidence rubric
 
@@ -219,7 +228,7 @@ All confidence values snap to the discrete rubric, never the soft 0.5 default:
 
 ## KnowledgeVault scope as a property
 
-Every node in the page or entity domain produced from a vault carries a `vault=<name>` property. Two consequences:
+Every node in the page domain produced from a vault carries a `vault=<name>` property (entity-domain nodes in pre-2026-08-04 graphs carry it too). Two consequences:
 
 - **Scoped retrieval is property equality.** Functions like `search(store, query, vault_scope="research")` filter by `node.properties.vault == "research"` — no graph traversal.
 - **KnowledgeVault attach is per-vault.** Mirroring one vault into a graph touches only nodes with that vault tag. Different vaults can share a graph without interfering.
@@ -232,7 +241,7 @@ Every node in the page or entity domain produced from a vault carries a `vault=<
 | `<file>::<symbol>` | `Class` / `Function` |
 | `<file>::<class>::<method>` | `Function` (method) |
 | `pkg:<registry>:<name>` | `Dependency` |
-| `<stem>_<entity-slug>` | Idea / Service / Module / Paper / Person / Event |
+| `<stem>_<entity-slug>` | Idea / Service / Module / Paper / Person / Event (legacy; no longer produced) |
 | `vault::<name>` | `KnowledgeVault` |
 | `<vault>::<kind_dir>/<base>` | `KnowledgeConcept` (e.g. `kb::concept/revenue`) |
 | `corpus::<sha256>` | `KnowledgeDoc` |

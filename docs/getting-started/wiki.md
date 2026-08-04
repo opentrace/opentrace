@@ -2,7 +2,7 @@
 
 A **vault** is an indexed collection of documents — papers, design docs, transcripts, notebooks — mirrored into the same knowledge graph as your code, so retrieval tools can pull from both surfaces.
 
-A vault is a **document corpus**: each doc gets a navigation label, an epistemic status, entity edges, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Nothing is summarized into new prose; there is no synthesis step.
+A vault is a **document corpus**: each doc gets a navigation label, an epistemic status, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Nothing is summarized into new prose; there is no synthesis step, and no entity graph is extracted from the text (that layer was removed on 2026-08-04 — see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced)).
 
 Vaults are produced two ways, sharing one pipeline:
 
@@ -29,7 +29,7 @@ What happens (either entry point):
 
 1. The walker discovers PDF / DOCX / Markdown / HTML / etc. under the folder, and prints a per-extension count + cost estimate **before** any LLM spend
 2. Each doc is converted to markdown via markitdown, body persisted to the scope-appropriate corpus dir (`<project>/.opentrace/corpus/<sha>.md` for local vaults, `~/.opentrace/corpus/<sha>.md` for globals)
-3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived from the filename + a one-line summary) and extracts its entity graph. Nothing is written in the model's own voice — the raw body stays in the corpus, readable via the `load_source` tool
+3. One LLM call per doc labels the `KnowledgeDoc` node with a navigation label (a `title` derived mechanically from the filename + a one-line summary from the model). That is the only thing the call produces. Nothing is written in the model's own voice — the raw body stays in the corpus, readable via the `load_source` tool
 4. Mechanical passes (no LLM) finish the corpus: a folder-relative `path` stamp, a `LINKS_TO` edge for every relative link an author wrote from one doc to another, and an epistemic `status` stamp (`authoritative` / `design_history` / `design_history_archived`; force one for a whole folder with `vault ingest --status`). Repo walks (`index --wiki`) additionally get a `MIRRORS` edge to each doc's `File` twin — `vault ingest` builds no code tree, so the KnowledgeDoc *is* the document
 5. The vault metadata lives at `<project>/.opentrace/vaults/<name>/` and everything is mirrored into this project's graph. Globals are written to disk only — mirror with an explicit `vault attach` (see below).
 
@@ -198,9 +198,6 @@ What you get from a single command:
 - `MIRRORS` edges joining each repo-walked KnowledgeDoc to its `File` twin in the code tree (the File node is created during linking if the code walk skipped the doc's extension — either twin reaches the other in one hop)
 - `LINKS_TO` edges between KnowledgeDocs for the links the docs' authors wrote to each other
 - A `DOCUMENTS` edge joining the `Repository` to the vault it spawned (plus a `spawned_from` stamp on the vault) — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
-- Flat entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from LLM extraction over the ingested docs
-- `MENTIONS` edges connecting docs (and legacy pages, when present) to the entities they discuss (matched against raw corpus markdown and page bodies)
-- `DERIVED_FROM` edges connecting entities to the KnowledgeDoc they came from
 
 Then surface cross-cutting structure:
 

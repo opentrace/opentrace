@@ -15,26 +15,31 @@
 """DocExtraction stage — one LLM call per newly-ingested source.
 
 Runs after Normalize. Each new document gets a single extraction call that
-emits:
-
-* a one-line summary + display title — stamped on the ``KnowledgeDoc`` node
-  as its navigation label (what agents see in search hits and listings
-  before deciding to ``load_source`` the body),
-* the entity graph (typed entities + edges) — merged and mirrored into
-  the knowledge graph.
+emits exactly one thing: a one-line summary. Together with the display title
+(derived mechanically from the filename, no LLM) it becomes the
+``KnowledgeDoc`` node's navigation label — what agents see in search hits and
+listings before deciding to ``load_source`` the body.
 
 There is no per-document wiki page and no synthesis. The raw
 post-markitdown body lives in the corpus (``KnowledgeDoc.corpus_path``) and
 is read directly by agents via the ``load_source`` MCP tool, or swept
 verbatim via ``grep``.
 
-A prior version also asked for a per-doc "concept inventory"
-(topic/subject/gloss) to feed cross-document page synthesis. That was
-removed: synthesis is gone, and the field was measurably *competing* with
-the entity inventory for the same content — dropping it raised entity yield
-~20%, concentrated almost entirely in ``idea`` (35 -> 69 over 48 docs,
-two runs each, non-overlapping ranges). Recurring themes now surface as
-``idea`` entities, which is where they belonged.
+Two fields have been asked of this call before and both were removed for the
+same reason — fields in one schema are not independent, and each extra one
+competed with the summary for the model's attention:
+
+* a per-doc "concept inventory" (topic/subject/gloss) feeding cross-document
+  page synthesis, removed with synthesis itself;
+* the entity inventory (typed entities + edges), **removed 2026-08-04**.
+  Three benchmark runs measured zero agent usage of the resulting entity
+  nodes once corpus ``grep`` existed, against real costs: entity nodes
+  crowded labelled documents out of the top FTS slots, entity names
+  fragmented one concept across five nodes, the same real-world thing landed
+  under two different types, and extraction was only ~65% stable run to run.
+
+Do not add a third field here without measuring it against the summary it
+would share the call with.
 """
 
 from __future__ import annotations
@@ -44,7 +49,6 @@ import os
 import re
 from collections.abc import Iterator
 
-from opentrace_agent.wiki.ingest.entities import build_entities
 from opentrace_agent.wiki.ingest.types import (
     NormalizedSource,
     WikiEventKind,
@@ -55,9 +59,9 @@ from opentrace_agent.wiki.ingest.types import (
 from opentrace_agent.wiki.llm import WikiLLM
 from opentrace_agent.wiki.vault import VaultMetadata
 
-# Output budget we request per extraction call. A one-liner + entity
-# inventory is small, so this is modest; the client clamps it to the backend's
-# hard cap (BackendConfig.max_output_tokens) regardless.
+# Output budget we request per extraction call. A one-liner is tiny, so this is
+# modest; the client clamps it to the backend's hard cap
+# (BackendConfig.max_output_tokens) regardless.
 EXTRACTION_MAX_TOKENS = 4000
 
 # Chunking: a doc must fit the model's INPUT context to be read in one
@@ -70,7 +74,7 @@ DEFAULT_MAX_DOC_CHARS = 120_000
 _HEADING_RE = re.compile(r"^#{1,6} ", re.MULTILINE)
 
 DOC_EXTRACTION_SCHEMA = {
-    "description": "Emit the one-line summary and entity graph for a document.",
+    "description": "Emit the one-line summary for a document.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -81,54 +85,17 @@ DOC_EXTRACTION_SCHEMA = {
                     "listings and search results."
                 ),
             },
-            "entities": {
-                "type": "array",
-                "description": "Named entities this document is ABOUT (knowledge-graph nodes).",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string", "description": "Human-readable entity name."},
-                        "type": {
-                            "type": "string",
-                            "description": "One of: idea | service | module | paper | person | event.",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "One line describing what this entity IS (stored on the node).",
-                        },
-                    },
-                    "required": ["label", "type"],
-                },
-            },
-            "edges": {
-                "type": "array",
-                "description": "Relationships between the entities above (reference entities by their label).",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "source": {"type": "string", "description": "Label of the source entity."},
-                        "target": {"type": "string", "description": "Label of the target entity."},
-                        "relation": {"type": "string", "description": "Verb describing the relationship."},
-                        "confidence": {
-                            "type": "string",
-                            "description": "EXTRACTED | INFERRED | AMBIGUOUS.",
-                        },
-                        "confidence_score": {"type": "number"},
-                    },
-                    "required": ["source", "target", "relation", "confidence"],
-                },
-            },
         },
         "required": ["one_line_summary"],
     },
 }
 
 
-DOC_EXTRACTION_SYSTEM = """You are reading a single uploaded document for a knowledge graph.
+DOC_EXTRACTION_SYSTEM = """You are reading a single uploaded document for a document index.
 
 The raw document is retained and readable in full, so you do NOT restate its
-content. Your job is a compact inventory: a one-line summary (its navigation
-label) and the named entities the document is about.
+content. Your job is one line: a summary that serves as the document's
+navigation label.
 
 Hard rules:
 - one_line_summary describes the DOCUMENT in one sentence (e.g. "RFP response
@@ -144,32 +111,7 @@ Hard rules:
 - Do not introduce facts that aren't in the source — no outside knowledge.
 - Do not distort numbers or proper nouns.
 
-Entity inventory (the `entities` + `edges` fields):
-- Extract the named entities the document is ABOUT — things a reader would call
-  a subject of the doc, not every named token. Give each a one-line `description`.
-- Include the document's recurring THEMES as entities in their own right (typed
-  `idea`) when the document is genuinely about them — a standard, a methodology,
-  a named process. These are the abstractions that let two documents about the
-  same subject matter be found together, so don't skip them in favour of only
-  concrete named systems.
-- Pick the closest `type`:
-  - idea:    a concept, technique, algorithm, pattern, or methodology
-  - service: a runnable system, product, command, external tool, or API
-  - module:  a software component, library, or codebase subdivision
-  - paper:   an external publication or citation (not a sibling doc)
-  - person:  a real named human (not a role or job title)
-  - event:   a specific occurrence at a point in time
-- Do NOT extract config flags/env vars, schema vocabulary, file paths, individual
-  functions of a library, boilerplate, or cross-references to sibling docs. One
-  entity per concept (not per mention); one per library (not per function).
-  When in doubt, skip.
-- In `edges`, relate entities to each other by their `label`. Tier each edge by
-  how the text supports it, then pick a `confidence_score` within the tier:
-  EXTRACTED is always 1.0 (the text states it outright); INFERRED picks from
-  0.55/0.65/0.75/0.85/0.95 (follows without being stated); AMBIGUOUS picks from
-  0.1/0.15/0.2/0.25/0.3 (suspected, but real doubt). 0.5 is not a legal score.
-
-- Return every field via the emit_extraction tool in a single call.
+- Return the summary via the emit_extraction tool in a single call.
 """
 
 
@@ -314,64 +256,27 @@ def _chunk_markdown(md: str, max_chars: int) -> list[str]:
 def _merge_chunk_results(results: list[dict]) -> dict:
     """Merge per-chunk emit_extraction payloads into one document-level result.
 
-    The one-line summary is the first non-empty one; entities/edges are
-    unioned with a light dedup so the doc's counts and downstream inputs
-    aren't inflated by content that spanned a chunk boundary.
+    The document-level one-line summary is the first non-empty one — a chunk
+    is a slice of the same document, so the first chunk that produced a label
+    already describes it.
     """
     if len(results) == 1:
         return results[0]
 
     one_liner = next((s for r in results if (s := str(r.get("one_line_summary", "")).strip())), "")
-
-    entities: list[dict] = []
-    seen_e: set[tuple[str, str]] = set()
-    for r in results:
-        for e in r.get("entities") or []:
-            if not isinstance(e, dict):
-                continue
-            key = ((e.get("type") or "").strip().lower(), (e.get("label") or "").strip().lower())
-            if key[1] == "" or key in seen_e:
-                continue
-            seen_e.add(key)
-            entities.append(e)
-
-    edges: list[dict] = []
-    seen_x: set[tuple[str, str, str]] = set()
-    for r in results:
-        for x in r.get("edges") or []:
-            if not isinstance(x, dict):
-                continue
-            key = (
-                (x.get("source") or "").strip().lower(),
-                (x.get("target") or "").strip().lower(),
-                (x.get("relation") or "").strip().lower(),
-            )
-            if "" in key[:2] or key in seen_x:
-                continue
-            seen_x.add(key)
-            edges.append(x)
-
-    return {
-        "one_line_summary": one_liner,
-        "entities": entities,
-        "edges": edges,
-    }
+    return {"one_line_summary": one_liner}
 
 
 def extract_docs(
     sources: list[NormalizedSource],
     meta: VaultMetadata,
     llm: WikiLLM,
-    entity_nodes_out: list | None = None,
-    entity_rels_out: list | None = None,
 ) -> Iterator[WikiPipelineEvent]:
     """Run the per-doc extraction call for each newly-ingested source.
 
     Stamps ``title`` + ``one_line_summary`` onto each ``NormalizedSource``
     in place (the graph writer copies them onto the ``KnowledgeDoc`` node as
-    its navigation label). When *entity_nodes_out* / *entity_rels_out* is
-    given, the parsed entity nodes/edges are appended to them for the
-    downstream entity-merge stage. Both come from ONE LLM call per document.
+    its navigation label). ONE LLM call per document, one field out of it.
     """
     total = len(sources)
     yield WikiPipelineEvent(
@@ -426,9 +331,8 @@ def extract_docs(
 
     # Each source is independent — extract concurrently. Emit a progress event
     # as each call COMPLETES (so the user sees live movement, not one burst at
-    # the end), surfacing the per-doc entity counts. Label stamping
-    # and accumulation happen in a second pass in INPUT order so results stay
-    # deterministic regardless of completion order.
+    # the end). Label stamping happens in a second pass in INPUT order so
+    # results stay deterministic regardless of completion order.
     results_by_sha: dict[str, tuple[NormalizedSource, str, dict]] = {}
     done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=_wiki_concurrency()) as pool:
@@ -437,12 +341,11 @@ def extract_docs(
             src, title, result, n_parts = fut.result()
             results_by_sha[src.sha256] = (src, title, result)
             done += 1
-            n_ent = len(result.get("entities") or []) if isinstance(result, dict) else 0
             parts_note = f" ({n_parts} parts)" if n_parts > 1 else ""
             yield WikiPipelineEvent(
                 kind=WikiEventKind.STAGE_PROGRESS,
                 phase=WikiPhase.EXTRACTING,
-                message=f"Extracted {src.original_name} → {n_ent} entities{parts_note}",
+                message=f"Extracted {src.original_name}{parts_note}",
                 current=done,
                 total=total,
                 file_name=src.original_name,
@@ -452,22 +355,11 @@ def extract_docs(
         src, title, result = results_by_sha[src.sha256]
         src.title = title
         src.one_line_summary = str(result.get("one_line_summary", ""))
-        if entity_nodes_out is not None or entity_rels_out is not None:
-            nodes, rels = build_entities(
-                result,
-                original_name=src.original_name,
-                source_id=f"corpus::{src.sha256}",
-                vault=meta.name,
-            )
-            if entity_nodes_out is not None:
-                entity_nodes_out.extend(nodes)
-            if entity_rels_out is not None:
-                entity_rels_out.extend(rels)
 
     yield WikiPipelineEvent(
         kind=WikiEventKind.STAGE_STOP,
         phase=WikiPhase.EXTRACTING,
-        message=f"Extracted labels and entities from {total} doc(s)",
+        message=f"Extracted labels from {total} doc(s)",
         current=total,
         total=total,
     )

@@ -24,7 +24,7 @@ Ingests a **bare folder of doc files** — a Confluence/Notion/SharePoint export
 What each doc gets:
 
 - markitdown normalization (HTML/PDF/DOCX/PPTX/... → markdown), body verbatim in the corpus, readable via `load_source`. The walked set is the repo walk's doc extensions **plus `.json`** — in an export folder, structured data (a fleet inventory, a config dump) is a document the same way `.csv` already is
-- a navigation label from one LLM call — `title` + one-line summary — plus the extracted entity graph
+- a navigation label from one LLM call — a one-line summary, with `title` derived mechanically from the filename. That is the only thing the LLM produces; no entity graph is extracted (that layer was removed 2026-08-04 — see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced))
 - a folder-relative `path` stamp (searchable, and the navigation key when export filenames are opaque)
 - an epistemic `status` from the path heuristic, or forced for the whole folder with `--status`
 - `LINKS_TO` edges for the relative links its author wrote, resolved against the folder root
@@ -33,7 +33,7 @@ What each doc gets:
 
 **Re-ingest is idempotent.** The folder's absolute path is recorded as `spawned_from` (`dir::<path>`), so re-running updates the same vault: unchanged files are skipped by content hash, new files are labelled, and files deleted from the folder are pruned from the graph, corpus, and vault metadata (`--no-prune` to keep them).
 
-The ingest ends with a summary — docs by extension, skips, entities, links, mirror stats — and a per-extension count + cost estimate is printed up front, *before* the LLM spend starts. Coverage is explicit: files the walker skipped as unsupported types are listed (`not walked (unsupported type): 1 × .xyz (...)`) rather than silently omitted, so "N docs indexed" never quietly means "N of M".
+The ingest ends with a summary — docs by extension, skips, links, mirror stats, and the **billed LLM actuals** (provider-reported token counts, converted at the extraction tier's listed rates) — and a per-extension count + cost estimate is printed up front, *before* the LLM spend starts, so estimate and actual confront each other on every run. Coverage is explicit: files the walker skipped as unsupported types are listed (`not walked (unsupported type): 1 × .xyz (...)`) rather than silently omitted, so "N docs indexed" never quietly means "N of M".
 
 ## `vault list`
 

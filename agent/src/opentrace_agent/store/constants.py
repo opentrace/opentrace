@@ -30,14 +30,15 @@ VALID_NODE_TYPES = {
     # Legacy aliases (accepted on input, not emitted)
     "Repo",
     "Package",
-    # Entity types emitted by the LLM extractor — the prompt constrains
-    # output to this set. Accepted as legacy aliases so they round-trip
-    # through the store without proto regen. ``Idea`` is the catch-all.
-    "Idea",
+    # ``Module`` is a code-graph concept (the import graph's consumer/target,
+    # per code_graph.proto) and is read by ``cli/impact.py``'s blast-radius
+    # walk, so it stays. ``Idea`` / ``Paper`` / ``Person`` / ``Event`` were
+    # added alongside the LLM entity extractor and removed with it on
+    # 2026-08-04 — nothing emits them any more. Note this set is declarative:
+    # it is referenced nowhere outside this module, so it neither validates
+    # writes nor filters reads, and an older graph containing entity nodes
+    # stays fully readable.
     "Module",
-    "Paper",
-    "Person",
-    "Event",
     # Runtime / observability types (not in code_graph.proto)
     "Service",
     "Cluster",

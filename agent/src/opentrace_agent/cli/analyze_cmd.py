@@ -64,7 +64,7 @@ def run_analyze_cli(
     with GraphStore(db_path) as store:
         gods = god_nodes(store, limit=god_limit)
         bridges = cross_community_bridges(store, limit=bridge_limit)
-        # Phase 7: cross-domain (code/entity/page) connectivity.
+        # Phase 7: cross-domain (code/page) connectivity.
         domain_bridges = cross_domain_bridges(store, limit=bridge_limit)
         cross_cutting = find_communities_spanning_domains(store, min_domains=2, limit=bridge_limit)
 
@@ -103,7 +103,7 @@ def run_analyze_cli(
         )
 
     click.echo("")
-    click.echo(f"Cross-domain bridges (code ↔ entity ↔ page) ({len(domain_bridges)}):")
+    click.echo(f"Cross-domain bridges (code ↔ page) ({len(domain_bridges)}):")
     if not domain_bridges:
         click.echo("  (none — run `index --wiki` to populate multiple domains)")
     for b in domain_bridges:

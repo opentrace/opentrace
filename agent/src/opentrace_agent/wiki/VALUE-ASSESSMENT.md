@@ -33,7 +33,8 @@ Two things this does **not** say:
   and a 90 KB `DOCS.md`.
 - **Two arms, blind A/B, same questions, same model.** One arm's graph was built
   with `opentraceai index ./ --wiki` (docs indexed as `KnowledgeDoc` nodes with
-  labels, epistemic status, entity graph, doc→doc `LINKS_TO`, `MIRRORS` twins).
+  labels, epistemic status, entity graph (since removed — see the update at the
+  end), doc→doc `LINKS_TO`, `MIRRORS` twins).
   The control was built with plain `opentraceai index ./` (code only).
 - **Both arms restricted to the OpenTrace MCP tools** — no native
   `Bash`/`Read`/`Grep`. Both could still read any file via `load_source` on a
@@ -97,10 +98,12 @@ Run-to-run noise for reference: two identical-config runs differed by 34 entitie
 and agreed on only ~65% of labels (Jaccard 0.65), so the cross-variant effect is
 well outside noise.
 
-**Consequences.** Recurring themes now surface as `idea` entities, which is where
-they belonged, so a separate concept layer has nothing left to add. Fields in one
-extraction schema are **not independent** — adding one costs the others attention.
-Measure before adding a third.
+**Consequences.** Recurring themes surfaced as `idea` entities instead, so a
+separate concept layer had nothing left to add. That half of the reasoning is now
+moot — the entity inventory was itself removed 2026-08-04 (see the update at the
+end). What survives is the general lesson: fields in one extraction schema are
+**not independent** — adding one costs the others attention. Measure before adding
+a second.
 
 ---
 
@@ -112,7 +115,7 @@ Component by component, for docs that are already in the repo:
 |---|---|
 | title + one-line gloss | duplicates the path. `openspec/changes/memory-conflict-audit/spec.md` is self-describing in a way `handleFoo()` never is |
 | epistemic `status` | *derived from the path* (`openspec/` → design history). The agent makes that inference itself |
-| entity graph | measurably adds noise: entities took ~half the top-3 search slots, and content-free ones (the project's own name) won slot 1 on 6 of 12 realistic queries |
+| entity graph | measurably adds noise: entities took ~half the top-3 search slots, and content-free ones (the project's own name) won slot 1 on 6 of 12 realistic queries. **Acted on: removed 2026-08-04** |
 | corpus copy of the body | byte-identical to the file — same text behind an extra hop |
 | doc→doc `LINKS_TO` | edges are accurate, but cover 189 of 401 files, so exhaustiveness answers are less trustworthy than grepping the links |
 
@@ -245,3 +248,41 @@ accuracy + cost fixes, `FINDINGS.md`, `regrade.sh` + `compare_grades.py`,
 - Byte-identical files share ONE content-addressed `KnowledgeDoc`. Two paths, one
   node — this made a transcript look like the agent had opened a superseded spec
   when the graph only ever had one node for both.
+
+---
+
+## Update — the entity layer was removed (2026-08-04)
+
+This document's component table already scored the entity graph as *measurably
+adding noise*. Three further benchmark runs settled it, and the layer is gone:
+`Idea`/`Service`/`Module`/`Paper`/`Person`/`Event` extraction, `DERIVED_FROM`,
+`SEMANTIC_EDGE`, `MENTIONS`, the merge stage, the two MCP traversal tools, and
+the `search_graph` exclusion that had been papering over the crowding.
+
+The five measurements, in order of weight:
+
+1. **Zero usage across three runs.** Once corpus `grep` shipped, the agent never
+   reached for an entity node to answer a question. That is the decisive one — an
+   index layer nothing queries cannot pay for itself no matter how good it is.
+2. **Search crowding.** Short entity names beat the labelled documents they were
+   extracted from (BM25 length normalisation), taking ~half the top-3 slots on a
+   25-doc index. The fix was to exclude them from search by default — which is an
+   admission, not a repair.
+3. **~65% run-to-run stability.** Re-ingesting the same corpus produced a
+   materially different entity graph, so nothing downstream could treat presence
+   or absence as a fact.
+4. **Name fragmentation.** "Cold chain" / "Cold-chain integrity" / "Cold-chain
+   monitoring" became separate nodes — splitting the documents the abstraction
+   existed to join.
+5. **Cross-type duplication.** `Midwest Beef Co` was extracted as both a
+   `Service` and a `Person` within one corpus.
+
+Plus a class of bugs with no cause other than the layer's existence (`MENTIONS`
+restating `DERIVED_FROM`, twice), and a separate measurement showing the
+entity fields competed with the doc summary inside the same extraction call.
+
+What remains is what the benchmark actually used: **normalized bodies, a title +
+one-line summary, epistemic `status`, author-written doc→doc `LINKS_TO`,
+exhaustive `grep` / `list_nodes`, verbatim `load_source`.** The node types stay in
+the schema so pre-removal graphs remain readable. Full decision record in
+[CLAUDE.md](CLAUDE.md#closed).

@@ -31,13 +31,7 @@ from opentrace_agent.retrieval import (
     find_communities_spanning_domains as _find_communities_spanning_domains,
 )
 from opentrace_agent.retrieval import (
-    find_entities_mentioned_by as _find_entities_mentioned_by,
-)
-from opentrace_agent.retrieval import (
     find_orphans as _find_orphans,
-)
-from opentrace_agent.retrieval import (
-    find_pages_mentioning as _find_pages_mentioning,
 )
 from opentrace_agent.retrieval import (
     find_path as _find_path,
@@ -457,8 +451,6 @@ _DOC_TYPES_NOTE = """
       read candidates with ``load_source``.
     * ``KnowledgeConcept`` — compiled concept pages; often none (they are
       opt-in). An empty list is normal.
-    * ``Idea`` / ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``
-      — entities extracted from the docs.
 
     ``filters`` matches on node properties, so scoping works too — e.g.
     ``type="KnowledgeDoc", filters={"status": "design_history"}`` lists only
@@ -479,12 +471,10 @@ _DOC_HITS_NOTE = """
       node and its File twin are merged into a single hit.
     * ``KnowledgeConcept`` — a compiled concept page, when the vault has any.
 
-    Entities extracted from the docs (``Idea`` / ``Service`` / ``Module`` /
-    ``Paper`` / ``Person`` / ``Event``) are NOT returned by default: their
-    short names outrank the documents they came from, and an entity is a
-    signpost, not an answer. Ask for them explicitly via ``nodeTypes``, or
-    follow ``find_pages_mentioning`` / ``traverse_graph`` (``MENTIONS`` /
-    ``DERIVED_FROM``) from a document.
+    A document is the unit of knowledge here — there is no summary or concept
+    layer standing in front of it. So a hit is a pointer to text you then
+    READ: ``load_source`` for one document, ``grep`` to sweep every
+    document's body at once, ``list_nodes`` to enumerate the corpus.
 
     ``nodeTypes`` accepts these as a comma-separated filter, e.g.
     ``nodeTypes="KnowledgeDoc"`` to search documents only."""
@@ -499,11 +489,11 @@ _DOC_EDGES_NOTE = """
       (Also connects concept pages to each other, when pages exist.)
     * ``MIRRORS`` — ``KnowledgeDoc`` → the ``File`` twin for the same
       document; the one-hop join between the doc layer and the code tree.
-    * ``MENTIONS`` — a document or page → an entity it references.
-    * ``DERIVED_FROM`` — an entity → the document it was extracted from.
-      "Every doc referencing X" = incoming ``MENTIONS`` ∪ outgoing
-      ``DERIVED_FROM`` on X.
-    * ``CITES`` — a concept page → its source documents (pages only)."""
+    * ``CITES`` — a concept page → its source documents (pages only).
+
+    There is no edge from a document to a topic or concept it discusses.
+    "Every doc that discusses X" is a CONTENT question, not a traversal: sweep
+    it with ``grep`` in one call."""
 
 
 def _to_int(v: Any) -> int | None:
@@ -874,9 +864,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         Optional ``vaultScope`` restricts hits to a single vault by name.
 
         (Documentation hit types — including the per-hit triage fields on
-        document hits and the extracted-entity exclusion default — are
-        appended to this description by ``_DOC_HITS_NOTE`` only when the open
-        index contains them.)
+        document hits — are appended to this description by
+        ``_DOC_HITS_NOTE`` only when the open index contains them.)
 
         Results are RANKED AND TRUNCATED, so this tool cannot show that
         something is absent, and re-issuing it with reworded queries does not
@@ -907,16 +896,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
                 limit=limit,
                 node_types=node_types,
                 vault_scope=scope,
-                exclude_llm_entities=node_types is None,
             )
-            excluded = result.get("entities_excluded", 0)
-            if excluded:
-                result["hint"] = (
-                    f"{excluded} extracted-entity hit(s) "
-                    "(Idea/Service/Module/Paper/Person/Event) excluded by "
-                    "default — pass nodeTypes to include them, or reach "
-                    "entities via traverse_graph (MENTIONS/DERIVED_FROM)."
-                )
             return _json_response(result)
         except Exception as e:
             return _error_response("search_graph", e)
@@ -1272,7 +1252,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Compact orientation of the indexed graph for agent session start.
 
         Returns counts by node type, the most-connected concepts, and the
-        most recently updated entities. Targets <500 tokens. Optional
+        most recently updated nodes. Targets <500 tokens. Optional
         ``vaultScope`` is reserved for the vault-graph rollout — currently
         no-op.
         """
@@ -1380,16 +1360,17 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         ``{id, slug, title, kind, one_line_summary, revision,
         last_updated}``. Use ``read_vault_page`` (or ``load_source``) with
         the returned ``id`` to fetch the page body. KnowledgeDoc documents are
-        not pages — find them via ``search_graph`` / ``find_pages_mentioning``
-        and read them with ``load_source``.
+        not pages — find them via ``search_graph`` / ``list_nodes`` and read
+        them with ``load_source``.
 
         **An empty list is normal, not an error.** Concept pages are opt-in
         (``index --wiki``); a default doc ingestion
         indexes the documents themselves without synthesizing pages. The
-        vault's knowledge is then in its KnowledgeDoc nodes and entities —
-        reach it via ``search_graph`` (titles, one-line summaries, entity
-        descriptions) and ``load_source``, and follow ``LINKS_TO`` between
-        KnowledgeDocs for the authors' own cross-references."""
+        vault's knowledge is then in its KnowledgeDoc nodes — reach it via
+        ``search_graph`` (titles, one-line summaries), ``list_nodes`` to
+        enumerate, ``grep`` to sweep every body, ``load_source`` to read one,
+        and follow ``LINKS_TO`` between KnowledgeDocs for the authors' own
+        cross-references."""
         if not store:
             return NO_INDEX_MSG
         try:
@@ -1518,105 +1499,10 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _error_response("load_source", e)
 
     @server.tool()
-    def find_pages_mentioning(entityId: str) -> str:
-        """Find KnowledgeConcepts and KnowledgeDocs whose body mentions a given
-        entity, OR that discuss a given code symbol.
-
-        MENTIONS edges only target the entity layer (``Idea`` / ``Service``
-        / ``Module`` / ``Paper`` / ``Person`` / ``Event``). If you pass a
-        code-layer node id (``Function`` / ``Class`` / ``Variable`` /
-        ``File`` / …) directly and the literal traversal returns nothing,
-        this tool falls back to a fuzzy entity lookup: it strips any
-        trailing Python signature from the symbol name (so
-        ``field_validator(str, …)`` becomes ``field_validator``) and then
-        finds entities whose name *contains* the bare symbol name (e.g.
-        ``"field_validator decorator"`` or ``"@field_validator"``). The
-        MENTIONS hits from every match are unioned and returned — so
-        "find pages about this function" works without manually chaining
-        an entity lookup first.
-
-        Returns ``{entityId, count, pages}``; each hit carries ``type``
-        (``KnowledgeConcept`` → read with ``read_vault_page``; ``KnowledgeDoc`` → read
-        with ``load_source``).
-        """
-        if not store:
-            return NO_INDEX_MSG
-        try:
-            # An empty result must mean "nothing mentions this entity", never
-            # "you passed the wrong kind of id". Measured failure: an agent
-            # passed a KnowledgeDoc id here, got `count: 0` with no
-            # explanation, reasonably read it as a true negative, and fell
-            # back to opening documents one at a time. A wrong-type id is a
-            # usage error and has to say so.
-            target = store.get_node(entityId)
-            if target is None:
-                return json.dumps(
-                    {
-                        "entityId": entityId,
-                        "error": f"no node with id {entityId!r} in this graph",
-                        "hint": "find entity ids with search_graph(nodeTypes=\"Idea,Service,Module,Paper,Person,Event\") or list_nodes.",
-                    }
-                )
-            target_type = target.get("type") or ""
-            if target_type in ("KnowledgeDoc", "KnowledgeConcept", "KnowledgeVault"):
-                return json.dumps(
-                    {
-                        "entityId": entityId,
-                        "error": (
-                            f"{entityId!r} is a {target_type}, not an entity — this tool maps an "
-                            "ENTITY to the documents mentioning it, so a document id has nothing "
-                            "to resolve."
-                        ),
-                        "hint": (
-                            "For the entities THIS document mentions, use "
-                            "find_entities_mentioned_by. For other documents on the same subject, "
-                            "take one of those entity ids and pass it here. To sweep the corpus by "
-                            "text instead, use grep."
-                        ),
-                    }
-                )
-            pages = _find_pages_mentioning(store, entityId)
-            # Trim each hit to the agent-essential fields and bypass the
-            # 4 KB truncation cap — find_pages_mentioning can legitimately
-            # return 30+ hits whose unabbreviated property dicts overflow
-            # the response budget and chop the JSON mid-string.
-            trimmed = [
-                {
-                    "id": p.get("id"),
-                    "type": p.get("type"),
-                    "name": p.get("name"),
-                    "slug": (p.get("properties") or {}).get("slug"),
-                    "kind": (p.get("properties") or {}).get("kind"),
-                    "one_line_summary": (p.get("properties") or {}).get("one_line_summary"),
-                }
-                for p in pages
-            ]
-            return json.dumps(
-                {"entityId": entityId, "count": len(trimmed), "pages": trimmed},
-                default=str,
-            )
-        except Exception as e:
-            return _error_response("find_pages_mentioning", e)
-
-    @server.tool()
-    def find_entities_mentioned_by(pageId: str) -> str:
-        """Find entities mentioned by a given KnowledgeConcept.
-
-        Forward-traverses MENTIONS edges. Returns
-        ``{pageId, count, entities}``.
-        """
-        if not store:
-            return NO_INDEX_MSG
-        try:
-            entities = _find_entities_mentioned_by(store, pageId)
-            return _json_response({"pageId": pageId, "count": len(entities), "entities": entities})
-        except Exception as e:
-            return _error_response("find_entities_mentioned_by", e)
-
-    @server.tool()
     def find_cross_cutting_communities(min_domains: int = 2, limit: int = 50) -> str:
-        """List Communities whose members span ≥``min_domains`` of the three
-        domains (code / entity / page).
+        """List Communities whose members span ≥``min_domains`` domains
+        (code / page — the legacy runtime-node domain is only populated on
+        graphs built by other producers).
 
         Requires ``opentraceai cluster`` to have been run first; returns an
         empty list when no Community nodes exist.

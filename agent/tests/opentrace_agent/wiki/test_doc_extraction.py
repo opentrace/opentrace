@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the DocExtraction stage — per-doc labels and entities."""
+"""Tests for the DocExtraction stage — the per-doc navigation label."""
 
 from __future__ import annotations
 
@@ -125,60 +125,36 @@ class TestMergeChunkResults:
         )
         assert merged["one_line_summary"] == "second"
 
-    def test_unions_and_dedups_entities(self):
+    def test_merge_emits_only_the_summary(self):
+        """The call emits one field, so the merge must not invent others —
+        anything a model returns beyond the schema is dropped, not carried."""
         merged = _merge_chunk_results(
             [
-                {
-                    "one_line_summary": "part one",
-                    "entities": [{"label": "Pydantic", "type": "module"}],
-                    "edges": [{"source": "Pydantic", "target": "Mypy", "relation": "integrates"}],
-                },
-                {
-                    "one_line_summary": "part two",
-                    "entities": [
-                        {"label": "pydantic", "type": "module"},  # case-insensitive dup → dropped
-                        {"label": "Mypy", "type": "service"},
-                    ],
-                    "edges": [{"source": "Pydantic", "target": "Mypy", "relation": "integrates"}],  # dup
-                },
+                {"one_line_summary": "part one", "entities": [{"label": "Pydantic"}]},
+                {"one_line_summary": "part two"},
             ]
         )
-        assert {e["label"] for e in merged["entities"]} == {"Pydantic", "Mypy"}
-        assert len(merged["edges"]) == 1
+        assert merged == {"one_line_summary": "part one"}
 
 
 def test_extract_docs_chunks_large_doc_and_merges(fake_llm, monkeypatch):
     """A doc over the (forced low) threshold is split, each part extracted, and
-    the parts merged into one label + one entity inventory."""
+    the parts merged into one label."""
     monkeypatch.setenv("OT_WIKI_MAX_DOC_CHARS", "120")
     monkeypatch.setenv("OT_WIKI_CONCURRENCY", "1")
     body = "# Alpha\n" + ("a" * 80) + "\n## Beta\n" + ("b" * 80) + "\n"
     src = NormalizedSource(sha256="big", original_name="big-doc.md", markdown=body)
     responses = [
-        (
-            "emit_extraction",
-            {
-                "one_line_summary": "Part one.",
-                "entities": [{"label": "Lib", "type": "module"}],
-            },
-        ),
-        (
-            "emit_extraction",
-            {
-                "one_line_summary": "Part two.",
-                "entities": [{"label": "Lib", "type": "module"}],  # dup across chunks
-            },
-        ),
+        ("emit_extraction", {"one_line_summary": "Part one."}),
+        ("emit_extraction", {"one_line_summary": "Part two."}),
     ]
     llm = fake_llm(responses)
-    entity_nodes: list = []
-    list(extract_docs([src], VaultMetadata.empty("v"), llm, entity_nodes_out=entity_nodes))
+    list(extract_docs([src], VaultMetadata.empty("v"), llm))
 
     assert len(llm.calls) == 2  # one call per chunk
     assert "PART 1 of 2" in llm.calls[0][1] and "PART 2 of 2" in llm.calls[1][1]
     assert src.title == "Big Doc"
     assert src.one_line_summary == "Part one."  # first non-empty across chunks
-    assert len(entity_nodes) == 1  # "Lib" deduped across the two chunks
 
 
 def test_extract_docs_stamps_labels(fake_llm):
@@ -191,11 +167,3 @@ def test_extract_docs_stamps_labels(fake_llm):
     assert src.title == "Ducks"
     assert src.one_line_summary == "About ducks."
 
-
-def test_extract_docs_without_entity_outs_is_fine(fake_llm):
-    """The entity out-params are optional — omitting them must not break
-    label extraction."""
-    src = NormalizedSource(sha256="abc", original_name="a.md", markdown="# A\nx")
-    resp = ("emit_extraction", {"one_line_summary": "s"})
-    list(extract_docs([src], VaultMetadata.empty("v"), fake_llm([resp])))
-    assert src.one_line_summary == "s"

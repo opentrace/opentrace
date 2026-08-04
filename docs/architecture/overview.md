@@ -1,6 +1,6 @@
 # Architecture Overview
 
-OpenTrace builds a single knowledge graph that holds three layers of information about your project. Code structure comes from tree-sitter; doc labels and entities come from LLM extraction over documents whose bodies stay verbatim. Nothing is synthesized — no layer is written in the model's own prose. Edges connect them.
+OpenTrace builds a single knowledge graph that holds two layers of information about your project. Code structure comes from tree-sitter; documents are indexed with a navigation label and an epistemic status while their bodies stay **verbatim**. Nothing is synthesized — no layer is written in the model's own prose. Edges connect them.
 
 ## Component layout
 
@@ -36,39 +36,26 @@ OpenTrace builds a single knowledge graph that holds three layers of information
 └──────────────────────────────────────────────────────┘
 ```
 
-## The three layers
+## The two layers
 
-The graph holds three layers, each populated by different stages:
+The graph holds two layers, each populated by different stages:
 
 ### 1. Code (structural)
 
 Tree-sitter walks source files and emits `Repository` / `Directory` / `File` / `Class` / `Function` / `Variable` nodes plus `DEFINES` / `CALLS` / `IMPORTS` / `DEPENDS_ON` edges. Always produced — no LLM cost, no opt-in.
 
-### 2. Entity (semantic, flat)
-
-Opt-in via `index --wiki`. The per-doc ingestion call extracts named entities from ingested doc bodies:
-
-| Type | Examples |
-|---|---|
-| `Idea` | "Authentication", "Diffusion Models", "Rate Limiting" |
-| `Service` | "auth-service", "billing-api" |
-| `Module` | "TokenBucket", "AuthMiddleware" |
-| `Paper` | "Attention Is All You Need" |
-| `Person` | "Karen Chen", "Vaswani et al." |
-| `Event` | "the 2024 release" |
-
-Edges: `DERIVED_FROM` (entity → KnowledgeDoc) carries the entity's provenance. `SEMANTIC_EDGE` (entity → entity) is an LLM-proposed relationship with discrete confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`). Entities derive from KnowledgeDocs; if code-derived entities are ever introduced, they anchor to File nodes, and MIRRORS keeps the two worlds joined.
-
-### 3. Page (the indexed documents)
+### 2. Page (the indexed documents)
 
 Opt-in via `index --wiki`. The doc-ingestion pipeline produces:
 
 - `KnowledgeVault` — one per vault (scope: `local` or `global`)
 - Labelled `KnowledgeDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`) and an epistemic `status` (`authoritative` / `design_history` / `design_history_archived`); the raw body stays verbatim in the corpus and is read via `load_source`
 
-Edges: `CONTAINS` (vault → page/doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MENTIONS` (KnowledgeDoc or page → entity whose name appears in the doc's corpus markdown or the page body — connects layer 3 to layer 2), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
+Edges: `CONTAINS` (vault → page/doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
-There is no synthesis half. `KnowledgeConcept(kind="concept")` nodes — multi-source narratives with bodies on disk, plus `CITES` (concept page → KnowledgeDoc) and page ↔ page `LINKS_TO` from `[[Title]]` wiki-links — were produced by an opt-in `--wiki-concept-pages` flag until 2026-08-03. It was removed: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution, and it measured 88.4% against a 98.6% control on the doc-Q&A benchmark. Cross-document questions are answered by corpus `grep` instead — verbatim lines from every doc, pre-labelled with title and status.
+**There used to be a third, "entity" layer.** An LLM pass extracted `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from each doc body and linked them with `DERIVED_FROM`, `SEMANTIC_EDGE`, and `MENTIONS`. It was **removed on 2026-08-04** after three benchmark runs measured **zero agent usage** of those nodes once corpus `grep` existed — against real costs: they crowded labelled documents out of the top search slots (short names win BM25), extraction was only ~65% stable run to run, names fragmented one concept into five nodes, and the same real-world thing landed under two different types. "Which documents discuss X" is now a `grep` sweep of the corpus: verbatim lines from every document, pre-labelled with title and status. The node and edge types remain valid so pre-removal graphs stay readable; nothing writes them. (`Service` and `Module` are separately in active use as runtime node types.)
+
+There is no synthesis half either. `KnowledgeConcept(kind="concept")` nodes — multi-source narratives with bodies on disk, plus `CITES` (concept page → KnowledgeDoc) and page ↔ page `LINKS_TO` from `[[Title]]` wiki-links — were produced by an opt-in `--wiki-concept-pages` flag until 2026-08-03. It was removed: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution, and it measured 88.4% against a 98.6% control on the doc-Q&A benchmark. Cross-document questions are answered by corpus `grep` instead — verbatim lines from every doc, pre-labelled with title and status.
 
 The node and edge types remain valid so a vault compiled before the removal keeps its pages: they stay on disk (canonical), stay mirrored into the graph, and `vault attach` still rebuilds that mirror.
 
@@ -80,17 +67,18 @@ The three layers form three **domains** in the cross-cutting analysis:
 
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
-entity domain   — Idea / Service / Module / Paper / Person / Event
 page domain     — Vault / Page / KnowledgeDoc
+entity domain   — Idea / Service / Module / Paper / Person / Event
+                  (empty on graphs built after 2026-08-04)
 ```
 
 `opentraceai analyze` surfaces:
 
 - **Cross-community bridges** — edges spanning detected communities
-- **Cross-domain bridges** — edges spanning code ↔ entity ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
+- **Cross-domain bridges** — edges spanning code ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
 - **Cross-cutting communities** — communities whose members span ≥2 domains
 
-The `MENTIONS` edge is the explicit bridge between the entity and page domains, deduped against `DERIVED_FROM` so the two never restate the same doc↔entity pair — MENTIONS carries references, `DERIVED_FROM` carries origin. `MIRRORS` is the direct code ↔ page bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
+`MIRRORS` is the code ↔ page bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
 
 ## Components
 
@@ -154,16 +142,16 @@ A typical full-stack run (`index ./repo myvault --wiki`):
 5. Save      → All emitted nodes/edges land in the LadybugDB store.
 
 6. Index     → run_compile makes one DocExtraction LLM call per doc
-   docs        (KnowledgeDoc navigation label + entity graph with
-               DERIVED_FROM edges — and nothing else), then writes
-               the graph mirror with CONTAINS / MENTIONS edges, the
-               authors' own doc→doc LINKS_TO edges, and the epistemic
-               status stamps. Bodies stay verbatim in the corpus.
-               This is the only LLM stage; nothing is synthesized.
+   docs        (the KnowledgeDoc's one-line summary — and nothing
+               else), then writes the graph mirror with CONTAINS
+               edges, the authors' own doc→doc LINKS_TO edges, and
+               the epistemic status stamps. Bodies stay verbatim in
+               the corpus. This is the only LLM stage; nothing is
+               synthesized.
 
 7. Autoprune → Compare walked doc set against the existing graph;
-               delete orphan KnowledgeDocs + the entities anchored to
-               them; for legacy vaults that still have pages, remove
+               delete orphan KnowledgeDocs and their corpus bodies;
+               for legacy vaults that still have pages, remove
                dangling CITES edges from concept pages, delete pages
                left with zero citations, stamp stale_since on the rest.
 ```
@@ -194,6 +182,6 @@ Disk is canonical for doc bodies (and legacy page bodies). The graph holds metad
 ## Conventions
 
 - **Read-only retrieval.** Every primitive under `opentrace_agent.retrieval` is read-only. Writes go through `index` / `vault attach` / `cluster`.
-- **Vault scope is a property.** `vault` denormalised onto every page / doc / entity so scope queries are property equality, not graph traversal.
+- **Vault scope is a property.** `vault` denormalised onto every page / doc so scope queries are property equality, not graph traversal.
 - **Discrete confidence.** All confidence values snap to a discrete rubric (`EXTRACTED` = 1.0, `INFERRED` ∈ {0.55, 0.65, 0.75, 0.85, 0.95}, `AMBIGUOUS` ∈ [0.1, 0.3]) — never 0.5.
 - **No backward-compat shims.** Each command does one thing; renamed commands are gone, not aliased.

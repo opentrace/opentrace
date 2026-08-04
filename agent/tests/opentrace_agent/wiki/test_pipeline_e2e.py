@@ -14,9 +14,9 @@
 
 """End-to-end pipeline tests with a fake LLM and real on-disk vault.
 
-Call shape per compile: exactly ONE ``emit_extraction`` per new source
-(navigation label + entity graph). Nothing else — synthesis was removed, so a
-compile makes no other LLM calls.
+Call shape per compile: exactly ONE ``emit_extraction`` per new source (its
+navigation label). Nothing else — synthesis and the entity layer were both
+removed, so a compile makes no other LLM calls and writes no other nodes.
 """
 
 from __future__ import annotations
@@ -148,12 +148,14 @@ def test_empty_content_source_is_skipped(tmp_path, fake_llm):
     assert [e.detail["low_content_skipped"] for e in gate_events] == [1]
 
 
-def test_unified_call_emits_entities_into_graph(tmp_path, fake_llm):
-    """The single emit_extraction call also yields entities + edges, which land
-    in the graph as Idea/Person/... nodes (with description) + DERIVED_FROM edges."""
+def test_compile_writes_no_entity_nodes(tmp_path, fake_llm):
+    """The extraction call emits ONLY the label, so a compile mirrors a
+    labelled KnowledgeDoc and nothing else. Regression guard for the entity
+    layer removed 2026-08-04: even if a model volunteers `entities`/`edges`
+    off-schema, no Idea/Person/... node may appear in the graph."""
     pytest.importorskip("real_ladybug")
-    from opentrace_agent.sources.markdown.prompts import make_entity_id
     from opentrace_agent.store import GraphStore
+    from opentrace_agent.wiki.ingest.graph_writer import corpus_doc_node_id
 
     src = SourceInput(name="ducks.md", data=b"# Ducks\nDucks are waterfowl studied by Karen.")
     sha = _sha(src.data)
@@ -161,37 +163,23 @@ def test_unified_call_emits_entities_into_graph(tmp_path, fake_llm):
         "emit_extraction",
         {
             "one_line_summary": "About ducks.",
-            "entities": [
-                {"label": "Waterfowl Biology", "type": "idea", "description": "the study of waterfowl"},
-                {"label": "Karen", "type": "person", "description": "a researcher"},
-            ],
-            "edges": [
-                {
-                    "source": "Karen",
-                    "target": "Waterfowl Biology",
-                    "relation": "studies",
-                    "confidence": "EXTRACTED",
-                    "confidence_score": 1.0,
-                }
-            ],
+            # Off-schema leftovers a model might still volunteer.
+            "entities": [{"label": "Karen", "type": "person"}],
+            "edges": [{"source": "Karen", "target": "Ducks", "relation": "studies"}],
         },
     )
-    llm = fake_llm(
-        [
-            extraction,
-        ]
-    )
+    llm = fake_llm([extraction])
 
     db_path = str(tmp_path / "graph.db")
     gs = GraphStore(db_path)
     try:
         list(run_compile("v", [src], vault_root=tmp_path, llm=llm, graph_store=gs))
 
-        idea = gs.get_node(make_entity_id("ducks", "Waterfowl Biology"))
-        assert idea is not None and idea["type"] == "Idea"
-        assert idea["properties"]["description"] == "the study of waterfowl"
-        person = gs.get_node(make_entity_id("ducks", "Karen"))
-        assert person is not None and person["type"] == "Person"
+        doc = gs.get_node(corpus_doc_node_id(sha))
+        assert doc is not None
+        assert doc["properties"]["one_line_summary"] == "About ducks."
+        for ntype in ("Idea", "Service", "Module", "Paper", "Person", "Event"):
+            assert gs.list_nodes(ntype, limit=10) == []
     finally:
         gs.close()
 
