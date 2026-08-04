@@ -463,13 +463,13 @@ class TestListNodesDiscoverability:
                 f"{sha}.md",
                 {"sha256": sha, "filename": f"{sha}.md", "status": status},
             )
-        allk = _call(store, "list_nodes", type="KnowledgeDoc", limit=100)
+        allk = _call(store, "list_nodes", type="KnowledgeDoc", limit=100, paged=True)
         assert allk["returned"] == 3
         # hasMore=False is the completeness signal that licenses an absence claim.
         assert allk["hasMore"] is False
         # Compact projection by default — name + status, not the full blob
         # (see TestListNodesEnumeration for why).
-        filtered = _call(store, "list_nodes", type="KnowledgeDoc", filters={"status": "design_history"}, limit=100)
+        filtered = _call(store, "list_nodes", type="KnowledgeDoc", filters={"status": "design_history"}, limit=100, paged=True)
         assert [n["name"] for n in filtered["items"]] == ["c.md"]
         assert [n["status"] for n in filtered["items"]] == ["design_history"]
 
@@ -552,7 +552,7 @@ class TestListNodesEnumeration:
 
     def test_returns_whole_corpus_and_stays_parseable(self, store):
         self._docs(store, 40)
-        raw = _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000)
+        raw = _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000, paged=True)
         items = self._items(raw)
         assert len(items) == 40, "a 40-doc corpus must enumerate in one call"
         # Compact projection: triage fields in, bulk out.
@@ -579,21 +579,21 @@ class TestListNodesEnumeration:
     def test_status_filter_narrows_the_set(self, store):
         self._docs(store, 40)
         items = self._items(
-            _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000, filters={"status": "design_history"})
+            _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000, filters={"status": "design_history"}, paged=True)
         )
         assert len(items) == 8  # every 5th of 40
         assert {i["status"] for i in items} == {"design_history"}
 
     def test_verbose_opts_back_into_full_records(self, store):
         self._docs(store, 3)
-        items = self._items(_call_raw(store, "list_nodes", type="KnowledgeDoc", limit=10, verbose=True))
+        items = self._items(_call_raw(store, "list_nodes", type="KnowledgeDoc", limit=10, verbose=True, paged=True))
         assert "properties" in items[0]
         assert items[0]["properties"]["corpus_path"]
 
     def test_oversized_set_degrades_to_valid_json(self, store):
         """Past the window budget it must drop ITEMS and say so — never slice bytes."""
         self._docs(store, 400)
-        raw = _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000)
+        raw = _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000, paged=True)
         payload = json.loads(raw)  # the assertion that used to fail
         assert payload["hasMore"] is True
         assert payload["returned"] == len(payload["items"]) < 400
@@ -952,3 +952,51 @@ class TestGrepResponseFitting:
         assert err["mode"] == "error" and err["error"] == "nope"
         empty = json.loads(_fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "python"}))
         assert empty["count"] == 0
+
+
+class TestListNodesBackwardCompatibility:
+    """`list_nodes` predates the vault work, so its DEFAULT response shape must
+    stay what it always was — a plain array of full nodes. The compact paged
+    window is an addition, opt-in via `paged`.
+
+    Guards the boundary the branch is held to: add to the existing product,
+    don't silently change it. Flipping this default is a separate decision.
+    """
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        s = GraphStore(str(tmp_path / "ln.db"))
+        for i in range(3):
+            s.add_node(f"corpus::{i}", "KnowledgeDoc", f"doc{i}.md", {"title": f"Doc {i}", "status": "authoritative"})
+        yield s
+        s.close()
+
+    def test_default_returns_a_plain_array_of_full_nodes(self, store):
+        out = _call(store, "list_nodes", type="KnowledgeDoc")
+        assert isinstance(out, list), "default shape must stay a bare JSON array"
+        assert len(out) == 3
+        # Full nodes, not the compact projection.
+        assert "properties" in out[0]
+
+    def test_paged_opts_into_the_window_shape(self, store):
+        out = _call(store, "list_nodes", type="KnowledgeDoc", paged=True)
+        assert isinstance(out, dict)
+        assert out["returned"] == 3
+        assert out["hasMore"] is False  # the completeness signal
+        assert "properties" not in out["items"][0]  # compact projection
+        assert out["items"][0]["title"] == "Doc 0"
+
+    def test_nonzero_offset_implies_paged(self, store):
+        out = _call(store, "list_nodes", type="KnowledgeDoc", limit=2, offset=1)
+        assert isinstance(out, dict)
+        assert out["offset"] == 1
+
+    def test_paged_verbose_returns_full_nodes_in_the_window(self, store):
+        out = _call(store, "list_nodes", type="KnowledgeDoc", paged=True, verbose=True)
+        assert "properties" in out["items"][0]
+
+    def test_unpaged_hasmore_signal_is_absent_by_design(self, store):
+        """The legacy array carries no completeness signal — that's exactly why
+        the docstring steers absence questions to paged=True."""
+        out = _call(store, "list_nodes", type="KnowledgeDoc")
+        assert isinstance(out, list)

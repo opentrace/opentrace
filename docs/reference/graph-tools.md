@@ -33,7 +33,12 @@ search_graph                            # ranked FTS over names + summary. Knowl
                                         #  default (short names outrank the docs they
                                         #  came from) — opt in via nodeTypes
 get_node                                # full node by id + immediate neighbors
-list_nodes                              # paginated by type
+list_nodes                              # all nodes of a type. Default: a plain
+                                        #  array of full nodes. paged=True adds
+                                        #  the compact window {items, returned,
+                                        #  offset, hasMore} — hasMore:false is
+                                        #  the completeness signal that makes
+                                        #  "there is no X" safe to assert
 traverse_graph                          # BFS with direction, max depth, rel-type filter
 find_path                               # shortest path between two nodes
 find_orphans                            # missing-edge detection

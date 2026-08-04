@@ -408,7 +408,10 @@ _DOC_TYPES_NOTE = """
     * ``KnowledgeDoc`` — one node per indexed document. Listing these
       enumerates the documentation corpus: each carries ``title``,
       ``one_line_summary``, ``path``, and ``status``. This is the reliable way
-      to answer "every document that…" — read candidates with ``load_source``.
+      to answer "every document that…" — call it with ``paged=True`` so you get
+      the compact projection and the ``hasMore`` completeness signal (a whole
+      corpus of documents does not fit in the unpaged full-node shape), then
+      read candidates with ``load_source``.
     * ``KnowledgeConcept`` — compiled concept pages; often none (they are
       opt-in). An empty list is normal.
     * ``Idea`` / ``Service`` / ``Module`` / ``Paper`` / ``Person`` / ``Event``
@@ -877,7 +880,12 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def list_nodes(
-        type: str, limit: int = 50, filters: dict[str, Any] | None = None, offset: int = 0, verbose: bool = False
+        type: str,
+        limit: int = 50,
+        filters: dict[str, Any] | None = None,
+        paged: bool = False,
+        offset: int = 0,
+        verbose: bool = False,
     ) -> str:
         """List every node of a type — the exhaustive counterpart to ``search_graph``.
 
@@ -894,23 +902,38 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         description by ``_DOC_TYPES_NOTE`` only when the open index contains
         them.)
 
-        Returns ``{items, returned, offset, hasMore, hint}``. **``hasMore:
+        **For completeness questions pass ``paged=True``.** That returns
+        ``{items, returned, offset, hasMore, hint}``, where **``hasMore:
         false`` is the completeness signal** — it means these really are all
         the matches, which is what makes "there is no X" safe to assert. When
         it's true, page on with ``offset`` (the ``hint`` gives the next value)
         or narrow with ``filters``; never conclude absence from a partial page.
-
-        Each item is a compact projection — ``id``, ``type``, ``name`` plus
+        Paged items are a compact projection — ``id``, ``type``, ``name`` plus
         triage fields (``path``, ``title``, ``status``, ``summary``, …) — so a
-        whole corpus fits in one response. Pass ``verbose=True`` for full
-        property blobs, or use ``get_node`` / ``load_source`` on one id."""
+        whole corpus fits in one response; add ``verbose=True`` for full
+        property blobs, or use ``get_node`` / ``load_source`` on one id.
+
+        Without ``paged`` this returns a plain JSON array of full nodes (the
+        long-standing shape). That array carries no completeness signal, so
+        prefer ``paged=True`` whenever absence matters."""
         if not store:
             logger.info("list_nodes called but no index exists")
             return NO_INDEX_MSG
-        logger.debug("list_nodes(type=%r, limit=%d, filters=%r)", type, limit, filters)
+        logger.debug("list_nodes(type=%r, limit=%d, filters=%r, paged=%r)", type, limit, filters, paged)
         try:
             limit = min(limit, 1000)
             offset = max(0, offset)
+            # Default stays the PRE-EXISTING contract: a plain array of full
+            # nodes. The compact paged window is an ADDITION, opt-in via
+            # `paged` (or implied by a non-zero `offset`, which is meaningless
+            # without it). `list_nodes` predates the vault work, so silently
+            # changing its response shape would break consumers that were here
+            # first — flipping the default is a deliberate change to make on
+            # its own, not a side effect of adding docs retrieval.
+            if not paged and offset == 0:
+                nodes = store.list_nodes(node_type=type, filters=filters, limit=limit)
+                logger.debug("list_nodes → %d results (unpaged, legacy shape)", len(nodes))
+                return _json_response(nodes)
             nodes = store.list_nodes(node_type=type, filters=filters, limit=offset + limit + 1)
             total_seen = len(nodes)
             window = nodes[offset : offset + limit]
