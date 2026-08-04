@@ -46,9 +46,14 @@ class FakeLLM:
     """
 
     def __init__(self, scripted: list[tuple[str, dict[str, Any]]]):
+        from opentrace_agent.wiki.llm import UsageTally
+
         self.scripted = list(scripted)
         self.calls: list[str] = []
         self._lock = threading.Lock()
+        # A real tally, like real clients carry, so these CLI tests exercise
+        # the billed-actuals line in the ingest summary end to end.
+        self.usage = UsageTally()
 
     def call_tool(self, *, system, user, tool_name, tool_schema, max_tokens: int = 4096):
         with self._lock:
@@ -58,13 +63,12 @@ class FakeLLM:
             if expected != tool_name:
                 raise AssertionError(f"FakeLLM expected {expected!r}, got {tool_name!r}")
             self.calls.append(tool_name)
+            self.usage.add(480, 55)
             return response
 
 
-def _extraction(summary: str = "A document.", *, entities: list[dict] | None = None) -> tuple[str, dict]:
-    payload: dict[str, Any] = {"one_line_summary": summary, "concepts": []}
-    if entities is not None:
-        payload["entities"] = entities
+def _extraction(summary: str = "A document.") -> tuple[str, dict]:
+    payload: dict[str, Any] = {"one_line_summary": summary}
     return ("emit_extraction", payload)
 
 
@@ -185,6 +189,23 @@ class TestIngestEndToEnd:
         assert "on disk:" in out
         assert "Next:" in out
 
+    def test_summary_reports_billed_actuals(self, project, export, monkeypatch):
+        """The estimate prints before spending; the summary must print what was
+        actually billed after, so a stale estimate assumption gets contradicted
+        on the very next run (ours ran 6.5x stale with nothing to contradict it)."""
+        _patch_llm(monkeypatch, [_extraction(), _extraction()])
+        out = _ingest(project, export).output
+        assert "llm: 960 in / 110 out across 2 call(s)" in out
+        assert "billed" in out  # dollar conversion at extraction-tier rates
+
+    def test_no_actuals_line_when_nothing_was_billed(self, project, export, monkeypatch):
+        _patch_llm(monkeypatch, [_extraction(), _extraction()])
+        assert _ingest(project, export).exit_code == 0
+        # All-duplicate re-run: zero LLM calls, so no actuals line.
+        _patch_llm(monkeypatch, [])
+        out = _ingest(project, export).output
+        assert "llm:" not in out
+
 
 class TestReingest:
     def test_second_run_reuses_vault_and_calls_no_llm(self, project, export, monkeypatch):
@@ -203,13 +224,7 @@ class TestReingest:
         assert len(meta["sources"]) == 2
 
     def test_deleted_doc_is_pruned_from_graph_and_meta(self, project, export, monkeypatch):
-        _patch_llm(
-            monkeypatch,
-            [
-                _extraction(),
-                _extraction(entities=[{"label": "Beta System", "type": "idea", "description": "from b"}]),
-            ],
-        )
+        _patch_llm(monkeypatch, [_extraction(), _extraction()])
         assert _ingest(project, export).exit_code == 0
         b = export / "sub" / "b.md"
         b_sha = _sha(b)
@@ -217,7 +232,6 @@ class TestReingest:
         store = _open(project)
         try:
             assert store.get_node(f"corpus::{b_sha}") is not None
-            assert len(store.list_nodes("Idea")) == 1
         finally:
             store.close()
 
@@ -229,86 +243,9 @@ class TestReingest:
         store = _open(project)
         try:
             assert store.get_node(f"corpus::{b_sha}") is None
-            assert store.list_nodes("Idea") == [], "derived entity must go with its doc"
         finally:
             store.close()
         assert b_sha not in _vault_meta(project)["sources"], "meta prune stops the next mirror resurrecting it"
-
-    def test_remirror_does_not_restate_derived_from_as_mentions(self, project, export, monkeypatch):
-        """Every compile re-matches EVERY doc body for MENTIONS, but
-        derived_pairs covers only docs extracted THIS run — the skip-set must
-        also consult the graph's existing DERIVED_FROM edges, or a re-ingest
-        turns each doc's own derived entities into doc→entity MENTIONS."""
-        # Run 1: b.md derives entity "Beta", whose name appears in b.md's own
-        # body ("# Beta") — the classic self-mention.
-        _patch_llm(
-            monkeypatch,
-            [
-                _extraction(),
-                _extraction(entities=[{"label": "Beta", "type": "idea", "description": "the beta system"}]),
-            ],
-        )
-        assert _ingest(project, export).exit_code == 0
-
-        # Run 2: a new file forces a compile in which the two old docs are
-        # re-mirrored WITHOUT being re-extracted.
-        (export / "c.md").write_text("# Gamma\nA new doc with enough content to clear the gate.")
-        _patch_llm(monkeypatch, [_extraction("Gamma doc.")])
-        assert _ingest(project, export).exit_code == 0
-
-        store = _open(project)
-        try:
-            for d in store.list_nodes("KnowledgeDoc"):
-                mentions = {
-                    r["node"]["id"]
-                    for r in store.traverse(d["id"], direction="outgoing", max_depth=1, relationship_type="MENTIONS")
-                }
-                derived = {
-                    r["node"]["id"]
-                    for r in store.traverse(
-                        d["id"], direction="incoming", max_depth=1, relationship_type="DERIVED_FROM"
-                    )
-                }
-                overlap = mentions & derived
-                assert not overlap, f"{d['properties'].get('path')}: MENTIONS restates DERIVED_FROM for {overlap}"
-        finally:
-            store.close()
-
-    def test_preexisting_violating_mentions_edge_is_healed(self, project, export, monkeypatch):
-        """An edge written by a compile that predates the graph-side dedup has
-        a deterministic id — the next compile must delete it, not keep it."""
-        _patch_llm(
-            monkeypatch,
-            [
-                _extraction(),
-                _extraction(entities=[{"label": "Beta", "type": "idea", "description": "the beta system"}]),
-            ],
-        )
-        assert _ingest(project, export).exit_code == 0
-        b_id = f"corpus::{_sha(export / 'sub' / 'b.md')}"
-
-        store = _open(project)
-        try:
-            (beta,) = store.list_nodes("Idea")
-            store.merge_relationship(
-                id=f"{b_id}->MENTIONS->{beta['id']}", rel_type="MENTIONS", source_id=b_id, target_id=beta["id"]
-            )
-        finally:
-            store.close()
-
-        (export / "c.md").write_text("# Gamma\nA new doc with enough content to clear the gate.")
-        _patch_llm(monkeypatch, [_extraction("Gamma doc.")])
-        assert _ingest(project, export).exit_code == 0
-
-        store = _open(project)
-        try:
-            mentions = {
-                r["node"]["id"]
-                for r in store.traverse(b_id, direction="outgoing", max_depth=1, relationship_type="MENTIONS")
-            }
-            assert beta["id"] not in mentions, "violating edge must be healed on the next compile"
-        finally:
-            store.close()
 
     def test_no_prune_preserves_deleted_docs(self, project, export, monkeypatch):
         _patch_llm(monkeypatch, [_extraction(), _extraction()])

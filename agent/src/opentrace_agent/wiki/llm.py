@@ -248,6 +248,43 @@ SUPPORTED_PROVIDERS = (
 )
 
 
+class UsageTally:
+    """Thread-safe accumulator for the token usage a client actually billed.
+
+    Every provider response carries exact usage metadata; until 2026-08-04 we
+    discarded it, which is how the pre-ingest cost estimate drifted 6.5x stale
+    with nothing to contradict it. Each client owns one tally, records after
+    every successful call, and the ingest summary prints the total next to the
+    estimate — so assumption drift is visible on the first run, not after
+    three benchmark runs.
+
+    Honest limits: only SUCCESSFUL calls are counted (a retried attempt's
+    partial billing is invisible to us), and dollar conversion still uses our
+    listed rates — the token counts are the provider's own, the prices can
+    drift.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.calls = 0
+
+    def add(self, input_tokens: int | None, output_tokens: int | None) -> None:
+        with self._lock:
+            self.input_tokens += int(input_tokens or 0)
+            self.output_tokens += int(output_tokens or 0)
+            self.calls += 1
+
+    def as_dict(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+                "calls": self.calls,
+            }
+
+
 class WikiLLMError(RuntimeError):
     pass
 
@@ -314,6 +351,7 @@ class AnthropicLLM:
         self._client = anthropic.Anthropic(api_key=_resolve_key(api_key, "anthropic"))
         self._model = model or _default_model("anthropic")
         self._max_out = BACKENDS["anthropic"].max_output_tokens
+        self.usage = UsageTally()
 
     def call_tool(
         self,
@@ -364,6 +402,8 @@ class AnthropicLLM:
                 return stream.get_final_message()
 
         response = _gated_retry(getattr(self, "_limiter", None), _do, classify=_classify, label="anthropic")
+        u = getattr(response, "usage", None)
+        self.usage.add(getattr(u, "input_tokens", None), getattr(u, "output_tokens", None))
         for block in response.content:
             if getattr(block, "type", None) == "tool_use" and block.name == tool_name:
                 return dict(block.input)
@@ -386,6 +426,7 @@ class GeminiLLM:
         self._client = genai.Client(api_key=_resolve_key(api_key, "gemini"))
         self._model = model or _default_model("gemini")
         self._max_out = BACKENDS["gemini"].max_output_tokens
+        self.usage = UsageTally()
 
     def call_tool(
         self,
@@ -442,6 +483,8 @@ class GeminiLLM:
             )
 
         response = _gated_retry(getattr(self, "_limiter", None), _do, classify=_classify, label="gemini")
+        um = getattr(response, "usage_metadata", None)
+        self.usage.add(getattr(um, "prompt_token_count", None), getattr(um, "candidates_token_count", None))
         for candidate in response.candidates or []:
             content = getattr(candidate, "content", None)
             if content is None:
@@ -480,6 +523,7 @@ class _OpenAICompatibleLLM:
         self._label = label
         cfg = BACKENDS.get(label)
         self._max_out = cfg.max_output_tokens if cfg else 8192
+        self.usage = UsageTally()
 
     def call_tool(
         self,
@@ -528,6 +572,8 @@ class _OpenAICompatibleLLM:
             )
 
         response = _gated_retry(getattr(self, "_limiter", None), _do, classify=_classify, label=self._label)
+        u = getattr(response, "usage", None)
+        self.usage.add(getattr(u, "prompt_tokens", None), getattr(u, "completion_tokens", None))
         choices = getattr(response, "choices", None) or []
         for choice in choices:
             tool_calls = getattr(choice.message, "tool_calls", None) or []

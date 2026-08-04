@@ -26,7 +26,6 @@ from typing import Any
 
 from opentrace_agent.sources._llm_common import resolve_model
 from opentrace_agent.wiki.ingest.doc_extraction import extract_docs as _extract_docs
-from opentrace_agent.wiki.ingest.entities import write_entity_edges, write_entity_nodes
 from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
 from opentrace_agent.wiki.ingest.normalize import normalize as _normalize
 from opentrace_agent.wiki.ingest.persist import persist as _persist
@@ -139,7 +138,7 @@ def run_compile(
     behind. Re-sync from disk via ``opentraceai vault attach``.
 
     The compile is **corpus-only**: documents are indexed (KnowledgeDoc nodes
-    with navigation labels and epistemic status, the entity graph, doc↔doc
+    with navigation labels and epistemic status, doc↔doc
     links, MIRRORS twins) and read back raw via ``load_source`` or swept
     verbatim by ``grep``. Nothing is synthesized. Concept-page synthesis was
     removed — it measured 88.4% against a 98.6% control (-10.2pp, the worst
@@ -256,41 +255,16 @@ def run_compile(
             extraction_client._limiter = AdaptiveLimiter(_wiki_concurrency())  # type: ignore[attr-defined]
 
         # Per-doc extraction — stamps each source's navigation label (title +
-        # one-liner, mirrored onto its KnowledgeDoc node) and inventories the
-        # doc's entities. No per-document wiki pages: the raw body stays in the
-        # corpus, readable via load_source and greppable verbatim.
-        entity_nodes: list = []
-        entity_rels: list = []
-        yield from _extract_docs(
-            normalized,
-            meta,
-            extraction_client,
-            entity_nodes,
-            entity_rels,
-        )
-        # Merge the per-document entities into deduped nodes/edges (the same
-        # merge the standalone entity-extraction stage used — keyed on
-        # (type, canonical name)). These are mirrored into the graph below.
-        if entity_nodes or entity_rels:
-            from opentrace_agent.pipeline.entity_merge import merge_entities
-
-            raw_entity_count = len(entity_nodes)
-            entity_nodes, entity_rels, _ = merge_entities(entity_nodes, entity_rels)
-            yield WikiPipelineEvent(
-                kind=WikiEventKind.STAGE_PROGRESS,
-                phase=WikiPhase.EXTRACTING,
-                message=(
-                    f"Extracted {len(entity_nodes)} entities, {len(entity_rels)} relationships "
-                    f"from {len(normalized)} doc(s) ({raw_entity_count} before merge)"
-                ),
-                detail={"entities": len(entity_nodes), "relationships": len(entity_rels)},
-            )
+        # one-liner, mirrored onto its KnowledgeDoc node). That is the whole
+        # stage: no per-document wiki pages and no entity inventory, so the
+        # raw body in the corpus (readable via load_source, greppable
+        # verbatim) is the only representation of the document's content.
+        yield from _extract_docs(normalized, meta, extraction_client)
 
         # Persist. Always zero pages now (synthesis was removed) — but the
         # acquired sources and their metadata still need recording (persist
         # updates meta.sources, including the extraction-stamped labels), and
-        # the graph mirror below still needs the KnowledgeDoc nodes, labels,
-        # and entities.
+        # the graph mirror below still needs the KnowledgeDoc nodes and labels.
         yield from _persist([], acquired, meta, pages_path, meta_path, log_path, normalized=normalized)
 
         # Mirror the post-compile state into the graph if a store is given.
@@ -308,20 +282,9 @@ def run_compile(
                     "model": extraction_model,
                     "session": str(uuid.uuid4()),
                 }
-                # Persist entity NODES first so the vault mirror's MENTIONS
-                # pass (which scans page/doc bodies for entity names) can see
-                # and link them. Entity EDGES wait until AFTER the vault
-                # mirror: DERIVED_FROM points at KnowledgeDoc nodes that
-                # write_vault_to_graph creates, and merge_relationship
-                # silently drops an edge whose target doesn't exist yet.
-                entities_written = write_entity_nodes(graph_store, entity_nodes)
                 # No pages are compiled any more, so none get fresh provenance
                 # stamped; legacy pages keep whatever they already carry.
                 compiled_slugs: set[str] = set()
-                # (corpus_doc_id, entity_id) pairs from the DERIVED_FROM edges,
-                # so the mirror's MENTIONS pass can skip the redundant reverse
-                # edge for a doc↔entity pair provenance already covers.
-                derived_pairs = {(r.target_id, r.source_id) for r in entity_rels if r.type == "DERIVED_FROM"}
                 stats = write_vault_to_graph(
                     graph_store,
                     meta,
@@ -331,19 +294,12 @@ def run_compile(
                     compiled_slugs=compiled_slugs,
                     normalized=normalized,
                     scope=scope,
-                    derived_pairs=derived_pairs,
                 )
-                # KnowledgeDoc nodes now exist — write the entity edges
-                # (DERIVED_FROM → KnowledgeDoc, SEMANTIC_EDGE → entity).
-                write_entity_edges(graph_store, entity_rels)
                 yield WikiPipelineEvent(
                     kind=WikiEventKind.STAGE_PROGRESS,
                     phase=WikiPhase.PERSISTING,
-                    message=(
-                        f"Mirrored vault to graph — {stats['nodes_written']} nodes, "
-                        f"{stats['rels_written']} rels, {entities_written} entities"
-                    ),
-                    detail={**stats, "entities_written": entities_written},
+                    message=f"Mirrored vault to graph — {stats['nodes_written']} nodes, {stats['rels_written']} rels",
+                    detail={**stats},
                 )
             except Exception as e:  # noqa: BLE001
                 yield WikiPipelineEvent(
@@ -358,11 +314,22 @@ def run_compile(
                 )
 
         done_message = f"Compile complete — {len(acquired)} new source(s) indexed"
+        done_detail: dict[str, Any] = {"new_sources": len(acquired)}
+        # Billed-token actuals, as the provider reported them per call. Real
+        # clients carry a UsageTally; injected test fakes may not (getattr),
+        # and zero calls means nothing to report. Consumers print this next to
+        # the pre-flight estimate so a stale estimate is contradicted by every
+        # run instead of surviving until someone re-derives it by hand.
+        tally = getattr(extraction_client, "usage", None)
+        if tally is not None:
+            usage = tally.as_dict()
+            if usage["calls"]:
+                done_detail["llm_usage"] = usage
         yield WikiPipelineEvent(
             kind=WikiEventKind.DONE,
             phase=WikiPhase.PERSISTING,
             message=done_message,
-            detail={"new_sources": len(acquired)},
+            detail=done_detail,
         )
 
 

@@ -49,10 +49,17 @@ class BackendConfig:
     pricing_output_per_million: float
     base_url: str | None = None  # None for Anthropic-SDK path
     model_env_var: str | None = None  # override model via env var
-    # Cheaper model used for the entity-extraction role (a strict-JSON task
+    # Cheaper model used for the ``extraction`` role (a strict-JSON task
     # that doesn't need the flagship model). None → fall back to default_model,
     # which is correct for backends whose default is already a cheap tier.
     extraction_model: str | None = None
+    # Pricing for ``extraction_model``, USD per 1M tokens. Separate from the
+    # flagship pair above because the two differ by ~3x and doc ingestion runs
+    # ENTIRELY on the extraction tier — costing it at flagship rates overstated
+    # the pre-ingest estimate by that factor. None → the extraction model is the
+    # default model, so the flagship pair already applies.
+    extraction_pricing_input_per_million: float | None = None
+    extraction_pricing_output_per_million: float | None = None
     # Hard ceiling on a single response's output tokens for this backend's
     # models. Callers clamp their requested ``max_tokens`` to this so a large
     # request never exceeds a provider's model limit (which would error). Set
@@ -72,6 +79,8 @@ BACKENDS: dict[str, BackendConfig] = {
         pricing_output_per_million=15.0,
         model_env_var="OT_LLM_MODEL_ANTHROPIC",
         extraction_model="claude-haiku-4-5",
+        extraction_pricing_input_per_million=1.0,  # Haiku 4.5
+        extraction_pricing_output_per_million=5.0,
         max_output_tokens=64000,  # Sonnet 4.6 + Haiku 4.5 both support 64k
     ),
     "gemini": BackendConfig(
@@ -84,6 +93,8 @@ BACKENDS: dict[str, BackendConfig] = {
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         model_env_var="OT_LLM_MODEL_GEMINI",
         extraction_model="gemini-2.5-flash",
+        extraction_pricing_input_per_million=0.30,  # Gemini 2.5 Flash
+        extraction_pricing_output_per_million=2.50,
         max_output_tokens=64000,  # Gemini 2.5 Pro/Flash support 64k+ output
     ),
     "kimi": BackendConfig(
@@ -106,6 +117,8 @@ BACKENDS: dict[str, BackendConfig] = {
         base_url="https://api.openai.com/v1",
         model_env_var="OT_LLM_MODEL_OPENAI",
         extraction_model="gpt-4.1-mini",
+        extraction_pricing_input_per_million=0.40,  # gpt-4.1-mini
+        extraction_pricing_output_per_million=1.60,
         max_output_tokens=32768,  # gpt-4.1 / gpt-4.1-mini cap
     ),
     "local": BackendConfig(
@@ -185,7 +198,7 @@ def detect_backend() -> str | None:
     return None
 
 
-# Role-specific model overrides. These let the LLM workloads diverge: entity
+# Role-specific model overrides. These let the LLM workloads diverge: strict
 # extraction and wiki *file summaries* can run a cheap model while wiki
 # *synthesis* (plan + concept pages) keeps the flagship one. Checked ahead of
 # the generic per-backend OT_LLM_MODEL_* var.
@@ -304,7 +317,7 @@ def resolve_max_retries(default: int = 6) -> int:
     Bounds how many times a rate-limited (429/529) LLM call is retried before
     giving up. The parallel extraction stage owns the retry loop (so it can
     also throttle concurrency), so it sets the SDK's own retries to 0 and uses
-    this value instead — see ``pipeline.entity_extraction``.
+    this value instead.
     """
     raw = os.environ.get("OT_LLM_MAX_RETRIES", "").strip()
     if raw:
@@ -315,3 +328,29 @@ def resolve_max_retries(default: int = 6) -> int:
         except ValueError:
             pass
     return default
+
+
+def extraction_pricing(backend: str) -> tuple[float, float] | None:
+    """``(input, output)`` USD per 1M tokens for *backend*'s extraction tier.
+
+    Falls back to the flagship pair when the backend has no separate cheap
+    model (its default already is one). ``None`` for an unknown backend.
+
+    Exists so cost estimates price the model that actually runs. Doc ingestion
+    is entirely extraction-tier work, and quoting it at flagship rates
+    overstated the pre-ingest estimate roughly 3x — on the one screen whose
+    whole job is letting someone decide whether to spend.
+    """
+    cfg = BACKENDS.get(backend)
+    if cfg is None:
+        return None
+    if cfg.extraction_model is None:
+        return cfg.pricing_input_per_million, cfg.pricing_output_per_million
+    return (
+        cfg.extraction_pricing_input_per_million
+        if cfg.extraction_pricing_input_per_million is not None
+        else cfg.pricing_input_per_million,
+        cfg.extraction_pricing_output_per_million
+        if cfg.extraction_pricing_output_per_million is not None
+        else cfg.pricing_output_per_million,
+    )
