@@ -32,9 +32,6 @@ from opentrace_agent.pipeline.types import (
     ScanResult,
     StageResult,
 )
-from opentrace_agent.sources.code.directory_walker import (
-    DirectoryWalker,
-)
 from opentrace_agent.sources.code.import_analyzer import (
     package_id,
     package_source_url,
@@ -78,7 +75,14 @@ def scanning(
     if ctx.cancelled:
         return
 
-    # Walk directory tree → flat nodes/rels
+    # Walk directory tree → flat nodes/rels.
+    #
+    # Imported here, not at module scope: ``directory_walker`` imports
+    # ``pipeline.types``, which runs ``pipeline/__init__`` → ``pipeline.pipeline``
+    # → this module. A module-level import therefore breaks whenever
+    # ``directory_walker`` is the first of the two to be imported.
+    from opentrace_agent.sources.code.directory_walker import DirectoryWalker
+
     walker = DirectoryWalker()
     # Code-only walk. Doc ingestion (--wiki) is handled entirely by the wiki
     # doc pass, which discovers and reads docs itself; the code pipeline no
