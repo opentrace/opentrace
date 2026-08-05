@@ -31,6 +31,9 @@ VALID_NODE_TYPES = {
     "Repo",
     "Package",
     # Runtime / observability types (not in code_graph.proto)
+    # Written by `opentraceai cluster` — an analysis artefact, not part of the
+    # indexed code model, so it lives here rather than in the proto.
+    "Community",
     "Service",
     "Cluster",
     "Namespace",
@@ -43,3 +46,10 @@ VALID_NODE_TYPES = {
     "Database",
     "DBTable",
 }
+
+# Community detection (`opentraceai cluster` / `analyze`). Kept here rather than
+# generated from the proto: a community is derived at analysis time from an
+# already-indexed graph, not something an indexer emits, so it belongs with the
+# other runtime types above instead of in the code-graph schema.
+NODE_TYPE_COMMUNITY = "Community"
+REL_TYPE_MEMBER_OF_COMMUNITY = "MEMBER_OF_COMMUNITY"

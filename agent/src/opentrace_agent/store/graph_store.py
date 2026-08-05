@@ -27,6 +27,10 @@ from typing import Any
 import real_ladybug as ladybug
 
 from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
+from opentrace_agent.store.constants import (
+    NODE_TYPE_COMMUNITY,
+    REL_TYPE_MEMBER_OF_COMMUNITY,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -969,6 +973,212 @@ class GraphStore:
         return {"nodes_deleted": nodes_deleted, "relationships_deleted": rels_deleted}
 
     # -- lifecycle -------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Analysis reads/writes — used by `opentraceai cluster` / `analyze`
+    # and the graph exporters. Kept here rather than in the analysis
+    # package so all Cypher stays behind the store boundary.
+    # ------------------------------------------------------------------
+
+    def iter_analysis_graph(
+        self,
+        *,
+        exclude_types: tuple[str, ...] = (
+            NODE_TYPE_COMMUNITY,
+            NODE_TYPE_INDEX_METADATA,
+        ),
+        exclude_rel_types: tuple[str, ...] = (REL_TYPE_MEMBER_OF_COMMUNITY,),
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+        """Return (nodes, edges) for analytical workloads (clustering, exports).
+
+        Excludes Community and IndexMetadata nodes plus the membership edges
+        that link them, so clustering operates on the underlying graph and
+        doesn't ingest its own previous output.
+        """
+        node_result = self._conn.execute(
+            "MATCH (n:Node) WHERE NOT n.type IN $excl RETURN n.id, n.type, n.name",
+            parameters={"excl": list(exclude_types)},
+        )
+        nodes: list[dict[str, Any]] = []
+        while node_result.has_next():
+            r = node_result.get_next()
+            nodes.append({"id": str(r[0]), "type": str(r[1]), "name": str(r[2])})
+
+        edge_result = self._conn.execute(
+            "MATCH (a:Node)-[r:RELATES]->(b:Node) "
+            "WHERE NOT a.type IN $excl AND NOT b.type IN $excl AND NOT r.type IN $excl_rel "
+            "RETURN a.id, b.id",
+            parameters={"excl": list(exclude_types), "excl_rel": list(exclude_rel_types)},
+        )
+        edges: list[tuple[str, str]] = []
+        while edge_result.has_next():
+            r = edge_result.get_next()
+            edges.append((str(r[0]), str(r[1])))
+        return nodes, edges
+
+
+    def list_communities(self) -> list[dict[str, Any]]:
+        """Return all Community nodes, ordered by community_id."""
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.type = $t RETURN n.id, n.name, n.properties",
+            parameters={"t": NODE_TYPE_COMMUNITY},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            props = _parse_props(r[2]) or {}
+            rows.append({"id": str(r[0]), "name": str(r[1]), **props})
+        rows.sort(key=lambda x: x.get("community_id", 0))
+        return rows
+
+
+    def save_community(
+        self,
+        id: str,
+        name: str,
+        community_id: int,
+        cohesion: float,
+        members: int,
+        is_god: bool = False,
+    ) -> None:
+        """Upsert a Community node detected by Leiden/Louvain."""
+        self.add_node(
+            id=id,
+            node_type=NODE_TYPE_COMMUNITY,
+            name=name,
+            properties={
+                "community_id": community_id,
+                "cohesion": cohesion,
+                "members": members,
+                "is_god": is_god,
+            },
+        )
+
+
+    def clear_communities(self) -> None:
+        """Remove all Community nodes and their membership edges.
+
+        Used by ``opentraceai cluster`` to make re-clustering idempotent.
+        """
+        try:
+            self._conn.execute(
+                "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = $rt DELETE r",
+                parameters={"rt": REL_TYPE_MEMBER_OF_COMMUNITY},
+            )
+        except Exception:
+            logger.warning("clear_communities: failed to delete memberships", exc_info=True)
+        try:
+            self._conn.execute(
+                "MATCH (n:Node) WHERE n.type = $t DETACH DELETE n",
+                parameters={"t": NODE_TYPE_COMMUNITY},
+            )
+        except Exception:
+            logger.warning("clear_communities: failed to delete communities", exc_info=True)
+
+
+    def get_node_community(self, node_id: str) -> dict[str, Any] | None:
+        """Return the Community a node belongs to, or None if unassigned."""
+        result = self._conn.execute(
+            "MATCH (n:Node {id: $id})-[r:RELATES]->(c:Node) "
+            "WHERE r.type = $rt AND c.type = $ct "
+            "RETURN c.id, c.name, c.properties LIMIT 1",
+            parameters={
+                "id": node_id,
+                "rt": REL_TYPE_MEMBER_OF_COMMUNITY,
+                "ct": NODE_TYPE_COMMUNITY,
+            },
+        )
+        if not result.has_next():
+            return None
+        r = result.get_next()
+        props = _parse_props(r[2]) or {}
+        return {"id": str(r[0]), "name": str(r[1]), **props}
+
+
+    def list_cross_community_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return edges whose endpoints belong to different communities.
+
+        Only returns edges where both endpoints have community membership; nodes
+        with no community are silently skipped. Useful for surfacing cross-cluster
+        couplings — places where two architecturally distinct regions touch.
+        """
+        result = self._conn.execute(
+            "MATCH (a:Node)-[r:RELATES]->(b:Node), "
+            "(a)-[ma:RELATES]->(ca:Node), (b)-[mb:RELATES]->(cb:Node) "
+            "WHERE r.type <> $member_rel "
+            "AND ma.type = $member_rel AND mb.type = $member_rel "
+            "AND ca.type = $com AND cb.type = $com "
+            "AND ca.id <> cb.id "
+            "RETURN a.id, a.name, ca.id, ca.name, "
+            "b.id, b.name, cb.id, cb.name, r.type LIMIT $lim",
+            parameters={
+                "member_rel": REL_TYPE_MEMBER_OF_COMMUNITY,
+                "com": NODE_TYPE_COMMUNITY,
+                "lim": limit,
+            },
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "source_id": str(r[0]),
+                    "source_name": str(r[1]),
+                    "source_community_id": str(r[2]),
+                    "source_community_name": str(r[3]),
+                    "target_id": str(r[4]),
+                    "target_name": str(r[5]),
+                    "target_community_id": str(r[6]),
+                    "target_community_name": str(r[7]),
+                    "relation": str(r[8]),
+                }
+            )
+        return rows
+
+    # -- metadata --------------------------------------------------------
+
+    _METADATA_ID_PREFIX = "_meta:index:"
+    _METADATA_TYPE = NODE_TYPE_INDEX_METADATA
+
+
+    def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        """Return top-degree non-synthetic nodes.
+
+        Degree = inbound + outbound RELATES count. Excludes the index-metadata
+        type by default; pass extra types in ``exclude_types`` to filter further.
+        """
+        exclude = (NODE_TYPE_INDEX_METADATA, *exclude_types)
+        result = self._conn.execute(
+            "MATCH (n:Node) "
+            "WHERE NOT n.type IN $excl "
+            "OPTIONAL MATCH (n)-[r:RELATES]-() "
+            "RETURN n.id, n.type, n.name, count(r) AS degree "
+            "ORDER BY degree DESC LIMIT $lim",
+            parameters={"excl": list(exclude), "lim": limit},
+        )
+        rows: list[dict[str, Any]] = []
+        while result.has_next():
+            r = result.get_next()
+            rows.append(
+                {
+                    "id": str(r[0]),
+                    "type": str(r[1]),
+                    "name": str(r[2]),
+                    "degree": int(r[3]),
+                }
+            )
+        return rows
+
+
+    def save_membership(self, id: str, node_id: str, community_id: str) -> None:
+        """Link a node to its Community via MEMBER_OF_COMMUNITY."""
+        self.merge_relationship(
+            id=id,
+            rel_type=REL_TYPE_MEMBER_OF_COMMUNITY,
+            source_id=node_id,
+            target_id=community_id,
+        )
+
 
     def close(self) -> None:
         """Release connection and database resources."""

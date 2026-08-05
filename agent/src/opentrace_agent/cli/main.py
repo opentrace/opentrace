@@ -2122,3 +2122,72 @@ def _configure_logging(verbose: bool) -> None:
         level=level,
         format="%(levelname)s %(name)s: %(message)s",
     )
+
+# ---------------------------------------------------------------------------
+# Graph analysis — community detection, structural highlights, exporters.
+# Registered as first-class top-level commands (no `graph` subgroup): each is
+# a thin CLI shell over `pipeline/cluster.py` and the `retrieval` package,
+# which hold the logic and the Cypher respectively.
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
+def cluster(db_path: str | None, output_json: bool) -> None:
+    """Run community detection over the stored graph.
+
+    Reads non-internal nodes + edges, runs Leiden (falls back to Louvain),
+    re-splits oversized or low-cohesion communities, and writes ``Community``
+    nodes + ``MEMBER_OF_COMMUNITY`` edges. Idempotent — re-running clears
+    prior Community state before writing.
+    """
+    from opentrace_agent.cli.cluster_cmd import run_cluster_cli
+
+    resolved = _resolve_db(db_path, must_exist=True)
+    run_cluster_cli(resolved, output_json=output_json)
+
+
+@app.command()
+@click.option(
+    "--db",
+    "db_path",
+    default=None,
+    type=click.Path(),
+    help="OpenTrace database path (auto-detected if omitted).",
+)
+@click.option("--gods", "god_limit", default=10, show_default=True, help="Top-N god nodes to surface.")
+@click.option(
+    "--bridges",
+    "bridge_limit",
+    default=10,
+    show_default=True,
+    help="Top-N cross-community bridges to surface.",
+)
+@click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
+def analyze(db_path: str | None, god_limit: int, bridge_limit: int, output_json: bool) -> None:
+    """Surface god nodes, cross-community bridges, and suggested questions.
+
+    Run ``opentraceai cluster`` first — bridges depend on community
+    membership. Without communities, only god nodes are reported.
+    """
+    from opentrace_agent.cli.analyze_cmd import run_analyze_cli
+
+    resolved = _resolve_db(db_path, must_exist=True)
+    run_analyze_cli(
+        resolved,
+        god_limit=god_limit,
+        bridge_limit=bridge_limit,
+        output_json=output_json,
+    )
+
+
+from opentrace_agent.cli.export_graph import export_graph_app as _export_graph_app  # noqa: E402
+
+app.add_command(_export_graph_app)

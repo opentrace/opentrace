@@ -41,6 +41,18 @@ summarization = [
 swe-bench = [
     "anthropic>=0.40",
 ]
+# Community detection for `opentraceai cluster` / `analyze`. networkx carries
+# the Louvain fallback and the graph model both algorithms consume; the error
+# raised when it's absent names this extra by name.
+graph = [
+    "networkx>=3.0",
+]
+# Leiden is preferred over Louvain but graspologic has no Python 3.13 wheel,
+# hence the marker — `cluster` degrades to Louvain rather than failing when
+# it's unavailable.
+graph-leiden = [
+    "graspologic; python_version < '3.13'",
+]
 
 [project.urls]
 Homepage = "https://github.com/opentrace/opentrace"
