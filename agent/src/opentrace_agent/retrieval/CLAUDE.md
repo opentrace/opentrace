@@ -170,5 +170,13 @@ disk-blob layer. A production-grade blob backing store is future work.
   unconfirmed in LadybugDB — `find_path` uses Python BFS, `find_orphans` uses
   two-query set difference. Don't reach for those Cypher forms without
   testing.
-- **Ripgrep dependency.** `grep` requires `rg` on PATH. Document in install
-  docs; gracefully error otherwise (don't crash the MCP process).
+- **Ripgrep is an accelerator, not a dependency.** `grep` prefers `rg` and
+  falls back to an equivalent Python scan when `shutil.which("rg")` comes up
+  empty; the response's `mode` says which ran. It used to hard-require `rg`,
+  and the failure was invisible: on a machine where `rg` existed only as a
+  shell function, every vault sweep returned "ripgrep not on PATH", so the
+  exhaustiveness primitive never executed once across three benchmark runs.
+  **Don't reintroduce the hard requirement**, and don't let `test_grep.py`
+  skip when `rg` is absent — that skip is what hid it (the tests hunted for a
+  vendored binary and prepended it to PATH, validating a path production
+  could not take).
