@@ -44,41 +44,39 @@ The graph holds two layers, each populated by different stages:
 
 Tree-sitter walks source files and emits `Repository` / `Directory` / `File` / `Class` / `Function` / `Variable` nodes plus `DEFINES` / `CALLS` / `IMPORTS` / `DEPENDS_ON` edges. Always produced — no LLM cost, no opt-in.
 
-### 2. Page (the indexed documents)
+### 2. Doc (the indexed documents)
 
 Opt-in via `index --wiki`. The doc-ingestion pipeline produces:
 
 - `KnowledgeVault` — one per vault (scope: `local` or `global`)
 - Labelled `KnowledgeDoc` nodes — each ingested doc gets a navigation label (`title` + `one_line_summary`) and an epistemic `status` (`authoritative` / `design_history` / `design_history_archived`); the raw body stays verbatim in the corpus and is read via `load_source`
 
-Edges: `CONTAINS` (vault → page/doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
+Edges: `CONTAINS` (vault → doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
 **There used to be a third, "entity" layer.** An LLM pass extracted `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from each doc body and linked them with `DERIVED_FROM`, `SEMANTIC_EDGE`, and `MENTIONS`. It was **removed on 2026-08-04** after three benchmark runs measured **zero agent usage** of those nodes once corpus `grep` existed — against real costs: they crowded labelled documents out of the top search slots (short names win BM25), extraction was only ~65% stable run to run, names fragmented one concept into five nodes, and the same real-world thing landed under two different types. "Which documents discuss X" is now a `grep` sweep of the corpus: verbatim lines from every document, pre-labelled with title and status. The node and edge types remain valid so pre-removal graphs stay readable; nothing writes them. (`Service` and `Module` are separately in active use as runtime node types.)
 
-There is no synthesis half either. `KnowledgeConcept(kind="concept")` nodes — multi-source narratives with bodies on disk, plus `CITES` (concept page → KnowledgeDoc) and page ↔ page `LINKS_TO` from `[[Title]]` wiki-links — were produced by an opt-in `--wiki-concept-pages` flag until 2026-08-03. It was removed: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution, and it measured 88.4% against a 98.6% control on the doc-Q&A benchmark. Cross-document questions are answered by corpus `grep` instead — verbatim lines from every doc, pre-labelled with title and status.
-
-The node and edge types remain valid so a vault compiled before the removal keeps its pages: they stay on disk (canonical), stay mirrored into the graph, and `vault attach` still rebuilds that mirror.
+**There was also a synthesis half, and it is gone entirely.** An opt-in `--wiki-concept-pages` flag wrote `KnowledgeConcept` pages — multi-source narratives in the model's own voice — with `CITES` edges back to their sources. Synthesis was removed **2026-08-03** and the rest of the layer (node types, `pages/` storage, every read path) on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result on record: restatement strips a source's hedges, tense, and attribution, which a verbatim body structurally cannot do. Unlike the entity types, `KnowledgeConcept` and `CITES` are **not** retained for backward compatibility — they only existed on an unreleased branch, so no graph contains one. Cross-document questions are answered by corpus `grep` plus verbatim `load_source` reads. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 See [Ontology](ontology.md) for the full node + edge reference.
 
 ## Domains and cross-cutting structure
 
-The three layers form three **domains** in the cross-cutting analysis:
+The layers form three **domains** in the cross-cutting analysis:
 
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
-page domain     — Vault / Page / KnowledgeDoc
-entity domain   — Idea / Service / Module / Paper / Person / Event
+doc domain      — KnowledgeVault / KnowledgeDoc
+entity domain   — Idea / Paper / Person / Event
                   (empty on graphs built after 2026-08-04)
 ```
 
 `opentraceai analyze` surfaces:
 
 - **Cross-community bridges** — edges spanning detected communities
-- **Cross-domain bridges** — edges spanning code ↔ page (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
+- **Cross-domain bridges** — edges spanning code ↔ doc (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
 - **Cross-cutting communities** — communities whose members span ≥2 domains
 
-`MIRRORS` is the code ↔ page bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
+`MIRRORS` is the code ↔ doc bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
 
 ## Components
 
@@ -150,10 +148,9 @@ A typical full-stack run (`index ./repo myvault --wiki`):
                synthesized.
 
 7. Autoprune → Compare walked doc set against the existing graph;
-               delete orphan KnowledgeDocs and their corpus bodies;
-               for legacy vaults that still have pages, remove
-               dangling CITES edges from concept pages, delete pages
-               left with zero citations, stamp stale_since on the rest.
+               delete orphan KnowledgeDocs and their corpus bodies.
+               That is the whole of it — the report is two counts,
+               sources_deleted and corpus_files_deleted.
 ```
 
 `opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community / Hyperedge nodes (cluster) or just print analysis (analyze).
@@ -166,22 +163,19 @@ A typical full-stack run (`index ./repo myvault --wiki`):
   index.db.wal                        # write-ahead log
   corpus/<sha>.md                     # raw doc bodies, sha-keyed
   vaults/<name>/                      # local vaults (scope=local)
-    pages/concept/<base>.md           # legacy concept pages — vaults
-                                      #  compiled before 2026-08-03 only
     .vault.json
     .compile-log/<ts>.json
 
 ~/.opentrace/vaults/<name>/           # global vaults (scope=global)
-  pages/concept/<base>.md             # legacy only, as above
   .vault.json
   .compile-log/<ts>.json
 ```
 
-Disk is canonical for doc bodies (and legacy page bodies). The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
+A vault dir holds nothing but `.vault.json` and `.compile-log/` — no bodies of its own. Disk is canonical for doc bodies, which live in the shared sha-keyed `corpus/`. The graph holds metadata + relationships + a denormalised reference to corpus paths. `vault attach` rebuilds a graph mirror from disk in seconds (no LLM).
 
 ## Conventions
 
 - **Read-only retrieval.** Every primitive under `opentrace_agent.retrieval` is read-only. Writes go through `index` / `vault attach` / `cluster`.
-- **Vault scope is a property.** `vault` denormalised onto every page / doc so scope queries are property equality, not graph traversal.
+- **Vault scope is a property.** `vault` denormalised onto every vault / doc node so scope queries are property equality, not graph traversal.
 - **Discrete confidence.** All confidence values snap to a discrete rubric (`EXTRACTED` = 1.0, `INFERRED` ∈ {0.55, 0.65, 0.75, 0.85, 0.95}, `AMBIGUOUS` ∈ [0.1, 0.3]) — never 0.5.
 - **No backward-compat shims.** Each command does one thing; renamed commands are gone, not aliased.

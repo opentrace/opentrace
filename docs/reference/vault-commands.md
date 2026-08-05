@@ -4,12 +4,15 @@
 
 ## Concept refresher
 
-A **vault** is an indexed collection of documents — labelled, linked, and searchable, with the bodies kept verbatim in the corpus. Nothing is synthesized, so a vault has no pages: only vaults compiled before 2026-08-03, when concept-page synthesis was removed, carry any. Two storage scopes:
+A **vault** is an indexed collection of documents — labelled, linked, and searchable, with the bodies kept verbatim in the corpus. Nothing is synthesized: a vault holds documents and nothing else. Two storage scopes:
 
 - **Local** — `<project>/.opentrace/vaults/<name>/`. Visible only to graphs in that project.
 - **Global** — `~/.opentrace/vaults/<name>/` (or `$OT_VAULT_ROOT`). Visible from anywhere via `vault attach`.
 
-Disk is canonical. Each graph holds a derived **mirror** (`KnowledgeVault` + `KnowledgeDoc` nodes, plus `KnowledgeConcept` nodes for a legacy vault that still has pages — they keep being mirrored rather than dropped). The disk vault is rebuilt by re-running `vault ingest` / `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+Disk is canonical. Each graph holds a derived **mirror** — `KnowledgeVault` + `KnowledgeDoc` nodes and their `CONTAINS` edges. The disk vault is rebuilt by re-running `vault ingest` / `index --wiki`; the graph mirror is rebuilt by `vault attach`.
+
+!!! note "Synthesized concept pages are gone — 2026-08-03 / 2026-08-04"
+    A vault used to be able to hold synthesized cross-document pages alongside its documents. Synthesis was removed **2026-08-03** and the rest of the layer — the `pages/` dir, `PageMeta` in `.vault.json`, `vault show --page`, the `KnowledgeConcept` node type — on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result on record: a page restates its sources in the model's own voice, dropping their hedges, tense, and attribution. Verbatim corpus bodies read via `load_source`, plus an exhaustive corpus `grep`, answer the same questions. No vault anywhere has pages; the types were deleted, not retained. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 ## `vault ingest`
 
@@ -63,17 +66,24 @@ Shows every global vault on the machine, regardless of whether the current graph
 ## `vault show`
 
 ```bash
-opentraceai vault show <name>                      # vault index
-opentraceai vault show <name> --page <slug>        # one page body (legacy vaults)
+opentraceai vault show <name>                      # document index
 opentraceai vault show <name> --scope global       # disambiguate local vs global
 ```
 
-Prints the vault metadata + doc/page list (default) or the markdown body of one page. The `--page` form is useful for piping into `less`, `glow`, `pbcopy`, etc. — it only applies to a vault compiled before concept-page synthesis was removed; nothing produces pages now.
+Prints the vault metadata — path, last compile time, a `Documents:` count — then one entry per document: epistemic status, `title`, and one-line summary.
 
-```bash
-opentraceai vault show research --page concept/diffusion-models | less
-opentraceai vault show research --page concept/diffusion-models | pbcopy
 ```
+Vault 'research' (local)
+  Path:           /home/me/code/proj/.opentrace/vaults/research
+  Last compiled:  2026-08-04T11:02:19Z
+  Documents:      27
+
+  [authoritative] cold-chain-overview.md
+      title:   Cold Chain Overview
+      summary: How refrigerated transport is monitored end to end.
+```
+
+Bodies are not printed here — they live verbatim in the shared corpus. Read one with the MCP `load_source` tool, or sweep them all with `grep`. (The `--page` flag was deleted 2026-08-04 with the concept-page layer; there are no page bodies to print.)
 
 ## `vault attach`
 
@@ -83,7 +93,7 @@ opentraceai vault attach <name> --scope global     # disambiguate on collision
 opentraceai vault attach <name> --db <path>        # explicit graph DB
 ```
 
-Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` + any page files from disk and writes `KnowledgeVault` / `KnowledgeDoc` nodes (plus `KnowledgeConcept` for a legacy vault that has pages) + `CONTAINS` / `CITES` / `LINKS_TO` edges into the graph.
+Mirrors an existing disk vault into the current graph. No LLM cost — just reads `.vault.json` from disk and writes `KnowledgeVault` / `KnowledgeDoc` nodes plus their `CONTAINS` edges into the graph.
 
 When to use:
 
@@ -128,7 +138,7 @@ Re-attached to this project's graph: 35 nodes, 146 rels.
     Auto-attach only fires for the project whose graph this command can discover (via `find_db()` from cwd). Other projects that previously ran `vault attach <name>` against this vault still hold a mirror tagged with the old scope. Run `vault attach <name>` in each of those, or `vault detach <name>` if they no longer need it.
 
 !!! note "`vault refresh-stale-pages` was removed 2026-08-03"
-    It regenerated concept pages that autoprune had stamped `stale_since`. With concept-page synthesis gone there is nothing to regenerate — autoprune still stamps `stale_since` on a legacy page that lost a citation, but the only remedy is deleting the page. The inline `index --wiki --refresh-stale-pages` form went with it.
+    It regenerated concept pages that autoprune had marked stale. With the concept-page layer gone there is nothing to regenerate, and no staleness to mark: autoprune only deletes `KnowledgeDoc` nodes and their corpus bodies for documents that vanished from disk. The inline `index --wiki --refresh-stale-pages` form went with it.
 
 ## Where vaults live on disk
 
@@ -136,11 +146,11 @@ Re-attached to this project's graph: 35 nodes, 146 rels.
 <project>/.opentrace/vaults/<name>/   # local
 ~/.opentrace/vaults/<name>/           # global (override with $OT_VAULT_ROOT)
 
-  pages/concept/<base>.md             # legacy concept pages — vaults compiled
-                                      #  before 2026-08-03 only
-  .vault.json                         # page metadata, source labels + sha256 dedup state
+  .vault.json                         # source labels + sha256 dedup state
   .compile-log/<ts>.json              # per-compile audit log
 ```
+
+Those two entries are the whole vault dir — a vault stores no bodies of its own.
 
 The doc corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed by sha256, scope-aware:
 
@@ -150,8 +160,6 @@ The doc corpus (post-markitdown bodies) lives in a sibling `corpus/` dir keyed b
 ```
 
 `vault attach` copies any sha files it finds in the global corpus into the attaching project's local corpus dir — once attached, `KnowledgeDoc.corpus_path` resolves under `<project>/.opentrace/` like any local KnowledgeDoc.
-
-Where legacy pages exist, slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept pages are the only page kind, so everything lives under `concept/`. Pass `<kind_dir>/<base>` to `vault show --page` and to the `/api/vaults/{vault}/pages/{slug}` REST route. A vault compiled today has no slugs — read its documents through `load_source` / the source routes instead.
 
 The `.vault.json` is the authoritative record. Re-attaching a graph mirror reads it — including each doc's navigation label (`title` + one-line summary), so attached KnowledgeDocs keep their labels; re-compiling against the same vault uses its `source_shas` to dedup.
 

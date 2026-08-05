@@ -133,7 +133,7 @@ export function AddVaultModal({ scope, appendTo, onClose }: Props) {
       scope,
       // "+ Compile new" always produces a fresh vault (auto-suffixed if the
       // name collides), so cancel may delete it. Appending must never wipe the
-      // existing vault's prior pages.
+      // existing vault's prior documents.
       isNew: !appending,
       // Appending updates the named vault in place; a new compile auto-suffixes
       // (flask → flask-1) if the name is taken in either scope.
@@ -155,10 +155,10 @@ export function AddVaultModal({ scope, appendTo, onClose }: Props) {
 
   const providerName = PROVIDERS[provider]?.name ?? provider;
   const subtitle = appending
-    ? `Runs one LLM pass over the new docs and merges them into "${appendTo}" — existing pages are extended, new concepts added, nothing removed.`
+    ? `Adds the new docs to "${appendTo}" — one LLM pass labels each one; existing documents are untouched, nothing is removed.`
     : scope === 'global'
-      ? 'One LLM pass over your docs builds a global vault in ~/.opentrace/vaults/ — attachable from any project.'
-      : 'One LLM pass over your docs builds a project-local vault of concept pages.';
+      ? 'One LLM pass labels your docs into a global vault in ~/.opentrace/vaults/ — attachable from any project.'
+      : 'One LLM pass labels your docs into a project-local vault. Bodies are indexed verbatim, never rewritten.';
   const totalMb = files.reduce((n, f) => n + f.size, 0) / 1024 / 1024;
 
   return (

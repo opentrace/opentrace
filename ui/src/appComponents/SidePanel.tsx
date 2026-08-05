@@ -36,10 +36,8 @@ import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
 import NodeDetailsPanel, {
   type NodeEdge,
-  type PageContent,
 } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
-import { getPageMarkdown, getVault } from '../wiki/client';
 import HistoryPanel from './HistoryPanel';
 import IndexMetadataPanel from './IndexMetadataPanel';
 import './SidePanel.css';
@@ -102,7 +100,7 @@ export default function SidePanel({
     hopMap,
     graphNodeIds,
   } = useGraphInteraction();
-  const { graphVersion, graphData, loadGraph } = useGraph();
+  const { graphVersion, graphData } = useGraph();
 
   // ─── Lazy property resolution for the selected node ──────────────────
   // The in-memory graph holds LEAN nodes (id/name/type only) so huge repos
@@ -201,74 +199,6 @@ export default function SidePanel({
     };
   }, [selectedNode?.id, resolvedProps, store]); // eslint-disable-line react-hooks/exhaustive-deps
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  // ─── Page body fetch ─────────────────────────────────────────────
-  // A KnowledgeConcept node IS a concept page. Its body lives on disk (not in the
-  // graph), so we fetch it from the vault REST API the same way source code
-  // is fetched for a File node — and render it in the Details panel. We also
-  // pull the vault's page list so `[[wiki-links]]` resolve to real slugs.
-  const [concept, setConcept] = useState<PageContent | null>(null);
-  const [wikiLoading, setWikiLoading] = useState(false);
-  /* eslint-disable react-hooks/set-state-in-effect -- async fetch pattern with cleanup */
-  useEffect(() => {
-    if (!selectedNode || selectedNode.type !== 'KnowledgeConcept') {
-      setConcept(null);
-      return;
-    }
-    // Wait for lazy props so we have vault + slug to address the page.
-    if (resolvedProps === undefined) return;
-    const vault = resolvedProps?.vault as string | undefined;
-    const slug = resolvedProps?.slug as string | undefined;
-    if (!vault || !slug) {
-      setConcept(null);
-      return;
-    }
-    let cancelled = false;
-    setWikiLoading(true);
-    setConcept(null);
-    // Scope is omitted — the server resolves the vault by name (local first,
-    // then global), matching how a page node addresses its vault.
-    Promise.all([getPageMarkdown(vault, slug), getVault(vault)])
-      .then(([body, detail]) => {
-        if (!cancelled) setConcept({ body, pages: detail.pages });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.warn('[SidePanel] wiki page fetch failed:', err);
-        setConcept({ body: '', pages: [] });
-      })
-      .finally(() => {
-        if (!cancelled) setWikiLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedNode?.id, selectedNode?.type, resolvedProps]); // eslint-disable-line react-hooks/exhaustive-deps
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  // Follow a `[[wiki-link]]`: resolve the target slug to its page node
-  // (`<vault>::<slug>`) and select it, so an internal link is a graph hop.
-  // Links are concept ↔ concept within one vault, so reuse the current
-  // page's vault. If the node isn't in the loaded graph, load around it.
-  const handlePageLink = useCallback(
-    (slug: string) => {
-      const vault = resolvedProps?.vault as string | undefined;
-      if (!vault) return;
-      const targetId = `${vault}::${slug}`;
-      const existing = graphData.nodes.find((n) => n.id === targetId);
-      if (existing) {
-        selectNode(existing);
-        return;
-      }
-      void loadGraph(targetId, 2).then(() => {
-        setTimeout(() => {
-          const node = graphData.nodes.find((n) => n.id === targetId);
-          if (node) selectNode(node);
-        }, 150);
-      });
-    },
-    [resolvedProps, graphData.nodes, selectNode, loadGraph],
-  );
 
   // ─── Selection callbacks (from context, plus light wrappers) ─────────
   const onCommunityFocus = useCallback(
@@ -669,9 +599,6 @@ export default function SidePanel({
               edges={selectedNodeEdges}
               onSelectNode={handleSelectNodeId}
               onSelectEdge={handleSelectEdgeFromNode}
-              concept={concept}
-              wikiLoading={wikiLoading}
-              onPageLink={handlePageLink}
             />
           ) : selectedLink ? (
             <EdgeDetailsPanel

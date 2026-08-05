@@ -5,6 +5,8 @@ Hands-on tour of the wikiv3 + graph features added on top of origin/main. Run th
 **Time:** ~25 minutes if you do every section. ~10 if you only do the headline sections (1, 3, 4).
 **Cost:** ~$0.50 total in LLM API calls. Each section's cost is called out so you can stop early.
 
+> The per-section dollar figures below were sized when one LLM call per doc also produced an entity inventory and a concept-page plan. Both of those layers were removed on 2026-08-04, so a run today costs materially less — one cheap-tier call per document, asking only for a title and a one-line summary, and nothing else. Treat the numbers as ceilings.
+
 ---
 
 ## Prerequisites
@@ -62,7 +64,7 @@ ls papers/        # 10 markdown docs
 ls code/          # 10 Python files
 ```
 
-Picked deliberately: the docs describe the same commands the code implements, so the doc-derived entities share names with code symbols. That overlap is what makes the `MENTIONS` page↔entity bridges and the cross-cutting communities in section 3 plentiful and obvious. (Code files no longer produce entities themselves — extraction is docs-only — but the shared vocabulary still ties the layers together.) If you want a bigger demo afterward, swap the explicit lists for `cp -r ./agent/src/opentrace_agent/cli /tmp/ot-demo/code/` + `find ./docs -name "*.md" -exec cp {} /tmp/ot-demo/papers/ \;` (~50 files, ~8-10 min, ~$0.50).
+Picked deliberately: the docs describe the same commands the code implements, and several of them link to each other. That overlap is what makes the code ↔ doc bridges and the cross-cutting communities in section 3 plentiful and obvious — `MIRRORS` twins where a doc is also a walked file, `LINKS_TO` edges from the relative links the doc authors actually wrote, and shared vocabulary in the FTS index. If you want a bigger demo afterward, swap the explicit lists for `cp -r ./agent/src/opentrace_agent/cli /tmp/ot-demo/code/` + `find ./docs -name "*.md" -exec cp {} /tmp/ot-demo/papers/ \;` (~50 files, ~8-10 min, ~$0.50).
 
 If you'd rather use a different corpus, swap in any small code repo + any folder of markdown/PDF/HTML docs. The expected outputs below will look different, but the *shape* will match.
 
@@ -73,22 +75,17 @@ If you'd rather use a different corpus, swap in any small code repo + any folder
 One command, two modes:
 
 - **Plain `index`** — code-only. tree-sitter parses every supported source file → `File` / `Class` / `Function` / `Module` nodes + `CALLS` / `IMPORTS` edges. **No LLM, no cost.**
-- **`index --wiki [VAULT_NAME]`** — adds a doc-ingestion pass on top of the code walk. For each doc file (md/pdf/html/txt/docx), a **single LLM call** produces all three of:
-  1. a **file-summary** Page (1:1 with the doc),
-  2. the **knowledge-graph entities** — `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes (each with a one-line `description`) + `DERIVED_FROM` edges back to their `Source`, plus entity↔entity `SEMANTIC_EDGE`s,
-  3. that doc's **concept inventory** — each concept tagged with `topic` / `subject` / `gloss`.
+- **`index --wiki [VAULT_NAME]`** — adds a doc-ingestion pass on top of the code walk. For each doc file (md/pdf/html/txt/docx), a **single cheap LLM call** produces exactly one thing: that document's navigation label (a `title` plus a one-line summary). Nothing else. The body is markitdown-normalised and written **verbatim** to the content-addressed corpus, then mirrored into the graph as a `KnowledgeDoc` with an epistemic `status`, a `MIRRORS` edge to its `File` twin when the code walk saw the same file, and `LINKS_TO` edges for the relative markdown links its author actually wrote (parsed mechanically — no LLM).
 
-  Then a cheap deterministic merge collapses duplicate entities, the concept mentions are clustered into cross-document **concept pages**, and the whole result is mirrored into the graph beside the vault.
-
-> **Entity extraction is docs-only now, and folded into the wiki pass.** Code files never hit the LLM — their structural layer (`File`/`Class`/`Function` + `CALLS`/`IMPORTS`) already comes from tree-sitter, so re-extracting them with an LLM was pure cost. The old standalone `--extract-entities` and `--build-pages` flags are both gone; everything routes through `--wiki`, where one per-doc call does summary + entities + concepts at once.
+> **Nothing is synthesized, and no entities are extracted.** Two layers used to hang off this pass and both are gone. The **LLM-extracted entity layer** (`Idea`/`Service`/`Module`/`Paper`/`Person`/`Event` + `DERIVED_FROM`/`SEMANTIC_EDGE`/`MENTIONS`) was **removed 2026-08-04**. The **concept-page layer** — cross-document synthesized pages, `KnowledgeConcept` nodes, `CITES` edges, `[[wiki-link]]` syntax — lost its synthesis stage **2026-08-03** and everything else **2026-08-04**, because the pages variant measured **88.4% against a 98.6% control (−10.2pp)**, the worst result on record: a synthesized page restates its sources in the model's own voice, stripping their hedges, tense, and attribution, a failure mode a verbatim body structurally cannot have. What replaced it is verbatim `load_source` bodies plus exhaustive corpus `grep`, which answer the same questions. Full record in `agent/src/opentrace_agent/wiki/CLAUDE.md` ("Closed"). The `--extract-entities`, `--build-pages`, and `--wiki-concept-pages` flags are all gone — everything routes through `--wiki`. Code files still never hit the LLM: their structural layer (`File`/`Class`/`Function` + `CALLS`/`IMPORTS`) comes from tree-sitter.
 
 > The vault name is the optional second positional. Omit it and it defaults to the path basename. A bare vault-name positional implies `--wiki`, so `index ./ opentrace-demo` works too. Add `--global` to compile into `~/.opentrace/vaults/` instead of the project.
 
 **Cost + speed knobs (new):**
 
-- **Cheap tier for the per-doc pass.** Entity extraction + file summaries run on a cheap model (Anthropic → Haiku, Gemini → Flash, OpenAI → gpt-4.1-mini); only cross-document concept synthesis uses the flagship. Override per role: `OT_EXTRACTION_MODEL` / `OT_WIKI_SUMMARY_MODEL` (cheap tier), `OT_WIKI_MODEL` (flagship).
-- **Parallelism.** The per-doc loop runs `OT_EXTRACTION_CONCURRENCY` docs at once (default 8), behind an adaptive limiter that ratchets concurrency *down* on 429/529 (never back up) and a `Retry-After`-aware retry loop (`OT_LLM_MAX_RETRIES`).
-- **Content-sha cache.** Each doc's extraction is cached at `.opentrace/entity_cache/<sha>.json`, keyed on raw bytes and checked *before* markitdown — a re-run skips both file conversion and the LLM for unchanged docs. Opt out with `OT_EXTRACTION_NO_CACHE=1`.
+- **Cheap tier, and only the cheap tier.** The per-doc labelling call runs on a cheap model (Anthropic → Haiku, Gemini → Flash, OpenAI → gpt-4.1-mini) via the `wiki_summary` role; override with `OT_WIKI_SUMMARY_MODEL`. No stage uses the flagship any more — the flagship client existed for cross-document concept synthesis, removed 2026-08-03. An explicit `--model` is honoured here so it isn't silently inert.
+- **Parallelism.** The per-doc loop runs `OT_WIKI_CONCURRENCY` docs at once (default 8), behind an adaptive limiter that ratchets concurrency *down* on 429/529 (never back up) and a `Retry-After`-aware retry loop (`OT_LLM_MAX_RETRIES`).
+- **Sha-keyed dedup.** Acquire is content-addressed, so re-running over an unchanged corpus reports `Acquired 0 new, skipped N duplicate` and makes no LLM call at all.
 
 ```bash
 # T1, in /tmp/ot-demo
@@ -105,69 +102,76 @@ Indexing /tmp/ot-demo ...
   Processing 10 files
   Extracted N classes, M functions, ...
   --wiki: ingesting 10 doc(s) into local vault 'opentrace-demo' ...
-    via anthropic (~$0.18 estimated)
+    via anthropic (~$0.0X estimated)
     wiki: Acquired 10 new, skipped 0 duplicate
     wiki: Normalizing 10 source(s)
-    wiki: Summarising 10 source(s)
-    wiki: [10/10] Summarised file-summary/<file>
-    wiki: Extracted X entities, Y relationships from 10 doc(s) (Z before merge)
-    wiki: Resolving concepts from K mention(s)
-    wiki: Plan: P create, E extend (from C concept(s))
-    wiki: Executing ...
-    wiki: Mirrored vault to graph — N nodes, M rels, X entities
-    wiki: Compile complete — 10 file summary page(s), P concept page(s)
+    wiki: Extracting from 10 source(s)
+    wiki: [10/10] Extracted <file>
+    wiki: Extracted labels from 10 doc(s)
+    wiki: Recording 10 document(s)
+    wiki: Mirrored vault to graph — N nodes, M rels
+    wiki: Compile complete — 10 new source(s) indexed
+    wiki: linked 10 doc(s) to their File nodes (MIRRORS)
+    wiki: linked K doc-to-doc reference(s) (LINKS_TO)
+    wiki: linked vault 'opentrace-demo' to repository 'local/ot-demo' (DOCUMENTS)
   Autoprune: no orphans found.
-Done in ~120s.
+Done in ~40s.
 ```
 
 ### What to notice
 
 - **Code walk first, no LLM.** The `Scanning` / `Processing` / `Extracted N classes` lines are tree-sitter only. The LLM fires only once `--wiki` reaches the doc pass.
 - **Pre-flight cost estimate** before any LLM call (`via anthropic (~$X estimated)`).
-- **One call per doc does three jobs** — summary + entities + concept inventory. There's no separate entity-extraction phase in the output anymore.
-- **Entity merge** runs after the per-doc loop: `Extracted X entities … (Z before merge)` shows duplicates collapsed by `(type, canonical name)` — so "Autoprune" named in `overview.md`, `wiki.md`, and `cli-flags.md` lands as one node with a `DERIVED_FROM` edge to each source.
-- **Concept clustering, not a planner.** `Resolving concepts from K mention(s)` → `Plan: P create, E extend`. Concept pages are clustered from the per-doc mentions by `(topic, subject)` — synonyms merge into one page citing every source, polysemy splits into distinct pages — rather than one planner call enumerating everything (which used to satisfice and miss central multi-doc concepts).
+- **One cheap call per doc does one job** — the title + one-line summary that becomes the doc's label in listings and search hits. That's the entire `Extracting` stage. The body is never rewritten.
+- **The linking lines are deterministic.** `linked … (MIRRORS)`, `linked … (LINKS_TO)`, `linked vault … (DOCUMENTS)` all come after the LLM stage and use zero LLM calls: MIRRORS pairs a doc with the `File` the code walk saw, LINKS_TO parses the relative markdown links in the body, DOCUMENTS ties a repo-spawned vault back to its `Repository`.
+- **No synthesis, planner, or merge lines.** There is no `Resolving concepts` / `Plan: P create, E extend` / `Executing` sequence and no entity-merge line. Those belonged to the concept-page layer (removed 2026-08-04) and the entity layer (same date). If you see them, you're on an old build.
 - **`Done in N.Ns`** includes wiki + autoprune time.
 
 ```bash
 opentraceai stats
 ```
 
-You'll see counts for all three layers: `Repository / File / Class / Function / Module` (code, tree-sitter, always there) plus `Source / Vault / Page / Idea / Service / Person / Event` (the doc pass).
+You'll see counts for both layers: `Repository / File / Class / Function / Module` (code, tree-sitter, always there) plus `KnowledgeVault / KnowledgeDoc` (the doc pass). Two node types, not seven — the entity and concept-page types stopped being written on 2026-08-04.
 
 ---
 
 ## Section 2: The vault on disk (3 min · $0)
 
-Everything compiled lives as plain markdown on disk; the DB is just a derived mirror.
+A vault directory is **metadata only**. Document bodies live verbatim in the shared, content-addressed corpus; the DB is a derived mirror of both.
 
 ```bash
-find .opentrace/vaults/opentrace-demo/pages -type f | sort
+find .opentrace/vaults/opentrace-demo -type f | sort
 ```
 
 ### What you'll see
 
 ```
-.opentrace/vaults/opentrace-demo/pages/concept/<some-slug>.md
-.opentrace/vaults/opentrace-demo/pages/concept/<another-slug>.md
-.opentrace/vaults/opentrace-demo/pages/file-summary/<file-1>.md
-.opentrace/vaults/opentrace-demo/pages/file-summary/<file-2>.md
-...
+.opentrace/vaults/opentrace-demo/.compile-log/<timestamp>.json
+.opentrace/vaults/opentrace-demo/.vault.json
 ```
 
-Two folders: `concept/` and `file-summary/`. Slugs are `<kind>/<base>` so a concept and a file-summary can share titles without collision. Pick a concept page and read it:
+That's the whole layout — `.vault.json` plus a compile log, nothing else. There used to be a `pages/` dir here holding synthesized `concept/` and `file-summary/` markdown cross-linked with `[[wiki-link]]` syntax; synthesis stopped **2026-08-03** and the rest of the concept-page layer went **2026-08-04**, because the pages variant measured **88.4% against a 98.6% control (−10.2pp)** — see `agent/src/opentrace_agent/wiki/CLAUDE.md`. There is no `[[wiki-link]]` syntax anywhere in the product now.
 
 ```bash
-cat .opentrace/vaults/opentrace-demo/pages/concept/*.md | head -60
+cat .opentrace/vaults/opentrace-demo/.vault.json | python3 -m json.tool | head -40
 ```
 
-You'll see `[[wiki-link]]` syntax linking to other pages. Obsidian-compatible — the `|` alias divider works too (`[[Slug|Display]]`).
+`.vault.json` is the authoritative record — one entry per document (sha256, original name, root-relative `path`, epistemic `status`, `title`, `one_line_summary`, `corpus_path`) plus `last_compiled_at`. The graph mirror is rebuilt from this file by `vault attach`. Unknown keys from an older vault are ignored on load rather than crashing, so a pre-removal `.vault.json` still opens.
+
+Same record, rendered for humans:
 
 ```bash
-cat .opentrace/vaults/opentrace-demo/.vault.json | python3 -m json.tool | head -30
+opentraceai vault show opentrace-demo
 ```
 
-`.vault.json` is the authoritative record — page list, source SHAs (used for re-compile dedup), `last_compiled_at`. The graph mirror is rebuilt from this file by `vault attach`.
+You get a `Documents:` count, then one `[status] filename` block per doc with its title and one-line summary. **Bodies aren't printed** — there's nothing to print but the source itself, and it's already on disk:
+
+```bash
+ls .opentrace/corpus/ | head -3
+head -20 .opentrace/corpus/"$(ls .opentrace/corpus | head -1)"
+```
+
+That's one document's markitdown-normalised body, verbatim. Agents read these through the MCP `load_source` tool and sweep every one of them at once with `grep` (section 10) — which is what replaced reading a synthesized page. Note the corpus is sha-keyed and shared across vaults, so vault membership comes from the graph's `CONTAINS` edges, never from the directory listing.
 
 ---
 
@@ -189,43 +193,43 @@ opentraceai analyze
 ### Concept cheat-sheet
 
 - **Community** — a tightly-linked group of nodes detected by Leiden/Louvain. Persists as a real `Community` graph node with its own properties (size, dominant type, cohesion score); every other node has a `MEMBER_OF` edge to exactly one Community. You can query Communities like any node, traverse from them to their members, etc. The folder names in the obsidian export (`module-cluster-48-nodes/`) come from these.
-- **God node** — *not a node type, never persisted*. Computed inline every time someone calls `analyze` (or hits `/api/highlights/gods`, or invokes the MCP tool). The whole definition is "SELECT every node ORDER BY degree DESC LIMIT N" where degree = incoming + outgoing edges. Any existing node type can rank — File, Function, Page, or even a Community itself. Re-running after a re-index changes the ranking because degrees changed; re-running on the same graph gives the same answer. Useful for spotting the hubs the rest of the graph orbits — touch them and you affect everything.
+- **God node** — *not a node type, never persisted*. Computed inline every time someone calls `analyze` (or hits `/api/highlights/gods`, or invokes the MCP tool). The whole definition is "SELECT every node ORDER BY degree DESC LIMIT N" where degree = incoming + outgoing edges. Any existing node type can rank — File, Function, KnowledgeDoc, or even a Community itself. Re-running after a re-index changes the ranking because degrees changed; re-running on the same graph gives the same answer. Useful for spotting the hubs the rest of the graph orbits — touch them and you affect everything.
 - **Cross-community bridge** — an edge whose source and target sit in *different* communities. The structural seams holding otherwise-separate clusters together.
-- **Cross-domain bridge** *(new in wikiv3)* — an edge crossing one of the three ontological layers (code / entity / page). Since extraction is docs-only, the producers are `DERIVED_FROM` (entity → `Source`, i.e. entity → page layer) and `MENTIONS` (page → entity).
-- **Cross-cutting community** *(new in wikiv3)* — a community whose members span ≥2 domains. Signal that a concept legitimately exists across code, docs, and entities at once.
+- **Cross-domain bridge** *(new in wikiv3)* — an edge crossing an ontological layer. Two layers are live: **code** (`Repository`/`Directory`/`File`/`Class`/`Function`/`Variable`) and **doc** (`KnowledgeVault`/`KnowledgeDoc`). The producers are `MIRRORS` (KnowledgeDoc → its `File` twin) and `DOCUMENTS` (Repository → the vault it spawned). A third **entity** domain still exists in the classifier so pre-2026-08-04 graphs keep classifying correctly, but nothing writes into it — the entity layer, and with it `DERIVED_FROM`/`MENTIONS` as bridge producers, was removed that day. The doc domain was called `page` until the same date.
+- **Cross-cutting community** *(new in wikiv3)* — a community whose members span ≥2 domains. Signal that a subject legitimately exists across code and docs at once.
 
 ### What you'll see in `analyze`
 
 Four sections, in order. Examples are roughly what you'll get on the opentrace-itself sandbox — your exact lines will differ.
 
-**1. God nodes** — a mix of `File`, `Community`, and `Page` types in one ranking:
+**1. God nodes** — a mix of `File`, `Community`, and `KnowledgeDoc` types in one ranking:
 ```
 God nodes (top 10 by degree):
     48  Community       Module cluster (48 nodes)
     36  File            main.py
-    32  Page        Indexing
     29  Community       Function cluster (29 nodes)
+    12  KnowledgeDoc    Indexing
     ...
 ```
-Pages can be god nodes now because they carry a lot of MENTIONS + CITES edges.
+A `KnowledgeDoc` ranks on its `CONTAINS` + `LINKS_TO` + `MIRRORS` degree. Doc-side degrees are lower than they used to be: the two highest-volume edge types a doc node ever carried, `MENTIONS` and `CITES`, went with the entity and concept-page layers on 2026-08-04.
 
 **2. Cross-community bridges:**
 ```
-Indexing [Module cluster (48 nodes)] --MENTIONS--> index_command [Module cluster (27 nodes)]
+indexing.md [Doc cluster (9 nodes)] --LINKS_TO--> cli-flags.md [Module cluster (27 nodes)]
 ```
-The `MENTIONS` edge is new — emitted when a wiki page body name-matches an extracted entity.
+`LINKS_TO` is a relative markdown link one doc's author wrote to another doc — parsed mechanically, never inferred.
 
-**3. Cross-domain bridges (code ↔ entity ↔ page):**
+**3. Cross-domain bridges (code ↔ doc)** — this is the header `analyze` actually prints:
 ```
-AppConfig (entity/Module) --DERIVED_FROM--> install-cli.md (page/Source)
+install-cli.md (doc/KnowledgeDoc) --MIRRORS--> install-cli.md (code/File)
 ```
-The LLM pulled `AppConfig` out of a doc body; the entity links back to the `Source` it derived from — an entity → page bridge. This is the section that didn't exist before wikiv3.
+The doc pass and the code walk both saw the same file, so it exists as two nodes; `MIRRORS` is the bridge, and it's what keeps the code-tree view one hop from any in-repo doc. This is the section that didn't exist before wikiv3.
 
 **4. Cross-cutting communities (span ≥2 domains):**
 ```
-Module cluster (48 nodes) — entity+page (48 members: {'entity': 39, 'page': 9})
+Module cluster (48 nodes) — code+doc (48 members: {'code': 39, 'doc': 9})
 ```
-Communities whose members aren't purely code, purely doc, or purely entity.
+Communities whose members aren't purely code or purely doc.
 
 ```bash
 opentraceai analyze --json | jq '.cross_domain_bridges[:3]'
@@ -268,14 +272,14 @@ The **Vaults manager** opens (a modal — management only, not a reader):
 - **Scope-aware action icons per row** — trash, detach, attach `+` only show when they make sense for that scope+attached-state combo.
 - **`+ Compile files`** — drop docs to compile a new vault.
 
-**Reading happens in the graph, not the manager.** A compiled vault mirrors into the graph as `Vault` / `Page` / `CorpusDoc` nodes. Close the manager and:
-- **Click a `Page` node** — its markdown renders in the Details side panel, exactly the way a `File` node shows its source. The page is the node.
-- **Click a `CorpusDoc` node** — the raw source document (markitdown-normalised) renders in Details too, the same way. Reading a doc is just landing on its node.
-- **Follow a `[[wiki-link]]`** in a concept page — it selects the linked page's node, so an internal link is a graph hop (the graph animates to it).
+**Reading happens in the graph, not the manager.** A compiled vault mirrors into the graph as `KnowledgeVault` + `KnowledgeDoc` nodes. Close the manager and:
+- **Click a `KnowledgeDoc` node** — the document's markitdown-normalised body renders in the Details side panel, exactly the way a `File` node shows its source. Reading a doc is just landing on its node, and what you read is what its author wrote.
+- **Follow a `LINKS_TO` edge** out of that node — it's a relative markdown link the author wrote to another doc, so an internal reference is a graph hop.
+- There is no separate page renderer. `WikiMarkdown.tsx` and `[[wiki-link]]` navigation were **removed 2026-08-04** with the concept-page layer (`agent/src/opentrace_agent/wiki/CLAUDE.md`); `components/wiki/` is now the vault manager only.
 
 Now the AI Assistant panel:
 - Ask: **"What's in the opentrace-demo vault?"**
-- The agent will call `list_vaults` → `list_vault_pages` → `read_vault_page` LangChain tools (defined in `chat/vaultTools.ts`). Same primitives the MCP server exposes. You'll see the page summaries quoted in its answer.
+- The agent will call the `list_vaults` LangChain tool (`chat/vaultTools.ts` exports only that one) and then read documents through the node/source endpoints. Same primitives the MCP server exposes. The `list_vault_pages` / `read_vault_page` tools that used to sit between them went with the concept-page layer.
 
 ---
 
@@ -303,7 +307,7 @@ ls ~/.opentrace/vaults/opentrace-demo/
 ls ~/.opentrace/corpus/ | head
 ```
 
-`vault attach` mirrors a disk vault into a graph. Zero LLM cost — reads `.vault.json` + page bodies + corpus files, writes Vault / Page / Source nodes plus CONTAINS / CITES / LINKS_TO edges, and copies any global-scope corpus files into the attaching project's corpus dir so `Source.corpus_path` resolves locally.
+`vault attach` mirrors a disk vault into a graph. Zero LLM cost — reads `.vault.json` + corpus files, writes `KnowledgeVault` / `KnowledgeDoc` nodes plus CONTAINS / LINKS_TO / MIRRORS edges, and copies any global-scope corpus files into the attaching project's corpus dir so each doc's `corpus_path` resolves locally.
 
 ```bash
 # T2: completely different project
@@ -312,14 +316,14 @@ opentraceai index .                               # fresh empty graph (Repositor
 opentraceai vault list                            # opentrace-demo: not attached
 opentraceai vault attach opentrace-demo
 opentraceai vault list                            # opentrace-demo: attached
-opentraceai query "MATCH (n:Node) WHERE n.type = 'Page' RETURN n.id LIMIT 5"
+opentraceai query "MATCH (n:Node) WHERE n.type = 'KnowledgeDoc' RETURN n.id LIMIT 5"
 ```
 
-You'll get 5 Page IDs from the same compiled vault, now queryable from a totally separate graph. Check `/tmp/ot-demo-b/.opentrace/corpus/` — it'll have the source bodies that the attach copied over.
+You'll get 5 `corpus::<sha>` document IDs from the same compiled vault, now queryable from a totally separate graph. Check `/tmp/ot-demo-b/.opentrace/corpus/` — it'll have the document bodies that the attach copied over.
 
 ---
 
-## Section 6: Autoprune cascade + refresh (4 min · ~$0.10)
+## Section 6: Autoprune (2 min · $0)
 
 Autoprune runs after every `index --wiki`. It compares the walked-source set against what's already in the graph and removes anything orphan, scope-limited to the walked path or vault.
 
@@ -334,33 +338,24 @@ opentraceai index --wiki ./ opentrace-demo
 ### What you'll see
 
 ```
-Autoprune: -1 sources, -0 entities, -1 file_summary pages, -0 concept pages, N stale-marked, -1 corpus files
+  Autoprune: -1 documents, -1 corpus files
 ```
 
-The cascade walks two hops:
-- Source removed → its 1:1 `file_summary` page is deleted (graph + disk + corpus).
-- Concept pages that cite the deleted file-summary get inspected. If they still have other citations → `stale_since` timestamp stamped. If they have 0 citations left → deleted entirely.
+Two numbers, one hop. A document that vanished from disk between runs has its `KnowledgeDoc` node deleted (which takes its `CONTAINS` / `LINKS_TO` / `MIRRORS` edges with it) and its corpus body removed. `AutopruneReport` has exactly those two fields.
 
-Confirm the stale pages exist in the graph:
+Confirm it's gone:
 
 ```bash
-opentraceai query "MATCH (n:Node) WHERE n.type = 'Page' AND n.properties CONTAINS 'stale_since' RETURN n.id"
+opentraceai query "MATCH (n:Node) WHERE n.type = 'KnowledgeDoc' RETURN count(n)"
 ```
 
-`refresh-stale-pages` re-runs the wiki Execute step against the page's remaining citations and clears the `stale_since` stamp on success. Cost = ~1 LLM call per stale page.
-
-```bash
-opentraceai vault refresh-stale-pages opentrace-demo
-opentraceai query "MATCH (n:Node) WHERE n.type = 'Page' AND n.properties CONTAINS 'stale_since' RETURN n.id"
-```
-
-Second query should return 0 rows.
+This used to be a multi-hop cascade with a **stale** state: a concept page that cited the deleted doc was either deleted (no citations left) or stamped `stale_since`, and `vault refresh-stale-pages` re-synthesized it for ~1 LLM call per page. All of it went with the concept-page layer on **2026-08-04**. **There is no staleness concept in the wiki layer any more** — a document is stored verbatim, so it can't drift from a source it never restated. Don't re-introduce `stale_since`; see `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 ---
 
 ## Section 7: URL + single-file ingestion (2 min · ~$0.05)
 
-`index --wiki` accepts a URL or single file in addition to a directory. Both skip the `DirectoryWalker` entirely (so no fake Repository/File nodes for one URL) and go through a single-source pipeline that builds one `SourceInput` and feeds it to the unified doc pass — one LLM call → file-summary page + entities. A single-file/URL input *requires* `--wiki` (there's no code to walk, so plain `index` rejects it).
+`index --wiki` accepts a URL or single file in addition to a directory. Both skip the `DirectoryWalker` entirely (so no fake Repository/File nodes for one URL) and go through a single-source pipeline that builds one `SourceInput` and feeds it to the unified doc pass — one cheap LLM call → the document's title + one-line summary, body verbatim in the corpus. A single-file/URL input *requires* `--wiki` (there's no code to walk, so plain `index` rejects it).
 
 ```bash
 opentraceai index --wiki https://arxiv.org/abs/1706.03762
@@ -374,15 +369,15 @@ Opening staging database at .../index.db.staging ...
   --wiki: ingesting 1 doc into local vault '1706-03762' ...
     via anthropic (~$0.03 estimated)
     wiki: Acquired 1 new, skipped 0 duplicate
-    wiki: Extracted N entities, M relationships from 1 doc(s)
-    wiki: Compile complete — 1 file summary page(s), 0 concept page(s)
+    wiki: Extracted labels from 1 doc(s)
+    wiki: Compile complete — 1 new source(s) indexed
 Done in ~30s.
 ```
 
-`sources/markdown/fetchers.py` rewrites arXiv abstract URLs to the PDF before markitdown. Source node ends up with `source_uri` = the original `/abs/` URL (the rewritten PDF URL is only used for markitdown's fetch).
+`sources/markdown/fetchers.py` rewrites arXiv abstract URLs to the PDF before markitdown; the rewritten PDF URL is only used for the fetch, and the original `/abs/` URL is what gets recorded as the run's source.
 
 ```bash
-opentraceai query "MATCH (n:Node) WHERE n.type = 'Source' AND n.properties CONTAINS 'arxiv' RETURN n.name, n.properties LIMIT 1"
+opentraceai query "MATCH (n:Node) WHERE n.type = 'KnowledgeDoc' RETURN n.id, n.name, n.properties LIMIT 3"
 ```
 
 Single-file works the same way:
@@ -409,7 +404,7 @@ opentraceai index --wiki ./papers/<yet-another>.md 2>&1 | grep "via "
 # → via anthropic (precedence wins again)
 ```
 
-> The cheap-tier split applies here too: extraction + per-doc summaries run on the provider's cheap model (Haiku / Flash / gpt-4.1-mini), while concept synthesis uses its flagship. `OT_LLM_PROVIDER` picks the backend; the per-role model resolution picks the tier within it.
+> The cheap tier applies here too: the per-doc labelling call runs on the provider's cheap model (Haiku / Flash / gpt-4.1-mini). There is no second, flagship call to compare it against — the flagship tier existed for cross-document concept synthesis, removed 2026-08-03. `OT_LLM_PROVIDER` picks the backend; the `wiki_summary` role resolution picks the model within it.
 
 ---
 
@@ -459,11 +454,13 @@ You can smoke-test the protocol without a real client:
 Look for a `serverInfo` object and a `tools` array. Available tools:
 
 - Original: `search_graph`, `list_nodes`, `traverse`, `get_node`, `query`
-- New in wikiv3: `list_vaults`, `list_vault_pages`, `read_vault_page`, `find_cross_cutting_communities`, `provenance`, `find_orphans`, `grep`, `get_god_nodes`
+- New in wikiv3: `list_vaults`, `load_source`, `overview`, `find_cross_cutting_communities`, `provenance`, `find_orphans`, `grep`, `get_god_nodes`
 
-  (`find_pages_mentioning` / `find_entities_mentioned_by` were removed 2026-08-04 with the LLM-extracted entity layer they traversed — `grep` answers "which documents discuss X" instead.)
+  Four vault tools were removed 2026-08-04 and won't be in the list: `find_pages_mentioning` / `find_entities_mentioned_by` went with the LLM-extracted entity layer they traversed, and `list_vault_pages` / `read_vault_page` with the concept-page layer they read. `grep` answers "which documents discuss X" and `load_source` returns a verbatim body — see `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
-For a real demo, configure your MCP client to point at `opentraceai mcp` and ask it a question like "what concepts span multiple sources in opentrace-demo?" — it should pick `find_cross_cutting_communities` unprompted.
+Try the pair that replaced them: `grep(pattern="autoprune", scopeId="opentrace-demo")` sweeps **every** member document's full body and returns verbatim lines, each labelled with the doc's title, epistemic status, and display path; `load_source(nodeId="corpus::<sha>")` then returns one of those documents whole. Exhaustive contact plus a verbatim read — no paraphrase layer in between.
+
+For a real demo, configure your MCP client to point at `opentraceai mcp` and ask it "what does the opentrace-demo corpus say about autoprune?" — it should reach for `grep` and then `load_source`, not a ranked search.
 
 ---
 

@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for OT-1749 emergent-structure surface on the overview response."""
+"""Tests for the ``overview`` orientation response.
+
+This file used to cover OT-1749's emergent-structure surface —
+``top_linked_concepts``, ``top_cited_sources``, and ``cluster_sizes``. All
+three ranked ``KnowledgeConcept`` nodes or counted ``CITES`` edges, so all
+three returned empty from the moment nothing produced concept pages; they were
+removed with the rest of that layer on 2026-08-04. What is left is the surface
+that works over documents.
+"""
 
 from __future__ import annotations
 
@@ -31,40 +39,26 @@ def store(tmp_path):
     s.close()
 
 
-def _seed_centrality(store: GraphStore) -> None:
-    """Two vaults with hand-tuned LINKS_TO + CITES topology.
+def _seed(store: GraphStore) -> None:
+    """Two vaults of documents joined by their authors' own ``LINKS_TO`` links.
 
     kb:
-      hub (concept)         — central, linked by everyone else
-      core (concept)        — links to hub + leaf
-      satellite (concept)   — links to hub only
-      leaf (concept)        — links to hub only
-      lonely (concept)      — no edges
-      corpus::spec (CorpusDoc)    — cited by hub + core (2 citations)
-      corpus::misc (CorpusDoc)    — cited by core only (1 citation)
-      corpus::cluster (CorpusDoc) — cited by no one
+      corpus::hub    — linked to by core + leaf, links to core (degree 3)
+      corpus::core   — links to hub + leaf
+      corpus::leaf   — links to hub
+      corpus::lonely — no edges
     other:
-      page-x (concept) — minimal, used to verify vault-scope filtering
+      corpus::offscope — used to verify vault-scope filtering
     """
-    pages_kb = [
-        ("hub", "Hub", "concept"),
-        ("core", "Core", "concept"),
-        ("satellite", "Satellite", "concept"),
-        ("leaf", "Leaf", "concept"),
-        ("lonely", "Lonely", "concept"),
-    ]
-    for slug, name, kind in pages_kb:
-        store.add_node(
-            f"kb::{slug}",
-            "KnowledgeConcept",
-            name,
-            {"kind": kind, "vault": "kb", "one_line_summary": f"Summary for {name}"},
-        )
-
-    # Sources are vault members via Vault -CONTAINS-> Source, not a
-    # ``vault`` property.
     store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
-    for sid, fname in [("spec", "spec.pdf"), ("misc", "misc.pdf"), ("cluster", "cluster.pdf")]:
+    store.add_node("vault::other", "KnowledgeVault", "other", {"vault": "other"})
+
+    for sid, fname in [
+        ("hub", "hub.md"),
+        ("core", "core.md"),
+        ("leaf", "leaf.md"),
+        ("lonely", "lonely.md"),
+    ]:
         store.add_node(
             f"corpus::{sid}",
             "KnowledgeDoc",
@@ -73,113 +67,89 @@ def _seed_centrality(store: GraphStore) -> None:
         )
         store.add_relationship(f"contains-{sid}", "CONTAINS", "vault::kb", f"corpus::{sid}")
 
-    store.add_node(
-        "other::page-x",
-        "KnowledgeConcept",
-        "Other Page",
-        {"kind": "concept", "vault": "other", "one_line_summary": "Not in scope"},
-    )
+    store.add_node("corpus::offscope", "KnowledgeDoc", "offscope.md", {"sha256": "offscope"})
+    store.add_relationship("contains-offscope", "CONTAINS", "vault::other", "corpus::offscope")
 
-    edges = [
-        # LINKS_TO — hub is the most-connected concept. Edges touching hub:
-        # l1 (in), l2 (in), l3 (out), l5 (in) = degree 4. Core touches l1/l3/l4
-        # = degree 3, so hub leads unambiguously.
-        ("l1", "LINKS_TO", "kb::core", "kb::hub"),
-        ("l2", "LINKS_TO", "kb::satellite", "kb::hub"),
-        ("l3", "LINKS_TO", "kb::hub", "kb::core"),
-        ("l4", "LINKS_TO", "kb::core", "kb::leaf"),
-        ("l5", "LINKS_TO", "kb::leaf", "kb::hub"),
-        # CITES — spec is the most-cited source (2), misc has 1
-        ("c1", "CITES", "kb::hub", "corpus::spec"),
-        ("c2", "CITES", "kb::core", "corpus::spec"),
-        ("c3", "CITES", "kb::core", "corpus::misc"),
-    ]
-    for eid, etype, src_id, tgt_id in edges:
-        store.add_relationship(eid, etype, src_id, tgt_id)
+    for eid, src, tgt in [
+        ("l1", "corpus::core", "corpus::hub"),
+        ("l2", "corpus::leaf", "corpus::hub"),
+        ("l3", "corpus::hub", "corpus::core"),
+        ("l4", "corpus::core", "corpus::leaf"),
+    ]:
+        store.add_relationship(eid, "LINKS_TO", src, tgt)
 
 
-class TestTopLinkedConcepts:
-    def test_hub_ranks_first(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        ranked = result["top_linked_concepts"]
-        assert ranked, "expected at least one entry"
-        assert ranked[0]["name"] == "Hub"
-        # Hub touches 4 LINKS_TO edges (l1/l2/l5 incoming, l3 outgoing).
-        assert ranked[0]["degree"] == 4
-
-    def test_lonely_excluded(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        names = [r["name"] for r in result["top_linked_concepts"]]
-        assert "Lonely" not in names
-
-    def test_vault_scope_filters_other_vault(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        for r in result["top_linked_concepts"]:
-            assert r["vault"] == "kb"
-
-    def test_only_concepts(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        # Source documents must not appear in the concept ranking.
-        assert "spec.pdf" not in [r["name"] for r in result["top_linked_concepts"]]
-
-
-class TestTopCitedSources:
-    def test_most_cited_ranks_first(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        ranked = result["top_cited_sources"]
-        assert ranked[0]["name"] == "spec.pdf"
-        assert ranked[0]["citation_count"] == 2
-        assert ranked[1]["name"] == "misc.pdf"
-        assert ranked[1]["citation_count"] == 1
-
-    def test_uncited_excluded(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        names = [r["name"] for r in result["top_cited_sources"]]
-        assert "cluster.pdf" not in names
-
-    def test_only_sources(self, store):
-        _seed_centrality(store)
-        result = overview(store, top_n=10, vault_scope="kb")
-        # Only Source nodes appear here — never Pages.
-        for r in result["top_cited_sources"]:
-            assert r["name"].endswith(".pdf")
-
-
-class TestClusterSizes:
-    def test_empty_when_no_cluster_ids(self, store):
-        _seed_centrality(store)
-        # No cluster_id stamps in the fixture.
-        result = overview(store, top_n=10, vault_scope="kb")
-        assert result["cluster_sizes"] == {}
-
-    def test_counts_pages_by_cluster_id(self, store):
-        # Stamp cluster_id manually to verify aggregation.
-        for slug, cluster in [("hub", 0), ("core", 0), ("satellite", 0), ("lonely", 1)]:
-            store.add_node(
-                f"kb::{slug}",
-                "KnowledgeConcept",
-                slug,
-                {"kind": "concept", "vault": "kb", "cluster_id": cluster},
-            )
-        result = overview(store, top_n=5, vault_scope="kb")
-        assert result["cluster_sizes"] == {"0": 3, "1": 1}
-
-    def test_vault_scope_filters(self, store):
-        store.add_node("kb::a", "KnowledgeConcept", "a", {"kind": "concept", "vault": "kb", "cluster_id": 0})
-        store.add_node("other::a", "KnowledgeConcept", "a", {"kind": "concept", "vault": "other", "cluster_id": 0})
-        result = overview(store, top_n=5, vault_scope="kb")
-        assert result["cluster_sizes"] == {"0": 1}
-
-
-class TestUnscopedResponseShape:
-    def test_new_fields_present(self, store):
-        _seed_centrality(store)
+class TestUnscopedShape:
+    def test_returns_the_documented_keys_and_nothing_page_shaped(self, store):
+        _seed(store)
         result = overview(store, top_n=5)
-        for key in ("top_linked_concepts", "top_cited_sources", "cluster_sizes"):
-            assert key in result
+        assert set(result) == {
+            "counts_by_type",
+            "top_concepts",
+            "recently_updated",
+            "vault_scope",
+        }
+        assert result["vault_scope"] is None
+
+    def test_counts_by_type_covers_the_doc_layer(self, store):
+        _seed(store)
+        counts = overview(store, top_n=5)["counts_by_type"]
+        assert counts["KnowledgeDoc"] == 5
+        assert counts["KnowledgeVault"] == 2
+        assert "KnowledgeConcept" not in counts
+
+    def test_top_concepts_ranks_the_hub_document_above_its_peers(self, store):
+        """Assert the top *document*, not the top node. ``vault::kb`` also has
+        degree 4 (one CONTAINS per member), and a tie in the Cypher
+        ``ORDER BY degree DESC`` resolves non-deterministically."""
+        _seed(store)
+        ranked = overview(store, top_n=10)["top_concepts"]
+        docs = [r["name"] for r in ranked if r["type"] == "KnowledgeDoc"]
+        assert docs, "expected at least one KnowledgeDoc entry"
+        assert docs[0] == "hub.md"
+
+    def test_ranking_is_by_degree_descending(self, store):
+        """``lonely.md`` has only its vault's CONTAINS edge, so it ranks below
+        every document its author cross-referenced."""
+        _seed(store)
+        ranked = overview(store, top_n=10)["top_concepts"]
+        by_name = {r["name"]: r["degree"] for r in ranked}
+        assert by_name["hub.md"] > by_name["lonely.md"]
+        assert [r["degree"] for r in ranked] == sorted((r["degree"] for r in ranked), reverse=True)
+
+
+class TestVaultScope:
+    def test_scope_restricts_to_one_vault(self, store):
+        _seed(store)
+        result = overview(store, top_n=10, vault_scope="kb")
+        assert result["vault_scope"] == "kb"
+        # ``KnowledgeVault`` is the only type carrying a ``vault`` property —
+        # doc membership is the CONTAINS edge, since a content-addressed
+        # document can belong to several vaults at once.
+        assert set(result["counts_by_type"]).issubset({"KnowledgeVault", "KnowledgeDoc"})
+        assert "other" not in [c.get("vault") for c in result["top_concepts"]]
+
+    def test_scoped_response_has_the_same_keys(self, store):
+        _seed(store)
+        assert set(overview(store, top_n=5, vault_scope="kb")) == set(overview(store, top_n=5))
+
+
+class TestPageSectionsStayRemoved:
+    """``top_linked_concepts`` / ``top_cited_sources`` / ``cluster_sizes`` must
+    not come back. Each was empty by construction once nothing wrote a
+    ``KnowledgeConcept`` node or a ``CITES`` edge, and ``overview`` is the
+    agent's first tool call — an always-empty section in a <500-token budget
+    spends the orientation payload saying nothing."""
+
+    @pytest.mark.parametrize("vault_scope", [None, "kb"])
+    def test_absent_from_both_response_shapes(self, store, vault_scope):
+        _seed(store)
+        result = overview(store, top_n=5, vault_scope=vault_scope)
+        for gone in ("top_linked_concepts", "top_cited_sources", "cluster_sizes"):
+            assert gone not in result
+
+    def test_helpers_are_gone_from_the_module(self):
+        from opentrace_agent.retrieval import overview as overview_mod
+
+        for gone in ("_top_linked_concepts", "_top_cited_sources", "_cluster_sizes"):
+            assert not hasattr(overview_mod, gone)

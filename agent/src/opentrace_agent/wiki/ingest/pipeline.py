@@ -19,7 +19,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import uuid
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
@@ -49,12 +48,8 @@ from opentrace_agent.wiki.paths import (
     compile_log_dir,
     ensure_vault_layout,
     metadata_path,
-    pages_dir,
 )
-from opentrace_agent.wiki.vault import (
-    VaultMetadata,
-    load_metadata,
-)
+from opentrace_agent.wiki.vault import load_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +142,6 @@ def run_compile(
     """
     ensure_vault_layout(vault_name, vault_root, scope=scope, project_root=project_root)
     meta_path = metadata_path(vault_name, vault_root, scope=scope, project_root=project_root)
-    pages_path = pages_dir(vault_name, vault_root, scope=scope, project_root=project_root)
     log_path = compile_log_dir(vault_name, vault_root, scope=scope, project_root=project_root)
 
     with _flock(meta_path):
@@ -261,37 +255,19 @@ def run_compile(
         # verbatim) is the only representation of the document's content.
         yield from _extract_docs(normalized, meta, extraction_client)
 
-        # Persist. Always zero pages now (synthesis was removed) — but the
-        # acquired sources and their metadata still need recording (persist
-        # updates meta.sources, including the extraction-stamped labels), and
-        # the graph mirror below still needs the KnowledgeDoc nodes and labels.
-        yield from _persist([], acquired, meta, pages_path, meta_path, log_path, normalized=normalized)
+        # Persist the acquired sources and their metadata (updates
+        # meta.sources, including the extraction-stamped labels); the graph
+        # mirror below needs the KnowledgeDoc nodes and labels.
+        yield from _persist(acquired, meta, meta_path, log_path, normalized=normalized)
 
         # Mirror the post-compile state into the graph if a store is given.
         # Disk-write has already succeeded, so failures here are non-fatal.
         if graph_store is not None:
             try:
-                page_bodies = _read_all_page_bodies(meta, pages_path)
-                # Provenance: stamp agent/model/session on pages produced
-                # this run. Pages not touched this run preserve whatever
-                # provenance the graph already has. ``confidence`` /
-                # ``confidence_tier`` are set per-page by graph_writer
-                # (concept pages → INFERRED) — see _confidence_for_kind there.
-                provenance = {
-                    "agent": "opentrace-wiki-compiler",
-                    "model": extraction_model,
-                    "session": str(uuid.uuid4()),
-                }
-                # No pages are compiled any more, so none get fresh provenance
-                # stamped; legacy pages keep whatever they already carry.
-                compiled_slugs: set[str] = set()
                 stats = write_vault_to_graph(
                     graph_store,
                     meta,
-                    page_bodies,
                     acquired=acquired,
-                    provenance=provenance,
-                    compiled_slugs=compiled_slugs,
                     normalized=normalized,
                     scope=scope,
                 )
@@ -331,23 +307,3 @@ def run_compile(
             message=done_message,
             detail=done_detail,
         )
-
-
-def _read_all_page_bodies(meta: VaultMetadata, pages_path: Path) -> dict[str, str]:
-    """Read every page body referenced by *meta* from disk into a slug→body map.
-
-    Always empty for vaults compiled after concept-page synthesis was removed.
-    Retained because a vault compiled BEFORE that removal still carries pages
-    in ``.vault.json``, and a re-compile must keep mirroring them rather than
-    dropping them from the graph.
-    """
-    bodies: dict[str, str] = {}
-    for slug in meta.pages.keys():
-        path = pages_path / f"{slug}.md"
-        try:
-            bodies[slug] = path.read_text()
-        except OSError:
-            # Page missing on disk despite metadata — record empty body so the
-            # graph writer at least creates the node + skips LINKS_TO parsing.
-            bodies[slug] = ""
-    return bodies

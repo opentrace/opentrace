@@ -29,8 +29,6 @@ import {
   BitbucketIcon,
   AzureDevOpsIcon,
 } from './providerIcons';
-import { WikiMarkdown } from '../components/wiki/WikiMarkdown';
-import type { VaultPageMeta } from '../wiki/types';
 import './NodeDetailsPanel.css';
 
 /** Node types whose source/body can be fetched and displayed. KnowledgeDoc is a
@@ -163,14 +161,6 @@ export interface NodeEdge {
   properties?: Record<string, unknown>;
 }
 
-/** A KnowledgeConcept node's body + sibling page list (for `[[link]]` resolution),
- *  fetched by the SidePanel from the vault REST API — bodies live on disk,
- *  not in the graph, so they arrive separately from the node itself. */
-export interface PageContent {
-  body: string;
-  pages: VaultPageMeta[];
-}
-
 interface NodeDetailsPanelProps {
   node: SelectedNode;
   nodeSource: NodeSourceResponse | null;
@@ -181,12 +171,6 @@ interface NodeDetailsPanelProps {
   edges?: NodeEdge[];
   onSelectNode?: (nodeId: string) => void;
   onSelectEdge?: (edge: NodeEdge) => void;
-  /** Present only for KnowledgeConcept nodes; loaded lazily by the parent. */
-  concept?: PageContent | null;
-  wikiLoading?: boolean;
-  /** Follow a `[[wiki-link]]` — the parent resolves the slug to a page node
-   *  and selects it, so links traverse the graph rather than swap a reader. */
-  onPageLink?: (slug: string) => void;
 }
 
 type PreviewTab = 'rendered' | 'raw';
@@ -211,9 +195,6 @@ export default function NodeDetailsPanel({
   edges,
   onSelectNode,
   onSelectEdge,
-  concept,
-  wikiLoading,
-  onPageLink,
 }: NodeDetailsPanelProps) {
   const [previewTab, setPreviewTab] = useState<PreviewTab>('rendered');
   const color = getNodeColor(node.type);
@@ -565,24 +546,6 @@ export default function NodeDetailsPanel({
                 </div>
               );
             })()}
-        </div>
-      )}
-
-      {/* ── Concept body ── read a concept page the same way a File node
-          shows its source: the node IS the page, its markdown renders here. */}
-      {node.type === 'KnowledgeConcept' && (
-        <div className="source-section">
-          <h4>Concept</h4>
-          {wikiLoading && <div className="source-loading">Loading page…</div>}
-          {!wikiLoading && concept && (
-            <div className="concept-body">
-              <WikiMarkdown
-                markdown={concept.body}
-                pages={concept.pages}
-                onPageClick={onPageLink}
-              />
-            </div>
-          )}
         </div>
       )}
 

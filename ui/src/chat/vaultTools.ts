@@ -15,38 +15,23 @@
  */
 
 /**
- * LangChain tools that let the chat agent read knowledge vaults compiled
- * via the wiki pipeline. The agent uses these to ground answers in the
- * user's uploaded documents instead of guessing.
+ * LangChain tools that let the chat agent discover the knowledge vaults
+ * attached to this project, so it can ground answers in the user's ingested
+ * documents instead of guessing.
  *
- * All tools hit the same REST endpoints the vault manager + node Details
- * page reader use (``/api/vaults/*`` on ``opentraceai serve``), via the
- * helpers in ``../wiki/client``. No new transport.
+ * Reading a vault's CONTENT is not here. A document is a graph node, so it is
+ * reached with the graph tools in ``./tools`` — ``search_graph`` /
+ * ``list_nodes`` to find one, ``load_source`` to read it verbatim, ``grep``
+ * to sweep every body at once. Two page-reader tools (``list_vault_pages``,
+ * ``read_vault_page``) lived here until 2026-08-04 and went with the
+ * concept-page layer.
  */
 
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { getPageMarkdown, getVault, listVaults } from '../wiki/client';
-
-const MAX_PAGE_CHARS = 20_000;
+import { listVaults } from '../wiki/client';
 
 const listVaultsSchema = z.object({});
-
-const listVaultPagesSchema = z.object({
-  vault: z
-    .string()
-    .describe('The vault name (from list_vaults). Case-sensitive.'),
-});
-
-const readVaultPageSchema = z.object({
-  vault: z.string().describe('The vault name.'),
-  slug: z
-    .string()
-    .describe(
-      'The page slug (from list_vault_pages). Lowercase, kebab-case form ' +
-        'of the page title. NOT the title itself — convert spaces/punctuation to dashes.',
-    ),
-});
 
 function jsonError(action: string, e: unknown): string {
   return JSON.stringify({
@@ -73,77 +58,14 @@ export function makeVaultTools() {
       name: 'list_vaults',
       description:
         'List all knowledge vaults attached to this project. A vault is a ' +
-        'collection of ingested documents (searchable via search_graph, read ' +
-        'verbatim via load_source), optionally with compiled concept pages. ' +
+        'collection of ingested documents: find them with search_graph or ' +
+        'list_nodes("KnowledgeDoc"), read one verbatim with load_source, and ' +
+        'sweep every body at once with grep (scopeId = the vault name). ' +
         'Use this first to discover what knowledge is available. ' +
         'Returns: {vaults: string[]}.',
       schema: listVaultsSchema,
     },
   );
 
-  const listPagesTool = tool(
-    async ({ vault }: z.infer<typeof listVaultPagesSchema>) => {
-      try {
-        const detail = await getVault(vault);
-        return JSON.stringify({
-          name: detail.name,
-          last_compiled_at: detail.last_compiled_at,
-          pages: detail.pages.map((p) => ({
-            slug: p.slug,
-            title: p.title,
-            summary: p.one_line_summary,
-            revision: p.revision,
-          })),
-        });
-      } catch (e) {
-        return jsonError('list_vault_pages', e);
-      }
-    },
-    {
-      name: 'list_vault_pages',
-      description:
-        'List the pages in a vault as {slug, title, one-line summary}. Use ' +
-        'these summaries to decide which page(s) to read in detail with ' +
-        'read_vault_page. An empty list is normal, not an error: concept ' +
-        'pages are opt-in, and a vault normally holds the documents ' +
-        'themselves rather than compiled pages — reach those with ' +
-        'search_graph (KnowledgeDoc titles and summaries) and load_source. ' +
-        'Returns: {name, pages: [{slug, title, summary, revision}]}.',
-      schema: listVaultPagesSchema,
-    },
-  );
-
-  const readPageTool = tool(
-    async ({ vault, slug }: z.infer<typeof readVaultPageSchema>) => {
-      try {
-        const body = await getPageMarkdown(vault, slug);
-        const truncated = body.length > MAX_PAGE_CHARS;
-        const content = truncated ? body.slice(0, MAX_PAGE_CHARS) : body;
-        return JSON.stringify({
-          vault,
-          slug,
-          markdown: content,
-          truncated,
-          length: body.length,
-        });
-      } catch (e) {
-        return jsonError('read_vault_page', e);
-      }
-    },
-    {
-      name: 'read_vault_page',
-      description:
-        'Read the full markdown body of a single vault page. Use this to ' +
-        'pull facts directly from the source — the page may contain ' +
-        '[[Other Page Title]] wiki-links you can follow with another ' +
-        'read_vault_page call. Resolve a link by finding the matching ' +
-        'page in list_vault_pages and passing its `slug` here (slugs are ' +
-        '`concept/<base>`, e.g. `concept/usage`). ' +
-        "Pages are LLM-summarised from the user's uploaded documents. " +
-        'Returns: {markdown, truncated, length}.',
-      schema: readVaultPageSchema,
-    },
-  );
-
-  return [listVaultsTool, listPagesTool, readPageTool];
+  return [listVaultsTool];
 }

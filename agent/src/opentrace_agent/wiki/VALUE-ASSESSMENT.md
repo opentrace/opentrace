@@ -208,17 +208,24 @@ accuracy + cost fixes, `FINDINGS.md`, `regrade.sh` + `compare_grades.py`,
    out-of-repo case, or accept the negative for in-repo docs. Note the seven
    primitives themselves are built and working — it's the comparison bar that
    fails, not the tools.
-2. ~~**Concept pages: recommend dropping rather than deferring.**~~ **DONE
-   2026-08-03 — dropped.** The recommendation stood on the pages variant being
-   the worst result on record (−10.2pp) with an understood mechanism: restating a
-   source in the model's own voice strips its hedges, tense and attribution.
-   Removed: page synthesis (`resolve.py`, `execute.py`, `verify.py`), the per-doc
-   `concepts` field, `refresh_stale_pages()`, `--wiki-concept-pages`,
-   `--refresh-stale-pages`, `OT_WIKI_CONCEPT_MIN_SOURCES`. The **read** surface
-   survives (`vault show --page`, `read_vault_page`/`list_vault_pages`, `CITES`
-   provenance, the UI renderer) so vaults compiled before this still show their
-   pages; nothing produces new ones. The salvage option — concepts as bodiless
-   graph nodes — was closed at the same time, see the measurement below.
+2. ~~**Concept pages: recommend dropping rather than deferring.**~~ **DONE —
+   synthesis 2026-08-03, the whole layer 2026-08-04.** The recommendation stood
+   on the pages variant being the worst result on record (−10.2pp) with an
+   understood mechanism: restating a source in the model's own voice strips its
+   hedges, tense and attribution.
+   Removed 2026-08-03: page synthesis (`resolve.py`, `execute.py`, `verify.py`),
+   the per-doc `concepts` field, `refresh_stale_pages()`,
+   `--wiki-concept-pages`, `--refresh-stale-pages`,
+   `OT_WIKI_CONCEPT_MIN_SOURCES`. The **read** surface was left standing that
+   day — `vault show --page`, `read_vault_page`/`list_vault_pages`, `CITES`
+   provenance, the UI renderer — on the theory that pre-removal vaults should
+   still show their pages. **That was the wrong call and it was reversed
+   2026-08-04**: nothing had ever produced a page on a release branch, so there
+   were no such vaults, and the surviving surface's only effect was to tell
+   readers and agents that pages existed. `KnowledgeConcept` and `CITES` are now
+   out of the proto too. See the update section below.
+   The salvage option — concepts as bodiless graph nodes — was closed at the
+   same time, see the measurement below.
 3. **The only experiment left worth running:** put the docs *outside* the repo —
    ingest a docs site or wiki export not present on disk — so the control
    genuinely cannot reach them. Needs a question set written against those docs.
@@ -286,3 +293,66 @@ one-line summary, epistemic `status`, author-written doc→doc `LINKS_TO`,
 exhaustive `grep` / `list_nodes`, verbatim `load_source`.** The node types stay in
 the schema so pre-removal graphs remain readable. Full decision record in
 [CLAUDE.md](CLAUDE.md#closed).
+
+**The concept-page remnants are gone too (2026-08-04).** Page *synthesis* was cut
+2026-08-03 on the score above (88.4% vs a 98.6% control, −10.2pp); its data model,
+storage, and read paths outlived it by a day. `KnowledgeConcept` and `CITES` are
+now out of the proto and `gen/`, along with `PageMeta` / `pages` / `tombstones` in
+`.vault.json`, the `pages/` dir, `vault show --page`, MCP `read_vault_page` and
+`list_vault_pages`, the `/api/vaults/{v}/pages` routes, `parse_wiki_links`, the UI
+`WikiMarkdown` renderer, the `CITES` provenance chain, three always-empty
+`overview` sections, and `grep`'s legacy `pages/` half. Unlike the entity types
+these are *not* kept for backward compatibility: they only ever existed on this
+branch, so no graph contains one. The generalisable point is the one this whole
+document keeps arriving at — **a read surface for something nothing produces is
+not free.** It tells every reader, and every agent parsing an MCP docstring, that
+the thing exists.
+
+## Cost, measured end to end (2026-08-04)
+
+The first numbers in this document that are billed actuals rather than
+estimates. Ingest usage now comes from each provider's own `usage` metadata,
+recorded per call and printed by every ingest; per-question costs are what the
+three out-of-repo benchmark runs actually spent.
+
+**Ingest is effectively free.** 48 documents cost **$0.09** — 76,329 input /
+3,458 output tokens over 48 calls, about **0.2¢ per document**. Output is
+~72 tokens/doc, which is the whole point of a single-field extraction schema.
+
+**Per question**, mean of runs 4–6 (15 questions each), at quality parity:
+
+| | vault | agent grepping the folder |
+|---|---|---|
+| mean cost/question | **$0.3081** | $0.3514 |
+| saving | **12.3%** | — |
+
+Cheaper in all three runs (8.2% / 17.2% / 11.3%). Ingest repays itself after
+**2.1 questions**; at 1,000 questions the vault has spent $308 against grep's
+$351.
+
+**Three things this does not say, and they matter more than the number:**
+
+1. **The economic case is the recurring 12%, not amortised ingest.** At 0.2¢/doc
+   the one-time cost is asymptotically irrelevant. So the case rests entirely on
+   a modest per-question margin — real, repeated three times, but thin enough
+   that a different question set could move it.
+2. **Per-question cost is dominated by the agent's own reasoning, not
+   retrieval.** $0.30 is mostly model thinking. A 12% *total* saving therefore
+   reflects a much larger *retrieval* saving diluted by fixed reasoning cost —
+   which is why token deltas ran 10–42% while dollar deltas ran 8–17%. Quoting
+   the token figure as a cost figure would be dishonest.
+3. **The comparison assumes a folder to grep.** It is grep against a corpus
+   already normalized on disk. Where documents are not on a disk the agent can
+   reach — the cloud case — the comparison is not "12% cheaper" but "possible
+   versus not". And at 48 documents the folder arm can still read everything, so
+   the margin should widen with corpus size. Untested.
+
+**Why the numbers are trustworthy now, and were not before.** The pre-ingest
+estimate had drifted to 6.5× high — costing extraction-tier work at flagship
+rates (~3×) on top of an output assumption left over from when the same call
+emitted concepts and an entity graph (~20× on the output half) — and nothing
+could contradict it, because the exact usage every response carries was being
+discarded. Estimate and billed actual are now printed together on every run.
+Even so the estimate remains ~2.4× conservative on this corpus (4,000 assumed
+input tokens/doc against 1,590 measured); that is the safe direction for a
+spend gate, and it is now self-correcting rather than silently rotting.

@@ -95,10 +95,18 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 | `list_nodes` | Enumerate all nodes of a type |
 | `get_node` | Full node details + immediate neighbors |
 | `traverse_graph` | Walk relationships (outgoing/incoming/both) with depth control |
-| `load_source` | Read a node's underlying content — code from the repo checkout (with line ranges), `KnowledgeDoc` bodies from the corpus snapshot, `KnowledgeConcept` bodies from the vault |
-| `read_vault_page` | Read a concept page's markdown body by node id |
+| `load_source` | Read a node's underlying content — code from the repo checkout (with line ranges), `KnowledgeDoc` bodies verbatim from the corpus snapshot |
+| `list_vaults` | Enumerate the `KnowledgeVault` nodes in this graph (name, scope, `last_compiled_at`, summary) |
 | `grep` | Regex sweep over a repo checkout or a vault's whole document corpus — the exhaustive counterpart to ranked `search_graph`. Use it for "which documents discuss X" (there is no doc→topic edge to traverse; the entity layer that provided one was removed 2026-08-04) |
-| `provenance` | Trust chain — concept page → cited `KnowledgeDoc` artefacts (+ MIRRORS File twin when present); code → commit + line range |
+| `provenance` | Trust chain — a `KnowledgeDoc`'s own identity (sha256, filename, path, ingest time, + MIRRORS File twin when present); code → commit + line range |
+
+`read_vault_page` and `list_vault_pages` were **removed 2026-08-04** with the
+concept-page layer they read. Do not re-add them, and do not describe pages in
+an agent or skill description — an advertised tool is a capability the agent
+will spend calls on, and these pointed at a synthesis layer that measured 88.4%
+against a 98.6% control. The corpus replaced it: `grep` for exhaustive contact
+with every document, `load_source` for a verbatim body. Record in
+`../../agent/src/opentrace_agent/wiki/CLAUDE.md` ("Closed").
 
 ## Database Convention
 

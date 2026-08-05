@@ -227,7 +227,7 @@ const findOrphansSchema = z.object({
 
 const findViaSchema = z.object({
   startType: z.string().describe('Type of the source node, e.g. Function'),
-  edgeType: z.string().describe("Edge type, e.g. 'CALLS' or 'CITES'"),
+  edgeType: z.string().describe("Edge type, e.g. 'CALLS' or 'LINKS_TO'"),
   targetType: z.string().describe('Type of the target node, e.g. Endpoint'),
   limit: z.number().optional().describe('Max pairs (default 100, max 1000)'),
 });
@@ -335,9 +335,8 @@ const EXPLORE_DESC =
   'traverse_graph + load_source calls when you want to understand a specific component.';
 
 const PROVENANCE_DESC =
-  'Return the trust chain for a node. For wiki pages: agent / model / ' +
-  'session / confidence stamped at compile time, plus the citation chain ' +
-  'back to the original Source artefacts. ' +
+  'Return the trust chain for a node. For an indexed document: its own ' +
+  'identity — sha256, filename, root-relative path, ingest time. ' +
   'For code nodes: commit_sha + indexer_version from the per-repo metadata, ' +
   'plus file_path and line_range from the node itself.';
 
@@ -356,14 +355,14 @@ const FIND_PATH_DESC =
 const FIND_ORPHANS_DESC =
   'Find nodes of a given type that have no edges of edgeType in the given ' +
   'direction. Use this for cleanup/audit questions like finding functions ' +
-  'never called (Function, CALLS, incoming) or wiki pages with no inbound ' +
-  'links (Page, LINKS_TO, incoming).';
+  'never called (Function, CALLS, incoming) or documents nothing links to ' +
+  '(KnowledgeDoc, LINKS_TO, incoming).';
 
 const FIND_VIA_DESC =
   'Find all (A, B) pairs where A is startType, B is targetType, and a ' +
   'relationship of edgeType points from A to B. Examples: ' +
   '("Function","CALLS","Endpoint") for "what hits the API"; ' +
-  '("KnowledgeConcept","CITES","KnowledgeDoc") for "what wiki pages cite real documents." ' +
+  '("KnowledgeDoc","LINKS_TO","KnowledgeDoc") for "which documents reference which." ' +
   'Cheaper than calling traverse_graph once per source node.';
 
 const COUNT_BY_DESC =
@@ -371,8 +370,8 @@ const COUNT_BY_DESC =
   'Without parentId: total count. With parentId: count of descendants of ' +
   'parent reachable via parentEdge (default CONTAINS) within maxHops. ' +
   'Examples: count_by("Function") for total function count; ' +
-  'count_by("KnowledgeConcept", parentId="vault::kb", parentEdge="CONTAINS") for ' +
-  '"how many pages in the kb vault."';
+  'count_by("KnowledgeDoc", parentId="vault::kb", parentEdge="CONTAINS") for ' +
+  '"how many documents in the kb vault."';
 
 const GREP_DESC =
   'Regex grep over the on-disk content reachable from a Repository or ' +

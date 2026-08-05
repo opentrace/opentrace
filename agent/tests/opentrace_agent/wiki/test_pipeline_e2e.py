@@ -70,9 +70,11 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
             )
         )
 
-        # Corpus-only: the vault node and the doc land in the graph, and NO
-        # page is written to disk (synthesis was removed).
-        assert not list((tmp_path / "testvault" / "pages").rglob("*.md"))
+        # Corpus-only: the vault node and the doc land in the graph, and
+        # nothing but metadata and the audit log is written under the vault
+        # dir — no synthesized bodies, and no ``pages/`` dir at all.
+        assert not (tmp_path / "testvault" / "pages").exists()
+        assert not list((tmp_path / "testvault").rglob("*.md"))
 
         vault_node = graph_store.get_node(vault_node_id("testvault"))
         assert vault_node is not None and vault_node["type"] == NODE_TYPE_KNOWLEDGE_VAULT
@@ -105,9 +107,9 @@ def test_second_compile_with_same_source_is_idempotent(tmp_path, fake_llm):
     assert llm2.calls == []
 
 
-def test_sources_and_labels_recorded_with_no_pages(tmp_path, fake_llm):
-    """Two new sources → no pages ever, but the sources and their labels are
-    recorded and the compile completes on exactly one call per doc."""
+def test_sources_and_labels_recorded(tmp_path, fake_llm):
+    """Two new sources → the sources and their labels are recorded and the
+    compile completes on exactly one LLM call per doc, nothing else."""
     src_a = SourceInput(name="alpha.md", data=b"# Alpha\nText A.")
     src_b = SourceInput(name="beta.md", data=b"# Beta\nText B.")
     llm = fake_llm(
@@ -119,7 +121,6 @@ def test_sources_and_labels_recorded_with_no_pages(tmp_path, fake_llm):
     events = list(run_compile("v", [src_a, src_b], vault_root=tmp_path, llm=llm))
     assert events[-1].kind == WikiEventKind.DONE
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
-    assert meta.pages == {}
     assert {s.original_name for s in meta.sources.values()} == {"alpha.md", "beta.md"}
     assert meta.sources[_sha(src_a.data)].one_line_summary == "Summary of Alpha."
     assert [c[0] for c in llm.calls] == ["emit_extraction", "emit_extraction"]  # nothing else

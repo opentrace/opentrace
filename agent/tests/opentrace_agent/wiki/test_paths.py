@@ -44,15 +44,18 @@ def test_vault_dir_under_root(tmp_path: Path):
 
 
 def test_ensure_vault_layout_creates_subdirs(tmp_path: Path):
+    """A vault dir is metadata + audit log only. The ``pages/`` dir it also
+    created went with the concept-page layer on 2026-08-04 — document bodies
+    live in the shared, sha-keyed corpus dir, never under the vault."""
     p = ensure_vault_layout("v", root=tmp_path)
-    assert (p / "pages").is_dir()
     assert (p / ".compile-log").is_dir()
+    assert not (p / "pages").exists()
 
 
 def test_delete_vault_removes_directory_and_returns_true(tmp_path: Path):
     vd = ensure_vault_layout("v1", root=tmp_path)
     (vd / ".vault.json").write_text("{}")
-    (vd / "pages" / "foo.md").write_text("# foo")
+    (vd / ".compile-log" / "run.json").write_text("{}")
     assert delete_vault("v1", root=tmp_path) is True
     assert not vd.exists()
 

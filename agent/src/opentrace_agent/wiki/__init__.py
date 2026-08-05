@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wiki — knowledge compilation pipeline (raw files → connected markdown vault)."""
+"""Wiki — document ingestion pipeline (raw files → an indexed corpus vault)."""
 
 from opentrace_agent.wiki.ingest.pipeline import run_compile
 from opentrace_agent.wiki.ingest.types import (

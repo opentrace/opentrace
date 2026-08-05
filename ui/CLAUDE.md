@@ -14,12 +14,29 @@ src/
     pipeline/                 — Browser tree-sitter extraction pipeline
     indexing/                 — Repo-add UI (AddRepoModal, IndexingProgress)
     graph/                    — Graphology helpers, Louvain clustering, filtering
+    wiki/                     — Vault management UI (AddVaultModal, VaultManager,
+                                wiki.css) — management only, no reader
     workers/                  — Web Worker orchestration (layout, community)
   graph/                      — Graph data hooks (useGraphData, useGraphInstance)
   chat/                       — AI chat panel (tool-use against the graph)
   config/                     — Runtime feature flags
   gen/                        — Generated proto types (do not edit; regen via `make ts` in proto/)
 ```
+
+### No vault reader
+
+`components/wiki/` is management-only. Vault **reading** happens on the graph
+node: a `KnowledgeDoc`'s markitdown-normalised body renders as markdown in
+`appComponents/NodeDetailsPanel.tsx`, the same way a `File` shows its source.
+
+There used to be a dedicated `WikiMarkdown.tsx` renderer for synthesized concept
+pages, with `.wiki-markdown` / `.wiki-link` CSS and `[[wiki-link]]` navigation.
+It was **removed 2026-08-04** with the concept-page layer, along with the
+`list_vault_pages` / `read_vault_page` chat tools — `chat/vaultTools.ts` now
+exports only `list_vaults`. **Don't re-add it**: `[[wiki-link]]` syntax no
+longer exists anywhere in the product, and the layer it rendered measured 88.4%
+against a 98.6% control. Record in
+`agent/src/opentrace_agent/wiki/CLAUDE.md` ("Closed").
 
 ## Two Operating Modes
 

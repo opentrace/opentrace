@@ -150,8 +150,8 @@ enum ConfidenceTier {
   CONFIDENCE_TIER_AMBIGUOUS   = 3;
 }
 
-// KnowledgeVaultNode represents a knowledge vault — a named collection of compiled
-// wiki pages produced by the wiki ingest pipeline. One per vault directory.
+// KnowledgeVaultNode represents a knowledge vault — a named collection of
+// indexed documents produced by the wiki ingest pipeline. One per vault directory.
 message KnowledgeVaultNode {
   string id                  = 1;          // vault name (validated, no separators)
   string name                = 2;          // display name (same as id today)
@@ -173,32 +173,19 @@ message KnowledgeVaultNode {
   string spawned_from        = 7 [(ladybug.column) = "spawnedFrom"];
 }
 
-// KnowledgeConceptNode represents a single compiled markdown page within a vault.
-// One per .md file under <vault>/pages/. KnowledgeConcepts are LLM-managed; provenance
-// fields are stamped at compile time.
-message KnowledgeConceptNode {
-  string id                = 1;          // "<vault>::<slug>"
-  string name              = 2;          // page title
-  string slug              = 3;
-  string kind              = 4;          // "concept" (the only kind)
-  string one_line_summary  = 5 [(ladybug.column) = "oneLineSummary"];
-  int32  revision          = 6;
-  string last_updated      = 7 [(ladybug.column) = "lastUpdated"];      // ISO-8601 UTC
-  // Provenance fields (Phase 5 populates; Phase 1 reserves the columns).
-  string agent             = 8;          // e.g. "opentrace-wiki-compiler"
-  string model             = 9;          // e.g. "claude-opus-4-7"
-  string session           = 10;         // UUID per compile run
-  float  confidence        = 11;         // numeric score, 0.0–1.0 (per ConfidenceTier rubric)
-  // Stamped by autoprune when a cited Source is removed and the page wasn't
-  // regenerated this run. ``vault refresh-stale-pages`` re-runs Plan+Execute against
-  // remaining citations to clear it. ISO-8601 UTC timestamp.
-  string stale_since       = 12 [(ladybug.column) = "staleSince"];
-}
+// NOTE (2026-08-04): a KnowledgeConceptNode message defined the concept-page
+// layer here until this date. It is removed rather than retained-for-legacy
+// (the convention SemanticEdgeRel/MentionsRel follow) because it never shipped
+// on a release branch — no graph anywhere contains a KnowledgeConcept node.
+// Do not re-add it: page synthesis measured 88.4% against a 98.6% control
+// (−10.2pp, the worst result on record) because restating a source strips its
+// hedges, tense, and attribution. Verbatim corpus bodies plus an exhaustive
+// `grep` answer the same questions without the restatement. See
+// agent/src/opentrace_agent/wiki/CLAUDE.md.
 
-// KnowledgeDocNode represents a document ingested into the wiki corpus — the
-// raw material concept pages are synthesised from and cite. Identity is the
-// sha256 of the RAW bytes; the normalized markdown body is persisted to
-// `.opentrace/corpus/<sha>.md` (referenced by corpus_path) so it's readable
+// KnowledgeDocNode represents a document ingested into the wiki corpus.
+// Identity is the sha256 of the RAW bytes; the normalized markdown body is
+// persisted to `.opentrace/corpus/<sha>.md` (referenced by corpus_path) so it's readable
 // via load_source and available for re-extraction and grep. Carries the
 // navigation label (title + one_line_summary; the `summary` copy feeds FTS).
 message KnowledgeDocNode {
@@ -243,7 +230,7 @@ message HyperedgeNode {
 
 // SemanticEdgeRel represents a semantic edge derived by LLM extraction.
 // Source and target are arbitrary graph nodes. The `relation` field is a
-// free-form verb naming the edge type (e.g. "calls", "cites", "depends_on",
+// free-form verb naming the edge type (e.g. "calls", "depends_on",
 // "rationale_for").
 //
 // NOTE (2026-08-04): no producer writes these any more. The LLM-extracted
@@ -348,25 +335,22 @@ message DerivedFromRel {
   string transform = 4;  // "identity", "call", "attribute"
 }
 
-// LinksToRel represents a wiki-style link between two KnowledgeConcept nodes.
-// Created by parsing [[wiki-link]] syntax in page bodies during compile.
+// LinksToRel represents an author-written cross-reference between two
+// KnowledgeDoc nodes. Created by parsing each document's own relative
+// markdown links, reference-style definitions, and HTML anchors at ingest
+// time — the doc-side analogue of an import edge. Purely mechanical: no LLM,
+// no inference.
 message LinksToRel {
   string id        = 1;
   string source_id = 2;
   string target_id = 3;
 }
 
-// CitesRel represents a wiki provenance citation.
-//   KnowledgeConcept --Cites--> KnowledgeDocNode   (concept page → the document it was synthesised from)
-//
-// Direct by sha, one hop. Distinct from DerivedFromRel (variable data flow);
-// kept separate to avoid overloading edge semantics across the code-graph
-// and wiki-graph domains.
-message CitesRel {
-  string id        = 1;
-  string source_id = 2;
-  string target_id = 3;
-}
+// NOTE (2026-08-04): a CitesRel message (concept page → the document it was
+// synthesised from) lived here until this date, alongside KnowledgeConceptNode.
+// Both are removed outright rather than retained-for-legacy because neither
+// ever shipped on a release branch. See the KnowledgeConceptNode note above for
+// the measurement that closed the layer.
 
 // MirrorsRel links a KnowledgeDoc to the File node for the same on-disk
 // document, for every doc discovered by a repo walk. When the code walk
@@ -393,11 +377,10 @@ message DocumentsRel {
   string target_id = 3;   // KnowledgeVault (vault::<name>)
 }
 
-// MentionsRel links a KnowledgeConcept or KnowledgeDoc (which have bodies) to an
-// Idea/Service/Module/Paper/Person/Event entity whose name appears in the
-// body — page markdown for KnowledgeConcepts, raw corpus markdown for KnowledgeDocs.
-// Bridged the content layers with the flat-entity layer so cross-cutting
-// queries worked — "which pages or documents discuss this concept?".
+// MentionsRel links a KnowledgeDoc (which has a body) to an
+// Idea/Service/Module/Paper/Person/Event entity whose name appears in that
+// body's raw corpus markdown. Bridged the content layer with the flat-entity
+// layer so cross-cutting queries worked — "which documents discuss this?".
 //
 // NOTE (2026-08-04): no producer writes these any more. The wiki ingest
 // graph_writer wrote them by whole-word matching against the vault's entity
@@ -408,7 +391,7 @@ message DocumentsRel {
 // remove or renumber it.
 message MentionsRel {
   string id        = 1;
-  string source_id = 2;   // KnowledgeConcept or KnowledgeDoc
+  string source_id = 2;   // KnowledgeDoc
   string target_id = 3;   // Idea / Service / Module / Paper / Person / Event
 }
 

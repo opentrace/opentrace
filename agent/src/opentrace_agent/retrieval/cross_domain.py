@@ -26,7 +26,11 @@ After Phase 5 the graph contains three coexisting domains:
   they are code/runtime types written by other producers, so leaving them
   here would classify a runtime `Service` node as an entity on every new
   graph.
-* **page** — `Vault` / `Page` / `Source`
+* **doc** — `KnowledgeVault` / `KnowledgeDoc`. Called "page" until
+  2026-08-04, when `KnowledgeConcept` went with the concept-page layer and
+  left the vault and its documents. Renamed rather than kept: nothing
+  consumed the old key, and a domain named for a node type that no longer
+  exists reads as though pages were still being produced.
 
 This module surfaces the bridges across those domains — the "AuthMiddleware
 appears in 5 code files plus 2 design docs" view that's hard to ask via
@@ -44,7 +48,7 @@ from opentrace_agent.store import GraphStore
 DOMAINS: dict[str, frozenset[str]] = {
     "code": frozenset({"Repository", "Directory", "File", "Class", "Function", "Variable"}),
     "entity": frozenset({"Idea", "Paper", "Person", "Event"}),
-    "page": frozenset({"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"}),
+    "doc": frozenset({"KnowledgeVault", "KnowledgeDoc"}),
 }
 
 

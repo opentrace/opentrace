@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,7 +35,6 @@ class IngestedSource:
     sha256: str
     original_name: str
     ingested_at: str
-    contributed_to: list[str] = field(default_factory=list)
     # Navigation label from the per-doc extraction call. Persisted here so a
     # disk-only vault (e.g. a global compiled without a graph store) keeps
     # its labels for a later ``vault attach`` to mirror onto Source nodes.
@@ -46,18 +45,12 @@ class IngestedSource:
     status: str = "authoritative"
 
 
-@dataclass
-class PageMeta:
-    slug: str
-    title: str
-    one_line_summary: str
-    source_shas: list[str] = field(default_factory=list)
-    last_updated: str = ""
-    revision: int = 1
-    # "concept" is the only page kind — cross-source synthesis pages decided
-    # by Plan. Kept as a field so slugs stay kind-namespaced and a future
-    # kind slots in without a schema change.
-    kind: str = "concept"
+# Field names ``IngestedSource`` accepts on load. A ``.vault.json`` written by
+# an older build can carry keys this build dropped (``contributed_to``, which
+# listed the concept-page slugs a doc fed — removed 2026-08-04 with the page
+# layer); splatting those straight in would raise TypeError and make the vault
+# unloadable, so unknown keys are ignored instead.
+_INGESTED_SOURCE_FIELDS = frozenset(f.name for f in fields(IngestedSource))
 
 
 @dataclass
@@ -67,8 +60,6 @@ class VaultMetadata:
     created_at: str = field(default_factory=_now)
     last_compiled_at: str | None = None
     sources: dict[str, IngestedSource] = field(default_factory=dict)
-    pages: dict[str, PageMeta] = field(default_factory=dict)
-    tombstones: list[str] = field(default_factory=list)
     # Repository id this vault was spawned from by ``index --wiki`` over a repo
     # (None for uploads / URLs / single files). Persisted so a re-index of the
     # same repo finds and updates the vault it created before — even when the
@@ -87,16 +78,16 @@ class VaultMetadata:
     @classmethod
     def from_json(cls, text: str) -> VaultMetadata:
         data = json.loads(text)
-        sources = {sha: IngestedSource(**v) for sha, v in (data.get("sources") or {}).items()}
-        pages = {slug: PageMeta(**v) for slug, v in (data.get("pages") or {}).items()}
+        sources = {
+            sha: IngestedSource(**{k: v2 for k, v2 in v.items() if k in _INGESTED_SOURCE_FIELDS})
+            for sha, v in (data.get("sources") or {}).items()
+        }
         return cls(
             name=data["name"],
             schema_version=data.get("schema_version", SCHEMA_VERSION),
             created_at=data.get("created_at") or _now(),
             last_compiled_at=data.get("last_compiled_at"),
             sources=sources,
-            pages=pages,
-            tombstones=list(data.get("tombstones") or []),
             spawned_from=data.get("spawned_from"),
         )
 

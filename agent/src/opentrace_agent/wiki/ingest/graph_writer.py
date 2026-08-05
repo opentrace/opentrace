@@ -16,14 +16,19 @@
 
 The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
 source of truth for the vault's filesystem state. This module mirrors the
-*same* state into the graph as :class:`Vault`, :class:`Page`, and
-:class:`KnowledgeDoc` nodes connected by ``CONTAINS``, ``CITES`` (page →
-KnowledgeDoc, direct by sha), ``LINKS_TO`` (page → page wiki-links, and
-KnowledgeDoc → KnowledgeDoc author links), and ``MIRRORS`` (KnowledgeDoc →
-File twin) relationships.
+*same* state into the graph as :class:`Vault` and :class:`KnowledgeDoc`
+nodes connected by ``CONTAINS``, ``LINKS_TO`` (KnowledgeDoc → KnowledgeDoc
+author links), and ``MIRRORS`` (KnowledgeDoc → File twin) relationships.
 
-``MENTIONS`` (content → LLM-extracted entity) was written here until
-2026-08-04, when the entity layer was removed — see the wiki CLAUDE.md.
+Two edge kinds were written here and are gone:
+
+* ``MENTIONS`` (content → LLM-extracted entity) — removed 2026-08-04 with
+  the entity layer.
+* ``CITES`` (concept page → the document it restated), the ``KnowledgeConcept``
+  nodes it hung off, and the ``[[wiki-link]]`` page↔page ``LINKS_TO`` parser —
+  removed 2026-08-04 with the last of the concept-page layer.
+
+See the wiki CLAUDE.md for both.
 
 Graph writes run *after* disk writes succeed, and any failure here is
 caught and logged so the on-disk vault stays valid even if the graph
@@ -40,7 +45,6 @@ from typing import Any
 
 from opentrace_agent.store import GraphStore
 from opentrace_agent.wiki.ingest.sources import AcquiredSource
-from opentrace_agent.wiki.slugify import kind_dir
 from opentrace_agent.wiki.vault import VaultMetadata
 
 logger = logging.getLogger(__name__)
@@ -52,35 +56,14 @@ def _sniff_content_type(filename: str) -> str:
     return guessed or ""
 
 
-# Confidence rubric (mirrors sources/markdown/prompts.py).
-#
-#   concept — LLM synthesis across sources. INFERRED, default 0.75
-#             (median of {0.55, 0.65, 0.75, 0.85, 0.95}).
-#
-# This is a conservative default stamped at compile time without asking the
-# LLM to self-rate. A future change can have the Execute prompt return a
-# per-page tier so we pick up genuinely ambiguous output instead of always
-# treating concepts as INFERRED.
-_DEFAULT_CONFIDENCE_BY_KIND: dict[str, tuple[str, float]] = {
-    "concept": ("INFERRED", 0.75),
-}
-
-
-def _confidence_for_kind(kind: str) -> tuple[str, float]:
-    """Return ``(tier, score)`` for the given page kind. Falls back to INFERRED 0.75."""
-    return _DEFAULT_CONFIDENCE_BY_KIND.get(kind, ("INFERRED", 0.75))
-
-
 # ---------------------------------------------------------------------------
 # Node / edge type constants — kept in sync with proto/opentrace/v1/code_graph.proto
 # ---------------------------------------------------------------------------
 
 NODE_TYPE_KNOWLEDGE_VAULT = "KnowledgeVault"
-NODE_TYPE_KNOWLEDGE_CONCEPT = "KnowledgeConcept"
 NODE_TYPE_KNOWLEDGE_DOC = "KnowledgeDoc"
 
 REL_TYPE_CONTAINS = "CONTAINS"
-REL_TYPE_CITES = "CITES"
 REL_TYPE_LINKS_TO = "LINKS_TO"
 REL_TYPE_MIRRORS = "MIRRORS"
 REL_TYPE_DOCUMENTS = "DOCUMENTS"
@@ -98,10 +81,6 @@ REL_TYPE_DEFINES = "DEFINES"
 
 def vault_node_id(vault_name: str) -> str:
     return f"vault::{vault_name}"
-
-
-def page_node_id(vault_name: str, slug: str) -> str:
-    return f"{vault_name}::{slug}"
 
 
 def corpus_doc_node_id(sha256: str) -> str:
@@ -391,30 +370,8 @@ def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool
 
 
 # ---------------------------------------------------------------------------
-# Wiki-link parser
+# Doc-link parser
 # ---------------------------------------------------------------------------
-
-# Matches [[Page Title]] or [[Page Title|displayed text]]. Captures the
-# target (everything before the optional `|`).
-_WIKI_LINK_RE = re.compile(r"\[\[([^\[\]|]+?)(?:\|[^\[\]]+?)?\]\]")
-
-
-def parse_wiki_links(body: str) -> list[str]:
-    """Extract verbatim link targets from ``[[Title]]`` / ``[[Title|alias]]``.
-
-    Returns titles in document order, deduplicated. Whitespace is stripped
-    from each target so ``[[ Foo ]]`` matches ``Foo``.
-    """
-    seen: set[str] = set()
-    out: list[str] = []
-    for m in _WIKI_LINK_RE.finditer(body):
-        target = m.group(1).strip()
-        if not target or target in seen:
-            continue
-        seen.add(target)
-        out.append(target)
-    return out
-
 
 # Inline markdown link: [text](target "optional title") — angle-bracket form
 # ``[t](<a b.md>)`` included. Image links (``![alt](x.png)``) match too; they
@@ -473,7 +430,7 @@ def parse_doc_links(body: str) -> list[str]:
 
 
 def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int]:
-    """Remove a vault's Vault and Page nodes, plus any KnowledgeDoc nodes
+    """Remove a vault's Vault node, plus any KnowledgeDoc nodes
     that no other vault still references via ``CONTAINS``. Symmetric
     counterpart of :func:`write_vault_to_graph`.
 
@@ -506,20 +463,11 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
         if r["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC:
             sources_in_vault.append(r["node"]["id"])
 
-    # 2. Delete Pages belonging to this vault. Pages are 1:1 with their
-    #    vault (id is "<vault>::<slug>") so the property check is sufficient.
-    for n in store.list_nodes(node_type=NODE_TYPE_KNOWLEDGE_CONCEPT, limit=100_000):
-        props = n.get("properties") or {}
-        if props.get("vault") != vault_name:
-            continue
-        if store.delete_node(n["id"]):
-            deleted += 1
-
-    # 3. Delete the Vault node itself.
+    # 2. Delete the Vault node itself.
     if store.delete_node(vault_id):
         deleted += 1
 
-    # 4. Delete shared Source nodes only when no other vault still references
+    # 3. Delete shared Source nodes only when no other vault still references
     #    them. We re-check after deleting the Vault above so the just-
     #    deleted vault's CONTAINS edges are gone from the count.
     for sid in sources_in_vault:
@@ -551,18 +499,15 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
 def write_vault_to_graph(
     store: GraphStore,
     meta: VaultMetadata,
-    page_bodies: dict[str, str],
     acquired: list[AcquiredSource] | None = None,
-    provenance: dict[str, Any] | None = None,
-    compiled_slugs: set[str] | None = None,
     normalized: list[Any] | None = None,
     scope: str = "global",
 ) -> dict[str, int]:
-    """Mirror *meta* + *page_bodies* into the graph as a fresh consistent slice.
+    """Mirror *meta* into the graph as a fresh consistent slice.
 
-    Writes every page in ``meta.pages`` (not just the ones changed in this
-    compile run) so the graph reflects the post-compile vault state in full.
-    Edges are upserted via :meth:`GraphStore.merge_relationship` where
+    Writes every document in ``meta.sources`` (not just the ones ingested in
+    this compile run) so the graph reflects the post-compile vault state in
+    full. Edges are upserted via :meth:`GraphStore.merge_relationship` where
     available; otherwise fresh edges are added (LadybugDB has no
     transaction support, so duplicate-edge tolerance is left to query time).
 
@@ -572,23 +517,14 @@ def write_vault_to_graph(
         GraphStore handle; must be writeable.
     meta
         Loaded vault metadata (post-compile).
-    page_bodies
-        Map of slug → markdown body for each page in *meta.pages*. The caller
-        supplies these because the in-memory ``CompiledPage`` is only
-        available for pages written *this run*; older pages must be read
-        from disk.
     acquired
         Sources acquired *this run*. Optional — the canonical source list
         comes from ``meta.sources``. Provided when the caller already has
         the AcquiredSource objects with content_type / size_bytes.
-    provenance
-        Provenance fields (``agent``, ``model``, ``session``, ``confidence``)
-        to stamp on pages compiled this run. Pages not in *compiled_slugs*
-        keep their existing provenance from a prior compile.
-    compiled_slugs
-        Slugs of pages produced or extended this run. When ``None`` (e.g.
-        ``opentraceai wiki backfill``), no provenance is stamped — backfilled
-        pages keep whatever provenance the graph already has.
+    normalized
+        Post-normalization sources for this run, carrying ``corpus_path`` and
+        the extraction-stamped navigation label. Attach / promote / demote
+        pass lightweight stubs with only the fields they know.
 
     Returns
     -------
@@ -666,14 +602,14 @@ def write_vault_to_graph(
         norm_corpus_path = getattr(norm, "corpus_path", "") if norm is not None else ""
         if norm_corpus_path:
             # Body persisted on disk this run — point the node at it so
-            # downstream consumers (``load_source``, concept synthesis)
-            # can stream it back.
+            # downstream consumers (``load_source``, ``grep``) can stream it
+            # back.
             props["corpus_path"] = norm_corpus_path
         # Navigation label: prefer this run's extraction (NormalizedSource),
         # fall back to the label persisted in .vault.json (covers ``vault
         # attach`` of a vault compiled elsewhere). Stored under BOTH keys:
-        # ``one_line_summary`` matches the Page convention
-        # (_neighbour_summary prefers it), and ``summary`` feeds
+        # ``one_line_summary`` is what ``_neighbour_summary`` prefers, and
+        # ``summary`` feeds
         # build_search_text so the label is FTS-findable.
         title = getattr(norm, "title", "") or getattr(ingested, "title", "")
         one_liner = getattr(norm, "one_line_summary", "") or getattr(ingested, "one_line_summary", "")
@@ -719,113 +655,9 @@ def write_vault_to_graph(
         )
         rels_written += 1
 
-    # 3. Page nodes — one per slug. Maintain title→slug for LINKS_TO
-    #    resolution. Slugs live under ``<kind_dir>/<base>``; we track both
-    #    an unambiguous-by-title map and a fully-qualified
-    #    ``<kind_dir>/<title>`` one. Ambiguous bare titles drop out so the
-    #    LINKS_TO write surfaces broken links instead of silently picking
-    #    the wrong target.
-    title_to_slug: dict[str, str] = {}
-    kinded_title_to_slug: dict[str, str] = {}
-    ambiguous_titles: set[str] = set()
-    for slug, p in meta.pages.items():
-        kinded_title_to_slug[f"{kind_dir(p.kind)}/{p.title}"] = slug
-        if p.title in title_to_slug:
-            ambiguous_titles.add(p.title)
-        else:
-            title_to_slug[p.title] = slug
-
-    prov_keys = ("agent", "model", "session", "confidence", "confidence_tier")
-    # Graph-only fields not present on disk metadata. Carry forward on
-    # every re-mirror so e.g. autoprune-stamped ``stale_since`` survives
-    # a ``vault attach`` / promote / demote.
-    graph_only_keys = ("stale_since",)
-    for slug, p in meta.pages.items():
-        pid = page_node_id(meta.name, slug)
-        page_props: dict[str, Any] = {
-            "slug": p.slug,
-            "vault": meta.name,
-            "kind": p.kind,
-            # ``build_search_text`` indexes ``one_line_summary`` directly, so a
-            # page is FTS-findable by its gloss, not just its title.
-            "one_line_summary": p.one_line_summary,
-            "revision": p.revision,
-            "last_updated": p.last_updated,
-        }
-        existing = store.get_node(pid)
-        existing_props = (existing or {}).get("properties") or {}
-        for k in graph_only_keys:
-            if k in existing_props:
-                page_props[k] = existing_props[k]
-        if provenance is not None and compiled_slugs is not None and slug in compiled_slugs:
-            # Stamp provenance for pages produced or extended this run.
-            # Concept pages default to INFERRED (0.75). Overridden by an
-            # explicit confidence/confidence_tier in the provenance dict if
-            # present (lets future per-page LLM self-ratings flow through).
-            tier, score = _confidence_for_kind(p.kind)
-            page_props["confidence"] = score
-            page_props["confidence_tier"] = tier
-            for k in prov_keys:
-                if k in provenance:
-                    page_props[k] = provenance[k]
-        else:
-            # Preserve any existing provenance — `add_node` overwrites the
-            # full property blob, so we read existing values forward.
-            for k in prov_keys:
-                if k in existing_props:
-                    page_props[k] = existing_props[k]
-        store.add_node(
-            id=pid,
-            node_type=NODE_TYPE_KNOWLEDGE_CONCEPT,
-            name=p.title,
-            properties=page_props,
-        )
-        nodes_written += 1
-        # Vault CONTAINS Page.
-        store.merge_relationship(
-            id=f"{vault_id}->CONTAINS->{pid}",
-            rel_type=REL_TYPE_CONTAINS,
-            source_id=vault_id,
-            target_id=pid,
-        )
-        rels_written += 1
-
-    # 4. CITES edges — provenance. Every page cites the Source nodes it was
-    #    synthesised from, directly by sha (one hop, no intermediate page).
-    for slug, p in meta.pages.items():
-        pid = page_node_id(meta.name, slug)
-        for sha in p.source_shas:
-            sid = corpus_doc_node_id(sha)
-            store.merge_relationship(
-                id=f"{pid}->CITES->{sid}",
-                rel_type=REL_TYPE_CITES,
-                source_id=pid,
-                target_id=sid,
-            )
-            rels_written += 1
-
-    # 5. LINKS_TO edges — parsed from [[Title]] occurrences in page bodies.
-    #    The link target may be bare (``[[Title]]``) or kinded
-    #    (``[[concept/Title]]``). Kinded targets always win; bare targets
-    #    only resolve when the title is unique across kinds.
-    for slug, body in page_bodies.items():
-        if slug not in meta.pages:
-            continue
-        src_pid = page_node_id(meta.name, slug)
-        for target in parse_wiki_links(body):
-            target_slug = kinded_title_to_slug.get(target)
-            if target_slug is None and target not in ambiguous_titles:
-                target_slug = title_to_slug.get(target)
-            if not target_slug or target_slug == slug:
-                continue
-            tgt_pid = page_node_id(meta.name, target_slug)
-            store.merge_relationship(
-                id=f"{src_pid}->LINKS_TO->{tgt_pid}",
-                rel_type=REL_TYPE_LINKS_TO,
-                source_id=src_pid,
-                target_id=tgt_pid,
-            )
-            rels_written += 1
+    # Doc→doc ``LINKS_TO`` is NOT written here — it needs root-relative paths
+    # this function doesn't have. ``link_doc_to_doc_links`` runs as a separate
+    # post-compile step alongside MIRRORS; see the callers in cli/.
 
     logger.debug(
         "vault graph write complete: %d nodes, %d rels (vault=%s)",

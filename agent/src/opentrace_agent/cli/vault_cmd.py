@@ -215,14 +215,14 @@ def vault_list(global_only: bool, db_path: str | None) -> None:
 @vault.command("show")
 @click.argument("vault_name")
 @click.option("--scope", type=click.Choice(["local", "global"]), default=None)
-@click.option(
-    "--page",
-    "page_slug",
-    default=None,
-    help="Print the markdown body of one page (by slug) instead of the index.",
-)
-def vault_show(vault_name: str, scope: str | None, page_slug: str | None) -> None:
-    """Show the page index for a vault, or one page's body."""
+def vault_show(vault_name: str, scope: str | None) -> None:
+    """Show a vault's document index.
+
+    Bodies are not printed here — they live verbatim in the shared corpus.
+    Read one with the MCP ``load_source`` tool, or sweep them all with
+    ``grep``. The ``--page`` flag went with the concept-page layer on
+    2026-08-04; there are no page bodies to print.
+    """
     project_root = Path.cwd()
     found_scope, found_dir = _resolve_vault(
         vault_name,
@@ -230,37 +230,23 @@ def vault_show(vault_name: str, scope: str | None, page_slug: str | None) -> Non
         project_root=project_root,  # type: ignore[arg-type]
     )
 
-    from opentrace_agent.wiki.paths import metadata_path, pages_dir
+    from opentrace_agent.wiki.paths import metadata_path
     from opentrace_agent.wiki.vault import load_metadata
 
     meta = load_metadata(
         metadata_path(vault_name, scope=found_scope, project_root=project_root),
         name=vault_name,
     )
-    pages_path = pages_dir(vault_name, scope=found_scope, project_root=project_root)
-
-    # `vault show` is read-only and runs across local + global vaults; we
-    # don't trigger a disk migration here to avoid quiet side-effects on a
-    # read command. Compile and attach paths handle the migration before
-    # any persisted writes.
-
-    if page_slug:
-        body_path = pages_path / f"{page_slug}.md"
-        if not body_path.exists():
-            raise click.ClickException(f"page {page_slug!r} not found in vault {vault_name!r}")
-        click.echo(body_path.read_text())
-        return
 
     click.echo(f"Vault {vault_name!r} ({found_scope})")
     click.echo(f"  Path:           {found_dir}")
     click.echo(f"  Last compiled:  {meta.last_compiled_at or '(never)'}")
-    click.echo(f"  Pages:          {len(meta.pages)}")
+    click.echo(f"  Documents:      {len(meta.sources)}")
     click.echo("")
-    for slug, p in sorted(meta.pages.items()):
-        kind = p.kind or "concept"
-        click.echo(f"  [{kind}] {p.slug}")
-        click.echo(f"      title:   {p.title}")
-        click.echo(f"      summary: {p.one_line_summary}")
+    for src in sorted(meta.sources.values(), key=lambda s: (s.original_name.lower(), s.sha256)):
+        click.echo(f"  [{src.status}] {src.original_name}")
+        click.echo(f"      title:   {src.title or '(none)'}")
+        click.echo(f"      summary: {src.one_line_summary or '(none)'}")
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +267,8 @@ def vault_show(vault_name: str, scope: str | None, page_slug: str | None) -> Non
 def vault_attach(vault_name: str, scope: str | None, db_path: str | None) -> None:
     """Mirror an existing disk vault into the current graph.
 
-    No LLM cost — just reads ``.vault.json`` + page files from disk and
-    writes Vault/Page/Source nodes + CONTAINS/CITES/LINKS_TO edges
+    No LLM cost — just reads ``.vault.json`` from disk and writes the
+    KnowledgeVault + KnowledgeDoc nodes and their CONTAINS edges
     into the graph. Use after a global vault has been re-compiled
     elsewhere, or after the graph DB was rebuilt.
 
@@ -314,7 +300,7 @@ def _mirror_vault_into_graph(
     project_root: Path,
     db_path: str | None = None,
 ) -> dict[str, int]:
-    """Read a disk vault and write its Vault/Page/Source nodes into the graph.
+    """Read a disk vault and write its KnowledgeVault + KnowledgeDoc nodes into the graph.
 
     Shared between ``vault attach`` and ``vault promote/demote`` so a scope
     move keeps the current project's mirror consistent without the user
@@ -330,20 +316,11 @@ def _mirror_vault_into_graph(
 
     from opentrace_agent.sources.markdown import copy_corpus_between_scopes
     from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
-    from opentrace_agent.wiki.paths import metadata_path, pages_dir
+    from opentrace_agent.wiki.paths import metadata_path
     from opentrace_agent.wiki.vault import load_metadata
 
     meta_path = metadata_path(vault_name, scope=scope, project_root=project_root)
     meta = load_metadata(meta_path, name=vault_name)
-    pages_path = pages_dir(vault_name, scope=scope, project_root=project_root)
-
-    page_bodies: dict[str, str] = {}
-    for slug in meta.pages.keys():
-        body_path = pages_path / f"{slug}.md"
-        try:
-            page_bodies[slug] = body_path.read_text()
-        except OSError:
-            page_bodies[slug] = ""
 
     # Copy corpus from this vault's scope into the project so locally
     # stored Source.corpus_path values resolve under the project's
@@ -368,7 +345,6 @@ def _mirror_vault_into_graph(
         return write_vault_to_graph(
             graph_store,
             meta,
-            page_bodies,
             normalized=normalized_stubs,
             scope=scope,
         )
@@ -542,8 +518,7 @@ def _prune_vault_meta_sources(meta_path: Path, vault_name: str, keep_shas: set[s
     Graph-side autoprune removes their KnowledgeDoc nodes, but every compile
     re-mirrors ALL of ``meta.sources`` — so without this, a deleted doc is
     resurrected on each re-ingest and re-deleted by that run's prune, and the
-    metadata grows forever. Sources still cited by a page are kept (defensive:
-    corpus-only vaults have no pages). Returns the number of entries dropped.
+    metadata grows forever. Returns the number of entries dropped.
     """
     from opentrace_agent.wiki.vault import load_metadata, save_metadata
 
@@ -551,8 +526,7 @@ def _prune_vault_meta_sources(meta_path: Path, vault_name: str, keep_shas: set[s
         meta = load_metadata(meta_path, name=vault_name)
     except (OSError, ValueError):
         return 0
-    cited = {sha for page in meta.pages.values() for sha in (page.source_shas or [])}
-    doomed = [sha for sha in meta.sources if sha not in keep_shas and sha not in cited]
+    doomed = [sha for sha in meta.sources if sha not in keep_shas]
     for sha in doomed:
         del meta.sources[sha]
     if doomed:
@@ -620,7 +594,7 @@ def vault_ingest(
     Markdown, ...), normalizes each to markdown, labels it with ONE LLM call
     (a one-line summary; the title is derived from the filename), and indexes it as KnowledgeDoc
     nodes an agent can search through the graph. Bodies stay verbatim in the
-    corpus. Corpus-only: no concept pages are synthesized.
+    Corpus-only: bodies are stored verbatim and nothing is synthesized.
 
     Re-running on the same folder updates the same vault in place: unchanged
     files are skipped (content-addressed), deleted files are pruned (unless

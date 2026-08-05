@@ -39,7 +39,7 @@ Inspect it:
 
 ```bash
 opentraceai vault list                          # local + global vaults visible here
-opentraceai vault show papers                   # vault index (docs, and legacy pages if any)
+opentraceai vault show papers                   # the vault's document index
 ```
 
 ## Doc-to-doc links
@@ -50,15 +50,8 @@ The `LINKS_TO` edges between `KnowledgeDoc` nodes are the doc-side analogue of t
 
 To ask what *every* document says about something, grep the corpus rather than read a summary of it. The [`grep` retrieval tool](../reference/graph-tools.md) (MCP + `POST /api/retrieval/grep`) sweeps every member doc's normalized body and returns matching lines already labelled with the doc's title and epistemic status.
 
-Earlier versions of OpenTrace synthesized cross-document "concept pages" for this. They were **removed on 2026-08-03**: a synthesized page restates its sources in the model's own voice, which drops their hedges, tense, and attribution — something a verbatim body cannot do — and they measured 88.4% against a 98.6% control on the doc-Q&A benchmark, the worst result recorded. Verbatim grep hits answer the same question without the paraphrase layer.
-
-!!! note "Vaults compiled before the removal"
-    Nothing produces concept pages any more, but a vault that already has them keeps them — the pages stay on disk, stay mirrored into the graph, and stay readable:
-
-    ```bash
-    opentraceai vault show papers                          # lists docs, and pages if any
-    opentraceai vault show papers --page concept/<base>    # one page body to stdout
-    ```
+!!! note "There are no concept pages — removed 2026-08-03 / 2026-08-04"
+    Earlier on this branch OpenTrace synthesized cross-document "concept pages" for exactly this question. Synthesis went on **2026-08-03** and the rest of the layer — storage, node types, and every read path — on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result recorded: a synthesized page restates its sources in the model's own voice, dropping their hedges, tense, and attribution, which a verbatim body structurally cannot do. Verbatim `grep` hits plus `load_source` reads answer the same question without the paraphrase layer. Nothing anywhere reads or writes a page, including vaults compiled before the removal. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 ## Vault scopes — local vs global
 
@@ -155,11 +148,9 @@ Note: graph mirrors that pointed at the old scope are now stale. Run `vault atta
 By default, re-running `index --wiki` detects docs that disappeared from disk between runs and cleans them up:
 
 - The orphaned `KnowledgeDoc` node + its body in `corpus/` are deleted
-- If the vault carries legacy concept pages, ones that cited the removed doc have the dangling citation removed:
-    - If the page still has other citations → kept, stamped `stale_since=<timestamp>`
-    - If the page has no remaining citations → deleted entirely
+- The vault's `.vault.json` entry for that source goes with it
 
-Pruning costs no LLM calls. A page stamped `stale_since` can't be regenerated — nothing writes page bodies any more — so delete it if it bothers you.
+That is the whole of autoprune: the report is two counts, `sources_deleted` and `corpus_files_deleted`. Pruning costs no LLM calls. Nothing is derived from a document, so a vanished doc leaves nothing behind to mark stale.
 
 To opt out of pruning on a particular run (e.g. you're partially re-indexing):
 
@@ -179,9 +170,11 @@ opentraceai vault list
 #   global  refs            (not attached to current graph)
 
 opentraceai vault list --global-only   # every global on the machine
-opentraceai vault show research        # doc index for one vault (plus pages, if it has legacy ones)
-opentraceai vault show research --page concept/some-base   # print one legacy page body to stdout
+opentraceai vault show research        # document index for one vault:
+                                       #  status, title, one-line summary per doc
 ```
+
+`vault show` doesn't print bodies — those live verbatim in the shared corpus. Read one with the `load_source` tool, or sweep them all with `grep`.
 
 A `STALE` row means the disk vault has been re-compiled since this graph last mirrored it (typically because the vault is global and another project recompiled). Run `vault attach <name>` to refresh.
 
@@ -212,15 +205,11 @@ opentraceai analyze            # god nodes + bridges + cross-domain bridges + cr
 <project>/.opentrace/vaults/<name>/        # local vault root
 ~/.opentrace/vaults/<name>/                # global vault root (override with $OT_VAULT_ROOT)
 
-  pages/concept/<base>.md          — legacy concept pages, if the vault was
-                                     compiled before 2026-08-03
-  .vault.json                      — page metadata, source labels + sha256 dedup state
+  .vault.json                      — source labels + sha256 dedup state
   .compile-log/<ts>.json           — per-compile audit log
 ```
 
-A vault compiled today has no `pages/` content — the documents' own bodies live in the sibling `corpus/<sha>.md` dir instead.
-
-Where legacy pages exist, slugs are `<kind_dir>/<base>` — e.g. `concept/usage`. Concept pages are the only page kind, so everything lives under the `concept/` folder. Open the vault in Obsidian and pages show up there; `[[wiki-links]]` in page bodies point concept-to-concept only. Source attribution isn't a wiki-link — it's the structural `CITES` edge from each concept page to the `KnowledgeDoc` nodes it drew from.
+That's the whole vault dir: metadata and an audit log, nothing else. A vault holds no bodies of its own — the documents' bodies live in the sibling `corpus/<sha>.md` dir, one file per doc, verbatim after markitdown normalization.
 
 Disk is the source of truth for bodies; the knowledge graph holds metadata and relationships. `vault attach` can always rebuild a graph mirror from disk — doc navigation labels are persisted in `.vault.json`, so attached mirrors keep them.
 

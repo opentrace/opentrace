@@ -18,15 +18,19 @@ Scopes are nodes whose subtree has on-disk content the agent can search:
 
 - ``Repository`` with ``local_path`` set (local-directory indexes; cloned
   remote repos don't carry one).
-- ``KnowledgeVault`` — the vault's document CORPUS (each member
-  KnowledgeDoc's normalized markdown body, resolved via its ``corpus_path``)
-  plus its compiled ``pages/`` when the vault has concept pages. The corpus
-  sweep is what makes exhaustive content claims possible for an agent whose
-  only access is the graph: ranked search finds the best documents, grep
-  establishes what's true of EVERY document. Corpus hits arrive joined back
-  to their KnowledgeDoc — node id, display path, title, epistemic status —
-  and their line numbers refer to the normalized body (exactly what
-  ``load_source`` returns).
+- ``KnowledgeVault`` — the vault's document CORPUS: each member
+  KnowledgeDoc's normalized markdown body, resolved via its ``corpus_path``.
+  This sweep is what makes exhaustive content claims possible for an agent
+  whose only access is the graph: ranked search finds the best documents, grep
+  establishes what's true of EVERY document. Hits arrive joined back to their
+  KnowledgeDoc — node id, display path, title, epistemic status — and their
+  line numbers refer to the normalized body (exactly what ``load_source``
+  returns).
+
+  A second sweep over the vault's compiled ``pages/`` dir ran here until
+  2026-08-04, when the concept-page layer was removed. Sweeping verbatim
+  bodies is what replaced synthesis, so grepping a layer of restatement on
+  top of them was the opposite of the point — see the wiki CLAUDE.md.
 
 ripgrep is invoked via ``subprocess.run`` with ``--json`` for structured
 output. ``rg`` is expected on ``PATH``; missing-binary cases return a
@@ -183,38 +187,19 @@ def _grep_vault(
     case_sensitive: bool,
     max_results: int,
 ) -> dict[str, Any]:
-    """Grep a vault's corpus (member docs' normalized bodies) + compiled pages.
+    """Grep a vault's corpus — every member doc's normalized markdown body.
 
-    The corpus half is the load-bearing one: membership comes from the
-    vault's ``CONTAINS`` edges (the shared, sha-keyed corpus dir may hold
-    other vaults' documents), each member resolves through its own
-    ``corpus_path`` (the canonical pointer — never parse corpus filenames),
-    and every hit is joined back to its KnowledgeDoc so the sweep's output is
-    pre-labelled. Docs whose corpus file isn't on this machine (e.g. a
-    metadata-only mirror) are skipped rather than failing the sweep.
+    Membership comes from the vault's ``CONTAINS`` edges (the shared,
+    sha-keyed corpus dir may hold other vaults' documents), each member
+    resolves through its own ``corpus_path`` (the canonical pointer — never
+    parse corpus filenames), and every hit is joined back to its KnowledgeDoc
+    so the sweep's output is pre-labelled. Docs whose corpus file isn't on
+    this machine (e.g. a metadata-only mirror) are skipped rather than
+    failing the sweep.
     """
     scope_id = scope_node["id"]
     vault_name = scope_node["name"] or scope_id.replace("vault::", "", 1)
 
-    # Pages layer — present only for vaults compiled with concept pages.
-    # Resolve the vault whichever scope it lives in (local first, then
-    # global); the previous global-only lookup silently missed local vaults.
-    pages_root: Path | None = None
-    try:
-        from opentrace_agent.wiki.paths import InvalidVaultName, resolve_vault_scope
-
-        try:
-            found = resolve_vault_scope(vault_name)
-            if found is not None:
-                candidate = found[1] / "pages"
-                if candidate.is_dir():
-                    pages_root = candidate
-        except InvalidVaultName as e:
-            return _err(scope_id, f"invalid vault name: {e}")
-    except Exception:  # noqa: BLE001 — pages are optional; the corpus can still be swept
-        pages_root = None
-
-    # Corpus layer — the vault's member documents.
     db_dir = Path(store.db_path).resolve().parent
     corpus_by_abs: dict[str, dict[str, Any]] = {}
     for r in store.traverse(scope_id, direction="outgoing", max_depth=1, relationship_type="CONTAINS"):
@@ -238,17 +223,15 @@ def _grep_vault(
             "status": nprops.get("status"),
         }
 
-    if pages_root is None and not corpus_by_abs:
+    if not corpus_by_abs:
         return _err(
             scope_id,
             "vault has no on-disk content to grep — no member document bodies "
-            "reachable from this DB and no compiled pages. Use search_graph / "
-            "load_source instead",
+            "reachable from this DB. Use search_graph / load_source instead",
         )
 
     matches: list[dict[str, Any]] = []
 
-    # Corpus first — the document layer is the reason to grep a vault.
     if corpus_by_abs:
         raw = _search_files(
             pattern=pattern,
@@ -274,31 +257,6 @@ def _grep_vault(
             )
             if len(matches) >= max_results:
                 break
-
-    if pages_root is not None and len(matches) < max_results:
-        raw = _search_files(
-            pattern=pattern,
-            targets=[str(pages_root)],
-            glob=f"*{file_filter}*" if file_filter else None,
-            case_sensitive=case_sensitive,
-            max_results=max_results - len(matches),
-        )
-        for m in raw:
-            try:
-                rel = str(Path(m["file_path"]).relative_to(pages_root))
-            except ValueError:
-                rel = m["file_path"]
-            slug = rel[: -len(".md")] if rel.endswith(".md") else rel
-            matches.append(
-                {
-                    # Page id is ``<vault>::<slug>``.
-                    "node_id": f"{vault_name}::{slug}",
-                    "file_path": rel,
-                    "line_number": m["line_number"],
-                    "line_text": m["line_text"],
-                    "structural_context": {"scope_type": "KnowledgeVault", "vault": vault_name, "layer": "pages"},
-                }
-            )
 
     return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": _engine()}
 

@@ -345,18 +345,11 @@ export interface ProvenanceChainDoc {
   acquired_at: string | null;
 }
 
-export interface ProvenanceChainConcept {
-  kind: 'knowledge_concept';
-  id: string;
-  page_kind: string | null;
-  title: string | null;
-  slug: string | null;
-  vault: string | null;
-}
-
-export type ProvenanceChainEntry =
-  | ProvenanceChainDoc
-  | ProvenanceChainConcept;
+/** A wiki chain is a single ``knowledge_doc`` entry: the document IS its own
+ *  provenance. It was a union with a ``knowledge_concept`` variant while the
+ *  concept-page layer existed and the chain was a multi-hop ``CITES`` walk;
+ *  that layer was removed 2026-08-04 and nothing restates a document now. */
+export type ProvenanceChainEntry = ProvenanceChainDoc;
 
 export interface ProvenanceWiki {
   agent: string | null;

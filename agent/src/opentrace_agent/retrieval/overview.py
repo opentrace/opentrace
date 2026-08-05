@@ -39,8 +39,13 @@ def overview(
     Targets a compact JSON payload (well under 500 tokens) to fit the OT-1732
     Overview success criterion. Top concepts are the highest-degree non-internal
     nodes; recently-updated entries come from the per-node ``last_updated``
-    property when set (today: Page). ``vault_scope`` is reserved for
-    Phase 4 — currently no-op.
+    property, on the nodes that carry one. ``vault_scope`` restricts the
+    payload to one vault's nodes.
+
+    Three page-only sections (``top_linked_concepts``, ``top_cited_sources``,
+    ``cluster_sizes``) were dropped 2026-08-04 with the concept-page layer —
+    each ranked ``KnowledgeConcept`` nodes or counted ``CITES`` edges, so all
+    three returned empty once nothing produced pages.
     """
     top_n = max(1, min(top_n, TOP_N_CAP))
 
@@ -62,9 +67,6 @@ def overview(
         "counts_by_type": nodes_by_type,
         "top_concepts": top_concepts,
         "recently_updated": recent,
-        "top_linked_concepts": _top_linked_concepts(store, top_n=top_n, vault_scope=None),
-        "top_cited_sources": _top_cited_sources(store, top_n=top_n, vault_scope=None),
-        "cluster_sizes": _cluster_sizes(store, vault_scope=None),
         "vault_scope": None,
     }
 
@@ -72,8 +74,10 @@ def overview(
 def _scoped_overview(store: GraphStore, top_n: int, vault_scope: str) -> dict[str, Any]:
     """Restrict overview output to nodes whose ``vault`` property matches.
 
-    Vault-domain nodes (Vault / Page / Source) all carry a ``vault``
-    property by Phase 4 convention; non-vault nodes are excluded.
+    ``KnowledgeVault`` nodes carry a ``vault`` property by Phase 4
+    convention; non-vault nodes are excluded. (``KnowledgeDoc`` membership is
+    the ``CONTAINS`` edge, not a property — docs are content-addressed and can
+    belong to several vaults at once.)
     """
     from opentrace_agent.store.graph_store import _parse_props
 
@@ -145,9 +149,6 @@ def _scoped_overview(store: GraphStore, top_n: int, vault_scope: str) -> dict[st
         "counts_by_type": counts,
         "top_concepts": top_concepts,
         "recently_updated": recently_updated,
-        "top_linked_concepts": _top_linked_concepts(store, top_n=top_n, vault_scope=vault_scope),
-        "top_cited_sources": _top_cited_sources(store, top_n=top_n, vault_scope=vault_scope),
-        "cluster_sizes": _cluster_sizes(store, vault_scope=vault_scope),
         "vault_scope": vault_scope,
     }
 
@@ -200,8 +201,8 @@ def _top_by_degree(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
 
 def _recently_updated(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
     """Return nodes whose properties carry a ``last_updated`` timestamp,
-    sorted descending. Currently driven by Page; will broaden when code
-    provenance stamping lands in Phase 5.
+    sorted descending. Empty on a docs-only graph today; will fill in when
+    code provenance stamping lands in Phase 5.
     """
     # Pull a bounded set of candidates and sort in Python — avoids relying on
     # JSON-property sort in Cypher (LadybugDB MAP literal sorting is brittle).
@@ -230,124 +231,3 @@ def _recently_updated(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
         )
     candidates.sort(key=lambda c: c["last_updated"], reverse=True)
     return candidates[:top_n]
-
-
-def _trim_summary(value: Any) -> str:
-    """Coerce *value* to a short summary string (≤120 chars)."""
-    if not isinstance(value, str):
-        return ""
-    return value[:117] + "..." if len(value) > 120 else value
-
-
-def _top_linked_concepts(store: GraphStore, top_n: int, vault_scope: str | None) -> list[dict[str, Any]]:
-    """Concept Pages ranked by how many ``LINKS_TO`` edges touch them.
-
-    Degree counts incident edges in either direction (a concept linked twice
-    and linking out once has degree 3). File-summary pages and zero-degree
-    ("lonely") concepts are excluded; restricted to *vault_scope* when set.
-    """
-    result = store._conn.execute(
-        "MATCH (a:Node)-[r:RELATES]-(b:Node) WHERE r.type = 'LINKS_TO' "
-        "RETURN a.id AS id, count(r) AS degree ORDER BY degree DESC, id LIMIT 200"
-    )
-    out: list[dict[str, Any]] = []
-    while result.has_next():
-        row = result.get_next()
-        nid, degree = str(row[0]), int(row[1])
-        if degree <= 0:
-            continue
-        node = store.get_node(nid)
-        if node is None or node["type"] != "KnowledgeConcept":
-            continue
-        props = node.get("properties") or {}
-        if props.get("kind") != "concept":
-            continue
-        if vault_scope is not None and props.get("vault") != vault_scope:
-            continue
-        out.append(
-            {
-                "id": nid,
-                "name": node["name"],
-                "vault": props.get("vault"),
-                "degree": degree,
-                "summary": _trim_summary(props.get("one_line_summary") or props.get("summary") or ""),
-            }
-        )
-        if len(out) >= top_n:
-            break
-    return out
-
-
-def _top_cited_sources(store: GraphStore, top_n: int, vault_scope: str | None) -> list[dict[str, Any]]:
-    """``Source`` nodes ranked by incoming ``CITES`` count.
-
-    Counts edges pointing *at* each source (concept page → Source, direct by
-    sha). Uncited sources never appear. Sources deliberately carry no
-    ``vault`` property (membership is the Vault -CONTAINS-> Source edge),
-    so *vault_scope* filters against the vault's contained-source set.
-    """
-    scope_source_ids: set[str] | None = None
-    if vault_scope is not None:
-        try:
-            contained = store.traverse(
-                f"vault::{vault_scope}",
-                direction="outgoing",
-                max_depth=1,
-                relationship_type="CONTAINS",
-            )
-        except ValueError:
-            contained = []
-        scope_source_ids = {r["node"]["id"] for r in contained if (r.get("node") or {}).get("type") == "KnowledgeDoc"}
-
-    result = store._conn.execute(
-        "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = 'CITES' "
-        "RETURN b.id AS id, count(r) AS citations ORDER BY citations DESC, id LIMIT 200"
-    )
-    out: list[dict[str, Any]] = []
-    while result.has_next():
-        row = result.get_next()
-        nid, citations = str(row[0]), int(row[1])
-        if citations <= 0:
-            continue
-        if scope_source_ids is not None and nid not in scope_source_ids:
-            continue
-        node = store.get_node(nid)
-        if node is None or node["type"] != "KnowledgeDoc":
-            continue
-        props = node.get("properties") or {}
-        out.append(
-            {
-                "id": nid,
-                "name": node["name"],
-                "title": props.get("title"),
-                "summary": _trim_summary(props.get("one_line_summary") or ""),
-                "citation_count": citations,
-            }
-        )
-        if len(out) >= top_n:
-            break
-    return out
-
-
-def _cluster_sizes(store: GraphStore, vault_scope: str | None) -> dict[str, int]:
-    """Count Pages per ``cluster_id`` stamp (keys stringified).
-
-    Returns an empty dict when no page carries a ``cluster_id``. Restricted to
-    *vault_scope* when set.
-    """
-    from opentrace_agent.store.graph_store import _parse_props
-
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.type = 'KnowledgeConcept' AND n.properties CONTAINS 'cluster_id' "
-        "RETURN n.properties LIMIT 5000"
-    )
-    sizes: dict[str, int] = {}
-    while result.has_next():
-        props = _parse_props(result.get_next()[0]) or {}
-        if "cluster_id" not in props:
-            continue
-        if vault_scope is not None and props.get("vault") != vault_scope:
-            continue
-        key = str(props["cluster_id"])
-        sizes[key] = sizes.get(key, 0) + 1
-    return sizes

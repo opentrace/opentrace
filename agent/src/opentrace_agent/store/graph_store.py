@@ -48,13 +48,14 @@ def build_search_text(name: str, node_type: str, properties: dict[str, Any]) -> 
     """Combine name, type, the node's gloss, and path into searchable text.
 
     The gloss lives under different property names across node types —
-    ``summary`` (KnowledgeDoc/Vault, code augmentations), ``one_line_summary``
-    (KnowledgeConcept pages), ``description`` (legacy nodes written by other
+    ``summary`` and ``one_line_summary`` (KnowledgeDoc/Vault, code
+    augmentations), ``description`` (legacy nodes written by other
     producers). We index all of them so every node is findable by its
     content, not just its name: without this, a topic query only matches the
-    name token and wiki-derived nodes (whose names are slugs) never surface
-    against code symbols that match by exact name. Duplicates across keys are
-    harmless — FTS dedupes term frequency's effect via BM25 saturation.
+    name token and a document whose filename says nothing about its subject
+    never surfaces against code symbols that match by exact name. Duplicates
+    across keys are harmless — FTS dedupes term frequency's effect via BM25
+    saturation.
     """
     parts = [name, node_type]
     for key in ("summary", "one_line_summary", "description"):

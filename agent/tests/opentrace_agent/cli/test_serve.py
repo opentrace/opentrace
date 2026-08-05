@@ -560,20 +560,15 @@ class TestVaultRoutes:
         assert (tmp_path / "globals" / "dup" / ".vault.json").exists()
 
     def _make_vault_with_content(self, tmp_path, name, scope, *, project_root):
-        """A vault with one page + one source + a corpus body, so the graph
-        re-mirror actually iterates sources (empty vaults hide writer bugs)."""
+        """A vault with one source + a corpus body, so the graph re-mirror
+        actually iterates sources (empty vaults hide writer bugs)."""
         from opentrace_agent.sources.markdown import (
             corpus_dir_for_scope,
             write_corpus_markdown_to,
         )
-        from opentrace_agent.wiki.paths import (
-            ensure_vault_layout,
-            metadata_path,
-            pages_dir,
-        )
+        from opentrace_agent.wiki.paths import ensure_vault_layout, metadata_path
         from opentrace_agent.wiki.vault import (
             IngestedSource,
-            PageMeta,
             VaultMetadata,
             save_metadata,
         )
@@ -588,16 +583,7 @@ class TestVaultRoutes:
             title="Doc",
             one_line_summary="a doc",
         )
-        meta.pages["concept/usage"] = PageMeta(
-            slug="concept/usage",
-            title="Usage",
-            one_line_summary="how to use",
-            source_shas=[sha],
-        )
         save_metadata(metadata_path(name, scope=scope, project_root=project_root), meta)
-        pd = pages_dir(name, scope=scope, project_root=project_root) / "concept"
-        pd.mkdir(parents=True, exist_ok=True)
-        (pd / "usage.md").write_text("# Usage\n\nbody")
         cdir = corpus_dir_for_scope(scope, project_root=project_root)
         write_corpus_markdown_to(cdir, sha, "# Doc\n\nraw body")
 

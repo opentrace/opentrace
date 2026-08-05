@@ -1220,56 +1220,6 @@ def _vault_routes(
 
         return load_metadata(metadata_path(name, scope=scope, project_root=_project_root()), name=name)
 
-    async def list_pages_route(request: Request) -> JSONResponse:
-        name = request.path_params["vault"]
-        scope, err = _resolve_scope_for(name, request.query_params.get("scope"))
-        if err is not None:
-            return err
-        meta = _load_vault_meta(name, scope)
-        pages = [
-            {
-                "slug": p.slug,
-                "title": p.title,
-                "one_line_summary": p.one_line_summary,
-                "revision": p.revision,
-                "last_updated": p.last_updated,
-                "kind": p.kind,
-            }
-            for p in meta.pages.values()
-        ]
-        pages.sort(key=lambda p: (p["title"].lower(), p["slug"]))
-        return JSONResponse(
-            {
-                "name": meta.name,
-                "last_compiled_at": meta.last_compiled_at,
-                "pages": pages,
-            }
-        )
-
-    async def get_page_route(request: Request) -> JSONResponse:
-        from starlette.responses import PlainTextResponse
-
-        from opentrace_agent.wiki.paths import pages_dir
-
-        name = request.path_params["vault"]
-        slug = request.path_params["slug"]
-        # Slugs are now ``<kind_dir>/<base>``; the single slash is expected.
-        # Reject traversal markers, leading dots, and any deeper nesting so
-        # a stray "/" can't be used to escape the vault's pages directory.
-        if ".." in slug or slug.startswith(".") or slug.startswith("/") or slug.endswith("/") or slug.count("/") > 1:
-            return _error(400, f"invalid slug: {slug}")
-        scope, err = _resolve_scope_for(name, request.query_params.get("scope"))
-        if err is not None:
-            return err
-        # Migrate a legacy flat-layout vault so the slug → file mapping
-        # holds even when no list-pages call ran first to do the fixup.
-        _load_vault_meta(name, scope)
-        pd = pages_dir(name, scope=scope, project_root=_project_root())
-        page_path = pd / f"{slug}.md"
-        if not page_path.exists():
-            return _error(404, f"Page not found: {slug}")
-        return PlainTextResponse(page_path.read_text(), media_type="text/markdown")
-
     async def compile_route(request: Request) -> "StreamingResponse | JSONResponse":
         from opentrace_agent.wiki import SourceInput, run_compile
         from opentrace_agent.wiki.ingest.types import WikiEventKind
@@ -1435,15 +1385,15 @@ def _vault_routes(
     async def attach_vault_route(request: Request) -> JSONResponse:
         """Mirror a global disk vault into the current project's graph.
 
-        No LLM cost — just reads ``.vault.json`` + page bodies and writes
-        Vault/Page/Source nodes. Symmetric counterpart of the
+        No LLM cost — just reads ``.vault.json`` and writes the
+        KnowledgeVault + KnowledgeDoc nodes. Symmetric counterpart of the
         ``vault attach`` CLI command.
         """
         from types import SimpleNamespace
 
         from opentrace_agent.sources.markdown import copy_corpus_between_scopes
         from opentrace_agent.wiki.ingest.graph_writer import write_vault_to_graph
-        from opentrace_agent.wiki.paths import metadata_path, pages_dir
+        from opentrace_agent.wiki.paths import metadata_path
         from opentrace_agent.wiki.vault import load_metadata
 
         if not has_graph:
@@ -1460,15 +1410,6 @@ def _vault_routes(
 
         meta_path = metadata_path(name, scope="global")
         meta = load_metadata(meta_path, name=name)
-        pages_path = pages_dir(name, scope="global")
-
-        page_bodies: dict[str, str] = {}
-        for slug in meta.pages.keys():
-            body_path = pages_path / f"{slug}.md"
-            try:
-                page_bodies[slug] = body_path.read_text()
-            except OSError:
-                page_bodies[slug] = ""
 
         # Copy the global vault's corpus into this project's corpus dir
         # (sha-keyed, idempotent) so Source.corpus_path resolves locally
@@ -1491,7 +1432,6 @@ def _vault_routes(
                 stats = write_vault_to_graph(
                     cur,
                     meta,
-                    page_bodies,
                     normalized=normalized_stubs,
                     scope="global",
                 )
@@ -1539,7 +1479,6 @@ def _vault_routes(
             InvalidVaultName,
             metadata_path,
             move_vault_dir,
-            pages_dir,
         )
         from opentrace_agent.wiki.vault import load_metadata
 
@@ -1564,14 +1503,6 @@ def _vault_routes(
 
         # Disk dir is now under the dst root.
         meta = load_metadata(metadata_path(name, scope=dst, project_root=pr), name=name)
-        pages_path = pages_dir(name, scope=dst, project_root=pr)
-        page_bodies: dict[str, str] = {}
-        for slug in meta.pages.keys():
-            body_path = pages_path / f"{slug}.md"
-            try:
-                page_bodies[slug] = body_path.read_text()
-            except OSError:
-                page_bodies[slug] = ""
 
         source_ids = list(meta.sources.keys())
         # This project's mirror always reads bodies from the local corpus.
@@ -1602,7 +1533,6 @@ def _vault_routes(
                 stats = write_vault_to_graph(
                     cur,
                     meta,
-                    page_bodies,
                     normalized=normalized_stubs,
                     scope=dst,
                 )
@@ -1634,8 +1564,6 @@ def _vault_routes(
 
     return [
         Route("/api/vaults", list_vaults_route, methods=["GET"]),
-        Route("/api/vaults/{vault}/pages", list_pages_route, methods=["GET"]),
-        Route("/api/vaults/{vault}/pages/{slug:path}", get_page_route, methods=["GET"]),
         Route("/api/vaults/{vault}/compile", compile_route, methods=["POST"]),
         Route("/api/vaults/{vault}/attach", attach_vault_route, methods=["POST"]),
         Route("/api/vaults/{vault}/detach", detach_vault_route, methods=["POST"]),

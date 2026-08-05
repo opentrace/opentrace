@@ -16,7 +16,6 @@ from pathlib import Path
 
 from opentrace_agent.wiki.vault import (
     IngestedSource,
-    PageMeta,
     VaultMetadata,
     load_metadata,
     save_metadata,
@@ -26,32 +25,34 @@ from opentrace_agent.wiki.vault import (
 def test_roundtrip(tmp_path: Path):
     meta = VaultMetadata.empty("v1")
     meta.sources["a" * 64] = IngestedSource(
-        sha256="a" * 64, original_name="x.md", ingested_at="t", contributed_to=["concept/foo"]
+        sha256="a" * 64,
+        original_name="x.md",
+        ingested_at="t",
+        title="X",
+        one_line_summary="about x",
+        status="design_history",
     )
-    meta.pages["concept/foo"] = PageMeta(
-        slug="concept/foo", title="Foo", one_line_summary="about foo", source_shas=["a" * 64]
-    )
-    meta.tombstones.append("concept/old-page")
+    meta.spawned_from = "dir::/tmp/docs"
     path = tmp_path / ".vault.json"
     save_metadata(path, meta)
     reloaded = load_metadata(path, name="v1")
     assert reloaded.name == "v1"
-    assert "concept/foo" in reloaded.pages
-    assert reloaded.pages["concept/foo"].title == "Foo"
-    assert reloaded.pages["concept/foo"].kind == "concept"
-    assert "a" * 64 in reloaded.sources
-    assert reloaded.tombstones == ["concept/old-page"]
+    assert reloaded.spawned_from == "dir::/tmp/docs"
+    src = reloaded.sources["a" * 64]
+    assert src.original_name == "x.md"
+    assert src.title == "X"
+    assert src.one_line_summary == "about x"
+    assert src.status == "design_history"
 
 
 def test_load_missing_returns_empty(tmp_path: Path):
     meta = load_metadata(tmp_path / "absent.json", name="empty")
     assert meta.name == "empty"
-    assert meta.pages == {}
     assert meta.sources == {}
 
 
-def test_metadata_without_kind_field_defaults_to_concept(tmp_path: Path):
-    """``kind`` has a dataclass default — records without it load as concept."""
+def test_status_defaults_when_absent(tmp_path: Path):
+    """``status`` has a dataclass default — pre-status records load as authoritative."""
     p = tmp_path / ".vault.json"
     p.write_text(
         """{
@@ -59,19 +60,50 @@ def test_metadata_without_kind_field_defaults_to_concept(tmp_path: Path):
         "schema_version": 1,
         "created_at": "2026-01-01T00:00:00+00:00",
         "last_compiled_at": null,
-        "sources": {},
-        "tombstones": [],
+        "sources": {
+            "b": {"sha256": "b", "original_name": "d.md", "ingested_at": "t"}
+        }
+    }"""
+    )
+    assert load_metadata(p, name="v").sources["b"].status == "authoritative"
+
+
+def test_legacy_page_layer_keys_are_ignored(tmp_path: Path):
+    """A ``.vault.json`` written before 2026-08-04 carries the concept-page
+    layer's fields: top-level ``pages`` / ``tombstones`` and a per-source
+    ``contributed_to`` list of page slugs. Splatting the latter into
+    ``IngestedSource`` would raise TypeError and make the vault unloadable, so
+    unknown keys are dropped — the documents still load."""
+    p = tmp_path / ".vault.json"
+    p.write_text(
+        """{
+        "name": "v",
+        "schema_version": 1,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "last_compiled_at": null,
+        "tombstones": ["concept/old-page"],
         "pages": {
             "concept/ducks": {
                 "slug": "concept/ducks",
                 "title": "Ducks",
                 "one_line_summary": "About ducks.",
-                "source_shas": [],
-                "last_updated": "2026-01-01T00:00:00+00:00",
+                "source_shas": ["c"],
                 "revision": 1
+            }
+        },
+        "sources": {
+            "c": {
+                "sha256": "c",
+                "original_name": "ducks.md",
+                "ingested_at": "t",
+                "contributed_to": ["concept/ducks"]
             }
         }
     }"""
     )
     meta = load_metadata(p, name="v")
-    assert meta.pages["concept/ducks"].kind == "concept"
+    assert meta.sources["c"].original_name == "ducks.md"
+    # Nothing page-shaped survives the load.
+    assert not hasattr(meta, "pages")
+    assert not hasattr(meta, "tombstones")
+    assert not hasattr(meta.sources["c"], "contributed_to")

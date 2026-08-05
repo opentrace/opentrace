@@ -29,15 +29,18 @@ from opentrace_agent.wiki.ingest.graph_writer import vault_node_id  # noqa: E402
 
 
 def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
-    """Seed a small graph: 3 Sources + 1 concept page citing all three, plus a
-    single-source concept page 1:1 with one Source.
+    """Seed a small graph: a Vault node owning three KnowledgeDocs.
 
-    Mirrors the real graph the wiki pipeline writes: a ``Vault`` node owns
-    its Sources and pages via ``CONTAINS`` edges; concept pages CITE their
-    Sources directly by sha. Autoprune discovers in-scope Sources by
-    traversing ``Vault -CONTAINS-> Source`` (sources are
-    content-addressed and carry no single vault), so the vault node + edges
-    are what makes a source visible to the prune pass.
+    Mirrors the real graph the wiki pipeline writes. Autoprune discovers
+    in-scope documents by traversing ``Vault -CONTAINS-> KnowledgeDoc``
+    (documents are content-addressed and carry no single vault), so the vault
+    node + edges are what makes a document visible to the prune pass.
+
+    This used to also seed concept pages and their ``CITES`` edges, because
+    autoprune had a second sweep that deleted a page losing its last citation
+    and stamped ``stale_since`` on one that kept some. Both went with the
+    concept-page layer on 2026-08-04 — nothing synthesized pages, so nothing
+    could go stale.
     """
     sids = {}
     # Vault node — the discovery anchor for this vault.
@@ -57,34 +60,6 @@ def _seed(store: GraphStore, vault: str = "v") -> dict[str, str]:
             },
         )
         store.add_relationship(f"{vault_id}->CONTAINS->{sid}", "CONTAINS", vault_id, sid, properties={"vault": vault})
-        # Single-source concept page 1:1 with this Source (exercises the
-        # zero-remaining-citations → delete branch).
-        page_id = f"{vault}::solo-{sha}"
-        store.add_node(
-            page_id,
-            "KnowledgeConcept",
-            f"Solo {i}",
-            properties={"vault": vault, "slug": f"concept/solo-{sha}", "kind": "concept"},
-        )
-        store.add_relationship(
-            f"{vault_id}->CONTAINS->{page_id}", "CONTAINS", vault_id, page_id, properties={"vault": vault}
-        )
-        store.add_relationship(f"{page_id}->CITES->{sid}", "CITES", page_id, sid, properties={"vault": vault})
-
-    # Concept page citing all three sources.
-    concept_id = f"{vault}::concept-x"
-    store.add_node(
-        concept_id,
-        "KnowledgeConcept",
-        "Concept X",
-        properties={"vault": vault, "slug": "concept-x", "kind": "concept"},
-    )
-    store.add_relationship(
-        f"{vault_id}->CONTAINS->{concept_id}", "CONTAINS", vault_id, concept_id, properties={"vault": vault}
-    )
-    for sid in sids.values():
-        store.add_relationship(f"{concept_id}->CITES->{sid}", "CITES", concept_id, sid, properties={"vault": vault})
-
     return sids
 
 
@@ -108,62 +83,48 @@ class TestAutoprune:
             assert store.get_node(sids["aaa"]) is not None
             assert store.get_node(sids["bbb"]) is not None
 
-    def test_single_source_page_deleted_when_source_removed(self, tmp_path):
+    def test_all_orphans_deleted_when_nothing_walked(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
-            _seed(store)
-            autoprune_after_index(
-                store,
-                walked_doc_shas={"aaa", "bbb"},
-                vault_name="v",
-                scope_path=tmp_path,
-                db_path=str(tmp_path / "db"),
-            )
-            # The page whose ONLY citation was the removed source is gone.
-            assert store.get_node("v::solo-ccc") is None
-            # Pages citing surviving sources stay.
-            assert store.get_node("v::solo-aaa") is not None
-            assert store.get_node("v::solo-bbb") is not None
-
-    def test_page_marked_stale_when_one_citation_lost(self, tmp_path):
-        with GraphStore(str(tmp_path / "db")) as store:
-            _seed(store)
-            autoprune_after_index(
-                store,
-                walked_doc_shas={"aaa", "bbb"},  # ccc removed
-                vault_name="v",
-                scope_path=tmp_path,
-                db_path=str(tmp_path / "db"),
-            )
-            concept = store.get_node("v::concept-x")
-            assert concept is not None
-            # Stale_since stamped — page kept, no regen.
-            assert concept["properties"].get("stale_since")
-
-    def test_page_deleted_when_all_citations_lost(self, tmp_path):
-        with GraphStore(str(tmp_path / "db")) as store:
-            _seed(store)
-            # Remove ALL sources from the walk → concept page has no remaining
-            # citations → page itself gets deleted.
-            autoprune_after_index(
+            sids = _seed(store)
+            report = autoprune_after_index(
                 store,
                 walked_doc_shas=set(),
                 vault_name="v",
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
-            assert store.get_node("v::concept-x") is None
+            assert report.sources_deleted == 3
+            assert all(store.get_node(sid) is None for sid in sids.values())
+            # The vault node itself is not a prune target — `vault delete` owns that.
+            assert store.get_node(vault_node_id("v")) is not None
+
+    def test_report_carries_only_document_counters(self, tmp_path):
+        """The page counters (``pages_deleted`` / ``pages_marked_stale`` /
+        ``cites_edges_removed``) went with the layer; the CLI summary reads
+        this dataclass, so a resurrected field would print a line about a
+        thing that cannot happen."""
+        from dataclasses import fields
+
+        from opentrace_agent.pipeline.autoprune import AutopruneReport
+
+        assert {f.name for f in fields(AutopruneReport)} == {
+            "sources_deleted",
+            "corpus_files_deleted",
+        }
 
     def test_scope_safety_other_vaults_untouched(self, tmp_path):
         with GraphStore(str(tmp_path / "db")) as store:
             _seed(store, vault="v1")
-            _seed(store, vault="v2")
-            # Autoprune scoped to v1 only — v2's vault-specific pages must
-            # survive. Note: ``_seed`` uses the same sha-keyed Source ids
-            # in both vaults (same content sha = same id), so Source nodes
-            # are shared rather than duplicated; the *second* _seed wins
-            # on vault tagging, which is a real edge case worth noting but
-            # not what this test exercises. The test asserts the
-            # vault-specific Page nodes survive intact.
+            # A second vault with its OWN documents (different shas — sharing a
+            # sha means sharing one content-addressed node, which is a separate
+            # concern from vault scoping).
+            v2 = vault_node_id("v2")
+            store.add_node(v2, "KnowledgeVault", "v2", properties={"vault": "v2", "scope": "local"})
+            for sha in ("ddd", "eee"):
+                sid = f"corpus::{sha}"
+                store.add_node(sid, "KnowledgeDoc", f"{sha}.md", properties={"sha256": sha})
+                store.add_relationship(f"{v2}->CONTAINS->{sid}", "CONTAINS", v2, sid)
+
             autoprune_after_index(
                 store,
                 walked_doc_shas=set(),  # all of v1 walked away from disk
@@ -171,10 +132,9 @@ class TestAutoprune:
                 scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
-            # v2's vault-specific pages survive.
-            assert store.get_node("v2::concept-x") is not None
-            assert store.get_node("v2::solo-aaa") is not None
-            assert store.get_node("v2::solo-bbb") is not None
+            # v2's documents survive — the prune never left v1's CONTAINS set.
+            assert store.get_node("corpus::ddd") is not None
+            assert store.get_node("corpus::eee") is not None
 
 
 class TestComputeWalkedShas:

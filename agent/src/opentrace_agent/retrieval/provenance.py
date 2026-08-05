@@ -16,18 +16,23 @@
 
 Two branches keyed off node type / edges:
 
-* **Wiki** (``Vault`` / ``Page`` / ``Source``) — agent/model/session/
-  confidence stamped at compile time plus the CITES chain to the original
-  ``Source`` artefacts (concept pages cite Sources directly by sha).
+* **Wiki** (``KnowledgeVault`` / ``KnowledgeDoc``) — the document's own
+  identity: sha256, filename, root-relative path, ingest time, and the
+  ``MIRRORS`` File twin when the doc came from a repo walk.
 * **Code** (``Repository`` / ``Directory`` / ``File`` / ``Class`` / ``Function`` /
   ``Variable``) — ``commit_sha`` / ``indexer_version`` from the per-repo
   ``IndexMetadata`` node written by ``opentraceai index``; file path and line
   range come from the node itself.
 
-A third **derived** branch walked ``DERIVED_FROM`` from an LLM-extracted
-entity back to the document it came out of. It went with the entity layer on
-2026-08-04 (see the wiki CLAUDE.md); nothing produces those nodes any more, so
-their type now falls through to ``kind="unknown"``.
+Two branches are gone, both because the layer they served was removed:
+
+* A **derived** branch walked ``DERIVED_FROM`` from an LLM-extracted entity
+  back to the document it came out of — removed 2026-08-04 with the entity
+  layer, so those types now fall through to ``kind="unknown"``.
+* The wiki branch walked a ``CITES`` chain from a concept page to the
+  documents it was synthesised from — removed 2026-08-04 with the
+  concept-page layer. A document *is* its own provenance; nothing restates
+  it, so there is no chain left to walk. See the wiki CLAUDE.md.
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ from typing import Any
 
 from opentrace_agent.store import GraphStore
 
-WIKI_NODE_TYPES = {"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"}
+WIKI_NODE_TYPES = {"KnowledgeVault", "KnowledgeDoc"}
 CODE_NODE_TYPES = {"Repository", "Directory", "File", "Class", "Function", "Variable"}
 
 
@@ -97,46 +102,15 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
 def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dict[str, Any]) -> dict[str, Any]:
     """Return ``{agent, model, session, confidence, vault, chain}`` for a wiki node.
 
-    ``chain`` walks CITES outgoing up to 3 hops, stopping at Source nodes.
-    For a concept page the chain goes concept → Source (direct by sha).
-    For a Source, the chain is just itself.
+    ``chain`` is the document's own identity — a single entry for a
+    ``KnowledgeDoc``, empty for a ``KnowledgeVault``. It was a multi-hop
+    ``CITES`` walk while concept pages existed; nothing restates a document
+    now, so there is nothing to walk back through.
     """
     chain: list[dict[str, Any]] = []
-    visited: set[str] = {node_id}
 
     if node_type == "KnowledgeDoc":
         chain.append(_source_link(node_id, props, store))
-    else:
-        # Walk CITES outgoing (depth-capped defensively; the schema is one
-        # hop, concept → Source).
-        traversal = store.traverse(
-            node_id,
-            direction="outgoing",
-            max_depth=3,
-            relationship_type="CITES",
-        )
-        # Sort by depth so the chain reads start-to-source.
-        traversal.sort(key=lambda r: r["depth"])
-        for r in traversal:
-            nid = r["node"]["id"]
-            if nid in visited:
-                continue
-            visited.add(nid)
-            t = r["node"]["type"]
-            p = r["node"].get("properties") or {}
-            if t == "KnowledgeDoc":
-                chain.append(_source_link(nid, p, store))
-            elif t == "KnowledgeConcept":
-                chain.append(
-                    {
-                        "kind": "knowledge_concept",
-                        "id": nid,
-                        "page_kind": p.get("kind"),
-                        "title": r["node"].get("name"),
-                        "slug": p.get("slug"),
-                        "vault": p.get("vault"),
-                    }
-                )
 
     return {
         "agent": props.get("agent") or None,

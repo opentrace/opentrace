@@ -23,6 +23,8 @@ shape and the final hop carries the data the agent would need.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 ladybug = pytest.importorskip("real_ladybug")
@@ -41,7 +43,7 @@ from opentrace_agent.wiki.ingest.graph_writer import (  # noqa: E402
     vault_node_id,
     write_vault_to_graph,
 )
-from opentrace_agent.wiki.vault import IngestedSource, PageMeta, VaultMetadata  # noqa: E402
+from opentrace_agent.wiki.vault import IngestedSource, VaultMetadata  # noqa: E402
 
 
 @pytest.fixture()
@@ -115,31 +117,19 @@ def seeded_store(store):
             ingested_at="2026-05-01T00:00:00",
         ),
     }
-    meta.pages = {
-        "concept/auth-flow": PageMeta(
-            slug="concept/auth-flow",
-            title="Auth Flow",
-            one_line_summary="How requests authenticate against the spec.",
-            source_shas=["spec-sha"],
-            last_updated="2026-05-01T00:00:00",
-            revision=1,
-            kind="concept",
-        ),
-    }
-    bodies = {
-        "concept/auth-flow": "Auth flow verifies tokens against the OAuth spec.",
-    }
+    meta.sources["spec-sha"].title = "Auth Flow Spec"
+    meta.sources["spec-sha"].one_line_summary = "How requests authenticate against the auth flow."
     write_vault_to_graph(
         store,
         meta,
-        bodies,
-        provenance={
-            "agent": "opentrace-wiki-compiler",
-            "model": "claude-opus-4-7",
-            "session": "test-session",
-            "confidence": 0.0,
-        },
-        compiled_slugs={"concept/auth-flow"},
+        normalized=[
+            SimpleNamespace(
+                sha256="spec-sha",
+                corpus_path="corpus/spec-sha.md",
+                title="Auth Flow Spec",
+                one_line_summary="How requests authenticate against the auth flow.",
+            )
+        ],
     )
 
     return store
@@ -165,8 +155,9 @@ class TestSessionStartOrientation:
         assert "Function" in types
         # Wiki side present
         assert "KnowledgeVault" in types
-        assert "KnowledgeConcept" in types
         assert "KnowledgeDoc" in types
+        # The concept-page layer is gone — nothing writes this type.
+        assert "KnowledgeConcept" not in types
         # Vault scope is null when not requested.
         assert result["vault_scope"] is None
 
@@ -174,33 +165,32 @@ class TestSessionStartOrientation:
         result = overview(seeded_store, top_n=10, vault_scope="kb")
         types = result["counts_by_type"]
         # Only vault-domain types appear under vault scope.
-        assert set(types).issubset({"KnowledgeVault", "KnowledgeConcept", "KnowledgeDoc"})
+        assert set(types).issubset({"KnowledgeVault", "KnowledgeDoc"})
         assert result["vault_scope"] == "kb"
 
 
-class TestWikiCitationChain:
-    """Phase-5 success criterion: the agent can trace a wiki claim back to
-    its source via the provenance chain."""
+class TestWikiDocProvenance:
+    """The agent can find a document by its label and trace it to the bytes.
 
-    def test_search_finds_concept_and_provenance_walks_to_source(self, seeded_store):
-        # 1. Agent searches for the topic.
+    This was a two-hop story while concept pages existed — search found a
+    page, provenance walked its ``CITES`` chain to the source. Since 2026-08-04
+    the document IS the hit, so the trace is direct.
+    """
+
+    def test_search_finds_doc_and_provenance_identifies_it(self, seeded_store):
+        # 1. Agent searches for the topic and gets the DOCUMENT, not a gloss.
         s = search(seeded_store, "auth flow", limit=5)
         assert s["count"] >= 1
-        hits = [h for h in s["hits"] if h["type"] == "KnowledgeConcept"]
-        assert hits, "expected a Page hit"
-        page_id = hits[0]["id"]
+        hits = [h for h in s["hits"] if h["type"] == "KnowledgeDoc"]
+        assert hits, "expected a KnowledgeDoc hit"
 
-        # 2. Agent asks for provenance.
-        p = provenance(seeded_store, page_id)
+        # 2. Provenance identifies the bytes behind it.
+        p = provenance(seeded_store, hits[0]["id"])
         assert p["kind"] == "wiki"
-        assert p["wiki"]["agent"] == "opentrace-wiki-compiler"
-        assert p["wiki"]["model"] == "claude-opus-4-7"
-
-        # 3. Chain terminates at a Source node carrying sha + filename.
-        sources = [c for c in p["wiki"]["chain"] if c["kind"] == "knowledge_doc"]
-        assert sources, "provenance chain must reach at least one Source"
-        assert sources[0]["sha256"] == "spec-sha"
-        assert sources[0]["filename"] == "spec.pdf"
+        entry = p["wiki"]["chain"][0]
+        assert entry["kind"] == "knowledge_doc"
+        assert entry["sha256"] == "spec-sha"
+        assert entry["filename"] == "spec.pdf"
 
 
 class TestCodeImpactQuery:
@@ -252,7 +242,7 @@ class TestVaultGraphCounts:
     def test_count_by_under_vault(self, seeded_store):
         result = count_by(
             seeded_store,
-            "KnowledgeConcept",
+            "KnowledgeDoc",
             parent_id=vault_node_id("kb"),
             parent_edge="CONTAINS",
             max_hops=1,

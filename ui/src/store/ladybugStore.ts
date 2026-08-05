@@ -3385,7 +3385,7 @@ export class LadybugGraphStore implements GraphStore {
       };
     }
     const props = (node.properties ?? {}) as Record<string, unknown>;
-    const wikiTypes = new Set(['KnowledgeVault', 'KnowledgeConcept', 'KnowledgeDoc']);
+    const wikiTypes = new Set(['KnowledgeVault', 'KnowledgeDoc']);
     const codeTypes = new Set([
       'Repository',
       'Directory',
@@ -3428,7 +3428,6 @@ export class LadybugGraphStore implements GraphStore {
     props: Record<string, unknown>,
   ): Promise<ProvenanceWiki> {
     const chain: ProvenanceChainEntry[] = [];
-    const visited = new Set<string>([nodeId]);
     const tryNumber = (v: unknown): number | null => {
       if (v == null) return null;
       const n = Number(v);
@@ -3437,6 +3436,11 @@ export class LadybugGraphStore implements GraphStore {
     const asString = (v: unknown): string | null =>
       typeof v === 'string' && v ? v : null;
 
+    // A document IS its own provenance, so the chain is one entry (empty for
+    // a KnowledgeVault, which has no body). This was a ``CITES`` walk from a
+    // concept page back to the documents it restated until 2026-08-04, when
+    // the concept-page layer was removed. Mirrors the Python
+    // ``retrieval/provenance.py``.
     if (nodeType === 'KnowledgeDoc') {
       chain.push({
         kind: 'knowledge_doc',
@@ -3445,33 +3449,6 @@ export class LadybugGraphStore implements GraphStore {
         filename: asString(props.filename),
         acquired_at: asString(props.acquired_at),
       });
-    } else {
-      const traversal = await this.traverse(nodeId, 'outgoing', 3, 'CITES');
-      traversal.sort((a, b) => a.depth - b.depth);
-      for (const r of traversal) {
-        const id = r.node.id;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        const p = (r.node.properties ?? {}) as Record<string, unknown>;
-        if (r.node.type === 'KnowledgeDoc') {
-          chain.push({
-            kind: 'knowledge_doc',
-            id,
-            sha256: asString(p.sha256),
-            filename: asString(p.filename),
-            acquired_at: asString(p.acquired_at),
-          });
-        } else if (r.node.type === 'KnowledgeConcept') {
-          chain.push({
-            kind: 'knowledge_concept',
-            id,
-            page_kind: asString(p.kind),
-            title: r.node.name ?? null,
-            slug: asString(p.slug),
-            vault: asString(p.vault),
-          });
-        }
-      }
     }
 
     return {
@@ -3628,10 +3605,10 @@ export class LadybugGraphStore implements GraphStore {
 
     // Recently-updated: pick from any node type carrying last_updated.
     // Since browser-side props vary by typed table, we only inspect node
-    // types that are likely to carry this field — KnowledgeConcept today.
+    // types that are likely to carry this field — KnowledgeDoc today.
     const recentBucket: OverviewRecent[] = [];
-    const conceptNodes = await this.listNodes('KnowledgeConcept', 200).catch(() => []);
-    for (const p of conceptNodes) {
+    const docNodes = await this.listNodes('KnowledgeDoc', 200).catch(() => []);
+    for (const p of docNodes) {
       const props = (p.properties ?? {}) as Record<string, unknown>;
       const last = props.last_updated;
       if (typeof last !== 'string') continue;

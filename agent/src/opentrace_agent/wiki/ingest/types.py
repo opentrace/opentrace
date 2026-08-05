@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wiki pipeline types — events, phases, and the structured Plan schema."""
+"""Wiki pipeline types — events, phases, and the per-stage source records."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -28,13 +28,6 @@ class WikiPhase(str, Enum):
     PLANNING = "planning"
     EXECUTING = "executing"
     PERSISTING = "persisting"
-
-
-# String constant used for ``CompiledPage.kind`` and ``PageMeta.kind``.
-# Plain string so it JSON-serializes trivially in ``.vault.json``. Concept
-# pages are the only page kind — per-document content is represented by
-# ``Source`` nodes (label + corpus body), not wiki pages.
-PAGE_KIND_CONCEPT = "concept"
 
 
 class WikiEventKind(str, Enum):
@@ -88,21 +81,6 @@ class NormalizedSource:
     status: str = "authoritative"
 
 
-
-
-
-
-
-@dataclass
-class CompiledPage:
-    slug: str
-    title: str
-    markdown_body: str
-    one_line_summary: str
-    source_shas: list[str]
-    revision: int
-    is_new: bool
-    kind: str = PAGE_KIND_CONCEPT
 
 
 def _wiki_concurrency() -> int:

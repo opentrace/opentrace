@@ -12,7 +12,6 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
     "CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, spawnedFrom STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS KnowledgeConcept(id STRING PRIMARY KEY, name STRING, slug STRING, kind STRING, oneLineSummary STRING, revision INT32, lastUpdated STRING, agent STRING, model STRING, session STRING, confidence FLOAT, staleSince STRING)",
     "CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)",
     "CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)",
@@ -28,13 +27,12 @@ NODE_TYPE_DEPENDENCY: Final[str] = "Dependency"
 NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
 NODE_TYPE_VARIABLE: Final[str] = "Variable"
 NODE_TYPE_KNOWLEDGE_VAULT: Final[str] = "KnowledgeVault"
-NODE_TYPE_KNOWLEDGE_CONCEPT: Final[str] = "KnowledgeConcept"
 NODE_TYPE_KNOWLEDGE_DOC: Final[str] = "KnowledgeDoc"
 NODE_TYPE_COMMUNITY: Final[str] = "Community"
 NODE_TYPE_HYPEREDGE: Final[str] = "Hyperedge"
 NODE_TYPE_INDEX_METADATA: Final[str] = "IndexMetadata"
 
-NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["KnowledgeVault"] | Literal["KnowledgeConcept"] | Literal["KnowledgeDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
+NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["KnowledgeVault"] | Literal["KnowledgeDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
 
 NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_REPOSITORY,
@@ -46,7 +44,6 @@ NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_PULL_REQUEST,
     NODE_TYPE_VARIABLE,
     NODE_TYPE_KNOWLEDGE_VAULT,
-    NODE_TYPE_KNOWLEDGE_CONCEPT,
     NODE_TYPE_KNOWLEDGE_DOC,
     NODE_TYPE_COMMUNITY,
     NODE_TYPE_HYPEREDGE,
@@ -143,20 +140,6 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("scope", "STRING"),
         ("mirrorCompiledAt", "STRING"),
         ("spawnedFrom", "STRING"),
-    ],
-    "KnowledgeConcept": [
-        ("id", "STRING"),
-        ("name", "STRING"),
-        ("slug", "STRING"),
-        ("kind", "STRING"),
-        ("oneLineSummary", "STRING"),
-        ("revision", "INT32"),
-        ("lastUpdated", "STRING"),
-        ("agent", "STRING"),
-        ("model", "STRING"),
-        ("session", "STRING"),
-        ("confidence", "FLOAT"),
-        ("staleSince", "STRING"),
     ],
     "KnowledgeDoc": [
         ("id", "STRING"),
@@ -298,20 +281,6 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "scope",
         "mirrorCompiledAt",
         "spawnedFrom",
-    ],
-    "KnowledgeConcept": [
-        "id",
-        "name",
-        "slug",
-        "kind",
-        "oneLineSummary",
-        "revision",
-        "lastUpdated",
-        "agent",
-        "model",
-        "session",
-        "confidence",
-        "staleSince",
     ],
     "KnowledgeDoc": [
         "id",
@@ -458,15 +427,6 @@ def rel_schema_links_to(pairs: list[RelPair]) -> str:
     return f"CREATE REL TABLE IF NOT EXISTS LINKS_TO({_join_rel_pairs(pairs)}, id STRING)"
 
 
-def rel_schema_cites(pairs: list[RelPair]) -> str:
-    """Return the CREATE REL TABLE DDL for Cites relationships.
-
-    Pass every (from, to) pair the CITES label needs in a single call;
-    all pairs must be declared in the initial CREATE REL TABLE statement.
-    """
-    return f"CREATE REL TABLE IF NOT EXISTS CITES({_join_rel_pairs(pairs)}, id STRING)"
-
-
 def rel_schema_mirrors(pairs: list[RelPair]) -> str:
     """Return the CREATE REL TABLE DDL for Mirrors relationships.
 
@@ -512,13 +472,12 @@ REL_TYPE_CALLS: Final[str] = "CALLS"
 REL_TYPE_DEPENDS_ON: Final[str] = "DEPENDS_ON"
 REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
 REL_TYPE_LINKS_TO: Final[str] = "LINKS_TO"
-REL_TYPE_CITES: Final[str] = "CITES"
 REL_TYPE_MIRRORS: Final[str] = "MIRRORS"
 REL_TYPE_DOCUMENTS: Final[str] = "DOCUMENTS"
 REL_TYPE_MENTIONS: Final[str] = "MENTIONS"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
-RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["CITES"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
+RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
 
 REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_SEMANTIC_EDGE,
@@ -530,7 +489,6 @@ REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_DEPENDS_ON,
     REL_TYPE_DERIVED_FROM,
     REL_TYPE_LINKS_TO,
-    REL_TYPE_CITES,
     REL_TYPE_MIRRORS,
     REL_TYPE_DOCUMENTS,
     REL_TYPE_MENTIONS,
@@ -573,9 +531,6 @@ REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
         ("transform", "STRING"),
     ],
     "LINKS_TO": [
-        ("id", "STRING"),
-    ],
-    "CITES": [
         ("id", "STRING"),
     ],
     "MIRRORS": [
@@ -630,9 +585,6 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
     "LINKS_TO": [
         "id",
     ],
-    "CITES": [
-        "id",
-    ],
     "MIRRORS": [
         "id",
     ],
@@ -656,7 +608,6 @@ _COLUMN_TO_PROTO: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "PullRequest": {"createdAt": "created_at", "baseBranch": "base_branch", "headBranch": "head_branch", "filesChanged": "files_changed"},
     "Variable": {"startLine": "start_line", "endLine": "end_line", "typeAnnotation": "type_annotation"},
     "KnowledgeVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at", "spawnedFrom": "spawned_from"},
-    "KnowledgeConcept": {"oneLineSummary": "one_line_summary", "lastUpdated": "last_updated", "staleSince": "stale_since"},
     "KnowledgeDoc": {"contentType": "content_type", "sizeBytes": "size_bytes", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
     "Community": {"communityId": "community_id", "isGod": "is_god"},
     "Hyperedge": {"confidenceScore": "confidence_score", "sourceFile": "source_file"},
@@ -672,7 +623,6 @@ _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "PullRequest": {"created_at": "createdAt", "base_branch": "baseBranch", "head_branch": "headBranch", "files_changed": "filesChanged"},
     "Variable": {"start_line": "startLine", "end_line": "endLine", "type_annotation": "typeAnnotation"},
     "KnowledgeVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt", "spawned_from": "spawnedFrom"},
-    "KnowledgeConcept": {"one_line_summary": "oneLineSummary", "last_updated": "lastUpdated", "stale_since": "staleSince"},
     "KnowledgeDoc": {"content_type": "contentType", "size_bytes": "sizeBytes", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
     "Community": {"community_id": "communityId", "is_god": "isGod"},
     "Hyperedge": {"confidence_score": "confidenceScore", "source_file": "sourceFile"},

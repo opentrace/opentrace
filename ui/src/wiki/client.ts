@@ -23,12 +23,7 @@
  * (the agent's default bind).
  */
 
-import type {
-  VaultDetail,
-  VaultEntry,
-  VaultScope,
-  WikiCompileEvent,
-} from './types';
+import type { VaultEntry, VaultScope, WikiCompileEvent } from './types';
 
 const DEFAULT_BASE = 'http://localhost:8787';
 
@@ -64,15 +59,6 @@ export async function listVaults(
 
 function scopeQuery(scope?: VaultScope): string {
   return scope ? `?scope=${scope}` : '';
-}
-
-export async function getVault(
-  name: string,
-  scope?: VaultScope,
-): Promise<VaultDetail> {
-  return await getJson<VaultDetail>(
-    `/api/vaults/${encodeURIComponent(name)}/pages${scopeQuery(scope)}`,
-  );
 }
 
 export async function deleteVault(
@@ -143,28 +129,6 @@ export async function demoteVault(name: string): Promise<void> {
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: demote ${name}`);
   }
-}
-
-export async function getPageMarkdown(
-  vault: string,
-  slug: string,
-  scope?: VaultScope,
-): Promise<string> {
-  const base = getVaultApiBase();
-  // Slugs are ``<kind_dir>/<base>`` — encode each path segment separately
-  // so the ``/`` survives as a path separator rather than turning into
-  // ``%2F`` (which the server-side `:path` converter then has to undo).
-  const slugPath = slug
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  const res = await fetch(
-    `${base}/api/vaults/${encodeURIComponent(vault)}/pages/${slugPath}${scopeQuery(scope)}`,
-  );
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}: page ${slug}`);
-  }
-  return await res.text();
 }
 
 /**

@@ -37,10 +37,14 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 
 ### OT-1732 additions
 
-- Node types: `KnowledgeVault`, `KnowledgeConcept`, `KnowledgeDoc` (vault domain — see `wiki/CLAUDE.md`)
-- Rel types: `LINKS_TO` (doc→doc author links, and page→page in legacy vaults), `CITES` (wiki provenance), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
-- **`KnowledgeConcept` and `CITES` remain valid types but nothing produces them** — concept-page synthesis was removed 2026-08-03. They stay in the schema so vaults compiled before that keep mirroring and reading their pages. Don't "clean up" the types; a re-compile of a legacy vault still writes them.
-- **`Idea` / `Paper` / `Person` / `Event` and the `DERIVED_FROM` / `SEMANTIC_EDGE` / `MENTIONS` rel types are likewise valid-but-unwritten** — the LLM-extracted entity layer was removed 2026-08-04 (see `wiki/CLAUDE.md` for the five measurements behind that). Same rule: **do not remove them from `constants.py`, the proto, or `gen/`.** Leaving them keeps graphs built before the removal readable, and `Service` / `Module` are in any case pre-existing legacy *runtime* types that non-wiki code still writes. `GraphStore.save_semantic_edge` survives for the same reason and has no current caller.
+- Node types: `KnowledgeVault`, `KnowledgeDoc` (vault domain — see `../wiki/CLAUDE.md`)
+- Rel types: `CONTAINS` (Vault → KnowledgeDoc), `LINKS_TO` (doc→doc author links, parsed mechanically from relative markdown links), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
+- **`KnowledgeConcept` and `CITES` are gone entirely — not retained-but-unwritten.** They were the concept-page layer's node and edge types; synthesis was removed 2026-08-03 and the rest of the layer 2026-08-04, including these two from the proto and `gen/`. They are *not* covered by the retention rule below: they were added on this branch and never shipped on a release branch, so no graph anywhere contains one and there is nothing to stay readable for. **Don't re-add them** — the layer measured 88.4% against a 98.6% control (−10.2pp); see `../wiki/CLAUDE.md` ("Closed") for the full record.
+- **The entity layer's `DERIVED_FROM` / `SEMANTIC_EDGE` / `MENTIONS` rel types are retained-but-unwritten**; its four exclusive *node* types (`Idea` / `Paper` / `Person` / `Event`) were removed from `constants.py` on 2026-08-04 along with the layer (see `../wiki/CLAUDE.md` for the five measurements). Why the asymmetry, precisely — it is not about what "shipped":
+    - `VALID_NODE_TYPES` is **declarative only**: nothing outside `constants.py` reads it, so it neither validates writes nor filters reads. Removing a name from it cannot make any graph unreadable, which is what made dropping those four free.
+    - The **proto/`gen/`** rel types are a different matter: they declare the typed tables the browser-side `LadybugStore` creates, so removing one can affect a browser-mode DB built earlier. Left in place for that reason. `GraphStore.save_semantic_edge` survives with no caller for the same reason.
+    - `Service` / `Module` stay regardless — the extractor *reused* those two pre-existing code/runtime type names rather than inventing its own (which is why identifying an entity ever needed a `derived_from` property check, not a type check), and non-wiki producers still write them.
+    - Note the contrast with `KnowledgeConcept` / `CITES` above is **not** "one shipped and one didn't" — neither layer was ever merged to `main`, and local graphs built from this branch can contain either. The difference that matters is the one above: for the Python `GraphStore`, node types are just strings in a generic `Node` table, so an old graph's entity *or* concept nodes stay readable either way.
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
 
 ## Property Marshalling
@@ -76,12 +80,13 @@ undiscoverable at any sane limit.
 - `relationship_type: str | None` — single rel-type filter (legacy)
 - `relationship_types: list[str] | None` — allowlist set; supersedes the singular
 - `vault_scope: str | None` — when set, neighbours are kept only when their
-  `vault` property matches (Phase 4 stamps `vault` on every Vault/
-  Page; KnowledgeDocs are vault-scoped via CONTAINS edges)
+  `vault` property matches (Phase 4 stamps `vault` on the `KnowledgeVault`;
+  KnowledgeDocs are vault-scoped via CONTAINS edges)
 - `confidence_threshold: float | None` — when >0, rel `properties.confidence`
-  below this is filtered out (matches the resolver-stamped `CALLS` confidence
-  today; wiki-side `confidence` was only ever a fixed placeholder on concept
-  pages, which nothing produces any more)
+  below this is filtered out. The resolver-stamped `CALLS` confidence is the
+  only live user: the wiki layer stamps no confidence at all, and the one
+  wiki-side placeholder that ever existed was page-level and went with the
+  concept-page layer on 2026-08-04.
 
 ## Pitfalls
 

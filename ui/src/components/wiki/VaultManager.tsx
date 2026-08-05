@@ -35,10 +35,10 @@ interface Props {
 }
 
 /**
- * Vault *management* surface — compile, attach/detach, and delete vaults.
- * Reading a vault's pages is NOT here: a Page is a graph node, so its
- * body renders in the node Details panel when you select it (mirroring how
- * a File node shows its source). This keeps the vault a first-class graph
+ * Vault *management* surface — ingest, attach/detach, and delete vaults.
+ * Reading a vault's CONTENT is not here: a document is a `KnowledgeDoc` graph
+ * node, so it is found and read through the graph (select it, or reach it with
+ * the chat agent's graph tools). This keeps the vault a first-class graph
  * citizen rather than a separate reader app. Rendered as a modal so it
  * never stacks on the left-edge SidePanel the way the old drawer did.
  */
@@ -116,7 +116,7 @@ export function VaultManager({ onClose }: Props) {
   const handleDeleteVault = useCallback(
     async (entry: VaultEntry) => {
       const ok = window.confirm(
-        `Delete ${entry.scope} vault "${entry.name}"? This removes all of its pages from disk` +
+        `Delete ${entry.scope} vault "${entry.name}"? This removes its index from disk` +
           (entry.scope === 'global'
             ? ` and detaches it from every project on this machine.`
             : ` and from the project's graph.`),

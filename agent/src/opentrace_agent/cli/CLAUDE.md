@@ -16,7 +16,14 @@ main.py          — Click root group + the unified index command:
                      removed; see wiki/CLAUDE.md)
                    • --no-prune for cleanup behaviour
 vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
-                   demote. `vault ingest <folder>` is the docs-only
+                   demote. `vault show` prints the vault's document index
+                   (Documents: count, then status / title / one-line summary
+                   per doc) — bodies are not printed, read one with
+                   `load_source` or sweep them all with `grep`. Its `--page`
+                   flag went with the concept-page layer on 2026-08-04, and
+                   `refresh-stale-pages` with the synthesis stage on
+                   2026-08-03 (see ../wiki/CLAUDE.md — don't re-add either).
+                   `vault ingest <folder>` is the docs-only
                    ingestion path: walks a bare folder (no git repo), corpus-only
                    compile, stamps folder-relative `path` + author LINKS_TO edges,
                    but builds NO code tree — no File twins, MIRRORS, or DOCUMENTS.
@@ -37,11 +44,6 @@ cluster_cmd.py   — community detection (Leiden → Louvain fallback)
 export_graph.py  — graphml / obsidian / report exporters (deterministic, no LLM)
 serve.py         — Starlette HTTP server; REST API consumed by the UI
 mcp_server.py    — MCP (Model Context Protocol) server for agent clients
-watch.py         — debounced filesystem watcher. SCAFFOLDING: the rebuild
-                   callback is a no-op shim until incremental indexing lands
-hook.py          — git post-commit hook install/uninstall. SCAFFOLDING: the
-                   installed hook calls `index --incremental`, which doesn't
-                   exist yet, so it no-ops on every commit
 augment.py       — Post-process: add AI summaries to existing graph nodes
 bench.py         — SWE-bench / accuracy benchmark runner (see /benchmark)
 impact.py        — Blast-radius analysis for a given symbol or file
@@ -76,7 +78,7 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 `/api/communities`, `/api/highlights/{gods,bridges,questions}`, plus `/api/source/*` and the vault routes:
 
 - `GET /api/vaults?view=project|global` — project view returns local vaults + globals attached to this project; global view lists every global with an `attached` flag.
-- `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` — optional `?scope=local|global` to disambiguate; legacy flat disk layouts are migrated on read.
+  (There is no page-read route pair any more: `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` were **removed 2026-08-04** with the concept-page layer — see `../wiki/CLAUDE.md`. Document bodies are read as node content through `/api/source/*`, not through a vault-scoped page route.)
 - `POST /api/vaults/{vault}/compile` — multipart upload. Corpus-only, like every other compile path: documents are indexed, nothing is synthesized. Accepts a `scope` form field (default `local`) and an `on_conflict` form field (`append` default = compile into the named vault in place; `suffix` = new-vault compile, auto-renames `flask` → `flask-1` if the name is taken in either scope). The stream reports the resolved `vault_name` in each event. Globals are written disk-only — no graph mirror. Runs the (blocking) pipeline in a threadpool via a sync-generator body, so concurrent reads (e.g. `GET /api/vaults`) stay responsive; graph writes are serialized against reads with the store lock.
 - `POST /api/vaults/{vault}/attach` / `POST /api/vaults/{vault}/detach` — mirror a global vault into this project's graph (and copy its corpus into `<project>/.opentrace/corpus/`) / remove the mirror.
 - `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `KnowledgeVault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.

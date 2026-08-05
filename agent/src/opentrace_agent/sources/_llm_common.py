@@ -17,7 +17,7 @@
 Two protocols live on top of this module:
 
 * ``wiki.llm.WikiLLM.call_tool`` — forced tool-calling for structured
-  output (wiki Plan/Execute/SourceSummaries pipeline).
+  output (the wiki ingest per-doc label pass).
 * ``sources.markdown.clients.LLMClient.complete`` — plain text completion
   with reject-not-repair JSON validation (``opentraceai ingest``).
 
@@ -86,7 +86,7 @@ BACKENDS: dict[str, BackendConfig] = {
     "gemini": BackendConfig(
         name="gemini",
         env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        # Flagship (resolve + concept synthesis) → Pro; cheap per-doc pass → Flash.
+        # Flagship (code extraction) → Pro; cheap per-doc doc pass → Flash.
         default_model="gemini-2.5-pro",
         pricing_input_per_million=1.25,
         pricing_output_per_million=10.00,
@@ -110,7 +110,7 @@ BACKENDS: dict[str, BackendConfig] = {
     "openai": BackendConfig(
         name="openai",
         env_keys=("OPENAI_API_KEY",),
-        # Flagship (resolve + concept synthesis) → gpt-4.1; cheap per-doc pass → mini.
+        # Flagship (code extraction) → gpt-4.1; cheap per-doc doc pass → mini.
         default_model="gpt-4.1",
         pricing_input_per_million=2.00,
         pricing_output_per_million=8.00,
@@ -198,10 +198,12 @@ def detect_backend() -> str | None:
     return None
 
 
-# Role-specific model overrides. These let the LLM workloads diverge: strict
-# extraction and wiki *file summaries* can run a cheap model while wiki
-# *synthesis* (plan + concept pages) keeps the flagship one. Checked ahead of
-# the generic per-backend OT_LLM_MODEL_* var.
+# Role-specific model overrides. These let the LLM workloads diverge: the
+# per-doc label pass (``wiki_summary``) and strict code ``extraction`` run on
+# the cheap tier, while ``wiki`` keeps the flagship one. Checked ahead of the
+# generic per-backend OT_LLM_MODEL_* var. ``wiki`` had one caller — concept-page
+# synthesis, removed 2026-08-03 — so it is now only reachable by a caller
+# passing ``role="wiki"`` explicitly.
 _ROLE_MODEL_ENV: dict[str, str] = {
     "extraction": "OT_EXTRACTION_MODEL",
     "wiki": "OT_WIKI_MODEL",

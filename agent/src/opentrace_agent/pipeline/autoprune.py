@@ -12,24 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoprune — sweep orphan Sources / pages after a walk.
+"""Autoprune — sweep orphan KnowledgeDocs after a walk.
 
-Runs after ``index --wiki`` to remove graph state for files that disappeared
-from disk between runs. Scoped to the walk's path and vault so partial indexes
-don't blast away other repos' data.
+Runs after ``index --wiki`` / ``vault ingest`` to remove graph state for
+documents that disappeared from disk between runs: the ``KnowledgeDoc`` node,
+its edges, and its corpus body. Scoped to the walk's path and vault so partial
+indexes don't blast away other repos' data. Zero LLM calls — the expensive
+part stays explicit.
 
-A third sweep deleted LLM-extracted entities left orphaned by a removed
-document. It went with the entity layer on 2026-08-04 (see the wiki
-CLAUDE.md) — nothing produces those nodes any more.
+Two further sweeps ran here and are gone with the layers they served:
 
-Concept pages that lose a citation get ``stale_since`` stamped instead of
-being regenerated. Nothing regenerates page bodies any more (concept-page
-synthesis was removed 2026-08-03), so a stale stamp on a legacy page is a
-marker to delete or ignore it, not a refresh cue. Zero LLM calls during
-autoprune; the expensive part stays explicit.
+* Deleting LLM-extracted entities orphaned by a removed document — removed
+  2026-08-04 with the entity layer.
+* Deleting concept pages that lost their last ``CITES`` citation, and stamping
+  ``stale_since`` on the ones that kept some — removed 2026-08-04 with the
+  concept-page layer. Nothing synthesized pages, so nothing could go stale.
 
-See the architecture doc (``docs/architecture/ingestion-unification.md``)
-for the full design.
+See the wiki CLAUDE.md for both, and the architecture doc
+(``docs/architecture/ingestion-unification.md``) for the full design.
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +48,6 @@ class AutopruneReport:
     """Counts surfaced after autoprune runs. Useful for the CLI summary."""
 
     sources_deleted: int = 0
-    pages_deleted: int = 0
-    pages_marked_stale: int = 0
-    cites_edges_removed: int = 0
     corpus_files_deleted: int = 0
 
 
@@ -78,7 +74,7 @@ def autoprune_after_index(
     scope_path: Path | None,
     db_path: str | None,
 ) -> AutopruneReport:
-    """Delete graph state for docs/pages absent from this walk.
+    """Delete graph state for docs absent from this walk.
 
     ``walked_doc_shas`` — sha256 of raw bytes for every doc surfaced this run.
     ``vault_name`` — when set (``--wiki`` was used), scopes deletion
@@ -87,7 +83,6 @@ def autoprune_after_index(
         prefix; otherwise deletion is vault-scoped.
     """
     report = AutopruneReport()
-    now_iso = datetime.now(timezone.utc).isoformat()
 
     # --- 1. Identify candidate Sources in scope ---
     candidate_sources = _sources_in_scope(store, vault_name=vault_name, scope_path=scope_path)
@@ -115,44 +110,10 @@ def autoprune_after_index(
                 except OSError as exc:
                     logger.warning("autoprune: could not delete %s (%s)", target, exc)
 
-    # --- 3. For each orphan Source: find dependent pages ---
-    # Track which concept pages we've already stamped this run so the
-    # counter reflects unique-page-count, not edge-removal-count. A
-    # concept page that cites multiple removed sources is still one
-    # stale page, not N.
-    already_marked_stale: set[str] = set()
+    # --- 3. Delete each orphan Source node + its edges ---
     for src in orphan_sources:
-        sid = src["id"]
         report.sources_deleted += 1
-
-        # Find concept pages that cited this Source (CITES page → source,
-        # direct by sha). Scope to the target vault: Sources are
-        # content-addressed and may be shared across vaults, so a page in
-        # *another* vault that happens to cite the same Source must not be
-        # pruned by this vault's pass.
-        page_ids_citing = _pages_in_vault(_pages_citing(store, sid), vault_name)
-
-        # Delete the Source node + its edges.
-        _delete_node_and_edges(store, sid)
-
-        # For each page that cited this Source: drop the dangling edge, then
-        # delete the page when it has no citations left, else stamp it stale.
-        for page in page_ids_citing:
-            pid = page["id"]
-
-            removed = _delete_cites_edge(store, source_id=pid, target_id=sid)
-            report.cites_edges_removed += removed
-
-            remaining = _remaining_cites_count(store, pid)
-            if remaining == 0:
-                _delete_page_disk_file(store, page, vault_name=vault_name, db_path=db_path)
-                _delete_node_and_edges(store, pid)
-                report.pages_deleted += 1
-            else:
-                _stamp_stale_since(store, pid, now_iso)
-                if pid not in already_marked_stale:
-                    report.pages_marked_stale += 1
-                    already_marked_stale.add(pid)
+        _delete_node_and_edges(store, src["id"])
 
     return report
 
@@ -189,67 +150,9 @@ def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None)
     return candidates
 
 
-def _pages_citing(store, source_id: str) -> list[dict[str, Any]]:
-    """Return Page nodes that have a CITES edge to *source_id*."""
-    incoming = store.traverse(source_id, direction="incoming", max_depth=1, relationship_type="CITES")
-    return [r["node"] for r in incoming if r.get("node", {}).get("type") == "KnowledgeConcept"]
-
-
-def _pages_in_vault(pages: list[dict[str, Any]], vault_name: str | None) -> list[dict[str, Any]]:
-    """Restrict *pages* to those tagged with *vault_name*; no-op when unset.
-
-    Keeps a vault-scoped prune from deleting another vault's pages that cite a
-    shared (content-addressed) Source.
-    """
-    if not vault_name:
-        return pages
-    return [p for p in pages if (p.get("properties") or {}).get("vault") == vault_name]
-
-
-def _remaining_cites_count(store, page_id: str) -> int:
-    outgoing = store.traverse(page_id, direction="outgoing", max_depth=1, relationship_type="CITES")
-    return sum(1 for r in outgoing if r.get("relationship", {}).get("type") == "CITES")
-
-
 # ---------------------------------------------------------------------------
 # Mutations — wrap GraphStore's lower-level delete/update operations.
 # ---------------------------------------------------------------------------
-
-
-def _delete_page_disk_file(
-    store,
-    page: dict[str, Any],
-    *,
-    vault_name: str | None,
-    db_path: str | None,
-) -> None:
-    """Best-effort delete the on-disk markdown for a Page being pruned.
-
-    The page's ``slug`` already encodes kind/base (e.g. ``concept/usage``),
-    so the disk path is ``<vault>/pages/<slug>.md``. Resolves the vault dir
-    using the Vault node's ``scope`` property; falls back to local scope
-    when the Vault is missing.
-
-    Failures (missing file, permission denied) are logged and swallowed —
-    the graph node has already been removed, the disk file is a follow-up.
-    """
-    props = page.get("properties") or {}
-    slug = props.get("slug")
-    if not slug or not vault_name:
-        return
-    try:
-        from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
-        from opentrace_agent.wiki.paths import pages_dir
-
-        vault_node = store.get_node(vault_node_id(vault_name))
-        scope = ((vault_node or {}).get("properties") or {}).get("scope", "local")
-        project_root = Path(db_path).resolve().parent.parent if db_path and scope == "local" else None
-        target = pages_dir(vault_name, scope=scope, project_root=project_root) / f"{slug}.md"
-        target.unlink()
-    except FileNotFoundError:
-        pass
-    except Exception as exc:  # noqa: BLE001 — best-effort; never fail prune over disk IO
-        logger.warning("autoprune: could not delete page file for %s (%s)", page.get("id"), exc)
 
 
 def _delete_node_and_edges(store, node_id: str) -> None:
@@ -263,39 +166,3 @@ def _delete_node_and_edges(store, node_id: str) -> None:
         store.delete_node(node_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("autoprune: failed to delete %s (%s)", node_id, exc)
-
-
-def _delete_cites_edge(store, *, source_id: str, target_id: str) -> int:
-    try:
-        store._conn.execute(
-            "MATCH (a:Node {id: $sid})-[r:RELATES]->(b:Node {id: $tid}) WHERE r.type = 'CITES' DELETE r",
-            parameters={"sid": source_id, "tid": target_id},
-        )
-        return 1
-    except RuntimeError as exc:
-        logger.warning(
-            "autoprune: failed to delete CITES edge %s -> %s (%s)",
-            source_id,
-            target_id,
-            exc,
-        )
-        return 0
-
-
-def _stamp_stale_since(store, page_id: str, iso_ts: str) -> None:
-    """Set ``stale_since=<iso_ts>`` on a Page's properties blob.
-
-    Reads-updates-writes via ``add_node`` (which upserts). Preserves all
-    other properties.
-    """
-    existing = store.get_node(page_id)
-    if existing is None:
-        return
-    props = dict(existing.get("properties") or {})
-    props["stale_since"] = iso_ts
-    store.add_node(
-        id=page_id,
-        node_type=existing["type"],
-        name=existing.get("name") or "",
-        properties=props,
-    )

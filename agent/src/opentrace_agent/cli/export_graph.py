@@ -486,7 +486,7 @@ def report_cmd(db_path: str | None, output: str) -> None:
         )
     else:
         bridge_page.append("(none — run `opentraceai cluster` to assign communities)")
-    bridge_page += ["", "## Cross-domain (code ↔ page)"]
+    bridge_page += ["", "## Cross-domain (code ↔ doc)"]
     if domain_bridges:
         bridge_page.extend(
             f"- {b['source_name']} ({b['source_domain']}/{b['source_type']}) "

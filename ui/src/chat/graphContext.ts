@@ -109,18 +109,25 @@ PullRequest node IDs follow the pattern: \`owner/repo/pr/NUMBER\`.
 
 ### Vault (Knowledge) Tools
 
-The user can compile uploaded documents (PDFs, design docs, meeting notes, etc.)
-into "vaults" — sets of LLM-summarised markdown pages with \`[[Title]]\`
-wiki-links between related concepts. When a question is about uploaded knowledge
-rather than code, prefer these tools over the graph tools.
+The user can ingest documents (PDFs, design docs, meeting notes, etc.) into
+"vaults". A vault is an INDEX, not a rewrite: each document keeps its own
+verbatim body, plus a title, a one-line summary, and an epistemic \`status\`
+(\`authoritative\` = current docs, \`design_history\` = a proposal or spec —
+intent, not shipped behaviour).
 
 - **list_vaults** — Discover what vaults exist. Use this first.
-- **list_vault_pages** — Get \`{slug, title, summary}\` for every page in a vault. Read summaries to pick what to dive into.
-- **read_vault_page** — Fetch the full markdown body of one page. Pages contain \`[[Other Page Title]]\` links you can follow by converting the title to a slug (lowercase, dashes for spaces/punctuation) and calling read_vault_page again.
 
-When citing facts from a vault page, name the page (and vault) so the user
-can find it. Vaults are LLM summaries, so when accuracy matters, prefer the
-phrasing actually present in the page.
+Reading a vault's content uses the graph tools above, because a document IS a
+graph node (\`KnowledgeDoc\`):
+
+- **search_graph** / **list_nodes("KnowledgeDoc")** — find or enumerate documents by title, summary, and path. \`list_nodes\` is what establishes that something is absent; ranked search cannot.
+- **load_source** — read one document's body VERBATIM, with its \`status\`.
+- **grep** — sweep EVERY document's body in one call (pass the vault name as \`scopeId\`). This is the exhaustiveness tool: use it for "what do all the docs say about X" and "is X mentioned anywhere".
+- **traverse_graph** on \`LINKS_TO\` — follow the cross-references the documents' own authors wrote.
+
+Nothing here paraphrases a document, so quote the text you read and name the
+document. A claim resting only on a \`design_history\` document is intent, not
+shipped behaviour — say so.
 
 ## Efficiency
 

@@ -164,12 +164,13 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   //               over the part of the repo it documents, instead of
   //               orbiting the vault
   //   DOCUMENTS — a repo-spawned Vault hangs off its Repository
-  //   CONTAINS  — vault membership; the fallback anchor for Pages and
-  //               non-repo docs (uploads, URLs, attached globals)
-  // CITES is deliberately NOT a tree type — it's a many-to-many page → doc
-  // provenance mesh (each page cites ~5 docs), and as full-strength springs
-  // it welds pages and docs into one clump. It, LINKS_TO, and MENTIONS stay
-  // semantic cross-links (analogous to CALLS), not hierarchy.
+  //   CONTAINS  — vault membership; the fallback anchor for non-repo docs
+  //               (uploads, URLs, attached globals)
+  // LINKS_TO and MENTIONS are deliberately NOT tree types — they are
+  // many-to-many meshes, and as full-strength springs they weld the docs into
+  // one clump. They stay semantic cross-links (analogous to CALLS), not
+  // hierarchy. ``CITES`` was a third such mesh (concept page → the documents
+  // it restated) and went with the concept-page layer on 2026-08-04.
   layoutEdgeType: ['DEFINES', 'MIRRORS', 'DOCUMENTS', 'CONTAINS'],
   structuralTypes: ['Repository', 'Directory', 'Dependency', 'KnowledgeVault'],
   // Color functions — OpenTrace palettes

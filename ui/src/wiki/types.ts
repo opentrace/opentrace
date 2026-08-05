@@ -25,27 +25,6 @@ export interface VaultEntry {
   attached: boolean;
 }
 
-/** Concept pages are the only page kind. Legacy vaults may carry other
- *  values (``"file_summary"``, ``"source_summary"``, ``"source"``) but the
- *  UI treats every page as a concept regardless. */
-export type VaultPageKind = 'concept';
-
-export interface VaultPageMeta {
-  slug: string;
-  title: string;
-  one_line_summary: string;
-  revision: number;
-  last_updated: string;
-  /** Old vaults may lack this field; treat absent as "concept". */
-  kind?: VaultPageKind;
-}
-
-export interface VaultDetail {
-  name: string;
-  last_compiled_at: string | null;
-  pages: VaultPageMeta[];
-}
-
 export type WikiPhase =
   | 'acquiring'
   | 'normalizing'

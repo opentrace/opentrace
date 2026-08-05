@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from opentrace_agent.wiki.slugify import (
-    base_slug,
-    kind_dir,
-    title_to_link_slug,
-    unique_slug,
-)
+"""Tests for ``base_slug`` — the vault-naming slugifier.
+
+The page-slug helpers this module also held (``kind_dir``, ``unique_slug``,
+``title_to_link_slug``) went with the concept-page layer on 2026-08-04.
+"""
+
+from opentrace_agent.wiki.slugify import base_slug
 
 
 def test_base_slug_lowercases_and_dashes():
@@ -37,36 +38,9 @@ def test_base_slug_empty_input():
     assert base_slug("!!!") == "untitled"
 
 
-def test_kind_dir_maps_concept():
-    assert kind_dir("concept") == "concept"
+def test_base_slug_truncates_and_trims_trailing_dash():
+    from opentrace_agent.wiki.slugify import MAX_SLUG_LEN
 
-
-def test_kind_dir_falls_back_to_concept_for_unknown():
-    assert kind_dir("source") == "concept"
-    assert kind_dir("file_summary") == "concept"
-    assert kind_dir("") == "concept"
-
-
-def test_unique_slug_concept_no_collision():
-    assert unique_slug("Foo", existing=set()) == "concept/foo"
-
-
-def test_unique_slug_other_kind_dirs_do_not_collide():
-    # The kind directory IS the namespace — a base taken under another kind
-    # folder doesn't block a concept slug.
-    assert unique_slug("Usage", kind="concept", existing={"other/usage"}) == "concept/usage"
-
-
-def test_unique_slug_appends_suffix_on_collision_within_kind():
-    assert unique_slug("Foo", existing={"concept/foo"}) == "concept/foo-2"
-    assert unique_slug("Foo", existing={"concept/foo", "concept/foo-2"}) == "concept/foo-3"
-
-
-def test_tombstones_block_reuse():
-    assert unique_slug("Foo", existing=set(), tombstones={"concept/foo"}) == "concept/foo-2"
-
-
-def test_title_to_link_slug_does_not_apply_collision_suffix():
-    # The renderer maps title → base slug under its kind folder; collisions
-    # surface as broken links by design.
-    assert title_to_link_slug("Foo") == "concept/foo"
+    out = base_slug("word " * 40)
+    assert len(out) <= MAX_SLUG_LEN
+    assert not out.endswith("-")

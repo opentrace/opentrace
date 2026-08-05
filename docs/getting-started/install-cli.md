@@ -60,14 +60,13 @@ Some commands require optional dependency groups. Install them via the bracket s
 |---|---|---|
 | `graph` | `networkx`, `markitdown[all]`, `faster-whisper`, `yt-dlp`, `anthropic`, `openai` | Doc ingestion (PDF/DOCX/MD/HTML/...), community detection, vault compilation, audio/video transcription, URL fetching |
 | `graph-leiden` | `graspologic` (Python < 3.13) | The Leiden community detection algorithm. Without it, `opentraceai cluster` falls back to Louvain — slightly different output, not broken |
-| `graph-watch` | `watchdog` | `opentraceai watch` |
 
 The bare install gives you the **structural code indexer** + retrieval primitives (`search`, `traverse`, `find_path`, etc.) over a code repo. Add `graph` as soon as you want to ingest documents, build vaults, or run LLM extraction.
 
 === "uv tool — bracket syntax"
 
     ```bash
-    uv tool install --upgrade 'opentraceai[graph,graph-watch]'
+    uv tool install --upgrade 'opentraceai[graph]'
     ```
 
 === "From source"
@@ -75,13 +74,13 @@ The bare install gives you the **structural code indexer** + retrieval primitive
     ```bash
     git clone https://github.com/opentrace/opentrace
     cd opentrace/agent
-    uv sync --extra graph --extra graph-watch --extra graph-leiden
+    uv sync --extra graph --extra graph-leiden
     ```
 
 === "pip"
 
     ```bash
-    pip install 'opentraceai[graph,graph-watch]'
+    pip install 'opentraceai[graph]'
     ```
 
 If you skip the extras and run a feature that needs one, the CLI errors out with an actionable hint pointing at the right install command.

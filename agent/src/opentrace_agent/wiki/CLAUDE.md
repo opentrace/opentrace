@@ -6,14 +6,14 @@ This is the **single doc-ingestion path**: the one per-doc LLM call (`doc_extrac
 
 ## Corpus-only — nothing is synthesized
 
-`run_compile()` runs **Acquire → Normalize → Extract → Persist → Mirror** and stops: labelled KnowledgeDoc nodes, doc↔doc `LINKS_TO`, `MIRRORS` File twins, epistemic `status`, bodies verbatim in the corpus. There is no synthesis stage and no flag to turn one on — the concept-page pipeline (Resolve/Execute/Verify, `--wiki-concept-pages`, `refresh-stale-pages`) was **removed 2026-08-03**. No new vault gets `KnowledgeConcept` nodes, `pages/concept/*.md`, or `CITES` edges. The LLM-extracted **entity layer** was **removed 2026-08-04** (see [Closed](#closed)); no new vault gets `Idea`/`Service`/`Module`/`Paper`/`Person`/`Event` nodes, `DERIVED_FROM`, `SEMANTIC_EDGE`, or `MENTIONS` edges.
+`run_compile()` runs **Acquire → Normalize → Extract → Persist → Mirror** and stops: labelled KnowledgeDoc nodes, doc↔doc `LINKS_TO`, `MIRRORS` File twins, epistemic `status`, bodies verbatim in the corpus. There is no synthesis stage and no flag to turn one on — the concept-page pipeline (Resolve/Execute/Verify, `--wiki-concept-pages`, `refresh-stale-pages`) was **removed 2026-08-03**, and the **whole rest of the concept-page layer went 2026-08-04** (see [Closed](#closed)). The LLM-extracted **entity layer** was also **removed 2026-08-04**; no new vault gets `Idea`/`Service`/`Module`/`Paper`/`Person`/`Event` nodes, `DERIVED_FROM`, `SEMANTIC_EDGE`, or `MENTIONS` edges.
 
-`KnowledgeConcept` is still a valid node type and the whole **read** surface still exists (`vault show --page`, MCP `read_vault_page` / `list_vault_pages`, `CITES` in `retrieval/provenance.py`, `retrieval/overview.py` counts, the UI wiki renderer, `parse_wiki_links`, `pipeline._read_all_page_bodies`). A vault compiled *before* the removal still carries pages on disk and in `.vault.json`, and a re-compile must keep mirroring them rather than silently dropping them from the graph. Short version: **nothing produces pages any more; legacy pages stay readable.**
+**There is no such thing as a page any more — the `KnowledgeConcept` node type and the `CITES` edge type do not exist.** They are gone from the proto and from `gen/`, along with `PageMeta`, the `pages` dict and `tombstones` in `.vault.json`, the `pages/` storage dir, `vault show --page`, the MCP `read_vault_page` / `list_vault_pages` tools, the `/api/vaults/{v}/pages` REST routes, `parse_wiki_links`, the UI `WikiMarkdown` renderer, the `CITES` provenance chain, three `overview` sections, and `grep`'s legacy `pages/` sweep. This is not a deprecation with a legacy read path: nothing ever produced these types on a release branch, so no graph anywhere contains one, and there is nothing to stay compatible with.
 
 The agent-facing contract for this layer lives in `cli/mcp_server.py` and is load-bearing — the benchmark showed a capability the tools don't advertise is a capability that doesn't exist:
 
 - **`load_source` on a KnowledgeDoc returns `status` + `statusNote`** alongside the body, plus `title`/`path`/`summary`. It originally returned filename/sha/body only, so the epistemic label was invisible at the moment of reading and the arm never once distinguished a proposal from shipped behaviour. A label that doesn't travel with the text does nothing.
-- **`list_nodes` names the doc types** (`KnowledgeDoc`, `KnowledgeConcept`) and states that it — not ranked `search_graph` — is what can establish absence. The arm called it *zero* times in 201 tool calls while the code arm called it 9×, and lost the corpus-enumeration question, because the docstring listed only code types.
+- **`list_nodes` names the doc type** (`KnowledgeDoc`) and states that it — not ranked `search_graph` — is what can establish absence. The arm called it *zero* times in 201 tool calls while the code arm called it 9×, and lost the corpus-enumeration question, because the docstring listed only code types.
 
 Why synthesis is gone: a synthesized page restates its sources in the model's own voice, which strips their hedges, tense, and attribution — a failure mode a verbatim body structurally cannot have (four successive grounding patches all chased instances of it). It measured accordingly: concept pages scored **88.4% against a 98.6% control (−10.2pp)**, the worst result on record. Corpus `grep` now answers "what do all the docs say about X" with verbatim lines from every document, pre-labelled with title and status — strictly better than a layer of paraphrase glosses, by the same standard that killed synthesis.
 
@@ -25,8 +25,8 @@ The per-doc `concepts` field went with it, for an independent reason: it was mea
 paths.py              — vault dir resolution + path-traversal validation;
                         scope-aware (local vs global) + resolve_vault_scope()
 vault.py              — VaultMetadata pydantic model + .vault.json read/write
-slugify.py            — title → slug, collision suffix, tombstones
-index.py              — vault index (slug, title, summary) read from .vault.json
+slugify.py            — title → filesystem-safe slug; sole caller is vault
+                        *naming* (repo/folder/filename → vault name)
 llm.py                — multi-provider client wrapper + BYOK key resolver;
                         each client carries a UsageTally recording the billed
                         token usage every provider response reports — surfaced
@@ -37,14 +37,15 @@ llm.py                — multi-provider client wrapper + BYOK key resolver;
                         (delegates to sources/_llm_common.py for BACKENDS)
 ingest/
   types.py            — WikiPipelineEvent, WikiPhase, SourceInput,
-                        NormalizedSource (with corpus_path), CompiledPage
+                        NormalizedSource (with corpus_path)
   sources.py          — Acquire stage: file inputs + sha256 dedup
   normalize.py        — Normalize stage: lazy-imported markitdown wrapper
   doc_extraction.py   — Extract: 1 LLM call/doc → the KnowledgeDoc's one-line
                         summary. Nothing else.
-  persist.py          — Persist stage: atomic disk writes + .vault.json update
-  graph_writer.py     — Mirror vault to graph: Vault/Page/KnowledgeDoc +
-                        CONTAINS/CITES/LINKS_TO + MIRRORS edges;
+  persist.py          — Persist stage: .vault.json source index + compile log
+                        (bodies are written to the corpus by the composer)
+  graph_writer.py     — Mirror vault to graph: KnowledgeVault + KnowledgeDoc +
+                        CONTAINS + MIRRORS edges;
                         parse_doc_links() + link_doc_to_doc_links() for the
                         authors' own doc→doc references; stamp_doc_paths()
                         stamps root-relative path/paths/status WITHOUT File
@@ -83,16 +84,13 @@ Fields in one schema are not independent.
 ```
 <project>/.opentrace/vaults/<name>/   # local scope (default for --wiki)
 ~/.opentrace/vaults/<name>/           # global scope; override root via $OT_VAULT_ROOT
-  pages/concept/<base>.md         # legacy only — nothing writes these now
   .vault.json
   .compile-log/<iso-ts>.json
 ```
 
-A compile writes `.vault.json` + `.compile-log/` and leaves `pages/` empty — the doc bodies live in the corpus dir described below, not in the vault. `pages/` is non-empty only for a vault compiled before synthesis was removed; those bodies are still read back and mirrored (`_read_all_page_bodies`).
+A vault dir holds **only** `.vault.json` + `.compile-log/`. Document bodies live in the shared, sha-keyed corpus dir described below, never under the vault. (A `pages/` dir sat here for compiled concept pages until 2026-08-04; `ensure_vault_layout` no longer creates it and nothing reads it.)
 
-Slugs are `<kind_dir>/<base>` (e.g. `concept/usage`). Concept is the only page kind. Generated by `wiki.slugify.unique_slug(title, kind=...)`; the folder name comes from `kind_dir(kind)`. Retained for reading legacy pages.
-
-**Disk is the source of truth for page bodies.** The graph holds metadata + relationships, with bodies referenced by `corpus_path`. LadybugDB caps STRING properties at ~4 KB; doc bodies typically run 5–20 KB, so they live on disk and are referenced by relative path.
+**Disk is the source of truth for document bodies.** The graph holds metadata + relationships, with bodies referenced by `corpus_path`. LadybugDB caps STRING properties at ~4 KB; doc bodies typically run 5–20 KB, so they live on disk and are referenced by relative path.
 
 The body of each raw document (post-markitdown) lives at a scope-aware corpus dir. `KnowledgeDoc` nodes carry `corpus_path` (stored relative to `.opentrace/`) pointing there:
 
@@ -135,13 +133,9 @@ place).
 `run_compile(graph_store=..., scope="local"|"global")` mirrors the post-compile vault state into the graph after disk writes succeed:
 
 - `KnowledgeVault` — id `vault::<name>`. Carries `vault` (denormalised), `last_compiled_at`, `summary`, `scope`, `mirror_compiled_at`, and `spawned_from` (repo id, or `dir::<abs path>` for `vault ingest` folders) when the vault was built over a walked source. For repos it's stamped by `link_vault_to_repo` after the mirror and carried forward on re-mirrors; `vault ingest` stamps it directly on the disk metadata.
-- `KnowledgeConcept` nodes — **legacy only**; no compile creates one any more (`compiled_slugs` is always empty, so no page gets fresh provenance). Still mirrored when a pre-removal vault has them: id `<vault>::<slug>` where slug is `<kind_dir>/<base>` (e.g. `kb::concept/usage`), carrying `slug`/`vault`/`kind` (`concept`)/`one_line_summary`/`revision`/`last_updated` and whatever `agent`/`model`/`session`/`confidence` provenance they already had (concept → INFERRED/0.75).
 - `KnowledgeDoc` nodes — id `corpus::<sha256-of-raw-bytes>`. Carries `sha256`/`filename`/`content_type`/`size_bytes`/`acquired_at`/`corpus_path` plus the navigation label: `title` and `one_line_summary`/`summary` (the `summary` copy feeds `build_search_text` so KnowledgeDocs are FTS-findable by label), and `path` (root-relative) when the doc came from a walked source — repo-relative on `index --wiki`, folder-relative on `vault ingest` (stamped by `stamp_doc_paths`, which both producers share; the ingest path passes `status_override` through so `--status` isn't undone by the stamp's path heuristic). Labels come from this run's extraction or, on re-mirror/attach, from `.vault.json`'s `IngestedSource` (which persists them) or the previously-written node. Sha-keyed deduplication across vaults.
-- `CONTAINS` — Vault → KnowledgeDoc (and Vault → Page for legacy pages).
-- `CITES` — concept page → KnowledgeDoc, direct by sha (one hop; no intermediate pages). Legacy only — no new edges are written, but the type stays so provenance still walks pre-removal vaults.
-- `LINKS_TO` — two distinct producers, same edge type:
-  - **KnowledgeDoc → KnowledgeDoc** — the authors' *own* cross-references, parsed mechanically (no LLM) from each doc's relative markdown links, reference-style definitions, and raw HTML anchors by `parse_doc_links` and written by `link_doc_to_doc_links` in the same post-compile step as MIRRORS. The doc-side analogue of the code graph's import edges: it records structure a human declared, never anything a model inferred. Targets resolve against the linking doc's own directory (`/docs/x.md` is treated as repo-root-relative); external URLs, fragment-only links, and paths escaping the repo root are dropped, and resolution itself is the filter — a link to a `.py` file or an image finds no KnowledgeDoc and is skipped. Runs whenever the ingest has root-relative paths — repo walks (`index --wiki`, repo root) and folder ingests (`vault ingest`, folder root standing in for it) — but not single-file/URL/dropped-file compiles.
-  - **KnowledgeConcept → KnowledgeConcept** — per `[[Title]]` occurrence in a page body. Legacy only; reachable solely from pages a pre-removal compile left on disk.
+- `CONTAINS` — Vault → KnowledgeDoc. The only edge `write_vault_to_graph` writes besides the doc nodes themselves.
+- `LINKS_TO` — **KnowledgeDoc → KnowledgeDoc**, one producer. (It had a second — `KnowledgeConcept → KnowledgeConcept`, per `[[Title]]` occurrence in a page body — until 2026-08-04.) The authors' *own* cross-references, parsed mechanically (no LLM) from each doc's relative markdown links, reference-style definitions, and raw HTML anchors by `parse_doc_links` and written by `link_doc_to_doc_links` in the same post-compile step as MIRRORS. The doc-side analogue of the code graph's import edges: it records structure a human declared, never anything a model inferred. Targets resolve against the linking doc's own directory (`/docs/x.md` is treated as repo-root-relative); external URLs, fragment-only links, and paths escaping the repo root are dropped, and resolution itself is the filter — a link to a `.py` file or an image finds no KnowledgeDoc and is skipped. Runs whenever the ingest has root-relative paths — repo walks (`index --wiki`, repo root) and folder ingests (`vault ingest`, folder root standing in for it) — but not single-file/URL/dropped-file compiles. Written by `link_doc_to_doc_links` in the post-compile step, **not** by `write_vault_to_graph`, which has no root-relative paths to resolve against.
 - `MENTIONS` / `DERIVED_FROM` / `SEMANTIC_EDGE` — **gone as of 2026-08-04** with the entity layer. Nothing writes them; a pre-existing graph's edges are left in place and stay traversable via the generic `traverse_graph`. "Every doc that discusses X" is now a `grep` sweep, not a traversal.
 - `MIRRORS` — KnowledgeDoc → File, written by `link_corpus_doc_mirrors` after an `index --wiki` directory run for every repo-walked doc. When the code walk didn't produce the File node (extensions outside `INCLUDED_EXTENSIONS` — `.rst`/`.txt`/`.html`/PDFs), `_ensure_file_twin` creates it (plus any missing ancestor Directory nodes) so the twin always exists. No edge for docs that didn't come from a repo walk (uploads, URLs, attached global vaults, and `vault ingest` folders — deliberately: there's no repo, the KnowledgeDoc IS the document, so ingest stamps `path` via `stamp_doc_paths` without creating File twins).
 - `DOCUMENTS` — Repository → Vault, written by `link_vault_to_repo` in the same `index --wiki` post-compile step as MIRRORS. Marks the vault as spawned from that repo (paired with the `spawned_from` vault property). Attached globals and dropped-file compiles never get it — they live alongside a repo without documenting it.
@@ -152,34 +146,23 @@ Graph-write failures are caught and emitted as non-fatal warnings — the on-dis
 opentraceai vault attach <name>
 ```
 
-## Link parsers
+## Link parser
 
-Two parsers, one per producer of `LINKS_TO` (see the graph-mirror section). Only the second runs on a compile today; the first is kept for legacy page bodies and the UI renderer.
+One parser, for the one producer of `LINKS_TO`. (A second, `parse_wiki_links`, read Obsidian-style `[[Title]]` / `[[Title|alias]]` targets out of concept-page bodies for the page↔page edge; it and the `ui/src/components/wiki/WikiMarkdown.tsx` renderer that shared its syntax were removed 2026-08-04. Authors write ordinary relative markdown links, not `[[wiki-links]]`, so nothing was lost.)
 
-**`graph_writer.parse_wiki_links(body)`** — page ↔ page. Extracts targets from `[[Title]]` and `[[Title|alias]]` Obsidian-style forms. Targets are stripped of whitespace and deduped in document order. The renderer in `ui/src/components/wiki/` uses the same syntax.
-
-Resolution accepts both bare and kinded forms: `[[Title]]` matches unambiguously when only one kind has that title; `[[concept/Title]]` always resolves to the named kind. Bare targets whose title appears in multiple kinds drop to "broken" so the page surfaces the ambiguity rather than silently picking one.
-
-**`graph_writer.parse_doc_links(body)`** — doc → doc, and the one a compile actually runs. Extracts in-repo relative targets from inline markdown links (`[t](./guide.md)`, angle-bracket and `%20` forms included), reference-style definitions (`[g]: docs/guide.md`), and raw HTML anchors. Fragments and query strings are stripped (`guide.md#setup` → `guide.md`); external targets (`http:`, `mailto:`, protocol-relative `//`) and fragment-only links are dropped; results are deduped in document order.
+**`graph_writer.parse_doc_links(body)`** — doc → doc. Extracts in-repo relative targets from inline markdown links (`[t](./guide.md)`, angle-bracket and `%20` forms included), reference-style definitions (`[g]: docs/guide.md`), and raw HTML anchors. Fragments and query strings are stripped (`guide.md#setup` → `guide.md`); external targets (`http:`, `mailto:`, protocol-relative `//`) and fragment-only links are dropped; results are deduped in document order.
 
 `link_doc_to_doc_links(store, named_blobs)` then resolves each target against the linking doc's own directory via `posixpath` (leading `/` means repo-root-relative), drops anything normalizing outside the repo root, and merges one edge per distinct target pair — so `guide.md`, `./guide.md`, and `guide.md#top` collapse to a single edge, and self-links are skipped. Bodies come from the corpus (post-markitdown, so an `.html` doc's anchors are already markdown) with a raw-bytes decode as fallback. Docs dropped by the content gate have no node and are silently skipped.
 
-## Stale tracking
+## Autoprune
 
-Only reachable for vaults that still have legacy concept pages; a vault compiled today has nothing to go stale.
-
-Autoprune (in `pipeline/autoprune.py`) stamps `stale_since=<iso-timestamp>` on concept pages whose cited KnowledgeDoc was removed but which have other remaining citations. Pages with no remaining citations are deleted entirely. No LLM cost during pruning. Its third sweep — deleting entities orphaned by a removed doc — went with the entity layer.
-
-There is no refresh path: a stale page can only be repaired by deleting it, since nothing regenerates page bodies. `refresh_stale_pages()` and its two CLI surfaces (`vault refresh-stale-pages`, `index --wiki --refresh-stale-pages`) were removed with synthesis.
+`pipeline/autoprune.py` runs after `index --wiki` / `vault ingest` and deletes graph state for documents that vanished from disk between runs: the `KnowledgeDoc` node, its edges, and its corpus body. Two further sweeps ran there and are gone with the layers they served — deleting entities orphaned by a removed doc (2026-08-04, entity layer) and deleting/`stale_since`-stamping concept pages that lost citations (2026-08-04, page layer). **There is no staleness concept in this module any more.** Nothing synthesizes a derived artefact, so nothing can fall out of date with respect to its source; a document is either present or pruned. No LLM cost during pruning.
 
 ## Provenance chain
 
-For wiki nodes, `retrieval.provenance(node_id)` walks the `CITES` chain:
+`retrieval.provenance(node_id)` on a `KnowledgeDoc` returns the document's own identity: sha256, filename, root-relative path, ingest time, and the `MIRRORS` File twin id when present. A `KnowledgeVault` returns an empty chain (no body of its own).
 
-- KnowledgeDoc returns its own metadata (this is the only case a vault compiled today produces)
-- legacy concept Page → KnowledgeDoc, direct by sha (with sha256 + filename + acquired_at, plus the MIRRORS File twin id when present)
-
-`agent`/`model`/`session`/`confidence` provenance was stamped at the page level; only pre-removal pages carry it. The third `derived` branch (walk `DERIVED_FROM` from an entity back to its source doc) went with the entity layer; those types now return `kind="unknown"`.
+**A document is its own provenance, so the "chain" is one entry.** It was a multi-hop `CITES` walk (concept page → the documents it was synthesised from) until 2026-08-04, and the `agent`/`model`/`session`/`confidence` fields were the page-level compile stamp. With nothing restating a document there is nothing to trace back through. The third `derived` branch (walk `DERIVED_FROM` from an entity back to its source doc) went with the entity layer; those types now return `kind="unknown"`.
 
 ## Measured value — read this before optimising anything here
 
@@ -261,12 +244,35 @@ Consequences for anyone working in this module:
   runtime types, and leaving them keeps older graphs readable) — they are simply
   types nothing writes.
 
-- **Concept pages: dropped 2026-08-03.** The pages variant was the worst result
-  on record (88.4% vs a 98.6% control, −10.2pp) — see VALUE-ASSESSMENT.md. The
-  synthesis pipeline (`resolve.py`, `execute.py`, `verify.py`,
-  `refresh_stale_pages`, `--wiki-concept-pages`, `--refresh-stale-pages`,
-  `OT_WIKI_CONCEPT_MIN_SOURCES`) is gone. The read surface stays for legacy
-  vaults.
+- **The concept-page layer: synthesis dropped 2026-08-03, everything else
+  2026-08-04.** The pages variant was the worst result on record (**88.4% vs a
+  98.6% control, −10.2pp**) — see VALUE-ASSESSMENT.md. **Do not re-add this.**
+
+  Two reasons, and the second is why the *remnants* went too:
+
+  1. **Restatement is lossy in a way a verbatim body structurally cannot be.**
+     A synthesized page re-voices its sources, which strips their hedges,
+     tense, and attribution. Four successive grounding patches each chased one
+     instance of that and the class stayed. Corpus `grep` answers the query the
+     layer existed for — "what does the corpus say about X" — with verbatim
+     lines from every document, pre-labelled with title and status.
+  2. **A read surface for a thing nothing writes is worse than no surface.**
+     After 2026-08-03 the data model, storage, and reads all survived while the
+     producer was gone: `KnowledgeConcept`/`CITES` in the proto, `PageMeta` +
+     `pages` + `tombstones` in `.vault.json`, the `pages/` dir,
+     `vault show --page`, MCP `read_vault_page`/`list_vault_pages`, the
+     `/api/vaults/{v}/pages` routes, `parse_wiki_links`, `WikiMarkdown.tsx`,
+     the `CITES` provenance chain, three `overview` sections that could only
+     ever return `[]`, and half of `grep`'s vault sweep. Every one of those told
+     a reader — human or agent — that pages exist. The MCP docstrings are the
+     agent's whole map of the graph, so an advertised tool IS a capability it
+     will spend calls on. All of it is now removed, including the proto types:
+     they were added on this branch and never shipped, so no graph contains a
+     `KnowledgeConcept` node or a `CITES` edge and there is nothing to stay
+     readable for. What replaced the layer is what the benchmark actually used:
+     **verbatim bodies, a title + one-line summary, epistemic `status`,
+     author-written doc→doc `LINKS_TO`, exhaustive `grep` and `list_nodes`,
+     verbatim `load_source`.**
 - **Concepts as bodiless graph nodes — closed, not deferred.** This was the safe
   salvage of the concept map: key a node on `(topic, subject)` from the per-doc
   mentions, hang each doc's own gloss on the doc→concept edge, never fuse the

@@ -37,8 +37,8 @@ opentraceai index [PATH] [OPTIONS]
 | `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
 
-!!! note "Removed 2026-08-03"
-    `--wiki-concept-pages` and `--refresh-stale-pages` no longer exist. Concept-page synthesis was removed after it measured 88.4% against a 98.6% control on the doc-Q&A benchmark; corpus `grep` answers the same cross-document questions with verbatim, pre-labelled lines. Vaults compiled before the removal keep their pages and stay readable via `vault show --page`.
+!!! note "Removed 2026-08-03 / 2026-08-04"
+    `--wiki-concept-pages` and `--refresh-stale-pages` no longer exist. Concept-page synthesis was removed 2026-08-03 after it measured **88.4% against a 98.6% control (−10.2pp)** on the doc-Q&A benchmark; the rest of the layer, including `vault show --page`, went 2026-08-04. Corpus `grep` answers the same cross-document questions with verbatim, pre-labelled lines, and `load_source` reads a body. See the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 ### Common combinations
 
@@ -79,7 +79,7 @@ Vault management. See [Vault Commands](vault-commands.md) for the conceptual ref
 ```
 opentraceai vault ingest FOLDER [NAME] [--scope local|global] [--db PATH] [--status X] [...]
 opentraceai vault list [--global-only] [--db PATH]
-opentraceai vault show NAME [--scope local|global] [--page SLUG]
+opentraceai vault show NAME [--scope local|global]
 opentraceai vault attach NAME [--scope local|global] [--db PATH]
 opentraceai vault detach NAME [--db PATH]
 opentraceai vault promote NAME
@@ -112,10 +112,13 @@ Ingest a bare folder of doc files (a Confluence/Notion/docs-site export — no g
 
 ### `vault show`
 
+Prints the vault's document index — a `Documents:` count, then status / title / one-line summary per doc. Bodies aren't printed; read them with `load_source` or sweep them with `grep`.
+
 | Flag | Description |
 |---|---|
 | `--scope local\|global` | Disambiguate when a vault exists in both scopes. Local wins by default |
-| `--page SLUG` | Print one page body to stdout instead of the index. Only vaults compiled before 2026-08-03 have pages |
+
+`--page SLUG` was deleted 2026-08-04 with the concept-page layer — see the note under `index` above.
 
 ### `vault attach`
 
@@ -189,43 +192,6 @@ opentraceai export-graph report   -o DIR [--db PATH]
 | `--port` | `8787` | Bind port |
 
 `serve` exposes REST + SSE; `mcp` speaks MCP over stdio (used by the Claude Code plugin).
-
-## `opentraceai watch`
-
-Re-index when files change.
-
-!!! warning "Not wired up yet"
-    The watcher detects and debounces changes, but the rebuild callback is
-    a no-op until incremental indexing lands — nothing is re-indexed today.
-
-```
-opentraceai watch PATH [--debounce SECONDS] [--db PATH]
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `PATH` | required | Directory to watch |
-| `--debounce` | 2.0 | Seconds to batch filesystem events before re-running the index |
-| `--db PATH` | auto | Graph DB |
-
-Requires the `graph-watch` extra.
-
-## `opentraceai hook`
-
-Install / uninstall a git post-commit hook that runs `opentraceai index --incremental` after each commit.
-
-```
-opentraceai hook install
-opentraceai hook uninstall
-opentraceai hook status
-```
-
-The hook is a single-line shell wrapper; runs nothing if `opentraceai` isn't on `PATH`. Failures are non-fatal — the commit succeeds even if indexing breaks.
-
-!!! warning "Not wired up yet"
-    `index --incremental` doesn't exist yet, so the installed hook is a safe
-    no-op on every commit until it ships. Install/uninstall/status work as
-    described.
 
 ## Environment variables
 

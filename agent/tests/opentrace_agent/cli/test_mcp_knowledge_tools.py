@@ -205,103 +205,48 @@ class TestLoadSource:
         assert "error" in _call(store, "load_source", nodeId="corpus::evil")
 
 
-class TestReadVaultPage:
-    """Page reads must hand the agent the page's primary sources (CITES) and
-    the citation contract — cite the primary alongside the page, never the
-    page alone — so vault answers stay traceable to repo documents."""
+class TestConceptPageSurfaceIsGone:
+    """The concept-page read surface must stay removed.
 
-    def _vault_on_disk(self, tmp_path, body: str = "# Conflicts\n\nRule text.\n"):
-        vault_dir = tmp_path / ".opentrace" / "vaults" / "kb"
-        (vault_dir / "pages" / "concept").mkdir(parents=True)
-        (vault_dir / ".vault.json").write_text('{"name": "kb"}')
-        (vault_dir / "pages" / "concept" / "conflicts.md").write_text(body)
-        return vault_dir
+    ``read_vault_page`` / ``list_vault_pages`` and ``load_source``'s
+    ``KnowledgeConcept`` branch were removed 2026-08-04 with the layer they
+    served — synthesis measured 88.4% against a 98.6% control (-10.2pp),
+    because restating a document strips its hedges, tense, and attribution.
+    Verbatim ``load_source`` plus corpus ``grep`` answer the same questions.
+    A tool the docstrings advertise is a capability the agent will reach for,
+    so re-adding either one has to be a deliberate decision, not a merge.
+    """
 
-    @pytest.fixture()
-    def vault_store(self, tmp_path):
-        self._vault_on_disk(tmp_path)
-        s = GraphStore(str(tmp_path / ".opentrace" / "index.db"))
-        s.add_node(
+    def test_page_tools_are_not_registered(self, store):
+        tools = create_mcp_server(store)._tool_manager._tools
+        assert "read_vault_page" not in tools
+        assert "list_vault_pages" not in tools
+
+    def test_no_tool_description_advertises_page_reads(self, store):
+        store.add_node("corpus::seed", "KnowledgeDoc", "seed.md", {"sha256": "seed"})
+        tools = create_mcp_server(store)._tool_manager._tools
+        for name, spec in tools.items():
+            blob = f"{spec.description or ''} {spec.fn.__doc__ or ''}".lower()
+            for gone in ("read_vault_page", "list_vault_pages", "knowledgeconcept"):
+                assert gone not in blob, f"{name} still advertises {gone}"
+
+    def test_load_source_on_a_page_shaped_node_is_not_a_page_read(self, store):
+        """A pre-removal graph can still hold a ``KnowledgeConcept`` node. It
+        must fall through to the code path and error cleanly, never resurrect
+        a disk page read."""
+        store.add_node(
             "kb::concept/conflicts",
             "KnowledgeConcept",
             "Conflicts",
             {"vault": "kb", "slug": "concept/conflicts", "kind": "concept"},
         )
-        s.add_node(
-            "corpus::sha-auth",
-            "KnowledgeDoc",
-            "docs/AGENT-SETUP.md",
-            {
-                "sha256": "sha-auth",
-                "filename": "docs/AGENT-SETUP.md",
-                "path": "docs/AGENT-SETUP.md",
-                "status": "authoritative",
-            },
-        )
-        s.add_node(
-            "corpus::sha-prop",
-            "KnowledgeDoc",
-            "openspec/proposal.md",
-            {"sha256": "sha-prop", "filename": "openspec/proposal.md", "status": "design_history"},
-        )
-        s.add_node("local/repo/docs/AGENT-SETUP.md", "File", "AGENT-SETUP.md")
-        s.add_relationship("c1", "CITES", "kb::concept/conflicts", "corpus::sha-auth")
-        s.add_relationship("c2", "CITES", "kb::concept/conflicts", "corpus::sha-prop")
-        s.add_relationship("m1", "MIRRORS", "corpus::sha-auth", "local/repo/docs/AGENT-SETUP.md")
-        yield s
-        s.close()
-
-    def test_returns_body_and_cited_sources(self, vault_store):
-        out = _call(vault_store, "read_vault_page", nodeId="kb::concept/conflicts")
-        assert "Rule text." in out["body"]
-        cited = {c["filename"]: c for c in out["cited_sources"]}
-        assert set(cited) == {"docs/AGENT-SETUP.md", "openspec/proposal.md"}
-        assert cited["docs/AGENT-SETUP.md"]["status"] == "authoritative"
-        assert cited["docs/AGENT-SETUP.md"]["file"] == "local/repo/docs/AGENT-SETUP.md"
-        assert cited["openspec/proposal.md"]["status"] == "design_history"
-        # Seam #2: epistemic framing travels with the payload.
-        assert out["nature"] == "documentation-synthesis"
-        assert "not its code" in out["provenance_note"]
-
-    def test_page_without_cites_returns_empty_list(self, tmp_path):
-        self._vault_on_disk(tmp_path)
-        s = GraphStore(str(tmp_path / ".opentrace" / "index.db"))
-        try:
-            s.add_node(
-                "kb::concept/conflicts",
-                "KnowledgeConcept",
-                "Conflicts",
-                {"vault": "kb", "slug": "concept/conflicts", "kind": "concept"},
-            )
-            out = _call(s, "read_vault_page", nodeId="kb::concept/conflicts")
-            assert out["cited_sources"] == []
-        finally:
-            s.close()
-
-    def test_load_source_concept_branch_carries_cited_sources(self, vault_store):
-        out = _call(vault_store, "load_source", nodeId="kb::concept/conflicts")
-        assert [c["filename"] for c in out["cited_sources"]]
-        # Seam #2 framing travels through the load_source dispatch too.
-        assert out["nature"] == "documentation-synthesis"
-
-    def test_epistemic_contract_pinned_in_docstring(self, vault_store):
-        # The docstring is the behavioural surface — agents read it to decide
-        # how to treat a page. Pin the seam-#2 contract's load-bearing phrases:
-        # the page is documentation (not a code oracle), and code-behavior
-        # claims must be confirmed against the code, not the page's cited docs.
-        import re
-
-        server = create_mcp_server(vault_store)
-        doc = server._tool_manager._tools["read_vault_page"].fn.__doc__
-        norm = re.sub(r"\s+", " ", doc).lower()
-        assert "faithful to the docs, not a statement about the code" in norm
-        assert "confirm the specific against the code" in norm
-        assert 'do not equate "the docs say x" with "the code does x"' in norm
-        assert "design_history" in norm
+        out = _call(store, "load_source", nodeId="kb::concept/conflicts")
+        assert "error" in out
+        assert "body" not in out
 
 
 class TestLoadSourceDocPaging:
-    """lineRange must work on doc/page bodies, and an unranged read of a huge
+    """lineRange must work on document bodies, and an unranged read of a huge
     doc must return a usable head + continuation hint — the MCP client hard-
     rejects oversized results, and a restricted session has no other way in
     (observed: an arm dead-ended re-requesting a 91 KB DOCS.md)."""
@@ -509,11 +454,12 @@ class TestPreExistingToolsAdvertiseDocLayer:
 
     def test_traverse_graph_names_doc_edges(self, store):
         doc = self._doc(store, "traverse_graph")
-        for edge in ("links_to", "mirrors", "cites"):
+        for edge in ("links_to", "mirrors"):
             assert edge in doc, f"{edge} missing from traverse_graph docstring"
-        # No doc→topic edge exists any more, so the docstring must not imply
-        # one — "which docs mention X" has to route to grep instead.
-        for gone in ("mentions", "derived_from"):
+        # None of these edges is written any more, so the docstring must not
+        # imply one. "Which docs mention X" routes to grep; there is no
+        # page→source citation to walk.
+        for gone in ("mentions", "derived_from", "cites"):
             assert gone not in doc, f"{gone} is no longer written; advertising it invents a capability"
         assert "grep" in doc
 

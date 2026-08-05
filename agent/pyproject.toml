@@ -71,10 +71,6 @@ graph = [
 graph-leiden = [
     "graspologic; python_version < '3.13'",
 ]
-# Filesystem watcher for `opentraceai watch`. Only that one command uses it.
-graph-watch = [
-    "watchdog>=3.0",
-]
 
 [project.urls]
 Homepage = "https://github.com/opentrace/opentrace"
@@ -87,9 +83,7 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-# watchdog: optional at runtime (graph-watch extra) but needed so the watch
-# tests exercise the real event handler instead of skipping.
-dev = ["pytest", "pytest-anyio", "ruff", "watchdog>=3.0"]
+dev = ["pytest", "pytest-anyio", "ruff"]
 
 [build-system]
 requires = ["hatchling"]

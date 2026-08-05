@@ -307,7 +307,7 @@ def _error_response(tool_name: str, e: Exception) -> str:
 def _neighbour_summary(node: dict[str, Any]) -> str:
     """Return a short, agent-legible summary for a neighbour node.
 
-    Prefer ``one_line_summary`` (set on KnowledgeConcept by the wiki compile pipeline);
+    Prefer ``one_line_summary`` (set on KnowledgeDoc by the wiki ingest pipeline);
     fall back to truncated ``summary`` (set on code nodes by the indexer);
     fall back to the node ``name``.
     """
@@ -329,7 +329,7 @@ NO_INDEX_MSG = json.dumps(
     }
 )
 
-# Source/page bodies legitimately exceed the 4 KB tool-response cap that
+# Document bodies legitimately exceed the 4 KB tool-response cap that
 # ``_json_response`` applies to structured results. We still bound them so a
 # pathological multi-MB file can't blow the response budget; an agent that
 # needs more should request a narrower line range.
@@ -449,9 +449,6 @@ _DOC_TYPES_NOTE = """
       the compact projection and the ``hasMore`` completeness signal (a whole
       corpus of documents does not fit in the unpaged full-node shape), then
       read candidates with ``load_source``.
-    * ``KnowledgeConcept`` — compiled concept pages; often none (they are
-      opt-in). An empty list is normal.
-
     ``filters`` matches on node properties, so scoping works too — e.g.
     ``type="KnowledgeDoc", filters={"status": "design_history"}`` lists only
     proposals/specs/ADRs, and ``{"status": "authoritative"}`` only current
@@ -469,7 +466,6 @@ _DOC_HITS_NOTE = """
       ``fileTwin``: the id of the ``File`` node for the same document, if you
       want the code-tree view. Each document appears at most ONCE — the doc
       node and its File twin are merged into a single hit.
-    * ``KnowledgeConcept`` — a compiled concept page, when the vault has any.
 
     A document is the unit of knowledge here — there is no summary or concept
     layer standing in front of it. So a hit is a pointer to text you then
@@ -486,10 +482,8 @@ _DOC_EDGES_NOTE = """
     * ``LINKS_TO`` — between ``KnowledgeDoc`` nodes, a relative link one
       document's AUTHOR wrote to another. The doc-side analogue of imports:
       use it for reading paths, hub documents, and "what references this doc".
-      (Also connects concept pages to each other, when pages exist.)
     * ``MIRRORS`` — ``KnowledgeDoc`` → the ``File`` twin for the same
       document; the one-hop join between the doc layer and the code tree.
-    * ``CITES`` — a concept page → its source documents (pages only).
 
     There is no edge from a document to a topic or concept it discusses.
     "Every doc that discusses X" is a CONTENT question, not a traversal: sweep
@@ -508,7 +502,7 @@ def _to_int(v: Any) -> int | None:
 def _dump_body_result(result: dict[str, Any]) -> str:
     """JSON-encode a read result, soft-capping an oversized ``body``.
 
-    Bypasses ``_json_response``'s 4 KB truncation (page/source bodies run
+    Bypasses ``_json_response``'s 4 KB truncation (document bodies run
     larger by design) but still bounds the payload.
     """
     body = result.get("body")
@@ -581,7 +575,7 @@ def _read_file_slice(abs_path, start_line: int | None, end_line: int | None) -> 
     }
 
 
-# Unranged doc/page reads are head-capped to this many chars. The MCP CLIENT
+# Unranged document reads are head-capped to this many chars. The MCP CLIENT
 # rejects tool results over its own token cap (~25k tokens) outright, telling
 # the agent to read a spill file with tools a restricted session may not have —
 # a dead end (observed: an arm stuck re-requesting DOCS.md, 91 KB). A capped
@@ -593,7 +587,7 @@ DOC_BODY_HEAD_CHARS = MAX_SOURCE_BODY_CHARS  # same budget for both paths — se
 
 
 def _slice_doc_body(result: dict[str, Any], start_line: int | None, end_line: int | None) -> dict[str, Any]:
-    """Apply a 1-based inclusive line slice to a doc/page read result.
+    """Apply a 1-based inclusive line slice to a document read result.
 
     With a range: return exactly those lines plus ``lineRange``/``totalLines``.
     Without one: return the whole body when small, else the head that fits
@@ -766,80 +760,6 @@ def _load_corpus_doc(store: GraphStore, node: dict[str, Any], node_id: str) -> d
     return out
 
 
-def _cited_sources(store: GraphStore, node_id: str) -> list[dict[str, Any]]:
-    """The KnowledgeDocs a concept page CITES — its primary sources.
-
-    Surfaced on every page read so agents can cite the primary document
-    alongside the page instead of the page alone (a page is a compiled
-    synthesis, not a repo document). Reuses the provenance chain-entry
-    builder so the MIRRORS File twin comes along; adds the doc's epistemic
-    ``status`` so agents can prefer authoritative docs over design history.
-    Failures degrade to an empty list — citation hints must never break a
-    page read.
-    """
-    from opentrace_agent.retrieval.provenance import _source_link
-
-    try:
-        traversal = store.traverse(node_id, direction="outgoing", max_depth=1, relationship_type="CITES")
-    except Exception:
-        return []
-    cited = []
-    for r in traversal:
-        n = r.get("node") or {}
-        if n.get("type") != "KnowledgeDoc":
-            continue
-        props = _props(n)
-        link = _source_link(n.get("id"), props, store)
-        link["status"] = props.get("status") or "authoritative"
-        cited.append(link)
-    return cited
-
-
-def _read_concept_body(store: GraphStore, node: dict[str, Any], node_id: str) -> dict[str, Any]:
-    """Resolve and read a ``KnowledgeConcept`` node's markdown body from disk."""
-    from pathlib import Path
-
-    from opentrace_agent.wiki.paths import resolve_vault_scope
-
-    props = _props(node)
-    vault = props.get("vault")
-    slug = props.get("slug")
-    if not vault or not slug:
-        return {"error": f"KnowledgeConcept {node_id} missing vault/slug properties"}
-    # Slug is "<kind_dir>/<base>"; reject any traversal nonsense.
-    if ".." in slug or slug.startswith(".") or slug.startswith("/") or slug.endswith("/") or slug.count("/") > 1:
-        return {"error": f"invalid slug: {slug}"}
-
-    db_path = Path(str(getattr(store, "db_path", "")))
-    project_root = db_path.parent.parent if db_path.parent.name == ".opentrace" else None
-    resolved = resolve_vault_scope(vault, project_root=project_root)
-    if resolved is None:
-        return {"error": f"vault '{vault}' not found on disk (local or global)"}
-    scope, vault_dir_path = resolved
-    page_path = vault_dir_path / "pages" / f"{slug}.md"
-    if not page_path.exists():
-        return {"error": f"page file not found: {page_path}"}
-    return {
-        "nodeId": node_id,
-        "type": "KnowledgeConcept",
-        "vault": vault,
-        "slug": slug,
-        "scope": scope,
-        "body": page_path.read_text(),
-        "cited_sources": _cited_sources(store, node_id),
-        # Epistemic framing travels with the content so an agent that skims
-        # the tool docstring still learns this is documentation knowledge, not
-        # a code oracle. See the "Epistemic contract" in read_vault_page.
-        "nature": "documentation-synthesis",
-        "provenance_note": (
-            "Reflects the repository's documentation, not its code. "
-            "Authoritative for what the docs say/design/intend; for any "
-            "code-behavior claim (wiring, exact values, provenance, "
-            "prod-vs-test), confirm against the code before asserting it."
-        ),
-    }
-
-
 def create_mcp_server(store: GraphStore | None) -> FastMCP:
     """Create a FastMCP server with graph query tools backed by *store*.
 
@@ -972,8 +892,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
         Each neighbour entry includes a pre-summarised ``target_summary`` so
         the agent can decide whether to recurse without a follow-up fetch:
-        ``one_line_summary`` for vault pages, truncated ``summary``/``name``
-        for code nodes.
+        ``one_line_summary`` for indexed documents, truncated
+        ``summary``/``name`` for code nodes.
         """
         if not store:
             logger.info("get_node called but no index exists")
@@ -1099,7 +1019,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         given direction. direction is 'incoming', 'outgoing', or 'both'.
 
         Use this to find unused functions ('Function', 'CALLS', 'incoming'),
-        dangling wiki pages ('KnowledgeConcept', 'LINKS_TO', 'incoming'), etc.
+        unreferenced documents ('KnowledgeDoc', 'LINKS_TO', 'incoming'), etc.
         """
         if not store:
             logger.info("find_orphans called but no index exists")
@@ -1132,7 +1052,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         """Find all (A, B) pairs where A is startType, B is targetType, and a
         relationship of edgeType points from A to B.
 
-        Examples: Functions that CALL Endpoints, KnowledgeConcepts that CITE KnowledgeDocs.
+        Examples: Functions that CALL Endpoints, KnowledgeDocs that LINKS_TO KnowledgeDocs.
         """
         if not store:
             logger.info("find_via_relationship_to_type called but no index exists")
@@ -1186,8 +1106,8 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         name** — `"my-docs"`, `"vault::my-docs"`, and a repo's name all
         resolve, so a name from `list_vaults` / `get_stats` can be passed
         straight through. An unresolvable scope lists the valid ones.
-        A vault grep sweeps EVERY member document's full normalized body (plus
-        compiled pages, when present) — use it to establish exhaustive claims
+        A vault grep sweeps EVERY member document's full normalized body —
+        use it to establish exhaustive claims
         about CONTENT, the way ``list_nodes`` establishes existence of nodes;
         ranked ``search_graph`` can do neither.
 
@@ -1232,9 +1152,9 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     def provenance(nodeId: str) -> str:
         """Return the trust chain for a node.
 
-        For wiki pages: agent / model / session / confidence stamped at
-        compile time, plus the CITES chain to the original KnowledgeDoc
-        artefacts (sha256 + filename; read the bytes via ``load_source``).
+        For an indexed document: its own identity — sha256, filename,
+        root-relative path, ingest time, and the ``MIRRORS`` File twin when it
+        came from a repo walk (read the bytes via ``load_source``).
 
         For code nodes: commit_sha + indexer_version from the per-repo
         IndexMetadata, plus file_path and line_range from the node itself.
@@ -1353,105 +1273,6 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _error_response("list_vaults", e)
 
     @server.tool()
-    def list_vault_pages(vault: str, kind: str = "", limit: int = 200) -> str:
-        """List KnowledgeConcept nodes in a vault (concept pages — the only kind).
-
-        Returns ``{vault, count, pages}`` where each page carries
-        ``{id, slug, title, kind, one_line_summary, revision,
-        last_updated}``. Use ``read_vault_page`` (or ``load_source``) with
-        the returned ``id`` to fetch the page body. KnowledgeDoc documents are
-        not pages — find them via ``search_graph`` / ``list_nodes`` and read
-        them with ``load_source``.
-
-        **An empty list is normal, not an error.** Concept pages are opt-in
-        (``index --wiki``); a default doc ingestion
-        indexes the documents themselves without synthesizing pages. The
-        vault's knowledge is then in its KnowledgeDoc nodes — reach it via
-        ``search_graph`` (titles, one-line summaries), ``list_nodes`` to
-        enumerate, ``grep`` to sweep every body, ``load_source`` to read one,
-        and follow ``LINKS_TO`` between KnowledgeDocs for the authors' own
-        cross-references."""
-        if not store:
-            return NO_INDEX_MSG
-        try:
-            filters: dict[str, Any] = {"vault": vault}
-            if kind.strip():
-                filters["kind"] = kind.strip()
-            cap = min(limit, 1000)
-            nodes = store.list_nodes(node_type="KnowledgeConcept", filters=filters, limit=cap)
-            pages = []
-            for n in nodes:
-                props = n.get("properties") or {}
-                pages.append(
-                    {
-                        "id": n.get("id"),
-                        "slug": props.get("slug"),
-                        "title": n.get("name"),
-                        "kind": props.get("kind"),
-                        "one_line_summary": props.get("one_line_summary"),
-                        "revision": props.get("revision"),
-                        "last_updated": props.get("last_updated"),
-                    }
-                )
-            return _json_response({"vault": vault, "count": len(pages), "pages": pages})
-        except Exception as e:
-            return _error_response("list_vault_pages", e)
-
-    @server.tool()
-    def read_vault_page(nodeId: str) -> str:
-        """Return the full markdown body of a KnowledgeConcept from disk.
-
-        KnowledgeConcept bodies live at ``<vault_dir>/pages/<slug>.md`` (the graph
-        node carries metadata only — LadybugDB caps STRING properties at
-        ~4 KB, wiki pages run 5–20 KB). Resolves the vault's on-disk
-        location via local-then-global scope lookup, rooted at the graph's
-        project directory (the parent of ``.opentrace/``).
-
-        Returns ``{nodeId, vault, slug, scope, body, cited_sources,
-        nature, provenance_note}``. ``cited_sources`` lists the primary
-        documents this page was compiled from (``{id, filename, path, status,
-        file}``; read them with ``load_source``).
-
-        **Epistemic contract — what this is:** a synthesis of what this repo's
-        *documentation* says about a concept. It is faithful to the docs, NOT
-        a statement about the code. Documentation can lag, simplify, or
-        diverge from the implementation.
-
-        **How to use it:**
-
-        - For questions about what the project *documents, designs, decides,
-          or intends* — this page and its ``cited_sources`` are the authority.
-          Answer from them and cite them.
-        - For questions about what the *code actually does* (behavior, wiring,
-          exact values, provenance, prod-vs-test) — a page statement is
-          evidence of what's *documented*, not proof of current behavior.
-          Confirm the specific against the code (``search_graph`` /
-          ``load_source`` on the code node) before asserting it. Do NOT equate
-          "the docs say X" with "the code does X".
-        - Verifying against this page's own ``cited_sources`` proves nothing
-          about the code — the page already reflects them faithfully. Only the
-          code settles code behavior.
-        - ``cited_sources`` carries each source's ``status``; a claim resting
-          only on ``design_history`` is *intent*, not shipped behavior. Prefer
-          ``status: authoritative`` sources.
-        - Don't count vault pages as repo documents when a question asks about
-          the repo's own files.
-        """
-        if not store:
-            return NO_INDEX_MSG
-        try:
-            node = store.get_node(nodeId)
-            if not node:
-                return json.dumps({"error": f"node not found: {nodeId}"})
-            if node.get("type") != "KnowledgeConcept":
-                return json.dumps({"error": f"node {nodeId} is not a KnowledgeConcept (type={node.get('type')})"})
-            # Wiki page bodies are 5–20 KB by design; bypass the 4 KB
-            # truncation in ``_json_response`` that would chop a page body.
-            return _dump_body_result(_read_concept_body(store, node, nodeId))
-        except Exception as e:
-            return _error_response("read_vault_page", e)
-
-    @server.tool()
     def load_source(nodeId: str, lineRange: str = "") -> str:
         """Read the underlying content for a graph node, dispatching by type.
 
@@ -1461,18 +1282,16 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
         - **Code** nodes (``Function`` / ``Class`` / ``File`` / ``Variable`` /
           …) → source read from the indexed repo checkout. Defaults to the
           node's own recorded line range.
-        - **KnowledgeDoc** nodes (ingested docs) → the document body from the
-          content-addressed corpus snapshot (``corpus/<sha>.md``), independent
-          of the working tree.
-        - **KnowledgeConcept** nodes → the compiled markdown page body (same as
-          ``read_vault_page``, including ``cited_sources`` and its epistemic
-          contract: the page reflects the *documentation*, not the code; it is
-          authoritative for what the docs say/design/intend, but any
-          code-behavior claim must be confirmed against the code — not against
-          the page's own cited docs — before you assert it).
+        - **KnowledgeDoc** nodes (ingested docs) → the document body VERBATIM
+          from the content-addressed corpus snapshot (``corpus/<sha>.md``),
+          independent of the working tree, alongside its ``status`` +
+          ``statusNote``. Nothing paraphrases a document: what you get is what
+          its author wrote. The body is authoritative for what the docs
+          say/design/intend, but any code-behavior claim must be confirmed
+          against the code before you assert it.
 
         ``lineRange`` (``"10-25"``, ``"10-"``, or ``"10"``) works on EVERY
-        node type — use it to page through large documents and pages. An
+        node type — use it to page through large documents. An
         unranged read of a large doc returns the head plus ``truncated``,
         ``totalLines``, and a ``hint`` with the lineRange to continue from —
         follow it rather than re-requesting the whole body.
@@ -1492,8 +1311,6 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
                 return json.dumps({"error": str(e)})
             if node_type == "KnowledgeDoc":
                 return _dump_body_result(_slice_doc_body(_load_corpus_doc(store, node, nodeId), start_line, end_line))
-            if node_type == "KnowledgeConcept":
-                return _dump_body_result(_slice_doc_body(_read_concept_body(store, node, nodeId), start_line, end_line))
             return _dump_body_result(_load_code_source(store, node, nodeId, start_line, end_line))
         except Exception as e:
             return _error_response("load_source", e)
@@ -1501,7 +1318,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     @server.tool()
     def find_cross_cutting_communities(min_domains: int = 2, limit: int = 50) -> str:
         """List Communities whose members span ≥``min_domains`` domains
-        (code / page — the legacy runtime-node domain is only populated on
+        (code / doc — the legacy runtime-node domain is only populated on
         graphs built by other producers).
 
         Requires ``opentraceai cluster`` to have been run first; returns an

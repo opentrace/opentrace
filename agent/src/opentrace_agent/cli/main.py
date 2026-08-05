@@ -459,7 +459,7 @@ def _run_indexing_pipeline(
                         verbose=verbose,
                     )
 
-                # --- Phase 4: autoprune orphan sources/pages ---
+                # --- Phase 4: autoprune orphan documents ---
                 # Sweep state for files that disappeared between this run
                 # and the previous one. Scoped to the walked path / vault
                 # so partial indexes don't blast away other repos' data.
@@ -685,17 +685,9 @@ def _run_autoprune_after_index(
         db_path=db_path,
     )
 
-    if any(
-        [
-            report.sources_deleted,
-            report.pages_deleted,
-            report.pages_marked_stale,
-        ]
-    ):
+    if report.sources_deleted or report.corpus_files_deleted:
         click.echo(
-            f"  Autoprune: -{report.sources_deleted} sources, "
-            f"-{report.pages_deleted} concept pages, "
-            f"{report.pages_marked_stale} stale-marked, "
+            f"  Autoprune: -{report.sources_deleted} documents, "
             f"-{report.corpus_files_deleted} corpus files"
         )
     elif verbose:
@@ -799,8 +791,8 @@ def _collect_wiki_inputs(
             # Pass the path RELATIVE to the walked root, not the bare
             # basename — corpora routinely repeat filenames across folders
             # (every package dir has a README.md / index.md). The relative
-            # path lets the summariser disambiguate otherwise-identical page
-            # titles so bare [[Readme]] wiki-links don't render broken.
+            # path lets the summariser disambiguate otherwise-identical doc
+            # titles, and gives each KnowledgeDoc a root-relative ``path``.
             rel_name = os.path.relpath(abs_file, source_path)
             status = classify_doc_status(rel_name)
             if exclude_design_history and status != "authoritative":
@@ -2962,12 +2954,16 @@ def analyze(db_path: str | None, god_limit: int, bridge_limit: int, output_json:
 
 
 from opentrace_agent.cli.export_graph import export_graph_app as _export_graph_app  # noqa: E402
-from opentrace_agent.cli.hook import hook_app as _hook_app  # noqa: E402
-from opentrace_agent.cli.watch import watch as _watch_cmd  # noqa: E402
 
 app.add_command(_export_graph_app)
-app.add_command(_hook_app)
-app.add_command(_watch_cmd)
+
+# `hook` and `watch` were removed 2026-08-05. Both were scaffolding for
+# incremental indexing, which never landed: `hook install` wrote a git
+# post-commit hook invoking `opentraceai index --incremental` — a flag that has
+# never existed — and `watch`'s rebuild callback was an explicit no-op shim.
+# A hook that silently does nothing after every commit is worse than no hook:
+# it reports success while the graph goes stale. Re-add them with the
+# incremental pipeline they presuppose, not before.
 
 
 @app.command()
