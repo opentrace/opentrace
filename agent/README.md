@@ -77,11 +77,11 @@ Add OpenTrace to Claude Code as a plugin, or configure it manually in your proje
 
 ## Supported Languages
 
-| Full extraction (symbols + calls + imports) | Structural extraction (symbols only)       |
-| ------------------------------------------- | ------------------------------------------ |
-| Python, TypeScript/JavaScript, Go           | Rust, Java, Kotlin, C#, C/C++, Ruby, Swift |
+The CLI agent performs full extraction (symbols, calls, and imports) for
+Python, TypeScript/JavaScript, Go, and Java.
 
-Config and data files (JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash) are indexed as file nodes.
+Other recognized source, config, and data files are indexed as file nodes
+without symbol extraction.
 
 ## CLI Reference
 

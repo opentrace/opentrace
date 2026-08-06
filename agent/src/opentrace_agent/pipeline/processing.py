@@ -38,6 +38,7 @@ from opentrace_agent.pipeline.types import (
 )
 from opentrace_agent.sources.code.extractors import (
     GoExtractor,
+    JavaExtractor,
     PythonExtractor,
     SymbolExtractor,
     TypeScriptExtractor,
@@ -49,6 +50,7 @@ from opentrace_agent.sources.code.extractors.typescript_extractor import (
 from opentrace_agent.sources.code.import_analyzer import (
     ImportResult,
     analyze_go_imports,
+    analyze_java_imports,
     analyze_python_imports,
     analyze_typescript_imports,
     build_go_dir_index,
@@ -61,6 +63,7 @@ _DEFAULT_EXTRACTORS: list[SymbolExtractor] = [
     PythonExtractor(),
     TypeScriptExtractor(),
     GoExtractor(),
+    JavaExtractor(),
 ]
 
 
@@ -299,6 +302,8 @@ def _analyze_imports_from_node(
         return analyze_go_imports(root_node, known_paths, go_module_path, dir_index=go_dir_index)  # type: ignore[arg-type]
     elif language in ("typescript", "javascript"):
         return analyze_typescript_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
+    elif language == "java":
+        return analyze_java_imports(root_node, file_path, known_paths)  # type: ignore[arg-type]
     return ImportResult()
 
 
