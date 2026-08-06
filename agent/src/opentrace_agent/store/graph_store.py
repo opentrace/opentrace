@@ -1016,7 +1016,6 @@ class GraphStore:
             edges.append((str(r[0]), str(r[1])))
         return nodes, edges
 
-
     def list_communities(self) -> list[dict[str, Any]]:
         """Return all Community nodes, ordered by community_id."""
         result = self._conn.execute(
@@ -1030,7 +1029,6 @@ class GraphStore:
             rows.append({"id": str(r[0]), "name": str(r[1]), **props})
         rows.sort(key=lambda x: x.get("community_id", 0))
         return rows
-
 
     def save_community(
         self,
@@ -1054,7 +1052,6 @@ class GraphStore:
             },
         )
 
-
     def clear_communities(self) -> None:
         """Remove all Community nodes and their membership edges.
 
@@ -1075,7 +1072,6 @@ class GraphStore:
         except Exception:
             logger.warning("clear_communities: failed to delete communities", exc_info=True)
 
-
     def get_node_community(self, node_id: str) -> dict[str, Any] | None:
         """Return the Community a node belongs to, or None if unassigned."""
         result = self._conn.execute(
@@ -1093,7 +1089,6 @@ class GraphStore:
         r = result.get_next()
         props = _parse_props(r[2]) or {}
         return {"id": str(r[0]), "name": str(r[1]), **props}
-
 
     def list_cross_community_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return edges whose endpoints belong to different communities.
@@ -1140,7 +1135,6 @@ class GraphStore:
     _METADATA_ID_PREFIX = "_meta:index:"
     _METADATA_TYPE = NODE_TYPE_INDEX_METADATA
 
-
     def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
         """Return top-degree non-synthetic nodes.
 
@@ -1169,7 +1163,6 @@ class GraphStore:
             )
         return rows
 
-
     def save_membership(self, id: str, node_id: str, community_id: str) -> None:
         """Link a node to its Community via MEMBER_OF_COMMUNITY."""
         self.merge_relationship(
@@ -1178,7 +1171,6 @@ class GraphStore:
             source_id=node_id,
             target_id=community_id,
         )
-
 
     def close(self) -> None:
         """Release connection and database resources."""

@@ -2123,6 +2123,7 @@ def _configure_logging(verbose: bool) -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
+
 # ---------------------------------------------------------------------------
 # Graph analysis — community detection, structural highlights, exporters.
 # Registered as first-class top-level commands (no `graph` subgroup): each is
