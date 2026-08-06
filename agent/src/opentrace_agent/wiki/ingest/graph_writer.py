@@ -362,7 +362,7 @@ def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool
 # resolve to no KnowledgeDoc, so they fall out at lookup time.
 _MD_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<([^>]+)>|\[[^\]]*\]\(\s*([^)\s]+)")
 # Reference-style definition: ``[label]: path/to/doc.md "title"``.
-_MD_REF_DEF_RE = re.compile(r"^[ \t]{0,3}\[[^\]^\]]+\]:[ \t]*<?([^\s>]+)>?", re.MULTILINE)
+_MD_REF_DEF_RE = re.compile(r"^[ \t]{0,3}\[[^\]]+\]:[ \t]*<?([^\s>]+)>?", re.MULTILINE)
 # HTML anchor — covers a raw .html doc read before markitdown normalization.
 _HTML_HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 # Anything with a URI scheme (http:, mailto:, tel:) or protocol-relative //.
@@ -454,6 +454,15 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
     # 3. Delete shared KnowledgeDocs only when no other vault still references
     #    them. We re-check after deleting the Vault above so the just-
     #    deleted vault's CONTAINS edges are gone from the count.
+    #
+    #    This check and the delete below are not atomic, and LadybugDB gives us
+    #    no transaction to make them so (see ../../store/CLAUDE.md). A compile
+    #    that adds a CONTAINS edge from another vault to `sid` in the window
+    #    between the traverse and the delete loses the doc node. Serializing
+    #    vault writes is what closes this — `ingest/pipeline._flock` does that
+    #    per vault, but two *different* vaults sharing a doc by sha take
+    #    different locks and can still interleave. Don't read the traverse as
+    #    a guarantee; it is a best-effort refcount.
     for sid in sources_in_vault:
         try:
             inbound = store.traverse(

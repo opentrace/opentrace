@@ -356,20 +356,25 @@ class GraphStore:
             return False
         # Detach incoming and outgoing edges first — LadybugDB DETACH DELETE
         # support varies, so we delete edges by RELATES match then the node.
+        # A node with no edges in one direction is the common case, so a failure
+        # here is not fatal — but it can also be a real DB error (closed
+        # connection, transaction conflict), in which case the `DELETE n` below
+        # fails too and raises a misleading node-level error. Log the original
+        # so the actual cause is recoverable from the debug stream.
         try:
             self._conn.execute(
                 "MATCH (a:Node {id: $id})-[r:RELATES]->(:Node) DELETE r",
                 parameters={"id": node_id},
             )
         except Exception:
-            pass
+            logger.debug("delete_node: outgoing edge delete failed for %s", node_id, exc_info=True)
         try:
             self._conn.execute(
                 "MATCH (:Node)-[r:RELATES]->(b:Node {id: $id}) DELETE r",
                 parameters={"id": node_id},
             )
         except Exception:
-            pass
+            logger.debug("delete_node: incoming edge delete failed for %s", node_id, exc_info=True)
         self._conn.execute(
             "MATCH (n:Node {id: $id}) DELETE n",
             parameters={"id": node_id},
@@ -1437,6 +1442,31 @@ class GraphStore:
                 }
                 pairs.append((node, rel))
         return pairs
+
+    def degrees_for_nodes(self, node_ids: set[str]) -> dict[str, int]:
+        """Return ``{node_id: total degree}`` for *node_ids*, in ONE query.
+
+        Degree counts edges in both directions, matching what a
+        ``traverse(direction="both", max_depth=1)`` neighbour count reports.
+        Nodes with no edges are absent from the result — callers should treat
+        a missing key as zero.
+
+        **Use this instead of a per-node ``traverse`` in a loop.** Ranking N
+        nodes by degree that way is N round-trips, each doing its own
+        ``get_node`` existence check; on a vault with a few hundred documents
+        that dominates the whole overview call.
+        """
+        if not node_ids:
+            return {}
+        result = self._conn.execute(
+            "MATCH (a:Node)-[r:RELATES]-(b:Node) WHERE a.id IN $ids RETURN a.id AS id, count(r) AS degree",
+            parameters={"ids": list(node_ids)},
+        )
+        degrees: dict[str, int] = {}
+        while result.has_next():
+            row = result.get_next()
+            degrees[str(row[0])] = int(row[1])
+        return degrees
 
     def list_relationships_for_nodes(
         self,

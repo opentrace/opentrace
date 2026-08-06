@@ -74,6 +74,14 @@ used, or the prune walks a vault the compile never wrote to.
 verbatim and nothing restates it, so it cannot go stale relative to a source.
 Don't introduce a `stale_since` stamp here.
 
+**The corpus-body delete is a security boundary.** `corpus_path` is graph data
+— written from whatever was ingested — and it feeds `unlink()`. `_safe_corpus_target`
+rejects `..` segments, absolute paths, and anything resolving outside the DB
+directory, mirroring `graph_writer._read_corpus_body`'s guard. Don't reduce it
+to a bare `db_dir / rel` join. The path is DB-relative and already carries its
+`corpus/` segment, so don't reintroduce a `corpus/` intermediate either — that
+doubles the segment and the sweep silently deletes nothing.
+
 ## Pitfalls
 
 - **Cancellation is cooperative.** Stages check `ctx.cancelled` between units; an in-progress tree-sitter parse cannot be interrupted. Don't expect sub-second cancel latency on large files.

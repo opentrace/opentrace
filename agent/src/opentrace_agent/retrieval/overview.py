@@ -93,14 +93,13 @@ def _scoped_overview(store: GraphStore, top_n: int, vault_scope: str) -> dict[st
             }
         )
 
-    # Top concepts by 1-hop degree, computed only for in-scope nodes.
-    scored: list[tuple[dict[str, Any], int]] = []
-    for n in in_scope[: top_n * 5]:
-        try:
-            neighbours = store.traverse(n["id"], direction="both", max_depth=1)
-        except ValueError:
-            neighbours = []
-        scored.append((n, len(neighbours)))
+    # Top concepts by 1-hop degree, computed only for in-scope nodes. One
+    # batched aggregate rather than a `traverse` per node — the loop this
+    # replaces was N+1 queries and capped its candidate set at `top_n * 5` to
+    # bound the cost, which meant the ranking silently ignored every document
+    # past that cut. A single query scores the whole vault.
+    degrees = store.degrees_for_nodes({n["id"] for n in in_scope})
+    scored: list[tuple[dict[str, Any], int]] = [(n, degrees.get(n["id"], 0)) for n in in_scope]
     scored.sort(key=lambda p: p[1], reverse=True)
     top_concepts: list[dict[str, Any]] = []
     for n, degree in scored[:top_n]:

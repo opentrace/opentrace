@@ -88,19 +88,28 @@ def autoprune_after_index(
 
     # --- 2. Delete corpus bodies for orphan documents ---
     if db_path:
-        corpus_root = Path(db_path).resolve().parent / "corpus"
+        # ``corpus_path`` is stored relative to the DB's parent (``.opentrace/``),
+        # so it resolves against that directory — the same base
+        # ``graph_writer._read_corpus_body`` and ``mcp_server`` use. Don't
+        # introduce a ``.../corpus`` intermediate here: the relative path
+        # already carries the ``corpus/`` segment and joining both doubles it.
+        db_dir = Path(db_path).resolve().parent
         for doc in orphan_docs:
             props = doc.get("properties") or {}
             rel = props.get("corpus_path")
-            if rel:
-                target = corpus_root.parent / rel
-                try:
-                    target.unlink()
-                    report.corpus_files_deleted += 1
-                except FileNotFoundError:
-                    pass
-                except OSError as exc:
-                    logger.warning("autoprune: could not delete %s (%s)", target, exc)
+            if not rel:
+                continue
+            target = _safe_corpus_target(db_dir, str(rel))
+            if target is None:
+                logger.warning("autoprune: refusing to delete out-of-tree corpus_path %r", rel)
+                continue
+            try:
+                target.unlink()
+                report.corpus_files_deleted += 1
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning("autoprune: could not delete %s (%s)", target, exc)
 
     # --- 3. Delete each orphan KnowledgeDoc + its edges ---
     for doc in orphan_docs:
@@ -114,6 +123,24 @@ def autoprune_after_index(
 # GraphStore queries — kept local so the autoprune module owns its own
 # Cypher and the GraphStore API stays focused on reads.
 # ---------------------------------------------------------------------------
+
+
+def _safe_corpus_target(db_dir: Path, corpus_rel: str) -> Path | None:
+    """Resolve ``corpus_rel`` under *db_dir*, or ``None`` if it escapes.
+
+    ``corpus_path`` is graph data, and the graph is written from whatever was
+    ingested — so this is an untrusted string on a path that ends in
+    ``unlink()``. Mirrors the guard in ``graph_writer._read_corpus_body``,
+    with a resolved-prefix check on top so symlinked segments can't walk out
+    either. **Don't drop this to a bare join**: a ``corpus_path`` of
+    ``"../../etc/passwd"`` would then delete an arbitrary file.
+    """
+    if not corpus_rel or ".." in corpus_rel or corpus_rel.startswith("/"):
+        return None
+    target = (db_dir / corpus_rel).resolve()
+    if not target.is_relative_to(db_dir):
+        return None
+    return target
 
 
 def _docs_in_vault(store, *, vault_name: str) -> list[dict[str, Any]]:

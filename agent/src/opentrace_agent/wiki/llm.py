@@ -110,7 +110,10 @@ def _retry_call(
                 f" (server hint: {hint:.1f}s)" if hint > 0 else "",
             )
             time.sleep(delay + jitter)
-    raise RuntimeError("retry loop exited without returning or raising")
+    # Only reachable when `max_attempts < 1` makes the loop body never run —
+    # every in-loop path returns or raises. Named so a miscalled retry budget
+    # reports itself instead of surfacing as a bare context-free error.
+    raise RuntimeError(f"{label}: retry loop never ran (max_attempts={max_attempts} must be >= 1)")
 
 
 _GEMINI_RETRY_DELAY_RE = re.compile(

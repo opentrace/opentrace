@@ -134,6 +134,65 @@ class TestAutoprune:
             assert store.get_node("corpus::eee") is not None
 
 
+class TestCorpusFileDeletion:
+    """``corpus_path`` is graph data on a path that ends in ``unlink()``."""
+
+    def test_deletes_body_at_db_relative_corpus_path(self, tmp_path):
+        """``corpus_path`` is stored relative to the DB's parent, so it resolves
+        against that directory — not against a ``corpus/`` subdirectory, which
+        would double the segment and silently delete nothing."""
+        db = tmp_path / ".opentrace" / "index.db"
+        db.parent.mkdir(parents=True)
+        body = db.parent / "corpus" / "source__ccc.md"
+        body.parent.mkdir()
+        body.write_text("orphan body")
+
+        with GraphStore(str(db)) as store:
+            _seed(store)
+            report = autoprune_after_index(
+                store,
+                walked_doc_shas={"aaa", "bbb"},
+                vault_name="v",
+                db_path=str(db),
+            )
+
+        assert report.corpus_files_deleted == 1
+        assert not body.exists()
+
+    def test_traversing_corpus_path_is_refused(self, tmp_path):
+        """A ``corpus_path`` that escapes the DB directory must not be unlinked.
+        The value comes from the graph, which is written from whatever was
+        ingested — so it is untrusted input to a delete."""
+        db = tmp_path / ".opentrace" / "index.db"
+        db.parent.mkdir(parents=True)
+        victim = tmp_path / "precious.txt"
+        victim.write_text("do not delete me")
+
+        with GraphStore(str(db)) as store:
+            vault_id = vault_node_id("v")
+            store.add_node(vault_id, "KnowledgeVault", "v", properties={"vault": "v", "scope": "local"})
+            sid = "corpus::evil"
+            store.add_node(
+                sid,
+                "KnowledgeDoc",
+                "evil.md",
+                properties={"sha256": "evil", "corpus_path": "../precious.txt"},
+            )
+            store.add_relationship(f"{vault_id}->CONTAINS->{sid}", "CONTAINS", vault_id, sid)
+
+            report = autoprune_after_index(
+                store,
+                walked_doc_shas=set(),  # the doc is an orphan → prune target
+                vault_name="v",
+                db_path=str(db),
+            )
+
+        assert victim.exists(), "path-traversal corpus_path escaped the DB directory"
+        assert report.corpus_files_deleted == 0
+        # The node itself is still pruned — only the file delete is refused.
+        assert report.documents_deleted == 1
+
+
 class TestComputeWalkedShas:
     def test_hashes_raw_file_bytes(self, tmp_path):
         f1 = tmp_path / "a.md"

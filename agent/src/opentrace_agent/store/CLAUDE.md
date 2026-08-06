@@ -102,6 +102,16 @@ well-labelled nodes effectively undiscoverable at any sane limit.
   below this is filtered out. The resolver-stamped `CALLS` confidence is the
   only user; the wiki layer stamps no confidence at all.
 
+## Degree ranking
+
+`degrees_for_nodes(node_ids)` returns `{id: in+out degree}` for a set of ids in
+one aggregate query; ids with no edges are absent, so read a missing key as
+zero. It exists so callers stop ranking nodes by `traverse(direction="both",
+max_depth=1)` in a loop — that is N round-trips, each with its own `get_node`
+existence check, and it pushed callers into capping their candidate set to
+bound the cost (which silently truncated the ranking). `retrieval/overview.py`
+uses it for the vault-scoped `top_concepts`.
+
 ## Pitfalls
 
 - **No transaction support.** Concurrent writers can corrupt the graph. Today the pipeline writes single-threaded; if you parallelize saving, add a write lock or batch externally.

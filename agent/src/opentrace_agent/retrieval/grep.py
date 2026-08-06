@@ -226,31 +226,30 @@ def _grep_vault(
 
     matches: list[dict[str, Any]] = []
 
-    if corpus_by_abs:
-        raw = _search_files(
-            pattern=pattern,
-            targets=sorted(corpus_by_abs),
-            glob=None,  # membership + file_filter already selected the files
-            case_sensitive=case_sensitive,
-            max_results=max_results,
+    raw = _search_files(
+        pattern=pattern,
+        targets=sorted(corpus_by_abs),
+        glob=None,  # membership + file_filter already selected the files
+        case_sensitive=case_sensitive,
+        max_results=max_results,
+    )
+    for m in raw:
+        doc = corpus_by_abs.get(m["file_path"])
+        if doc is None:
+            continue
+        matches.append(
+            {
+                "node_id": doc["node_id"],
+                "file_path": doc["display"],
+                "line_number": m["line_number"],
+                "line_text": m["line_text"],
+                "title": doc["title"],
+                "status": doc["status"],
+                "structural_context": {"scope_type": "KnowledgeVault", "vault": vault_name, "layer": "corpus"},
+            }
         )
-        for m in raw:
-            doc = corpus_by_abs.get(m["file_path"])
-            if doc is None:
-                continue
-            matches.append(
-                {
-                    "node_id": doc["node_id"],
-                    "file_path": doc["display"],
-                    "line_number": m["line_number"],
-                    "line_text": m["line_text"],
-                    "title": doc["title"],
-                    "status": doc["status"],
-                    "structural_context": {"scope_type": "KnowledgeVault", "vault": vault_name, "layer": "corpus"},
-                }
-            )
-            if len(matches) >= max_results:
-                break
+        if len(matches) >= max_results:
+            break
 
     return {"matches": matches, "count": len(matches), "scope": scope_id, "mode": _engine()}
 

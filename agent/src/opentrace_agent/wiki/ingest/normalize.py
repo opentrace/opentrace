@@ -69,10 +69,16 @@ def _markitdown_convert(name: str, data: bytes) -> str:
     # markitdown's BinaryIO API takes a stream; provide one with a name attr so
     # extension sniffing works.
     suffix = os.path.splitext(name)[1] or ""
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(data)
-        tmp_path = tmp.name
+    # `delete=False` because markitdown reopens the path by name, so the handle
+    # has to be closed before conversion. That makes cleanup ours: bind
+    # `tmp_path` before the `try` and unlink in `finally`, so a failure *inside*
+    # the `with` (a short write, a full disk) still removes the file instead of
+    # leaking it into the temp dir.
+    tmp_path: str | None = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(data)
         try:
             result = md.convert(tmp_path)
         except Exception as conv_err:
@@ -86,10 +92,11 @@ def _markitdown_convert(name: str, data: bytes) -> str:
             except UnicodeDecodeError:
                 raise conv_err
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     return result.text_content or ""
 
 

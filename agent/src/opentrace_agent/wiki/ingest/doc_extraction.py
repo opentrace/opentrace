@@ -321,11 +321,32 @@ def extract_docs(
     # the end). Label stamping happens in a second pass in INPUT order so
     # results stay deterministic regardless of completion order.
     results_by_sha: dict[str, tuple[NormalizedSource, str, dict]] = {}
+    failures: list[str] = []
     done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=_wiki_concurrency()) as pool:
-        futures = [pool.submit(_extract_one, src) for src in sources]
-        for fut in concurrent.futures.as_completed(futures):
-            src, title, result, n_parts = fut.result()
+        future_to_src = {pool.submit(_extract_one, src): src for src in sources}
+        for fut in concurrent.futures.as_completed(future_to_src):
+            # One doc's extraction failing must not discard the docs that
+            # already succeeded: letting the exception out of this loop drops
+            # every collected result and leaves the second pass to KeyError on
+            # sources whose future had completed. A failed doc keeps its
+            # filename-derived title and an empty summary — it is still
+            # ingested, just unlabelled.
+            try:
+                src, title, result, n_parts = fut.result()
+            except Exception as exc:  # noqa: BLE001 — reported per-source below
+                failed = future_to_src[fut]
+                failures.append(f"extraction failed for {failed.original_name}: {exc}")
+                done += 1
+                yield WikiPipelineEvent(
+                    kind=WikiEventKind.ERROR,
+                    phase=WikiPhase.EXTRACTING,
+                    message=f"Extraction failed for {failed.original_name}: {exc}",
+                    current=done,
+                    total=total,
+                    file_name=failed.original_name,
+                )
+                continue
             results_by_sha[src.sha256] = (src, title, result)
             done += 1
             parts_note = f" ({n_parts} parts)" if n_parts > 1 else ""
@@ -339,14 +360,22 @@ def extract_docs(
             )
 
     for src in sources:
-        src, title, result = results_by_sha[src.sha256]
+        entry = results_by_sha.get(src.sha256)
+        if entry is None:
+            # Extraction failed for this source (reported above). Fall back to
+            # the mechanical title so the doc still gets a navigation label.
+            src.title = title_by_sha[src.sha256]
+            src.one_line_summary = ""
+            continue
+        _, title, result = entry
         src.title = title
         src.one_line_summary = str(result.get("one_line_summary", ""))
 
     yield WikiPipelineEvent(
         kind=WikiEventKind.STAGE_STOP,
         phase=WikiPhase.EXTRACTING,
-        message=f"Extracted labels from {total} doc(s)",
+        message=f"Extracted labels from {total - len(failures)} of {total} doc(s)",
         current=total,
         total=total,
+        errors=failures or None,
     )

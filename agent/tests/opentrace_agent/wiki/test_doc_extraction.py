@@ -25,7 +25,7 @@ from opentrace_agent.wiki.ingest.doc_extraction import (
     _split_sections,
     extract_docs,
 )
-from opentrace_agent.wiki.ingest.types import NormalizedSource
+from opentrace_agent.wiki.ingest.types import NormalizedSource, WikiEventKind
 
 
 def _src(sha: str, name: str) -> NormalizedSource:
@@ -164,3 +164,33 @@ def test_extract_docs_stamps_labels(fake_llm):
 
     assert src.title == "Ducks"
     assert src.one_line_summary == "About ducks."
+
+
+def test_one_failed_extraction_does_not_discard_the_others(monkeypatch):
+    """A doc whose LLM call raises must not take the batch with it.
+
+    Letting the exception escape the ``as_completed`` loop throws away every
+    result already collected and leaves the label-stamping pass to KeyError on
+    sources whose future had finished. The failed doc keeps its mechanical
+    title, gets an empty summary, and is reported as an error event.
+    """
+    monkeypatch.setenv("OT_WIKI_CONCURRENCY", "1")
+
+    class Exploding:
+        def call_tool(self, *, system, user, tool_name, tool_schema, max_tokens=4096):
+            if "boom.md" in user:
+                raise RuntimeError("provider exhausted retries")
+            return {"one_line_summary": "Fine."}
+
+    good = NormalizedSource(sha256="g", original_name="good.md", markdown="# Good\nbody")
+    bad = NormalizedSource(sha256="b", original_name="boom.md", markdown="# Boom\nbody")
+    events = list(extract_docs([good, bad], Exploding()))
+
+    assert good.one_line_summary == "Fine."
+    assert bad.title == "Boom"  # mechanical title survives
+    assert bad.one_line_summary == ""
+    errors = [e for e in events if e.kind == WikiEventKind.ERROR]
+    assert len(errors) == 1
+    assert "boom.md" in errors[0].message
+    stop = [e for e in events if e.kind == WikiEventKind.STAGE_STOP][-1]
+    assert stop.errors and len(stop.errors) == 1
