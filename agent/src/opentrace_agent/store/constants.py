@@ -32,12 +32,10 @@ VALID_NODE_TYPES = {
     "Package",
     # ``Module`` is a code-graph concept (the import graph's consumer/target,
     # per code_graph.proto) and is read by ``cli/impact.py``'s blast-radius
-    # walk, so it stays. ``Idea`` / ``Paper`` / ``Person`` / ``Event`` were
-    # added alongside the LLM entity extractor and removed with it on
-    # 2026-08-04 — nothing emits them any more. Note this set is declarative:
-    # it is referenced nowhere outside this module, so it neither validates
-    # writes nor filters reads, and an older graph containing entity nodes
-    # stays fully readable.
+    # walk, so it stays. Note this set is declarative: it is referenced
+    # nowhere outside this module, so it neither validates writes nor filters
+    # reads, and a graph containing a type absent from it stays fully
+    # readable.
     "Module",
     # Runtime / observability types (not in code_graph.proto)
     "Service",

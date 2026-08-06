@@ -141,7 +141,7 @@ const server: Plugin = async (
       "opentrace_impact_analysis": createImpactAnalysisTool(client),
       "opentrace_graph_explore": createGraphExploreTool(client),
       "opentrace_graph_stats": createGraphStatsTool(client),
-      // Knowledge-graph pipeline (requires opentraceai[graph])
+      // Knowledge-graph pipeline (networkx ships in the base install)
       "opentrace_graph_build": createGraphBuildTool(client),
       "opentrace_graph_query": createGraphQueryTool(client),
       "opentrace_graph_analyze": createGraphAnalyzeTool(client),

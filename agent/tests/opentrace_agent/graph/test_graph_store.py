@@ -53,8 +53,8 @@ class TestBuildSearchText:
         assert "src/x.py" in text
 
     def test_includes_one_line_summary(self):
-        # KnowledgeConcept pages store their gloss under one_line_summary.
-        text = build_search_text("Auth", "KnowledgeConcept", {"one_line_summary": "how staff sign in"})
+        # KnowledgeDocs store their navigation label under one_line_summary.
+        text = build_search_text("Auth", "KnowledgeDoc", {"one_line_summary": "how staff sign in"})
         assert "how staff sign in" in text
 
     def test_includes_description(self):
@@ -699,36 +699,6 @@ class TestKnowledgeGraph:
         assert node["properties"]["members"] == 14
         assert node["properties"]["is_god"] is True
 
-    def test_save_hyperedge_roundtrip(self, store):
-        store.save_hyperedge("h1", "OAuth Handshake", "implement", "INFERRED", 0.75, source_file="auth.py")
-        node = store.get_node("h1")
-        assert node["type"] == "Hyperedge"
-        assert node["properties"]["relation"] == "implement"
-        assert node["properties"]["confidence"] == "INFERRED"
-        assert node["properties"]["confidence_score"] == 0.75
-        assert node["properties"]["source_file"] == "auth.py"
-
-    def test_save_semantic_edge_persists_confidence(self, store):
-        store.add_node("a", "Function", "login")
-        store.add_node("b", "Function", "authenticate")
-        store.save_semantic_edge(
-            "se1",
-            "a",
-            "b",
-            "rationale_for",
-            "AMBIGUOUS",
-            0.3,
-            source_file="auth.py",
-            source_location="auth.py:42",
-        )
-        rels = store.list_relationships_for_nodes({"a", "b"})
-        assert len(rels) == 1
-        rel = rels[0]
-        assert rel["type"] == "SEMANTIC_EDGE"
-        assert rel["properties"]["confidence"] == "AMBIGUOUS"
-        assert rel["properties"]["confidence_score"] == 0.3
-        assert rel["properties"]["source_location"] == "auth.py:42"
-
     def test_membership_query(self, store):
         store.add_node("fn1", "Function", "login")
         store.save_community("c1", "Auth", 1, 0.7, 5)
@@ -749,16 +719,6 @@ class TestKnowledgeGraph:
         store.save_community("c3", "Gamma", 3, 0.5, 8)
         names = [c["name"] for c in store.list_communities()]
         assert names == ["Alpha", "Beta", "Gamma"]
-
-    def test_participation_query(self, store):
-        store.add_node("fn1", "Function", "step1")
-        store.save_hyperedge("h1", "Login Flow", "participate_in", "EXTRACTED", 1.0)
-        store.save_hyperedge("h2", "Audit Log", "participate_in", "INFERRED", 0.7)
-        store.save_participation("p1", "fn1", "h1")
-        store.save_participation("p2", "fn1", "h2")
-        hyperedges = store.list_hyperedges_for_node("fn1")
-        names = sorted(h["name"] for h in hyperedges)
-        assert names == ["Audit Log", "Login Flow"]
 
     def test_list_god_nodes_sorted_by_degree(self, store):
         _seed(store)
@@ -866,3 +826,42 @@ class TestFtsSearchOrdering:
         assert scores == sorted(scores, reverse=True), f"not best-first: {results}"
         # And the consequence that actually bit: the doc survives a limit of 3.
         assert "doc-browser-reqs" in [nid for nid, _ in results[:3]]
+
+
+class TestVaultMembership:
+    """Vault scoping resolves through ``CONTAINS`` edges, never a per-node
+    property: a KnowledgeDoc is content-addressed by sha and can belong to
+    several vaults, so it carries no ``vault`` key. ``traverse`` used to filter
+    on that key and therefore excluded every document.
+    """
+
+    @staticmethod
+    def _seed(store):
+        store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
+        store.add_node("vault::other", "KnowledgeVault", "other", {"vault": "other"})
+        for sid in ("a", "b"):
+            store.add_node(f"corpus::{sid}", "KnowledgeDoc", f"{sid}.md", {"sha256": sid})
+        store.add_relationship("c-a", "CONTAINS", "vault::kb", "corpus::a")
+        store.add_relationship("c-b", "CONTAINS", "vault::other", "corpus::b")
+        store.add_relationship("l-ab", "LINKS_TO", "corpus::a", "corpus::b")
+
+    def test_member_ids_include_vault_and_its_docs(self, store):
+        self._seed(store)
+        assert store.vault_member_ids("kb") == {"vault::kb", "corpus::a"}
+
+    def test_member_ids_unknown_vault_is_empty(self, store):
+        self._seed(store)
+        assert store.vault_member_ids("ghost") == set()
+
+    def test_traverse_scope_keeps_in_vault_neighbours(self, store):
+        self._seed(store)
+        rows = store.traverse("vault::kb", direction="outgoing", max_depth=1, vault_scope="kb")
+        assert [r["node"]["id"] for r in rows] == ["corpus::a"]
+
+    def test_traverse_scope_drops_out_of_vault_neighbours(self, store):
+        """``corpus::a`` LINKS_TO ``corpus::b``, which lives in another vault."""
+        self._seed(store)
+        rows = store.traverse("corpus::a", direction="outgoing", max_depth=1, vault_scope="kb")
+        assert [r["node"]["id"] for r in rows] == []
+        unscoped = store.traverse("corpus::a", direction="outgoing", max_depth=1)
+        assert "corpus::b" in [r["node"]["id"] for r in unscoped]

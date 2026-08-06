@@ -148,6 +148,23 @@ class TestWriteVaultToGraph:
         # `summary` mirrors the one-liner so build_search_text FTS-indexes it.
         assert props["summary"] == "Q4 financial report."
 
+    def test_doc_carries_last_updated(self, store):
+        """``last_updated`` is what ``retrieval.overview``'s ``recently_updated``
+        and ``search``'s ``recency`` read. Nothing wrote it, so both were
+        permanently empty/null — and an empty "recently updated" list reads as
+        "nothing changed", not as a missing producer. Keep this assertion.
+        """
+        write_vault_to_graph(store, _make_meta(), normalized=_normalized())
+        props = store.get_node(corpus_doc_node_id("sha1"))["properties"]
+        assert props["last_updated"], "no producer for last_updated → recently_updated is dead"
+        # A corpus doc is content-addressed, so ingest time IS last-updated time.
+        assert props["last_updated"] == props["acquired_at"]
+
+    def test_last_updated_survives_remirror(self, store):
+        write_vault_to_graph(store, _make_meta(), normalized=_normalized())
+        write_vault_to_graph(store, _make_meta())
+        assert store.get_node(corpus_doc_node_id("sha1"))["properties"]["last_updated"]
+
     def test_source_labels_survive_remirror_without_normalized(self, store):
         write_vault_to_graph(store, _make_meta(), normalized=_normalized())
         # Re-mirror (e.g. vault attach / backfill) without NormalizedSources.
@@ -228,7 +245,7 @@ class TestDeleteVaultFromGraph:
 
     def test_shared_source_survives_when_other_vault_still_uses_it(self, store):
         """Two vaults ingest the same source file (same sha256). Deleting one
-        vault must NOT delete the shared Source node — the other vault still
+        vault must NOT delete the shared KnowledgeDoc — the other vault still
         depends on it via its CONTAINS edge."""
         write_vault_to_graph(store, _make_meta())  # uses sha1 + sha2
 
@@ -240,7 +257,7 @@ class TestDeleteVaultFromGraph:
         }
         write_vault_to_graph(store, meta_b)
 
-        # Source nodes don't carry a `vault` property — vault membership is
+        # KnowledgeDocs don't carry a `vault` property — vault membership is
         # graph-edge based.
         sha1_node = store.get_node(corpus_doc_node_id("sha1"))
         assert sha1_node is not None
@@ -432,13 +449,12 @@ class TestLinkVaultToRepo:
         write_vault_to_graph(store, _make_meta())
         store.add_node("myrepo", "Repository", "myrepo", {})
 
-    def test_links_and_stamps_spawned_from(self, store):
+    def test_writes_documents_edge(self, store):
         self._seed(store)
         assert link_vault_to_repo(store, "myrepo", "kb") is True
 
         out = store.traverse("myrepo", direction="outgoing", max_depth=1, relationship_type=REL_TYPE_DOCUMENTS)
         assert [r["node"]["id"] for r in out] == [vault_node_id("kb")]
-        assert store.get_node(vault_node_id("kb"))["properties"]["spawned_from"] == "myrepo"
 
     def test_missing_repo_or_vault_skipped(self, store):
         write_vault_to_graph(store, _make_meta())
@@ -456,14 +472,19 @@ class TestLinkVaultToRepo:
         out = store.traverse("myrepo", direction="outgoing", max_depth=1, relationship_type=REL_TYPE_DOCUMENTS)
         assert len(out) == 1
 
-    def test_spawned_from_survives_remirror(self, store):
-        """Re-mirrors that skip the linker (vault attach, promote/demote)
-        must carry the stamp forward rather than wiping it."""
+    def test_repo_link_is_not_mirrored_onto_the_vault_node(self, store):
+        """The repo→vault key lives in ``.vault.json`` and nowhere else.
+
+        A copy was written onto the vault node too, and carried forward on
+        every re-mirror so it wouldn't be wiped — but nothing ever read it
+        back. The `DOCUMENTS` edge already records the same relationship in
+        the graph, so the property was a second home for one fact.
+        """
         self._seed(store)
         link_vault_to_repo(store, "myrepo", "kb")
 
-        write_vault_to_graph(store, _make_meta())  # plain re-mirror
-        assert store.get_node(vault_node_id("kb"))["properties"]["spawned_from"] == "myrepo"
+        props = store.get_node(vault_node_id("kb"))["properties"] or {}
+        assert "spawned_from" not in props
 
 
 class TestLinkDocToDocLinks:

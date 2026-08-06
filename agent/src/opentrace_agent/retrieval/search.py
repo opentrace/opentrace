@@ -15,10 +15,13 @@
 """OT-1732 ranked Search — FTS-only on the CLI surface.
 
 Wraps :meth:`GraphStore._fts_search` to produce ranked results with a snippet
-plus the optional metadata channels the agent uses to triage hits (type,
-vault, recency, confidence). The vault / recency / confidence fields are
-populated where the underlying property is set; otherwise ``None``. They
-become consistently meaningful once Phases 4/5 land.
+plus the metadata channels an agent uses to triage hits: ``vault`` (set on the
+KnowledgeVault node) and ``recency`` (``last_updated``, stamped on every
+KnowledgeDoc at ingest). Both are ``None`` when the property isn't set.
+
+A hit carries no ``confidence``: nothing writes a node-level confidence. The
+only confidence in the graph is on ``CALLS`` relationships, which a node hit
+can't see — so a ``confidence`` key here would be permanently null.
 """
 
 from __future__ import annotations
@@ -48,16 +51,20 @@ def search(
     -------
     dict
         ``{"hits": [SearchHit, ...], "count": N, "query": str}`` where each hit
-        is ``{id, type, name, snippet, score, vault, recency, confidence}``;
+        is ``{id, type, name, snippet, score, vault, recency}``;
         ``KnowledgeDoc`` hits additionally carry ``title`` / ``status`` /
         ``one_line_summary`` (≤120 chars) / ``path`` so they can be triaged
-        without opening the doc. ``vault`` / ``recency`` / ``confidence`` are
-        ``None`` when the underlying property isn't set on the node.
+        without opening the doc. ``vault`` / ``recency`` are ``None`` when the
+        underlying property isn't set on the node.
     """
     from opentrace_agent.store.constants import INTERNAL_NODE_TYPES
 
     limit = max(1, min(limit, LIMIT_CAP))
     type_filter = set(node_types) if node_types else None
+    # Vault membership is the CONTAINS edge, not a per-node property. Filtering
+    # on a `vault` property matched only the vault node itself, so a scoped
+    # search returned no documents at all.
+    scope_ids = store.vault_member_ids(vault_scope) if vault_scope is not None else None
 
     try:
         fts = store._fts_search(query, limit * 3)
@@ -68,9 +75,9 @@ def search(
         # Fall back to the existing substring path so the caller still gets
         # something useful when FTS is unavailable. Drop scores in that case.
         nodes = store.search_nodes(query, node_types=node_types, limit=limit)
-        hits = [_hit_from_node(store, n, score=None, query=query) for n in nodes]
-        if vault_scope is not None:
-            hits = [h for h in hits if h["vault"] == vault_scope]
+        hits = [_hit_from_node(n, score=None, query=query) for n in nodes]
+        if scope_ids is not None:
+            hits = [h for h in hits if h["id"] in scope_ids]
         return {"hits": hits, "count": len(hits), "query": query}
 
     # Materialise candidates first (still ranked), then collapse File /
@@ -85,8 +92,8 @@ def search(
             continue
         if type_filter and node["type"] not in type_filter:
             continue
-        hit = _hit_from_node(store, node, score=score, query=query)
-        if vault_scope is not None and hit["vault"] != vault_scope:
+        hit = _hit_from_node(node, score=score, query=query)
+        if scope_ids is not None and hit["id"] not in scope_ids:
             continue
         candidates.append(hit)
 
@@ -157,7 +164,6 @@ def _collapse_doc_file_twins(store: GraphStore, hits: list[dict[str, Any]]) -> l
 
 
 def _hit_from_node(
-    store: GraphStore,
     node: dict[str, Any],
     score: float | None,
     query: str,
@@ -165,23 +171,17 @@ def _hit_from_node(
     props = node.get("properties") or {}
     snippet = _snippet(node, props, query)
 
-    # Vault scope is tracked at the Page level via the auto-injected
-    # `vault` column; for code nodes it stays None until Phase 4 adds an
-    # ancestor lookup.
+    # Vault scope is read straight off the node's auto-injected `vault`
+    # column. Code nodes carry no vault tag, so this is null for them —
+    # resolving one would mean an ancestor walk per hit, which no caller
+    # has asked for.
     vault = props.get("vault") if isinstance(props.get("vault"), str) else None
 
-    # Recency: last_updated is populated on Page by the wiki compile
-    # pipeline today; code-side stamping arrives in Phase 5.
+    # Recency: `last_updated` is stamped on KnowledgeDoc by the doc-ingest
+    # graph writer (a corpus doc is content-addressed, so its ingest time IS
+    # its last-updated time). Code nodes carry no per-node timestamp, so this
+    # is null for them.
     recency = props.get("last_updated") if isinstance(props.get("last_updated"), str) else None
-
-    # Confidence: Phase 5 stamps this on Page; falls back to the rel-level
-    # `confidence` carried on CALLS edges in some cases. Read whatever the
-    # property says; None if unset.
-    confidence_raw = props.get("confidence")
-    try:
-        confidence = float(confidence_raw) if confidence_raw is not None else None
-    except (TypeError, ValueError):
-        confidence = None
 
     hit = {
         "id": node["id"],
@@ -191,7 +191,6 @@ def _hit_from_node(
         "score": score,
         "vault": vault,
         "recency": recency,
-        "confidence": confidence,
     }
 
     # KnowledgeDoc hits carry their navigation label inline so an agent can

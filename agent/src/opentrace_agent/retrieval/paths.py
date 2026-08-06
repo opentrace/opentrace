@@ -45,8 +45,13 @@ def find_path(
     dict
         ``{"path": [{"node": …, "relationship": …, "depth": N}, …], "length": N}``
         where ``path`` includes the start node at depth 0 and the end node
-        last. If no path is found within ``max_hops``, ``path`` is ``None``
-        and ``length`` is ``None``.
+        last. If no path is found within ``max_hops``, ``path`` is ``None``,
+        ``length`` is ``None``, and ``truncated`` says WHY: ``True`` means the
+        walk stopped at the hop ceiling with nodes left unexpanded (raising
+        ``max_hops`` may find one), ``False`` means the reachable graph was
+        exhausted and no path exists. Callers must not collapse these two into
+        one message — reporting "no path" for a truncated search tells the user
+        something false.
     """
     max_hops = max(1, min(max_hops, MAX_HOPS_CAP))
     edge_filter = set(edge_types) if edge_types else None
@@ -68,9 +73,14 @@ def find_path(
     visited: set[str] = {start_id}
     queue: deque[tuple[str, int]] = deque([(start_id, 0)])
 
+    truncated = False
+
     while queue:
         curr_id, depth = queue.popleft()
         if depth >= max_hops:
+            # Reached the ceiling with this node still unexpanded, so the search
+            # is incomplete rather than exhaustive.
+            truncated = True
             continue
         # Outgoing-only walk; reversing for incoming paths is a future option.
         for nb_node, nb_rel in store._get_neighbors(curr_id, "outgoing"):
@@ -87,7 +97,7 @@ def find_path(
                 }
             queue.append((nb_node["id"], depth + 1))
 
-    return {"path": None, "length": None}
+    return {"path": None, "length": None, "truncated": truncated}
 
 
 def _reconstruct_path(

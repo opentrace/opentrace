@@ -172,7 +172,6 @@ export interface GraphStore {
     options?: TraverseOptions,
   ): Promise<TraverseResult[]>;
 
-
   /** Search stored source files for exact text patterns (regex). */
   grepSource?(
     pattern: string,
@@ -253,9 +252,11 @@ export interface GraphStore {
 export interface TraverseOptions {
   /** Allowlist of relationship types — supersedes single relType when set. */
   relTypes?: string[];
-  /** Reserved for Phase 4: restrict to nodes whose vault ancestor matches. */
+  /** Restrict to nodes belonging to this vault, by name. Membership follows
+   *  CONTAINS edges, so it reaches the vault's documents. */
   vaultScope?: string;
-  /** Reserved for Phase 5: skip rels with confidence below this threshold. */
+  /** Skip relationships whose `confidence` is below this threshold. Only CALLS
+   *  edges carry one; edges without it are kept. */
   confidenceThreshold?: number;
 }
 
@@ -346,9 +347,8 @@ export interface ProvenanceChainDoc {
 }
 
 /** A wiki chain is a single ``knowledge_doc`` entry: the document IS its own
- *  provenance. It was a union with a ``knowledge_concept`` variant while the
- *  concept-page layer existed and the chain was a multi-hop ``CITES`` walk;
- *  that layer was removed 2026-08-04 and nothing restates a document now. */
+ *  provenance. Nothing restates a document, so there is nothing to trace back
+ *  through and the chain is never multi-hop. */
 export type ProvenanceChainEntry = ProvenanceChainDoc;
 
 export interface ProvenanceWiki {

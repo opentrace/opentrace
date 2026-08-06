@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""URL fetching that hands clean inputs to the markdown loader.
+"""URL fetching that hands clean inputs to the doc-normalize stage.
 
 Most URLs go straight through ``markitdown.convert_url`` — markitdown handles
 HTML, YouTube transcripts, and PDFs over the wire. The exceptions are:

@@ -15,6 +15,8 @@ existence.py   — find_orphans (two-query set difference)
 counts.py      — count_by (global or descendants-of-parent)
 provenance.py  — Trust chain for code (commit_sha + line range) and wiki (the doc's own identity)
 grep.py        — Regex match via ripgrep over a Repository or Vault scope
+communities.py — list_communities, god_nodes, cross_community_bridges
+cross_domain.py — cross_domain_bridges, find_communities_spanning_domains
 ```
 
 ## Convention
@@ -49,9 +51,8 @@ All functions follow the [store CLAUDE.md](../store/CLAUDE.md) parameterisation 
   `graph_writer` on the `KnowledgeVault`; null for code nodes and KnowledgeDocs)
 - **`recency`** — `last_updated` property; null when not stamped
 - **`confidence`** — `confidence` property; null when not stamped, which is
-  everything the wiki layer writes. Nothing on the doc side has ever carried a
-  meaningful value here (the one wiki-side stamp went with the concept-page
-  layer on 2026-08-04); resolver-stamped `CALLS` edges are its only live user.
+  everything the wiki layer writes. Resolver-stamped `CALLS` edges are its only
+  user.
 - **`fileTwin`** — on a `KnowledgeDoc` hit, the id of the `File` node it
   `MIRRORS` (absent when there is none), so the code-tree view stays one hop away
 
@@ -64,14 +65,10 @@ and `status`), promoted to whichever of the two ranked better and annotated with
 reused — collapsing afterwards would free nothing. Pairing follows the MIRRORS
 edge, never a path-string match, so same-named docs in different repos don't merge.
 
-Measured on a 25-doc index: duplicates in the top 5 went from 8/12 queries to
-0/12, and `KnowledgeDoc` reached the top 3 on 10/12. The root cause of the
-inversion is worth knowing — BM25 normalises by length, so the `File`'s short
-`search_text` outscores the `KnowledgeDoc`'s *identical tokens plus a gloss*
-(it beat its own twin in 15 of 22 pairs). **Enriching a node demotes it** — the
-same inversion that let short-named extracted entity nodes outrank the glossed
-docs they came from, one of the reasons that layer was removed. A field-weighted
-ranking would fix the class of problem; this collapse fixes the worst instance.
+The root cause of the inversion is worth knowing — BM25 normalises by length, so
+the `File`'s short `search_text` outscores the `KnowledgeDoc`'s *identical tokens
+plus a gloss*. **Enriching a node demotes it.** A field-weighted ranking would fix
+the class of problem; this collapse fixes the worst instance.
 
 **Doc-hit triage fields.** `KnowledgeDoc` hits carry `title` / `status` /
 `one_line_summary` (≤120 chars, matching `list_nodes`'s compact projection) /
@@ -79,33 +76,21 @@ ranking would fix the class of problem; this collapse fixes the worst instance.
 instead of paying a `load_source` round-trip per hit. Other node types stay
 lean.
 
-**No entity exclusion any more.** `search` used to take an
-`exclude_llm_entities` flag (MCP-default-on) because doc-extracted entities —
-the second instance of the BM25 problem above — took ~half the top-3 slots on
-the same 25-doc index, crowding out the labelled docs they came from. The layer
-that produced them was **removed 2026-08-04** (see the wiki CLAUDE.md), so the
-flag, its `_is_llm_entity` discriminator, and the `entities_excluded` counter
-are gone with it. Nodes of those types in a pre-existing graph are returned like
-any other node — there is nothing left to filter, and hiding a legacy graph's
-contents would be worse than ranking it.
+`search` applies no node-type filtering of its own — every indexed node is
+eligible for a hit and is returned like any other.
 
 Falls back to `GraphStore.search_nodes` substring matching when FTS is
 unavailable (e.g. before the index is built).
 
 ## Provenance semantics
 
-Two branches keyed off node type (a third, `derived`, walked `DERIVED_FROM`
-from an LLM-extracted entity to its source document — removed 2026-08-04 with
-the entity layer; those node types now return `kind="unknown"`):
+Two branches keyed off node type; anything else returns `kind="unknown"`:
 
 - **Wiki** (`KnowledgeVault` / `KnowledgeDoc`) — returns the document's own
   identity: sha256, filename, root-relative path, ingest time, plus the
   `MIRRORS` File twin id when the doc came from a repo walk. A `KnowledgeVault`
-  gets an empty chain. This branch used to walk a `CITES` chain from a
-  synthesized concept page back to the docs it restated; that went with the
-  concept-page layer on **2026-08-04**, and with it the agent/model/session/
-  confidence compile stamp (page-level, never doc-level). A document *is* its
-  own provenance — nothing restates it, so there is no chain left to walk.
+  gets an empty chain. A document *is* its own provenance — nothing restates it,
+  so the chain is one entry.
 - **Code** (`Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`) — returns commit_sha + indexer_version from the per-repo
   `IndexMetadata` node (`_meta:index:{repoId}`), plus file_path + line_range
@@ -126,11 +111,8 @@ fall back to `search_graph` for FTS over indexed metadata.
 **A vault grep sweeps the CORPUS, and only the corpus** — every member
 KnowledgeDoc's normalized markdown body. This is the exhaustiveness primitive:
 ranked search finds the best documents, grep establishes what's true of every
-document (the folder arm won benchmark coverage questions with exactly this
-capability; see the wiki CLAUDE.md's measured-value section). It is also what
-replaced synthesis for "what does the corpus say about X" — verbatim lines from
-every doc, pre-labelled, instead of a paraphrase layer. Three details are
-load-bearing:
+document. It is also how "what does the corpus say about X" is answered —
+verbatim lines from every doc, pre-labelled. Three details are load-bearing:
 
 - **Membership via `CONTAINS`, not the directory.** The corpus dir is shared
   and sha-keyed across vaults; grepping it raw would leak other vaults' docs.
@@ -144,16 +126,6 @@ load-bearing:
   display path. A corpus sweep therefore returns *pre-labelled* matches,
   which is what makes it better than grepping the raw export (where PDFs and
   HTML grep badly and hits carry no labels).
-
-The sweep used to have a second half, over the vault's `pages/` dir of
-synthesized concept pages. That went with the concept-page layer — synthesis
-dropped **2026-08-03**, everything else **2026-08-04** — because the pages
-variant measured **88.4% against a 98.6% control (−10.2pp)**, the worst result
-on record: a synthesized page restates its sources in the model's own voice and
-strips their hedges, tense, and attribution, a failure mode a verbatim body
-structurally cannot have. Full record in
-[wiki CLAUDE.md](../wiki/CLAUDE.md) ("Closed"). **Don't re-add it** — the corpus
-sweep plus `load_source` is the replacement.
 
 No FTS-over-bodies fallback inside the graph: graph DBs are not blob stores
 (LadybugDB caps STRING properties at ~4 KB), and bodies live in their natural
@@ -172,11 +144,10 @@ disk-blob layer. A production-grade blob backing store is future work.
   testing.
 - **Ripgrep is an accelerator, not a dependency.** `grep` prefers `rg` and
   falls back to an equivalent Python scan when `shutil.which("rg")` comes up
-  empty; the response's `mode` says which ran. It used to hard-require `rg`,
-  and the failure was invisible: on a machine where `rg` existed only as a
-  shell function, every vault sweep returned "ripgrep not on PATH", so the
-  exhaustiveness primitive never executed once across three benchmark runs.
-  **Don't reintroduce the hard requirement**, and don't let `test_grep.py`
-  skip when `rg` is absent — that skip is what hid it (the tests hunted for a
-  vendored binary and prepended it to PATH, validating a path production
-  could not take).
+  empty; the response's `mode` says which ran. **Don't make `rg` a hard
+  requirement** — the failure mode is invisible: on a machine where `rg`
+  exists only as a shell function, every vault sweep returns "ripgrep not on
+  PATH" and the exhaustiveness primitive silently never runs. For the same
+  reason, don't let `test_grep.py` skip when `rg` is absent, and don't have
+  it hunt for a vendored binary and prepend that to PATH — both validate a
+  path production cannot take.

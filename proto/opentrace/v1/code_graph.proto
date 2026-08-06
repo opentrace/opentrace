@@ -132,24 +132,6 @@ message VariableNode {
   string docs            = 9;
 }
 
-// ConfidenceTier records how a wiki or semantic edge/node was derived, so
-// downstream consumers can tell directly observed facts apart from model
-// judgement.
-//
-//   EXTRACTED  — the source states the relationship itself; a reader could
-//                point at the line that asserts it.
-//   INFERRED   — concluded from context rather than from any explicit
-//                statement. Usually right, weighted below EXTRACTED.
-//   AMBIGUOUS  — a candidate the producer could neither confirm nor rule
-//                out, kept so review tooling can surface it rather than
-//                lose it.
-enum ConfidenceTier {
-  CONFIDENCE_TIER_UNSPECIFIED = 0;
-  CONFIDENCE_TIER_EXTRACTED   = 1;
-  CONFIDENCE_TIER_INFERRED    = 2;
-  CONFIDENCE_TIER_AMBIGUOUS   = 3;
-}
-
 // KnowledgeVaultNode represents a knowledge vault — a named collection of
 // indexed documents produced by the wiki ingest pipeline. One per vault directory.
 message KnowledgeVaultNode {
@@ -166,22 +148,16 @@ message KnowledgeVaultNode {
   // call into THIS graph store. Compared against the disk vault's
   // ``last_compiled_at`` to surface stale mirrors in ``vault list``.
   string mirror_compiled_at  = 6 [(ladybug.column) = "mirrorCompiledAt"];
-  // Repo id this vault was spawned from, when it was built by
-  // ``index --wiki`` over a repository walk (the same runs that emit a
-  // Repository -DOCUMENTS-> KnowledgeVault edge). Empty for vaults compiled
-  // from uploads/URLs and for attached globals.
-  string spawned_from        = 7 [(ladybug.column) = "spawnedFrom"];
+  // Denormalised vault name. Same reason as KnowledgeDoc.status: without a
+  // column the browser store drops it, and vault-scoped reads key off it.
+  string vault               = 7;
 }
 
-// NOTE (2026-08-04): a KnowledgeConceptNode message defined the concept-page
-// layer here until this date. It is removed rather than retained-for-legacy
-// (the convention SemanticEdgeRel/MentionsRel follow) because it never shipped
-// on a release branch — no graph anywhere contains a KnowledgeConcept node.
-// Do not re-add it: page synthesis measured 88.4% against a 98.6% control
-// (−10.2pp, the worst result on record) because restating a source strips its
-// hedges, tense, and attribution. Verbatim corpus bodies plus an exhaustive
-// `grep` answer the same questions without the restatement. See
-// agent/src/opentrace_agent/wiki/CLAUDE.md.
+// There is deliberately no node type for synthesized document content.
+// Restating a source strips its hedges, tense, and attribution, so a
+// synthesized page can assert something its own sources do not. Verbatim
+// corpus bodies plus an exhaustive `grep` answer the same questions without
+// the restatement.
 
 // KnowledgeDocNode represents a document ingested into the wiki corpus.
 // Identity is the sha256 of the RAW bytes; the normalized markdown body is
@@ -194,13 +170,18 @@ message KnowledgeDocNode {
   string sha256           = 3;
   string filename         = 4;
   string content_type     = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
-  int64  size_bytes       = 6 [(ladybug.column) = "sizeBytes"];
-  string acquired_at      = 7 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
-  string corpus_path      = 8 [(ladybug.column) = "corpusPath"];    // relative to .opentrace/
-  string title            = 9;       // display title (derived from filename)
-  string one_line_summary = 10 [(ladybug.column) = "oneLineSummary"];
-  string summary          = 11;      // copy of the one-liner; feeds search_text FTS
-  string path             = 12;      // repo-relative path when repo-walked (see MirrorsRel)
+  string acquired_at      = 6 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+  string corpus_path      = 7 [(ladybug.column) = "corpusPath"];    // relative to .opentrace/
+  string title            = 8;       // display title (derived from filename)
+  string one_line_summary = 9 [(ladybug.column) = "oneLineSummary"];
+  string summary          = 10;      // copy of the one-liner; feeds search_text FTS
+  string path             = 11;      // repo-relative path when repo-walked (see MirrorsRel)
+  // Epistemic label: "authoritative" | "design_history" |
+  // "design_history_archived". Load-bearing — it is what lets a reader tell a
+  // proposal from shipped behaviour, so it must travel with the body. It needs
+  // a column here because the browser store projects writes strictly through
+  // the generated column list, so a property without one is silently dropped.
+  string status           = 12;
 }
 
 // CommunityNode represents a cluster of related nodes detected by Leiden/Louvain.
@@ -215,53 +196,11 @@ message CommunityNode {
   bool   is_god      = 6 [(ladybug.column) = "isGod"];   // true if this is a top-centrality community
 }
 
-// HyperedgeNode names a set of three or more nodes that act as one unit —
-// a workflow, a layered design, a recurring theme. Stored as a node because
-// a property graph has no native n-ary edge; members attach individually
-// through ParticipatesInRel.
-message HyperedgeNode {
-  string id               = 1;
-  string name             = 2;   // human-readable label
-  string relation         = 3;   // "participate_in", "implement", "form"
-  ConfidenceTier confidence = 4;
-  double confidence_score = 5 [(ladybug.column) = "confidenceScore"];
-  string source_file      = 6 [(ladybug.column) = "sourceFile"];
-}
-
-// SemanticEdgeRel represents a semantic edge derived by LLM extraction.
-// Source and target are arbitrary graph nodes. The `relation` field is a
-// free-form verb naming the edge type (e.g. "calls", "depends_on",
-// "rationale_for").
-//
-// NOTE (2026-08-04): no producer writes these any more. The LLM-extracted
-// entity layer that emitted them was removed after three benchmark runs
-// measured zero agent usage of the resulting nodes — see
-// agent/src/opentrace_agent/wiki/CLAUDE.md. The message is retained so graphs
-// built before then stay readable; do not remove or renumber it.
-message SemanticEdgeRel {
-  string         id               = 1;
-  string         source_id        = 2;
-  string         target_id        = 3;
-  string         relation         = 4;
-  ConfidenceTier confidence       = 5;
-  double         confidence_score = 6 [(ladybug.column) = "confidenceScore"];
-  string         source_file      = 7 [(ladybug.column) = "sourceFile"];
-  string         source_location  = 8 [(ladybug.column) = "sourceLocation"];
-  double         weight           = 9;
-}
-
 // MemberOfCommunityRel links a graph node to its CommunityNode.
 message MemberOfCommunityRel {
   string id        = 1;
   string source_id = 2;   // member node
   string target_id = 3;   // CommunityNode
-}
-
-// ParticipatesInRel links a graph node to a HyperedgeNode it participates in.
-message ParticipatesInRel {
-  string id        = 1;
-  string source_id = 2;   // member node
-  string target_id = 3;   // HyperedgeNode
 }
 
 // IndexMetadataNode stores a single record of index provenance per database.
@@ -346,12 +285,6 @@ message LinksToRel {
   string target_id = 3;
 }
 
-// NOTE (2026-08-04): a CitesRel message (concept page → the document it was
-// synthesised from) lived here until this date, alongside KnowledgeConceptNode.
-// Both are removed outright rather than retained-for-legacy because neither
-// ever shipped on a release branch. See the KnowledgeConceptNode note above for
-// the measurement that closed the layer.
-
 // MirrorsRel links a KnowledgeDoc to the File node for the same on-disk
 // document, for every doc discovered by a repo walk. When the code walk
 // didn't create the File node (extensions like .rst/.txt/.html/PDFs), it
@@ -375,24 +308,6 @@ message DocumentsRel {
   string id        = 1;
   string source_id = 2;   // Repository
   string target_id = 3;   // KnowledgeVault (vault::<name>)
-}
-
-// MentionsRel links a KnowledgeDoc (which has a body) to an
-// Idea/Service/Module/Paper/Person/Event entity whose name appears in that
-// body's raw corpus markdown. Bridged the content layer with the flat-entity
-// layer so cross-cutting queries worked — "which documents discuss this?".
-//
-// NOTE (2026-08-04): no producer writes these any more. The wiki ingest
-// graph_writer wrote them by whole-word matching against the vault's entity
-// set, and that entity layer was removed after three benchmark runs measured
-// zero agent usage of it — "which documents discuss X" is now answered by a
-// corpus `grep` sweep instead. See agent/src/opentrace_agent/wiki/CLAUDE.md.
-// The message is retained so graphs built before then stay readable; do not
-// remove or renumber it.
-message MentionsRel {
-  string id        = 1;
-  string source_id = 2;   // KnowledgeDoc
-  string target_id = 3;   // Idea / Service / Module / Paper / Person / Event
 }
 
 // TargetsRepoRel links a PullRequest to its target Repository.

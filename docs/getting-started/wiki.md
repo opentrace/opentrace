@@ -2,7 +2,7 @@
 
 A **vault** is an indexed collection of documents — papers, design docs, transcripts, notebooks — mirrored into the same knowledge graph as your code, so retrieval tools can pull from both surfaces.
 
-A vault is a **document corpus**: each doc gets a navigation label, an epistemic status, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Nothing is summarized into new prose; there is no synthesis step, and no entity graph is extracted from the text (that layer was removed on 2026-08-04 — see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced)).
+A vault is a **document corpus**: each doc gets a navigation label, an epistemic status, a `MIRRORS` link to its `File` twin, and `LINKS_TO` edges for the links its author wrote — while the body itself is kept **verbatim** and read back through `load_source`. Nothing is summarized into new prose: there is no synthesis step, and no entity graph is extracted from the text.
 
 Vaults are produced two ways, sharing one pipeline:
 
@@ -12,7 +12,7 @@ Vaults are produced two ways, sharing one pipeline:
 ## Prerequisites
 
 - `opentraceai` installed — see the [CLI install guide](install-cli.md)
-- The `graph` extra installed (`uv tool install opentraceai[graph]` or via the install guide), for markitdown + LLM SDKs
+- A plain `opentraceai` install — markitdown and the provider SDKs are core dependencies, no extra needed
 - An LLM key from one of the [supported providers](../reference/wiki-providers.md), **or** a local OpenAI-compatible server (Ollama, llama.cpp, vLLM)
 
 ## Compile your first vault
@@ -48,10 +48,7 @@ The `LINKS_TO` edges between `KnowledgeDoc` nodes are the doc-side analogue of t
 
 ## Corpus-wide questions
 
-To ask what *every* document says about something, grep the corpus rather than read a summary of it. The [`grep` retrieval tool](../reference/graph-tools.md) (MCP + `POST /api/retrieval/grep`) sweeps every member doc's normalized body and returns matching lines already labelled with the doc's title and epistemic status.
-
-!!! note "There are no concept pages — removed 2026-08-03 / 2026-08-04"
-    Earlier on this branch OpenTrace synthesized cross-document "concept pages" for exactly this question. Synthesis went on **2026-08-03** and the rest of the layer — storage, node types, and every read path — on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result recorded: a synthesized page restates its sources in the model's own voice, dropping their hedges, tense, and attribution, which a verbatim body structurally cannot do. Verbatim `grep` hits plus `load_source` reads answer the same question without the paraphrase layer. Nothing anywhere reads or writes a page, including vaults compiled before the removal. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
+To ask what *every* document says about something, grep the corpus rather than read a summary of it. The [`grep` retrieval tool](../reference/graph-tools.md) (MCP + `POST /api/retrieval/grep`) sweeps every member doc's normalized body and returns matching lines already labelled with the doc's title and epistemic status. Follow up with `load_source` to read any document that looks worth opening in full.
 
 ## Vault scopes — local vs global
 
@@ -150,7 +147,7 @@ By default, re-running `index --wiki` detects docs that disappeared from disk be
 - The orphaned `KnowledgeDoc` node + its body in `corpus/` are deleted
 - The vault's `.vault.json` entry for that source goes with it
 
-That is the whole of autoprune: the report is two counts, `sources_deleted` and `corpus_files_deleted`. Pruning costs no LLM calls. Nothing is derived from a document, so a vanished doc leaves nothing behind to mark stale.
+That is the whole of autoprune: the report is two counts, `documents_deleted` and `corpus_files_deleted`. Pruning costs no LLM calls. Nothing is derived from a document, so a vanished doc leaves nothing behind to mark stale.
 
 To opt out of pruning on a particular run (e.g. you're partially re-indexing):
 
@@ -190,7 +187,7 @@ What you get from a single command:
 - Doc bodies (`KnowledgeDoc` nodes + corpus files) from markitdown, kept verbatim
 - `MIRRORS` edges joining each repo-walked KnowledgeDoc to its `File` twin in the code tree (the File node is created during linking if the code walk skipped the doc's extension — either twin reaches the other in one hop)
 - `LINKS_TO` edges between KnowledgeDocs for the links the docs' authors wrote to each other
-- A `DOCUMENTS` edge joining the `Repository` to the vault it spawned (plus a `spawned_from` stamp on the vault) — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
+- A `DOCUMENTS` edge joining the `Repository` to the vault it spawned — only for vaults built by `index --wiki` over a repo, never for attached globals or dropped-file compiles
 
 Then surface cross-cutting structure:
 

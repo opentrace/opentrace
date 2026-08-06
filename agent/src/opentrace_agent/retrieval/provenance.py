@@ -24,15 +24,8 @@ Two branches keyed off node type / edges:
   ``IndexMetadata`` node written by ``opentraceai index``; file path and line
   range come from the node itself.
 
-Two branches are gone, both because the layer they served was removed:
-
-* A **derived** branch walked ``DERIVED_FROM`` from an LLM-extracted entity
-  back to the document it came out of — removed 2026-08-04 with the entity
-  layer, so those types now fall through to ``kind="unknown"``.
-* The wiki branch walked a ``CITES`` chain from a concept page to the
-  documents it was synthesised from — removed 2026-08-04 with the
-  concept-page layer. A document *is* its own provenance; nothing restates
-  it, so there is no chain left to walk. See the wiki CLAUDE.md.
+Any other node type falls through to ``kind="unknown"`` with both
+sub-payloads null.
 """
 
 from __future__ import annotations
@@ -82,7 +75,7 @@ def provenance(store: GraphStore, node_id: str) -> dict[str, Any]:
             "node_id": node_id,
             "node_type": ntype,
             "kind": "code",
-            "code": _code_provenance(store, node_id, ntype, props),
+            "code": _code_provenance(store, node_id, props),
             "wiki": None,
         }
     return {
@@ -103,20 +96,20 @@ def _wiki_provenance(store: GraphStore, node_id: str, node_type: str, props: dic
     """Return ``{agent, model, session, confidence, vault, chain}`` for a wiki node.
 
     ``chain`` is the document's own identity — a single entry for a
-    ``KnowledgeDoc``, empty for a ``KnowledgeVault``. It was a multi-hop
-    ``CITES`` walk while concept pages existed; nothing restates a document
-    now, so there is nothing to walk back through.
+    ``KnowledgeDoc``, empty for a ``KnowledgeVault``. A document *is* its own
+    provenance, so the chain is never multi-hop.
     """
     chain: list[dict[str, Any]] = []
 
     if node_type == "KnowledgeDoc":
         chain.append(_source_link(node_id, props, store))
 
+    # `agent`/`model`/`session`/`confidence` used to be returned here and were
+    # ALWAYS null — no producer writes any of them on a node. They were residue
+    # from an LLM-extraction layer that no longer exists. Don't reintroduce a
+    # key without a writer: a permanently-null field reads as "unknown for this
+    # document" rather than "never populated for anything".
     return {
-        "agent": props.get("agent") or None,
-        "model": props.get("model") or None,
-        "session": props.get("session") or None,
-        "confidence": _try_float(props.get("confidence")),
         "vault": props.get("vault"),
         "chain": chain,
     }
@@ -152,7 +145,7 @@ def _source_link(node_id: str, props: dict[str, Any], store: GraphStore | None =
 # ---------------------------------------------------------------------------
 
 
-def _code_provenance(store: GraphStore, node_id: str, node_type: str, props: dict[str, Any]) -> dict[str, Any]:
+def _code_provenance(store: GraphStore, node_id: str, props: dict[str, Any]) -> dict[str, Any]:
     """Return ``{commit_sha, indexer_version, file_path, line_range, repo}``."""
     file_path = props.get("path") or None
     start_line = props.get("start_line") or props.get("startLine")
@@ -203,12 +196,3 @@ def _infer_repo_id(node_id: str) -> str | None:
         # For owner/repo/... prefer two segments; for local/<name>/... same.
         return "/".join(parts[:2])
     return parts[0] if parts else None
-
-
-def _try_float(v: Any) -> float | None:
-    if v is None:
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None

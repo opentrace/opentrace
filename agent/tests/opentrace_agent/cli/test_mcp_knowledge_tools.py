@@ -414,7 +414,14 @@ class TestListNodesDiscoverability:
         assert allk["hasMore"] is False
         # Compact projection by default — name + status, not the full blob
         # (see TestListNodesEnumeration for why).
-        filtered = _call(store, "list_nodes", type="KnowledgeDoc", filters={"status": "design_history"}, limit=100, paged=True)
+        filtered = _call(
+            store,
+            "list_nodes",
+            type="KnowledgeDoc",
+            filters={"status": "design_history"},
+            limit=100,
+            paged=True,
+        )
         assert [n["name"] for n in filtered["items"]] == ["c.md"]
         assert [n["status"] for n in filtered["items"]] == ["design_history"]
 
@@ -488,7 +495,6 @@ class TestListNodesEnumeration:
                     "status": "design_history" if i % 5 == 0 else "authoritative",
                     "corpus_path": f"corpus/sha-{i:03d}.md",
                     "acquired_at": "2026-07-29T00:00:00",
-                    "size_bytes": 4096,
                     "content_type": "text/markdown",
                     # The bulk that used to blow the cap.
                     "one_line_summary": "A document about " + ("x" * 90),
@@ -530,7 +536,14 @@ class TestListNodesEnumeration:
     def test_status_filter_narrows_the_set(self, store):
         self._docs(store, 40)
         items = self._items(
-            _call_raw(store, "list_nodes", type="KnowledgeDoc", limit=1000, filters={"status": "design_history"}, paged=True)
+            _call_raw(
+                store,
+                "list_nodes",
+                type="KnowledgeDoc",
+                limit=1000,
+                filters={"status": "design_history"},
+                paged=True,
+            )
         )
         assert len(items) == 8  # every 5th of 40
         assert {i["status"] for i in items} == {"design_history"}
@@ -893,7 +906,9 @@ class TestGrepResponseFitting:
     def test_error_and_empty_results_pass_through(self):
         from opentrace_agent.cli.mcp_server import _fit_grep_response
 
-        err = json.loads(_fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "error", "error": "nope"}))
+        err = json.loads(
+            _fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "error", "error": "nope"})
+        )
         assert err["mode"] == "error" and err["error"] == "nope"
         empty = json.loads(_fit_grep_response({"matches": [], "count": 0, "scope": "x", "mode": "python"}))
         assert empty["count"] == 0

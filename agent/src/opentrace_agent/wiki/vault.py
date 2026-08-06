@@ -37,7 +37,7 @@ class IngestedSource:
     ingested_at: str
     # Navigation label from the per-doc extraction call. Persisted here so a
     # disk-only vault (e.g. a global compiled without a graph store) keeps
-    # its labels for a later ``vault attach`` to mirror onto Source nodes.
+    # its labels for a later ``vault attach`` to mirror onto KnowledgeDocs.
     title: str = ""
     one_line_summary: str = ""
     # Epistemic status ("authoritative" | "design_history" |
@@ -46,10 +46,9 @@ class IngestedSource:
 
 
 # Field names ``IngestedSource`` accepts on load. A ``.vault.json`` written by
-# an older build can carry keys this build dropped (``contributed_to``, which
-# listed the concept-page slugs a doc fed — removed 2026-08-04 with the page
-# layer); splatting those straight in would raise TypeError and make the vault
-# unloadable, so unknown keys are ignored instead.
+# another build can carry keys this build does not declare; splatting those
+# straight in would raise TypeError and make the vault unloadable, so unknown
+# keys are ignored instead.
 _INGESTED_SOURCE_FIELDS = frozenset(f.name for f in fields(IngestedSource))
 
 

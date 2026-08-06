@@ -3437,9 +3437,7 @@ export class LadybugGraphStore implements GraphStore {
       typeof v === 'string' && v ? v : null;
 
     // A document IS its own provenance, so the chain is one entry (empty for
-    // a KnowledgeVault, which has no body). This was a ``CITES`` walk from a
-    // concept page back to the documents it restated until 2026-08-04, when
-    // the concept-page layer was removed. Mirrors the Python
+    // a KnowledgeVault, which has no body). Mirrors the Python
     // ``retrieval/provenance.py``.
     if (nodeType === 'KnowledgeDoc') {
       chain.push({

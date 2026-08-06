@@ -69,7 +69,10 @@ def _import_networkx():
 
         return nx
     except ImportError as exc:
-        raise RuntimeError("networkx not installed. Run: uv pip install 'opentraceai[graph]'") from exc
+        raise RuntimeError(
+            "networkx not installed. It is a core dependency — reinstall opentraceai, "
+            "or `uv pip install networkx` into the active environment."
+        ) from exc
 
 
 def _try_leiden(graph, member_cap: int) -> dict[Any, int] | None:

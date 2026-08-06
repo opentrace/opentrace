@@ -17,7 +17,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './themed-select.css';
 
-export interface ThemedSelectOption<T extends string> {
+interface ThemedSelectOption<T extends string> {
   value: T;
   label: string;
 }

@@ -23,7 +23,7 @@ OpenTrace builds a single knowledge graph that holds two layers of information a
 │  │  Pipeline      │  │   Retrieval primitives     │  │
 │  │  scan→process→ │  │   search / overview /      │  │
 │  │   extract→     │  │   find_path / provenance / │  │
-│  │   resolve→save │  │   communities / mentions / │  │
+│  │   resolve→save │  │   communities / grep /     │  │
 │  │  + autoprune   │  │   cross_domain_bridges     │  │
 │  └────────────────┘  └────────────────────────────┘  │
 │                                                      │
@@ -53,21 +53,17 @@ Opt-in via `index --wiki`. The doc-ingestion pipeline produces:
 
 Edges: `CONTAINS` (vault → doc), `LINKS_TO` (KnowledgeDoc → KnowledgeDoc, parsed mechanically from the relative links the docs' authors wrote to each other — the doc-side analogue of the code layer's import edges), `MIRRORS` (KnowledgeDoc → File, for every doc indexed from a directory — the File node is created at link time when the code walk skipped its extension — joins the corpus layer to the code tree in one hop), `DOCUMENTS` (Repository → Vault, for vaults spawned by `index --wiki` over that repo — attached globals and dropped-file vaults never get it).
 
-**There used to be a third, "entity" layer.** An LLM pass extracted `Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes from each doc body and linked them with `DERIVED_FROM`, `SEMANTIC_EDGE`, and `MENTIONS`. It was **removed on 2026-08-04** after three benchmark runs measured **zero agent usage** of those nodes once corpus `grep` existed — against real costs: they crowded labelled documents out of the top search slots (short names win BM25), extraction was only ~65% stable run to run, names fragmented one concept into five nodes, and the same real-world thing landed under two different types. "Which documents discuss X" is now a `grep` sweep of the corpus: verbatim lines from every document, pre-labelled with title and status. The node and edge types remain valid so pre-removal graphs stay readable; nothing writes them. (`Service` and `Module` are separately in active use as runtime node types.)
-
-**There was also a synthesis half, and it is gone entirely.** An opt-in `--wiki-concept-pages` flag wrote `KnowledgeConcept` pages — multi-source narratives in the model's own voice — with `CITES` edges back to their sources. Synthesis was removed **2026-08-03** and the rest of the layer (node types, `pages/` storage, every read path) on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result on record: restatement strips a source's hedges, tense, and attribution, which a verbatim body structurally cannot do. Unlike the entity types, `KnowledgeConcept` and `CITES` are **not** retained for backward compatibility — they only existed on an unreleased branch, so no graph contains one. Cross-document questions are answered by corpus `grep` plus verbatim `load_source` reads. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
+Cross-document questions ("what does everything say about X?") are answered by a corpus `grep` — verbatim lines from every document, pre-labelled with title and status — followed by verbatim `load_source` reads of the documents worth opening.
 
 See [Ontology](ontology.md) for the full node + edge reference.
 
 ## Domains and cross-cutting structure
 
-The layers form three **domains** in the cross-cutting analysis:
+The layers form two **domains** in the cross-cutting analysis:
 
 ```
 code domain     — Repository / Directory / File / Class / Function / Variable
 doc domain      — KnowledgeVault / KnowledgeDoc
-entity domain   — Idea / Paper / Person / Event
-                  (empty on graphs built after 2026-08-04)
 ```
 
 `opentraceai analyze` surfaces:
@@ -102,7 +98,7 @@ Python package + CLI (`opentraceai`). Managed with [uv](https://docs.astral.sh/u
 | `vault` | Ingest a bare doc folder, and manage compiled vaults — ingest, list, show, attach, detach, promote, demote |
 | `cluster` / `analyze` | Community detection + cross-cutting analysis |
 | `export-graph` | Deterministic projections — graphml, obsidian, report |
-| `watch` / `hook` | Filesystem watcher + git post-commit hook for incremental re-indexes |
+| `impact` | Blast radius for a changed file |
 | `serve` | REST API for the UI |
 | `mcp` | MCP stdio server for agent clients |
 
@@ -150,10 +146,10 @@ A typical full-stack run (`index ./repo myvault --wiki`):
 7. Autoprune → Compare walked doc set against the existing graph;
                delete orphan KnowledgeDocs and their corpus bodies.
                That is the whole of it — the report is two counts,
-               sources_deleted and corpus_files_deleted.
+               documents_deleted and corpus_files_deleted.
 ```
 
-`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community / Hyperedge nodes (cluster) or just print analysis (analyze).
+`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community nodes (cluster) or just print analysis (analyze).
 
 ## Storage layout
 
@@ -177,5 +173,5 @@ A vault dir holds nothing but `.vault.json` and `.compile-log/` — no bodies of
 
 - **Read-only retrieval.** Every primitive under `opentrace_agent.retrieval` is read-only. Writes go through `index` / `vault attach` / `cluster`.
 - **Vault scope is a property.** `vault` denormalised onto every vault / doc node so scope queries are property equality, not graph traversal.
-- **Discrete confidence.** All confidence values snap to a discrete rubric (`EXTRACTED` = 1.0, `INFERRED` ∈ {0.55, 0.65, 0.75, 0.85, 0.95}, `AMBIGUOUS` ∈ [0.1, 0.3]) — never 0.5.
+- **Discrete confidence.** Tiered confidence values snap to a discrete rubric (`EXTRACTED` = 1.0, `INFERRED` ∈ {0.55, 0.65, 0.75, 0.85, 0.95}, `AMBIGUOUS` ∈ [0.1, 0.3]) — never 0.5. `CALLS` carries a plain resolver score instead.
 - **No backward-compat shims.** Each command does one thing; renamed commands are gone, not aliased.

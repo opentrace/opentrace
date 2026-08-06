@@ -20,7 +20,8 @@ answer, and propose the next stop.
 ## Available data
 
 - `.opentrace/index.db` — the LadybugDB store with every indexed node and edge.
-  Edges carry `confidence` (EXTRACTED / INFERRED / AMBIGUOUS) where applicable.
+  `CALLS` edges carry a `confidence` float from the call resolver; no other
+  edge type carries one.
 - The OpenTrace MCP — read through `search_graph`, `get_node`, `traverse_graph`,
   `list_nodes`, and `get_stats`. This is your primary lens; the database is
   there but you should rarely need to touch it directly.
@@ -39,9 +40,9 @@ answer, and propose the next stop.
 
 3. **Answer from the graph.** Run `/interrogate`, `/path`, or `/explore` as
    appropriate. For shape questions, hit the MCP tools (`traverse_graph`,
-   `search_graph`) in parallel. Back each specific claim with its
-   `source_location`. Edges come from the store, never from intuition, and
-   each one is relayed with its stored confidence tier.
+   `search_graph`) in parallel. Cite the node ids the claim rests on, and use
+   `provenance` when the question is "how do we know this". Edges come from
+   the store, never from intuition.
 
 4. **Surface the structure**, not just the answer. Name the route:
    "we crossed from the *Training* community to the *Evaluation* community via
@@ -55,8 +56,7 @@ answer, and propose the next stop.
 
 ## Honesty
 
-- Only report edges the store actually returns. When an edge's tier is
-  AMBIGUOUS, the answer says so.
+- Only report edges the store actually returns.
 - A question the graph can't answer gets a straight "the graph doesn't know
   this yet", followed by the fastest way to teach it — usually re-running
   `/build` over the folder that holds the missing material.

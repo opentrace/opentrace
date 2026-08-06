@@ -222,13 +222,17 @@ class TestMCPSearchGraph:
         assert len(result["hits"]) <= 2
 
     def test_search_returns_metadata_channels(self, indexed_go_store):
-        """OT-1732 spec: each hit carries vault/recency/confidence (null today)."""
+        """Each hit carries the triage channels: ``vault`` and ``recency``.
+
+        Both are null for code nodes — a repo walk stamps neither. There is
+        deliberately no ``confidence`` key: nothing writes a node-level
+        confidence, so it would be permanently null for every node type.
+        """
         result = _call_tool(indexed_go_store, "search_graph", query="db")
         for hit in result["hits"]:
-            # Phases 4/5 will populate these; today they're null on code nodes.
             assert "vault" in hit
             assert "recency" in hit
-            assert "confidence" in hit
+            assert "confidence" not in hit
 
 
 # ---------------------------------------------------------------------------

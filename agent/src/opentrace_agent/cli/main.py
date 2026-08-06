@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+from click.core import ParameterSource
 
 from opentrace_agent.cli.workspace import (
     EXIT_DB_MISSING,
@@ -467,7 +468,9 @@ def _run_indexing_pipeline(
                     _run_autoprune_after_index(
                         graph_store=graph_store,
                         source_path=source_path,
-                        vault_name=vault_name,
+                        # Must resolve the SAME name the compile above used, or
+                        # the prune walks a vault the compile never wrote to.
+                        vault_name=vault_name or _default_vault_name(source_path),
                         db_path=staging_db,
                         verbose=verbose,
                     )
@@ -560,7 +563,9 @@ def _run_indexing_pipeline(
     ),
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+@click.pass_context
 def index(
+    ctx: click.Context,
     path: str,
     db_path: str | None,
     repo_id: str | None,
@@ -581,24 +586,38 @@ def index(
     if exclude_design_history and not wiki:
         raise click.ClickException("--wiki-exclude-design-history requires --wiki (or a vault name).")
 
-    # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
-    # before opening the staging DB / acquiring locks, rather than mid-pipeline.
-    if wiki:
-        from opentrace_agent.sources._llm_common import actionable_no_backend_message
-        from opentrace_agent.sources.markdown.clients import detect_client
-
-        if detect_client() is None:
-            raise click.ClickException(actionable_no_backend_message())
-
     # Classify the input shape. URLs and single files take a different path —
     # they skip the directory walker and feed one SourceInput straight to the
     # extract/wiki pipelines. Only a directory makes sense for the full code
     # walk (Repository/Directory/File nodes).
+    #
+    # Argument validation runs BEFORE the LLM preflight below: whether the
+    # invocation is coherent doesn't depend on the environment, and demanding
+    # an API key before reporting a malformed command sends the user to
+    # configure a provider for a run that was never going to start.
     input_kind = _classify_index_input(path)
 
     if input_kind in ("url", "file"):
         if not wiki:
             raise click.ClickException(f"Single-{input_kind} input requires --wiki (there's no code to walk).")
+        _reject_directory_only_options(ctx, input_kind)
+
+    # Preflight: doc ingestion needs an LLM backend. Detect now so we fail
+    # before opening the staging DB / acquiring locks, rather than mid-pipeline.
+    if wiki:
+        from opentrace_agent.sources._llm_common import (
+            actionable_no_backend_message,
+            detect_backend,
+        )
+
+        # Pre-flight: is a provider key present at all? Ask the registry, don't
+        # build a client. This used to call `detect_client()`, which instantiates
+        # a provider SDK client and throws it away — the actual client is built
+        # later by `wiki.llm.make_llm`.
+        if detect_backend() is None:
+            raise click.ClickException(actionable_no_backend_message())
+
+    if input_kind in ("url", "file"):
         resolved_db = _resolve_db(db_path)
         resolved_vault = vault_name or _default_vault_name_for_uri(path, input_kind)
         elapsed = _run_single_source_pipeline(
@@ -642,7 +661,7 @@ def _run_autoprune_after_index(
     *,
     graph_store,
     source_path: Path,
-    vault_name: str | None,
+    vault_name: str,
     db_path: str,
     verbose: bool,
 ) -> None:
@@ -681,15 +700,11 @@ def _run_autoprune_after_index(
         graph_store,
         walked_doc_shas=walked_shas,
         vault_name=vault_name,
-        scope_path=source_path,
         db_path=db_path,
     )
 
-    if report.sources_deleted or report.corpus_files_deleted:
-        click.echo(
-            f"  Autoprune: -{report.sources_deleted} documents, "
-            f"-{report.corpus_files_deleted} corpus files"
-        )
+    if report.documents_deleted or report.corpus_files_deleted:
+        click.echo(f"  Autoprune: -{report.documents_deleted} documents, -{report.corpus_files_deleted} corpus files")
     elif verbose:
         click.echo("  Autoprune: no orphans found.")
 
@@ -807,10 +822,10 @@ def _collect_wiki_inputs(
 
 # Token assumptions behind every doc-ingestion cost estimate. Input is a rough
 # average document; output is one sentence, which is all the extraction schema
-# asks for since concepts and entities were removed. Keep these two together so
-# the second-guessing happens in one place.
+# asks for. Keep these two together so the second-guessing happens in one place.
 INPUT_TOKENS_PER_DOC = 4_000
 OUTPUT_TOKENS_PER_DOC = 100
+
 
 def _echo_wiki_cost_estimate(
     provider: str,
@@ -825,16 +840,14 @@ def _echo_wiki_cost_estimate(
 
     The doc pass is ONE call per source emitting ONE field (the one-line
     summary), and it runs on the backend's extraction tier — so the estimate
-    must use that tier's pricing, not the flagship pair. Getting either wrong
-    is not cosmetic: this line exists so someone can decide whether to spend,
-    and it previously overstated a 48-doc ingest at ~$1.30 against an actual
-    ~$0.20 — flagship rates (~3x) on top of a 1k-output assumption left over
-    from when this call also emitted concepts and an entity graph (~20x on the
-    output half).
+    must use that tier's pricing, not the flagship pair, and
+    OUTPUT_TOKENS_PER_DOC must stay sized for a one-field schema. Getting
+    either wrong is not cosmetic: this line exists so someone can decide
+    whether to spend.
 
-    Cost is now dominated by INPUT — the unavoidable cost of the model reading
-    each document once. If a field is ever added back to the extraction schema,
-    revisit OUTPUT_TOKENS_PER_DOC with it.
+    Cost is dominated by INPUT — the unavoidable cost of the model reading
+    each document once. If a field is added to the extraction schema, revisit
+    OUTPUT_TOKENS_PER_DOC with it.
     """
     from collections import Counter
 
@@ -1003,9 +1016,10 @@ def _run_wiki_compile_against_index(
             click.echo(f"    wiki: linked {doc_links} doc-to-doc reference(s) (LINKS_TO)")
 
         # The vault itself spawned from this repo — record that as a
-        # Repository -DOCUMENTS-> Vault edge + spawned_from stamp.
-        # This is the ONLY path that writes it: attached globals and
-        # dropped-file compiles don't document the repo they sit next to.
+        # Repository -DOCUMENTS-> Vault edge. This is the ONLY path that
+        # writes it: attached globals and dropped-file compiles don't
+        # document the repo they sit next to. The repo id itself is
+        # persisted to .vault.json below, not onto the vault node.
         if link_vault_to_repo(mirror_target, repo_id, vault_name):
             click.echo(f"    wiki: linked vault {vault_name!r} to repository {repo_id!r} (DOCUMENTS)")
 
@@ -1074,6 +1088,54 @@ def _classify_index_input(path: str) -> str:
     if p.is_file():
         return "file"
     raise click.ClickException(f"Path does not exist: {path}")
+
+
+#: ``index`` options that only mean something for a directory walk, mapped to
+#: why they can't apply to a single URL/file. Each is inapplicable by
+#: construction, not merely unplumbed: a single source produces no Repository
+#: node to name, is one document rather than a stream to batch, and
+#: deliberately skips autoprune (see ``_run_single_source_pipeline``) because
+#: there is no walked set to compute orphans against.
+_DIRECTORY_ONLY_INDEX_OPTIONS: dict[str, tuple[str, str]] = {
+    "repo_id": ("--repo-id", "no Repository node is created for a single source"),
+    "batch_size": ("--batch-size", "a single source is one document, not a batch"),
+    "no_prune": ("--no-prune", "autoprune never runs for a single source"),
+    "exclude_design_history": (
+        "--wiki-exclude-design-history",
+        "it filters a walked doc set, and a single source is not a set",
+    ),
+}
+
+
+def _reject_directory_only_options(ctx: click.Context, input_kind: str) -> None:
+    """Fail if a directory-only option was passed with URL/file input.
+
+    These were previously accepted and dropped on the floor. That is the worst
+    outcome for ``--wiki-exclude-design-history`` in particular, which the user
+    passes precisely to keep design docs OUT of the vault — ignoring it
+    silently ingests exactly what they asked to exclude.
+
+    Detection is by parameter SOURCE, not by comparing against the default:
+    ``--batch-size 200`` typed explicitly is indistinguishable from the default
+    by value, and silently ignoring an option the user actually typed is the
+    bug being fixed.
+    """
+    offenders = [
+        flag
+        for name, (flag, _reason) in _DIRECTORY_ONLY_INDEX_OPTIONS.items()
+        if ctx.get_parameter_source(name) is not ParameterSource.DEFAULT
+    ]
+    if not offenders:
+        return
+    detail = "; ".join(
+        f"{flag} ({_DIRECTORY_ONLY_INDEX_OPTIONS[name][1]})"
+        for name, (flag, _reason) in _DIRECTORY_ONLY_INDEX_OPTIONS.items()
+        if flag in offenders
+    )
+    raise click.UsageError(
+        f"{'These options are' if len(offenders) > 1 else 'This option is'} only valid when indexing a "
+        f"directory, but the input is a {input_kind}: {detail}."
+    )
 
 
 def _default_vault_name_for_uri(uri: str, kind: str) -> str:
@@ -2891,9 +2953,8 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
-# Knowledge-graph features (cluster, analyze, export-graph, watch, hook,
-# ingest, llm-extraction-eval) are registered as first-class top-level
-# commands below — no separate `graph` subgroup.
+# Knowledge-graph features (cluster, analyze, export-graph) are registered as
+# first-class top-level commands below — no separate `graph` subgroup.
 
 
 @app.command()
@@ -2933,7 +2994,7 @@ def cluster(db_path: str | None, output_json: bool) -> None:
     "bridge_limit",
     default=10,
     show_default=True,
-    help="Top-N cross-community bridges to surface.",
+    help="Top-N cap for cross-community bridges, cross-domain bridges, and cross-cutting communities.",
 )
 @click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
 def analyze(db_path: str | None, god_limit: int, bridge_limit: int, output_json: bool) -> None:
@@ -2957,13 +3018,10 @@ from opentrace_agent.cli.export_graph import export_graph_app as _export_graph_a
 
 app.add_command(_export_graph_app)
 
-# `hook` and `watch` were removed 2026-08-05. Both were scaffolding for
-# incremental indexing, which never landed: `hook install` wrote a git
-# post-commit hook invoking `opentraceai index --incremental` — a flag that has
-# never existed — and `watch`'s rebuild callback was an explicit no-op shim.
-# A hook that silently does nothing after every commit is worse than no hook:
-# it reports success while the graph goes stale. Re-add them with the
-# incremental pipeline they presuppose, not before.
+# There is deliberately no `hook` or `watch` command. Indexing has no
+# incremental mode, so a git post-commit hook or a file watcher would report
+# success after every commit while the graph goes stale — worse than no hook
+# at all. Add them together with an incremental pipeline, not before.
 
 
 @app.command()
@@ -2976,7 +3034,7 @@ app.add_command(_export_graph_app)
     type=click.Path(),
     help="OpenTrace database path (auto-detected if omitted).",
 )
-@click.option("--max-hops", default=6, show_default=True, help="Maximum path length.")
+@click.option("--max-hops", default=6, show_default=True, help="Maximum path length. Clamped to 10.")
 @click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
 def path(
     source_id: str,
@@ -3005,13 +3063,16 @@ def path(
         err = result.get("error")
         if err:
             reason, friendly = "node not found", "Node not found."
-        elif result.get("length") is None:
-            reason, friendly = "no path", "No path between those nodes."
-        else:
+        elif result.get("truncated"):
+            # The walk stopped at the ceiling with nodes unexpanded, so absence
+            # of a path here is not evidence there isn't one.
             reason, friendly = (
-                "exceeds max_hops",
-                f"A path exists but is longer than {max_hops} hops — raise --max-hops to see it.",
+                "search truncated at max_hops",
+                f"No path within {max_hops} hops — the search stopped at the limit, "
+                "so a longer path may exist. Raise --max-hops to look further.",
             )
+        else:
+            reason, friendly = "no path", "No path between those nodes."
         if output_json:
             click.echo(_json.dumps({"path": [], "reason": reason}))
         else:
@@ -3025,7 +3086,7 @@ def path(
         click.echo(" → ".join(ids))
 
 
-# Note: the standalone ``opentraceai ingest`` command was removed in the
-# ingestion-unification work. Single-file/URL ingestion goes through
-# ``opentraceai index --wiki <path>``, which routes the source through the
-# unified wiki doc pass (one LLM call → the doc's one-line summary).
+# Note: there is no standalone ``opentraceai ingest`` command. Single-file/URL
+# ingestion goes through ``opentraceai index --wiki <path>``, which routes the
+# source through the unified wiki doc pass (one LLM call → the doc's one-line
+# summary).

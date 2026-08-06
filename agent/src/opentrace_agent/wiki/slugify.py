@@ -14,12 +14,9 @@
 
 """Title → filesystem-safe slug.
 
-The one caller left is vault *naming* — deriving a validated vault name from
-a repo name, folder name, or uploaded filename (see ``cli/main.py`` and
-``cli/vault_cmd.py``). The page-slug machinery this module was written for
-(``kind_dir`` / ``unique_slug`` / ``title_to_link_slug``, the
-``<kind_dir>/<base>`` path shape, and tombstone reservation for stale
-``[[wiki-links]]``) went with the concept-page layer on 2026-08-04.
+The sole caller is vault *naming* — deriving a validated vault name from a
+repo name, folder name, or uploaded filename (see ``cli/main.py`` and
+``cli/vault_cmd.py``).
 """
 
 from __future__ import annotations

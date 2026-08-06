@@ -20,4 +20,4 @@ $ARGUMENTS
 
 1. Run `opentraceai analyze $ARGUMENTS`.
 2. Call out the one bridge whose two communities are otherwise least connected.
-3. Offer the top suggested question for follow-up via `/query` or `/path`.
+3. Offer the top suggested question for follow-up via `/interrogate` or `/path`.

@@ -41,15 +41,9 @@ import { compileVault, deleteVault } from '../wiki/client';
 import type { VaultScope, WikiCompileEvent, WikiPhase } from '../wiki/types';
 import { useGraph } from './GraphDataProvider';
 
-export type CompileStatus =
-  | 'idle'
-  | 'running'
-  | 'done'
-  | 'error'
-  | 'cancelling'
-  | 'cancelled';
+type CompileStatus = 'idle' | 'running' | 'done' | 'error' | 'cancelled';
 
-export interface CompileJobState {
+interface CompileJobState {
   status: CompileStatus;
   vaultName: string;
   scope: VaultScope;
@@ -61,7 +55,7 @@ export interface CompileJobState {
   error: string | null;
 }
 
-export interface CompileStartParams {
+interface CompileStartParams {
   vaultName: string;
   files: File[];
   apiKey: string;
@@ -171,7 +165,10 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
             if (ev.kind === 'done') sawDone = true;
             // Adopt the server-resolved name — a new-vault compile may have
             // been auto-suffixed (flask → flask-1) to avoid a collision.
-            if (ev.vault_name && ev.vault_name !== targetRef.current?.vaultName) {
+            if (
+              ev.vault_name &&
+              ev.vault_name !== targetRef.current?.vaultName
+            ) {
               const resolved = ev.vault_name;
               if (targetRef.current) targetRef.current.vaultName = resolved;
             }
@@ -215,9 +212,10 @@ export function CompileJobProvider({ children }: { children: ReactNode }) {
     const target = targetRef.current;
     // Abort the in-flight compile fetch right away — the client disconnect
     // stops the server pipeline at its next checkpoint. Report 'cancelled'
-    // immediately (no 'cancelling' limbo) so the panel clears the instant the
-    // user clicks X; the disk/graph cleanup runs in the background rather than
-    // holding the UI until the round-trip returns.
+    // immediately — there is deliberately no intermediate in-flight state — so
+    // the panel clears the instant the user clicks X; the disk/graph cleanup
+    // runs in the background rather than holding the UI until the round-trip
+    // returns.
     abortRef.current?.abort();
     abortRef.current = null;
     // Mark aborted so any events still buffered in the stream can't flip the

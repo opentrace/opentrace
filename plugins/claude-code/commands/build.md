@@ -37,5 +37,4 @@ Recognised forms:
 
 - `/export-graphml -o out.graphml` — escape to Gephi/Cytoscape
 - `/export-obsidian -o vault/` — Obsidian vault
-- `/export-wiki -o wiki/` — linked markdown report folder
-- `/watch <path>` — re-index on file change
+- `/export-report -o report/` — linked markdown report folder

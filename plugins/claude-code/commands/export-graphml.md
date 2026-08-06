@@ -6,9 +6,8 @@ description: |
 allowed-tools: Bash
 ---
 
-Runs `opentraceai export-graph graphml -o <output>`. Includes Community and
-Hyperedge nodes so downstream tools can render cluster structure alongside the
-source graph.
+Runs `opentraceai export-graph graphml -o <output>`. Includes Community nodes
+so downstream tools can render cluster structure alongside the source graph.
 
 ## Arguments
 $ARGUMENTS

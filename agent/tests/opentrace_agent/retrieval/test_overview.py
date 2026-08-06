@@ -42,13 +42,21 @@ def store(tmp_path):
 def _seed(store: GraphStore) -> None:
     """Two vaults of documents joined by their authors' own ``LINKS_TO`` links.
 
+    Degrees below INCLUDE each doc's ``CONTAINS`` edge from its vault, because
+    that is what the ranking counts:
+
     kb:
-      corpus::hub    — linked to by core + leaf, links to core (degree 3)
-      corpus::core   — links to hub + leaf
-      corpus::leaf   — links to hub
-      corpus::lonely — no edges
+      corpus::hub    — 5: CONTAINS, in from core + leaf, out to core + leaf
+      corpus::core   — 4: CONTAINS, out to hub + leaf, in from hub
+      corpus::leaf   — 4: CONTAINS, out to hub, in from core + hub
+      corpus::lonely — 1: CONTAINS only
     other:
       corpus::offscope — used to verify vault-scope filtering
+
+    ``hub`` must stay the STRICTLY highest-degree document. It used to tie with
+    ``core`` at 4, and ``ORDER BY degree DESC`` breaks ties arbitrarily, so
+    ``top_concepts[0]`` flipped between them and the ranking test failed
+    intermittently. Don't equalise these degrees again.
     """
     store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
     store.add_node("vault::other", "KnowledgeVault", "other", {"vault": "other"})
@@ -75,6 +83,8 @@ def _seed(store: GraphStore) -> None:
         ("l2", "corpus::leaf", "corpus::hub"),
         ("l3", "corpus::hub", "corpus::core"),
         ("l4", "corpus::core", "corpus::leaf"),
+        # Breaks the hub/core degree tie — see the docstring.
+        ("l5", "corpus::hub", "corpus::leaf"),
     ]:
         store.add_relationship(eid, "LINKS_TO", src, tgt)
 
@@ -99,9 +109,10 @@ class TestUnscopedShape:
         assert "KnowledgeConcept" not in counts
 
     def test_top_concepts_ranks_the_hub_document_above_its_peers(self, store):
-        """Assert the top *document*, not the top node. ``vault::kb`` also has
-        degree 4 (one CONTAINS per member), and a tie in the Cypher
-        ``ORDER BY degree DESC`` resolves non-deterministically."""
+        """Assert the top *document*, not the top node: ``vault::kb`` has degree
+        4 (one CONTAINS per member) and would otherwise compete for the first
+        slot. ``hub`` is seeded as the strictly highest-degree document so this
+        cannot depend on how ``ORDER BY degree DESC`` breaks a tie."""
         _seed(store)
         ranked = overview(store, top_n=10)["top_concepts"]
         docs = [r["name"] for r in ranked if r["type"] == "KnowledgeDoc"]
@@ -119,15 +130,35 @@ class TestUnscopedShape:
 
 
 class TestVaultScope:
-    def test_scope_restricts_to_one_vault(self, store):
+    def test_scope_includes_the_vaults_documents(self, store):
+        """The scope must reach DOCUMENTS, not just the vault node.
+
+        Membership is the CONTAINS edge; a KnowledgeDoc carries no ``vault``
+        property. A property-equality filter here matched only ``vault::kb``
+        and reported an empty vault, so assert the document count exactly —
+        a subset assertion passes either way and cannot catch the regression.
+        """
         _seed(store)
         result = overview(store, top_n=10, vault_scope="kb")
         assert result["vault_scope"] == "kb"
-        # ``KnowledgeVault`` is the only type carrying a ``vault`` property —
-        # doc membership is the CONTAINS edge, since a content-addressed
-        # document can belong to several vaults at once.
-        assert set(result["counts_by_type"]).issubset({"KnowledgeVault", "KnowledgeDoc"})
-        assert "other" not in [c.get("vault") for c in result["top_concepts"]]
+        assert result["counts_by_type"] == {"KnowledgeVault": 1, "KnowledgeDoc": 4}
+        names = {c["name"] for c in result["top_concepts"]}
+        assert {"hub.md", "core.md", "leaf.md", "lonely.md"} <= names
+        assert "offscope.md" not in names
+
+    def test_scope_excludes_the_other_vaults_documents(self, store):
+        _seed(store)
+        result = overview(store, top_n=10, vault_scope="other")
+        assert result["counts_by_type"] == {"KnowledgeVault": 1, "KnowledgeDoc": 1}
+        assert {c["name"] for c in result["top_concepts"]} == {"other", "offscope.md"}
+
+    def test_unknown_scope_is_empty_not_unscoped(self, store):
+        """A typo'd vault name must return nothing, never the whole graph —
+        silently dropping the filter would be worse than an empty result."""
+        _seed(store)
+        result = overview(store, top_n=10, vault_scope="nope")
+        assert result["counts_by_type"] == {}
+        assert result["top_concepts"] == []
 
     def test_scoped_response_has_the_same_keys(self, store):
         _seed(store)

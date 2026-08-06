@@ -382,6 +382,23 @@ export class GraphClient {
   // CLI subprocess runner
   // -------------------------------------------------------------------
 
+  /**
+   * Run a short read-only subcommand on the default `this.timeout` budget.
+   *
+   * Exists so tools don't have to cast through `private run` to reach the
+   * runner. That cast is not a style nit: `graph-build` used it to launch
+   * `index`, which silently inherited the 10s budget and was killed mid-walk
+   * on any real repo — a mismatch the type checker would have caught had the
+   * call not been an `as any`. Anything that can outrun ten seconds belongs on
+   * {@link indexRepo}/{@link clusterGraph} and their `indexTimeout` instead.
+   */
+  async runReadOnly(
+    subArgs: string[],
+    opts?: { surfaceErrors?: boolean },
+  ): Promise<string | null> {
+    return this.run(subArgs, opts)
+  }
+
   private async run(
     subArgs: string[],
     opts?: { surfaceErrors?: boolean },
@@ -782,6 +799,20 @@ export class GraphClient {
       ok: false,
       message: result.output || (isUrl ? "Fetch-and-index failed or no output" : "Indexing failed or no output"),
       inProgress: result.exitCode === EXIT_INDEX_IN_PROGRESS,
+    }
+  }
+
+  /**
+   * Run community detection. Uses the INDEX timeout, not the default one:
+   * Leiden/Louvain over a large graph runs for minutes, and the default
+   * `run()` budget is 10s — a build tool that shells out through `run()` gets
+   * its subprocess killed and returns partial stderr on any real repo.
+   */
+  async clusterGraph(): Promise<{ ok: boolean; message: string }> {
+    const result = await this.runWithTimeout(["cluster"], this.indexTimeout)
+    return {
+      ok: result.ok,
+      message: result.output || (result.ok ? "Clustering completed" : "Clustering failed or no output"),
     }
   }
 

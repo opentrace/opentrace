@@ -12,17 +12,13 @@ main.py          — Click root group + the unified index command:
                      docs are linked to File twins (MIRRORS) and to each other
                      by the authors' own relative links (LINKS_TO), and bodies
                      stay verbatim in the corpus. Corpus-only — nothing is
-                     synthesized, and no entity layer is extracted (both
-                     removed; see wiki/CLAUDE.md)
+                     synthesized
                    • --no-prune for cleanup behaviour
 vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
                    demote. `vault show` prints the vault's document index
                    (Documents: count, then status / title / one-line summary
                    per doc) — bodies are not printed, read one with
-                   `load_source` or sweep them all with `grep`. Its `--page`
-                   flag went with the concept-page layer on 2026-08-04, and
-                   `refresh-stale-pages` with the synthesis stage on
-                   2026-08-03 (see ../wiki/CLAUDE.md — don't re-add either).
+                   `load_source` or sweep them all with `grep`.
                    `vault ingest <folder>` is the docs-only
                    ingestion path: walks a bare folder (no git repo), corpus-only
                    compile, stamps folder-relative `path` + author LINKS_TO edges,
@@ -32,10 +28,11 @@ vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
                    Needs no existing project: when find_db comes up empty, a
                    docs-only graph is created at ./.opentrace/index.db.
                    Walks DOC_EXTENSIONS + .json (data-as-docs; ingest-specific —
-                   `_ingest_extensions()`); the prune keep-set MUST use the same
-                   set or a doc ingested under an added extension is deleted as
-                   "removed" on the next run (`_walk_ingest_files` is the single
-                   walker both use). Files skipped by type are REPORTED in the
+                   `_ingest_extensions()`); the prune keep-set MUST walk the same
+                   extension set as the ingest walk, or a doc ingested under an
+                   added extension is pruned on the next run as if it had
+                   vanished from disk (`_walk_ingest_files` is the single walker
+                   both use). Files skipped by type are REPORTED in the
                    summary, never silent ("14 docs" over a 15-file folder must
                    not read as full coverage)
 analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
@@ -45,15 +42,21 @@ export_graph.py  — graphml / obsidian / report exporters (deterministic, no LL
 serve.py         — Starlette HTTP server; REST API consumed by the UI
 mcp_server.py    — MCP (Model Context Protocol) server for agent clients
 augment.py       — Post-process: add AI summaries to existing graph nodes
-bench.py         — SWE-bench / accuracy benchmark runner (see /benchmark)
+bench.py         — SWE-bench / accuracy benchmark runner; its own console script
+                   (`opentraceai-bench`), not an `opentraceai` subcommand
 impact.py        — Blast-radius analysis for a given symbol or file
+get_node.py      — `get-node`: single node + its 1-hop neighbors
+traverse.py      — `traverse`: BFS walk from a starting node
+source_search.py — `source-search`: full-text search across the graph
+source_grep.py   — `source-grep`: regex sweep over indexed file contents
+workspace.py     — Resolves the `--workspace` DB under ~/.opentrace/workspaces/
 auth.py          — GitHub token onboarding flows
 credentials.py   — Token storage helpers
 config.py        — pydantic-settings (env prefix OT_)
 export_import.py — Dump and reload graph state for backups / cross-machine moves
 ```
 
-The standalone ``ingest``, ``wiki compile``, ``wiki backfill``, and ``export-graph wiki`` commands were removed during the ingestion unification — all of those flows now route through ``index`` or ``vault attach``. No backward-compat aliases.
+Doc ingestion routes through ``index --wiki`` or ``vault ingest`` / ``vault attach``; there is no standalone ``ingest`` or ``wiki`` command group.
 
 ## Database Discovery
 
@@ -75,10 +78,15 @@ This is a **security boundary** — don't loosen the symlink check casually. If 
 REST endpoints (full list in `docs/reference/graph-tools.md`):
 `/api/health`, `/api/stats`, `/api/metadata`, `/api/graph`, `/api/nodes/*`, `/api/traverse`,
 `/api/retrieval/{search,overview,find_path,find_orphans,find_via_relationship_to_type,count_by,provenance,grep}`,
-`/api/communities`, `/api/highlights/{gods,bridges,questions}`, plus `/api/source/*` and the vault routes:
+plus `/api/source/*` and the vault routes:
 
-- `GET /api/vaults?view=project|global` — project view returns local vaults + globals attached to this project; global view lists every global with an `attached` flag.
-  (There is no page-read route pair any more: `GET /api/vaults/{vault}/pages` and `GET /api/vaults/{vault}/pages/{slug:path}` were **removed 2026-08-04** with the concept-page layer — see `../wiki/CLAUDE.md`. Document bodies are read as node content through `/api/source/*`, not through a vault-scoped page route.)
+Community analysis (god nodes, bridges, cross-cutting communities, suggested
+questions) is deliberately NOT on REST — it is reachable via `opentraceai
+analyze`, the MCP tools, and the report exporter. Routes for it existed briefly
+to back a `KnowledgeHighlightsPanel` that was never built, and were removed
+rather than shipped unconsumed.
+
+- `GET /api/vaults?view=project|global` — project view returns local vaults + globals attached to this project; global view lists every global with an `attached` flag. Document bodies are read as node content through `/api/source/*`; there is no vault-scoped body route.
 - `POST /api/vaults/{vault}/compile` — multipart upload. Corpus-only, like every other compile path: documents are indexed, nothing is synthesized. Accepts a `scope` form field (default `local`) and an `on_conflict` form field (`append` default = compile into the named vault in place; `suffix` = new-vault compile, auto-renames `flask` → `flask-1` if the name is taken in either scope). The stream reports the resolved `vault_name` in each event. Globals are written disk-only — no graph mirror. Runs the (blocking) pipeline in a threadpool via a sync-generator body, so concurrent reads (e.g. `GET /api/vaults`) stay responsive; graph writes are serialized against reads with the store lock.
 - `POST /api/vaults/{vault}/attach` / `POST /api/vaults/{vault}/detach` — mirror a global vault into this project's graph (and copy its corpus into `<project>/.opentrace/corpus/`) / remove the mirror.
 - `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `KnowledgeVault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.
@@ -86,7 +94,7 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 
 MCP tools mirror the same primitives plus `find_cross_cutting_communities`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
 
-`find_pages_mentioning` and `find_entities_mentioned_by` were **removed 2026-08-04** with the LLM-extracted entity layer they traversed (`MENTIONS` / `DERIVED_FROM`) — see wiki/CLAUDE.md. "Which documents discuss X" is answered by `grep` (exhaustive, verbatim, pre-labelled), not by a traversal. Don't re-add them: three benchmark runs measured zero usage of the entity nodes they walked to.
+"Which documents discuss X" is answered by `grep` (exhaustive, verbatim, pre-labelled). There is no doc→topic edge to traverse.
 
 ## Adding a Subcommand
 

@@ -70,11 +70,34 @@ def _autodetect_provider() -> str:
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
 
-    from opentrace_agent.sources.markdown.clients import (
+    from opentrace_agent.sources._llm_common import (
         actionable_no_backend_message,
     )
 
     raise click.ClickException(actionable_no_backend_message())
+
+
+def _vault_project_root(db: str | None) -> Path:
+    """The project root a vault subcommand should read local vaults from.
+
+    Local vaults live at ``<project_root>/.opentrace/vaults/``, so this must
+    track wherever the graph is. Under ``--workspace`` the graph is the
+    workspace's ``index.db``, and its parent's parent is the project root; the
+    subcommands used to hardcode ``Path.cwd()`` and so listed the CURRENT
+    directory's vaults while reading the workspace's graph. Also enforces the
+    ``--workspace``/``--db`` mutual exclusion that every non-vault command gets
+    from ``main._resolve_db``.
+    """
+    ctx = click.get_current_context(silent=True)
+    workspace_db = (ctx.obj or {}).get("workspace_db") if ctx and ctx.obj else None
+    if workspace_db is not None:
+        if db is not None:
+            raise click.UsageError("--workspace and --db are mutually exclusive.")
+        # <root>/.opentrace/index.db → <root>
+        return Path(workspace_db).parent.parent
+    if db is not None:
+        return Path(db).parent.parent
+    return Path.cwd()
 
 
 def _open_graph_store(db: str | None):
@@ -87,7 +110,20 @@ def _open_graph_store(db: str | None):
     from opentrace_agent.cli.main import find_db
     from opentrace_agent.store import GraphStore
 
-    if db is not None:
+    # Honour the top-level ``--workspace`` and its mutual exclusion with
+    # ``--db``, exactly as ``main._resolve_db`` does for every other command.
+    # This used to call ``find_db()`` bare, so ``--workspace W vault list --db X``
+    # silently ignored BOTH flags and read whatever the cwd walk-up found —
+    # while the same flags on ``stats`` correctly exited 2.
+    ctx = click.get_current_context(silent=True)
+    workspace_db = (ctx.obj or {}).get("workspace_db") if ctx and ctx.obj else None
+    if workspace_db is not None:
+        if db is not None:
+            raise click.UsageError("--workspace and --db are mutually exclusive.")
+        path = Path(workspace_db)
+        if not path.exists():
+            return None
+    elif db is not None:
         path = Path(db)
     else:
         found = find_db()
@@ -150,7 +186,7 @@ def _resolve_vault(
 )
 def vault_list(global_only: bool, db_path: str | None) -> None:
     """List vaults, with scope + attachment status against the current graph."""
-    project_root = Path.cwd()
+    project_root = _vault_project_root(db_path)
 
     if global_only:
         from opentrace_agent.wiki.paths import list_vaults
@@ -214,16 +250,20 @@ def vault_list(global_only: bool, db_path: str | None) -> None:
 
 @vault.command("show")
 @click.argument("vault_name")
-@click.option("--scope", type=click.Choice(["local", "global"]), default=None)
+@click.option(
+    "--scope",
+    type=click.Choice(["local", "global"]),
+    default=None,
+    help="Disambiguate when a local and a global vault share this name.",
+)
 def vault_show(vault_name: str, scope: str | None) -> None:
     """Show a vault's document index.
 
     Bodies are not printed here — they live verbatim in the shared corpus.
     Read one with the MCP ``load_source`` tool, or sweep them all with
-    ``grep``. The ``--page`` flag went with the concept-page layer on
-    2026-08-04; there are no page bodies to print.
+    ``grep``.
     """
-    project_root = Path.cwd()
+    project_root = _vault_project_root(None)  # `vault show` has no --db option
     found_scope, found_dir = _resolve_vault(
         vault_name,
         scope_hint=scope,
@@ -275,7 +315,7 @@ def vault_attach(vault_name: str, scope: str | None, db_path: str | None) -> Non
     On name collision (same vault exists both local and global) without
     ``--scope``, prefers the local one.
     """
-    project_root = Path.cwd()
+    project_root = _vault_project_root(db_path)
     found_scope, _ = _resolve_vault(
         vault_name,
         scope_hint=scope,
@@ -370,7 +410,7 @@ def vault_detach(vault_name: str, db_path: str | None) -> None:
     """Remove a vault's mirror from the current graph (disk stays).
 
     Symmetric counterpart of ``vault attach``. Uses the existing
-    ``delete_vault_from_graph`` helper which preserves Source nodes
+    ``delete_vault_from_graph`` helper which preserves KnowledgeDocs
     referenced by other attached vaults.
     """
     from opentrace_agent.wiki.ingest.graph_writer import delete_vault_from_graph
@@ -398,9 +438,11 @@ def vault_detach(vault_name: str, db_path: str | None) -> None:
 def vault_promote(vault_name: str) -> None:
     """Promote a local vault to global (move from project to ~/.opentrace/vaults/).
 
-    Moves the on-disk directory; graph mirrors that pointed at the local
-    vault need to be re-attached via ``vault attach`` to pick up the new
-    scope. Errors if a global vault with the same name already exists.
+    Moves the on-disk directory and re-mirrors THIS project's graph
+    automatically, so no ``vault attach`` is needed here. Other projects that
+    have the vault attached keep the old scope until you run ``vault attach``
+    in each of them — the command prints a warning saying so. Errors if a
+    global vault with the same name already exists.
     """
     _move_vault_scope(vault_name, src="local", dst="global")
 
@@ -418,7 +460,7 @@ def vault_demote(vault_name: str) -> None:
 
 
 def _move_vault_scope(vault_name: str, *, src: Scope, dst: Scope) -> None:
-    project_root = Path.cwd()
+    project_root = _vault_project_root(None)  # promote/demote have no --db option
     try:
         move_vault_dir(vault_name, src=src, dst=dst, project_root=project_root)
     except InvalidVaultName as exc:
@@ -446,8 +488,6 @@ def _move_vault_scope(vault_name: str, *, src: Scope, dst: Scope) -> None:
         f"refresh their mirror, or `opentraceai vault detach {vault_name}` if they "
         "no longer need it."
     )
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -556,9 +596,24 @@ def _prune_vault_meta_sources(meta_path: Path, vault_name: str, keep_shas: set[s
     default=None,
     help="LLM backend for the per-doc labelling call. Auto-detected from env keys if omitted.",
 )
-@click.option("--api-key", default=None)
-@click.option("--model", default=None)
-@click.option("--base-url", default=None)
+@click.option(
+    "--api-key",
+    default=None,
+    help="Provider API key. Falls back to the backend's env var (e.g. ANTHROPIC_API_KEY).",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Override the model for the per-doc labelling call. Defaults to the backend's cheap tier.",
+)
+@click.option(
+    "--base-url",
+    default=None,
+    help=(
+        "Override the API base URL. Only honoured for --provider local; the "
+        "hosted backends use their own endpoints and ignore it."
+    ),
+)
 @click.option(
     "--status",
     "status_override",
@@ -751,7 +806,7 @@ def vault_ingest(
         except OSError as exc:
             click.echo(f"  could not stamp spawned_from on {vault_name!r}: {exc}", err=True)
 
-        pruned_sources = pruned_meta = 0
+        pruned_documents = pruned_meta = 0
         if not no_prune:
             keep_shas = _walked_doc_shas(folder)
             if store is not None:
@@ -761,13 +816,12 @@ def vault_ingest(
                     store,
                     walked_doc_shas=keep_shas,
                     vault_name=vault_name,
-                    scope_path=folder,
                     db_path=store.db_path,
                 )
-                pruned_sources = report.sources_deleted
-                if report.sources_deleted:
+                pruned_documents = report.documents_deleted
+                if report.documents_deleted:
                     click.echo(
-                        f"  pruned {report.sources_deleted} deleted doc(s), "
+                        f"  pruned {report.documents_deleted} deleted doc(s), "
                         f"{report.corpus_files_deleted} corpus file(s)"
                     )
             pruned_meta = _prune_vault_meta_sources(mp, vault_name, keep_shas)
@@ -781,7 +835,7 @@ def vault_ingest(
             mirror_stats=mirror_stats,
             stamped=stamped,
             doc_links=doc_links,
-            pruned=pruned_sources or pruned_meta,
+            pruned=pruned_documents or pruned_meta,
             mirrored=store is not None,
             not_walked=not_walked,
             llm_usage=llm_usage,
@@ -837,19 +891,17 @@ def _echo_ingest_summary(
         click.echo(f"  graph: {stamped} path(s) stamped, {doc_links} doc-to-doc link(s) (LINKS_TO)")
     if mirror_stats:
         click.echo(
-            f"  mirror: {mirror_stats.get('nodes_written', 0)} nodes, "
-            f"{mirror_stats.get('rels_written', 0)} rels"
+            f"  mirror: {mirror_stats.get('nodes_written', 0)} nodes, {mirror_stats.get('rels_written', 0)} rels"
         )
     if pruned:
         click.echo(f"  pruned: {pruned} doc(s) no longer in the folder")
 
-    # Billed actuals next to where the pre-flight ESTIMATE printed, so the two
-    # confront each other on every run. Token counts are the provider's own;
-    # the dollar figure converts them at our listed extraction-tier rates
-    # (provider prices can drift, so it's approximate — but grounded, unlike
-    # the estimate, whose assumptions once ran 6.5x stale with nothing to
-    # contradict them). Absent when nothing was billed (all-duplicate re-runs)
-    # or when a test injects a usage-less fake client.
+    # Print billed actuals next to where the pre-flight ESTIMATE printed, so
+    # the two can be compared on every run. Token counts are the provider's
+    # own; the dollar figure converts them at our listed extraction-tier rates,
+    # so it is approximate (provider prices can drift). Absent when nothing was
+    # billed (all-duplicate re-runs) or when a test injects a usage-less fake
+    # client.
     if llm_usage and provider:
         from opentrace_agent.sources._llm_common import extraction_pricing
 
@@ -857,8 +909,7 @@ def _echo_ingest_summary(
         cost_note = ""
         if pricing is not None:
             actual = (
-                llm_usage["input_tokens"] / 1_000_000 * pricing[0]
-                + llm_usage["output_tokens"] / 1_000_000 * pricing[1]
+                llm_usage["input_tokens"] / 1_000_000 * pricing[0] + llm_usage["output_tokens"] / 1_000_000 * pricing[1]
             )
             cost_note = f" · ~${actual:.2f} billed"
         click.echo(

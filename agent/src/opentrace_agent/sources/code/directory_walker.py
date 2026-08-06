@@ -111,9 +111,12 @@ EXTENSION_LANGUAGE_MAP: dict[str, str] = {
 }
 
 # File extensions surfaced as docs when ``walk_docs=True``. These are the
-# formats markitdown knows how to convert to markdown — used by the wiki
-# doc-ingestion pass to feed bodies to the LLM. Kept in lockstep
-# with ``sources/markdown/loader.py::_EXT_TO_TYPE``.
+# formats markitdown knows how to convert to markdown — used by the doc-ingestion
+# pass to feed bodies to the LLM. Kept in lockstep with
+# ``wiki/ingest/normalize.py``'s passthrough set: an extension here that
+# normalize can neither pass through nor convert is walked and then fails.
+# ``vault ingest`` extends this set with ``.json`` — see
+# ``cli/vault_cmd.py::_ingest_extensions``.
 DOC_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".pdf",
@@ -157,7 +160,7 @@ class DocFileEntry:
     """A doc file discovered when ``walk_docs=True``.
 
     Separate from :class:`FileEntry` because docs don't have a stable
-    ``file_id`` at scan time — the Source node id is derived from the
+    ``file_id`` at scan time — the KnowledgeDoc id is derived from the
     markitdown'd body content, computed in the doc-ingestion pass.
     """
 

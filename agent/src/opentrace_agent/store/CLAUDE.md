@@ -39,13 +39,30 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 
 - Node types: `KnowledgeVault`, `KnowledgeDoc` (vault domain — see `../wiki/CLAUDE.md`)
 - Rel types: `CONTAINS` (Vault → KnowledgeDoc), `LINKS_TO` (doc→doc author links, parsed mechanically from relative markdown links), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
-- **`KnowledgeConcept` and `CITES` are gone entirely — not retained-but-unwritten.** They were the concept-page layer's node and edge types; synthesis was removed 2026-08-03 and the rest of the layer 2026-08-04, including these two from the proto and `gen/`. They are *not* covered by the retention rule below: they were added on this branch and never shipped on a release branch, so no graph anywhere contains one and there is nothing to stay readable for. **Don't re-add them** — the layer measured 88.4% against a 98.6% control (−10.2pp); see `../wiki/CLAUDE.md` ("Closed") for the full record.
-- **The entity layer's `DERIVED_FROM` / `SEMANTIC_EDGE` / `MENTIONS` rel types are retained-but-unwritten**; its four exclusive *node* types (`Idea` / `Paper` / `Person` / `Event`) were removed from `constants.py` on 2026-08-04 along with the layer (see `../wiki/CLAUDE.md` for the five measurements). Why the asymmetry, precisely — it is not about what "shipped":
-    - `VALID_NODE_TYPES` is **declarative only**: nothing outside `constants.py` reads it, so it neither validates writes nor filters reads. Removing a name from it cannot make any graph unreadable, which is what made dropping those four free.
-    - The **proto/`gen/`** rel types are a different matter: they declare the typed tables the browser-side `LadybugStore` creates, so removing one can affect a browser-mode DB built earlier. Left in place for that reason. `GraphStore.save_semantic_edge` survives with no caller for the same reason.
-    - `Service` / `Module` stay regardless — the extractor *reused* those two pre-existing code/runtime type names rather than inventing its own (which is why identifying an entity ever needed a `derived_from` property check, not a type check), and non-wiki producers still write them.
-    - Note the contrast with `KnowledgeConcept` / `CITES` above is **not** "one shipped and one didn't" — neither layer was ever merged to `main`, and local graphs built from this branch can contain either. The difference that matters is the one above: for the Python `GraphStore`, node types are just strings in a generic `Node` table, so an old graph's entity *or* concept nodes stay readable either way.
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
+
+### `VALID_NODE_TYPES` is declarative only
+
+The set in `constants.py` is the proto-generated `NODE_TYPES` splat (minus
+`INTERNAL_NODE_TYPES`), plus the legacy aliases `Repo` / `Package`, plus
+`Module`, plus the runtime/observability types (`Service`, `Cluster`,
+`Namespace`, `Deployment`, `InstrumentedService`, `Span`, `Log`, `Metric`,
+`Endpoint`, `Database`, `DBTable`).
+
+Nothing outside `constants.py` reads it, so it neither validates writes nor
+filters reads — for the Python `GraphStore`, node types are just strings in a
+generic `Node` table, and a graph containing a type not in this set stays fully
+readable. Editing the set therefore cannot break an existing DB.
+
+The **proto/`gen/` rel types are a different matter.** They declare the typed
+tables the browser-side `LadybugStore` creates, so dropping one can break a
+browser-mode DB built earlier. Before pruning a rel type, check whether any
+*released* version declared it: if none did, no graph in the wild can contain
+it and it can go. If one did, keep it and say so in the proto.
+
+Don't infer a compatibility obligation from the absence of a Python producer
+alone. `DERIVED_FROM` looks producerless from the wiki layer but
+`pipeline/resolving.py` writes it, so it is live, not retained-for-legacy.
 
 ## Property Marshalling
 
@@ -68,10 +85,9 @@ browser-mode indexing.
 selects the top-N by relevance but does not order them, and every caller
 (`retrieval.search`, `search_nodes`, MCP `search_graph`) truncates to a
 smaller limit — so without the sort a top-scoring node is dropped in favour
-of a weaker one that merely arrived first. Don't remove it: on a real
-25-doc index the second-best hit came back last, behind hits scoring a
-third as high, making labelled `KnowledgeDoc` nodes effectively
-undiscoverable at any sane limit.
+of a weaker one that merely arrived first. **Don't remove the sort.** A
+strong hit can otherwise come back last, behind far weaker ones, which makes
+well-labelled nodes effectively undiscoverable at any sane limit.
 
 ## Traverse extensions (OT-1732 Phase 3)
 
@@ -84,9 +100,7 @@ undiscoverable at any sane limit.
   KnowledgeDocs are vault-scoped via CONTAINS edges)
 - `confidence_threshold: float | None` — when >0, rel `properties.confidence`
   below this is filtered out. The resolver-stamped `CALLS` confidence is the
-  only live user: the wiki layer stamps no confidence at all, and the one
-  wiki-side placeholder that ever existed was page-level and went with the
-  concept-page layer on 2026-08-04.
+  only user; the wiki layer stamps no confidence at all.
 
 ## Pitfalls
 

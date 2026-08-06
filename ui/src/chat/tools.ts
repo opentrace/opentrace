@@ -153,15 +153,15 @@ const traverseGraphSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Restrict to nodes whose vault ancestor matches this name. ' +
-        'No-op until vault graph nodes are populated.',
+      'Restrict traversal to nodes belonging to this vault, by name. ' +
+        'Membership follows CONTAINS edges, so it reaches the vault\'s documents.',
     ),
   confidenceThreshold: z
     .number()
     .optional()
     .describe(
       'Skip relationships with confidence below this threshold (0.0–1.0). ' +
-        'No-op until provenance fields are populated.',
+        'Only CALLS edges carry a confidence; edges without one are kept.',
     ),
 });
 
@@ -211,7 +211,9 @@ const findPathSchema = z.object({
 });
 
 const findOrphansSchema = z.object({
-  nodeType: z.string().describe('Node type to scan, e.g. Function or Page'),
+  nodeType: z
+    .string()
+    .describe('Node type to scan, e.g. Function or KnowledgeDoc'),
   edgeType: z
     .string()
     .describe(
@@ -264,8 +266,8 @@ const overviewSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Restrict to a specific vault by name. ' +
-        'No-op until vault graph nodes are populated.',
+      'Restrict the whole response to a specific vault by name. ' +
+        'An unknown name yields empty counts, not the unscoped graph.',
     ),
 });
 

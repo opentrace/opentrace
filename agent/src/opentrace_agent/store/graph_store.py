@@ -22,20 +22,15 @@ from __future__ import annotations
 import json
 import logging
 from collections import deque
-from typing import Any, Literal
+from typing import Any
 
 import real_ladybug as ladybug
 
 from opentrace_agent.gen.schema_gen import (
     NODE_TYPE_COMMUNITY,
-    NODE_TYPE_HYPEREDGE,
     NODE_TYPE_INDEX_METADATA,
     REL_TYPE_MEMBER_OF_COMMUNITY,
-    REL_TYPE_PARTICIPATES_IN,
-    REL_TYPE_SEMANTIC_EDGE,
 )
-
-ConfidenceTier = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
 
 logger = logging.getLogger(__name__)
 
@@ -834,8 +829,8 @@ class GraphStore:
             Allowlist of rel types — when set, only these rel types traverse.
             Supersedes ``relationship_type`` if both are passed.
         vault_scope
-            When set, only neighbours whose ``properties.vault`` matches this
-            value are traversed.
+            When set, only neighbours that belong to that vault are traversed.
+            Membership follows ``CONTAINS`` edges — see :meth:`vault_member_ids`.
         confidence_threshold
             When > 0, relationships whose ``properties.confidence`` is below
             this value are skipped. Edges without a ``confidence`` property
@@ -857,6 +852,10 @@ class GraphStore:
 
         visited: set[str] = {node_id}
         results: list[dict[str, Any]] = []
+        # Resolve vault membership ONCE (see vault_member_ids): a KnowledgeDoc
+        # has no `vault` property, so filtering on one returned no documents.
+        scope_ids = self.vault_member_ids(vault_scope) if vault_scope is not None else None
+
         queue: deque[tuple[str, int]] = deque([(node_id, 0)])
 
         while queue:
@@ -868,10 +867,8 @@ class GraphStore:
             for nb_node, nb_rel in neighbors:
                 if rel_filter is not None and nb_rel["type"] not in rel_filter:
                     continue
-                if vault_scope is not None:
-                    nb_props = nb_node.get("properties") or {}
-                    if nb_props.get("vault") != vault_scope:
-                        continue
+                if scope_ids is not None and nb_node["id"] not in scope_ids:
+                    continue
                 if confidence_threshold is not None and confidence_threshold > 0:
                     rel_props = nb_rel.get("properties") or {}
                     rel_conf = rel_props.get("confidence")
@@ -923,7 +920,7 @@ class GraphStore:
             "nodes_by_type": nodes_by_type,
         }
 
-    # -- knowledge graph (communities, hyperedges, semantic edges) ------
+    # -- knowledge graph (communities) ----------------------------------
 
     def save_community(
         self,
@@ -947,62 +944,6 @@ class GraphStore:
             },
         )
 
-    def save_hyperedge(
-        self,
-        id: str,
-        name: str,
-        relation: str,
-        confidence: ConfidenceTier,
-        confidence_score: float,
-        source_file: str = "",
-    ) -> None:
-        """Upsert a Hyperedge node — a labelled n-ary grouping from LLM extraction."""
-        self.add_node(
-            id=id,
-            node_type=NODE_TYPE_HYPEREDGE,
-            name=name,
-            properties={
-                "relation": relation,
-                "confidence": confidence,
-                "confidence_score": confidence_score,
-                "source_file": source_file,
-            },
-        )
-
-    def save_semantic_edge(
-        self,
-        id: str,
-        source_id: str,
-        target_id: str,
-        relation: str,
-        confidence: ConfidenceTier,
-        confidence_score: float,
-        *,
-        source_file: str = "",
-        source_location: str = "",
-        weight: float = 1.0,
-    ) -> None:
-        """Upsert a SEMANTIC_EDGE relationship.
-
-        Unused by any current producer: the LLM-extracted entity layer that
-        wrote these was removed on 2026-08-04 (see the wiki CLAUDE.md). Kept
-        so a graph built before then stays writable and readable — the edge
-        type is still in the proto schema."""
-        self.merge_relationship(
-            id=id,
-            rel_type=REL_TYPE_SEMANTIC_EDGE,
-            source_id=source_id,
-            target_id=target_id,
-            properties={
-                "relation": relation,
-                "confidence": confidence,
-                "confidence_score": confidence_score,
-                "source_file": source_file,
-                "source_location": source_location,
-                "weight": weight,
-            },
-        )
-
     def save_membership(self, id: str, node_id: str, community_id: str) -> None:
         """Link a node to its Community via MEMBER_OF_COMMUNITY."""
         self.merge_relationship(
@@ -1012,31 +953,18 @@ class GraphStore:
             target_id=community_id,
         )
 
-    def save_participation(self, id: str, node_id: str, hyperedge_id: str) -> None:
-        """Link a node to a Hyperedge it participates in."""
-        self.merge_relationship(
-            id=id,
-            rel_type=REL_TYPE_PARTICIPATES_IN,
-            source_id=node_id,
-            target_id=hyperedge_id,
-        )
-
     def iter_analysis_graph(
         self,
         *,
         exclude_types: tuple[str, ...] = (
             NODE_TYPE_COMMUNITY,
-            NODE_TYPE_HYPEREDGE,
             NODE_TYPE_INDEX_METADATA,
         ),
-        exclude_rel_types: tuple[str, ...] = (
-            REL_TYPE_MEMBER_OF_COMMUNITY,
-            REL_TYPE_PARTICIPATES_IN,
-        ),
+        exclude_rel_types: tuple[str, ...] = (REL_TYPE_MEMBER_OF_COMMUNITY,),
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         """Return (nodes, edges) for analytical workloads (clustering, exports).
 
-        Excludes Community/Hyperedge/IndexMetadata nodes and the membership
+        Excludes Community/IndexMetadata nodes and the membership
         relationships that link them, so clustering operates on the underlying
         graph and doesn't ingest its own previous output.
         """
@@ -1081,6 +1009,31 @@ class GraphStore:
         except Exception:
             logger.warning("clear_communities: failed to delete communities", exc_info=True)
 
+    def vault_member_ids(self, vault_name: str) -> set[str]:
+        """Node ids belonging to *vault_name*: the vault node plus its members.
+
+        Membership is the ``KnowledgeVault -CONTAINS-> KnowledgeDoc`` edge, NOT
+        a per-node property. A ``KnowledgeDoc`` deliberately carries no
+        ``vault`` property — it is content-addressed by sha and one document can
+        belong to several vaults at once — so a property filter matches only the
+        vault node itself and silently returns no documents. Every vault-scoped
+        read must resolve membership through here.
+
+        Returns an empty set when no such vault exists, which callers should
+        treat as "scope matched nothing" rather than "scope not applied".
+        """
+        vault_id = f"vault::{vault_name}"
+        if self.get_node(vault_id) is None:
+            return set()
+        ids = {vault_id}
+        rows = self._conn.execute(
+            "MATCH (v:Node)-[r:RELATES]->(d:Node) WHERE v.id = $vid AND r.type = 'CONTAINS' RETURN d.id",
+            parameters={"vid": vault_id},
+        )
+        while rows.has_next():
+            ids.add(str(rows.get_next()[0]))
+        return ids
+
     def list_communities(self) -> list[dict[str, Any]]:
         """Return all Community nodes, ordered by community_id."""
         result = self._conn.execute(
@@ -1112,54 +1065,6 @@ class GraphStore:
         r = result.get_next()
         props = _parse_props(r[2]) or {}
         return {"id": str(r[0]), "name": str(r[1]), **props}
-
-    def list_hyperedges_for_node(self, node_id: str) -> list[dict[str, Any]]:
-        """Return Hyperedges this node participates in."""
-        result = self._conn.execute(
-            "MATCH (n:Node {id: $id})-[r:RELATES]->(h:Node) "
-            "WHERE r.type = $rt AND h.type = $ht "
-            "RETURN h.id, h.name, h.properties",
-            parameters={
-                "id": node_id,
-                "rt": REL_TYPE_PARTICIPATES_IN,
-                "ht": NODE_TYPE_HYPEREDGE,
-            },
-        )
-        rows: list[dict[str, Any]] = []
-        while result.has_next():
-            r = result.get_next()
-            props = _parse_props(r[2]) or {}
-            rows.append({"id": str(r[0]), "name": str(r[1]), **props})
-        return rows
-
-    def list_hyperedges(self, limit: int = 200) -> list[dict[str, Any]]:
-        """Return every Hyperedge with the ids of its participating members.
-
-        Rows are ``{id, name, <hyperedge properties>, member_ids: [...]}``,
-        ordered by member count descending then name. Hyperedges with no
-        remaining participants are not returned (the MATCH requires at least
-        one PARTICIPATES_IN edge).
-        """
-        result = self._conn.execute(
-            "MATCH (n:Node)-[r:RELATES]->(h:Node) "
-            "WHERE r.type = $rt AND h.type = $ht "
-            "RETURN h.id, h.name, h.properties, n.id",
-            parameters={
-                "rt": REL_TYPE_PARTICIPATES_IN,
-                "ht": NODE_TYPE_HYPEREDGE,
-            },
-        )
-        by_id: dict[str, dict[str, Any]] = {}
-        while result.has_next():
-            r = result.get_next()
-            hid = str(r[0])
-            entry = by_id.get(hid)
-            if entry is None:
-                props = _parse_props(r[2]) or {}
-                entry = by_id[hid] = {"id": hid, "name": str(r[1]), **props, "member_ids": []}
-            entry["member_ids"].append(str(r[3]))
-        ranked = sorted(by_id.values(), key=lambda h: (-len(h["member_ids"]), h["name"]))
-        return ranked[:limit]
 
     def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
         """Return top-degree non-synthetic nodes.

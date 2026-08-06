@@ -12,9 +12,8 @@ import type { GraphClient } from "../graph-client.js"
  * Index a folder and run community detection over the result. Wraps
  * `opentraceai index` followed by `opentraceai cluster`.
  *
- * Clustering needs the graph extra:
- *
- *     uv pip install 'opentraceai[graph]'
+ * Both run on the INDEX timeout, not the default 10s command budget — see
+ * `GraphClient.indexRepo` / `clusterGraph`.
  */
 export function createGraphBuildTool(client: GraphClient) {
   return tool({
@@ -26,9 +25,15 @@ export function createGraphBuildTool(client: GraphClient) {
       const cliBlocked = await client.requireCliAvailable()
       if (cliBlocked) return cliBlocked
 
-      const indexOut = await (client as any).run(["index", args.path ?? "."], { surfaceErrors: true })
-      const clusterOut = await (client as any).run(["cluster"], { surfaceErrors: true })
-      const combined = [indexOut, clusterOut].filter(Boolean).join("\n")
+      // Both steps go through the INDEX timeout (30 min), not the default 10s
+      // `run()` budget — indexing or clustering any real repo takes longer than
+      // ten seconds, so the subprocess was being killed mid-walk and the tool
+      // returned partial stderr as if that were the result.
+      const indexed = await client.indexRepo(args.path ?? ".")
+      if (!indexed.ok) return indexed.message
+
+      const clustered = await client.clusterGraph()
+      const combined = [indexed.message, clustered.message].filter(Boolean).join("\n")
       return combined || "index produced no output"
     },
   })

@@ -22,14 +22,12 @@
  * Reading a vault's CONTENT is not here. A document is a graph node, so it is
  * reached with the graph tools in ``./tools`` — ``search_graph`` /
  * ``list_nodes`` to find one, ``load_source`` to read it verbatim, ``grep``
- * to sweep every body at once. Two page-reader tools (``list_vault_pages``,
- * ``read_vault_page``) lived here until 2026-08-04 and went with the
- * concept-page layer.
+ * to sweep every body at once.
  */
 
 import { tool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { listVaults } from '../wiki/client';
+import { isVaultApiConfigured, listVaults } from '../wiki/client';
 
 const listVaultsSchema = z.object({});
 
@@ -41,6 +39,11 @@ function jsonError(action: string, e: unknown): string {
 }
 
 export function makeVaultTools() {
+  // No server, no vault API — return no tools rather than an advertised tool
+  // that can only throw. An advertised tool is a capability the agent will
+  // spend a call on.
+  if (!isVaultApiConfigured()) return [];
+
   const listVaultsTool = tool(
     async () => {
       try {

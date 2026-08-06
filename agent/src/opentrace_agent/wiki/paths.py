@@ -40,7 +40,6 @@ DEFAULT_GLOBAL_VAULT_ROOT = Path.home() / ".opentrace" / "vaults"
 LOCAL_VAULT_DIRNAME = ".opentrace/vaults"
 
 # Backward-compat alias — pre-scope code referenced this. Maps to global.
-DEFAULT_VAULT_ROOT = DEFAULT_GLOBAL_VAULT_ROOT
 
 Scope = Literal["local", "global"]
 

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import io
 import os
 import tempfile
 from collections.abc import Iterable, Iterator
@@ -50,7 +49,16 @@ def _passthrough(data: bytes) -> str:
 
 
 def _markitdown_convert(name: str, data: bytes) -> str:
-    """Convert non-text formats via the markitdown library (lazy-imported)."""
+    """Convert non-text formats via the markitdown library (lazy-imported).
+
+    A fresh ``MarkItDown()`` per document is deliberate. Caching one at module
+    scope saves re-registering its converters, but normalization is sequential
+    (see :func:`normalize`) so there is no concurrency to protect against, and a
+    cached instance becomes hidden global state that outlives the call — it also
+    silently defeats tests that patch ``markitdown.MarkItDown``, leaking one
+    test's stub into the next. Don't add the cache without measuring that the
+    construction cost actually matters next to the per-document LLM call.
+    """
     try:
         from markitdown import MarkItDown
     except ImportError as e:
@@ -142,4 +150,3 @@ __all__ = ["normalize", "_passthrough", "_markitdown_convert", "_is_passthrough"
 
 
 # Silence unused-import warnings; io kept for mypy stub compatibility.
-_ = io

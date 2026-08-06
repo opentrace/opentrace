@@ -26,7 +26,7 @@ import hashlib
 import pytest
 
 from opentrace_agent.wiki import SourceInput, run_compile
-from opentrace_agent.wiki.ingest.types import WikiEventKind, WikiPhase
+from opentrace_agent.wiki.ingest.types import WikiEventKind
 from opentrace_agent.wiki.vault import load_metadata
 
 
@@ -43,6 +43,7 @@ def _sha(b: bytes) -> str:
 def _extraction(title: str) -> tuple[str, dict]:
     """One emit_extraction response: the doc's navigation label."""
     return ("emit_extraction", {"one_line_summary": f"Summary of {title}."})
+
 
 def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
     pytest.importorskip("real_ladybug")
@@ -64,11 +65,7 @@ def test_first_compile_with_graph_store_mirrors_into_graph(tmp_path, fake_llm):
     db_path = str(tmp_path / "graph.db")
     graph_store = GraphStore(db_path)
     try:
-        events = list(
-            run_compile(
-                "testvault", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store
-            )
-        )
+        events = list(run_compile("testvault", [src], vault_root=tmp_path, llm=llm, graph_store=graph_store))
 
         # Corpus-only: the vault node and the doc land in the graph, and
         # nothing but metadata and the audit log is written under the vault
@@ -142,7 +139,7 @@ def test_empty_content_source_is_skipped(tmp_path, fake_llm):
 
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
     assert _sha(real.data) in meta.sources
-    assert _sha(blank.data) not in meta.sources  # skipped entirely — no Source node either
+    assert _sha(blank.data) not in meta.sources  # skipped entirely — no KnowledgeDoc either
     # The gate's skip count travels as structured detail (the CLI summary
     # reads it), not just message text.
     gate_events = [e for e in events if e.detail and "low_content_skipped" in e.detail]
@@ -212,5 +209,3 @@ def test_source_status_persisted_and_mirrored(tmp_path, fake_llm):
     # And it survives in .vault.json for disk-only reloads / re-mirrors.
     meta = load_metadata(tmp_path / "v" / ".vault.json", name="v")
     assert meta.sources[_sha(src.data)].status == "design_history"
-
-

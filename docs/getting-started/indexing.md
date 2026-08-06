@@ -9,9 +9,7 @@ The graph holds two layers:
 1. **Code layer** — `File`, `Class`, `Function`, `Variable` nodes from tree-sitter. Always produced.
 2. **Doc layer** — labelled `KnowledgeDoc` nodes, linked to each other by the authors' own links and to their `File` twins, bodies kept verbatim in the corpus. Produced by `--wiki`.
 
-An LLM-extracted **entity layer** (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event` nodes over doc bodies) was **removed on 2026-08-04**: three benchmark runs measured zero agent usage of it once corpus `grep` existed, while it crowded labelled documents out of the top search slots, fragmented single concepts across several nodes, and re-extracted only ~65% consistently between runs. Whole-corpus questions are answered by `grep`; see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced).
-
-One flag turns on the doc layer: `--wiki`. There is no synthesis layer — doc bodies are never rewritten.
+One flag turns on the doc layer: `--wiki`. Doc bodies are never rewritten, and nothing is synthesized on top of them — whole-corpus questions are answered by `grep` over the verbatim bodies.
 
 ## The commands
 
@@ -46,9 +44,6 @@ The vault is **local by default** (project-scoped). Pass `--global` for a vault 
 
 Cost: ~1 LLM call per doc. Pre-flight estimate is printed before any call runs.
 
-!!! note "There is no concept-page layer at all"
-    OpenTrace briefly offered `--wiki-concept-pages`, which synthesized cross-document `KnowledgeConcept` pages on top of the corpus. Synthesis was removed **2026-08-03** and the remaining data model, storage, and read paths on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)** on the doc-Q&A benchmark — the worst result on record. A synthesized page restates its sources in the model's own voice, dropping their hedges, tense, and attribution, which the verbatim corpus structurally cannot do. For corpus-wide questions use the `grep` retrieval tool, which returns verbatim lines from every doc, pre-labelled with title and status, and `load_source` to read a body. Nothing reads or writes a page any more, on any vault.
-
 !!! warning "LLM key required"
     `--wiki` hard-fails up front if no API key is configured. See [Wiki Providers](../reference/wiki-providers.md) for the env var → provider mapping.
 
@@ -61,6 +56,7 @@ Cost: ~1 LLM call per doc. Pre-flight estimate is printed before any call runs.
 | `--wiki` | Walks docs + runs the doc-ingestion pipeline: one LLM call per doc (its navigation label), then the mechanical link pass (`MIRRORS` File twins, doc→doc `LINKS_TO`, epistemic `status`). Corpus-only — bodies stay verbatim, nothing is synthesized. Implies a vault |
 | `[VAULT_NAME]` (2nd positional) | Override the auto-derived vault name (defaults to path basename / repo name / file stem / URL slug). Implies `--wiki` when given. Names are unique across scopes — a genuinely new vault whose name is already taken (locally *or* globally) is auto-suffixed `-1`, `-2`, …; re-indexing the same repo reuses the vault it made before rather than suffixing again |
 | `--global` | Compile the vault into `~/.opentrace/vaults/` instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki`. Disk only — run `vault attach <name>` to mirror into this project's graph |
+| `--wiki-exclude-design-history` | Skip design-history docs (openspec / ADR / RFC / proposal trees, CHANGELOGs) instead of ingesting them with a `design_history` status label |
 
 ### Re-indexing & cleanup
 
@@ -95,7 +91,7 @@ Default-on for `--wiki`. When you re-run on a path:
 
 - KnowledgeDocs the walked set lost since the last run → deleted from graph + corpus body deleted from disk
 
-That's all it does. The report is two counts — `sources_deleted` and `corpus_files_deleted` — because nothing is derived from a document, so a vanished doc leaves nothing else behind to clean up or mark.
+That's all it does. The report is two counts — `documents_deleted` and `corpus_files_deleted` — because nothing is derived from a document, so a vanished doc leaves nothing else behind to clean up or mark.
 
 Scope is **walk-path-limited** (or vault-limited when `--wiki` provided a vault). Re-indexing `./papers` doesn't touch docs you ingested from `./transcripts`.
 

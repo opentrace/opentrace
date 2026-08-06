@@ -48,7 +48,7 @@ export default function CompileProgressPanel({ raised = false }: Props) {
 
   if (state.status === 'idle') return null;
 
-  const running = state.status === 'running' || state.status === 'cancelling';
+  const running = state.status === 'running';
   const determinate = running && state.total > 0;
   const pct = determinate
     ? Math.min(100, (state.current / state.total) * 100)
@@ -123,7 +123,6 @@ export default function CompileProgressPanel({ raised = false }: Props) {
             type="button"
             className="compile-panel__btn compile-panel__btn--cancel"
             onClick={cancel}
-            disabled={state.status === 'cancelling'}
             title="Cancel compilation"
             aria-label="Cancel compilation"
           >
@@ -152,9 +151,7 @@ export default function CompileProgressPanel({ raised = false }: Props) {
       >
         <span
           className={`compile-panel__bar${
-            running && !determinate
-              ? ' compile-panel__bar--indeterminate'
-              : ''
+            running && !determinate ? ' compile-panel__bar--indeterminate' : ''
           }`}
         >
           <span

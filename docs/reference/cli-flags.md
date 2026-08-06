@@ -35,10 +35,11 @@ opentraceai index [PATH] [OPTIONS]
 | `--wiki` | flag | off | Walks doc files in addition to code. One LLM call per doc produces the `KnowledgeDoc` navigation label — a one-line summary, with the `title` derived mechanically from the filename — and nothing else. A mechanical pass then adds a `MIRRORS` edge to each repo-walked doc's `File` twin (created at link time when the code walk skipped the extension), `LINKS_TO` edges between docs from the authors' own relative links, and an epistemic `status` stamp. **Corpus-only** — doc bodies stay verbatim and are read via `load_source`; nothing is synthesized. Vault name comes from the `VAULT_NAME` positional (or path-derived default). Hard-fails when no LLM key is configured |
 | `--global` | flag | off | Vault lives at `~/.opentrace/vaults/` (or `$OT_VAULT_ROOT`) instead of `<cwd>/.opentrace/vaults/`. Only meaningful with `--wiki` |
 | `--no-prune` | flag | off | Disable autoprune. By default, re-running over a path removes graph state for docs that disappeared from disk (scope-limited to the walked path / vault) |
+| `--wiki-exclude-design-history` | flag | off | Skip design-history docs (openspec / ADR / RFC / proposal trees, CHANGELOGs) instead of ingesting them with a `design_history` status label |
 | `-v` / `--verbose` | flag | off | Per-file progress events |
 
-!!! note "Removed 2026-08-03 / 2026-08-04"
-    `--wiki-concept-pages` and `--refresh-stale-pages` no longer exist. Concept-page synthesis was removed 2026-08-03 after it measured **88.4% against a 98.6% control (−10.2pp)** on the doc-Q&A benchmark; the rest of the layer, including `vault show --page`, went 2026-08-04. Corpus `grep` answers the same cross-document questions with verbatim, pre-labelled lines, and `load_source` reads a body. See the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
+!!! note "Concept pages"
+    `--wiki-concept-pages`, `--refresh-stale-pages`, and `vault show --page` do not exist. Use `grep` for cross-document questions and `load_source` to read a document's body.
 
 ### Common combinations
 
@@ -117,8 +118,6 @@ Prints the vault's document index — a `Documents:` count, then status / title 
 | Flag | Description |
 |---|---|
 | `--scope local\|global` | Disambiguate when a vault exists in both scopes. Local wins by default |
-
-`--page SLUG` was deleted 2026-08-04 with the concept-page layer — see the note under `index` above.
 
 ### `vault attach`
 

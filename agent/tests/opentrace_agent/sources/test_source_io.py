@@ -16,30 +16,27 @@
 
 from __future__ import annotations
 
-import pytest
-
-from opentrace_agent.sources.markdown import AnnotatedMarkdown
 from opentrace_agent.sources.markdown.source_io import (
     CORPUS_SUBDIR,
     corpus_dir,
-    load_source_markdown,
     relative_corpus_path,
-    write_source_markdown,
 )
 
 
 class TestRelativeCorpusPath:
-    def test_basic(self):
-        assert relative_corpus_path("src_abc") == "corpus/src_abc.md"
+    def test_sha_is_used_verbatim(self):
+        sha = "a" * 64
+        assert relative_corpus_path(sha) == f"corpus/{sha}.md"
 
     def test_colon_replaced(self):
-        # Source IDs include "src:<hash>"; the colon would confuse filesystems
-        # on some platforms — verify it's normalised.
-        assert relative_corpus_path("src:1234") == "corpus/src_1234.md"
+        # Defensive only: a sha256 is hex, so this cannot fire in production.
+        # It guards against a non-sha id ever reaching the filename.
+        assert relative_corpus_path("a:1234") == "corpus/a_1234.md"
 
     def test_slash_replaced(self):
-        # A stray slash in the id would create unintended subdirectories.
-        assert relative_corpus_path("src/x") == "corpus/src_x.md"
+        # A stray slash would otherwise create unintended subdirectories,
+        # placing a body outside the corpus dir.
+        assert relative_corpus_path("a/x") == "corpus/a_x.md"
 
 
 class TestCorpusDir:
@@ -48,96 +45,6 @@ class TestCorpusDir:
         db = tmp_path / ".opentrace" / "index.db"
         db.parent.mkdir(parents=True)
         assert corpus_dir(db) == tmp_path / ".opentrace" / CORPUS_SUBDIR
-
-
-class TestWriteAndLoadRoundTrip:
-    def test_write_creates_file(self, tmp_path):
-        db = tmp_path / "db"
-        annotated = AnnotatedMarkdown(
-            markdown="# Hi\nbody",
-            source_uri="file:///x",
-            source_type="markdown",
-        )
-        rel = write_source_markdown(db, "src:1", annotated)
-        assert rel == "corpus/src_1.md"
-        full = tmp_path / rel
-        assert full.exists()
-        assert full.read_text() == "# Hi\nbody"
-
-    def test_write_creates_corpus_dir_if_missing(self, tmp_path):
-        # Don't pre-create the corpus dir.
-        db = tmp_path / "db"
-        write_source_markdown(
-            db,
-            "src:1",
-            AnnotatedMarkdown(markdown="x", source_uri="u", source_type="t"),
-        )
-        assert (tmp_path / CORPUS_SUBDIR).is_dir()
-
-    def test_write_overwrites_existing_file(self, tmp_path):
-        db = tmp_path / "db"
-        a = AnnotatedMarkdown(markdown="v1", source_uri="u", source_type="t")
-        b = AnnotatedMarkdown(markdown="v2", source_uri="u", source_type="t")
-        rel = write_source_markdown(db, "src:1", a)
-        write_source_markdown(db, "src:1", b)
-        assert (tmp_path / rel).read_text() == "v2"
-
-    def test_load_round_trip(self, tmp_path):
-        db = tmp_path / "db"
-        original = AnnotatedMarkdown(
-            markdown="# Topic\nDetails.",
-            source_uri="https://example.com/x",
-            source_type="html",
-            title="Topic",
-            fetched_at="2026-05-14T10:00:00Z",
-        )
-        rel = write_source_markdown(db, "src:abc", original)
-        node = {
-            "id": "src:abc",
-            "type": "KnowledgeDoc",
-            "name": "Topic",
-            "properties": {
-                "source_uri": original.source_uri,
-                "source_type": original.source_type,
-                "title": original.title,
-                "fetched_at": original.fetched_at,
-                "corpus_path": rel,
-            },
-        }
-        loaded = load_source_markdown(db, node)
-        assert loaded.markdown == original.markdown
-        assert loaded.source_uri == original.source_uri
-        assert loaded.source_type == original.source_type
-        assert loaded.title == original.title
-        assert loaded.fetched_at == original.fetched_at
-
-    def test_load_without_corpus_path_raises(self, tmp_path):
-        node = {"id": "src:x", "properties": {"source_uri": "u"}}
-        with pytest.raises(ValueError, match="corpus_path"):
-            load_source_markdown(tmp_path / "db", node)
-
-    def test_load_with_missing_file_raises(self, tmp_path):
-        node = {
-            "id": "src:x",
-            "properties": {"corpus_path": "corpus/missing.md", "source_uri": "u"},
-        }
-        with pytest.raises(FileNotFoundError):
-            load_source_markdown(tmp_path / "db", node)
-
-    def test_load_handles_unicode(self, tmp_path):
-        db = tmp_path / "db"
-        original = AnnotatedMarkdown(
-            markdown="émoji ✨ test — résumé",
-            source_uri="u",
-            source_type="t",
-        )
-        rel = write_source_markdown(db, "src:u", original)
-        node = {
-            "id": "src:u",
-            "properties": {"corpus_path": rel, "source_uri": "u", "source_type": "t"},
-        }
-        loaded = load_source_markdown(db, node)
-        assert loaded.markdown == original.markdown
 
 
 class TestScopeAwareCorpus:

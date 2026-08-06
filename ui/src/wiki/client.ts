@@ -27,7 +27,45 @@ import type { VaultEntry, VaultScope, WikiCompileEvent } from './types';
 
 const DEFAULT_BASE = 'http://localhost:8787';
 
-export function getVaultApiBase(): string {
+/**
+ * Server URL published by whoever owns store mode. Takes precedence over the
+ * `?server=` query param.
+ *
+ * The query param alone was NOT enough: connecting to a server at runtime
+ * (`OpenTraceApp.handleConnectServer`) swaps the store via React state without
+ * touching `window.location.search`. So `ServerGraphStore` talked to the real
+ * host while every vault call — list, compile, attach, delete, promote,
+ * demote — silently went to `localhost:8787`. Keep this in sync with store
+ * mode; don't re-derive the base from the URL.
+ */
+let publishedBase: string | null = null;
+
+/** Point the vault API at *url*, or pass null to fall back to the query param. */
+export function setVaultApiBase(url: string | null): void {
+  publishedBase = url ? url.replace(/\/+$/, '') : null;
+}
+
+/**
+ * Whether a vault API is actually reachable — i.e. a server URL is published by
+ * store mode, or supplied via `?server=`.
+ *
+ * In browser/in-memory mode there is no server, so every vault call fails. The
+ * chat agent used to be handed `list_vaults` unconditionally, with a
+ * description telling it to "use this first to discover what knowledge is
+ * available" — so its opening move was a guaranteed error. Gate on this
+ * instead of assuming a default host is listening.
+ */
+export function isVaultApiConfigured(): boolean {
+  if (publishedBase) return true;
+  try {
+    return Boolean(new URLSearchParams(window.location.search).get('server'));
+  } catch {
+    return false;
+  }
+}
+
+function getVaultApiBase(): string {
+  if (publishedBase) return publishedBase;
   try {
     const fromQuery = new URLSearchParams(window.location.search).get('server');
     if (fromQuery) return fromQuery.replace(/\/+$/, '');

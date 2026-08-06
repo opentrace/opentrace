@@ -11,9 +11,6 @@ A **vault** is an indexed collection of documents — labelled, linked, and sear
 
 Disk is canonical. Each graph holds a derived **mirror** — `KnowledgeVault` + `KnowledgeDoc` nodes and their `CONTAINS` edges. The disk vault is rebuilt by re-running `vault ingest` / `index --wiki`; the graph mirror is rebuilt by `vault attach`.
 
-!!! note "Synthesized concept pages are gone — 2026-08-03 / 2026-08-04"
-    A vault used to be able to hold synthesized cross-document pages alongside its documents. Synthesis was removed **2026-08-03** and the rest of the layer — the `pages/` dir, `PageMeta` in `.vault.json`, `vault show --page`, the `KnowledgeConcept` node type — on **2026-08-04**, after it measured **88.4% against a 98.6% control (−10.2pp)**, the worst result on record: a page restates its sources in the model's own voice, dropping their hedges, tense, and attribution. Verbatim corpus bodies read via `load_source`, plus an exhaustive corpus `grep`, answer the same questions. No vault anywhere has pages; the types were deleted, not retained. Full record: the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
-
 ## `vault ingest`
 
 ```bash
@@ -27,7 +24,7 @@ Ingests a **bare folder of doc files** — a Confluence/Notion/SharePoint export
 What each doc gets:
 
 - markitdown normalization (HTML/PDF/DOCX/PPTX/... → markdown), body verbatim in the corpus, readable via `load_source`. The walked set is the repo walk's doc extensions **plus `.json`** — in an export folder, structured data (a fleet inventory, a config dump) is a document the same way `.csv` already is
-- a navigation label from one LLM call — a one-line summary, with `title` derived mechanically from the filename. That is the only thing the LLM produces; no entity graph is extracted (that layer was removed 2026-08-04 — see [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced))
+- a navigation label from one LLM call — a one-line summary, with `title` derived mechanically from the filename. That is the only thing the LLM produces; no entity graph is extracted from the text
 - a folder-relative `path` stamp (searchable, and the navigation key when export filenames are opaque)
 - an epistemic `status` from the path heuristic, or forced for the whole folder with `--status`
 - `LINKS_TO` edges for the relative links its author wrote, resolved against the folder root
@@ -83,7 +80,7 @@ Vault 'research' (local)
       summary: How refrigerated transport is monitored end to end.
 ```
 
-Bodies are not printed here — they live verbatim in the shared corpus. Read one with the MCP `load_source` tool, or sweep them all with `grep`. (The `--page` flag was deleted 2026-08-04 with the concept-page layer; there are no page bodies to print.)
+Bodies are not printed here — they live verbatim in the shared corpus. Read one with the MCP `load_source` tool, or sweep them all with `grep`.
 
 ## `vault attach`
 
@@ -136,9 +133,6 @@ Re-attached to this project's graph: 35 nodes, 146 rels.
 
 !!! warning "Other projects' mirrors still go stale"
     Auto-attach only fires for the project whose graph this command can discover (via `find_db()` from cwd). Other projects that previously ran `vault attach <name>` against this vault still hold a mirror tagged with the old scope. Run `vault attach <name>` in each of those, or `vault detach <name>` if they no longer need it.
-
-!!! note "`vault refresh-stale-pages` was removed 2026-08-03"
-    It regenerated concept pages that autoprune had marked stale. With the concept-page layer gone there is nothing to regenerate, and no staleness to mark: autoprune only deletes `KnowledgeDoc` nodes and their corpus bodies for documents that vanished from disk. The inline `index --wiki --refresh-stale-pages` form went with it.
 
 ## Where vaults live on disk
 

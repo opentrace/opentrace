@@ -39,13 +39,9 @@ Match the user's intent to one of the commands below. When in doubt, default to
 | Quick exploration of a named component | `/explore <name>` |
 | Read-only Q&A over the graph | `/interrogate "<question>"` |
 | Shortest path between two graph nodes | `/path <A> <B>` |
-| Ingest a URL (webpage / PDF / arXiv / image / etc.) | `/add <url>` |
 | Obsidian vault export | `/export-obsidian` |
-| Browsable markdown wiki | `/export-wiki` |
+| Browsable markdown report | `/export-report` |
 | GraphML for Gephi / yEd | `/export-graphml` |
-| Auto-rebuild on file changes | `/watch` |
-| git post-commit hook for incremental rebuilds | `/hook install` |
-| LLM extraction precision/recall benchmark | `/benchmark` |
 | Counts of indexed nodes by type | `/graph-status` |
 
 If the user asked a question the graph could answer directly (e.g. "what's
@@ -60,9 +56,10 @@ graph.
 
 ## Conventions
 
-- Edge confidence is one of EXTRACTED / INFERRED / AMBIGUOUS — when surfacing
-  edges, propagate the tier so callers know what was directly observed vs.
-  guessed.
+- Only `CALLS` edges carry a `confidence` value — a float from the call
+  resolver (1.0 for an exact in-scope match, lower for cross-file and
+  heuristic ones). No other edge type has one, so don't report a confidence
+  for edges that don't carry it.
 - After any build, the OpenTrace MCP tools (`search_graph`, `get_node`,
   `traverse_graph`, `list_nodes`, `get_stats`) read the same `.opentrace/index.db`
   the slash commands wrote to. There is one graph, not two.

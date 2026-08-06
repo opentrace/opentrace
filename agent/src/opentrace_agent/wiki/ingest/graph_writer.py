@@ -20,16 +20,6 @@ source of truth for the vault's filesystem state. This module mirrors the
 nodes connected by ``CONTAINS``, ``LINKS_TO`` (KnowledgeDoc → KnowledgeDoc
 author links), and ``MIRRORS`` (KnowledgeDoc → File twin) relationships.
 
-Two edge kinds were written here and are gone:
-
-* ``MENTIONS`` (content → LLM-extracted entity) — removed 2026-08-04 with
-  the entity layer.
-* ``CITES`` (concept page → the document it restated), the ``KnowledgeConcept``
-  nodes it hung off, and the ``[[wiki-link]]`` page↔page ``LINKS_TO`` parser —
-  removed 2026-08-04 with the last of the concept-page layer.
-
-See the wiki CLAUDE.md for both.
-
 Graph writes run *after* disk writes succeed, and any failure here is
 caught and logged so the on-disk vault stays valid even if the graph
 mirror falls behind. A ``backfill`` command (``opentraceai wiki backfill``)
@@ -339,17 +329,20 @@ def _ensure_file_twin(store: GraphStore, repo_id: str, rel_path: str) -> str:
 def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool:
     """Link a repo-spawned vault to its Repository node.
 
-    Merges ``Repository -DOCUMENTS-> Vault`` (idempotent) and stamps
-    ``spawned_from=<repo_id>`` on the vault node so the provenance is
-    self-describing. Called only from the ``index --wiki`` path where the
-    wiki compile runs alongside a repo walk — vaults compiled from uploads
-    or URLs and attached globals never reach this, so they never claim to
-    document a repo they didn't come from. Returns True when the edge was
-    written (both nodes present).
+    Merges ``Repository -DOCUMENTS-> Vault`` (idempotent). Called only from the
+    ``index --wiki`` path where the wiki compile runs alongside a repo walk —
+    vaults compiled from uploads or URLs and attached globals never reach this,
+    so they never claim to document a repo they didn't come from. Returns True
+    when the edge was written (both nodes present).
+
+    The repo→vault provenance itself lives in ``.vault.json``'s
+    ``spawned_from``, which is what ``_resolve_index_vault_name`` reads to keep
+    re-indexing idempotent. This used to mirror it onto the vault node as well;
+    nothing ever read that copy back, so it was dropped rather than kept as a
+    second version of a fact with one owner.
     """
     vid = vault_node_id(vault_name)
-    vault_node = store.get_node(vid)
-    if vault_node is None or store.get_node(repo_id) is None:
+    if store.get_node(vid) is None or store.get_node(repo_id) is None:
         return False
     store.merge_relationship(
         id=f"{repo_id}->DOCUMENTS->{vid}",
@@ -357,15 +350,6 @@ def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool
         source_id=repo_id,
         target_id=vid,
     )
-    props = dict(vault_node.get("properties") or {})
-    if props.get("spawned_from") != repo_id:
-        props["spawned_from"] = repo_id
-        store.add_node(
-            id=vid,
-            node_type=NODE_TYPE_KNOWLEDGE_VAULT,
-            name=vault_node.get("name") or vault_name,
-            properties=props,
-        )
     return True
 
 
@@ -467,7 +451,7 @@ def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int
     if store.delete_node(vault_id):
         deleted += 1
 
-    # 3. Delete shared Source nodes only when no other vault still references
+    # 3. Delete shared KnowledgeDocs only when no other vault still references
     #    them. We re-check after deleting the Vault above so the just-
     #    deleted vault's CONTAINS edges are gone from the count.
     for sid in sources_in_vault:
@@ -520,7 +504,7 @@ def write_vault_to_graph(
     acquired
         Sources acquired *this run*. Optional — the canonical source list
         comes from ``meta.sources``. Provided when the caller already has
-        the AcquiredSource objects with content_type / size_bytes.
+        the AcquiredSource objects with content_type.
     normalized
         Post-normalization sources for this run, carrying ``corpus_path`` and
         the extraction-stamped navigation label. Attach / promote / demote
@@ -555,14 +539,6 @@ def write_vault_to_graph(
         "scope": scope,
         "mirror_compiled_at": mirror_iso,
     }
-    # ``spawned_from`` is stamped by link_vault_to_repo AFTER the mirror on
-    # ``index --wiki`` runs; carry it forward here so re-mirrors that don't
-    # go through the linker (e.g. vault attach) don't wipe it.
-    existing_vault = store.get_node(vault_id)
-    if existing_vault is not None:
-        prev = (existing_vault.get("properties") or {}).get("spawned_from")
-        if prev:
-            vault_props["spawned_from"] = prev
     store.add_node(
         id=vault_id,
         node_type=NODE_TYPE_KNOWLEDGE_VAULT,
@@ -589,9 +565,15 @@ def write_vault_to_graph(
             "sha256": sha,
             "filename": ingested.original_name,
             "acquired_at": ingested.ingested_at,
+            # A corpus document is content-addressed, so its bytes never change
+            # in place — an edited document is a NEW node under a new sha. Its
+            # ingest time IS therefore its last-updated time. This is the only
+            # producer of `last_updated`, which `retrieval.overview`'s
+            # `recently_updated` and `search`'s `recency` both read; without it
+            # they returned an empty list and a null on every single call.
+            "last_updated": ingested.ingested_at,
         }
         if acq is not None:
-            props["size_bytes"] = len(acq.data)
             props["content_type"] = _sniff_content_type(ingested.original_name)
         # ``norm`` is a NormalizedSource on a fresh compile, but attach /
         # promote / demote / re-mirror pass lightweight stubs that carry only
@@ -628,7 +610,6 @@ def write_vault_to_graph(
         # previously-written values forward instead of wiping them.
         existing_src_props = (store.get_node(sid) or {}).get("properties") or {}
         for k in (
-            "size_bytes",
             "content_type",
             "corpus_path",
             "title",

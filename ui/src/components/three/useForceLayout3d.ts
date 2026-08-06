@@ -43,16 +43,6 @@ import type {
  *  lower = more tree-like. */
 const RELATIONAL_LINK_WEIGHT = 0.05;
 
-/** Edge types with NO physics at all — never sent to the layout worker. They
- *  still render (subject to the link-type filter) and stay queryable; they're
- *  retrieval indexes, not structure. MENTIONS is the archetype: a wiki corpus
- *  emits it per whole-word entity match (flask: ~1.8k edges, half the wiki's
- *  edge count), and even at relational weight the aggregate pull drags every
- *  entity into the vault's neighbourhood — and, worse, inflates doc/page
- *  degrees, which dilutes the degree-normalized strength of their structural
- *  anchor springs. */
-const LAYOUT_INERT_EDGE_TYPES = new Set(['MENTIONS']);
-
 /** Which endpoint is the CHILD of a tree-forming edge. Everything points
  *  parent → child except MIRRORS, which is stored doc → file while the File
  *  (already rooted in the code tree) is the anchor the doc hangs off. */
@@ -253,7 +243,6 @@ export function useForceLayout3d(
       const out: { source: string; target: string; w: number }[] = [];
       for (let i = 0; i < linkArray.length; i++) {
         const link = linkArray[i];
-        if (LAYOUT_INERT_EDGE_TYPES.has(link.label)) continue;
         const source = endpointId(link.source);
         const target = endpointId(link.target);
         if (source === target) continue; // self-loops don't shape layout

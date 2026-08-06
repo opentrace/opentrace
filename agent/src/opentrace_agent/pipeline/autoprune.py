@@ -20,16 +20,9 @@ its edges, and its corpus body. Scoped to the walk's path and vault so partial
 indexes don't blast away other repos' data. Zero LLM calls — the expensive
 part stays explicit.
 
-Two further sweeps ran here and are gone with the layers they served:
-
-* Deleting LLM-extracted entities orphaned by a removed document — removed
-  2026-08-04 with the entity layer.
-* Deleting concept pages that lost their last ``CITES`` citation, and stamping
-  ``stale_since`` on the ones that kept some — removed 2026-08-04 with the
-  concept-page layer. Nothing synthesized pages, so nothing could go stale.
-
-See the wiki CLAUDE.md for both, and the architecture doc
-(``docs/architecture/ingestion-unification.md``) for the full design.
+Deletion is the whole sweep. A document is stored verbatim and nothing is
+derived from it, so it cannot go stale relative to a source — don't add a
+``stale_since`` stamp here.
 """
 
 from __future__ import annotations
@@ -47,7 +40,7 @@ logger = logging.getLogger(__name__)
 class AutopruneReport:
     """Counts surfaced after autoprune runs. Useful for the CLI summary."""
 
-    sources_deleted: int = 0
+    documents_deleted: int = 0
     corpus_files_deleted: int = 0
 
 
@@ -70,35 +63,34 @@ def autoprune_after_index(
     store,  # GraphStore — typed loosely to avoid the import cycle
     *,
     walked_doc_shas: set[str],
-    vault_name: str | None,
-    scope_path: Path | None,
+    vault_name: str,
     db_path: str | None,
 ) -> AutopruneReport:
     """Delete graph state for docs absent from this walk.
 
     ``walked_doc_shas`` — sha256 of raw bytes for every doc surfaced this run.
-    ``vault_name`` — when set (``--wiki`` was used), scopes deletion
-        to nodes carrying ``vault=<vault_name>``.
-    ``scope_path`` — when set without ``vault_name``, scopes by source_uri
-        prefix; otherwise deletion is vault-scoped.
+    ``vault_name`` — required, and the only scope. Deletion follows the
+        vault's ``CONTAINS`` edges, so a partial index can never reach
+        another vault's documents. There is deliberately no unscoped mode:
+        the fallback it would need is "every KnowledgeDoc in the graph".
     """
     report = AutopruneReport()
 
-    # --- 1. Identify candidate Sources in scope ---
-    candidate_sources = _sources_in_scope(store, vault_name=vault_name, scope_path=scope_path)
+    # --- 1. Identify candidate documents in this vault ---
+    candidate_docs = _docs_in_vault(store, vault_name=vault_name)
 
-    walked_source_ids = {f"corpus::{sha}" for sha in walked_doc_shas}
+    walked_doc_ids = {f"corpus::{sha}" for sha in walked_doc_shas}
 
-    orphan_sources = [s for s in candidate_sources if s["id"] not in walked_source_ids]
+    orphan_docs = [d for d in candidate_docs if d["id"] not in walked_doc_ids]
 
-    if not orphan_sources:
+    if not orphan_docs:
         return report  # nothing to do
 
-    # --- 2. Delete corpus bodies for orphan Sources ---
+    # --- 2. Delete corpus bodies for orphan documents ---
     if db_path:
         corpus_root = Path(db_path).resolve().parent / "corpus"
-        for src in orphan_sources:
-            props = src.get("properties") or {}
+        for doc in orphan_docs:
+            props = doc.get("properties") or {}
             rel = props.get("corpus_path")
             if rel:
                 target = corpus_root.parent / rel
@@ -110,10 +102,10 @@ def autoprune_after_index(
                 except OSError as exc:
                     logger.warning("autoprune: could not delete %s (%s)", target, exc)
 
-    # --- 3. Delete each orphan Source node + its edges ---
-    for src in orphan_sources:
-        report.sources_deleted += 1
-        _delete_node_and_edges(store, src["id"])
+    # --- 3. Delete each orphan KnowledgeDoc + its edges ---
+    for doc in orphan_docs:
+        report.documents_deleted += 1
+        _delete_node_and_edges(store, doc["id"])
 
     return report
 
@@ -124,30 +116,26 @@ def autoprune_after_index(
 # ---------------------------------------------------------------------------
 
 
-def _sources_in_scope(store, *, vault_name: str | None, scope_path: Path | None) -> list[dict[str, Any]]:
-    """Return Source nodes that are candidates for orphan checking.
+def _docs_in_vault(store, *, vault_name: str) -> list[dict[str, Any]]:
+    """Return the KnowledgeDocs that are candidates for orphan checking.
 
-    Wiki-created Source nodes deliberately don't carry a ``vault`` property
-    (sources are content-addressed by sha and may live in multiple vaults at
+    KnowledgeDocs deliberately don't carry a ``vault`` property (they are
+    content-addressed by sha and one document may live in several vaults at
     once — see ``wiki/ingest/graph_writer.py``). Vault membership is expressed
-    via ``Vault -CONTAINS-> Source`` edges, so we traverse from the
-    Vault when ``vault_name`` is set.
+    via ``KnowledgeVault -CONTAINS-> KnowledgeDoc`` edges, so membership is
+    resolved by traversing them. **Don't substitute a property filter here** —
+    there is no per-doc vault property to filter on, so it would match nothing
+    and the prune would silently become a no-op.
     """
-    if vault_name:
-        from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
+    from opentrace_agent.wiki.ingest.graph_writer import vault_node_id
 
-        results = store.traverse(
-            vault_node_id(vault_name),
-            direction="outgoing",
-            max_depth=1,
-            relationship_type="CONTAINS",
-        )
-        return [r["node"] for r in results if (r.get("node") or {}).get("type") == "KnowledgeDoc"]
-    candidates = store.list_nodes("KnowledgeDoc", limit=10_000)
-    if scope_path is not None:
-        prefix = str(scope_path.resolve())
-        return [s for s in candidates if str((s.get("properties") or {}).get("source_uri") or "").startswith(prefix)]
-    return candidates
+    results = store.traverse(
+        vault_node_id(vault_name),
+        direction="outgoing",
+        max_depth=1,
+        relationship_type="CONTAINS",
+    )
+    return [r["node"] for r in results if (r.get("node") or {}).get("type") == "KnowledgeDoc"]
 
 
 # ---------------------------------------------------------------------------

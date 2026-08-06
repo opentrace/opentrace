@@ -8,6 +8,9 @@ Protobuf definitions for the OpenTrace platform. These are the source of truth f
 opentrace/v1/
   agent_service.proto   — AgentService RPC, job events, indexing types
   job_config.proto      — Git integration config, provider enum
+  code_graph.proto      — Graph node/rel schema (source for `make graph`)
+ladybug/
+  options.proto         — Ladybug schema-generator custom options
 ```
 
 ## Code Generation
@@ -20,10 +23,10 @@ make graph # LadybugDB graph schema (Python + TS) -> ../agent/src/opentrace_agen
 make clean # Remove TS and Python generated code
 ```
 
-The Python `make py` target was retired when the agent went local-only —
-the agent no longer consumes the gRPC stubs. If a future change reintroduces
-a Python gRPC consumer, restore the `py:` target (and `grpcio-tools` in
-`agent/pyproject.toml [dependency-groups] dev`).
+There is no gRPC-stub target for Python: the agent is local-only and consumes
+only the graph schema (`make graph`). A Python gRPC consumer would need a new
+`py:` target plus `grpcio-tools` in `agent/pyproject.toml
+[dependency-groups] dev`.
 
 ### Prerequisites
 
@@ -56,5 +59,5 @@ service AgentService {
 ```
 
 Currently consumed by the UI (TypeScript types only) and the Go API. The
-Python agent is local-only and does not implement the gRPC service today;
-see the note above about restoring the `py:` target if that changes.
+Python agent is local-only and does not implement the gRPC service; see the
+note above if that changes.

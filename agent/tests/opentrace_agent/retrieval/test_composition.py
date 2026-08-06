@@ -62,9 +62,7 @@ def seeded_store(store):
       Function(handle) -CALLS-> Function(authenticate)
 
     Wiki:
-      Vault(kb) -CONTAINS-> Page(auth-flow)
-      Vault(kb) -CONTAINS-> Source(spec.pdf)
-      Page(auth-flow) -CITES-> Source(spec.pdf)
+      KnowledgeVault(kb) -CONTAINS-> KnowledgeDoc(spec.pdf)
 
     IndexMetadata for myorg/api with commit_sha + indexer_version.
     """
@@ -173,7 +171,7 @@ class TestWikiDocProvenance:
     """The agent can find a document by its label and trace it to the bytes.
 
     This was a two-hop story while concept pages existed — search found a
-    page, provenance walked its ``CITES`` chain to the source. Since 2026-08-04
+    synthesized page, provenance walked a citation chain back to the source. Now
     the document IS the hit, so the trace is direct.
     """
 

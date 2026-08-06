@@ -20,7 +20,7 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `cross_domain_bridges` | Edges spanning code / doc domains | "What connects code and docs?" |
 | `find_communities_spanning_domains` | Communities whose members span ≥N domains | Cross-cutting topics |
 
-`find_pages_mentioning` and `find_entities_mentioned_by` were removed on 2026-08-04 with the entity layer they traversed. **"Which documents discuss X" is a `grep` sweep** — exhaustive, verbatim, and pre-labelled with each doc's title and status, rather than a traversal into LLM-guessed entity nodes. See [Ontology](../architecture/ontology.md#types-that-remain-valid-but-are-no-longer-produced) for why.
+**"Which documents discuss X" is a `grep` sweep** — exhaustive, verbatim, and pre-labelled with each doc's title and status.
 
 ## MCP tools
 
@@ -48,15 +48,15 @@ grep                                    # ripgrep over Repository / Vault scope
 get_communities                         # listed clusters
 get_god_nodes                           # centrality hubs
 get_bridges                             # cross-community edges
+find_cross_cutting_communities          # communities spanning ≥N domains
 load_source                             # a node's underlying content — code from the
                                         #  repo checkout, KnowledgeDoc bodies verbatim
                                         #  from the corpus (with title/path/status)
+list_vaults                             # vaults mirrored into this graph
 get_stats                               # node + edge counts by type
 ```
 
 Every tool produces a JSON-serialisable response truncated to 4000 chars by default — agents see the same shape across transports.
-
-`read_vault_page` and `list_vault_pages` were deleted on 2026-08-04 with the concept-page layer. A document's own body is the deepest thing there is to read: `load_source` returns it verbatim, `grep` sweeps all of them.
 
 ## REST endpoints
 
@@ -79,10 +79,6 @@ POST /api/retrieval/find_via_relationship_to_type
 POST /api/retrieval/count_by
 POST /api/retrieval/provenance
 POST /api/retrieval/grep
-GET  /api/communities
-GET  /api/highlights/gods
-GET  /api/highlights/bridges
-GET  /api/highlights/questions
 
 # Vaults
 GET    /api/vaults?view=project|global
@@ -96,7 +92,7 @@ DELETE /api/vaults/{vault}?scope=local|global
 
 `view=project` (default) returns local vaults from cwd plus globals already attached to this project's graph; `view=global` lists every global on the machine with an `attached` flag. The `?scope=` query param disambiguates when a name exists in both scopes — when omitted, the server resolves local-first.
 
-`POST /compile` is **corpus-only**, like every other compile path: it indexes the uploaded documents (labels, doc links, verbatim bodies) and synthesizes nothing. There are no page routes — `GET /api/vaults/{vault}/pages` and `.../pages/{slug}` were deleted on 2026-08-04 with the concept-page layer. Document bodies come from the source/`load_source` path instead.
+`POST /compile` is **corpus-only**, like every other compile path: it indexes the uploaded documents (labels, doc links, verbatim bodies) and synthesizes nothing. Document bodies come from the source/`load_source` path.
 
 The UI's `ServerGraphStore` consumes these. See [Browser](../getting-started/install-browser.md) for setup.
 
@@ -126,7 +122,7 @@ All retrieval primitives are read-only; no module under `opentrace_agent.retriev
 
 ## Node types
 
-The graph contains two live layers, one retained-but-unwritten layer, and some auxiliary types.
+The graph contains two layers plus some auxiliary types.
 
 ### Code layer
 
@@ -142,27 +138,20 @@ From `opentraceai index` (always produced):
 | `Variable` | A field / parameter / module-level variable |
 | `Dependency` | An external package from a manifest (`package.json`, `pyproject.toml`, etc.) |
 
-### Entity layer (no longer produced)
-
-`index --wiki` used to extract flat, bodiless entities (`Idea` / `Service` / `Module` / `Paper` / `Person` / `Event`) from every doc. **Removed 2026-08-04** — three benchmark runs measured zero agent usage of them once corpus `grep` existed, and they cost: crowding labelled documents out of the top search slots, ~65% run-to-run stability, one concept fragmenting into several nodes, and the same real-world thing landing under two types. The types stay valid so pre-removal graphs remain readable; nothing writes them. (`Service` and `Module` are separately in use as runtime types.)
-
 ### Doc layer
 
 From `index --wiki` / `vault ingest` — the indexed documents themselves, bodies verbatim in the corpus:
 
 | Type | What it is |
 |---|---|
-| `KnowledgeVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at` + `spawned_from` (repo id, when built by `index --wiki` over a repo) |
+| `KnowledgeVault` | A named vault (one per disk vault dir). Carries `scope` (local / global) + `mirror_compiled_at`. The repo it was built from is the `DOCUMENTS` edge |
 | `KnowledgeDoc` | A raw ingested artifact — sha256-keyed (`corpus::<sha>`), with a navigation label (`title` + `one_line_summary`) for search and browsing. Body in `<project>/.opentrace/corpus/<sha>.md` for local vaults (read it via `load_source`); for globals compiled but not yet attached, it lives at `~/.opentrace/corpus/<sha>.md` and is copied into the project's corpus on `vault attach`. |
-
-There is no third `KnowledgeConcept` type. Synthesized concept pages, and the `CITES` edges behind them, were removed on 2026-08-03 (synthesis) and 2026-08-04 (everything else) after measuring **88.4% against a 98.6% control** — restating a source strips its hedges, tense, and attribution. Unlike the entity types above, these were deleted rather than retained: they never shipped, so no graph has one. See the "Closed" section of `agent/src/opentrace_agent/wiki/CLAUDE.md`.
 
 ### Auxiliary
 
 | Type | What it is |
 |---|---|
 | `Community` | Cluster detected by `opentraceai cluster` |
-| `Hyperedge` | Group relationship of 3+ entities. No longer produced — went with the entity layer |
 | `IndexMetadata` | Per-repo provenance record (commit sha, index version) |
 
 ## Edge types
@@ -174,14 +163,11 @@ There is no third `KnowledgeConcept` type. Synthesized concept pages, and the `C
 | `CALLS` | Function → Function | Resolved call |
 | `IMPORTS` | File → external Package | Resolved import |
 | `DEPENDS_ON` | Repo → Dependency | Manifest dependency |
-| `DERIVED_FROM` | Variable → Variable/Function | Code-side derivation, resolved by the pipeline. Also written entity → KnowledgeDoc by the entity layer removed 2026-08-04 — legacy graphs only |
+| `DERIVED_FROM` | Variable → Variable/Function | Code-side derivation, resolved by the pipeline |
 | `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's author wrote to another doc — parsed mechanically (no LLM) from markdown links, reference definitions, and HTML anchors, resolved against the linking doc's directory. The doc-side analogue of `IMPORTS`. External URLs, bare fragments, and out-of-repo targets are dropped |
-| `MENTIONS` | KnowledgeDoc → Idea/Service/... | **No longer produced** — went with the entity layer on 2026-08-04. Use `grep` for "which documents discuss X" |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
-| `SEMANTIC_EDGE` | Idea/Service/... → Idea/Service/... | **No longer produced** — went with the entity layer on 2026-08-04 |
 | `MEMBER_OF_COMMUNITY` | any non-internal node → Community | Cluster membership |
-| `PARTICIPATES_IN` | Idea/Service/... → Hyperedge | Group-relationship membership. **No longer produced** |
 
 ## Vault-scoped retrieval
 
@@ -203,7 +189,7 @@ Confidence is a code-side concept now: it's stamped on `CALLS` edges (resolver c
 - **Code** — reads commit_sha + indexer version from the per-repo `IndexMetadata` node, plus file_path + line_range from the node
 - **Wiki** — a `KnowledgeDoc` returns its own identity: sha256, filename, root-relative path, ingest time, and the `MIRRORS` File twin's id when it has one. A `KnowledgeVault` returns an empty chain
 
-Two provenance branches are gone. The `derived` branch walked `DERIVED_FROM` from an LLM-extracted entity to its source document, removed 2026-08-04 with the entity layer (those node types now return `kind="unknown"`). The wiki branch used to walk a `CITES` chain from a synthesized concept page to the documents it drew from — removed 2026-08-04 with the concept-page layer. A document *is* its own provenance; nothing restates it, so there is no chain left to walk.
+A document *is* its own provenance — nothing restates it, so there is no citation chain to walk.
 
 Chain entries for ingested docs have `kind="corpus_doc"` and carry the doc's `path`; when the doc has a `MIRRORS` twin in the code tree, the entry also includes the mirrored `File` id in a `file` field.
 

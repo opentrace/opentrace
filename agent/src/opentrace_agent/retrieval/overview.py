@@ -41,11 +41,6 @@ def overview(
     nodes; recently-updated entries come from the per-node ``last_updated``
     property, on the nodes that carry one. ``vault_scope`` restricts the
     payload to one vault's nodes.
-
-    Three page-only sections (``top_linked_concepts``, ``top_cited_sources``,
-    ``cluster_sizes``) were dropped 2026-08-04 with the concept-page layer —
-    each ranked ``KnowledgeConcept`` nodes or counted ``CITES`` edges, so all
-    three returned empty once nothing produced pages.
     """
     top_n = max(1, min(top_n, TOP_N_CAP))
 
@@ -59,8 +54,9 @@ def overview(
     top_concepts = _top_by_degree(store, top_n=top_n)
 
     # Recently-updated nodes — sourced from any node carrying a `last_updated`
-    # property. Today populated by the wiki compile pipeline; future: also
-    # code nodes once Phase 5 stamps them.
+    # property. The doc-ingest graph writer is the only producer, so in practice
+    # this ranks KnowledgeDocs by ingest time; code nodes have no per-node
+    # timestamp and never appear.
     recent = _recently_updated(store, top_n=top_n)
 
     return {
@@ -72,33 +68,28 @@ def overview(
 
 
 def _scoped_overview(store: GraphStore, top_n: int, vault_scope: str) -> dict[str, Any]:
-    """Restrict overview output to nodes whose ``vault`` property matches.
+    """Restrict overview output to the vault node and the documents it contains.
 
-    ``KnowledgeVault`` nodes carry a ``vault`` property by Phase 4
-    convention; non-vault nodes are excluded. (``KnowledgeDoc`` membership is
-    the ``CONTAINS`` edge, not a property — docs are content-addressed and can
-    belong to several vaults at once.)
+    Membership is the ``KnowledgeVault -CONTAINS-> KnowledgeDoc`` edge, resolved
+    via :meth:`GraphStore.vault_member_ids`. It is NOT a per-node property: a
+    ``KnowledgeDoc`` carries no ``vault`` key (it is content-addressed by sha and
+    can belong to several vaults), so the property filter this used to apply
+    matched only the vault node and reported an empty vault.
     """
-    from opentrace_agent.store.graph_store import _parse_props
-
-    result = store._conn.execute(
-        "MATCH (n:Node) WHERE n.properties CONTAINS 'vault' RETURN n.id, n.type, n.name, n.properties LIMIT 5000"
-    )
     counts: dict[str, int] = {}
     in_scope: list[dict[str, Any]] = []
-    while result.has_next():
-        row = result.get_next()
-        props = _parse_props(row[3]) or {}
-        if props.get("vault") != vault_scope:
+    for node_id in sorted(store.vault_member_ids(vault_scope)):
+        node = store.get_node(node_id)
+        if node is None:
             continue
-        ntype = str(row[1])
+        ntype = str(node["type"])
         counts[ntype] = counts.get(ntype, 0) + 1
         in_scope.append(
             {
-                "id": str(row[0]),
+                "id": node_id,
                 "type": ntype,
-                "name": str(row[2]),
-                "properties": props,
+                "name": node.get("name") or node_id,
+                "properties": node.get("properties") or {},
             }
         )
 
@@ -201,8 +192,13 @@ def _top_by_degree(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
 
 def _recently_updated(store: GraphStore, top_n: int) -> list[dict[str, Any]]:
     """Return nodes whose properties carry a ``last_updated`` timestamp,
-    sorted descending. Empty on a docs-only graph today; will fill in when
-    code provenance stamping lands in Phase 5.
+    sorted descending.
+
+    Only the doc-ingest graph writer stamps that property, so this is empty on a
+    code-only graph. **If it comes back empty on a graph that has documents, the
+    stamp has regressed** — that is exactly how this went unnoticed before: with
+    no producer at all, the field was permanently ``[]`` and read as "nothing
+    changed recently" rather than as a bug.
     """
     # Pull a bounded set of candidates and sort in Python — avoids relying on
     # JSON-property sort in Cypher (LadybugDB MAP literal sorting is brittle).

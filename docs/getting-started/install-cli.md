@@ -54,19 +54,23 @@ Install the `opentraceai` command-line tool to index repositories and run an MCP
 
 ## Optional extras
 
-Some commands require optional dependency groups. Install them via the bracket syntax (`opentraceai[graph]`) or by passing `--extra` flags to `uv sync` if you're working from source.
+A plain install already includes everything doc ingestion and community
+detection need — `markitdown[all]` for PDF/DOCX/PPTX/XLSX/HTML/EPUB conversion,
+`networkx` for clustering and the graph exporters, and the provider SDKs. There
+is no `graph` extra to add.
+
+Audio and video transcription is **not** supported: no audio extension is
+walked, so those files are never ingested.
 
 | Extra | What it pulls in | Required for |
 |---|---|---|
-| `graph` | `networkx`, `markitdown[all]`, `faster-whisper`, `yt-dlp`, `anthropic`, `openai` | Doc ingestion (PDF/DOCX/MD/HTML/...), community detection, vault compilation, audio/video transcription, URL fetching |
 | `graph-leiden` | `graspologic` (Python < 3.13) | The Leiden community detection algorithm. Without it, `opentraceai cluster` falls back to Louvain — slightly different output, not broken |
+| `summarization` | `optimum[onnxruntime]`, `transformers` | Local code summarization via `opentraceai augment` |
 
-The bare install gives you the **structural code indexer** + retrieval primitives (`search`, `traverse`, `find_path`, etc.) over a code repo. Add `graph` as soon as you want to ingest documents, build vaults, or run LLM extraction.
-
-=== "uv tool — bracket syntax"
+=== "uv tool"
 
     ```bash
-    uv tool install --upgrade 'opentraceai[graph]'
+    uv tool install --upgrade 'opentraceai[graph-leiden]'
     ```
 
 === "From source"
@@ -74,16 +78,16 @@ The bare install gives you the **structural code indexer** + retrieval primitive
     ```bash
     git clone https://github.com/opentrace/opentrace
     cd opentrace/agent
-    uv sync --extra graph --extra graph-leiden
+    uv sync --extra graph-leiden
     ```
 
 === "pip"
 
     ```bash
-    pip install 'opentraceai[graph]'
+    pip install 'opentraceai[graph-leiden]'
     ```
 
-If you skip the extras and run a feature that needs one, the CLI errors out with an actionable hint pointing at the right install command.
+If you run a feature that needs an extra you skipped, the CLI errors out with an actionable hint pointing at the right install command.
 
 ## Using It
 

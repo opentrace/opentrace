@@ -26,7 +26,6 @@ from opentrace_agent.wiki.ingest.doc_extraction import (
     extract_docs,
 )
 from opentrace_agent.wiki.ingest.types import NormalizedSource
-from opentrace_agent.wiki.vault import VaultMetadata
 
 
 def _src(sha: str, name: str) -> NormalizedSource:
@@ -63,7 +62,6 @@ class TestDisambiguatedTitles:
         srcs = [_src("1", "README"), _src("2", "README")]
         titles = _disambiguated_titles(srcs)
         assert set(titles.values()) == {"Readme", "Readme (2)"}
-
 
 
 class TestMaxDocChars:
@@ -149,7 +147,7 @@ def test_extract_docs_chunks_large_doc_and_merges(fake_llm, monkeypatch):
         ("emit_extraction", {"one_line_summary": "Part two."}),
     ]
     llm = fake_llm(responses)
-    list(extract_docs([src], VaultMetadata.empty("v"), llm))
+    list(extract_docs([src], llm))
 
     assert len(llm.calls) == 2  # one call per chunk
     assert "PART 1 of 2" in llm.calls[0][1] and "PART 2 of 2" in llm.calls[1][1]
@@ -162,8 +160,7 @@ def test_extract_docs_stamps_labels(fake_llm):
     from the model. Both are stamped on the NormalizedSource in place."""
     src = NormalizedSource(sha256="abc", original_name="ducks.md", markdown="# Ducks\nstuff")
     resp = ("emit_extraction", {"one_line_summary": "About ducks."})
-    list(extract_docs([src], VaultMetadata.empty("v"), fake_llm([resp])))
+    list(extract_docs([src], fake_llm([resp])))
 
     assert src.title == "Ducks"
     assert src.one_line_summary == "About ducks."
-

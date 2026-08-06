@@ -340,7 +340,6 @@ function InternalGraphInteractionProvider({
     setHiddenNodeTypes((prev) =>
       prev.has('Variable') ? prev : new Set(prev).add('Variable'),
     );
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time-per-load default init
     setHiddenSubTypes((prev) => {
       const next = new Set(prev);
       for (const type of ['Variable', 'Dependency']) {

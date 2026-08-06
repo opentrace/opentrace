@@ -36,15 +36,17 @@ dependencies = [
     "anthropic>=0.40",
     "google-genai>=1.0",
     "openai>=1.0",
-    # Knowledge graph + doc ingestion — required by the headline wikiv3
-    # features (index --extract-entities, --build-pages, cluster, analyze,
-    # export-graph). markitdown[all] bundles PDF/DOCX/audio/video adapters;
-    # faster-whisper handles audio transcription; yt-dlp pulls YouTube
-    # transcripts. networkx powers community detection + exports.
+    # Doc ingestion + graph analysis. markitdown[all] converts PDF/DOCX/PPTX/
+    # XLSX/HTML/EPUB to markdown and bundles youtube-transcript-api for URL
+    # ingestion. networkx powers community detection (`cluster`) and the
+    # graph exporters.
+    #
+    # Audio/video transcription is NOT supported: no audio extension is in
+    # DOC_EXTENSIONS, so audio is never walked. `faster-whisper` and `yt-dlp`
+    # were declared here for it and imported nowhere — don't re-add them
+    # without an ingestion path that actually reaches them.
     "networkx>=3.0",
     "markitdown[all]>=0.1.5",
-    "faster-whisper>=1.0",
-    "yt-dlp>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -54,16 +56,6 @@ summarization = [
 ]
 swe-bench = [
     "anthropic>=0.40",
-]
-# Vestigial — the packages that used to live here are now in core deps.
-# Kept so existing `pip install opentraceai[graph]` callers don't break.
-graph = [
-    "networkx>=3.0",
-    "markitdown[all]>=0.1.5",
-    "faster-whisper>=1.0",
-    "yt-dlp>=2024.1",
-    "anthropic>=0.40",
-    "openai>=1.0",
 ]
 # Leiden community detection — graspologic doesn't support Python 3.13 yet,
 # so it has to stay opt-in. `cluster` falls back to Louvain (in networkx)

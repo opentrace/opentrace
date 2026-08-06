@@ -73,12 +73,6 @@ _GREP_SNIPPET_CHARS = 100  # per-line snippet when a full-text grep response won
 NODE_TYPE_KNOWLEDGE_DOC_NAME = "KnowledgeDoc"
 
 
-def _truncate(text: str, limit: int = MAX_RESULT_CHARS) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n...[truncated, {len(text)} chars total]"
-
-
 def _json_response(data: Any) -> str:
     """Serialize a tool result, keeping it parseable when it must be shortened.
 
@@ -116,13 +110,11 @@ def _shrink_dominant_list(data: dict[str, Any], budget: int) -> str | None:
     Returns the serialized JSON, or ``None`` when the dict holds no list worth
     shedding (caller then falls back to the string-head envelope).
 
-    This is the fix for the most common corruption in practice: ``search_graph``
+    This covers the most common corruption in practice: ``search_graph``
     returns ``{hits, count, query}`` and ``get_node`` returns ``{node,
-    neighbours}`` — both dicts, so both previously fell through to
-    string-slicing. Measured on one 15-question benchmark run, **39% of
-    search_graph results and 78% of get_node results reached the agent as
-    unparseable JSON**, which is what drove it to re-issue the same query in
-    slightly different words over and over."""
+    neighbours}`` — both dicts, so without this they fall through to
+    string-slicing and reach the caller as unparseable JSON, which sends an
+    agent into re-issuing the same query in slightly different words."""
     list_keys = [k for k, v in data.items() if isinstance(v, list) and v]
     if not list_keys:
         return None
@@ -155,12 +147,10 @@ def _fit_grep_response(result: dict[str, Any], budget: int = MAX_LIST_RESULT_CHA
     generic truncation path optimises for the opposite — it sheds whole list
     entries, which for grep means shedding documents.
 
-    Measured consequence: a sweep matched 39 lines across 18 documents, the
-    4 KB cap kept 8 and dropped the rest, and the arm — reading `count: 8` and
-    a hint advising it to "narrow the request" — concluded no such constraint
-    existed. The evidence had been retrieved and then discarded in transport,
-    and the advice to narrow made it worse, since each narrowed sweep is a
-    different biased sample of the corpus.
+    Dropping documents is the failure that matters: the caller reads a short
+    set as a complete one and concludes the thing it was looking for does not
+    exist. Advising it to "narrow the request" compounds that — each narrowed
+    sweep is a different biased sample.
 
     Grouping by document also removes the redundancy that caused the overflow:
     `node_id`, `title`, `status` and `structural_context` were repeated on
@@ -172,11 +162,8 @@ def _fit_grep_response(result: dict[str, Any], budget: int = MAX_LIST_RESULT_CHA
     forced the degradation below to fire on a routine 31-document sweep.
 
     Degradation ladder, applied only as needed. ``node_id`` and ``path`` are
-    NEVER dropped — an entry the agent cannot pass to ``load_source`` is a
-    result it cannot act on, which is worse than a shorter list. (Learned the
-    hard way: an earlier ladder shed ``node_id`` first, and the arm answered a
-    31-document sweep with 3 reads because nothing in the response was
-    addressable.)
+    NEVER dropped — an entry the caller cannot pass to ``load_source`` is a
+    result it cannot act on, which is worse than a shorter list.
       0. + title, status, full line text
       1. + title, status, line snippets (first 100 chars)
       2. + title, status, line numbers only
@@ -336,11 +323,9 @@ NO_INDEX_MSG = json.dumps(
 # ONE cap for every body read, whichever node type you came in through.
 # These were 200_000 (File → disk) and 40_000 (KnowledgeDoc → corpus), so the
 # same 90 KB document returned 2.26x more text via its File twin than via its
-# KnowledgeDoc. That asymmetry is invisible to the caller and it decided a
-# benchmark question: reading DOCS.md whole, one arm saw the two /conflicts
-# routes that only appear there; the arm on the doc path read it in slices and
-# reported the discrepancy as absent. A doc layer must never see less of a
-# document than the code layer does.
+# KnowledgeDoc. That asymmetry is invisible to the caller: content present in
+# the document simply goes missing on the doc path, and an agent reports it as
+# absent. A doc layer must never see less of a document than the code layer.
 MAX_SOURCE_BODY_CHARS = 40_000
 
 
@@ -353,7 +338,6 @@ def _props(node: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             return {}
     return p
-
 
 
 _COMPACT_PROP_KEYS = ("path", "title", "status", "kind", "vault", "language", "extension")
@@ -1171,10 +1155,10 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     def overview(topN: int = 5, vaultScope: str = "") -> str:
         """Compact orientation of the indexed graph for agent session start.
 
-        Returns counts by node type, the most-connected concepts, and the
-        most recently updated nodes. Targets <500 tokens. Optional
-        ``vaultScope`` is reserved for the vault-graph rollout — currently
-        no-op.
+        Returns counts by node type and the most-connected concepts. Targets
+        <500 tokens. Pass ``vaultScope`` with a vault name to restrict the
+        whole response to that vault and the documents it contains; an unknown
+        name yields empty counts rather than the unscoped graph.
         """
         if not store:
             logger.info("overview called but no index exists")
@@ -1249,7 +1233,7 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
     def list_vaults() -> str:
         """List KnowledgeVault nodes present in the current graph.
 
-        Returns ``{vaults: [{name, scope, last_compiled_at, summary}]}``.
+        Returns ``{vaults: [{name, scope, last_compiled_at}]}``.
         Empty unless a vault has been compiled via ``opentraceai index
         --wiki`` or attached via ``opentraceai vault attach``.
         """
@@ -1260,12 +1244,14 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             vaults = []
             for n in nodes:
                 props = n.get("properties") or {}
+                # No `summary`: nothing produces a vault-level summary, so the
+                # key was always null. Read a vault's contents with `vault show`
+                # / `list_nodes`, or sweep its bodies with `grep`.
                 vaults.append(
                     {
                         "name": props.get("vault") or n.get("name"),
                         "scope": props.get("scope"),
                         "last_compiled_at": props.get("last_compiled_at"),
-                        "summary": props.get("summary"),
                     }
                 )
             return _json_response({"vaults": vaults})

@@ -25,7 +25,7 @@ import {
 import { PROVIDERS } from '../../chat/providers';
 import { useCompileJob } from '../../providers/CompileJobProvider';
 // Shell + form primitives shared with the indexing modal so the two
-// pop-ups read as one family (.modal-card, .form-hero, .chip-toggle,
+// pop-ups read as one family (.modal-card, .form-hero,
 // .input-pill, .import-dropzone, .btn-cta).
 import '../indexing/indexing-base.css';
 import '../indexing/AddRepoModal.css';
@@ -63,8 +63,7 @@ export function AddVaultModal({ scope, appendTo, onClose }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // A background compile is already in flight — block starting a second one.
-  const compileBusy =
-    compileState.status === 'running' || compileState.status === 'cancelling';
+  const compileBusy = compileState.status === 'running';
 
   const apiKey = useMemo(() => loadApiKey(provider), [provider]);
   const baseUrl = useMemo(
@@ -185,7 +184,9 @@ export function AddVaultModal({ scope, appendTo, onClose }: Props) {
               <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
             </svg>
           </div>
-          <h2>{appending ? `Append to ${appendTo}` : `Compile a ${scope} vault`}</h2>
+          <h2>
+            {appending ? `Append to ${appendTo}` : `Compile a ${scope} vault`}
+          </h2>
           <p className="hero-subtitle">{subtitle}</p>
         </div>
 

@@ -138,65 +138,6 @@ class TestGetSource:
         assert resp.status_code == 400
 
 
-class TestHighlights:
-    """REST endpoints backing the UI's KnowledgeHighlightsPanel."""
-
-    def test_communities_empty_by_default(self, client):
-        # Fixture store has no Community nodes — endpoint should return [].
-        resp = client.get("/api/communities")
-        assert resp.status_code == 200
-        assert resp.json() == []
-
-    def test_communities_after_save(self, store, client):
-        store.save_community("c1", "Auth", 1, 0.7, 5, is_god=True)
-        resp = client.get("/api/communities")
-        assert resp.status_code == 200
-        rows = resp.json()
-        assert len(rows) == 1
-        assert rows[0]["name"] == "Auth"
-        assert rows[0]["is_god"] is True
-
-    def test_gods_returns_top_degree(self, client):
-        # Fixture has 3 nodes with 2 edges; node-2 has degree 2.
-        resp = client.get("/api/highlights/gods")
-        assert resp.status_code == 200
-        rows = resp.json()
-        assert rows[0]["id"] == "node-2"
-        assert rows[0]["degree"] == 2
-
-    def test_gods_respects_limit(self, client):
-        resp = client.get("/api/highlights/gods?limit=1")
-        assert resp.status_code == 200
-        assert len(resp.json()) == 1
-
-    def test_gods_rejects_non_int_limit(self, client):
-        resp = client.get("/api/highlights/gods?limit=abc")
-        assert resp.status_code == 400
-
-    def test_bridges_empty_without_communities(self, client):
-        resp = client.get("/api/highlights/bridges")
-        assert resp.status_code == 200
-        assert resp.json() == []
-
-    def test_bridges_after_clustering(self, store, client):
-        store.save_community("ca", "A", 1, 0.7, 1)
-        store.save_community("cb", "B", 2, 0.7, 1)
-        store.save_membership("m1", "node-1", "ca")
-        store.save_membership("m2", "node-2", "cb")
-        resp = client.get("/api/highlights/bridges")
-        assert resp.status_code == 200
-        rows = resp.json()
-        assert any(r["source_id"] in ("node-1", "node-2") and r["target_id"] in ("node-1", "node-2") for r in rows)
-
-    def test_questions_returns_strings(self, client):
-        resp = client.get("/api/highlights/questions")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert isinstance(body, list)
-        # All entries are strings, even with no communities yet.
-        assert all(isinstance(q, str) for q in body)
-
-
 class TestTraverse:
     def test_outgoing(self, client):
         resp = client.post("/api/traverse", json={"nodeId": "node-1", "direction": "outgoing"})

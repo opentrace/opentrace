@@ -147,7 +147,7 @@ There is also a role-specific override, checked **ahead** of the per-backend var
 |---|---|
 | `OT_WIKI_SUMMARY_MODEL` | The model used for the per-doc extraction call — i.e. the only LLM call `index --wiki` / `vault ingest` makes |
 
-Two sibling role vars exist in the registry (`OT_EXTRACTION_MODEL`, `OT_WIKI_MODEL`) but no code path in the current pipeline reads them — they were the flagship/synthesis tier for the concept-page stage, removed 2026-08-03 (synthesis) and 2026-08-04 (everything else). Setting them has no effect on doc ingestion.
+`OT_WIKI_MODEL` is a sibling role var, checked the same way. It selects the model for callers that ask for the flagship tier instead of the cheap one — doc ingestion never does, so it does not change `index --wiki` or `vault ingest`. It **is** read, though; it is not inert.
 
 ## UI flow
 

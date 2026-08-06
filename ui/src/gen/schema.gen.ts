@@ -9,10 +9,9 @@ export const NODE_SCHEMA_STATEMENTS = [
   `CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)`,
   `CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)`,
-  `CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, spawnedFrom STRING)`,
-  `CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, vault STRING)`,
+  `CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING, status STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)`,
-  `CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)`,
   `CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)`,
 ] as const;
 
@@ -28,7 +27,6 @@ export const NODE_TYPES = [
   'KnowledgeVault',
   'KnowledgeDoc',
   'Community',
-  'Hyperedge',
   'IndexMetadata',
 ] as const;
 
@@ -134,7 +132,7 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'summary', type: 'STRING' },
     { name: 'scope', type: 'STRING' },
     { name: 'mirrorCompiledAt', type: 'STRING' },
-    { name: 'spawnedFrom', type: 'STRING' },
+    { name: 'vault', type: 'STRING' },
   ],
   KnowledgeDoc: [
     { name: 'id', type: 'STRING' },
@@ -142,13 +140,13 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'sha256', type: 'STRING' },
     { name: 'filename', type: 'STRING' },
     { name: 'contentType', type: 'STRING' },
-    { name: 'sizeBytes', type: 'INT64' },
     { name: 'acquiredAt', type: 'STRING' },
     { name: 'corpusPath', type: 'STRING' },
     { name: 'title', type: 'STRING' },
     { name: 'oneLineSummary', type: 'STRING' },
     { name: 'summary', type: 'STRING' },
     { name: 'path', type: 'STRING' },
+    { name: 'status', type: 'STRING' },
   ],
   Community: [
     { name: 'id', type: 'STRING' },
@@ -157,14 +155,6 @@ export const NODE_COLUMNS: Readonly<Record<NodeType, readonly ColumnDef[]>> = {
     { name: 'cohesion', type: 'DOUBLE' },
     { name: 'members', type: 'INT32' },
     { name: 'isGod', type: 'BOOL' },
-  ],
-  Hyperedge: [
-    { name: 'id', type: 'STRING' },
-    { name: 'name', type: 'STRING' },
-    { name: 'relation', type: 'STRING' },
-    { name: 'confidence', type: 'STRING' },
-    { name: 'confidenceScore', type: 'DOUBLE' },
-    { name: 'sourceFile', type: 'STRING' },
   ],
   IndexMetadata: [
     { name: 'id', type: 'STRING' },
@@ -275,7 +265,7 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'summary',
     'scope',
     'mirrorCompiledAt',
-    'spawnedFrom',
+    'vault',
   ],
   KnowledgeDoc: [
     'id',
@@ -283,13 +273,13 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'sha256',
     'filename',
     'contentType',
-    'sizeBytes',
     'acquiredAt',
     'corpusPath',
     'title',
     'oneLineSummary',
     'summary',
     'path',
+    'status',
   ],
   Community: [
     'id',
@@ -298,14 +288,6 @@ export const NODE_COLUMN_NAMES: Readonly<Record<NodeType, readonly string[]>> = 
     'cohesion',
     'members',
     'isGod',
-  ],
-  Hyperedge: [
-    'id',
-    'name',
-    'relation',
-    'confidence',
-    'confidenceScore',
-    'sourceFile',
   ],
   IndexMetadata: [
     'id',
@@ -345,12 +327,8 @@ function joinRelPairs(pairs: ReadonlyArray<RelPair>): string {
 }
 
 export const REL_SCHEMA = {
-  SEMANTIC_EDGE: (pairs: ReadonlyArray<RelPair>) =>
-    `CREATE REL TABLE IF NOT EXISTS SEMANTIC_EDGE(${joinRelPairs(pairs)}, id STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING, sourceLocation STRING, weight DOUBLE)`,
   MEMBER_OF_COMMUNITY: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS MEMBER_OF_COMMUNITY(${joinRelPairs(pairs)}, id STRING)`,
-  PARTICIPATES_IN: (pairs: ReadonlyArray<RelPair>) =>
-    `CREATE REL TABLE IF NOT EXISTS PARTICIPATES_IN(${joinRelPairs(pairs)}, id STRING)`,
   DEFINES: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS DEFINES(${joinRelPairs(pairs)}, id STRING)`,
   IMPORTS: (pairs: ReadonlyArray<RelPair>) =>
@@ -367,16 +345,12 @@ export const REL_SCHEMA = {
     `CREATE REL TABLE IF NOT EXISTS MIRRORS(${joinRelPairs(pairs)}, id STRING)`,
   DOCUMENTS: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS DOCUMENTS(${joinRelPairs(pairs)}, id STRING)`,
-  MENTIONS: (pairs: ReadonlyArray<RelPair>) =>
-    `CREATE REL TABLE IF NOT EXISTS MENTIONS(${joinRelPairs(pairs)}, id STRING)`,
   TARGETS_REPO: (pairs: ReadonlyArray<RelPair>) =>
     `CREATE REL TABLE IF NOT EXISTS TARGETS_REPO(${joinRelPairs(pairs)}, id STRING)`,
 } as const;
 
 export const REL_TYPES = [
-  'SEMANTIC_EDGE',
   'MEMBER_OF_COMMUNITY',
-  'PARTICIPATES_IN',
   'DEFINES',
   'IMPORTS',
   'CALLS',
@@ -385,26 +359,13 @@ export const REL_TYPES = [
   'LINKS_TO',
   'MIRRORS',
   'DOCUMENTS',
-  'MENTIONS',
   'TARGETS_REPO',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];
 
 export const REL_COLUMNS: Readonly<Record<RelType, readonly ColumnDef[]>> = {
-  SEMANTIC_EDGE: [
-    { name: 'id', type: 'STRING' },
-    { name: 'relation', type: 'STRING' },
-    { name: 'confidence', type: 'STRING' },
-    { name: 'confidenceScore', type: 'DOUBLE' },
-    { name: 'sourceFile', type: 'STRING' },
-    { name: 'sourceLocation', type: 'STRING' },
-    { name: 'weight', type: 'DOUBLE' },
-  ],
   MEMBER_OF_COMMUNITY: [
-    { name: 'id', type: 'STRING' },
-  ],
-  PARTICIPATES_IN: [
     { name: 'id', type: 'STRING' },
   ],
   DEFINES: [
@@ -435,28 +396,13 @@ export const REL_COLUMNS: Readonly<Record<RelType, readonly ColumnDef[]>> = {
   DOCUMENTS: [
     { name: 'id', type: 'STRING' },
   ],
-  MENTIONS: [
-    { name: 'id', type: 'STRING' },
-  ],
   TARGETS_REPO: [
     { name: 'id', type: 'STRING' },
   ],
 } as const;
 
 export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
-  SEMANTIC_EDGE: [
-    'id',
-    'relation',
-    'confidence',
-    'confidenceScore',
-    'sourceFile',
-    'sourceLocation',
-    'weight',
-  ],
   MEMBER_OF_COMMUNITY: [
-    'id',
-  ],
-  PARTICIPATES_IN: [
     'id',
   ],
   DEFINES: [
@@ -487,9 +433,6 @@ export const REL_COLUMN_NAMES: Readonly<Record<RelType, readonly string[]>> = {
   DOCUMENTS: [
     'id',
   ],
-  MENTIONS: [
-    'id',
-  ],
   TARGETS_REPO: [
     'id',
   ],
@@ -502,12 +445,10 @@ const COLUMN_TO_PROTO: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Function: { 'startLine': 'start_line', 'endLine': 'end_line' },
   PullRequest: { 'createdAt': 'created_at', 'baseBranch': 'base_branch', 'headBranch': 'head_branch', 'filesChanged': 'files_changed' },
   Variable: { 'startLine': 'start_line', 'endLine': 'end_line', 'typeAnnotation': 'type_annotation' },
-  KnowledgeVault: { 'lastCompiledAt': 'last_compiled_at', 'mirrorCompiledAt': 'mirror_compiled_at', 'spawnedFrom': 'spawned_from' },
-  KnowledgeDoc: { 'contentType': 'content_type', 'sizeBytes': 'size_bytes', 'acquiredAt': 'acquired_at', 'corpusPath': 'corpus_path', 'oneLineSummary': 'one_line_summary' },
+  KnowledgeVault: { 'lastCompiledAt': 'last_compiled_at', 'mirrorCompiledAt': 'mirror_compiled_at' },
+  KnowledgeDoc: { 'contentType': 'content_type', 'acquiredAt': 'acquired_at', 'corpusPath': 'corpus_path', 'oneLineSummary': 'one_line_summary' },
   Community: { 'communityId': 'community_id', 'isGod': 'is_god' },
-  Hyperedge: { 'confidenceScore': 'confidence_score', 'sourceFile': 'source_file' },
   IndexMetadata: { 'indexedAt': 'indexed_at', 'durationSeconds': 'duration_seconds', 'repoId': 'repo_id', 'repoPath': 'repo_path', 'commitSha': 'commit_sha', 'commitMessage': 'commit_message', 'sourceUri': 'source_uri', 'opentraceaiVersion': 'opentraceai_version', 'nodesCreated': 'nodes_created', 'relationshipsCreated': 'relationships_created', 'filesProcessed': 'files_processed', 'classesExtracted': 'classes_extracted', 'functionsExtracted': 'functions_extracted' },
-  SEMANTIC_EDGE: { 'confidenceScore': 'confidence_score', 'sourceFile': 'source_file', 'sourceLocation': 'source_location' },
 } as const;
 
 const PROTO_TO_COLUMN: Partial<Readonly<Record<NodeType | RelType, Readonly<Record<string, string>>>>> = {
@@ -517,12 +458,10 @@ const PROTO_TO_COLUMN: Partial<Readonly<Record<NodeType | RelType, Readonly<Reco
   Function: { 'start_line': 'startLine', 'end_line': 'endLine' },
   PullRequest: { 'created_at': 'createdAt', 'base_branch': 'baseBranch', 'head_branch': 'headBranch', 'files_changed': 'filesChanged' },
   Variable: { 'start_line': 'startLine', 'end_line': 'endLine', 'type_annotation': 'typeAnnotation' },
-  KnowledgeVault: { 'last_compiled_at': 'lastCompiledAt', 'mirror_compiled_at': 'mirrorCompiledAt', 'spawned_from': 'spawnedFrom' },
-  KnowledgeDoc: { 'content_type': 'contentType', 'size_bytes': 'sizeBytes', 'acquired_at': 'acquiredAt', 'corpus_path': 'corpusPath', 'one_line_summary': 'oneLineSummary' },
+  KnowledgeVault: { 'last_compiled_at': 'lastCompiledAt', 'mirror_compiled_at': 'mirrorCompiledAt' },
+  KnowledgeDoc: { 'content_type': 'contentType', 'acquired_at': 'acquiredAt', 'corpus_path': 'corpusPath', 'one_line_summary': 'oneLineSummary' },
   Community: { 'community_id': 'communityId', 'is_god': 'isGod' },
-  Hyperedge: { 'confidence_score': 'confidenceScore', 'source_file': 'sourceFile' },
   IndexMetadata: { 'indexed_at': 'indexedAt', 'duration_seconds': 'durationSeconds', 'repo_id': 'repoId', 'repo_path': 'repoPath', 'commit_sha': 'commitSha', 'commit_message': 'commitMessage', 'source_uri': 'sourceUri', 'opentraceai_version': 'opentraceaiVersion', 'nodes_created': 'nodesCreated', 'relationships_created': 'relationshipsCreated', 'files_processed': 'filesProcessed', 'classes_extracted': 'classesExtracted', 'functions_extracted': 'functionsExtracted' },
-  SEMANTIC_EDGE: { 'confidence_score': 'confidenceScore', 'source_file': 'sourceFile', 'source_location': 'sourceLocation' },
 } as const;
 
 /**

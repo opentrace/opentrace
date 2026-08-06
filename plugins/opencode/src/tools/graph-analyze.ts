@@ -24,7 +24,7 @@ export function createGraphAnalyzeTool(client: GraphClient) {
 
       const subArgs = ["analyze", "--json"]
       if (typeof args.top === "number") subArgs.push("--gods", String(args.top), "--bridges", String(args.top))
-      const out = await (client as any).run(subArgs, { surfaceErrors: true })
+      const out = await client.runReadOnly(subArgs, { surfaceErrors: true })
       return out ?? "analyze produced no output (has `opentraceai index` run yet?)"
     },
   })

@@ -45,13 +45,16 @@ def export_graph_app() -> None:
 def _build_export_graph(store):  # type: ignore[no-untyped-def]
     """Build a networkx DiGraph for export.
 
-    Includes Community/Hyperedge nodes (consumers want to see them) but
+    Includes Community nodes (consumers want to see them) but
     excludes IndexMetadata. Membership and participation edges are kept.
     """
     try:
         import networkx as nx
     except ImportError as exc:
-        raise click.ClickException("networkx not installed. Run: uv pip install 'opentraceai[graph]'") from exc
+        raise click.ClickException(
+            "networkx not installed. It is a core dependency — reinstall opentraceai, "
+            "or `uv pip install networkx` into the active environment."
+        ) from exc
 
     from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
 
@@ -89,7 +92,7 @@ def _build_export_graph(store):  # type: ignore[no-untyped-def]
 def graphml_cmd(db_path: str | None, output: str) -> None:
     """Export the stored graph as GraphML (Gephi, yEd, Cytoscape).
 
-    Includes Community and Hyperedge nodes so downstream tools can render
+    Includes Community nodes so downstream tools can render
     the cluster structure alongside the source graph. IndexMetadata is
     excluded (it's a per-repo provenance record, not part of the graph).
     """
@@ -374,7 +377,6 @@ def report_cmd(db_path: str | None, output: str) -> None:
         nodes_by_id, edges, communities, memberships = _project_graph(store)
         god_nodes = store.list_god_nodes(limit=20)
         metadata = store.get_metadata()
-        hyperedges = store.list_hyperedges()
         community_bridges = store.list_cross_community_bridges(limit=list_cap)
         domain_bridges = cross_domain_bridges(store, limit=list_cap)
         cross_cutting = find_communities_spanning_domains(store, min_domains=2, limit=list_cap)
@@ -544,22 +546,6 @@ def report_cmd(db_path: str | None, output: str) -> None:
                 else:
                     target_c = community_by_id[target_id]
                     page.append(f"- [{target_c['name']}]({community_slug[target_id]}.md): {count} — {samples}")
-
-        # Hyperedges anchored here: n-ary groupings with 2+ members in this
-        # community. Flat edge lists hide these.
-        local_hyperedges = []
-        for h in hyperedges:
-            local = [m for m in h["member_ids"] if m in member_set]
-            if len(local) >= 2:
-                local_hyperedges.append((h, local))
-        if local_hyperedges:
-            page += ["", "## Hyperedges"]
-            for h, local in local_hyperedges[:list_cap]:
-                local_names = ", ".join(_display_name(nodes_by_id[m]) for m in local[:5] if m in nodes_by_id)
-                outside = len(h["member_ids"]) - len(local)
-                suffix = f" (+{outside} outside this community)" if outside > 0 else ""
-                relation = h.get("relation") or "group"
-                page.append(f"- {h['name']} ({relation}): {local_names}{suffix}")
 
         (communities_dir / f"{community_slug[c['id']]}.md").write_text("\n".join(page))
 

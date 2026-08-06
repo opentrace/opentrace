@@ -174,7 +174,7 @@ class TestWikiExport:
 
 
 def _seed_rich(db_path: str) -> None:
-    """The base two-community seed plus metadata and a hyperedge."""
+    """The base two-community seed plus index metadata."""
     _seed(db_path)
     with GraphStore(db_path) as s:
         s.save_metadata(
@@ -186,10 +186,6 @@ def _seed_rich(db_path: str) -> None:
                 "opentraceaiVersion": "1.2.3",
             }
         )
-        s.save_hyperedge("h1", "Auth flow", "participate_in", "INFERRED", 0.75)
-        s.save_participation("pa0", "a0", "h1")
-        s.save_participation("pa1", "a1", "h1")
-        s.save_participation("pb0", "b0", "h1")
 
 
 class TestReportDashboard:
@@ -231,16 +227,3 @@ class TestReportDashboard:
         assert "## Connections to other communities" in alpha
         assert "[Beta cluster](beta-cluster.md): 1 edge" in alpha
         assert "alpha-0 → beta-0 (CALLS)" in alpha
-
-    def test_community_page_lists_anchored_hyperedges(self, tmp_path):
-        db = str(tmp_path / "db")
-        _seed_rich(db)
-        out = tmp_path / "wiki"
-        CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
-        alpha = (out / "communities" / "alpha-cluster.md").read_text()
-        assert "## Hyperedges" in alpha
-        assert "Auth flow (participate_in)" in alpha
-        assert "+1 outside this community" in alpha
-        # Only 2 of 3 members are in beta — below the anchor threshold.
-        beta = (out / "communities" / "beta-cluster.md").read_text()
-        assert "Auth flow" not in beta

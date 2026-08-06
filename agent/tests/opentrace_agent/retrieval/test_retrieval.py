@@ -29,6 +29,7 @@ from opentrace_agent.retrieval import (  # noqa: E402
     find_orphans,
     find_path,
     find_via_relationship_to_type,
+    search,
 )
 from opentrace_agent.store import GraphStore  # noqa: E402
 
@@ -48,12 +49,11 @@ def _seed(store: GraphStore) -> None:
         repo -CONTAINS-> file -CONTAINS-> fn-handle -CALLS-> fn-query
         repo -CONTAINS-> file -CONTAINS-> fn-orphan   (no callers)
 
-    Wiki side:
-        vault -CONTAINS-> source-report
-        vault -CONTAINS-> page-concept-a
-        vault -CONTAINS-> page-concept-b   (no LINKS_TO from anyone)
-        page-concept-a -LINKS_TO-> page-concept-b
-        page-concept-a -CITES-> source-report
+    Wiki side (documents linked by their authors' own relative links):
+        vault -CONTAINS-> doc-report
+        vault -CONTAINS-> doc-guide
+        vault -CONTAINS-> doc-orphan   (no LINKS_TO from anyone)
+        doc-guide -LINKS_TO-> doc-orphan
     """
     # Code
     store.add_node("repo-1", "Repository", "myrepo", {})
@@ -68,15 +68,14 @@ def _seed(store: GraphStore) -> None:
     store.add_relationship("c5", "CALLS", "fn-handle", "fn-query")
 
     # Wiki
-    store.add_node("vault-1", "KnowledgeVault", "knowledge", {})
-    store.add_node("source-report", "KnowledgeDoc", "report.pdf", {"sha256": "report-sha", "filename": "report.pdf"})
-    store.add_node("page-concept-a", "KnowledgeConcept", "Concept A", {"kind": "concept"})
-    store.add_node("page-concept-b", "KnowledgeConcept", "Concept B", {"kind": "concept"})
-    store.add_relationship("w1", "CONTAINS", "vault-1", "source-report")
-    store.add_relationship("w2", "CONTAINS", "vault-1", "page-concept-a")
-    store.add_relationship("w3", "CONTAINS", "vault-1", "page-concept-b")
-    store.add_relationship("w4", "LINKS_TO", "page-concept-a", "page-concept-b")
-    store.add_relationship("w5", "CITES", "page-concept-a", "source-report")
+    store.add_node("vault-1", "KnowledgeVault", "knowledge", {"vault": "knowledge"})
+    store.add_node("doc-report", "KnowledgeDoc", "report.pdf", {"sha256": "report-sha", "filename": "report.pdf"})
+    store.add_node("doc-guide", "KnowledgeDoc", "guide.md", {"sha256": "guide-sha", "filename": "guide.md"})
+    store.add_node("doc-orphan", "KnowledgeDoc", "notes.md", {"sha256": "notes-sha", "filename": "notes.md"})
+    store.add_relationship("w1", "CONTAINS", "vault-1", "doc-report")
+    store.add_relationship("w2", "CONTAINS", "vault-1", "doc-guide")
+    store.add_relationship("w3", "CONTAINS", "vault-1", "doc-orphan")
+    store.add_relationship("w4", "LINKS_TO", "doc-guide", "doc-orphan")
 
 
 # ---------------------------------------------------------------------------
@@ -160,11 +159,16 @@ class TestFindViaRelationshipToType:
         assert result["pairs"] == []
 
     def test_wiki_links(self, store):
+        """Doc→doc ``LINKS_TO`` — the authors' own relative markdown links.
+
+        This used to query ``KnowledgeConcept``, a node type removed with the
+        concept-page layer, so it passed vacuously against an empty result.
+        """
         _seed(store)
-        result = find_via_relationship_to_type(store, "KnowledgeConcept", "LINKS_TO", "KnowledgeConcept")
+        result = find_via_relationship_to_type(store, "KnowledgeDoc", "LINKS_TO", "KnowledgeDoc")
         assert result["count"] == 1
-        assert result["pairs"][0]["start"]["id"] == "page-concept-a"
-        assert result["pairs"][0]["target"]["id"] == "page-concept-b"
+        assert result["pairs"][0]["start"]["id"] == "doc-guide"
+        assert result["pairs"][0]["target"]["id"] == "doc-orphan"
 
     def test_limit_caps_results(self, store):
         for i in range(5):
@@ -204,12 +208,13 @@ class TestFindOrphans:
         ids = [o["id"] for o in result["orphans"]]
         assert ids == ["fn-orphan"]
 
-    def test_concepts_with_no_inbound_links(self, store):
+    def test_docs_with_no_inbound_links(self, store):
+        """Documents nobody cross-references. ``doc-orphan`` is linked FROM
+        ``doc-guide``, so the un-referenced ones are report + guide."""
         _seed(store)
-        # page-concept-a has no incoming LINKS_TO; page-concept-b does.
-        result = find_orphans(store, "KnowledgeConcept", "LINKS_TO", direction="incoming")
+        result = find_orphans(store, "KnowledgeDoc", "LINKS_TO", direction="incoming")
         ids = sorted(o["id"] for o in result["orphans"])
-        assert ids == ["page-concept-a"]
+        assert ids == ["doc-guide", "doc-report"]
 
     def test_no_candidates(self, store):
         _seed(store)
@@ -254,8 +259,8 @@ class TestCountBy:
 
     def test_scoped_to_vault(self, store):
         _seed(store)
-        result = count_by(store, "KnowledgeConcept", parent_id="vault-1", parent_edge="CONTAINS", max_hops=1)
-        assert result["count"] == 2
+        result = count_by(store, "KnowledgeDoc", parent_id="vault-1", parent_edge="CONTAINS", max_hops=1)
+        assert result["count"] == 3
 
     def test_missing_parent(self, store):
         _seed(store)
@@ -441,3 +446,82 @@ class TestLegacyEntityNodesStayReadable:
         self._seed(store)
         result = search(store, "engram", limit=10, node_types=["Idea"])
         assert {h["id"] for h in result["hits"]} == {"ent::engram"}
+
+
+class TestVaultScopedSearch:
+    """``vaultScope`` is advertised on the MCP ``search_graph`` tool, but had no
+    test at all — and it was broken: it filtered hits on a ``vault`` property
+    that a KnowledgeDoc never carries, so scoping a search to a vault returned
+    nothing and an agent concluded the vault was empty. Membership is the
+    ``CONTAINS`` edge (``GraphStore.vault_member_ids``).
+    """
+
+    @staticmethod
+    def _seed(store):
+        store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
+        store.add_node("vault::other", "KnowledgeVault", "other", {"vault": "other"})
+        store.add_node(
+            "corpus::a",
+            "KnowledgeDoc",
+            "retry-policy.md",
+            {"sha256": "a", "title": "Retry policy", "summary": "retry policy for the gateway"},
+        )
+        store.add_node(
+            "corpus::b",
+            "KnowledgeDoc",
+            "retry-notes.md",
+            {"sha256": "b", "title": "Retry notes", "summary": "retry policy notes elsewhere"},
+        )
+        store.add_relationship("c-a", "CONTAINS", "vault::kb", "corpus::a")
+        store.add_relationship("c-b", "CONTAINS", "vault::other", "corpus::b")
+
+    def test_scoped_search_returns_the_vaults_document(self, store):
+        self._seed(store)
+        ids = {h["id"] for h in search(store, "retry", limit=10, vault_scope="kb")["hits"]}
+        assert "corpus::a" in ids, "scoped search must reach the vault's documents"
+        assert "corpus::b" not in ids
+
+    def test_unscoped_search_sees_both(self, store):
+        self._seed(store)
+        ids = {h["id"] for h in search(store, "retry", limit=10)["hits"]}
+        assert {"corpus::a", "corpus::b"} <= ids
+
+    def test_unknown_scope_returns_nothing(self, store):
+        self._seed(store)
+        assert search(store, "retry", limit=10, vault_scope="ghost")["hits"] == []
+
+
+class TestFindPathTruncation:
+    """``find_path`` must distinguish "no path exists" from "I stopped looking".
+
+    Both used to return ``{"path": None, "length": None}``, so the CLI's
+    "a path exists but is longer than N hops" branch was unreachable and the
+    user was told *No path between those nodes* when one existed just beyond
+    the hop limit. A failed search is not evidence of absence.
+    """
+
+    @staticmethod
+    def _seed(store):
+        for n in ("a", "b", "c"):
+            store.add_node(n, "Function", n)
+        store.add_node("island", "Function", "island")
+        store.add_relationship("ab", "CALLS", "a", "b")
+        store.add_relationship("bc", "CALLS", "b", "c")
+
+    def test_truncated_when_path_is_beyond_the_hop_limit(self, store):
+        self._seed(store)
+        result = find_path(store, "a", "c", max_hops=1)
+        assert result["path"] is None
+        assert result["truncated"] is True
+
+    def test_not_truncated_when_no_path_can_exist(self, store):
+        self._seed(store)
+        result = find_path(store, "a", "island", max_hops=6)
+        assert result["path"] is None
+        assert result["truncated"] is False
+
+    def test_found_path_within_the_limit(self, store):
+        self._seed(store)
+        result = find_path(store, "a", "c", max_hops=3)
+        assert [s["node"]["id"] for s in result["path"]] == ["a", "b", "c"]
+        assert result["length"] == 2

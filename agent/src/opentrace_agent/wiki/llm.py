@@ -37,6 +37,14 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
+from opentrace_agent.sources._llm_common import (
+    BACKENDS,
+    canonical_backend,
+    resolve_api_key,
+    resolve_base_url,
+    resolve_model,
+)
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -226,14 +234,6 @@ def _gated_retry(
         limiter.release()
 
 
-from opentrace_agent.sources._llm_common import (
-    BACKENDS,
-    canonical_backend,
-    resolve_api_key,
-    resolve_base_url,
-    resolve_model,
-)
-
 PROVIDER_ANTHROPIC = "anthropic"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENAI = "openai"
@@ -251,12 +251,10 @@ SUPPORTED_PROVIDERS = (
 class UsageTally:
     """Thread-safe accumulator for the token usage a client actually billed.
 
-    Every provider response carries exact usage metadata; until 2026-08-04 we
-    discarded it, which is how the pre-ingest cost estimate drifted 6.5x stale
-    with nothing to contradict it. Each client owns one tally, records after
-    every successful call, and the ingest summary prints the total next to the
-    estimate — so assumption drift is visible on the first run, not after
-    three benchmark runs.
+    Every provider response carries exact usage metadata. Each client owns one
+    tally, records after every successful call, and the ingest summary prints
+    the total next to the pre-flight estimate — so the two confront each other
+    on every run and a stale estimate cannot drift unnoticed.
 
     Honest limits: only SUCCESSFUL calls are counted (a retried attempt's
     partial billing is invisible to us), and dollar conversion still uses our

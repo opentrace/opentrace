@@ -28,7 +28,7 @@ export function createGraphQueryTool(client: GraphClient) {
       const subArgs = ["query", args.query, "--output", "json"]
       if (args.fts) subArgs.push("--type", "fts")
       if (args.fts && typeof args.limit === "number") subArgs.push("--limit", String(args.limit))
-      const out = await (client as any).run(subArgs, { surfaceErrors: true })
+      const out = await client.runReadOnly(subArgs, { surfaceErrors: true })
       return out ?? "query produced no output (has `opentraceai index` run yet?)"
     },
   })

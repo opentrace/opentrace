@@ -27,10 +27,6 @@ Scopes are nodes whose subtree has on-disk content the agent can search:
   line numbers refer to the normalized body (exactly what ``load_source``
   returns).
 
-  A second sweep over the vault's compiled ``pages/`` dir ran here until
-  2026-08-04, when the concept-page layer was removed. Sweeping verbatim
-  bodies is what replaced synthesis, so grepping a layer of restatement on
-  top of them was the opposite of the point — see the wiki CLAUDE.md.
 
 ripgrep is invoked via ``subprocess.run`` with ``--json`` for structured
 output. ``rg`` is expected on ``PATH``; missing-binary cases return a
@@ -108,7 +104,6 @@ def grep(
 
     if scope_type == "Repository":
         return _grep_repository(
-            store,
             scope_node,
             pattern,
             file_filter=file_filter,
@@ -131,7 +126,6 @@ def grep(
 
 
 def _grep_repository(
-    store: GraphStore,
     scope_node: dict[str, Any],
     pattern: str,
     *,
@@ -301,10 +295,7 @@ def _unknown_scope_message(store: GraphStore, scope_id: str) -> str:
             continue
     if options:
         return f"scope node not found: {scope_id}. Valid scopes in this graph: {', '.join(sorted(options))}"
-    return (
-        f"scope node not found: {scope_id}. This graph has no Repository or KnowledgeVault "
-        "node to scope a grep to."
-    )
+    return f"scope node not found: {scope_id}. This graph has no Repository or KnowledgeVault node to scope a grep to."
 
 
 def _err(scope_id: str, message: str) -> dict[str, Any]:
@@ -326,15 +317,13 @@ def _search_files(
 ) -> list[dict[str, Any]]:
     """Regex-scan *targets*, preferring ripgrep and falling back to Python.
 
-    ripgrep is an optional accelerator, NOT a requirement. It used to be
-    required, and the consequence was invisible: `rg` is absent from plenty of
-    environments (and on the machine this was developed on it existed only as a
-    shell function, so ``shutil.which`` never saw it), which made every vault
-    grep return "ripgrep not on PATH". The tool that exists to answer
-    exhaustiveness questions therefore never ran once in three benchmark runs,
-    and the arm fell back to opening documents one at a time. The unit tests
-    missed it because they hunt for a vendored `rg` and prepend it to PATH —
-    validating a path production could not take.
+    ripgrep is an optional accelerator, NOT a requirement. Requiring it fails
+    invisibly: `rg` is absent from plenty of environments (and can exist only
+    as a shell function, which ``shutil.which`` never sees), so every vault
+    grep returns "ripgrep not on PATH" and the caller silently loses the only
+    tool that answers exhaustiveness questions. Keep the tests honest too —
+    hunting for a vendored `rg` and prepending it to PATH validates a path
+    production cannot take.
 
     A vault corpus is a few dozen small normalized markdown files, so a pure
     Python scan is entirely adequate there; the fallback keeps large repo

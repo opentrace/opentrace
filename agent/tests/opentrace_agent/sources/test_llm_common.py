@@ -105,19 +105,24 @@ class TestModelParity:
 
 
 class TestRoleModelResolution:
-    """The ``role`` arg lets strict extraction run a cheap model while wiki
-    synthesis keeps the flagship one, each with its own override env var."""
+    """The ``role`` arg lets the per-doc label call run a cheap model while a
+    caller asking for ``role="wiki"`` keeps the flagship one, each with its own
+    override env var.
+
+    ``wiki_summary`` is the only cheap-tier role. An ``extraction`` role existed
+    alongside it with an ``OT_EXTRACTION_MODEL`` var; no production caller ever
+    passed it, so it was removed. Unknown roles fall through to the generic
+    backend env then the default model — they don't error.
+    """
 
     @pytest.fixture(autouse=True)
     def _clear_env(self, monkeypatch):
-        for var in ("OT_EXTRACTION_MODEL", "OT_WIKI_MODEL", "OT_WIKI_SUMMARY_MODEL", "OT_LLM_MODEL_ANTHROPIC"):
+        for var in ("OT_WIKI_MODEL", "OT_WIKI_SUMMARY_MODEL", "OT_LLM_MODEL_ANTHROPIC"):
             monkeypatch.delenv(var, raising=False)
 
-    def test_extraction_role_uses_cheap_tier(self):
-        # Anthropic defines a cheaper extraction tier; wiki/default keep Sonnet.
-        assert resolve_model("anthropic", None, role="extraction") == "claude-haiku-4-5"
-        assert resolve_model("anthropic", None, role="wiki") == BACKENDS["anthropic"].default_model
-        assert resolve_model("anthropic", None) == BACKENDS["anthropic"].default_model
+    def test_unknown_role_falls_through_to_the_default(self):
+        """A role with no registry entry must not be treated as cheap-tier."""
+        assert resolve_model("anthropic", None, role="nonexistent") == BACKENDS["anthropic"].default_model
 
     def test_wiki_summary_role_uses_cheap_tier_but_wiki_stays_flagship(self):
         # File summaries run cheap; plan/synthesis (role="wiki") stay flagship.
@@ -131,35 +136,34 @@ class TestRoleModelResolution:
         assert resolve_model("anthropic", None, role="wiki") == BACKENDS["anthropic"].default_model
         assert resolve_model("anthropic", None) == BACKENDS["anthropic"].default_model
 
-    def test_extraction_role_falls_back_when_no_cheap_tier(self):
+    def test_cheap_role_falls_back_when_backend_has_no_cheap_tier(self):
         # Backends without a separate cheap tier (local, kimi) fall back to default.
-        assert resolve_model("local", None, role="extraction") == BACKENDS["local"].default_model
-        assert resolve_model("kimi", None, role="extraction") == BACKENDS["kimi"].default_model
+        assert resolve_model("local", None, role="wiki_summary") == BACKENDS["local"].default_model
+        assert resolve_model("kimi", None, role="wiki_summary") == BACKENDS["kimi"].default_model
 
     def test_gemini_and_openai_mirror_the_cheap_flagship_split(self):
-        # Like Anthropic: cheap per-doc tier (extraction/wiki_summary) + smarter
-        # flagship (wiki) for resolve + concept synthesis.
+        # Like Anthropic: cheap per-doc tier (wiki_summary) + flagship (wiki).
         assert resolve_model("gemini", None, role="wiki_summary") == BACKENDS["gemini"].extraction_model
         assert resolve_model("gemini", None, role="wiki") == BACKENDS["gemini"].default_model
-        assert resolve_model("openai", None, role="extraction") == BACKENDS["openai"].extraction_model
+        assert resolve_model("openai", None, role="wiki_summary") == BACKENDS["openai"].extraction_model
         assert resolve_model("openai", None, role="wiki") == BACKENDS["openai"].default_model
 
     def test_role_env_overrides_are_independent(self, monkeypatch):
-        monkeypatch.setenv("OT_EXTRACTION_MODEL", "ext-x")
+        monkeypatch.setenv("OT_WIKI_SUMMARY_MODEL", "sum-x")
         monkeypatch.setenv("OT_WIKI_MODEL", "wiki-y")
-        assert resolve_model("anthropic", None, role="extraction") == "ext-x"
+        assert resolve_model("anthropic", None, role="wiki_summary") == "sum-x"
         assert resolve_model("anthropic", None, role="wiki") == "wiki-y"
         # role=None ignores both role-specific vars.
         assert resolve_model("anthropic", None) == BACKENDS["anthropic"].default_model
 
     def test_explicit_override_beats_role_env(self, monkeypatch):
-        monkeypatch.setenv("OT_EXTRACTION_MODEL", "ext-x")
-        assert resolve_model("anthropic", "explicit", role="extraction") == "explicit"
+        monkeypatch.setenv("OT_WIKI_SUMMARY_MODEL", "sum-x")
+        assert resolve_model("anthropic", "explicit", role="wiki_summary") == "explicit"
 
     def test_role_env_beats_generic_backend_env(self, monkeypatch):
-        monkeypatch.setenv("OT_EXTRACTION_MODEL", "ext-x")
+        monkeypatch.setenv("OT_WIKI_SUMMARY_MODEL", "sum-x")
         monkeypatch.setenv("OT_LLM_MODEL_ANTHROPIC", "generic")
-        assert resolve_model("anthropic", None, role="extraction") == "ext-x"
+        assert resolve_model("anthropic", None, role="wiki_summary") == "sum-x"
         # Without a role, the generic backend env still wins over the default.
         assert resolve_model("anthropic", None) == "generic"
 

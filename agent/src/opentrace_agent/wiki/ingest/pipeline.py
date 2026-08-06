@@ -133,12 +133,11 @@ def run_compile(
     behind. Re-sync from disk via ``opentraceai vault attach``.
 
     The compile is **corpus-only**: documents are indexed (KnowledgeDoc nodes
-    with navigation labels and epistemic status, doc↔doc
-    links, MIRRORS twins) and read back raw via ``load_source`` or swept
-    verbatim by ``grep``. Nothing is synthesized. Concept-page synthesis was
-    removed — it measured 88.4% against a 98.6% control (-10.2pp, the worst
-    result on record) because restating a source strips its hedges, tense,
-    and attribution, a failure mode a verbatim body structurally cannot have.
+    with navigation labels and epistemic status, doc↔doc links, MIRRORS twins)
+    and read back raw via ``load_source`` or swept verbatim by ``grep``.
+    Nothing is synthesized — restating a source in the model's own voice
+    strips its hedges, tense, and attribution, which a verbatim body
+    structurally cannot do.
     """
     ensure_vault_layout(vault_name, vault_root, scope=scope, project_root=project_root)
     meta_path = metadata_path(vault_name, vault_root, scope=scope, project_root=project_root)
@@ -170,7 +169,7 @@ def run_compile(
         # (logos, favicons, icons → markitdown yields ~nothing). This is
         # content-based, not type-based — an image whose text/data IS extracted
         # clears the bar and is ingested like any doc. Filter `acquired` to
-        # match so the dropped sources get no Source node / corpus / meta entry.
+        # match so the dropped documents get no KnowledgeDoc / corpus / meta entry.
         min_chars = _min_doc_chars()
         before = len(normalized)
         normalized[:] = [s for s in normalized if len(s.markdown.strip()) >= min_chars]
@@ -229,10 +228,10 @@ def run_compile(
 
         # Per-doc extraction is a compact inventory, so it runs on the cheap
         # tier by default (role="wiki_summary", overridable via
-        # OT_WIKI_SUMMARY_MODEL). An explicit *model* from the caller wins — it
-        # used to reach only the flagship synthesis client, which no longer
-        # makes any call, so honouring it here is what keeps `--model` from
-        # being silently inert. When a caller injects `llm` (tests), use it.
+        # OT_WIKI_SUMMARY_MODEL). An explicit *model* from the caller wins:
+        # this is the only call the pipeline makes, so honouring it here is
+        # what keeps `--model` from being silently inert. When a caller
+        # injects `llm` (tests), use it.
         extraction_model = model or resolve_model(provider, None, role="wiki_summary")
         extraction_client: WikiLLM = llm or make_llm(
             provider,
@@ -253,7 +252,7 @@ def run_compile(
         # stage: no per-document wiki pages and no entity inventory, so the
         # raw body in the corpus (readable via load_source, greppable
         # verbatim) is the only representation of the document's content.
-        yield from _extract_docs(normalized, meta, extraction_client)
+        yield from _extract_docs(normalized, extraction_client)
 
         # Persist the acquired sources and their metadata (updates
         # meta.sources, including the extraction-stamped labels); the graph

@@ -12,59 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Markdown source ingestion: URL/file → annotated markdown + the corpus store.
+"""URL/file fetching plus the on-disk corpus store.
 
-The LLM entity/edge extraction that used to live here (``extractor.py`` and
-``prompts.py``) was removed on 2026-08-04 — see the wiki CLAUDE.md.
+Doc plumbing only — this package runs no LLM of its own. The single LLM call
+over a document lives in ``wiki/ingest/doc_extraction.py``, and the provider
+registry it uses is ``sources/_llm_common.py``. Conversion to markdown lives in
+``wiki/ingest/normalize.py``.
 """
 
-from .clients import (
-    BACKENDS,
-    AnthropicClient,
-    BackendConfig,
-    OpenAICompatClient,
-    actionable_no_backend_message,
-    create_client,
-    detect_backend,
-    detect_client,
-    estimate_cost,
-)
 from .fetchers import UnsupportedSourceError, resolve
-from .loader import AnnotatedMarkdown, convert, detect_source_type
 from .source_io import (
     CORPUS_SUBDIR,
     copy_corpus_between_scopes,
     corpus_dir,
     corpus_dir_for_scope,
-    load_source_markdown,
     relative_corpus_path,
-    write_corpus_markdown,
     write_corpus_markdown_to,
-    write_source_markdown,
 )
 
 __all__ = [
-    "AnnotatedMarkdown",
-    "AnthropicClient",
-    "BACKENDS",
-    "BackendConfig",
     "CORPUS_SUBDIR",
-    "OpenAICompatClient",
     "UnsupportedSourceError",
-    "actionable_no_backend_message",
-    "convert",
     "copy_corpus_between_scopes",
     "corpus_dir",
     "corpus_dir_for_scope",
-    "create_client",
-    "detect_backend",
-    "detect_client",
-    "detect_source_type",
-    "estimate_cost",
-    "load_source_markdown",
     "relative_corpus_path",
     "resolve",
-    "write_corpus_markdown",
     "write_corpus_markdown_to",
-    "write_source_markdown",
 ]

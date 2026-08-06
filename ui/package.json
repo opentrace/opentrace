@@ -139,7 +139,6 @@
     "react-markdown": "^10.1.0",
     "react-window": "^2.2.7",
     "remark-gfm": "^4.0.1",
-    "remark-wiki-link": "^2.0.1",
     "three": "^0.184.0",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0",

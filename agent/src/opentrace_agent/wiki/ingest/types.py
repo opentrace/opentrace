@@ -25,8 +25,6 @@ class WikiPhase(str, Enum):
     ACQUIRING = "acquiring"
     NORMALIZING = "normalizing"
     EXTRACTING = "extracting"
-    PLANNING = "planning"
-    EXECUTING = "executing"
     PERSISTING = "persisting"
 
 
@@ -73,14 +71,12 @@ class NormalizedSource:
     # so the value stays portable across machines.
     corpus_path: str | None = None
     # Navigation label, stamped by the DocExtraction stage and copied onto
-    # the Source node by the graph writer: a display title derived from the
+    # the KnowledgeDoc by the graph writer: a display title derived from the
     # filename plus the LLM's one-sentence description of the document.
     title: str = ""
     one_line_summary: str = ""
     # Epistemic status, carried from SourceInput (see there).
     status: str = "authoritative"
-
-
 
 
 def _wiki_concurrency() -> int:

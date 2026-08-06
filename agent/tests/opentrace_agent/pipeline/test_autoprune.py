@@ -73,11 +73,10 @@ class TestAutoprune:
                 store,
                 walked_doc_shas={"aaa", "bbb"},
                 vault_name="v",
-                scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
 
-            assert report.sources_deleted == 1
+            assert report.documents_deleted == 1
             assert store.get_node(sids["ccc"]) is None
             # Other two sources stay.
             assert store.get_node(sids["aaa"]) is not None
@@ -90,10 +89,9 @@ class TestAutoprune:
                 store,
                 walked_doc_shas=set(),
                 vault_name="v",
-                scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
-            assert report.sources_deleted == 3
+            assert report.documents_deleted == 3
             assert all(store.get_node(sid) is None for sid in sids.values())
             # The vault node itself is not a prune target — `vault delete` owns that.
             assert store.get_node(vault_node_id("v")) is not None
@@ -108,7 +106,7 @@ class TestAutoprune:
         from opentrace_agent.pipeline.autoprune import AutopruneReport
 
         assert {f.name for f in fields(AutopruneReport)} == {
-            "sources_deleted",
+            "documents_deleted",
             "corpus_files_deleted",
         }
 
@@ -129,7 +127,6 @@ class TestAutoprune:
                 store,
                 walked_doc_shas=set(),  # all of v1 walked away from disk
                 vault_name="v1",
-                scope_path=tmp_path,
                 db_path=str(tmp_path / "db"),
             )
             # v2's documents survive — the prune never left v1's CONTAINS set.

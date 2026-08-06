@@ -12,34 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""On-disk corpus storage for ingested ``Source`` nodes.
+"""On-disk corpus storage for ingested document bodies.
 
-Each ``opentraceai ingest`` writes the markitdown output to
-``.opentrace/corpus/<source_id>.md`` and stores ``corpus_path`` on the
-``Source`` node instead of inlining the body. Keeps node fetches cheap (the
-markdown body never rides along on ``/api/graph`` or ``get_node``) and lets
-the LLM-extraction stage stream the body off disk on demand.
-
-The two seams are tiny:
-
-* :func:`write_source_markdown` — called by ``ingest_cmd`` after conversion.
-* :func:`load_source_markdown` — called by the extractor (and any other
-  consumer) to reconstruct an :class:`AnnotatedMarkdown` from a stored node.
+Doc ingestion writes each markitdown-normalized body to
+``.opentrace/corpus/<sha>.md`` and stores only ``corpus_path`` on the graph
+node. Bodies do not live in the graph: LadybugDB caps STRING properties at
+~4 KB and doc bodies typically run 5–20 KB, so disk is the source of truth for
+content and the graph holds metadata plus a reference. This also keeps node
+fetches cheap — a body never rides along on ``/api/graph`` or ``get_node``.
 
 ``corpus_path`` is stored as a path relative to ``.opentrace/`` so the
 graph database stays portable across machines / worktrees.
+
+The corpus is scope-aware: :func:`corpus_dir_for_scope` resolves it for a
+local or global vault, and :func:`copy_corpus_between_scopes` moves bodies
+sha-by-sha when a vault is attached, promoted, or demoted.
 """
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Literal
-
-from .loader import AnnotatedMarkdown
+from typing import Literal
 
 CORPUS_SUBDIR = "corpus"
-ENTITY_CACHE_SUBDIR = "entity_cache"
 
 Scope = Literal["local", "global"]
 
@@ -59,24 +55,21 @@ def corpus_dir(db_path: str | Path) -> Path:
     return _opentrace_dir(db_path) / CORPUS_SUBDIR
 
 
-def entity_cache_dir(db_path: str | Path) -> Path:
-    """Filesystem location of the entity-extraction cache for *db_path*.
+def relative_corpus_path(doc_sha: str) -> str:
+    """The ``corpus_path`` string stored on the KnowledgeDoc — stable, portable.
 
-    Sits next to the corpus dir (anchored on the DB's ``.opentrace/``). Holds
-    one ``<sha>.json`` per extracted source so re-indexing unchanged docs can
-    skip the LLM call. Path-only helper — no graph-type dependency.
+    Pass the bare sha256, NOT the node id: the node is ``corpus::<sha>`` but
+    its body is ``corpus/<sha>.md``. Passing the id yields a different,
+    self-consistent filename, so the mistake resolves fine and silently
+    establishes a second naming convention in the same directory.
     """
-    return _opentrace_dir(db_path) / ENTITY_CACHE_SUBDIR
+    return f"{CORPUS_SUBDIR}/{_safe_corpus_filename(doc_sha)}"
 
 
-def relative_corpus_path(source_id: str) -> str:
-    """The string stored on the Source node — stable, portable."""
-    safe = source_id.replace(":", "_").replace("/", "_")
-    return f"{CORPUS_SUBDIR}/{safe}.md"
-
-
-def _safe_corpus_filename(source_id: str) -> str:
-    safe = source_id.replace(":", "_").replace("/", "_")
+def _safe_corpus_filename(doc_sha: str) -> str:
+    # A sha256 is hex, so neither character can occur; the substitution is
+    # retained only so a non-sha id can never escape the corpus directory.
+    safe = doc_sha.replace(":", "_").replace("/", "_")
     return f"{safe}.md"
 
 
@@ -86,7 +79,7 @@ def corpus_dir_for_scope(
 ) -> Path:
     """Resolve the on-disk corpus directory for *scope*.
 
-    The corpus is the post-markitdown body of each ``Source`` node, stored
+    The corpus is the post-markitdown body of each ``KnowledgeDoc``, stored
     at ``<base>/corpus/<sha>.md``. ``<base>`` is scope-dependent so a
     global vault's corpus survives across the projects that attach it:
 
@@ -97,7 +90,7 @@ def corpus_dir_for_scope(
     """
     if scope == "global":
         # Lazy import — wiki.paths depends on this module's siblings
-        # (sources.markdown) for write_corpus_markdown, and an import at
+        # (sources.markdown) for the corpus helpers, and an import at
         # module-top would risk a cycle.
         from opentrace_agent.wiki.paths import vault_root
 
@@ -108,37 +101,23 @@ def corpus_dir_for_scope(
 
 def write_corpus_markdown_to(
     corpus_directory: Path,
-    source_id: str,
+    doc_sha: str,
     markdown_text: str,
 ) -> str:
-    """Write *markdown_text* to ``<corpus_directory>/<safe_id>.md``.
+    """Write *markdown_text* to ``<corpus_directory>/<sha>.md``.
 
     Returns the same stable relative path string that :func:`relative_corpus_path`
-    produces, so the value can be stored on the ``Source`` node regardless
-    of which scope's corpus directory the file actually lives in.
+    produces, so the value can be stored as the KnowledgeDoc's ``corpus_path``
+    regardless of which scope's corpus directory the file actually lives in.
     """
-    full = corpus_directory / _safe_corpus_filename(source_id)
+    full = corpus_directory / _safe_corpus_filename(doc_sha)
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(markdown_text, encoding="utf-8")
-    return relative_corpus_path(source_id)
-
-
-def write_corpus_markdown(
-    db_path: str | Path,
-    source_id: str,
-    markdown_text: str,
-) -> str:
-    """Write *markdown_text* to ``corpus/<id>.md``; return the relative path.
-
-    Low-level seam used by both ``ingest_cmd`` (via :func:`write_source_markdown`)
-    and the wiki ingest pipeline. Overwrites existing files so re-ingesting
-    the same source converges.
-    """
-    return write_corpus_markdown_to(corpus_dir(db_path), source_id, markdown_text)
+    return relative_corpus_path(doc_sha)
 
 
 def copy_corpus_between_scopes(
-    source_ids: list[str],
+    doc_shas: list[str],
     *,
     from_scope: Scope,
     to_scope: Scope,
@@ -147,11 +126,11 @@ def copy_corpus_between_scopes(
 ) -> dict[str, str]:
     """Copy corpus files from one scope's dir to another.
 
-    Used by ``vault attach`` to bring a global vault's source bodies into
+    Used by ``vault attach`` to bring a global vault's document bodies into
     the attaching project's corpus so retrieval / provenance works
     end-to-end without keeping references to ``~/.opentrace/corpus/``.
 
-    Returns a ``{source_id: relative_corpus_path}`` map for every source
+    Returns a ``{doc_sha: relative_corpus_path}`` map for every document
     whose corpus file ended up at the destination (already-present files
     are included, missing-at-source files are skipped). Safe to call when
     both scopes resolve to the same dir — it becomes an existence check.
@@ -162,7 +141,7 @@ def copy_corpus_between_scopes(
     if not same_dir:
         dst_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
-    for sid in source_ids:
+    for sid in doc_shas:
         filename = _safe_corpus_filename(sid)
         src_file = src_dir / filename
         dst_file = dst_dir / filename
@@ -176,42 +155,3 @@ def copy_corpus_between_scopes(
             shutil.copyfile(src_file, dst_file)
         out[sid] = relative_corpus_path(sid)
     return out
-
-
-def write_source_markdown(
-    db_path: str | Path,
-    source_id: str,
-    annotated: AnnotatedMarkdown,
-) -> str:
-    """Write the markdown body to disk; return the relative path to store on the node."""
-    return write_corpus_markdown(db_path, source_id, annotated.markdown)
-
-
-def load_source_markdown(
-    db_path: str | Path,
-    source_node: dict[str, Any],
-) -> AnnotatedMarkdown:
-    """Reconstruct :class:`AnnotatedMarkdown` from a stored Source node.
-
-    Reads the markdown body from ``corpus/<source_id>.md`` and pulls
-    provenance fields out of ``source_node.properties``. Raises
-    ``FileNotFoundError`` if the corpus file is missing — callers should treat
-    that as data corruption, not a routine failure.
-    """
-    props = source_node.get("properties") or {}
-    rel = props.get("corpus_path")
-    if not rel:
-        raise ValueError(
-            f"Source node {source_node.get('id')!r} has no corpus_path property "
-            "(it was likely written by an older OpenTrace version)."
-        )
-    full = _opentrace_dir(db_path) / rel
-    if not full.exists():
-        raise FileNotFoundError(f"Corpus file missing for Source {source_node.get('id')!r}: {full}")
-    return AnnotatedMarkdown(
-        markdown=full.read_text(encoding="utf-8"),
-        source_uri=str(props.get("source_uri") or ""),
-        source_type=str(props.get("source_type") or "unknown"),
-        title=str(props.get("title")) if props.get("title") else None,
-        fetched_at=str(props.get("fetched_at") or ""),
-    )

@@ -39,13 +39,10 @@ from starlette.routing import Route
 
 from opentrace_agent.retrieval import (
     count_by,
-    cross_community_bridges,
     find_orphans,
     find_path,
     find_via_relationship_to_type,
-    god_nodes,
     grep,
-    list_communities,
     overview,
     provenance,
     search,
@@ -429,43 +426,6 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
         rather than needing the full ``_with_store`` lock."""
         with store_lock:
             return store_ref["store"]
-
-    # --- Knowledge-graph highlights (communities / gods / bridges / questions) ---
-
-    async def get_communities(request: Request) -> JSONResponse:
-        """GET /api/communities — list detected communities."""
-        return _with_store(lambda cur: JSONResponse(list_communities(cur)))
-
-    async def get_god_nodes(request: Request) -> JSONResponse:
-        """GET /api/highlights/gods?limit=N — top-degree non-internal nodes."""
-        try:
-            limit = int(request.query_params.get("limit", "20"))
-        except ValueError:
-            return _error(400, "Invalid parameter: limit must be an integer")
-        return _with_store(lambda cur: JSONResponse(god_nodes(cur, limit=limit)))
-
-    async def get_bridges(request: Request) -> JSONResponse:
-        """GET /api/highlights/bridges?limit=N — cross-community edges."""
-        try:
-            limit = int(request.query_params.get("limit", "50"))
-        except ValueError:
-            return _error(400, "Invalid parameter: limit must be an integer")
-        return _with_store(lambda cur: JSONResponse(cross_community_bridges(cur, limit=limit)))
-
-    async def get_questions(request: Request) -> JSONResponse:
-        """GET /api/highlights/questions — deterministic suggested questions.
-
-        Seeded by the top god nodes + bridges. Replaced by LLM-generated
-        questions once the extraction pipeline is wired in.
-        """
-        from opentrace_agent.cli.analyze_cmd import _suggested_questions
-
-        def _do(cur: GraphStore) -> JSONResponse:
-            gods = god_nodes(cur, limit=10)
-            bridges = cross_community_bridges(cur, limit=10)
-            return JSONResponse(_suggested_questions(gods, bridges))
-
-        return _with_store(_do)
 
     # --- OT-1732 retrieval primitives ---
 
@@ -1024,10 +984,6 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
                 Route("/api/retrieval/search", search_route, methods=["POST"]),
                 Route("/api/retrieval/provenance", provenance_route, methods=["POST"]),
                 Route("/api/retrieval/grep", grep_route, methods=["POST"]),
-                Route("/api/communities", get_communities, methods=["GET"]),
-                Route("/api/highlights/gods", get_god_nodes, methods=["GET"]),
-                Route("/api/highlights/bridges", get_bridges, methods=["GET"]),
-                Route("/api/highlights/questions", get_questions, methods=["GET"]),
                 Route("/api/index-url", index_url, methods=["POST"]),
                 Route("/api/index-progress/{job_id}", index_progress, methods=["GET"]),
                 Route("/api/index-active", index_active, methods=["GET"]),

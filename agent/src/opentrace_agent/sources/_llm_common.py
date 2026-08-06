@@ -12,24 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared LLM backend registry used by both wiki ingest and generic ingest.
+"""Shared LLM backend registry for the doc-ingestion LLM surface.
 
-Two protocols live on top of this module:
+One consumer sits on top of this module: ``wiki.llm.WikiLLM.call_tool``, the
+forced tool-call the doc pass makes once per document. Everything provider-shaped
+lives here rather than beside that consumer — backend name, default and
+cheap-tier model, env-var conventions, pricing, autodetect order, output-token
+ceiling, and the actionable "no backend configured" message.
 
-* ``wiki.llm.WikiLLM.call_tool`` — forced tool-calling for structured
-  output (the wiki ingest per-doc label pass).
-* ``sources.markdown.clients.LLMClient.complete`` — plain text completion
-  with reject-not-repair JSON validation (``opentraceai ingest``).
-
-The protocols are deliberately different — wiki gets server-side schema
-guarantees from tool-calling, generic ingest gets the broader model
-support that comes from a text-only API. They share *everything else*:
-provider name, default model, env var conventions, pricing, autodetect
-order, actionable error messages. That shared state lives here.
+Provider resolution: ``detect_backend`` picks one from the environment, then
+``resolve_model`` / ``resolve_api_key`` / ``resolve_base_url`` supply its
+settings.
 
 Backend names: ``anthropic`` / ``gemini`` / ``openai`` / ``kimi`` / ``local``.
-``"claude"`` and ``"ollama"`` are accepted as aliases for backward
-compatibility with the experiment's original ingest CLI.
+``"claude"`` and ``"ollama"`` are accepted as input aliases.
 """
 
 from __future__ import annotations
@@ -49,15 +45,15 @@ class BackendConfig:
     pricing_output_per_million: float
     base_url: str | None = None  # None for Anthropic-SDK path
     model_env_var: str | None = None  # override model via env var
-    # Cheaper model used for the ``extraction`` role (a strict-JSON task
-    # that doesn't need the flagship model). None → fall back to default_model,
+    # Cheaper model used for cheap-tier roles — today just ``wiki_summary``,
+    # the one-field per-doc label call. None → fall back to default_model,
     # which is correct for backends whose default is already a cheap tier.
     extraction_model: str | None = None
     # Pricing for ``extraction_model``, USD per 1M tokens. Separate from the
-    # flagship pair above because the two differ by ~3x and doc ingestion runs
-    # ENTIRELY on the extraction tier — costing it at flagship rates overstated
-    # the pre-ingest estimate by that factor. None → the extraction model is the
-    # default model, so the flagship pair already applies.
+    # flagship pair above because the two differ substantially and doc ingestion
+    # runs ENTIRELY on the cheap tier — costing it at flagship rates overstates
+    # the pre-ingest estimate. None → the cheap-tier model IS the default model,
+    # so the flagship pair already applies.
     extraction_pricing_input_per_million: float | None = None
     extraction_pricing_output_per_million: float | None = None
     # Hard ceiling on a single response's output tokens for this backend's
@@ -138,9 +134,9 @@ BACKENDS: dict[str, BackendConfig] = {
 # can't shadow a paid key.
 _BACKEND_PRIORITY: tuple[str, ...] = ("anthropic", "gemini", "kimi", "openai", "local")
 
-# Legacy alias map — old names from the experiment's first ingest pass.
-# Callers passing these (e.g. ``opentraceai ingest --provider claude``) get
-# translated to the current canonical name before any registry lookup.
+# Legacy alias map — non-canonical provider names still accepted on input.
+# Callers passing these (e.g. ``--provider claude``) get translated to the
+# current canonical name before any registry lookup.
 _LEGACY_ALIASES: dict[str, str] = {
     "claude": "anthropic",
     "ollama": "local",
@@ -201,25 +197,23 @@ def detect_backend() -> str | None:
 # Role-specific model overrides. These let the LLM workloads diverge: the
 # per-doc label pass (``wiki_summary``) and strict code ``extraction`` run on
 # the cheap tier, while ``wiki`` keeps the flagship one. Checked ahead of the
-# generic per-backend OT_LLM_MODEL_* var. ``wiki`` had one caller — concept-page
-# synthesis, removed 2026-08-03 — so it is now only reachable by a caller
-# passing ``role="wiki"`` explicitly.
+# generic per-backend OT_LLM_MODEL_* var. ``wiki`` is reachable only by a
+# caller passing ``role="wiki"`` explicitly; nothing defaults to it.
 _ROLE_MODEL_ENV: dict[str, str] = {
-    "extraction": "OT_EXTRACTION_MODEL",
     "wiki": "OT_WIKI_MODEL",
     "wiki_summary": "OT_WIKI_SUMMARY_MODEL",
 }
 
 # Roles that default to the backend's cheap tier (a strict-distillation task,
 # not flagship-worthy) when no explicit/env override is set.
-_CHEAP_TIER_ROLES = frozenset({"extraction", "wiki_summary"})
+_CHEAP_TIER_ROLES = frozenset({"wiki_summary"})
 
 
 def resolve_model(backend: str, override: str | None, *, role: str | None = None) -> str:
     """Pick a model name for *backend*.
 
     Precedence: explicit ``override`` → role-specific env
-    (``OT_EXTRACTION_MODEL`` / ``OT_WIKI_MODEL`` / ``OT_WIKI_SUMMARY_MODEL``) →
+    (``OT_WIKI_MODEL`` / ``OT_WIKI_SUMMARY_MODEL``) →
     generic per-backend env (``OT_LLM_MODEL_<BACKEND>``) → role default
     (``extraction_model`` for cheap-tier roles, when the backend defines one) →
     ``default_model``.
@@ -266,20 +260,6 @@ def resolve_base_url(backend: str, override: str | None = None) -> str:
     return cfg.base_url or ""
 
 
-def _cost_usd(cfg: BackendConfig, input_tokens: int, output_tokens: int) -> float:
-    return (input_tokens / 1_000_000.0) * cfg.pricing_input_per_million + (
-        output_tokens / 1_000_000.0
-    ) * cfg.pricing_output_per_million
-
-
-def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
-    """Return USD cost estimate for *backend* given a token count."""
-    cfg = BACKENDS.get(canonical_backend(backend))
-    if cfg is None:
-        return 0.0
-    return _cost_usd(cfg, input_tokens, output_tokens)
-
-
 def actionable_no_backend_message() -> str:
     """The error string we print when an LLM-required feature has no backend.
 
@@ -298,38 +278,6 @@ def actionable_no_backend_message() -> str:
         "required when you opt into doc ingestion with --wiki."
     )
     return "\n".join(lines)
-
-
-def resolve_timeout(default: float) -> float:
-    """Read ``OT_LLM_TIMEOUT`` seconds; fall back to *default* on missing/invalid."""
-    raw = os.environ.get("OT_LLM_TIMEOUT", "").strip()
-    if raw:
-        try:
-            v = float(raw)
-            if v > 0:
-                return v
-        except ValueError:
-            pass
-    return default
-
-
-def resolve_max_retries(default: int = 6) -> int:
-    """Read ``OT_LLM_MAX_RETRIES``; fall back to *default* on missing/invalid.
-
-    Bounds how many times a rate-limited (429/529) LLM call is retried before
-    giving up. The parallel extraction stage owns the retry loop (so it can
-    also throttle concurrency), so it sets the SDK's own retries to 0 and uses
-    this value instead.
-    """
-    raw = os.environ.get("OT_LLM_MAX_RETRIES", "").strip()
-    if raw:
-        try:
-            v = int(raw)
-            if v >= 0:
-                return v
-        except ValueError:
-            pass
-    return default
 
 
 def extraction_pricing(backend: str) -> tuple[float, float] | None:

@@ -25,11 +25,14 @@ export interface VaultEntry {
   attached: boolean;
 }
 
+/** Mirrors `WikiPhase` in `agent/src/opentrace_agent/wiki/ingest/types.py`.
+ *  Keep the two in lockstep: this union previously listed `planning` and
+ *  `executing` (which no stage emits) while omitting `extracting` (which every
+ *  compile emits), so the one phase a caller actually sees was untyped. */
 export type WikiPhase =
   | 'acquiring'
   | 'normalizing'
-  | 'planning'
-  | 'executing'
+  | 'extracting'
   | 'persisting';
 
 export interface WikiCompileEvent {

@@ -59,22 +59,20 @@ Use `collect_pipeline()` for tests (drains the generator, returns final `Pipelin
 `autoprune.py` is not a pipeline stage — it runs after `index --wiki` / `vault
 ingest` to delete graph state for docs that disappeared from disk between runs.
 It does exactly one thing: sweep orphan `KnowledgeDoc` nodes and their corpus
-bodies. `AutopruneReport` has two fields to match — `sources_deleted` and
+bodies. `AutopruneReport` has two fields to match — `documents_deleted` and
 `corpus_files_deleted`.
 
-Two other sweeps used to live here and are both gone:
+**Scope is always a vault, and `vault_name` is required.** Membership is
+resolved by walking the vault's `CONTAINS` edges, because a `KnowledgeDoc`
+carries no `vault` property of its own — it is content-addressed by sha and one
+document can belong to several vaults. Don't add a property-filter fallback:
+there is nothing to filter on, so it would match nothing and turn the prune
+into a silent no-op. Callers must pass the same resolved vault name the compile
+used, or the prune walks a vault the compile never wrote to.
 
-- Deleting LLM-extracted entities orphaned by a removed doc — **removed
-  2026-08-04** with the entity layer itself, along with
-  `pipeline/entity_merge.py`.
-- A cascade over concept pages: delete a page that lost every citation,
-  otherwise stamp it `stale_since`. **Removed 2026-08-04** with the
-  concept-page layer. **There is no staleness concept in the wiki layer any
-  more** — a document is verbatim, so it can't go stale relative to a source it
-  never restated. Don't re-introduce `stale_since`.
-
-Both are recorded in `../wiki/CLAUDE.md` ("Closed"); the concept-page removal
-was measured (88.4% vs a 98.6% control).
+**There is no staleness concept in the wiki layer.** A document is stored
+verbatim and nothing restates it, so it cannot go stale relative to a source.
+Don't introduce a `stale_since` stamp here.
 
 ## Pitfalls
 

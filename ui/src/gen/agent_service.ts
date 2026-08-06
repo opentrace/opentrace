@@ -25,8 +25,6 @@ export const JobPhase = {
   JOB_PHASE_SUMMARIZING: 8,
   JOB_PHASE_EMBEDDING: 9,
   JOB_PHASE_NORMALIZING: 10,
-  JOB_PHASE_PLANNING: 11,
-  JOB_PHASE_EXECUTING: 12,
   JOB_PHASE_PERSISTING: 13,
   UNRECOGNIZED: -1,
 } as const;
@@ -45,8 +43,6 @@ export namespace JobPhase {
   export type JOB_PHASE_SUMMARIZING = typeof JobPhase.JOB_PHASE_SUMMARIZING;
   export type JOB_PHASE_EMBEDDING = typeof JobPhase.JOB_PHASE_EMBEDDING;
   export type JOB_PHASE_NORMALIZING = typeof JobPhase.JOB_PHASE_NORMALIZING;
-  export type JOB_PHASE_PLANNING = typeof JobPhase.JOB_PHASE_PLANNING;
-  export type JOB_PHASE_EXECUTING = typeof JobPhase.JOB_PHASE_EXECUTING;
   export type JOB_PHASE_PERSISTING = typeof JobPhase.JOB_PHASE_PERSISTING;
   export type UNRECOGNIZED = typeof JobPhase.UNRECOGNIZED;
 }

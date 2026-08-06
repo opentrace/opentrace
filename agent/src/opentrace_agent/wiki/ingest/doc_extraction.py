@@ -25,21 +25,10 @@ post-markitdown body lives in the corpus (``KnowledgeDoc.corpus_path``) and
 is read directly by agents via the ``load_source`` MCP tool, or swept
 verbatim via ``grep``.
 
-Two fields have been asked of this call before and both were removed for the
-same reason — fields in one schema are not independent, and each extra one
-competed with the summary for the model's attention:
-
-* a per-doc "concept inventory" (topic/subject/gloss) feeding cross-document
-  page synthesis, removed with synthesis itself;
-* the entity inventory (typed entities + edges), **removed 2026-08-04**.
-  Three benchmark runs measured zero agent usage of the resulting entity
-  nodes once corpus ``grep`` existed, against real costs: entity nodes
-  crowded labelled documents out of the top FTS slots, entity names
-  fragmented one concept across five nodes, the same real-world thing landed
-  under two different types, and extraction was only ~65% stable run to run.
-
-Do not add a third field here without measuring it against the summary it
-would share the call with.
+The call asks for one field, deliberately. Fields in a single extraction
+schema are not independent: each one competes with the others for the model's
+attention on the same document. Do not add a second without measuring its
+effect on the summary it would share the call with.
 """
 
 from __future__ import annotations
@@ -57,7 +46,6 @@ from opentrace_agent.wiki.ingest.types import (
     _wiki_concurrency,
 )
 from opentrace_agent.wiki.llm import WikiLLM
-from opentrace_agent.wiki.vault import VaultMetadata
 
 # Output budget we request per extraction call. A one-liner is tiny, so this is
 # modest; the client clamps it to the backend's hard cap
@@ -269,7 +257,6 @@ def _merge_chunk_results(results: list[dict]) -> dict:
 
 def extract_docs(
     sources: list[NormalizedSource],
-    meta: VaultMetadata,
     llm: WikiLLM,
 ) -> Iterator[WikiPipelineEvent]:
     """Run the per-doc extraction call for each newly-ingested source.

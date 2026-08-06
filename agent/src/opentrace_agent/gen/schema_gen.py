@@ -11,10 +11,9 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)",
     "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, spawnedFrom STRING)",
-    "CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, sizeBytes INT64, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, vault STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING, status STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)",
-    "CREATE NODE TABLE IF NOT EXISTS Hyperedge(id STRING PRIMARY KEY, name STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING)",
     "CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)",
 ]
 
@@ -29,10 +28,9 @@ NODE_TYPE_VARIABLE: Final[str] = "Variable"
 NODE_TYPE_KNOWLEDGE_VAULT: Final[str] = "KnowledgeVault"
 NODE_TYPE_KNOWLEDGE_DOC: Final[str] = "KnowledgeDoc"
 NODE_TYPE_COMMUNITY: Final[str] = "Community"
-NODE_TYPE_HYPEREDGE: Final[str] = "Hyperedge"
 NODE_TYPE_INDEX_METADATA: Final[str] = "IndexMetadata"
 
-NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["KnowledgeVault"] | Literal["KnowledgeDoc"] | Literal["Community"] | Literal["Hyperedge"] | Literal["IndexMetadata"]
+NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["KnowledgeVault"] | Literal["KnowledgeDoc"] | Literal["Community"] | Literal["IndexMetadata"]
 
 NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_REPOSITORY,
@@ -46,7 +44,6 @@ NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_KNOWLEDGE_VAULT,
     NODE_TYPE_KNOWLEDGE_DOC,
     NODE_TYPE_COMMUNITY,
-    NODE_TYPE_HYPEREDGE,
     NODE_TYPE_INDEX_METADATA,
 ]
 
@@ -139,7 +136,7 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("summary", "STRING"),
         ("scope", "STRING"),
         ("mirrorCompiledAt", "STRING"),
-        ("spawnedFrom", "STRING"),
+        ("vault", "STRING"),
     ],
     "KnowledgeDoc": [
         ("id", "STRING"),
@@ -147,13 +144,13 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("sha256", "STRING"),
         ("filename", "STRING"),
         ("contentType", "STRING"),
-        ("sizeBytes", "INT64"),
         ("acquiredAt", "STRING"),
         ("corpusPath", "STRING"),
         ("title", "STRING"),
         ("oneLineSummary", "STRING"),
         ("summary", "STRING"),
         ("path", "STRING"),
+        ("status", "STRING"),
     ],
     "Community": [
         ("id", "STRING"),
@@ -162,14 +159,6 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("cohesion", "DOUBLE"),
         ("members", "INT32"),
         ("isGod", "BOOL"),
-    ],
-    "Hyperedge": [
-        ("id", "STRING"),
-        ("name", "STRING"),
-        ("relation", "STRING"),
-        ("confidence", "STRING"),
-        ("confidenceScore", "DOUBLE"),
-        ("sourceFile", "STRING"),
     ],
     "IndexMetadata": [
         ("id", "STRING"),
@@ -280,7 +269,7 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "summary",
         "scope",
         "mirrorCompiledAt",
-        "spawnedFrom",
+        "vault",
     ],
     "KnowledgeDoc": [
         "id",
@@ -288,13 +277,13 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "sha256",
         "filename",
         "contentType",
-        "sizeBytes",
         "acquiredAt",
         "corpusPath",
         "title",
         "oneLineSummary",
         "summary",
         "path",
+        "status",
     ],
     "Community": [
         "id",
@@ -303,14 +292,6 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "cohesion",
         "members",
         "isGod",
-    ],
-    "Hyperedge": [
-        "id",
-        "name",
-        "relation",
-        "confidence",
-        "confidenceScore",
-        "sourceFile",
     ],
     "IndexMetadata": [
         "id",
@@ -346,15 +327,6 @@ def _join_rel_pairs(pairs: list[RelPair]) -> str:
     return ", ".join(f"FROM {p[0]} TO {p[1]}" for p in pairs)
 
 
-def rel_schema_semantic_edge(pairs: list[RelPair]) -> str:
-    """Return the CREATE REL TABLE DDL for SemanticEdge relationships.
-
-    Pass every (from, to) pair the SEMANTIC_EDGE label needs in a single call;
-    all pairs must be declared in the initial CREATE REL TABLE statement.
-    """
-    return f"CREATE REL TABLE IF NOT EXISTS SEMANTIC_EDGE({_join_rel_pairs(pairs)}, id STRING, relation STRING, confidence STRING, confidenceScore DOUBLE, sourceFile STRING, sourceLocation STRING, weight DOUBLE)"
-
-
 def rel_schema_member_of_community(pairs: list[RelPair]) -> str:
     """Return the CREATE REL TABLE DDL for MemberOfCommunity relationships.
 
@@ -362,15 +334,6 @@ def rel_schema_member_of_community(pairs: list[RelPair]) -> str:
     all pairs must be declared in the initial CREATE REL TABLE statement.
     """
     return f"CREATE REL TABLE IF NOT EXISTS MEMBER_OF_COMMUNITY({_join_rel_pairs(pairs)}, id STRING)"
-
-
-def rel_schema_participates_in(pairs: list[RelPair]) -> str:
-    """Return the CREATE REL TABLE DDL for ParticipatesIn relationships.
-
-    Pass every (from, to) pair the PARTICIPATES_IN label needs in a single call;
-    all pairs must be declared in the initial CREATE REL TABLE statement.
-    """
-    return f"CREATE REL TABLE IF NOT EXISTS PARTICIPATES_IN({_join_rel_pairs(pairs)}, id STRING)"
 
 
 def rel_schema_defines(pairs: list[RelPair]) -> str:
@@ -445,15 +408,6 @@ def rel_schema_documents(pairs: list[RelPair]) -> str:
     return f"CREATE REL TABLE IF NOT EXISTS DOCUMENTS({_join_rel_pairs(pairs)}, id STRING)"
 
 
-def rel_schema_mentions(pairs: list[RelPair]) -> str:
-    """Return the CREATE REL TABLE DDL for Mentions relationships.
-
-    Pass every (from, to) pair the MENTIONS label needs in a single call;
-    all pairs must be declared in the initial CREATE REL TABLE statement.
-    """
-    return f"CREATE REL TABLE IF NOT EXISTS MENTIONS({_join_rel_pairs(pairs)}, id STRING)"
-
-
 def rel_schema_targets_repo(pairs: list[RelPair]) -> str:
     """Return the CREATE REL TABLE DDL for TargetsRepo relationships.
 
@@ -463,9 +417,7 @@ def rel_schema_targets_repo(pairs: list[RelPair]) -> str:
     return f"CREATE REL TABLE IF NOT EXISTS TARGETS_REPO({_join_rel_pairs(pairs)}, id STRING)"
 
 
-REL_TYPE_SEMANTIC_EDGE: Final[str] = "SEMANTIC_EDGE"
 REL_TYPE_MEMBER_OF_COMMUNITY: Final[str] = "MEMBER_OF_COMMUNITY"
-REL_TYPE_PARTICIPATES_IN: Final[str] = "PARTICIPATES_IN"
 REL_TYPE_DEFINES: Final[str] = "DEFINES"
 REL_TYPE_IMPORTS: Final[str] = "IMPORTS"
 REL_TYPE_CALLS: Final[str] = "CALLS"
@@ -474,15 +426,12 @@ REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
 REL_TYPE_LINKS_TO: Final[str] = "LINKS_TO"
 REL_TYPE_MIRRORS: Final[str] = "MIRRORS"
 REL_TYPE_DOCUMENTS: Final[str] = "DOCUMENTS"
-REL_TYPE_MENTIONS: Final[str] = "MENTIONS"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
-RelType = Literal["SEMANTIC_EDGE"] | Literal["MEMBER_OF_COMMUNITY"] | Literal["PARTICIPATES_IN"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["MENTIONS"] | Literal["TARGETS_REPO"]
+RelType = Literal["MEMBER_OF_COMMUNITY"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["TARGETS_REPO"]
 
 REL_TYPES: Final[list[RelType]] = [
-    REL_TYPE_SEMANTIC_EDGE,
     REL_TYPE_MEMBER_OF_COMMUNITY,
-    REL_TYPE_PARTICIPATES_IN,
     REL_TYPE_DEFINES,
     REL_TYPE_IMPORTS,
     REL_TYPE_CALLS,
@@ -491,24 +440,11 @@ REL_TYPES: Final[list[RelType]] = [
     REL_TYPE_LINKS_TO,
     REL_TYPE_MIRRORS,
     REL_TYPE_DOCUMENTS,
-    REL_TYPE_MENTIONS,
     REL_TYPE_TARGETS_REPO,
 ]
 
 REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
-    "SEMANTIC_EDGE": [
-        ("id", "STRING"),
-        ("relation", "STRING"),
-        ("confidence", "STRING"),
-        ("confidenceScore", "DOUBLE"),
-        ("sourceFile", "STRING"),
-        ("sourceLocation", "STRING"),
-        ("weight", "DOUBLE"),
-    ],
     "MEMBER_OF_COMMUNITY": [
-        ("id", "STRING"),
-    ],
-    "PARTICIPATES_IN": [
         ("id", "STRING"),
     ],
     "DEFINES": [
@@ -539,28 +475,13 @@ REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
     "DOCUMENTS": [
         ("id", "STRING"),
     ],
-    "MENTIONS": [
-        ("id", "STRING"),
-    ],
     "TARGETS_REPO": [
         ("id", "STRING"),
     ],
 }
 
 REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
-    "SEMANTIC_EDGE": [
-        "id",
-        "relation",
-        "confidence",
-        "confidenceScore",
-        "sourceFile",
-        "sourceLocation",
-        "weight",
-    ],
     "MEMBER_OF_COMMUNITY": [
-        "id",
-    ],
-    "PARTICIPATES_IN": [
         "id",
     ],
     "DEFINES": [
@@ -591,9 +512,6 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
     "DOCUMENTS": [
         "id",
     ],
-    "MENTIONS": [
-        "id",
-    ],
     "TARGETS_REPO": [
         "id",
     ],
@@ -607,12 +525,10 @@ _COLUMN_TO_PROTO: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Function": {"startLine": "start_line", "endLine": "end_line"},
     "PullRequest": {"createdAt": "created_at", "baseBranch": "base_branch", "headBranch": "head_branch", "filesChanged": "files_changed"},
     "Variable": {"startLine": "start_line", "endLine": "end_line", "typeAnnotation": "type_annotation"},
-    "KnowledgeVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at", "spawnedFrom": "spawned_from"},
-    "KnowledgeDoc": {"contentType": "content_type", "sizeBytes": "size_bytes", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
+    "KnowledgeVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at"},
+    "KnowledgeDoc": {"contentType": "content_type", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
     "Community": {"communityId": "community_id", "isGod": "is_god"},
-    "Hyperedge": {"confidenceScore": "confidence_score", "sourceFile": "source_file"},
     "IndexMetadata": {"indexedAt": "indexed_at", "durationSeconds": "duration_seconds", "repoId": "repo_id", "repoPath": "repo_path", "commitSha": "commit_sha", "commitMessage": "commit_message", "sourceUri": "source_uri", "opentraceaiVersion": "opentraceai_version", "nodesCreated": "nodes_created", "relationshipsCreated": "relationships_created", "filesProcessed": "files_processed", "classesExtracted": "classes_extracted", "functionsExtracted": "functions_extracted"},
-    "SEMANTIC_EDGE": {"confidenceScore": "confidence_score", "sourceFile": "source_file", "sourceLocation": "source_location"},
 }
 
 _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
@@ -622,12 +538,10 @@ _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
     "Function": {"start_line": "startLine", "end_line": "endLine"},
     "PullRequest": {"created_at": "createdAt", "base_branch": "baseBranch", "head_branch": "headBranch", "files_changed": "filesChanged"},
     "Variable": {"start_line": "startLine", "end_line": "endLine", "type_annotation": "typeAnnotation"},
-    "KnowledgeVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt", "spawned_from": "spawnedFrom"},
-    "KnowledgeDoc": {"content_type": "contentType", "size_bytes": "sizeBytes", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
+    "KnowledgeVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt"},
+    "KnowledgeDoc": {"content_type": "contentType", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
     "Community": {"community_id": "communityId", "is_god": "isGod"},
-    "Hyperedge": {"confidence_score": "confidenceScore", "source_file": "sourceFile"},
     "IndexMetadata": {"indexed_at": "indexedAt", "duration_seconds": "durationSeconds", "repo_id": "repoId", "repo_path": "repoPath", "commit_sha": "commitSha", "commit_message": "commitMessage", "source_uri": "sourceUri", "opentraceai_version": "opentraceaiVersion", "nodes_created": "nodesCreated", "relationships_created": "relationshipsCreated", "files_processed": "filesProcessed", "classes_extracted": "classesExtracted", "functions_extracted": "functionsExtracted"},
-    "SEMANTIC_EDGE": {"confidence_score": "confidenceScore", "source_file": "sourceFile", "source_location": "sourceLocation"},
 }
 
 
