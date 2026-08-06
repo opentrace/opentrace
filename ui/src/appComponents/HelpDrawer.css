@@ -15,15 +15,21 @@
  */
 
 .help-drawer {
-  flex-shrink: 0;
+  /* Floats over the full-width graph (like the chat panel + left side panel)
+   * with a translucent, blurred background so the graph shines through. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: var(--help-drawer-width, 380px);
   max-width: 100%;
-  background: var(--background);
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
   z-index: 10;
-  position: relative;
   padding-top: 64px;
 }
 
@@ -134,6 +140,10 @@
     border-left: none;
     padding-top: max(0px, env(safe-area-inset-top));
     padding-bottom: max(0px, env(safe-area-inset-bottom));
+    /* Stacked below the graph on mobile — nothing behind it, so keep it opaque. */
+    background: var(--background);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 

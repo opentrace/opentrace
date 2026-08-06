@@ -108,26 +108,36 @@ export async function readDirectoryFiles(
     async ({ file, relPath }) => {
       if (signal?.aborted) return;
 
-      // Check a small slice for null bytes to catch binary files
-      // with unrecognized extensions
-      const probe = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
-      if (isBinaryData(probe)) return;
+      try {
+        // Check a small slice for null bytes to catch binary files
+        // with unrecognized extensions
+        const probe = new Uint8Array(await file.slice(0, 8192).arrayBuffer());
+        if (isBinaryData(probe)) return;
 
-      const content = await file.text();
-      result.push({
-        path: relPath,
-        content,
-        sha: '',
-        size: file.size,
-      });
-
-      completed++;
-      onProgress?.({
-        phase: 'blobs',
-        current: completed,
-        total: eligible.length,
-        fileName: relPath,
-      });
+        const content = await file.text();
+        result.push({
+          path: relPath,
+          content,
+          sha: '',
+          size: file.size,
+        });
+      } catch (err) {
+        // One unreadable file (permissions, file changed/removed since the
+        // picker snapshot, transient I/O error) must not abort the whole
+        // job — skip it and keep indexing the rest.
+        console.warn(
+          `[directoryLoader] skipping unreadable file "${relPath}":`,
+          err,
+        );
+      } finally {
+        completed++;
+        onProgress?.({
+          phase: 'blobs',
+          current: completed,
+          total: eligible.length,
+          fileName: relPath,
+        });
+      }
     },
   );
 

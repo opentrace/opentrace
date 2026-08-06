@@ -176,6 +176,35 @@ func Helper() {}
         names = [s.name for s in result.symbols]
         assert names == ["A", "B", "Helper"]
 
+    def test_extract_grouped_type_declaration(self):
+        """Grouped `type ( ... )` blocks must yield every struct/interface."""
+        source = b"""\
+package main
+
+type (
+	Request struct {
+		Body string
+	}
+	Response struct {
+		Code int
+	}
+	Handler interface {
+		Handle(r Request) Response
+	}
+)
+"""
+        result = self.extractor.extract(source)
+        names = [s.name for s in result.symbols]
+        assert names == ["Request", "Response", "Handler"]
+        request = result.symbols[0]
+        assert request.kind == "class"
+        assert request.subtype == "struct"
+        assert request.start_line == 4
+        assert request.end_line == 6
+        handler = result.symbols[2]
+        assert handler.subtype == "interface"
+        assert [m.name for m in handler.children] == ["Handle"]
+
     def test_extract_empty_file(self):
         source = b"package main\n"
         result = self.extractor.extract(source)

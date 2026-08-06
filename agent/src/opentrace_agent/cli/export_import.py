@@ -84,8 +84,9 @@ def export_database(store: GraphStore) -> bytes:
             zf.writestr(f"nodes_{node_type}.parquet", buf.getvalue())
             logger.debug("Exported %s: %d nodes", node_type, len(nodes))
 
-        # Export relationships
-        rels = store.list_relationships_for_nodes(all_node_ids)
+        # Export relationships — unbounded: the default 10k cap silently
+        # produced disconnected archives on medium-size graphs.
+        rels = store.list_relationships_for_nodes(all_node_ids, limit=None)
         if rels:
             rel_rows = [
                 {

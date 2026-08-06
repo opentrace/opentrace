@@ -599,14 +599,14 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
 
         Lifecycle (under failure, every step still writes a final state):
           1. Resolve repo metadata from `body`.
-          2. If `reindex=True`, close the live store, delete the repo's
-             rows, reopen.
-          3. Clone (or update) the working tree under ~/.opentrace/repos.
-          4. Close the live store (releases LadybugDB's file lock).
-          5. Run the indexing pipeline — it writes to a staging DB and
-             atomically renames over the live DB.
-          6. Reopen the live store so subsequent reads see new data.
-          7. Mark the job done.
+          2. Clone (or update) the working tree under ~/.opentrace/repos.
+          3. Close the live store (releases LadybugDB's file lock).
+          4. Run the indexing pipeline — it wipes the repo's stale rows in
+             the staging DB (so reindex needs no delete here — the live
+             store is read-only anyway), then atomically renames the
+             staging DB over the live one.
+          5. Reopen the live store (read-only) so reads see the new data.
+          6. Mark the job done.
         """
 
         def _update(**fields: Any) -> None:
@@ -619,6 +619,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
         # `serve` startups that never call this endpoint.
         from opentrace_agent.cli.main import (
             _do_clone,
+            _existing_clone_matches,
             _run_indexing_pipeline,
             _update_existing_clone,
         )
@@ -630,38 +631,25 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
         repo_id = body.get("repoId") or inferred_name
         token = body.get("token")
         ref = body.get("ref")
-        reindex = bool(body.get("reindex"))
 
         try:
             _update(phase="initializing", message=f"Preparing {repo_id}…")
 
-            # Reindex: drop the existing repo before any clone work. A
-            # failed clone afterward leaves the DB without the repo —
-            # acceptable; the user can retry. (Mirrors the browser
-            # pipeline's "delete after fetch succeeds" pattern in spirit
-            # but happens earlier here because we can't easily roll back
-            # a partial pipeline run.)
-            if reindex:
-                _update(phase="deleting", message=f"Removing existing data for {repo_id}…")
-                with store_lock:
-                    cur = store_ref["store"]
-                    if cur is not None:
-                        deleted = cur.delete_repo(repo_id)
-                        _update(
-                            message=(
-                                f"Deleted {deleted['nodes_deleted']} nodes and "
-                                f"{deleted['relationships_deleted']} relationships"
-                            ),
-                        )
+            # Reindex needs no explicit delete here: the live store is
+            # opened read-only (deleting on it would raise), and
+            # `_run_indexing_pipeline` already wipes this repo's stale
+            # rows in the staging DB before every run.
 
             # Clone (or update) the working tree.
             _update(phase="fetching", message=f"Cloning {repo_url}…")
             clone_root = Path.home() / ".opentrace" / "repos" / org / inferred_name
             clone_root.parent.mkdir(parents=True, exist_ok=True)
-            if clone_root.exists() and (clone_root / ".git").exists():
+            if clone_root.exists() and (clone_root / ".git").exists() and _existing_clone_matches(clone_root, repo_url):
                 _update_existing_clone(clone_root, ref)
                 local_path = clone_root
             else:
+                # Missing, no .git, or origin points at a different repo
+                # (the dir is keyed only by <org>/<name>) — re-clone.
                 if clone_root.exists():
                     shutil.rmtree(clone_root)
                 clone_root.mkdir(parents=True, exist_ok=True)
@@ -751,8 +739,11 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
             finally:
                 # Always reopen, even on pipeline failure — otherwise
                 # the read endpoints would be stuck at 503 forever.
+                # Read-only, matching how `serve` opened the store: a
+                # write-mode reopen would take the exclusive file lock
+                # and block concurrent `index` runs.
                 with store_lock:
-                    store_ref["store"] = GraphStore(target_db)
+                    store_ref["store"] = GraphStore(target_db, read_only=True)
 
             # Read final stats from the fresh store to send back to the UI.
             with store_lock:
@@ -777,7 +768,7 @@ def create_app(store: GraphStore | None, *, db_path: Optional[str] = None) -> St
             with store_lock:
                 if store_ref["store"] is None:
                     try:
-                        store_ref["store"] = GraphStore(target_db)
+                        store_ref["store"] = GraphStore(target_db, read_only=True)
                     except Exception:
                         logger.exception("failed to reopen store after index error")
             _update(

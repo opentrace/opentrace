@@ -141,22 +141,22 @@ def _derived_from_rels() -> list[GraphRelationship]:
 
 
 def _var_node(scope: str, name: str) -> GraphNode:
-    var_id = f"{SVC_FILE_ID}::{scope}::{name}"
+    var_id = f"{SVC_FILE_ID}::{scope}::var:{name}"
     matches = [n for n in _var_nodes() if n.id == var_id]
     assert len(matches) == 1, f"Expected 1 Variable node {var_id}, found {len(matches)}"
     return matches[0]
 
 
 def _has_defines(parent_scope: str, child_scope: str, child_name: str) -> bool:
-    """Check that parent_scope → DEFINES → child_scope::child_name exists."""
+    """Check that parent_scope → DEFINES → child_scope::var:child_name exists."""
     source = f"{SVC_FILE_ID}::{parent_scope}" if parent_scope else SVC_FILE_ID
-    target = f"{SVC_FILE_ID}::{child_scope}::{child_name}"
+    target = f"{SVC_FILE_ID}::{child_scope}::var:{child_name}"
     return any(r.source_id == source and r.target_id == target for r in _defines_rels())
 
 
 def _derived_targets(scope: str, var_name: str) -> list[tuple[str, str]]:
     """Return (target_id, transform) pairs for DERIVED_FROM edges from a variable."""
-    var_id = f"{SVC_FILE_ID}::{scope}::{var_name}"
+    var_id = f"{SVC_FILE_ID}::{scope}::var:{var_name}"
     return [(r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id]
 
 
@@ -224,7 +224,7 @@ class TestUserServiceInitParams:
 
     def test_self_skipped(self):
         var_ids = {n.id for n in _var_nodes()}
-        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::self" not in var_ids
+        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::var:self" not in var_ids
 
     def test_defines_params(self):
         assert _has_defines("UserService::__init__(Database,bool)", "UserService::__init__(Database,bool)", "db")
@@ -359,7 +359,7 @@ class TestDerivedFromEdges:
         """self.db = db → DERIVED_FROM → __init__::db parameter."""
         targets = _derived_targets("UserService", "db")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::db" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::__init__(Database,bool)::var:db" in target_ids
 
     def test_self_conn_from_attribute(self):
         """self.conn = db.conn → attribute, receiver 'db' resolves in __init__ scope.
@@ -379,21 +379,21 @@ class TestDerivedFromEdges:
         """data = rows → DERIVED_FROM → rows (same scope)."""
         targets = _derived_targets("UserService::get_user(int)", "data")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::get_user(int)::rows" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::get_user(int)::var:rows" in target_ids
 
     def test_create_user_batch_reassignment_merges(self):
         """created = 0; created = created + 1 → merges derivation from reassignment."""
         targets = _derived_targets("UserService::create_user_batch(list,list)", "created")
         # Second assignment `created = created + 1` adds a self-referencing derivation
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::create_user_batch(list,list)::created" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::create_user_batch(list,list)::var:created" in target_ids
 
     def test_validate_email_list_derivation(self):
         """parts = [address, pattern] → derives from both parameters/locals."""
         targets = _derived_targets("validate_email(str,bool)", "parts")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::validate_email(str,bool)::address" in target_ids
-        assert f"{SVC_FILE_ID}::validate_email(str,bool)::pattern" in target_ids
+        assert f"{SVC_FILE_ID}::validate_email(str,bool)::var:address" in target_ids
+        assert f"{SVC_FILE_ID}::validate_email(str,bool)::var:pattern" in target_ids
 
     def test_validate_email_literal_no_derivation(self):
         """valid = False → no DERIVED_FROM edges."""
@@ -404,14 +404,14 @@ class TestDerivedFromEdges:
         """retries = self.max_retries → DERIVED_FROM → class field."""
         targets = _derived_targets("UserService::status()", "retries")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::max_retries" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::var:max_retries" in target_ids
         assert any(t[1] == "attribute" for t in targets)
 
     def test_status_remaining_compound_with_literal(self):
         """remaining = retries - 1 → derives from retries only (literal ignored)."""
         targets = _derived_targets("UserService::status()", "remaining")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::UserService::status()::retries" in target_ids
+        assert f"{SVC_FILE_ID}::UserService::status()::var:retries" in target_ids
         # '1' is a literal — should not appear as a derivation
         assert len(targets) == 1
 
@@ -419,14 +419,14 @@ class TestDerivedFromEdges:
         """data = items → DERIVED_FROM → items parameter."""
         targets = _derived_targets("process_batch", "data")
         target_ids = {t[0] for t in targets}
-        assert f"{SVC_FILE_ID}::process_batch::items" in target_ids
+        assert f"{SVC_FILE_ID}::process_batch::var:items" in target_ids
 
     def test_process_batch_chained_call_resolves_args(self):
         """result = transform(parse(data)) → data resolved from call args."""
         targets = _derived_targets("process_batch", "result")
         target_ids = {t[0] for t in targets}
         # transform/parse are unresolved, but data (passed as arg) is resolved
-        assert f"{SVC_FILE_ID}::process_batch::data" in target_ids
+        assert f"{SVC_FILE_ID}::process_batch::var:data" in target_ids
 
 
 # ─── UserService.status: self-field reads ────────────────────────────
@@ -503,7 +503,7 @@ class TestAdvancedPatterns:
         for name in ("first", "second"):
             targets = _derived_targets("advanced_patterns", name)
             target_ids = {t[0] for t in targets}
-            assert f"{SVC_FILE_ID}::advanced_patterns::args" in target_ids
+            assert f"{SVC_FILE_ID}::advanced_patterns::var:args" in target_ids
 
     def test_for_loop_variable(self):
         node = _var_node("advanced_patterns", "key")
@@ -527,7 +527,7 @@ class TestDbFileVariables:
     """Verify db.py also produces Variable nodes (it's in the same fixture)."""
 
     def _db_var(self, scope: str, name: str) -> GraphNode:
-        var_id = f"{DB_FILE_ID}::{scope}::{name}"
+        var_id = f"{DB_FILE_ID}::{scope}::var:{name}"
         matches = [n for n in _var_nodes() if n.id == var_id]
         assert len(matches) == 1, f"Expected 1 Variable node {var_id}, found {len(matches)}"
         return matches[0]
@@ -543,12 +543,12 @@ class TestDbFileVariables:
 
     def test_self_path_derived_from_param(self):
         """self.path = path → DERIVED_FROM → __init__::path parameter."""
-        var_id = f"{DB_FILE_ID}::Database::path"
+        var_id = f"{DB_FILE_ID}::Database::var:path"
         derivs = [
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]
         target_ids = {t[0] for t in derivs}
-        assert f"{DB_FILE_ID}::Database::__init__(str)::path" in target_ids
+        assert f"{DB_FILE_ID}::Database::__init__(str)::var:path" in target_ids
 
     def test_init_self_conn_field(self):
         node = self._db_var("Database", "conn")
@@ -582,7 +582,7 @@ class TestMainFileVariables:
     """Verify main.py variables and cross-file DERIVED_FROM edges."""
 
     def _main_var(self, scope: str, name: str) -> GraphNode:
-        var_id = f"{MAIN_FILE_ID}::{scope}::{name}"
+        var_id = f"{MAIN_FILE_ID}::{scope}::var:{name}"
         matches = [n for n in _var_nodes() if n.id == var_id]
         assert len(matches) == 1, f"Expected 1 Variable node {var_id}, found {len(matches)}"
         return matches[0]
@@ -594,7 +594,7 @@ class TestMainFileVariables:
 
     def test_list_users_derivation(self):
         """users → DERIVED_FROM → Database::get_all_users (cross-file)."""
-        var_id = f"{MAIN_FILE_ID}::list_users()::users"
+        var_id = f"{MAIN_FILE_ID}::list_users()::var:users"
         derivs = [
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]
@@ -612,7 +612,7 @@ class TestMainFileVariables:
 
     def test_create_user_derivation(self):
         """user → DERIVED_FROM → Database::insert_user (cross-file)."""
-        var_id = f"{MAIN_FILE_ID}::create_user()::user"
+        var_id = f"{MAIN_FILE_ID}::create_user()::var:user"
         derivs = [
             (r.target_id, r.properties.get("transform", "")) for r in _derived_from_rels() if r.source_id == var_id
         ]

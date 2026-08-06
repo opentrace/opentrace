@@ -48,18 +48,32 @@ export interface GitLabParsed {
 /** Parse host + project path from a GitLab URL. Supports subgroups. */
 export function parseGitLabUrl(url: string): GitLabParsed | null {
   // Match: gitlab.example.com/group[/subgroup...]/project
-  // Also handles URLs with protocol, .git suffix, and trailing slashes
-  const match = url.match(
-    /(?:https?:\/\/)?([^/]*gitlab[^/]*)\/([\w.-]+(?:\/[\w.-]+)+)\/?/,
-  );
+  // Also handles URLs with protocol, .git suffix, deep links (/-/tree/...),
+  // and trailing slashes. The "gitlab" check is anchored to the URL's
+  // hostname — a path segment containing "gitlab" (e.g.
+  // github.com/gitlab-org/gitlab-runner) must NOT claim this loader.
+  const match = url.match(/^(?:https?:\/\/)?([^/?#]+)(?:\/([^?#]*))?/);
   if (!match) return null;
 
   const host = match[1];
-  const fullPath = match[2].replace(/\.git$/, '');
-  const segments = fullPath.split('/');
+  if (!/gitlab/i.test(host)) return null;
 
-  if (segments.length < 2) return null;
+  let path = match[2] ?? '';
+  // GitLab deep links separate the project path from in-repo routes with
+  // "/-/" (e.g. group/project/-/tree/main). Cut at the canonical separator
+  // so "project/-/tree" isn't misread as a subgroup chain.
+  const dashIdx = path.indexOf('/-/');
+  if (dashIdx >= 0) path = path.slice(0, dashIdx);
+  if (path.endsWith('/-')) path = path.slice(0, -2);
+  path = path.replace(/\/+$/, '').replace(/\.git$/, '');
 
+  const segments = path.split('/').filter(Boolean);
+  // Only accept plain path components (namespace/project names).
+  if (segments.length < 2 || !segments.every((s) => /^[\w.-]+$/.test(s))) {
+    return null;
+  }
+
+  const fullPath = segments.join('/');
   const project = segments[segments.length - 1];
   const namespace = segments.slice(0, -1).join('/');
 

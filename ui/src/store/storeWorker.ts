@@ -190,6 +190,9 @@ async function dispatch(msg: CallMessage): Promise<void> {
       case 'setLimits':
         value = await store.setLimits(args[0] as number, args[1] as number);
         break;
+      case 'setSkipSourceContent':
+        value = await store.setSkipSourceContent(args[0] as boolean);
+        break;
       case 'importBatch':
         value = await store.importBatch(args[0] as ImportBatchRequest);
         break;
@@ -238,6 +241,66 @@ async function dispatch(msg: CallMessage): Promise<void> {
         break;
       case 'getNode':
         value = await store.getNode(args[0] as string);
+        break;
+      // Retrieval primitives — the dispatch half of WorkerGraphStore's
+      // proxies. This switch is an allowlist, so a method missing here fails
+      // at runtime with "unknown method" however well-typed the caller is.
+      case 'search':
+        value = await store.search(
+          ...(args as [
+            string,
+            { limit?: number; nodeTypes?: string[]; vaultScope?: string }?,
+          ]),
+        );
+        break;
+      case 'overview':
+        value = await store.overview(
+          ...(args as [{ topN?: number; vaultScope?: string }?]),
+        );
+        break;
+      case 'findPath':
+        value = await store.findPath(
+          ...(args as [string, string, number?, string[]?]),
+        );
+        break;
+      case 'findOrphans':
+        value = await store.findOrphans(
+          ...(args as [
+            string,
+            string,
+            ('incoming' | 'outgoing' | 'both')?,
+            number?,
+          ]),
+        );
+        break;
+      case 'findViaRelationshipToType':
+        value = await store.findViaRelationshipToType(
+          ...(args as [string, string, string, number?]),
+        );
+        break;
+      case 'countBy':
+        value = await store.countBy(
+          ...(args as [
+            string,
+            { parentId?: string; parentEdge?: string; maxHops?: number }?,
+          ]),
+        );
+        break;
+      case 'provenance':
+        value = await store.provenance(args[0] as string);
+        break;
+      case 'grep':
+        value = await store.grep(
+          ...(args as [
+            string,
+            string,
+            {
+              fileFilter?: string;
+              caseSensitive?: boolean;
+              maxResults?: number;
+            }?,
+          ]),
+        );
         break;
       case 'traverse':
         value = await store.traverse(

@@ -675,6 +675,204 @@ class TestGraphStoreFindFilesByBasename:
         assert results[0]["id"] == "r/Button.tsx"
 
 
+class TestGraphStoreIdMirror:
+    """The in-memory node/rel id mirror must never change what rows land.
+
+    Every scenario here also had a defined outcome under the old query-backed
+    path; the assertions pin that outcome so the mirror can't drift.
+    """
+
+    _NODES = [
+        {"id": "repo", "type": "Repository", "name": "repo", "properties": {}},
+        {"id": "repo/a.py", "type": "File", "name": "a.py", "properties": {"path": "a.py"}},
+        {"id": "repo/b.py", "type": "File", "name": "b.py", "properties": {"path": "b.py"}},
+    ]
+    _RELS = [
+        {
+            "id": "repo->DEFINES->repo/a.py",
+            "type": "DEFINES",
+            "source_id": "repo",
+            "target_id": "repo/a.py",
+            "properties": {},
+        },
+        {
+            "id": "repo->DEFINES->repo/b.py",
+            "type": "DEFINES",
+            "source_id": "repo",
+            "target_id": "repo/b.py",
+            "properties": {},
+        },
+    ]
+
+    def test_reimport_same_archive_is_idempotent(self, store):
+        """Re-importing an existing archive: the rel-id DELETE is load-bearing
+        (RELATES.id is not unique, COPY would append duplicate edges)."""
+        store.import_batch(self._NODES, self._RELS)
+        store.import_batch(self._NODES, self._RELS)
+        stats = store.get_stats()
+        assert stats["total_nodes"] == 3
+        assert stats["total_edges"] == 2
+
+    def test_reimport_archive_across_instances(self, tmp_path):
+        """Mirror lazily loads pre-existing ids when the DB already has data."""
+        db_path = str(tmp_path / "mirror-db")
+        with GraphStore(db_path) as s1:
+            s1.import_batch(self._NODES, self._RELS)
+        with GraphStore(db_path) as s2:
+            s2.import_batch(self._NODES, self._RELS)
+            stats = s2.get_stats()
+            assert stats["total_nodes"] == 3
+            assert stats["total_edges"] == 2
+
+    def test_delete_repo_then_reimport(self, store):
+        """delete_repo must invalidate the mirror — otherwise a reindex would
+        see every node as already existing and drop the whole import."""
+        store.import_batch(self._NODES, self._RELS)
+        store.delete_repo("repo")
+        assert store.get_node("repo/a.py") is None
+        store.import_batch(self._NODES, self._RELS)
+        assert store.get_node("repo/a.py") is not None
+        stats = store.get_stats()
+        assert stats["total_nodes"] == 3
+        assert stats["total_edges"] == 2
+
+    def test_add_node_visible_to_subsequent_batch_endpoint_check(self, store):
+        """Nodes written via add_node after the mirror is initialized must
+        pass the rel endpoint-existence check of a later batch."""
+        store.import_batch(self._NODES, [])  # initializes the mirror
+        store.add_node("late", "File", "late.py", {"path": "late.py"})
+        res = store.import_batch(
+            [],
+            [
+                {
+                    "id": "repo->DEFINES->late",
+                    "type": "DEFINES",
+                    "source_id": "repo",
+                    "target_id": "late",
+                    "properties": {},
+                }
+            ],
+        )
+        assert res["relationships_created"] == 1
+        assert store.get_stats()["total_edges"] == 1
+
+    def test_add_relationship_id_seen_by_batch_delete(self, store):
+        """Rel ids written via add_relationship must be replaced (not
+        duplicated) when a later batch re-imports the same id."""
+        store.import_batch(self._NODES, [])  # initializes the mirror
+        store.add_relationship("dup-rel", "CALLS", "repo", "repo/a.py", {"confidence": 1.0})
+        store.import_batch(
+            [],
+            [
+                {
+                    "id": "dup-rel",
+                    "type": "CALLS",
+                    "source_id": "repo",
+                    "target_id": "repo/a.py",
+                    "properties": {"confidence": 0.5},
+                }
+            ],
+        )
+        assert store.get_stats()["total_edges"] == 1
+        results = store.traverse("repo", direction="outgoing", max_depth=1)
+        assert len(results) == 1
+        assert results[0]["relationship"]["properties"]["confidence"] == 0.5
+
+    def test_rel_with_missing_endpoint_is_dropped(self, store):
+        """FK pre-filter semantics are unchanged: rels to absent nodes drop."""
+        store.import_batch(
+            self._NODES,
+            [
+                {
+                    "id": "repo->DEFINES->ghost",
+                    "type": "DEFINES",
+                    "source_id": "repo",
+                    "target_id": "ghost",
+                    "properties": {},
+                }
+            ],
+        )
+        assert store.get_stats()["total_edges"] == 0
+
+    def test_cross_batch_node_dedup_keeps_first_payload(self, store):
+        """Cross-batch duplicate node ids keep the FIRST payload (existing
+        rows are dropped from later batches) — same as the query-backed path."""
+        store.import_batch([{"id": "n", "type": "File", "name": "first", "properties": None}], [])
+        store.import_batch([{"id": "n", "type": "File", "name": "second", "properties": None}], [])
+        assert store.get_node("n")["name"] == "first"
+
+    def test_in_batch_node_dedup_keeps_last_payload(self, store):
+        """In-batch duplicate node ids keep the LAST payload. Pinned because
+        together with keep-first above it makes results depend on where batch
+        boundaries fall — which is why the flush batch size cannot be changed
+        without changing produced graphs (see adapters.py)."""
+        store.import_batch(
+            [
+                {"id": "n", "type": "File", "name": "first", "properties": None},
+                {"id": "n", "type": "File", "name": "second", "properties": None},
+            ],
+            [],
+        )
+        assert store.get_node("n")["name"] == "second"
+
+    def test_merge_fallback_keeps_mirror_consistent(self, store):
+        """Rows written by the per-row MERGE fallback must be visible to the
+        mirror-backed COPY path afterwards."""
+        store.import_batch(self._NODES, [])  # initializes the mirror
+
+        orig = store._import_batch_via_copy
+
+        def _boom(nodes, rels):
+            raise RuntimeError("copy disabled for test")
+
+        store._import_batch_via_copy = _boom
+        try:
+            res = store.import_batch(
+                [{"id": "fb", "type": "File", "name": "fb.py", "properties": None}],
+                [
+                    {
+                        "id": "repo->DEFINES->fb",
+                        "type": "DEFINES",
+                        "source_id": "repo",
+                        "target_id": "fb",
+                        "properties": {},
+                    }
+                ],
+            )
+            assert res["errors"] == 0
+        finally:
+            store._import_batch_via_copy = orig
+
+        # Back on the COPY path: the fallback-inserted node must pass the
+        # endpoint check, and re-importing it must dedup (not PK-collide).
+        store.import_batch(
+            [{"id": "fb", "type": "File", "name": "fb-reimported", "properties": None}],
+            [
+                {
+                    "id": "fb->DEFINES->repo/a.py",
+                    "type": "DEFINES",
+                    "source_id": "fb",
+                    "target_id": "repo/a.py",
+                    "properties": {},
+                }
+            ],
+        )
+        assert store.get_node("fb")["name"] == "fb.py"  # keep-first, no dup
+        stats = store.get_stats()
+        assert stats["total_nodes"] == 4
+        assert stats["total_edges"] == 2
+
+    def test_query_fallback_when_mirror_unavailable(self, store):
+        """If the mirror can't initialize, the old query path must produce
+        the same rows."""
+        store._ensure_id_mirror = lambda: None  # mirror stays None
+        store.import_batch(self._NODES, self._RELS)
+        store.import_batch(self._NODES, self._RELS)
+        stats = store.get_stats()
+        assert stats["total_nodes"] == 3
+        assert stats["total_edges"] == 2
+
+
 class TestGraphStoreContextManager:
     def test_context_manager(self, tmp_path):
         db_path = str(tmp_path / "ctxdb")

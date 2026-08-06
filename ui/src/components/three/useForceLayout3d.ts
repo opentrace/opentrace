@@ -29,6 +29,7 @@ import type {
   LayoutConfig,
 } from '../graph/types';
 import { endpointId, nodeSize } from '../graph/layoutHelpers';
+import { AppendTracker } from './appendPrefix';
 import { selectBreakpoint } from './scaleBreakpoints';
 import type {
   Worker3DInMessage,
@@ -50,6 +51,23 @@ function childEnd(label: string, source: string, target: string): string {
   return label === 'MIRRORS' ? source : target;
 }
 
+/** Orient a tree-forming edge parent → child for the worker's forest builder,
+ *  which reads `source` as the parent. Only MIRRORS is stored child-first. */
+function orientParentFirst(
+  link: GraphLink,
+  source: string,
+  target: string,
+): readonly [string, string] {
+  return link.label === 'MIRRORS' ? [target, source] : [source, target];
+}
+
+/** A layout-worker link: endpoint ids + link-force weight. */
+export interface LayoutLink {
+  source: string;
+  target: string;
+  w: number;
+}
+
 /** Multiset diff of layout links against what the worker was already sent,
  *  keyed source|target (weight excluded — a flat-mode / layout-edge-type
  *  change reclassifies weights without adding edges and must not re-send the
@@ -58,11 +76,11 @@ function childEnd(label: string, source: string, target: string): string {
  *  resolve stage emits CALLS/IMPORTS edges between nodes that both streamed
  *  in earlier batches. */
 function takeUnsentLinks(
-  links: { source: string; target: string; w: number }[],
+  links: LayoutLink[],
   sent: Map<string, number>,
-): { source: string; target: string; w: number }[] {
+): LayoutLink[] {
   const counts = new Map<string, number>();
-  const out: { source: string; target: string; w: number }[] = [];
+  const out: LayoutLink[] = [];
   for (const l of links) {
     const key = `${l.source}|${l.target}`;
     const c = (counts.get(key) ?? 0) + 1;
@@ -71,6 +89,160 @@ function takeUnsentLinks(
       out.push(l);
       sent.set(key, c);
     }
+  }
+  return out;
+}
+
+/**
+ * Incremental "classify raw graph links → diff against what the worker holds".
+ *
+ * Combines the old buildLayoutLinks (filter self-loops / missing endpoints,
+ * assign structural-vs-relational weights) + takeUnsentLinks pair, but skips
+ * re-scanning the whole link list per streamed batch when it grew append-only
+ * (concat preserves prefix element identity).
+ *
+ * Fast-path correctness: the fast path emits every candidate that passes the
+ * endpoint filter WITHOUT consulting the multiset diff, so it's only taken
+ * when `sent` provably equals the per-key counts of the current included
+ * list. That invariant is tracked as `sentTotal === included-count` after
+ * every full scan (Σ equal + `sent` pointwise ≥ counts ⇒ pointwise equal) and
+ * is preserved by each fast-path emission. Anything else — replaced/shrunk
+ * arrays, a `sent` superset left over from a shrink — falls back to the full
+ * scan, which behaves exactly like the old code path.
+ *
+ * Links excluded because an endpoint hasn't arrived yet (progressive loading
+ * pushes edges before their nodes) are kept in `pendingExcluded` and
+ * re-examined on every collect, so a prefix link becoming resolvable is still
+ * caught — mirroring what the old full rescan did. Self-loops are dropped
+ * permanently (content-based, can never become includable).
+ *
+ * Assumes the node set only GROWS between `reset()` calls (the owning effect
+ * resets on every full worker rebuild, which is the only non-growing path).
+ */
+export class LayoutLinkCollector {
+  private tracker = new AppendTracker<GraphLink>();
+  private pendingExcluded: GraphLink[] = [];
+  private sent = new Map<string, number>();
+  private sentTotal = 0;
+  private eligible = false;
+
+  /** Fresh worker → fresh sent-state. Pairs with the worker init/rebuild. */
+  reset(): void {
+    this.tracker.reset();
+    this.pendingExcluded = [];
+    this.sent = new Map();
+    this.sentTotal = 0;
+    this.eligible = false;
+  }
+
+  /**
+   * Returns the layout links not yet sent to the worker, recording them as
+   * sent. Called with the FULL current link list; after a `reset()` the
+   * result is the full filtered list (the worker-init payload).
+   */
+  collect(
+    allLinks: GraphLink[],
+    nodeIdSet: Set<string>,
+    isStructural: (link: GraphLink) => boolean,
+    orient: (
+      link: GraphLink,
+      source: string,
+      target: string,
+    ) => readonly [string, string] = (_l, s, t) => [s, t],
+  ): LayoutLink[] {
+    const suffix = this.tracker.suffixStart(allLinks);
+
+    if (suffix >= 0 && this.eligible) {
+      // Append fast path: the prefix is already classified + counted into
+      // `sent`; only previously endpoint-deferred links and the suffix can
+      // produce new layout links. Pending first so output order matches the
+      // old full scan (prefix positions precede suffix positions).
+      const out: LayoutLink[] = [];
+      const pending = this.pendingExcluded;
+      this.pendingExcluded = [];
+      for (const link of pending) {
+        this.consider(link, nodeIdSet, isStructural, orient, out);
+      }
+      for (let i = suffix; i < allLinks.length; i++) {
+        this.consider(allLinks[i], nodeIdSet, isStructural, orient, out);
+      }
+      return out;
+    }
+
+    // Full scan — identical to the old buildLayoutLinks + takeUnsentLinks.
+    this.pendingExcluded = [];
+    const layoutLinks: LayoutLink[] = [];
+    for (const link of allLinks) {
+      const source = endpointId(link.source);
+      const target = endpointId(link.target);
+      if (source === target) continue; // self-loops don't shape layout
+      if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) {
+        this.pendingExcluded.push(link);
+        continue;
+      }
+      // Structural edges (the DEFINES containment tree) drive the layout at
+      // full strength → the tree/flower shape. Relational edges (calls,
+      // imports, …) are included at a weak weight so call/import neighbours
+      // drift closer — shortening those long cross-graph edges into logical
+      // branches — without collapsing the structure into a hairball.
+      const [from, to] = orient(link, source, target);
+      layoutLinks.push({
+        source: from,
+        target: to,
+        w: isStructural(link) ? 1 : RELATIONAL_LINK_WEIGHT,
+      });
+    }
+    const out = takeUnsentLinks(layoutLinks, this.sent);
+    this.sentTotal += out.length;
+    this.eligible = this.sentTotal === layoutLinks.length;
+    return out;
+  }
+
+  private consider(
+    link: GraphLink,
+    nodeIdSet: Set<string>,
+    isStructural: (link: GraphLink) => boolean,
+    orient: (
+      link: GraphLink,
+      source: string,
+      target: string,
+    ) => readonly [string, string],
+    out: LayoutLink[],
+  ): void {
+    const source = endpointId(link.source);
+    const target = endpointId(link.target);
+    if (source === target) return; // self-loops don't shape layout
+    if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) {
+      this.pendingExcluded.push(link);
+      return;
+    }
+    // Key on the ORIENTED pair so the multiset diff matches what the full
+    // scan records — keying raw endpoints would make a MIRRORS edge look
+    // unsent on every collect and re-post it forever.
+    const [from, to] = orient(link, source, target);
+    const key = `${from}|${to}`;
+    this.sent.set(key, (this.sent.get(key) ?? 0) + 1);
+    this.sentTotal++;
+    out.push({
+      source: from,
+      target: to,
+      w: isStructural(link) ? 1 : RELATIONAL_LINK_WEIGHT,
+    });
+  }
+}
+
+/** Subset of `assignments` for the given ids (the per-batch communities
+ *  delta: only NEW nodes' assignments ride along on add-nodes messages —
+ *  structured-cloning the full 100k-key record per batch was a large,
+ *  pure-overhead cost; the worker already holds everything else). */
+export function pickAssignments(
+  assignments: Record<string, number>,
+  ids: string[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const id of ids) {
+    const v = assignments[id];
+    if (v !== undefined) out[id] = v;
   }
   return out;
 }
@@ -139,7 +311,6 @@ export function useForceLayout3d(
 
   const nodeOrderRef = useRef<string[]>([]);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const nodeSizesRef = useRef<Map<string, number>>(new Map());
   const onTickRef = useRef(onTick);
   onTickRef.current = onTick;
   // Dimensions are applied at init; later changes go via setDimensions.
@@ -157,22 +328,104 @@ export function useForceLayout3d(
     };
   }, []);
 
-  useEffect(() => {
-    const degreeMap = new Map<string, number>();
+  // useMemo (mirroring nodeColors in ThreeGraphCanvas), NOT an effect into a
+  // ref: the canvas's data effect consumes this map in the SAME commit that
+  // nodes/links change. A ref written by an effect is always one commit stale,
+  // so every incrementally-appended node would miss the map and be rendered at
+  // the fallback minimum size forever.
+  //
+  // Append fast path: when nodes AND links both grew append-only (live
+  // indexing), the map is extended instead of rebuilt. Sizes depend on
+  // DEGREE, which changes for EXISTING nodes as new links arrive — so the
+  // extension refreshes not just the new nodes but every endpoint of the
+  // appended links. That keeps the map CONTENTS identical to a full
+  // recompute in every state (no consumption-equivalence caveats needed:
+  // even full setData/addData rebuilds, which size ALL nodes from this map,
+  // read exactly the values a fresh recompute would produce). The cached
+  // degree/type lookups are guarded on the structural-types inputs; any
+  // change there falls back to a full recompute, mirroring what today's
+  // recompute would use.
+  const nodeSizesCacheRef = useRef<{
+    map: Map<string, number>;
+    degree: Map<string, number>;
+    typeById: Map<string, string>;
+    flatMode: boolean;
+    structuralTypesInput: LayoutConfig['structuralTypes'];
+  } | null>(null);
+  const sizeNodesTrackerRef = useRef<AppendTracker<GraphNode> | null>(null);
+  sizeNodesTrackerRef.current ??= new AppendTracker<GraphNode>();
+  const sizeLinksTrackerRef = useRef<AppendTracker<GraphLink> | null>(null);
+  sizeLinksTrackerRef.current ??= new AppendTracker<GraphLink>();
+  const nodeSizes = useMemo(() => {
+    const cache = nodeSizesCacheRef.current;
+    const nodeSuffix = sizeNodesTrackerRef.current!.suffixStart(allNodes);
+    const linkSuffix = sizeLinksTrackerRef.current!.suffixStart(allLinks);
+    const appendOnly =
+      nodeSuffix >= 0 &&
+      linkSuffix >= 0 &&
+      cache !== null &&
+      cache.flatMode === flatMode &&
+      cache.structuralTypesInput === layoutConfig.structuralTypes;
+
+    if (appendOnly) {
+      const { map, degree, typeById } = cache;
+      // Types first: an appended link may touch a node from the same flush.
+      for (let i = nodeSuffix; i < allNodes.length; i++) {
+        const n = allNodes[i];
+        typeById.set(n.id, n.type);
+      }
+      // Fold the new links into the degree counts. Endpoints without a node
+      // (progressive loading pushes edges before their nodes) still count —
+      // exactly like the full recompute's unconditional degreeMap fold — but
+      // get no size entry until the node arrives.
+      const touched = new Set<string>();
+      for (let i = linkSuffix; i < allLinks.length; i++) {
+        const link = allLinks[i];
+        const s = endpointId(link.source);
+        const t = endpointId(link.target);
+        degree.set(s, (degree.get(s) || 0) + 1);
+        degree.set(t, (degree.get(t) || 0) + 1);
+        touched.add(s);
+        touched.add(t);
+      }
+      // Refresh every node whose degree changed…
+      for (const id of touched) {
+        const type = typeById.get(id);
+        if (type === undefined) continue; // endpoint not a node (yet)
+        map.set(id, nodeSize(degree.get(id)!, type, structuralTypes));
+      }
+      // …and add the new nodes (their full degree is already folded in).
+      for (let i = nodeSuffix; i < allNodes.length; i++) {
+        const n = allNodes[i];
+        map.set(n.id, nodeSize(degree.get(n.id) ?? 0, n.type, structuralTypes));
+      }
+      return map;
+    }
+
+    const degree = new Map<string, number>();
     for (const link of allLinks) {
       const s = endpointId(link.source);
       const t = endpointId(link.target);
-      degreeMap.set(s, (degreeMap.get(s) || 0) + 1);
-      degreeMap.set(t, (degreeMap.get(t) || 0) + 1);
+      degree.set(s, (degree.get(s) || 0) + 1);
+      degree.set(t, (degree.get(t) || 0) + 1);
     }
+    const typeById = new Map<string, string>();
     const sizes = new Map<string, number>();
     for (const node of allNodes) {
+      typeById.set(node.id, node.type);
       sizes.set(
         node.id,
-        nodeSize(degreeMap.get(node.id) ?? 0, node.type, structuralTypes),
+        nodeSize(degree.get(node.id) ?? 0, node.type, structuralTypes),
       );
     }
-    nodeSizesRef.current = sizes;
+    nodeSizesCacheRef.current = {
+      map: sizes,
+      degree,
+      typeById,
+      flatMode,
+      structuralTypesInput: layoutConfig.structuralTypes,
+    };
+    return sizes;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allNodes, allLinks]);
 
@@ -195,11 +448,6 @@ export function useForceLayout3d(
   }, []);
 
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
-  // source|target → count of links already sent to the live worker (init +
-  // add-nodes). Diffing against this is what catches resolve-stage edges that
-  // arrive after both endpoints (see takeUnsentLinks). Reset on full rebuild.
-  const sentLinkCountsRef = useRef<Map<string, number>>(new Map());
-
   // layoutEdgeType is a priority-ORDERED list of tree-forming edge types
   // (index 0 = strongest claim on a node). Each node gets exactly ONE
   // full-strength "parent" spring — its highest-priority tree edge — and
@@ -215,74 +463,107 @@ export function useForceLayout3d(
     return new Map(list.map((t, i) => [t, i] as const));
   }, [layoutConfig.layoutEdgeType]);
 
-  const buildLayoutLinks = useCallback(
+  // Pick each node's ONE parent edge: the highest-priority tree-type edge
+  // where the node is the child end (first seen wins a tie, matching the
+  // worker's first-parent-wins forest). Returned as the set of winning link
+  // objects so it can back a per-link `isStructural` predicate — the shape
+  // LayoutLinkCollector consumes.
+  const chooseParentLinks = useCallback(
     (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
-      // Pass 1 — pick each node's parent edge: the highest-priority
-      // tree-type edge where the node is the child end (first seen wins a
-      // tie, matching the worker's first-parent-wins forest).
-      const chosenIdx = new Map<string, number>();
+      const chosen = new Map<string, GraphLink>();
       const chosenPrio = new Map<string, number>();
-      if (!flatMode) {
-        for (let i = 0; i < linkArray.length; i++) {
-          const link = linkArray[i];
-          const prio = parentPriority.get(link.label);
-          if (prio === undefined) continue;
-          const source = endpointId(link.source);
-          const target = endpointId(link.target);
-          if (source === target) continue;
-          if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
-          const child = childEnd(link.label, source, target);
-          const cur = chosenPrio.get(child);
-          if (cur === undefined || prio < cur) {
-            chosenPrio.set(child, prio);
-            chosenIdx.set(child, i);
+      for (const link of linkArray) {
+        const prio = parentPriority.get(link.label);
+        if (prio === undefined) continue;
+        const source = endpointId(link.source);
+        const target = endpointId(link.target);
+        if (source === target) continue;
+        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+        const child = childEnd(link.label, source, target);
+        const cur = chosenPrio.get(child);
+        if (cur === undefined || prio < cur) {
+          chosenPrio.set(child, prio);
+          chosen.set(child, link);
+        }
+      }
+      return new Set(chosen.values());
+    },
+    [parentPriority],
+  );
+
+  // Classifier + multiset diff of links already sent to the live worker
+  // (init + add-nodes). Diffing against this is what catches resolve-stage
+  // edges that arrive after both endpoints. Reset on full rebuild.
+  const linkCollectorRef = useRef<LayoutLinkCollector | null>(null);
+  linkCollectorRef.current ??= new LayoutLinkCollector();
+  // Append fast path over allNodes (live indexing: batches concat, so the
+  // prefix keeps element identity and only the suffix can hold new nodes).
+  const nodesTrackerRef = useRef<AppendTracker<GraphNode> | null>(null);
+  nodesTrackerRef.current ??= new AppendTracker<GraphNode>();
+  // Identity of the assignments object last sent to the worker (init /
+  // add-nodes / set-communities). Louvain produces a NEW object each time it
+  // (re)computes, so identity is a cheap "actually changed" signal — without
+  // it, ANY same-node effect re-run (e.g. a link-only resolve flush) would
+  // re-post set-communities and the worker would full-rebuild + reheat
+  // (alpha 0.7), reshuffling an already-settled graph.
+  const lastPostedCommunitiesRef = useRef<Record<string, number> | null>(null);
+
+  useEffect(() => {
+    const prevIds = prevNodeIdsRef.current;
+    const prevSize = prevIds.size;
+    const suffixStart = nodesTrackerRef.current!.suffixStart(allNodes);
+
+    let nodeIdSet: Set<string>;
+    let newNodeIds: string[];
+    let newTypes: Record<string, string>;
+    let allPrevPresent: boolean;
+    if (suffixStart >= 0) {
+      // Append fast path: [0, suffixStart) is the previous array, whose ids
+      // are exactly `prevIds` — extend it in place (contents end up identical
+      // to a from-scratch rebuild) and derive new ids/types from the suffix.
+      nodeIdSet = prevIds;
+      newNodeIds = [];
+      newTypes = {};
+      for (let i = suffixStart; i < allNodes.length; i++) {
+        const n = allNodes[i];
+        if (!nodeIdSet.has(n.id)) {
+          nodeIdSet.add(n.id);
+          newNodeIds.push(n.id);
+          newTypes[n.id] = n.type;
+        }
+      }
+      allPrevPresent = prevSize > 0;
+    } else {
+      nodeIdSet = new Set<string>();
+      for (const n of allNodes) nodeIdSet.add(n.id);
+      allPrevPresent =
+        prevSize > 0 && [...prevIds].every((id) => nodeIdSet.has(id));
+      newNodeIds = [];
+      newTypes = {};
+      if (allPrevPresent && nodeIdSet.size > prevSize) {
+        for (const n of allNodes) {
+          if (!prevIds.has(n.id)) {
+            newNodeIds.push(n.id);
+            newTypes[n.id] = n.type;
           }
         }
       }
+    }
+    // Structural edges drive the layout at full strength; relational edges
+    // pull weakly (see LayoutLinkCollector). "Structural" is the one-parent
+    // rule, not a label test: a node's highest-priority tree edge wins, every
+    // other tree edge touching it is demoted. That is a GLOBAL decision, so
+    // unlike a per-label predicate it needs a pass over all links — skipped
+    // entirely in flat mode, where every edge is structural by definition.
+    const chosenParents = flatMode
+      ? null
+      : chooseParentLinks(nodeIdSet, allLinks);
+    const isStructural = (link: GraphLink) =>
+      flatMode || chosenParents!.has(link);
 
-      const out: { source: string; target: string; w: number }[] = [];
-      for (let i = 0; i < linkArray.length; i++) {
-        const link = linkArray[i];
-        const source = endpointId(link.source);
-        const target = endpointId(link.target);
-        if (source === target) continue; // self-loops don't shape layout
-        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
-        // Structural = this edge IS some node's parent spring. Everything
-        // else (calls, imports, demoted surplus tree edges) pulls at the
-        // weak weight — enough to drift related nodes together without
-        // collapsing the backbone.
-        const child = childEnd(link.label, source, target);
-        const structural = flatMode || chosenIdx.get(child) === i;
-        // Emit tree edges parent → child: the worker's radial-tree forest
-        // builder reads `source` as the parent, and MIRRORS is stored the
-        // other way round (doc → file).
-        const swap = link.label === 'MIRRORS';
-        out.push({
-          source: swap ? target : source,
-          target: swap ? source : target,
-          w: structural ? 1 : RELATIONAL_LINK_WEIGHT,
-        });
-      }
-      return out;
-    },
-    [flatMode, parentPriority],
-  );
-
-  useEffect(() => {
-    const nodeIds = allNodes.map((n) => n.id);
-    const nodeIdSet = new Set(nodeIds);
-    const prevIds = prevNodeIdsRef.current;
-    // id → node type, for the worker's onion layout (shells by type).
-    const typeById: Record<string, string> = {};
-    for (const n of allNodes) typeById[n.id] = n.type;
-
-    const allPrevPresent =
-      prevIds.size > 0 && [...prevIds].every((id) => nodeIdSet.has(id));
     const isIncremental =
-      allPrevPresent &&
-      nodeIdSet.size > prevIds.size &&
-      workerRef.current !== null;
-    const isSameNodes = allPrevPresent && nodeIdSet.size === prevIds.size;
+      allPrevPresent && nodeIdSet.size > prevSize && workerRef.current !== null;
+    const isSameNodes = allPrevPresent && nodeIdSet.size === prevSize;
 
     if (isSameNodes && workerRef.current) {
       // Links can still be new with an unchanged node set: during a live
@@ -290,27 +571,41 @@ export function useForceLayout3d(
       // already-streamed nodes, and a flush can carry ONLY those. They must
       // reach the worker, or the layout — and the end-of-build reseed, which
       // replays the worker's cached links — permanently lacks their pull.
-      const sameNodeLinks = buildLayoutLinks(nodeIdSet, allLinks);
-      const lateLinks = takeUnsentLinks(
-        sameNodeLinks,
-        sentLinkCountsRef.current,
+      const lateLinks = linkCollectorRef.current!.collect(
+        allLinks,
+        nodeIdSet,
+        isStructural,
+        orientParentFirst,
       );
       if (lateLinks.length > 0) {
+        const assignmentsChanged =
+          communityData.assignments !== lastPostedCommunitiesRef.current;
         workerRef.current.postMessage({
           type: 'add-nodes',
           nodeIds: [],
           links: lateLinks,
-          communities: communityData.assignments,
+          // The full (large) assignments record only rides along when
+          // Louvain actually recomputed — the worker already holds every
+          // key otherwise (identity ⇒ contents), and structured-cloning
+          // 100k assignments per resolve flush was pure overhead.
+          ...(assignmentsChanged
+            ? { communities: communityData.assignments }
+            : {}),
           nodeTypes: {},
           pinExisting: growBuildRef.current,
         } satisfies Worker3DInMessage);
+        // add-nodes already delivered (and applied) these assignments — no
+        // need for the set-communities rebuild below on top of it.
+        lastPostedCommunitiesRef.current = communityData.assignments;
         simRunningRef.current = true;
         setSimRunning(true);
       }
       // When Louvain (re)computes — including at the end of a live build — let
       // the layout cluster into communities so the result matches the finished
-      // graph's shape.
-      if (communityData.assignments) {
+      // graph's shape. Only when the assignments ACTUALLY changed (identity
+      // check — see lastPostedCommunitiesRef).
+      if (communityData.assignments !== lastPostedCommunitiesRef.current) {
+        lastPostedCommunitiesRef.current = communityData.assignments;
         workerRef.current.postMessage({
           type: 'set-communities',
           communities: communityData.assignments,
@@ -328,15 +623,21 @@ export function useForceLayout3d(
 
     if (isIncremental) {
       if (growBuildRef.current) liveBuiltRef.current = true;
-      const newNodeIds = nodeIds.filter((id) => !prevIds.has(id));
-      const links = buildLayoutLinks(nodeIdSet, allLinks);
-      const newLinks = takeUnsentLinks(links, sentLinkCountsRef.current);
-      nodeOrderRef.current = [...nodeOrderRef.current, ...newNodeIds];
+      const newLinks = linkCollectorRef.current!.collect(
+        allLinks,
+        nodeIdSet,
+        isStructural,
+        orientParentFirst,
+      );
+      for (const id of newNodeIds) nodeOrderRef.current.push(id);
 
       const pos = positionsRef.current;
       let cx = 0,
         cy = 0,
         count = 0;
+      // On the fast path `prevIds` was already extended with the new ids —
+      // harmless here: new ids can't have a position yet, so the `p` guard
+      // skips them and the centroid matches the old previous-ids-only loop.
       for (const id of prevIds) {
         const p = pos.get(id);
         if (p) {
@@ -349,7 +650,7 @@ export function useForceLayout3d(
         cx /= count;
         cy /= count;
       }
-      const spread = Math.sqrt(prevIds.size) * 10;
+      const spread = Math.sqrt(prevSize) * 10;
       for (const id of newNodeIds) {
         if (!pos.has(id)) {
           const angle = Math.random() * Math.PI * 2;
@@ -362,16 +663,27 @@ export function useForceLayout3d(
       }
 
       prevNodeIdsRef.current = nodeIdSet;
-      const newTypes: Record<string, string> = {};
-      for (const id of newNodeIds) newTypes[id] = typeById[id];
+      const assignmentsChanged =
+        communityData.assignments !== lastPostedCommunitiesRef.current;
       workerRef.current!.postMessage({
         type: 'add-nodes',
         nodeIds: newNodeIds,
         links: newLinks,
-        communities: communityData.assignments,
+        // Per-batch payload: only the NEW nodes' assignments (the worker
+        // merges them in). The full record still goes when Louvain actually
+        // recomputed, exactly as before.
+        ...(assignmentsChanged
+          ? { communities: communityData.assignments }
+          : {
+              communitiesDelta: pickAssignments(
+                communityData.assignments,
+                newNodeIds,
+              ),
+            }),
         nodeTypes: newTypes,
         pinExisting: growBuildRef.current,
       } satisfies Worker3DInMessage);
+      lastPostedCommunitiesRef.current = communityData.assignments;
 
       simRunningRef.current = true;
       setSimRunning(true);
@@ -385,21 +697,31 @@ export function useForceLayout3d(
 
     if (allNodes.length === 0) {
       prevNodeIdsRef.current = new Set();
-      sentLinkCountsRef.current = new Map();
+      linkCollectorRef.current!.reset();
+      lastPostedCommunitiesRef.current = null;
       return;
     }
 
     const reqId = ++requestIdRef.current;
+    const nodeIds = allNodes.map((n) => n.id);
+    // id → node type, for the worker's onion layout (shells by type).
+    const typeById: Record<string, string> = {};
+    for (const n of allNodes) typeById[n.id] = n.type;
     nodeOrderRef.current = nodeIds;
 
     const pos = positionsRef.current;
     pos.clear();
     for (const id of nodeIds) pos.set(id, { x: 0, y: 0 });
 
-    const links = buildLayoutLinks(nodeIdSet, allLinks);
-    // Fresh worker → fresh sent-set, seeded with the init payload.
-    sentLinkCountsRef.current = new Map();
-    takeUnsentLinks(links, sentLinkCountsRef.current);
+    // Fresh worker → fresh sent-state; collect() after reset() returns the
+    // full filtered link list (the init payload) while seeding the diff.
+    linkCollectorRef.current!.reset();
+    const links = linkCollectorRef.current!.collect(
+      allLinks,
+      nodeIdSet,
+      isStructural,
+      orientParentFirst,
+    );
 
     const worker = new Worker(
       new URL('../workers/forceLayout3dWorker.ts', import.meta.url),
@@ -450,6 +772,7 @@ export function useForceLayout3d(
         layoutMode: initialLayoutMode,
       },
     } satisfies Worker3DInMessage);
+    lastPostedCommunitiesRef.current = communityData.assignments;
 
     prevNodeIdsRef.current = nodeIdSet;
     simRunningRef.current = true;
@@ -461,7 +784,12 @@ export function useForceLayout3d(
     communityData,
     layoutConfig,
     applyPositionBuffer,
-    buildLayoutLinks,
+    // flatMode derives from layoutConfig (already a dep), so listing it adds no
+    // re-run trigger. Same reasoning covers the omitted `chooseParentLinks`:
+    // it is a useCallback over `parentPriority`, which derives from
+    // layoutConfig.layoutEdgeType — so any change that would give it new
+    // behaviour already re-runs this effect through `layoutConfig`.
+    flatMode,
   ]);
 
   const postToWorker = useCallback((msg: Worker3DInMessage) => {
@@ -628,7 +956,7 @@ export function useForceLayout3d(
   return {
     layoutReady,
     positions: positionsRef.current,
-    nodeSizes: nodeSizesRef.current,
+    nodeSizes,
     simRunning,
     reheat,
     reseed,

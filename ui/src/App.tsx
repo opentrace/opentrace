@@ -109,6 +109,20 @@ function AppInner({
   const [chatHighlightNodes, setChatHighlightNodes] = useState<Set<string>>(
     () => new Set(),
   );
+  // Ref mirror so the stable stage-click handler can check for active chat
+  // highlights without re-creating (and thus re-rendering the memoized
+  // GraphViewer) every time the highlight set changes.
+  const chatHighlightNodesRef = useRef(chatHighlightNodes);
+  chatHighlightNodesRef.current = chatHighlightNodes;
+  // Clicking empty canvas drops chat-driven highlights + the traversal trail,
+  // so the user no longer has to close the chat or start a new conversation to
+  // clear them. No-op when nothing is highlighted (avoids re-allocating an
+  // empty Set and re-firing downstream highlight effects on every void click).
+  const handleStageDeselect = useCallback(() => {
+    if (chatHighlightNodesRef.current.size === 0) return;
+    setChatHighlightNodes(new Set());
+    graphViewerRef.current?.clearChatTraversal();
+  }, []);
   const hasRepoParam = useRef(
     new URLSearchParams(window.location.search).has('repo'),
   );
@@ -355,6 +369,7 @@ function AppInner({
           showHelp={showHelp}
           onToggleHelp={handleToggleHelp}
           chatHighlightNodes={chatHighlightNodes}
+          onStageClick={handleStageDeselect}
           animationSettings={animationSettings}
           graphFullscreen={isMobile ? graphFullscreen : undefined}
           onToggleGraphFullscreen={

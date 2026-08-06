@@ -99,6 +99,13 @@ export default function PRDetailPanel({
   const [reviewError, setReviewError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Abort any in-flight review when the panel unmounts (e.g. user clicks
+  // Back) — otherwise the review agent keeps running LLM calls in the
+  // background with nowhere to render the result.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
   const canReview = !!(llm && store);
 
   // Check if this PR is already indexed in the graph

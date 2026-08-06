@@ -153,7 +153,6 @@ export default function PhysicsPanel({
   onReheat,
   onFitToScreen,
   mode3d = false,
-  onMode3dChange,
   mode3dAutoRotate = true,
   onMode3dAutoRotateChange,
   mode3dSpeed = 15,
@@ -413,33 +412,23 @@ export default function PhysicsPanel({
             community-clusters label visibility, which conflated two
             different concerns. */}
 
-            {/* Pixi: 3D rotation toggle + controls */}
-            {pixiMode && onMode3dChange && (
+            {/* Rotation controls — only meaningful in 3D. The 2D↔3D dimension
+            switch lives in the bottom-right toolbar ("Switch to 3D"), so the
+            panel just exposes auto-rotate + its speed/tilt when already in 3D. */}
+            {pixiMode && mode3d && onMode3dAutoRotateChange && (
               <>
                 <div
                   className="physics-toggle-row"
-                  onClick={() => onMode3dChange(!mode3d)}
+                  onClick={() => onMode3dAutoRotateChange(!mode3dAutoRotate)}
                 >
-                  <span className="physics-toggle-label">3D rotation</span>
-                  <div className={`physics-toggle-track${mode3d ? ' on' : ''}`}>
+                  <span className="physics-toggle-label">Auto-rotate</span>
+                  <div
+                    className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}
+                  >
                     <div className="physics-toggle-thumb" />
                   </div>
                 </div>
-                {mode3d && onMode3dAutoRotateChange && (
-                  <div
-                    className="physics-toggle-row"
-                    onClick={() => onMode3dAutoRotateChange(!mode3dAutoRotate)}
-                    style={{ paddingLeft: 8 }}
-                  >
-                    <span className="physics-toggle-label">Auto-rotate</span>
-                    <div
-                      className={`physics-toggle-track${mode3dAutoRotate ? ' on' : ''}`}
-                    >
-                      <div className="physics-toggle-thumb" />
-                    </div>
-                  </div>
-                )}
-                {mode3d && onMode3dSpeedChange && (
+                {onMode3dSpeedChange && (
                   <div className="physics-slider-row">
                     <div className="physics-slider-label">
                       <span>Rotation speed</span>
@@ -458,7 +447,7 @@ export default function PhysicsPanel({
                     />
                   </div>
                 )}
-                {mode3d && onMode3dTiltChange && (
+                {onMode3dTiltChange && (
                   <div className="physics-slider-row">
                     <div className="physics-slider-label">
                       <span>Camera tilt</span>

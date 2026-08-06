@@ -48,15 +48,26 @@ export function* runNodePipeline(
   const { ctx, stages, seeds } = opts;
   const stageCount = stages.length;
 
-  // Per-stage queues: index 0 = first stage, etc.
+  // Per-stage queues: index 0 = first stage, etc. Consumption uses an
+  // index pointer (heads[i] = next unread slot) instead of shift() —
+  // shift() memmoves every remaining element, turning the tick loop
+  // quadratic on 100k-node repos. Consumed slots are nulled to release
+  // node references, and a fully drained queue is reset to length 0 so
+  // its backing storage is reclaimed.
   const queues: GraphNode[][] = Array.from({ length: stageCount }, () => []);
+  const heads: number[] = new Array(stageCount).fill(0);
   pushAll(queues[0], seeds);
 
   // Counters for the final done event (no accumulation — avoids OOM on large repos)
   let totalNodes = seeds.length;
   let totalRelationships = 0;
 
-  const hasWork = () => queues.some((q) => q.length > 0);
+  const hasWork = () => {
+    for (let i = 0; i < stageCount; i++) {
+      if (heads[i] < queues[i].length) return true;
+    }
+    return false;
+  };
 
   // --- Main tick loop ---
   while (hasWork()) {
@@ -69,9 +80,16 @@ export function* runNodePipeline(
 
     // Reverse order: drain later stages first
     for (let i = stageCount - 1; i >= 0; i--) {
-      if (queues[i].length === 0) continue;
+      const queue = queues[i];
+      if (heads[i] >= queue.length) continue;
 
-      const node = queues[i].shift()!;
+      const node = queue[heads[i]];
+      queue[heads[i]] = undefined as unknown as GraphNode;
+      heads[i]++;
+      if (heads[i] === queue.length) {
+        queue.length = 0;
+        heads[i] = 0;
+      }
       const stage = stages[i];
 
       yield { stage: stage.name(), node: node.id, action: 'start' };

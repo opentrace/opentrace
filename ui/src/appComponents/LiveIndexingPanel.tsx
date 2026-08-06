@@ -40,8 +40,8 @@ interface Props {
   icon?: ReactNode;
   /** Open the full-detail indexing modal. */
   onExpand: () => void;
-  /** Cancel the running job. */
-  onCancel: () => void;
+  /** Collapse the panel to a compact chip — indexing keeps running. */
+  onMinimize: () => void;
 }
 
 function formatMB(bytes: number): string {
@@ -99,7 +99,7 @@ export default function LiveIndexingPanel({
   stages,
   icon,
   onExpand,
-  onCancel,
+  onMinimize,
 }: Props) {
   // Only stages that have started — keeps the panel short early on.
   const rows = stages
@@ -142,12 +142,12 @@ export default function LiveIndexingPanel({
         </button>
         <button
           type="button"
-          className="live-indexing-panel__btn live-indexing-panel__btn--cancel"
-          onClick={onCancel}
-          title="Cancel indexing"
-          aria-label="Cancel indexing"
+          className="live-indexing-panel__btn"
+          onClick={onMinimize}
+          title="Minimize — indexing continues in the background"
+          aria-label="Minimize indexing panel"
         >
-          &times;
+          &minus;
         </button>
       </div>
 

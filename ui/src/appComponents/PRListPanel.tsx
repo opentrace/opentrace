@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PRClient } from '../pr/client';
 import type { PRSummary, PRDetail } from '../pr/types';
 import type { GraphStore } from '../store/types';
@@ -89,6 +89,10 @@ export default function PRListPanel({
   const [indexingAll, setIndexingAll] = useState(false);
   const [lookupInput, setLookupInput] = useState('');
   const [lookupError, setLookupError] = useState<string | null>(null);
+  // Monotonic sequence for PR-detail requests (list click + lookup share it).
+  // Responses are applied only if they're still the latest request, so a slow
+  // earlier fetch can't clobber a faster later one (last-resolved-wins race).
+  const detailReqSeq = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,14 +118,17 @@ export default function PRListPanel({
   }, [prClient]);
 
   const handleSelectPR = async (pr: PRSummary) => {
+    const seq = ++detailReqSeq.current;
     setLoadingDetail(true);
     try {
       const detail = await prClient.getPRDetail(pr.number);
+      if (detailReqSeq.current !== seq) return;
       setSelectedPR(detail);
     } catch (err) {
+      if (detailReqSeq.current !== seq) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingDetail(false);
+      if (detailReqSeq.current === seq) setLoadingDetail(false);
     }
   };
 
@@ -166,16 +173,19 @@ export default function PRListPanel({
       setLookupError('Enter a PR number (e.g. 123) or a link');
       return;
     }
+    const seq = ++detailReqSeq.current;
     setLookupError(null);
     setLoadingDetail(true);
     try {
       const detail = await prClient.getPRDetail(prNumber);
+      if (detailReqSeq.current !== seq) return;
       setSelectedPR(detail);
       setLookupInput('');
     } catch (err) {
+      if (detailReqSeq.current !== seq) return;
       setLookupError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingDetail(false);
+      if (detailReqSeq.current === seq) setLoadingDetail(false);
     }
   };
 

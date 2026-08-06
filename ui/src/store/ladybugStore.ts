@@ -178,8 +178,15 @@ function csvEscape(value: string): string {
  *  mishandling of quoted newlines. */
 const COPY_OPTS = `(HEADER=true, PARALLEL=FALSE, ESCAPE='"')`;
 
-/** Format a value for a LadybugDB CSV column based on its type. */
-function csvFormatValue(value: unknown, colType: ColumnType): string {
+/** Format a value for a LadybugDB CSV column based on its type.
+ *
+ *  BOOL and STRING[] values may arrive as strings rather than native
+ *  booleans/arrays: the Parquet export path stringifies every cell
+ *  (`'false'`, `'["a","b"]'`), and importDatabase feeds those strings
+ *  back through here. Treating them as generic truthy values flipped
+ *  every exported `false` to `true` and erased every list column on
+ *  import, so both types decode their string forms explicitly. */
+export function csvFormatValue(value: unknown, colType: ColumnType): string {
   if (value == null || value === '') {
     // LadybugDB treats empty quoted strings as empty; use defaults per type
     if (colType === 'INT32') return csvEscape('0');
@@ -189,14 +196,28 @@ function csvFormatValue(value: unknown, colType: ColumnType): string {
     return csvEscape('');
   }
   if (colType === 'STRING[]') {
-    const arr = Array.isArray(value) ? value : [];
+    let arr: unknown[] = [];
+    if (Array.isArray(value)) {
+      arr = value;
+    } else if (typeof value === 'string') {
+      // JSON-encoded array from the Parquet export path. Legacy archives
+      // hold comma-joined `String(arr)` output — split as a best effort
+      // (elements containing commas are not recoverable from that form).
+      try {
+        const parsed: unknown = JSON.parse(value);
+        arr = Array.isArray(parsed) ? parsed : value.split(',');
+      } catch {
+        arr = value.split(',');
+      }
+    }
     // LadybugDB CSV array format: ["a","b","c"]
     return csvEscape(
       '[' + arr.map((v: unknown) => JSON.stringify(String(v))).join(',') + ']',
     );
   }
   if (colType === 'BOOL') {
-    return csvEscape(value ? 'true' : 'false');
+    const bool = typeof value === 'string' ? value === 'true' : Boolean(value);
+    return csvEscape(bool ? 'true' : 'false');
   }
   return csvEscape(String(value));
 }
@@ -523,6 +544,15 @@ function safeJsonParse(
   }
 }
 
+/** Stringify one cell for the all-Utf8 Parquet export schema. Arrays are
+ *  JSON-encoded so csvFormatValue can decode them losslessly on import —
+ *  `String(['a','b'])` gives `'a,b'`, which is ambiguous for elements
+ *  containing commas. Booleans/numbers round-trip fine via String(). */
+export function parquetCellValue(value: unknown): string {
+  if (Array.isArray(value)) return JSON.stringify(value.map(String));
+  return String(value ?? '');
+}
+
 /** Convert an array of row objects to Parquet bytes via Arrow IPC → parquet-wasm. */
 async function rowsToParquet(
   rows: Record<string, unknown>[],
@@ -534,7 +564,7 @@ async function rowsToParquet(
   const children = columns.map(
     (col) =>
       vectorFromArray(
-        rows.map((r) => String(r[col] ?? '')),
+        rows.map((r) => parquetCellValue(r[col])),
         new Utf8(),
       ).data[0],
   );
@@ -579,6 +609,13 @@ export class LadybugGraphStore implements GraphStore {
 
   // --- Source text for FTS indexing (populated by storeSource, consumed by flush) ---
   private sourceSnippets = new Map<string, string>();
+  /** When true, storeSource skips staging source for the SourceText table + its
+   *  FTS index — the biggest store-write memory cost. Set on constrained devices
+   *  indexing a large repo (see browserJobService): building the full-source FTS
+   *  over ~15k files overflows the mobile browser's per-tab memory cap. Source
+   *  viewing + the grep tool still work (both read the compressed sourceCache);
+   *  only in-code content ranking in search is lost. */
+  private skipSourceContent = false;
 
   // --- JS-side indexes ---
   private bm25Index = new BM25Index(1.5, 0.75, { name: 2.0 }, 1);
@@ -602,6 +639,13 @@ export class LadybugGraphStore implements GraphStore {
    *  duplicates to avoid LadybugDB COPY FROM primary-key violations. */
   private flushedPackageIds = new Set<string>();
   private flushedSourceIds = new Set<string>();
+  /** Dirty set: snippet ids added by storeSource and not yet flushed to the
+   *  SourceText table. Lets flushInner skip the SourceText stage outright
+   *  when nothing new arrived — previously EVERY flush re-scanned ALL of
+   *  sourceSnippets (~15k entries on Grafana) against flushedSourceIds.
+   *  Ids are removed only when their chunk COPY succeeds, so failed chunks
+   *  stay dirty and retry on the next flush (same retry contract). */
+  private pendingSnippetIds = new Set<string>();
 
   // --- Visualization limits ---
   // Match SettingsDrawer's DEFAULT_MAX_* and serverStore. Kept above typical
@@ -654,10 +698,18 @@ export class LadybugGraphStore implements GraphStore {
     return this.nodeTypeMap.size > 0 || this.totalNodesBuffered > 0;
   }
 
-  /** Start WASM init if not already started. Safe to call multiple times. */
+  /** Start WASM init if not already started. Safe to call multiple times.
+   *  A failed init is NOT cached: the rejected promise is cleared so the
+   *  next call retries instead of wedging the store forever on a transient
+   *  failure (e.g. a flaky WASM fetch). Callers awaiting the failed attempt
+   *  still see the original rejection. */
   ensureReady(): Promise<void> {
     if (!this.ready) {
-      this.ready = this.initModule();
+      const attempt = this.initModule();
+      this.ready = attempt;
+      attempt.catch(() => {
+        if (this.ready === attempt) this.ready = null;
+      });
     }
     return this.ready;
   }
@@ -945,6 +997,12 @@ export class LadybugGraphStore implements GraphStore {
     this.maxVisEdges = maxEdges;
   }
 
+  /** Skip staging source for the SourceText FTS table (see skipSourceContent).
+   *  Must be set before storeSource runs. */
+  async setSkipSourceContent(skip: boolean): Promise<void> {
+    this.skipSourceContent = skip;
+  }
+
   async fetchGraph(query?: string, hops?: number): Promise<GraphData> {
     const t0 = performance.now();
     let data: GraphData;
@@ -1212,17 +1270,24 @@ export class LadybugGraphStore implements GraphStore {
       return { nodes: [], links: [], exhausted: true };
     }
     const lim = Math.max(1, Math.floor(limit));
+    // ORDER BY n.id makes the SKIP/LIMIT cursor stable: without it, storage
+    // order can change under concurrent writes, shifting an unseen row
+    // backward into an already-consumed offset range (permanently dropped) or
+    // forward (duplicate). With a stable order, the only residual hole is a
+    // concurrent APPEND whose new ids sort before the cursor — accepted, as
+    // live indexing concurrent with a progressive load is rare and the next
+    // fetchGraphSkeleton resync picks those rows up.
     const rows = await this.query(
       `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} ` +
-        `SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
+        `ORDER BY n.id SKIP ${Math.max(0, Math.floor(offset))} LIMIT ${lim}`,
     );
     const nodes: GraphNode[] = [];
     const pageIds = new Set<string>();
     for (const r of rows as Record<string, unknown>[]) {
       const id = String(r.id);
-      // SKIP/LIMIT paging has no ORDER BY, so an interleaved write can shift
-      // rows between pages — skip anything already streamed this session
-      // rather than hand the UI a ghost duplicate.
+      // Even with ORDER BY, a concurrent delete/append can still shift rows
+      // between pages — skip anything already streamed this session rather
+      // than hand the UI a ghost duplicate.
       if (this.progressiveIds.has(id)) continue;
       pageIds.add(id);
       this.progressiveIds.add(id);
@@ -1400,43 +1465,54 @@ export class LadybugGraphStore implements GraphStore {
       sourceId: string;
     }> = [];
 
+    // An undirected MATCH carries no direction info, so 'both' runs the
+    // two directed patterns separately — otherwise every incoming edge
+    // would be reported with source/target flipped. Each RELATES edge
+    // matches exactly one of the two patterns (self-loops aside), so no
+    // duplicates are introduced.
+    const patterns: Array<{
+      outgoing: boolean;
+      pattern: (t: string) => string;
+    }> = [];
+    if (direction === 'outgoing' || direction === 'both') {
+      patterns.push({
+        outgoing: true,
+        pattern: (t) => `MATCH (a:${t})-[r:RELATES]->(b)`,
+      });
+    }
+    if (direction === 'incoming' || direction === 'both') {
+      patterns.push({
+        outgoing: false,
+        pattern: (t) => `MATCH (a:${t})<-[r:RELATES]-(b)`,
+      });
+    }
+
     for (const [type, ids] of byType) {
       for (let off = 0; off < ids.length; off += 500) {
         const chunk = ids.slice(off, off + 500);
         const idList = chunk.map((i) => `'${esc(i)}'`).join(', ');
-
-        let pattern: string;
-        switch (direction) {
-          case 'outgoing':
-            pattern = `MATCH (a:${type})-[r:RELATES]->(b)`;
-            break;
-          case 'incoming':
-            pattern = `MATCH (a:${type})<-[r:RELATES]-(b)`;
-            break;
-          default:
-            pattern = `MATCH (a:${type})-[r:RELATES]-(b)`;
-            break;
-        }
-
         const relFilter = relType ? ` AND r.type = '${esc(relType)}'` : '';
-        const rows = await this.query(
-          `${pattern} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
-        );
 
-        for (const row of rows as Record<string, string>[]) {
-          // Neighbor properties come from the JS-side cache (typed columns
-          // vary per type, so we can't select them in a cross-type query)
-          const cached = this.nodeCache.get(row.id);
-          results.push({
-            fromId: row.fromId,
-            neighborId: row.id,
-            neighborName: row.name,
-            neighborProps: cached?.properties,
-            relId: row.rel_id,
-            relType: row.rel_type,
-            relProps: row.rel_properties,
-            sourceId: row.fromId,
-          });
+        for (const { outgoing, pattern } of patterns) {
+          const rows = await this.query(
+            `${pattern(type)} WHERE a.id IN [${idList}]${relFilter} RETURN a.id AS fromId, b.id AS id, b.name AS name, r.id AS rel_id, r.type AS rel_type, r.properties AS rel_properties`,
+          );
+
+          for (const row of rows as Record<string, string>[]) {
+            // Neighbor properties come from the JS-side cache (typed columns
+            // vary per type, so we can't select them in a cross-type query)
+            const cached = this.nodeCache.get(row.id);
+            results.push({
+              fromId: row.fromId,
+              neighborId: row.id,
+              neighborName: row.name,
+              neighborProps: cached?.properties,
+              relId: row.rel_id,
+              relType: row.rel_type,
+              relProps: row.rel_properties,
+              sourceId: outgoing ? row.fromId : row.id,
+            });
+          }
         }
       }
     }
@@ -1772,6 +1848,17 @@ export class LadybugGraphStore implements GraphStore {
       await this.execInternal(`DROP TABLE IF EXISTS ${type}`);
     }
     await this.execInternal(`DROP TABLE IF EXISTS SourceText`);
+    // NodeVector lives outside SCHEMA_STATEMENTS (created by initVectorSchema).
+    // Dropping it also drops nodevec_idx; leaving it would keep stale embedding
+    // rows that break re-index COPYs (PK violations) and pollute vector search.
+    try {
+      await this.execInternal(`DROP TABLE IF EXISTS NodeVector`);
+      await this.execInternal(
+        'CREATE NODE TABLE IF NOT EXISTS NodeVector(id STRING PRIMARY KEY, vec FLOAT[384])',
+      );
+    } catch {
+      // VECTOR extension may be unavailable — mirrors initVectorSchema
+    }
     // Recreate schema
     for (const stmt of SCHEMA_STATEMENTS) {
       await this.execInternal(stmt);
@@ -1782,6 +1869,7 @@ export class LadybugGraphStore implements GraphStore {
     this.nodeCache.clear();
     this.flushedPackageIds.clear();
     this.flushedSourceIds.clear();
+    this.pendingSnippetIds.clear();
     this.sourceCache.clear();
     this.sourceSnippets.clear();
     this.pendingNodes = [];
@@ -1853,7 +1941,7 @@ export class LadybugGraphStore implements GraphStore {
     );
 
     // Repo-scoped node tables. Dependency is the only global table and is
-    // omitted. Variable IDs are `{scope_id}::{name}` where scope_id is a
+    // omitted. Variable IDs are `{scope_id}::var:{name}` where scope_id is a
     // File/Class/Function — all repo-prefixed, so they match the predicate.
     // SourceText is repo-scoped (file-id keyed). NodeVector shadows every
     // node, so the same id predicate prunes it.
@@ -1904,6 +1992,9 @@ export class LadybugGraphStore implements GraphStore {
     }
     for (const id of [...this.flushedSourceIds]) {
       if (matches(id)) this.flushedSourceIds.delete(id);
+    }
+    for (const id of [...this.pendingSnippetIds]) {
+      if (matches(id)) this.pendingSnippetIds.delete(id);
     }
 
     await this.sweepOrphanedDependencies();
@@ -2400,17 +2491,19 @@ export class LadybugGraphStore implements GraphStore {
     await this.ensureReady();
 
     // Persist to LadybugDB NodeVector table in chunks
+    const importGeneration = this.generation;
     for (let offset = 0; offset < vectors.length; offset += FLUSH_CHUNK_SIZE) {
       const chunk = vectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
       const lines = ['id,vec'];
       for (const { id, vec } of chunk) {
         lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
       }
-      const csv = lines.join('\n');
-      const path = this.tmpCsvPath('vectors_embed');
-      await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-      await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
-      await this.engine.fsUnlink(path);
+      await this.copyCsvChunk(
+        'NodeVector',
+        'vectors_embed',
+        lines.join('\n'),
+        importGeneration,
+      );
     }
 
     if (!this.hasVectorIndex) {
@@ -2449,9 +2542,66 @@ export class LadybugGraphStore implements GraphStore {
     return p;
   }
 
+  /** Write one CSV chunk into the engine FS and COPY it into `table`.
+   *
+   *  - Aborts (AbortError) if `flushGeneration` no longer matches the store's
+   *    current generation — i.e. clearGraph()/importDatabase() tore the schema
+   *    down since the caller started. Without this per-chunk check, a
+   *    multi-chunk flush would re-capture the NEW generation on its next
+   *    exec() and COPY stale rows into the freshly-recreated schema.
+   *  - Unlinks the temp file in `finally` so a failed COPY doesn't leak it
+   *    in the engine's virtual filesystem.
+   */
+  private async copyCsvChunk(
+    table: string,
+    label: string,
+    csv: string,
+    flushGeneration: number,
+  ): Promise<void> {
+    if (this.generation !== flushGeneration) {
+      throw abortError('Flush aborted: store was cleared');
+    }
+    const path = this.tmpCsvPath(label);
+    await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
+    try {
+      // Re-check after the fsWrite await: a clearGraph in that window would
+      // otherwise let exec() capture the NEW generation and pass its check.
+      // No await sits between this check and the exec() enqueue, and exec's
+      // own generation check covers any bump after enqueue.
+      if (this.generation !== flushGeneration) {
+        throw abortError('Flush aborted: store was cleared');
+      }
+      await this.exec(`COPY ${table} FROM '${path}' ${COPY_OPTS}`);
+    } finally {
+      try {
+        await this.engine.fsUnlink(path);
+      } catch {
+        // best-effort cleanup — never mask the COPY error
+      }
+    }
+  }
+
+  // NOT TRANSACTIONAL — what a mid-flush failure can still leave behind:
+  //  * JS-side indexes (bm25Index, nodeCache, nodeTypeMap) are updated
+  //    eagerly before the COPYs, so they may briefly describe nodes that
+  //    aren't in the DB yet. A retried flush re-applies those updates
+  //    idempotently, so they converge once the re-queued batch lands.
+  //  * SourceText chunks that fail are left un-marked in flushedSourceIds
+  //    and retried on the next flush; chunks already COPY'd stay.
+  //  * NodeVector (embedding) chunks that fail are LOST for the session —
+  //    their nodes are already COPY'd so they can't be re-queued through
+  //    pendingNodes without PK violations. Semantic search degrades for
+  //    those nodes; accepted (vectors are an enrichment, not source data).
+  //  * Node/relationship rows, however, are never silently dropped: any
+  //    unwritten remainder is restored to the pending buffers before the
+  //    error propagates (see the node-stage catch below).
   private async flushInner(): Promise<void> {
     if (this.pendingNodes.length === 0 && this.pendingRels.length === 0) return;
     await this.ensureReady();
+
+    // Captured ONCE for the whole flush; every chunk checks it before its
+    // exec so a concurrent clearGraph aborts the remainder of the flush.
+    const flushGeneration = this.generation;
 
     const rawNodes = this.pendingNodes;
     const rels = this.pendingRels;
@@ -2535,62 +2685,139 @@ export class LadybugGraphStore implements GraphStore {
     // node names regularly do (e.g. `setup(:Partial<Props["x"]>)`), tripping
     // "neither QUOTE nor ESCAPE is preceded by ESCAPE". Single-threaded reads
     // parse them correctly (mirrors the agent's graph_store COPY).
-    for (const [type, bucket] of buckets) {
-      for (let offset = 0; offset < bucket.length; offset += FLUSH_CHUNK_SIZE) {
-        const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const csv = generateTypedNodeCSV(type, chunk);
-        const path = this.tmpCsvPath(`nodes_${type}`);
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY ${type} FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
+    //
+    // Each bucket is consumed (spliced) only AFTER its chunk's COPY succeeds,
+    // so on failure `buckets` holds exactly the unwritten remainder — which
+    // the catch re-queues (with all relationships, none flushed yet) instead
+    // of silently dropping the rest of the batch.
+    try {
+      for (const [type, bucket] of buckets) {
+        while (bucket.length > 0) {
+          const chunk = bucket.slice(0, FLUSH_CHUNK_SIZE);
+          const csv = generateTypedNodeCSV(type, chunk);
+          await this.copyCsvChunk(type, `nodes_${type}`, csv, flushGeneration);
+          bucket.splice(0, chunk.length);
+        }
       }
+    } catch (err) {
+      if (this.generation === flushGeneration) {
+        // Real COPY failure (not a clearGraph abort): restore the unwritten
+        // nodes and every relationship to the pending buffers so the next
+        // flush retries them. clearGraph aborts skip the re-queue — the
+        // whole batch is intentionally discarded then.
+        const unwritten: ImportBatchRequest['nodes'] = [];
+        for (const bucket of buckets.values()) {
+          for (const node of bucket) {
+            // Re-queued Dependencies must be re-eligible for COPY next time.
+            if (node.type === 'Dependency') {
+              this.flushedPackageIds.delete(node.id);
+            }
+            unwritten.push(node);
+          }
+        }
+        this.pendingNodes = unwritten.concat(this.pendingNodes);
+        this.pendingRels = rels.concat(this.pendingRels);
+        console.warn(
+          `[LadybugStore] flush failed mid-batch — re-queued ${unwritten.length} nodes + ${rels.length} rels for retry:`,
+          err,
+        );
+      }
+      throw err;
     }
 
     // --- Flush source text for FTS indexing (file-level only) ---
-    // Only flush snippets not yet in the SourceText table (avoid PK violations)
+    // Only flush snippets not yet in the SourceText table (avoid PK
+    // violations). Driven by the pendingSnippetIds dirty set so a flush
+    // with no new source (the common case — many node flushes per source
+    // load) skips this stage without scanning every stored snippet.
+    // Iteration order matches the old full-map scan: ids enter the dirty
+    // set in sourceSnippets insertion order and leave only on COPY success.
     const newSnippets = new Map<string, string>();
-    for (const [id, text] of this.sourceSnippets) {
-      if (!this.flushedSourceIds.has(id)) {
+    if (this.pendingSnippetIds.size > 0) {
+      for (const id of this.pendingSnippetIds) {
+        if (this.flushedSourceIds.has(id)) {
+          // Already in SourceText (a re-stored id) — never re-COPY it.
+          this.pendingSnippetIds.delete(id);
+          continue;
+        }
+        const text = this.sourceSnippets.get(id);
+        if (text === undefined) {
+          // Snippet removed since it was queued (deleteRepo) — drop it.
+          this.pendingSnippetIds.delete(id);
+          continue;
+        }
         newSnippets.set(id, text);
       }
     }
     if (newSnippets.size > 0) {
       const entries = Array.from(newSnippets.entries());
-      for (
-        let offset = 0;
-        offset < entries.length;
-        offset += FLUSH_CHUNK_SIZE
-      ) {
-        const chunk = new Map(entries.slice(offset, offset + FLUSH_CHUNK_SIZE));
-        const csv = generateSourceTextCSV(chunk, this.sourceCache);
-        const path = this.tmpCsvPath('source_text');
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY SourceText FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
-      }
-      for (const id of newSnippets.keys()) {
-        this.flushedSourceIds.add(id);
+      try {
+        for (
+          let offset = 0;
+          offset < entries.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
+          const slice = entries.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const csv = generateSourceTextCSV(new Map(slice), this.sourceCache);
+          await this.copyCsvChunk(
+            'SourceText',
+            'source_text',
+            csv,
+            flushGeneration,
+          );
+          // Mark per chunk (not all-at-end) so a later chunk's failure
+          // doesn't leave already-written rows unmarked — re-COPYing them
+          // next flush would trip PK violations. Failed chunks keep their
+          // ids in pendingSnippetIds and retry on the next flush.
+          for (const [id] of slice) {
+            this.flushedSourceIds.add(id);
+            this.pendingSnippetIds.delete(id);
+          }
+        }
+      } catch (err) {
+        if (this.generation !== flushGeneration) throw err;
+        // Non-fatal: unmarked snippets stay in sourceSnippets and are
+        // retried on the next flush. Don't abort — the relationship flush
+        // below must still run for the nodes already written.
+        console.warn(
+          '[LadybugStore] SourceText flush failed — remaining snippets will retry next flush:',
+          err,
+        );
       }
       await this.rebuildSourceFTS();
     }
 
     // --- Flush embeddings to NodeVector table ---
     if (pendingVectors.length > 0) {
-      for (
-        let offset = 0;
-        offset < pendingVectors.length;
-        offset += FLUSH_CHUNK_SIZE
-      ) {
-        const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
-        const lines = ['id,vec'];
-        for (const { id, vec } of chunk) {
-          lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+      try {
+        for (
+          let offset = 0;
+          offset < pendingVectors.length;
+          offset += FLUSH_CHUNK_SIZE
+        ) {
+          const chunk = pendingVectors.slice(offset, offset + FLUSH_CHUNK_SIZE);
+          const lines = ['id,vec'];
+          for (const { id, vec } of chunk) {
+            lines.push(`${csvEscape(id)},${csvEscape(`[${vec.join(',')}]`)}`);
+          }
+          await this.copyCsvChunk(
+            'NodeVector',
+            'vectors',
+            lines.join('\n'),
+            flushGeneration,
+          );
         }
-        const csv = lines.join('\n');
-        const path = this.tmpCsvPath('vectors');
-        await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
-        await this.exec(`COPY NodeVector FROM '${path}' ${COPY_OPTS}`);
-        await this.engine.fsUnlink(path);
+      } catch (err) {
+        if (this.generation !== flushGeneration) throw err;
+        // Non-fatal but LOSSY: the nodes these vectors belong to are already
+        // COPY'd, so the vectors can't be re-queued via pendingNodes without
+        // PK violations. Semantic search degrades for these nodes (see the
+        // NOT TRANSACTIONAL note above flushInner). The relationship flush
+        // below must still run.
+        console.warn(
+          '[LadybugStore] NodeVector flush failed — embeddings for this batch are lost:',
+          err,
+        );
       }
       // Create vector index if not yet created
       if (!this.hasVectorIndex) {
@@ -2623,13 +2850,25 @@ export class LadybugGraphStore implements GraphStore {
           offset < bucket.length;
           offset += FLUSH_CHUNK_SIZE
         ) {
+          if (this.generation !== flushGeneration) {
+            throw abortError('Flush aborted: store was cleared');
+          }
           const chunk = bucket.slice(offset, offset + FLUSH_CHUNK_SIZE);
           const csv = generateRelCSV(chunk);
           const path = this.tmpCsvPath(`rels_${key}`);
           await this.engine.fsWrite(path, CSV_ENCODER.encode(csv));
           try {
+            // Re-check after the fsWrite await (see copyCsvChunk).
+            if (this.generation !== flushGeneration) {
+              throw abortError('Flush aborted: store was cleared');
+            }
             await this.exec(`COPY RELATES_${key} FROM '${path}' ${COPY_OPTS}`);
           } catch (err) {
+            // A clearGraph abort must propagate, not fall back to inserts
+            // (they'd COPY stale rows into the recreated schema).
+            if (err instanceof DOMException && err.name === 'AbortError') {
+              throw err;
+            }
             console.warn(
               `[LadybugStore] COPY RELATES_${key} failed (chunk at ${offset}), inserting rows individually:`,
               err,
@@ -2649,8 +2888,13 @@ export class LadybugGraphStore implements GraphStore {
                 );
               }
             }
+          } finally {
+            try {
+              await this.engine.fsUnlink(path);
+            } catch {
+              // best-effort cleanup
+            }
           }
-          await this.engine.fsUnlink(path);
         }
       }
     }
@@ -2675,12 +2919,15 @@ export class LadybugGraphStore implements GraphStore {
         path: f.path,
         binary: f.binary,
       });
-      // Store truncated source for FTS indexing (flushed to SourceText table)
-      if (!f.binary && f.content) {
+      // Store truncated source for FTS indexing (flushed to SourceText table).
+      // Skipped on constrained devices for large repos — the full-source FTS is
+      // the biggest store-write memory cost and overflows the tab cap.
+      if (!this.skipSourceContent && !f.binary && f.content) {
         this.sourceSnippets.set(
           f.id,
           f.content.slice(0, MAX_SOURCE_TEXT_CHARS),
         );
+        this.pendingSnippetIds.add(f.id);
       }
     }
   }
@@ -2944,11 +3191,31 @@ export class LadybugGraphStore implements GraphStore {
       return [];
     }
 
-    const rows = await this.query(
-      `MATCH (n:${type}) RETURN ${typedReturnClause(type as NodeType)} LIMIT ${effectiveLimit}`,
+    // Push equality filters into the Cypher WHERE clause wherever possible.
+    // Filtering in JS after `LIMIT ${effectiveLimit}` produced false
+    // negatives: matching rows past the first `limit` unfiltered rows were
+    // never seen (e.g. listNodes('Function', 50, {language:'go'}) returned []
+    // on a mixed-language repo). Only STRING columns declared for this node
+    // type are pushable (case-insensitive equality); anything else falls back
+    // to a paged JS scan below. A value containing `*` is a wildcard pattern,
+    // never an equality — pushing it as `lower(n.k) = 'a*'` would match the
+    // literal string "a*" and silently return nothing, so those stay residual
+    // and are matched as anchored regexes in `matchesResidual`.
+    const columnTypes = new Map(
+      NODE_COLUMNS[type as NodeType].map((c) => [c.name, c.type]),
     );
+    const pushed: string[] = [];
+    const residual: [string, string][] = [];
+    for (const [k, v] of Object.entries(filters ?? {})) {
+      if (columnTypes.get(k) === 'STRING' && !v.includes('*')) {
+        pushed.push(`lower(n.${k}) = '${esc(v.toLowerCase())}'`);
+      } else {
+        residual.push([k, v]);
+      }
+    }
+    const where = pushed.length > 0 ? `WHERE ${pushed.join(' AND ')} ` : '';
 
-    let results: NodeResult[] = (rows as Record<string, unknown>[]).map((r) => {
+    const mapRow = (r: Record<string, unknown>): NodeResult => {
       const props = rowToProperties(r);
       return {
         id: String(r.id),
@@ -2956,23 +3223,60 @@ export class LadybugGraphStore implements GraphStore {
         name: String(r.name),
         ...(props && { properties: props }),
       };
-    });
-
-    if (filters && Object.keys(filters).length > 0) {
-      results = results.filter((n) => {
-        if (!n.properties) return false;
-        return Object.entries(filters).every(([k, v]) => {
-          const propLower = String(n.properties![k]).toLowerCase();
-          const valLower = v.toLowerCase();
-          if (valLower.includes('*')) {
-            // Wildcard match: anchored, * → .*
-            const escaped = valLower.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-            const pattern = '^' + escaped.replace(/\*/g, '.*') + '$';
-            return new RegExp(pattern).test(propLower);
-          }
-          return propLower === valLower;
-        });
+    };
+    const matchesResidual = (n: NodeResult): boolean => {
+      if (residual.length === 0) return true;
+      if (!n.properties) return false;
+      return residual.every(([k, v]) => {
+        const propLower = String(n.properties![k]).toLowerCase();
+        const valLower = v.toLowerCase();
+        if (valLower.includes('*')) {
+          // Wildcard match: anchored, * → .*
+          const escaped = valLower.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp('^' + escaped.replace(/\*/g, '.*') + '$').test(
+            propLower,
+          );
+        }
+        return propLower === valLower;
       });
+    };
+
+    let results: NodeResult[];
+    if (residual.length === 0) {
+      // Fully pushable — one query, DB applies the filter before the LIMIT.
+      const rows = await this.query(
+        `MATCH (n:${type}) ${where}RETURN ${typedReturnClause(type as NodeType)} LIMIT ${effectiveLimit}`,
+      );
+      results = (rows as Record<string, unknown>[]).map(mapRow);
+    } else {
+      // Residual JS filters — page through the (Cypher-prefiltered) rows
+      // with a stable ORDER BY until we have `limit` matches or the table
+      // is exhausted, capped to a sane total scan.
+      const PAGE_SIZE = Math.max(effectiveLimit, 1000);
+      const MAX_SCANNED_ROWS = 50_000;
+      results = [];
+      let offset = 0;
+      for (;;) {
+        const rows = await this.query(
+          `MATCH (n:${type}) ${where}RETURN ${typedReturnClause(type as NodeType)} ` +
+            `ORDER BY n.id SKIP ${offset} LIMIT ${PAGE_SIZE}`,
+        );
+        for (const r of rows as Record<string, unknown>[]) {
+          const node = mapRow(r);
+          if (matchesResidual(node)) {
+            results.push(node);
+            if (results.length >= effectiveLimit) break;
+          }
+        }
+        offset += rows.length;
+        if (
+          results.length >= effectiveLimit ||
+          rows.length < PAGE_SIZE ||
+          offset >= MAX_SCANNED_ROWS
+        ) {
+          break;
+        }
+      }
     }
 
     logPerf(

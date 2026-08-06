@@ -310,7 +310,8 @@
 .graph-controls {
   position: absolute;
   bottom: 20px;
-  right: 24px;
+  /* Sit clear of the right-hand chat / help overlay when one is open. */
+  right: calc(24px + var(--right-panel-inset, 0px));
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -341,6 +342,51 @@
   justify-content: center;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+/* Large-graph notice: edges start hidden past the auto-hide threshold; the
+   pill explains why and offers an in-place re-enable. */
+.graph-edges-hidden-pill {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.graph-edges-hidden-pill__show {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.graph-edges-hidden-pill__show:hover {
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.graph-edges-hidden-pill__dismiss {
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
 }
 
 /* Fetch-phase placeholder: pulsing logo + stage text centered in the viewport
@@ -747,13 +793,19 @@
 }
 
 .chat-panel {
-  flex-shrink: 0;
-  background: var(--background);
+  /* Floats over the full-width graph (like the left side panel) with a
+   * translucent, blurred background so the graph shines through. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: color-mix(in oklch, var(--background) 60%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-left: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
   display: flex;
   flex-direction: column;
   z-index: 10;
-  position: relative;
   padding-top: 64px;
   /* Clamp so a stored width wider than the current viewport can't hide the
    * left-edge resize handle. The stored value persists — CSS renders the
@@ -1646,39 +1698,45 @@
     bottom: max(20px, env(safe-area-inset-bottom));
   }
 
+  /* The view-preset bar drops to a full-width row under the toolbar on narrow
+     screens; move the "edges hidden" pill below it so they don't overlap, and
+     cap its width so the long count doesn't run off-screen. */
+  .graph-edges-hidden-pill {
+    top: 116px;
+    max-width: calc(100vw - 24px);
+    font-size: 0.75rem;
+  }
+
+  /* Truncate the message with an ellipsis so "Show edges" + × stay INSIDE the
+     capped pill instead of sticking out past its edge. */
+  .graph-edges-hidden-pill > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .graph-edges-hidden-pill__show,
+  .graph-edges-hidden-pill__dismiss {
+    flex-shrink: 0;
+  }
+
   /* Collapse graph controls into a single button with popup */
   .graph-controls-trigger,
   .graph-controls-fullscreen {
     display: flex;
   }
 
+  /* A clean right-aligned 3-column grid that flows all controls left-to-right
+     (there are ~9, so 3 columns tile them into a tidy 3×3 block; the old
+     nth-child hacks assumed 4 and left a ragged, staircased layout). Columns
+     are `auto` so they match the 44px touch-target button width — a fixed 36px
+     was narrower than the buttons, so they overlapped/touched. Items div is
+     always rendered open. */
   .graph-controls-items {
-    display: none;
-    grid-template-columns: repeat(4, auto);
-    gap: 4px;
-    position: absolute;
-    bottom: 0;
-    right: calc(100% + 4px);
-  }
-
-  .graph-controls-items--open {
     display: grid;
-  }
-
-  /* Top row: 3 items right-aligned (gap on the left) */
-  .graph-controls-items .graph-control-btn:nth-child(1) {
-    grid-column: 2;
-  }
-  .graph-controls-items .graph-control-btn:nth-child(2) {
-    grid-column: 3;
-  }
-  .graph-controls-items .graph-control-btn:nth-child(3) {
-    grid-column: 4;
-  }
-  /* Force 4th item to start the second row (prevents grid auto-fill into empty top-left) */
-  .graph-controls-items .graph-control-btn:nth-child(4) {
-    grid-row: 2;
-    grid-column: 1;
+    grid-template-columns: repeat(3, auto);
+    justify-content: end;
+    gap: 8px;
   }
 
   .version-footer {
@@ -1809,6 +1867,10 @@
     border-top: 1px solid var(--border);
     padding-top: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
+    /* Stacked below the graph on mobile — nothing behind it, so keep it opaque. */
+    background: var(--background);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .chat-input-area {

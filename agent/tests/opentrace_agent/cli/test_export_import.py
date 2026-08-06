@@ -120,6 +120,51 @@ def test_import_empty_zip(tmp_path):
     s.close()
 
 
+def test_export_does_not_truncate_relationships(tmp_path):
+    """Regression: export silently capped relationships at the store's
+    default LIMIT 10000, producing disconnected archives on any
+    medium-size graph."""
+    db_path = str(tmp_path / "big.db")
+    s = GraphStore(db_path)
+
+    n_nodes = 120
+    n_rels = 10_050  # just past the old cap
+    nodes = [{"id": f"fn{i}", "type": "Function", "name": f"fn{i}", "properties": {}} for i in range(n_nodes)]
+    rels = []
+    i = 0
+    for a in range(n_nodes):
+        for b in range(n_nodes):
+            if a == b:
+                continue
+            rels.append(
+                {
+                    "id": f"r{i}",
+                    "type": "CALLS",
+                    "source_id": f"fn{a}",
+                    "target_id": f"fn{b}",
+                    "properties": {},
+                }
+            )
+            i += 1
+            if i >= n_rels:
+                break
+        if i >= n_rels:
+            break
+    result = s.import_batch(nodes, rels)
+    assert result["relationships_created"] == n_rels
+
+    data = export_database(s)
+    s.close()
+
+    import pyarrow.parquet as pq
+
+    zf = zipfile.ZipFile(io.BytesIO(data))
+    with zf.open("relationships.parquet") as fh:
+        table = pq.read_table(io.BytesIO(fh.read()))
+    assert table.num_rows == n_rels
+    zf.close()
+
+
 def test_roundtrip_preserves_metadata(store, tmp_path):
     """Index metadata should survive export/import."""
     store.save_metadata({"repoId": "test/repo", "commitSha": "abc123", "indexedAt": "2026-01-01"})

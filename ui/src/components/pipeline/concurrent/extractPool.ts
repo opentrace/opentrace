@@ -21,6 +21,7 @@
  * bounds peak memory — only N files are in flight at once.
  */
 
+import { isConstrainedDevice } from '../../../config/device';
 import type { CodeSymbol } from '../types';
 import type { ImportAnalysisResult } from '../parser/importAnalyzer';
 import type { ExtractWorkerIn, ExtractWorkerOut } from './extractTypes';
@@ -47,13 +48,16 @@ export interface RunCallbacks {
 
 /** Choose a sensible worker count: leave a core for the main thread, cap the
  *  fan-out so we don't load N×14 grammars on machines reporting huge core
- *  counts. */
+ *  counts. On a memory-constrained device (phone) cap hard at 2 — each worker
+ *  loads its own grammars and holds an AST + file content while parsing, so a
+ *  full fan-out is a major contributor to the indexing OOM. */
 export function defaultPoolSize(): number {
   const cores =
     typeof navigator !== 'undefined' && navigator.hardwareConcurrency
       ? navigator.hardwareConcurrency
       : 4;
-  return Math.min(8, Math.max(1, cores - 1));
+  const max = isConstrainedDevice() ? 2 : 8;
+  return Math.min(max, Math.max(1, cores - 1));
 }
 
 export class ExtractPool {

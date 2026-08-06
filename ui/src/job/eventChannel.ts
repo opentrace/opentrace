@@ -53,6 +53,20 @@ export class EventChannel<T> implements AsyncIterable<T> {
     }
   }
 
+  /**
+   * Close the channel AND discard any buffered events, so the consumer's
+   * iterator ends immediately instead of draining stale events first.
+   *
+   * Use this for cancellation: a cancelled job's buffered events (e.g. a
+   * GRAPH_READY/DONE that was pushed just before the user hit cancel) must
+   * not keep driving UI state. Normal completion should use close(), which
+   * lets the consumer drain the remaining buffered events.
+   */
+  closeAndDrop(): void {
+    this.buffer.length = 0;
+    this.close();
+  }
+
   error(err: unknown): void {
     if (this.closed) return;
     this.closed = true;

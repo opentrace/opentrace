@@ -170,6 +170,15 @@ export default function ChatPanel({
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const [highlightEnabled, setHighlightEnabled] = useState(true);
+  // Ref mirror of `highlightEnabled` so the long-lived streaming loop reads
+  // the CURRENT value at tool-result time instead of the render-time closure
+  // captured when the turn started (a mid-turn toggle otherwise applies to
+  // the whole turn — and worse, the submit-time `setHighlightEnabled(true)`
+  // isn't visible to the very turn that set it).
+  const highlightEnabledRef = useRef(true);
+  useEffect(() => {
+    highlightEnabledRef.current = highlightEnabled;
+  }, [highlightEnabled]);
   const [hasFoundNodes, setHasFoundNodes] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const [showHistory, setShowHistory] = useState(false);
@@ -407,7 +416,11 @@ export default function ChatPanel({
   };
 
   const getAgentHandle = (): AgentHandle => {
-    const key = `${providerId}:${modelId}:${apiKey}:${localUrl}:${repoUrl ?? ''}`;
+    // Include a cheap graph signature: the agent bakes buildGraphContext(...)
+    // into its system prompt, so a graph change (re-index, repo switch,
+    // progressive load) must mint a fresh agent or the context goes stale.
+    const graphSig = `${graphData.nodes.length}:${graphData.links.length}`;
+    const key = `${providerId}:${modelId}:${apiKey}:${localUrl}:${repoUrl ?? ''}:${graphSig}`;
     if (agentKeyRef.current !== key || !agentRef.current) {
       const systemPrompt = buildGraphContext(graphData.nodes, graphData.links);
       agentRef.current = createChatAgent(
@@ -457,7 +470,10 @@ export default function ChatPanel({
 
     onQuestionSubmit?.();
     // Ensure graph highlights are on for this turn — we auto-disable them at
-    // stream end, so each new submit needs to turn them back on.
+    // stream end, so each new submit needs to turn them back on. Update the
+    // ref immediately: the state update won't have committed by the time the
+    // first tool result of this turn arrives.
+    highlightEnabledRef.current = true;
     setHighlightEnabled(true);
 
     // Abort any previous request
@@ -642,10 +658,10 @@ export default function ChatPanel({
                 for (const id of ids) chatFoundNodesRef.current.add(id);
                 setHasFoundNodes(true);
                 onChatHighlight?.(
-                  highlightEnabled
+                  highlightEnabledRef.current
                     ? new Set(chatFoundNodesRef.current)
                     : new Set(),
-                  highlightEnabled ? ids : [],
+                  highlightEnabledRef.current ? ids : [],
                 );
               }
             }
@@ -797,9 +813,19 @@ export default function ChatPanel({
         return parts;
       });
     } finally {
-      streamingRef.current = false;
-      setStreaming(false);
-      progress.setListener(null);
+      // Turn-ownership guard: if this turn was aborted and a NEW turn has
+      // already started (edit-resend, "Chat with PR", back-to-back submit),
+      // `abortRef` points at the replacement's controller. In that case the
+      // shared streaming state, the progress listener, and the last assistant
+      // message all belong to the new turn — a stale finally must not touch
+      // them (it would kill the live turn's spinner, drop its sub-agent
+      // progress, and stamp this turn's usage onto the new turn's message).
+      const isCurrentTurn = abortRef.current === controller;
+      if (isCurrentTurn) {
+        streamingRef.current = false;
+        setStreaming(false);
+        progress.setListener(null);
+      }
       // Attach accumulated token usage to the assistant message, then persist.
       //
       // Why flushSync: this whole block used to read `messagesRef.current`
@@ -817,22 +843,28 @@ export default function ChatPanel({
       // setters + our usage merge) and run effects synchronously, so by
       // the time it returns `messagesRef.current` reflects the final
       // rendered state and persistence can happen outside any updater.
+      // Skip the usage merge entirely when this turn was superseded — the
+      // last assistant message now belongs to the replacement turn. On an
+      // explicit user stop of the CURRENT turn the merge still runs so the
+      // partial usage is shown against the truncated answer.
       const hasUsage =
         usageAccum.inputTokens > 0 || usageAccum.outputTokens > 0;
-      flushSync(() => {
-        setMessages((prev) => {
-          if (!hasUsage) return prev;
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role !== 'assistant') return prev;
-          updated[updated.length - 1] = {
-            ...(last as AssistantMessage),
-            usage: usageAccum,
-          };
-          return updated;
+      if (isCurrentTurn) {
+        flushSync(() => {
+          setMessages((prev) => {
+            if (!hasUsage) return prev;
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.role !== 'assistant') return prev;
+            updated[updated.length - 1] = {
+              ...(last as AssistantMessage),
+              usage: usageAccum,
+            };
+            return updated;
+          });
         });
-      });
-      if (!controller.signal.aborted) {
+      }
+      if (isCurrentTurn && !controller.signal.aborted) {
         persistMessages(
           messagesRef.current,
           providerId,
@@ -1002,7 +1034,15 @@ export default function ChatPanel({
   /** Switch to chat tab and send a pre-seeded prompt (used by PR panel) */
   const handleChatWithPR = (prompt: string) => {
     setActiveTab('chat');
-    abortRef.current?.abort();
+    // Mirror submitEditMessage: after aborting a live stream we must reset
+    // the streaming flag synchronously, otherwise sendMessage's
+    // `streamingRef.current` guard silently drops this prompt (the aborted
+    // turn's finally only clears the flag a microtask later).
+    if (streamingRef.current) {
+      abortRef.current?.abort();
+      streamingRef.current = false;
+      setStreaming(false);
+    }
     sendMessage(prompt);
   };
 

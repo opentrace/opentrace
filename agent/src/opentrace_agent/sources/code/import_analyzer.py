@@ -20,6 +20,7 @@ aliases to repo-relative file paths, enabling module-qualified call resolution.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import tree_sitter
@@ -96,16 +97,28 @@ def _parse_python_import(
     for child in node.children:
         if child.type == "dotted_name":
             module_name = child.text.decode()
+            top_level = module_name.split(".")[0]
             # Try to resolve module.submodule → module/submodule.py or module/submodule/__init__.py
             candidates = _module_to_paths(module_name)
             resolved = False
             for candidate in candidates:
                 if candidate in known_files:
-                    result[module_name.split(".")[-1]] = candidate
+                    # ``import a.b.c`` binds only ``a`` in Python; attribute
+                    # calls reference the full dotted path (``a.b.c.func()``),
+                    # so register the full name — not the last segment, which
+                    # is never a usable binding for a plain dotted import.
+                    result[module_name] = candidate
                     resolved = True
                     break
-            if not resolved:
-                top_level = module_name.split(".")[0]
+            top_resolved = False
+            if "." in module_name:
+                # Also map the top-level package name (the actual binding).
+                for candidate in _module_to_paths(top_level):
+                    if candidate in known_files:
+                        result.setdefault(top_level, candidate)
+                        top_resolved = True
+                        break
+            if not resolved and not top_resolved:
                 external[top_level] = package_id("pypi", top_level)
         elif child.type == "aliased_import":
             name_node = child.child_by_field_name("name")
@@ -179,30 +192,118 @@ def _parse_python_from_import(
             resolved_path = candidate
             break
 
-    # Store individual imported symbol names from `from X import Y, Z`
+    # Store individual imported symbol names from `from X import Y, Z`.
+    # When X resolved to a package __init__.py, an imported name may be a
+    # submodule (`from . import helper` with pkg/helper.py) — prefer the
+    # module file and fall back to the __init__.py (symbol import) only
+    # when no such module file exists.
     if resolved_path is not None:
         for child in node.children:
             if child.type == "dotted_name" and child != node.child_by_field_name("module_name"):
                 # Bare imported name: `from X import Y`
-                result[child.text.decode()] = resolved_path
+                name = child.text.decode()
+                result[name] = _package_submodule_path(resolved_path, name, known_files) or resolved_path
             elif child.type == "aliased_import":
                 # `from X import Y as Z` — store the alias
                 name_node = child.child_by_field_name("name")
                 alias_node = child.child_by_field_name("alias")
+                name = name_node.text.decode() if name_node else None
+                target = resolved_path
+                if name:
+                    target = _package_submodule_path(resolved_path, name, known_files) or resolved_path
                 if alias_node:
-                    result[alias_node.text.decode()] = resolved_path
-                elif name_node:
-                    result[name_node.text.decode()] = resolved_path
+                    result[alias_node.text.decode()] = target
+                elif name:
+                    result[name] = target
     elif not is_relative:
         # External import: not resolved to any local file
         top_level = module_text.split(".")[0]
         external[top_level] = package_id("pypi", top_level)
 
 
+def build_go_dir_index(known_files: set[str]) -> dict[str, str]:
+    """Precompute directory → representative file for O(1) Go import resolution.
+
+    Maps every known file's parent directory to the lexicographically smallest
+    file it contains. Import specs are then resolved by probing the trailing
+    path-component suffixes of the import path (see
+    :func:`_lookup_go_package_file`) instead of scanning the whole file set per
+    import spec — the same shape as the browser mirror's
+    ``importAnalyzer.ts buildDirIndex``. (The TS index also keys unambiguous
+    directory *basenames*; here every trailing suffix of the import path is
+    probed instead, so no basename shortcut is needed.)
+
+    Unlike the TS mirror this deliberately indexes files of every extension:
+    the historical Python matching considered any known file (e.g. a lone
+    ``.sql`` file in the package directory still resolved the import), and
+    that behaviour is preserved.
+
+    Build this once per repo and pass it to :func:`analyze_go_imports` when
+    analyzing many files against the same file set.
+    """
+    index: dict[str, str] = {}
+    for path in known_files:
+        d = _parent_dir(path)
+        cur = index.get(d)
+        if cur is None or path < cur:
+            index[d] = path
+    return index
+
+
+def _iter_trailing_dirs(path: str) -> Iterator[str]:
+    """Yield *path* and every trailing path-component suffix.
+
+    ``"a/b/c"`` → ``"a/b/c"``, ``"b/c"``, ``"c"``.
+    """
+    yield path
+    idx = path.find("/")
+    while idx != -1:
+        yield path[idx + 1 :]
+        idx = path.find("/", idx + 1)
+
+
+def _lookup_go_package_file(
+    dir_index: dict[str, str],
+    rel_path: str,
+    import_path: str,
+) -> str | None:
+    """Find the known file that resolves a Go import path, or None.
+
+    A known directory matches when it equals — or is a trailing
+    path-component suffix of — the import path (both the raw path and the
+    module-prefix-stripped one are probed). Matching only the last segment
+    would wrongly link unrelated third-party packages (e.g.
+    ``github.com/other/store``) to any local dir named ``store``. The set of
+    matching directories is exactly what the historical full scan over
+    ``known_files`` produced.
+
+    Among multiple matching files the lexicographically smallest path wins.
+    The historical scan returned whichever match came first in ``set``
+    iteration order, which is str-hash dependent and therefore varied between
+    processes (PYTHONHASHSEED is not pinned anywhere in the agent) — the
+    multi-candidate pick was already nondeterministic across runs, so this
+    deterministic tie-break is an improvement, not a behaviour change for any
+    pick that was previously stable. Single-candidate resolutions (by far the
+    common case) are byte-identical to the old behaviour.
+    """
+    best: str | None = None
+    for cand_dir in _iter_trailing_dirs(rel_path):
+        f = dir_index.get(cand_dir)
+        if f is not None and (best is None or f < best):
+            best = f
+    if import_path != rel_path:
+        for cand_dir in _iter_trailing_dirs(import_path):
+            f = dir_index.get(cand_dir)
+            if f is not None and (best is None or f < best):
+                best = f
+    return best
+
+
 def analyze_go_imports(
     root_node: tree_sitter.Node,
     known_files: set[str],
     go_module_path: str | None = None,
+    dir_index: dict[str, str] | None = None,
 ) -> ImportResult:
     """Extract Go imports and map package aliases to repo file IDs.
 
@@ -210,22 +311,32 @@ def analyze_go_imports(
       - ``import "myproject/internal/store"`` → alias "store"
       - ``import s "myproject/internal/store"`` → alias "s"
 
+    Args:
+        root_node: Tree-sitter root node of the parsed Go file.
+        known_files: Set of all repo file IDs (paths) for local-import detection.
+        go_module_path: Module path from go.mod, when known.
+        dir_index: Optional precomputed :func:`build_go_dir_index` for
+            *known_files*. The pipeline builds it once per repo; when omitted
+            it is built on the fly from *known_files*.
+
     Returns:
         ImportResult with internal (alias → file_id) and external (name → pkg ID).
     """
     internal: dict[str, str] = {}
     external: dict[str, str] = {}
+    if dir_index is None:
+        dir_index = build_go_dir_index(known_files)
 
     for child in root_node.children:
         if child.type == "import_declaration":
-            _parse_go_import_decl(child, known_files, internal, external, go_module_path)
+            _parse_go_import_decl(child, dir_index, internal, external, go_module_path)
 
     return ImportResult(internal=internal, external=external)
 
 
 def _parse_go_import_decl(
     node: tree_sitter.Node,
-    known_files: set[str],
+    dir_index: dict[str, str],
     result: dict[str, str],
     external: dict[str, str],
     go_module_path: str | None,
@@ -233,11 +344,11 @@ def _parse_go_import_decl(
     """Parse a Go import declaration (single or grouped)."""
     for child in node.children:
         if child.type == "import_spec":
-            _parse_go_import_spec(child, known_files, result, external, go_module_path)
+            _parse_go_import_spec(child, dir_index, result, external, go_module_path)
         elif child.type == "import_spec_list":
             for spec in child.children:
                 if spec.type == "import_spec":
-                    _parse_go_import_spec(spec, known_files, result, external, go_module_path)
+                    _parse_go_import_spec(spec, dir_index, result, external, go_module_path)
 
 
 def _go_module_root(import_path: str) -> str:
@@ -258,7 +369,7 @@ def _go_module_root(import_path: str) -> str:
 
 def _parse_go_import_spec(
     node: tree_sitter.Node,
-    known_files: set[str],
+    dir_index: dict[str, str],
     result: dict[str, str],
     external: dict[str, str],
     go_module_path: str | None,
@@ -292,24 +403,11 @@ def _parse_go_import_spec(
     rel_path = import_path
     if go_module_path and import_path.startswith(go_module_path):
         rel_path = import_path[len(go_module_path) :].lstrip("/")
-    resolved = False
-    for known in known_files:
-        known_dir = _parent_dir(known)
-        # Require the *full* package directory to match (exactly, or as a
-        # trailing path-component sequence of the import path). Matching only
-        # the last segment would wrongly link unrelated third-party packages
-        # (e.g. "github.com/other/store") to any local dir named "store".
-        if (
-            known_dir == rel_path
-            or known_dir == import_path
-            or rel_path.endswith("/" + known_dir)
-            or import_path.endswith("/" + known_dir)
-        ):
-            result[alias] = known
-            resolved = True
-            break
+    resolved_file = _lookup_go_package_file(dir_index, rel_path, import_path)
+    if resolved_file is not None:
+        result[alias] = resolved_file
 
-    if not resolved:
+    if resolved_file is None:
         # External dependency — skip if it's the project's own module path
         if go_module_path and import_path.startswith(go_module_path):
             return
@@ -502,6 +600,22 @@ def _parent_dir(path: str) -> str:
     """Get parent directory of a path string."""
     parts = path.rsplit("/", 1)
     return parts[0] if len(parts) > 1 else ""
+
+
+def _package_submodule_path(resolved_path: str, name: str, known_files: set[str]) -> str | None:
+    """Resolve *name* as a submodule of the package *resolved_path* points at.
+
+    Only applies when the import resolved to a package ``__init__.py``;
+    returns ``pkg/name.py`` or ``pkg/name/__init__.py`` when known, else None.
+    """
+    if not resolved_path.endswith("__init__.py"):
+        return None
+    pkg_dir = resolved_path[: -len("__init__.py")].rstrip("/")
+    base = f"{pkg_dir}/{name}" if pkg_dir else name
+    for candidate in (f"{base}.py", f"{base}/__init__.py"):
+        if candidate in known_files:
+            return candidate
+    return None
 
 
 def _module_to_paths(module_name: str) -> list[str]:

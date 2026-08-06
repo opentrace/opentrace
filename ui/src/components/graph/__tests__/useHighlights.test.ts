@@ -131,6 +131,36 @@ describe('useHighlights', () => {
     expect(result.current.hopMap.get('c')).toBe(2);
   });
 
+  it('closes the neighborhood: highlights edges between frontier nodes', () => {
+    // Regression: BFS only highlighted the edge that first *reached* each node,
+    // so edges between two outermost (frontier) nodes were left dark and those
+    // nodes looked unconnected until the hop depth was raised. The close pass
+    // must highlight every edge between two highlighted nodes.
+    const graph = makeGraph();
+    const nodes: GraphNode[] = [
+      { id: 'a', name: 'A', type: 'Service' },
+      { id: 'b', name: 'B', type: 'Service' },
+      { id: 'c', name: 'C', type: 'Service' },
+    ];
+    // a→b, a→c are the BFS-tree edges (depth 0→1). b→c joins two frontier
+    // nodes — never traversed at hops=1, so previously un-highlighted.
+    const links: GraphLink[] = [
+      { source: 'a', target: 'b', label: 'CALLS' },
+      { source: 'a', target: 'c', label: 'CALLS' },
+      { source: 'b', target: 'c', label: 'CALLS' },
+    ];
+    const { result } = renderHook(() =>
+      useHighlights(graph, true, nodes, links, '', 'a', 1, emptyFilter()),
+    );
+    expect(result.current.highlightNodes.has('b')).toBe(true);
+    expect(result.current.highlightNodes.has('c')).toBe(true);
+    // The sibling edge between the two frontier nodes is now highlighted...
+    expect(result.current.highlightLinks.has('b-c')).toBe(true);
+    // ...alongside the tree edges.
+    expect(result.current.highlightLinks.has('a-b')).toBe(true);
+    expect(result.current.highlightLinks.has('a-c')).toBe(true);
+  });
+
   it('label nodes limited to min(2, hops)', () => {
     const graph = makeGraph();
     const nodes: GraphNode[] = [
@@ -160,6 +190,98 @@ describe('useHighlights', () => {
     // depth=1 frontier=[b], discovers c at depth+1=2, depth<2 is false for depth=1? No, depth=1 < 2 is true
     // depth=2 frontier=[c], discovers d at depth+1=3, depth<2 is false for depth=2
     expect(result.current.labelNodes.has('c')).toBe(true);
+  });
+
+  it('returns REFERENTIALLY STABLE empty results while inactive, across data changes', () => {
+    // Live indexing: nodes/links get a new identity per streamed batch. With
+    // no query/selection the result must not change identity, so downstream
+    // effects keyed on the sets don't re-fire per batch.
+    const graph = makeGraph();
+    let nodes: GraphNode[] = [{ id: 'a', name: 'A', type: 'Service' }];
+    let links: GraphLink[] = [];
+    const { result, rerender } = renderHook(() =>
+      useHighlights(graph, true, nodes, links, '', null, 2, emptyFilter()),
+    );
+    const first = result.current;
+    expect(first.highlightNodes.size).toBe(0);
+
+    // Simulate two streamed batches (concat keeps prefix identity).
+    nodes = nodes.concat([{ id: 'b', name: 'B', type: 'Service' }]);
+    links = links.concat([{ source: 'a', target: 'b', label: 'CALLS' }]);
+    rerender();
+    const second = result.current;
+    nodes = nodes.concat([{ id: 'c', name: 'C', type: 'Service' }]);
+    links = links.concat([{ source: 'b', target: 'c', label: 'CALLS' }]);
+    rerender();
+    const third = result.current;
+
+    expect(second.highlightNodes).toBe(first.highlightNodes);
+    expect(second.highlightLinks).toBe(first.highlightLinks);
+    expect(second.labelNodes).toBe(first.labelNodes);
+    expect(second.hopMap).toBe(first.hopMap);
+    expect(third.highlightNodes).toBe(first.highlightNodes);
+    expect(third.hopMap).toBe(first.hopMap);
+  });
+
+  it('active state after inactive batches matches a fresh active computation', () => {
+    // Grow the graph while inactive, then select a node: the (lazily built)
+    // adjacency must produce exactly what a from-scratch computation does.
+    const graph = makeGraph();
+    const nodes: GraphNode[] = [
+      { id: 'a', name: 'A', type: 'Service' },
+      { id: 'b', name: 'B', type: 'Service' },
+      { id: 'c', name: 'C', type: 'Service' },
+    ];
+    const links: GraphLink[] = [
+      { source: 'a', target: 'b', label: 'CALLS' },
+      { source: 'b', target: 'c', label: 'CALLS' },
+    ];
+
+    let selected: string | null = null;
+    const { result, rerender } = renderHook(() =>
+      useHighlights(graph, true, nodes, links, '', selected, 2, emptyFilter()),
+    );
+    expect(result.current.highlightNodes.size).toBe(0);
+
+    selected = 'a';
+    rerender();
+    const incremental = result.current;
+
+    // Reference: a hook that was active from the start with identical inputs.
+    const { result: reference } = renderHook(() =>
+      useHighlights(graph, true, nodes, links, '', 'a', 2, emptyFilter()),
+    );
+    expect(incremental.highlightNodes).toEqual(
+      reference.current.highlightNodes,
+    );
+    expect(incremental.highlightLinks).toEqual(
+      reference.current.highlightLinks,
+    );
+    expect(incremental.labelNodes).toEqual(reference.current.labelNodes);
+    expect(incremental.hopMap).toEqual(reference.current.hopMap);
+    // And going back to inactive returns the stable empties again.
+    selected = null;
+    rerender();
+    expect(result.current.highlightNodes.size).toBe(0);
+    expect(result.current.hopMap.size).toBe(0);
+  });
+
+  it('search-only activation produces the same results as before', () => {
+    const graph = makeGraph();
+    const nodes: GraphNode[] = [
+      { id: 'n1', name: 'AuthService', type: 'Service' },
+      { id: 'n2', name: 'UserRepo', type: 'Repository' },
+    ];
+    let query = '';
+    const { result, rerender } = renderHook(() =>
+      useHighlights(graph, true, nodes, [], query, null, 1, emptyFilter()),
+    );
+    expect(result.current.highlightNodes.size).toBe(0);
+    query = 'auth';
+    rerender();
+    expect(result.current.highlightNodes.has('n1')).toBe(true);
+    expect(result.current.highlightNodes.has('n2')).toBe(false);
+    expect(result.current.labelNodes.has('n1')).toBe(true);
   });
 
   it('filter state excludes hidden link types from adjacency', () => {

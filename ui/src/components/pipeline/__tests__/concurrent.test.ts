@@ -23,10 +23,11 @@ import type {
   StageEvent,
 } from '../concurrent/types';
 import { EMPTY_MUTATION } from '../concurrent/types';
-import { FileCacheStage } from '../concurrent/stages';
+import { FileCacheStage, ResolveStage } from '../concurrent/stages';
 import { StoreStage } from '../concurrent/stages';
 import { PipelineDebugLog } from '../concurrent/debug';
 import type { GraphNode, PipelineContext } from '../types';
+import type { CallInfo, Registries, SymbolNode } from '../parser/callResolver';
 
 // --- Helpers ---
 
@@ -450,6 +451,280 @@ describe('concurrent pipeline', () => {
     });
   });
 
+  describe('scheduler dequeue equivalence', () => {
+    /**
+     * Reference copy of the scheduler as it was BEFORE the index-pointer
+     * dequeue change — verbatim shift()-based logic. The production
+     * scheduler must emit a byte-identical event stream.
+     */
+    function* runNodePipelineShiftReference(
+      opts: Parameters<typeof runNodePipeline>[0],
+    ): Generator<ConcurrentPipelineEvent> {
+      const { ctx, stages, seeds } = opts;
+      const stageCount = stages.length;
+      const queues: GraphNode[][] = Array.from(
+        { length: stageCount },
+        () => [],
+      );
+      for (const s of seeds) queues[0].push(s);
+      let totalNodes = seeds.length;
+      let totalRelationships = 0;
+      const hasWork = () => queues.some((q) => q.length > 0);
+
+      while (hasWork()) {
+        if (ctx.cancelled) {
+          yield { kind: 'pipeline_error', error: 'cancelled' };
+          return;
+        }
+        let processed = false;
+        for (let i = stageCount - 1; i >= 0; i--) {
+          if (queues[i].length === 0) continue;
+          const n = queues[i].shift()!;
+          const stage = stages[i];
+          yield { stage: stage.name(), node: n.id, action: 'start' };
+          let mutation: StageMutation;
+          try {
+            mutation = stage.process(n);
+          } catch (err) {
+            yield {
+              kind: 'item_error',
+              stage: stage.name(),
+              node: n.id,
+              error: err instanceof Error ? err.message : String(err),
+            };
+            processed = true;
+            break;
+          }
+          yield { stage: stage.name(), node: n.id, action: 'end', mutation };
+          totalRelationships += mutation.relationships.length;
+          if (mutation.nodes.length > 0) {
+            totalNodes += mutation.nodes.length;
+            if (i < stageCount - 1) {
+              for (const m of mutation.nodes) queues[i + 1].push(m);
+            }
+          }
+          processed = true;
+          break;
+        }
+        if (!processed) break;
+      }
+
+      for (const stage of stages) {
+        if (ctx.cancelled) {
+          yield { kind: 'pipeline_error', error: 'cancelled' };
+          return;
+        }
+        yield { kind: 'flush_start', stage: stage.name() };
+        let mutation: StageMutation;
+        try {
+          mutation = stage.flush();
+        } catch (err) {
+          yield {
+            kind: 'pipeline_error',
+            error: `flush error in ${stage.name()}: ${err instanceof Error ? err.message : String(err)}`,
+          };
+          return;
+        }
+        totalNodes += mutation.nodes.length;
+        totalRelationships += mutation.relationships.length;
+        yield {
+          kind: 'flush_end',
+          stage: stage.name(),
+          mutation:
+            mutation.nodes.length > 0 || mutation.relationships.length > 0
+              ? mutation
+              : undefined,
+        };
+      }
+      yield { kind: 'pipeline_done', totalNodes, totalRelationships };
+    }
+
+    /** Stage set exercising branching, errors, pass-through, and flush
+     *  batches — enough churn that stage queues repeatedly drain empty
+     *  (hitting the new reset/reuse path) and refill. */
+    const makeStages = (): INodeStage[] => [
+      new PassthroughStage('gen', (n) =>
+        n.type === 'File'
+          ? [node(`${n.id}::a`, 'Class'), node(`${n.id}::b`, 'Function')]
+          : [],
+      ),
+      new ErrorStage('err', 'f3::a'),
+      new AccumulatingStage('accum'),
+    ];
+    const makeSeeds = () =>
+      Array.from({ length: 12 }, (_, i) =>
+        node(`f${i}`, i % 3 === 2 ? 'Directory' : 'File'),
+      );
+
+    it('index-pointer dequeue emits the same event stream as shift()', () => {
+      const expected = [
+        ...runNodePipelineShiftReference({
+          ctx: ctx(),
+          stages: makeStages(),
+          seeds: makeSeeds(),
+        }),
+      ];
+      const actual = collect({
+        ctx: ctx(),
+        stages: makeStages(),
+        seeds: makeSeeds(),
+      });
+
+      // Sanity: the fixture actually produced a rich stream.
+      expect(expected.length).toBeGreaterThan(50);
+      expect(expected.some((e) => 'kind' in e && e.kind === 'item_error')).toBe(
+        true,
+      );
+      expect(actual).toEqual(expected);
+    });
+
+    it('matches shift() semantics under mid-run cancellation', () => {
+      const run = (
+        pipeline: typeof runNodePipeline,
+      ): ConcurrentPipelineEvent[] => {
+        const mutableCtx = { cancelled: false };
+        let ticks = 0;
+        const stages: INodeStage[] = [
+          new PassthroughStage('S', (n) => {
+            ticks++;
+            if (ticks === 7) mutableCtx.cancelled = true;
+            return n.type === 'File' ? [node(`${n.id}-out`, 'Class')] : [];
+          }),
+          new AccumulatingStage('accum'),
+        ];
+        return [...pipeline({ ctx: mutableCtx, stages, seeds: makeSeeds() })];
+      };
+
+      expect(run(runNodePipeline)).toEqual(run(runNodePipelineShiftReference));
+    });
+  });
+
+  describe('ResolveStage sliced resolution', () => {
+    const sym = (
+      id: string,
+      name: string,
+      fileId: string,
+      kind: 'class' | 'function' = 'function',
+    ): SymbolNode => ({
+      id,
+      name,
+      kind,
+      fileId,
+      parentId: fileId,
+      language: 'python',
+      receiverVar: null,
+      receiverType: null,
+      paramTypes: null,
+      children: [],
+    });
+
+    /** Five callers in fileA: four resolve (intra-file bare + cross-file
+     *  unique bare), one doesn't (unknown name). Spread across slice
+     *  boundaries at sliceSize=2. */
+    const makeFixture = (): {
+      registries: Registries;
+      allCallInfo: CallInfo[];
+    } => {
+      const helper = sym('fileA::helper', 'helper', 'fileA');
+      const util = sym('fileB::util', 'util', 'fileB');
+      const callers = Array.from({ length: 5 }, (_, i) =>
+        sym(`fileA::caller${i}`, `caller${i}`, 'fileA'),
+      );
+      const registries: Registries = {
+        nameRegistry: new Map([
+          ['helper', [helper]],
+          ['util', [util]],
+        ]),
+        fileRegistry: new Map([
+          ['fileA', new Map([['helper', helper]])],
+          ['fileB', new Map([['util', util]])],
+        ]),
+        classRegistry: new Map(),
+        importRegistry: new Map(),
+      };
+      const allCallInfo: CallInfo[] = callers.map((caller, i) => ({
+        callerNode: caller,
+        fileId: 'fileA',
+        calls: [
+          i === 2
+            ? { name: 'nonexistent', receiver: null, kind: 'bare' as const }
+            : i % 2 === 0
+              ? { name: 'helper', receiver: null, kind: 'bare' as const }
+              : { name: 'util', receiver: null, kind: 'bare' as const },
+        ],
+      }));
+      return { registries, allCallInfo };
+    };
+
+    // Hardcoded expectation, constructed by running the fixture through the
+    // synchronous resolver as it existed before slicing was introduced:
+    // callers 0/4 → intra-file helper (strategy 6, confidence 1.0),
+    // callers 1/3 → unique cross-file util (strategy 7, confidence 0.8),
+    // caller 2 → unresolved.
+    const EXPECTED_RELS = [
+      {
+        id: 'fileA::caller0->CALLS->fileA::helper',
+        type: 'CALLS',
+        source_id: 'fileA::caller0',
+        target_id: 'fileA::helper',
+        properties: { confidence: 1.0 },
+      },
+      {
+        id: 'fileA::caller1->CALLS->fileB::util',
+        type: 'CALLS',
+        source_id: 'fileA::caller1',
+        target_id: 'fileB::util',
+        properties: { confidence: 0.8 },
+      },
+      {
+        id: 'fileA::caller3->CALLS->fileB::util',
+        type: 'CALLS',
+        source_id: 'fileA::caller3',
+        target_id: 'fileB::util',
+        properties: { confidence: 0.8 },
+      },
+      {
+        id: 'fileA::caller4->CALLS->fileA::helper',
+        type: 'CALLS',
+        source_id: 'fileA::caller4',
+        target_id: 'fileA::helper',
+        properties: { confidence: 1.0 },
+      },
+    ];
+
+    it('synchronous flush() matches the hardcoded pre-change expectation', () => {
+      const stage = new ResolveStage(makeFixture());
+      expect(stage.flush().relationships).toEqual(EXPECTED_RELS);
+    });
+
+    it('resolveSliced produces byte-identical output across slice boundaries', async () => {
+      const sliced = new ResolveStage(makeFixture());
+      await sliced.resolveSliced(undefined, 2); // slices of 2/2/1 CallInfos
+      const slicedOut = sliced.flush();
+
+      expect(slicedOut.relationships).toEqual(EXPECTED_RELS);
+      expect(slicedOut.nodes).toEqual([]);
+      // And identical to the unsliced path on the same fixture.
+      expect(slicedOut).toEqual(new ResolveStage(makeFixture()).flush());
+    });
+
+    it('flush() consumes the precomputed result once, then falls back', async () => {
+      const stage = new ResolveStage(makeFixture());
+      await stage.resolveSliced(undefined, 2);
+      expect(stage.flush().relationships).toEqual(EXPECTED_RELS);
+      // Second flush re-resolves synchronously (fallback path).
+      expect(stage.flush().relationships).toEqual(EXPECTED_RELS);
+    });
+
+    it('discards the partial result when cancelled between slices', async () => {
+      const stage = new ResolveStage(makeFixture());
+      let calls = 0;
+      // Stop after the first slice has been resolved.
+      await stage.resolveSliced(() => calls++ >= 1, 2);
+      expect(stage.flush().relationships).toEqual([]);
+    });
+  });
+
   describe('EMPTY_MUTATION', () => {
     it('is frozen and reusable', () => {
       expect(EMPTY_MUTATION.nodes).toEqual([]);
@@ -620,6 +895,52 @@ describe('concurrent pipeline', () => {
       expect(entries[1].detail).toContain('start file1');
       expect(entries[2].detail).toContain('end file1');
       expect(entries[2].detail).toContain('nodes=1');
+    });
+
+    it('circular buffer wraps and keeps the most recent event entries', () => {
+      const log = new PipelineDebugLog({ maxEntries: 3 });
+      log.start(); // 'started'
+      for (let i = 0; i < 5; i++) {
+        log.logEvent({ stage: 'S', node: `n${i}`, action: 'start' });
+      }
+      const entries = log.getEntries();
+      expect(entries.length).toBe(3);
+      expect(entries.map((e) => e.detail)).toEqual([
+        'start n2',
+        'start n3',
+        'start n4',
+      ]);
+    });
+
+    it('summary() pairs start/end timings from lazily-stored events', () => {
+      const log = new PipelineDebugLog();
+      log.start();
+      for (const n of ['a', 'b']) {
+        log.logEvent({ stage: 'extract', node: n, action: 'start' });
+        log.logEvent({
+          stage: 'extract',
+          node: n,
+          action: 'end',
+          mutation: { nodes: [], relationships: [] },
+        });
+      }
+      // flush events must not pollute the start/end pairing.
+      log.logEvent({ kind: 'flush_start', stage: 'extract' });
+      log.logEvent({ kind: 'flush_end', stage: 'extract' });
+
+      const s = log.summary();
+      expect(s['stage:extract'].count).toBe(2);
+      expect(s['stage:extract'].totalMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('mutation lengths are captured at log time, not retained by reference', () => {
+      const log = new PipelineDebugLog();
+      log.start();
+      const mutation = { nodes: [node('x')], relationships: [] };
+      log.logEvent({ stage: 'S', node: 'x', action: 'end', mutation });
+      mutation.nodes.length = 0; // caller reuses/clears the array afterwards
+      const entries = log.getEntries();
+      expect(entries[1].detail).toBe('end x nodes=1 rels=0');
     });
   });
 });

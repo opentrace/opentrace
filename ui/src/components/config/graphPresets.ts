@@ -101,7 +101,9 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCentering: 10,
       compactRadius: 22,
       edgeOpacity: 45,
-      zoomSizeExponent: 0.25,
+      // Matches Planet's zoom scaling (displays as 20% on the slider) so nodes
+      // attenuate identically across every preset.
+      zoomSizeExponent: 0.8,
       labelScale: 100,
       mode3dSpeed: 12,
       mode3dTilt: 35,
@@ -115,10 +117,12 @@ export const GRAPH_PRESETS: GraphPreset[] = [
     label: 'Onion',
     icon: 'onion',
     description:
-      'A layered ball — every node type forms its own evenly-spread spherical shell, nested core-to-rim (repo at the center, functions & dependencies on the outer layers). Colored by node type.',
+      'A flat, top-down map — every node type forms its own concentric ring, nested core-to-rim (repo at the center, functions & dependencies on the outer rings). Colored by node type.',
     settings: {
+      // 'onion' layout in 2D renders as a cross-section: concentric annular
+      // bands, one per node type (see computeOnion in forceLayout3dWorker).
       layoutMode: 'onion',
-      mode3d: true,
+      mode3d: false,
       autoRotate: false,
       colorMode: 'type',
       communitiesEnabled: false,
@@ -130,11 +134,11 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCommunity: 10,
       compactCentering: 5,
       compactRadius: 16,
-      // Cross-shell edges crisscross the ball and clutter it — hide them (and
-      // labels) so the clean layered shells read on their own.
+      // Cross-ring edges crisscross the map and clutter it — hide them (and
+      // labels) so the clean concentric rings read on their own.
       edgeOpacity: 0,
-      // Higher exponent = smaller nodes; keep the shells reading as a clean ball.
-      zoomSizeExponent: 0.5,
+      // Matches Planet's zoom scaling (displays as 20% on the slider).
+      zoomSizeExponent: 0.8,
       labelScale: 90,
       mode3dSpeed: 15,
       mode3dTilt: 35,
@@ -164,8 +168,8 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       compactCentering: 0,
       compactRadius: 39,
       edgeOpacity: 15,
-      // Displays as 50% on the "Zoom scaling" slider (0 = big, 1 = small).
-      zoomSizeExponent: 0.5,
+      // Displays as 20% on the "Zoom scaling" slider (0 = big, 1 = small).
+      zoomSizeExponent: 0.8,
       labelScale: 72,
       mode3dSpeed: 15,
       mode3dTilt: 35,
@@ -197,10 +201,9 @@ export const GRAPH_PRESETS: GraphPreset[] = [
       // Kept low: thousands of intra-cluster edges read as noise at full
       // strength — the clusters themselves carry the structure.
       edgeOpacity: 35,
-      // 2D attenuation exponent (0 = big/screen-fixed, 1 = small/world-scale);
-      // 0.75 preserves the look this preset was tuned with before the slider
-      // direction fix (formerly stored as 0.25 under the inverse convention).
-      zoomSizeExponent: 0.75,
+      // Matches Planet's zoom scaling (displays as 20% on the slider) so nodes
+      // attenuate identically across every preset.
+      zoomSizeExponent: 0.8,
       labelScale: 100,
       mode3dSpeed: 15,
       mode3dTilt: 35,
