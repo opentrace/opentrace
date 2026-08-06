@@ -412,7 +412,11 @@ export default function NodeDetailsPanel({
               // Markdown files (and KnowledgeDoc bodies, which are always
               // markitdown-normalised markdown regardless of the original
               // file's extension): tabbed Rendered / Raw view.
-              if (ext === '.md' || ext === '.mdx' || node.type === 'KnowledgeDoc') {
+              if (
+                ext === '.md' ||
+                ext === '.mdx' ||
+                node.type === 'KnowledgeDoc'
+              ) {
                 return (
                   <div className="preview-viewer">
                     <div className="preview-tab-bar">

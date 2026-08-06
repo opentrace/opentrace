@@ -46,6 +46,20 @@ class TestAdaptiveLimiter:
         lim.signal_throttle()
         assert lim.limit == 4  # a simultaneous burst = a single reduction
 
+    def test_first_ratchet_fires_on_a_freshly_booted_machine(self, monkeypatch):
+        """The cooldown must not suppress the run's FIRST reduction.
+
+        ``time.monotonic()`` counts from boot on Linux, so on a machine with
+        less uptime than the cooldown a 0.0 "last ratchet" sentinel looks like a
+        ratchet that just happened — every 429 was ignored and concurrency
+        stayed at the default for the whole run. This passed on any long-lived
+        dev box and failed only on fresh CI runners and containers.
+        """
+        monkeypatch.setattr("opentrace_agent.wiki.llm.time.monotonic", lambda: 42.0)
+        lim = AdaptiveLimiter(8, cooldown=1000)
+        lim.signal_throttle()
+        assert lim.limit == 4
+
     def test_acquire_release_accounting(self):
         lim = AdaptiveLimiter(2, cooldown=0)
         lim.acquire()

@@ -185,7 +185,12 @@ class AdaptiveLimiter:
         self._limit = max(1, initial)
         self._in_flight = 0
         self._cooldown = cooldown
-        self._last_ratchet = 0.0
+        # None means "never ratcheted". A 0.0 sentinel would be compared against
+        # time.monotonic(), whose epoch is arbitrary (boot time on Linux) — on a
+        # freshly-started machine `now - 0.0` is smaller than the cooldown, so
+        # the FIRST throttle signal of the run was swallowed and concurrency
+        # never came down at all.
+        self._last_ratchet: float | None = None
         self._cond = threading.Condition()
 
     def acquire(self) -> None:
@@ -203,7 +208,9 @@ class AdaptiveLimiter:
         """Ratchet the ceiling down one notch (halve), cooldown-collapsed."""
         with self._cond:
             now = time.monotonic()
-            if self._limit <= 1 or (now - self._last_ratchet) < self._cooldown:
+            if self._limit <= 1:
+                return
+            if self._last_ratchet is not None and (now - self._last_ratchet) < self._cooldown:
                 return
             self._limit = max(1, self._limit // 2)
             self._last_ratchet = now

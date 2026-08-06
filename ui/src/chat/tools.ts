@@ -154,7 +154,7 @@ const traverseGraphSchema = z.object({
     .optional()
     .describe(
       'Restrict traversal to nodes belonging to this vault, by name. ' +
-        'Membership follows CONTAINS edges, so it reaches the vault\'s documents.',
+        "Membership follows CONTAINS edges, so it reaches the vault's documents.",
     ),
   confidenceThreshold: z
     .number()

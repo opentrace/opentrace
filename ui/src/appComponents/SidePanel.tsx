@@ -35,9 +35,7 @@ import { linkId } from '../providers/graphFilterUtils';
 import { useThemeKey } from '../components/graph/useThemeKey';
 import DiscoverPanelContainer from './DiscoverPanelContainer';
 import { createStoreDataProvider } from './storeDataProvider';
-import NodeDetailsPanel, {
-  type NodeEdge,
-} from './NodeDetailsPanel';
+import NodeDetailsPanel, { type NodeEdge } from './NodeDetailsPanel';
 import EdgeDetailsPanel from './EdgeDetailsPanel';
 import HistoryPanel from './HistoryPanel';
 import IndexMetadataPanel from './IndexMetadataPanel';

@@ -59,6 +59,16 @@ _RG = _find_rg()
 if _RG is not None:
     os.environ["PATH"] = os.path.dirname(_RG) + os.pathsep + os.environ.get("PATH", "")
 
+# The backend this environment should select, computed from the test's OWN
+# ripgrep probe rather than from grep.py's — so the assertion still cross-checks
+# `grep._engine()` instead of restating it. Hard-coding "ripgrep" made the suite
+# green on developer machines and red on CI, where no `rg` is installed; that
+# reintroduces the very PATH assumption the comment above warns about. What
+# these cases are actually asserting is "a scan ran and found things", and both
+# backends must satisfy that — `TestGrepWithoutRipgrep` pins the fallback
+# explicitly.
+_EXPECTED_MODE = "ripgrep" if _RG is not None else "python"
+
 from opentrace_agent.retrieval import grep  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 
@@ -97,7 +107,7 @@ class TestGrepRepositoryScope:
             {"local_path": str(fixture_repo)},
         )
         result = grep(store, "hello", scope_id="myorg/myrepo")
-        assert result["mode"] == "ripgrep"
+        assert result["mode"] == _EXPECTED_MODE
         assert result["count"] >= 2  # 'hello' and 'HELLO' both match (case-insensitive)
         files = {m["file_path"] for m in result["matches"]}
         assert "src/main.py" in files
@@ -227,7 +237,7 @@ class TestGrepVaultCorpusScope:
     def test_corpus_hits_join_back_to_docs(self, store, tmp_path):
         self._seed_vault(store, tmp_path)
         result = grep(store, "capacity", scope_id="vault::kb")
-        assert result["mode"] == "ripgrep"
+        assert result["mode"] == _EXPECTED_MODE
         by_node = {m["node_id"]: m for m in result["matches"]}
         assert set(by_node) == {"corpus::aaa1", "corpus::bbb2"}, "non-member doc must not leak into the sweep"
         hit = by_node["corpus::aaa1"]
@@ -249,7 +259,7 @@ class TestGrepVaultCorpusScope:
         corpus = self._seed_vault(store, tmp_path)
         (corpus / "aaa1.md").unlink()  # e.g. a metadata-only mirror
         result = grep(store, "capacity", scope_id="vault::kb")
-        assert result["mode"] == "ripgrep"
+        assert result["mode"] == _EXPECTED_MODE
         assert {m["node_id"] for m in result["matches"]} == {"corpus::bbb2"}
 
     def test_no_content_at_all_is_a_structured_error(self, store):
@@ -266,13 +276,13 @@ class TestGrepVaultCorpusScope:
         self._seed_vault(store, tmp_path)
         by_id = grep(store, "capacity", scope_id="vault::kb")
         by_name = grep(store, "capacity", scope_id="kb")
-        assert by_name["mode"] == "ripgrep"
+        assert by_name["mode"] == _EXPECTED_MODE
         assert {m["node_id"] for m in by_name["matches"]} == {m["node_id"] for m in by_id["matches"]}
 
     def test_bare_repo_name_resolves(self, store, fixture_repo):
         store.add_node("myorg/myrepo", "Repository", "myrepo", {"local_path": str(fixture_repo)})
         result = grep(store, "hello", scope_id="myrepo")
-        assert result["mode"] == "ripgrep"
+        assert result["mode"] == _EXPECTED_MODE
         assert result["count"] >= 2
 
     def test_unknown_scope_names_the_valid_ones(self, store, tmp_path):

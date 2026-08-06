@@ -14,9 +14,10 @@ src/
     pipeline/                 — Browser tree-sitter extraction pipeline
     indexing/                 — Repo-add UI (AddRepoModal, IndexingProgress)
     graph/                    — Graphology helpers, Louvain clustering, filtering
+    workers/                  — Web Worker orchestration (layout, community)
+  appComponents/
     wiki/                     — Vault management UI (AddVaultModal, VaultManager,
                                 wiki.css) — management only, no reader
-    workers/                  — Web Worker orchestration (layout, community)
   graph/                      — Graph data hooks (useGraphData, useGraphInstance)
   chat/                       — AI chat panel (tool-use against the graph)
   config/                     — Runtime feature flags
@@ -25,7 +26,7 @@ src/
 
 ### No vault reader
 
-`components/wiki/` is management-only. Vault **reading** happens on the graph
+`appComponents/wiki/` is management-only. Vault **reading** happens on the graph
 node: a `KnowledgeDoc`'s markitdown-normalised body renders as markdown in
 `appComponents/NodeDetailsPanel.tsx`, the same way a `File` shows its source.
 
@@ -86,6 +87,7 @@ Workers use transferable objects (Float64Array) for zero-copy position handoff. 
 ## Pitfalls
 
 - **Pre-existing build errors.** `App.tsx` and `gen/` may have minor type issues that pre-date your changes — don't fix them unless they block your work.
+- **`components/` must not reach app singletons.** `tsconfig.lib.json` compiles `src/components` alone — no `src/store`, no `src/providers`, and deliberately without the `lbug-wasm.d.ts` ambient shim. A component that imports one of those drags the whole store layer into the pure-library declaration build and fails on the missing shim. That error is the boundary working; don't widen the config's `include` to silence it. UI wired to app context belongs in `appComponents/` (covered by `tsconfig.lib-app.json`), which is why the vault management UI lives there. `npm run build:lib` is the only check that catches this — `tsc -b` does not.
 - **Parser init race.** `TreeSitter.Parser.init()` is global and async; calling it concurrently corrupts state. Use a singleton promise guard (`wasm.ts`).
 - **Store immutability.** Don't try to hot-swap from server to in-memory mode — re-mount `StoreContext`.
 - **SharedArrayBuffer fails silently** without COOP/COEP headers. If the dev server starts but WASM features break, check that `crossOriginIsolation()` plugin is enabled.

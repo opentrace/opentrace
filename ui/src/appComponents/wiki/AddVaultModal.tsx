@@ -16,7 +16,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { VaultScope } from '../../wiki/types';
-import { ThemedSelect } from '../ThemedSelect';
+import { ThemedSelect } from '../../components/ThemedSelect';
 import {
   loadApiKey,
   loadLocalUrl,
@@ -27,8 +27,8 @@ import { useCompileJob } from '../../providers/CompileJobProvider';
 // Shell + form primitives shared with the indexing modal so the two
 // pop-ups read as one family (.modal-card, .form-hero,
 // .input-pill, .import-dropzone, .btn-cta).
-import '../indexing/indexing-base.css';
-import '../indexing/AddRepoModal.css';
+import '../../components/indexing/indexing-base.css';
+import '../../components/indexing/AddRepoModal.css';
 import './wiki.css';
 
 type WikiProvider = 'anthropic' | 'gemini' | 'openai' | 'local';

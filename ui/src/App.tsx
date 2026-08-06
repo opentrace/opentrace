@@ -22,7 +22,7 @@ import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
-import { VaultManager } from './components/wiki/VaultManager';
+import { VaultManager } from './appComponents/wiki/VaultManager';
 import SidePanel, { type SidePanelTab } from './appComponents/SidePanel';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
