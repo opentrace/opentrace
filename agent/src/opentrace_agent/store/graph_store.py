@@ -338,6 +338,10 @@ class GraphStore:
         try:
             return self._import_batch_via_copy(nodes, relationships)
         except Exception as exc:
+            message = str(exc).lower()
+            if "primary key" in message and ("duplicat" in message or "uniqueness constraint" in message):
+                logger.error("Bulk COPY import hit a primary-key collision; refusing unsafe per-row MERGE fallback")
+                raise
             logger.warning(
                 "Bulk COPY import failed (%s); falling back to per-row MERGE",
                 exc,
@@ -969,6 +973,16 @@ class GraphStore:
         return {"nodes_deleted": nodes_deleted, "relationships_deleted": rels_deleted}
 
     # -- lifecycle -------------------------------------------------------
+
+    def checkpoint(self) -> None:
+        """Force a WAL checkpoint, flushing pending writes to the main DB file.
+
+        Call this after large write batches (especially after ``delete_repo``
+        followed by a bulk import) to prevent the WAL from growing unboundedly
+        and to ensure that a subsequent ``shutil.copy2`` of the DB file
+        captures a self-contained snapshot without a bloated WAL sidecar.
+        """
+        self._conn.execute("CHECKPOINT")
 
     def close(self) -> None:
         """Release connection and database resources."""

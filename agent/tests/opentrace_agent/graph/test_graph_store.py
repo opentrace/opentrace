@@ -826,6 +826,33 @@ class TestGraphStoreIdMirror:
         assert stats["total_nodes"] == 4
         assert stats["total_edges"] == 2
 
+    def test_primary_key_copy_failure_does_not_fallback_to_merge(self, store):
+        """A PK collision indicates stale/corrupt database state.
+
+        Retrying the same batch through per-row MERGE can make LadybugDB consume
+        unbounded memory and disk, so the index must fail and discard staging.
+        """
+        merge_called = False
+
+        def _copy_boom(nodes, rels):
+            raise RuntimeError(
+                "Found duplicated primary key value 177211, which violates "
+                "the uniqueness constraint of the primary key column."
+            )
+
+        def _merge_boom(nodes, rels):
+            nonlocal merge_called
+            merge_called = True
+            raise AssertionError("unsafe MERGE fallback was called")
+
+        store._import_batch_via_copy = _copy_boom
+        store._import_batch_via_merge = _merge_boom
+
+        with pytest.raises(RuntimeError, match="duplicated primary key"):
+            store.import_batch(self._NODES, [])
+
+        assert merge_called is False
+
     def test_query_fallback_when_mirror_unavailable(self, store):
         """If the mirror can't initialize, the old query path must produce
         the same rows."""

@@ -117,8 +117,9 @@ Full details: [OpenCode Plugin reference](https://opentrace.github.io/opentrace/
 
 ## Supported Languages
 
-**Full extraction** (symbols + calls + imports): Python, TypeScript/JavaScript, Go
-**Structural extraction** (symbols only): Rust, Java, Kotlin, C#, C/C++, Ruby, Swift
+**CLI agent full extraction** (symbols + calls + imports): Python, TypeScript/JavaScript, Go, Java
+**Browser indexer full extraction** (symbols + calls + imports): Python, TypeScript/JavaScript, Go
+**Browser indexer structural extraction** (symbols only): Rust, Java, Kotlin, C#, C/C++, Ruby, Swift
 **Indexed as file nodes**: JSON, YAML, TOML, Protobuf, SQL, GraphQL, Bash
 
 Full language matrix: [Supported Languages](https://opentrace.github.io/opentrace/reference/languages/).

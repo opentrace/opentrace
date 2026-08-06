@@ -265,10 +265,29 @@ def _clean_stale_staging(staging_db: str) -> None:
 
 
 def _seed_staging_from_live(db_path: str, staging_db: str) -> None:
-    """Clone live DB + WAL into staging so a new index appends rather than replaces."""
+    """Clone live DB + WAL into staging so a new index appends rather than replaces.
+
+    Forces a WAL checkpoint on the live DB first so the copy captures a
+    self-contained snapshot.  Without this, a large WAL accumulated from
+    prior writes would be duplicated into the staging file, doubling the
+    on-disk footprint and seeding the staging DB with dead pages that
+    LadybugDB never reclaims.
+    """
     live = Path(db_path)
     if not live.exists():
         return
+
+    # Checkpoint the live DB so the WAL is folded into the main file
+    # before we byte-copy it.  Opened read_only=False briefly just for
+    # the CHECKPOINT command; the exclusive index lock is already held.
+    from opentrace_agent.store import GraphStore
+
+    try:
+        with GraphStore(db_path) as gs:
+            gs.checkpoint()
+    except Exception as exc:
+        # Non-fatal: the copy still works, just with a potentially large WAL.
+        click.echo(f"Note: pre-copy checkpoint skipped ({exc})", err=True)
 
     shutil.copy2(live, staging_db)
     live_wal = Path(db_path + ".wal")
@@ -353,6 +372,148 @@ def _swap_staging_into_place(staging_db: str, db_path: str) -> None:
         _safe_unlink(live_wal, context="post-rename cleanup")
 
 
+def _do_index(
+    *,
+    staging_db: str,
+    source_path: Path,
+    repo_id: str,
+    batch_size: int,
+    verbose: bool,
+    extra_metadata: dict[str, object] | None,
+    on_event: "Callable[[object], None] | None",
+    GraphStore,
+    GraphStoreAdapter,
+    PipelineInput,
+    run_pipeline,
+) -> float:
+    """Core indexing logic: open staging, run pipeline, flush, checkpoint."""
+    with GraphStore(staging_db) as graph_store:
+        store = GraphStoreAdapter(graph_store, batch_size=batch_size)
+
+        click.echo(f"Indexing {source_path} ...")
+        t0 = time.monotonic()
+
+        inp = PipelineInput(path=str(source_path), repo_id=repo_id)
+
+        last_result = None
+        for event in run_pipeline(inp, store=store):
+            _print_event(event, verbose)
+            if getattr(event, "result", None) is not None:
+                last_result = event.result
+            if on_event is not None:
+                try:
+                    on_event(event)
+                except Exception:
+                    logging.getLogger(__name__).debug("on_event callback raised; ignoring", exc_info=True)
+
+        elapsed = time.monotonic() - t0
+
+        metadata = _collect_metadata(source_path, repo_id, elapsed, last_result)
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        graph_store.save_metadata(metadata)
+
+        store.flush()
+
+        # Checkpoint the staging DB before the atomic swap so the
+        # WAL is folded into the main file.  This keeps the swapped-
+        # in DB compact and avoids carrying a bloated WAL sidecar
+        # that would be byte-copied again on the *next* index run.
+        graph_store.checkpoint()
+
+    return elapsed
+
+
+def _is_pk_collision(exc: Exception) -> bool:
+    """Return True if *exc* is a LadybugDB duplicate-primary-key error."""
+    msg = str(exc).lower()
+    return "primary key" in msg and ("duplicat" in msg or "uniqueness constraint" in msg)
+
+
+def _index_into_staging(
+    *,
+    staging_db: str,
+    db_path: str,
+    source_path: Path,
+    repo_id: str,
+    batch_size: int,
+    verbose: bool,
+    extra_metadata: dict[str, object] | None,
+    on_event: "Callable[[object], None] | None",
+    GraphStore,
+    GraphStoreAdapter,
+    PipelineInput,
+    run_pipeline,
+) -> float:
+    """Seed staging from live, delete old rows, index, checkpoint.
+
+    If the import hits a LadybugDB primary-key collision (stale internal
+    row-ID metadata baked into the DB file), discard the corrupted staging
+    copy and retry into a **fresh empty** staging DB.  The live DB is left
+    untouched so other repos' data is preserved; they will be re-seeded
+    from the live DB on their next individual index run.
+    """
+    _seed_staging_from_live(db_path, staging_db)
+
+    # Wipe this repo's rows so the bulk-import path starts clean.
+    with GraphStore(staging_db) as graph_store:
+        deleted = graph_store.delete_repo(repo_id)
+        # Flush the WAL after the bulk delete so that freed pages
+        # are consolidated before the connection closes.  This
+        # also prevents the subsequent fresh connection from
+        # seeing stale internal primary-key metadata.
+        graph_store.checkpoint()
+    if deleted.get("nodes_deleted"):
+        click.echo(f"Re-index: cleared {deleted['nodes_deleted']} existing nodes for '{repo_id}'")
+
+    try:
+        return _do_index(
+            staging_db=staging_db,
+            source_path=source_path,
+            repo_id=repo_id,
+            batch_size=batch_size,
+            verbose=verbose,
+            extra_metadata=extra_metadata,
+            on_event=on_event,
+            GraphStore=GraphStore,
+            GraphStoreAdapter=GraphStoreAdapter,
+            PipelineInput=PipelineInput,
+            run_pipeline=run_pipeline,
+        )
+    except RuntimeError as exc:
+        if not _is_pk_collision(exc):
+            raise
+
+    # ------------------------------------------------------------------
+    # Retry: the live DB has corrupted internal primary-key state that
+    # survived the delete_repo + checkpoint + fresh-connection sequence.
+    # Discard the tainted staging copy and re-index into a blank DB.
+    # Other repos will be absent from this staging file, but the live DB
+    # is untouched — subsequent index runs for those repos will re-seed
+    # their data from the live copy.
+    # ------------------------------------------------------------------
+    click.echo(
+        "Primary-key collision detected in seeded staging DB; retrying with a fresh empty database ...",
+        err=True,
+    )
+    _safe_unlink(staging_db, context="pk-collision retry")
+    _safe_unlink(staging_db + ".wal", context="pk-collision retry")
+
+    return _do_index(
+        staging_db=staging_db,
+        source_path=source_path,
+        repo_id=repo_id,
+        batch_size=batch_size,
+        verbose=verbose,
+        extra_metadata=extra_metadata,
+        on_event=on_event,
+        GraphStore=GraphStore,
+        GraphStoreAdapter=GraphStoreAdapter,
+        PipelineInput=PipelineInput,
+        run_pipeline=run_pipeline,
+    )
+
+
 def _run_indexing_pipeline(
     *,
     source_path: Path,
@@ -395,44 +556,20 @@ def _run_indexing_pipeline(
 
         click.echo(f"Opening staging database at {staging_db} ...")
         try:
-            _seed_staging_from_live(db_path, staging_db)
-
-            with GraphStore(staging_db) as graph_store:
-                # Staging is seeded from the live DB, so a re-index of an
-                # already-indexed repo would otherwise append into stale rows:
-                # the bulk-import path drops nodes whose id already exists
-                # (never updating line numbers/signatures) and deleted symbols
-                # would persist as ghosts. Wipe this repo's rows first —
-                # other repos and shared pkg:* Dependency nodes are untouched.
-                deleted = graph_store.delete_repo(repo_id)
-                if deleted.get("nodes_deleted"):
-                    click.echo(f"Re-index: cleared {deleted['nodes_deleted']} existing nodes for '{repo_id}'")
-                store = GraphStoreAdapter(graph_store, batch_size=batch_size)
-
-                click.echo(f"Indexing {source_path} ...")
-                t0 = time.monotonic()
-
-                inp = PipelineInput(path=str(source_path), repo_id=repo_id)
-
-                last_result = None
-                for event in run_pipeline(inp, store=store):
-                    _print_event(event, verbose)
-                    if getattr(event, "result", None) is not None:
-                        last_result = event.result
-                    if on_event is not None:
-                        try:
-                            on_event(event)
-                        except Exception:
-                            logging.getLogger(__name__).debug("on_event callback raised; ignoring", exc_info=True)
-
-                elapsed = time.monotonic() - t0
-
-                metadata = _collect_metadata(source_path, repo_id, elapsed, last_result)
-                if extra_metadata:
-                    metadata.update(extra_metadata)
-                graph_store.save_metadata(metadata)
-
-                store.flush()
+            elapsed = _index_into_staging(
+                staging_db=staging_db,
+                db_path=db_path,
+                source_path=source_path,
+                repo_id=repo_id,
+                batch_size=batch_size,
+                verbose=verbose,
+                extra_metadata=extra_metadata,
+                on_event=on_event,
+                GraphStore=GraphStore,
+                GraphStoreAdapter=GraphStoreAdapter,
+                PipelineInput=PipelineInput,
+                run_pipeline=run_pipeline,
+            )
 
             # Inside the try so a swap-time failure (ENOSPC, permission flip)
             # gets the same staging cleanup as a pipeline failure.

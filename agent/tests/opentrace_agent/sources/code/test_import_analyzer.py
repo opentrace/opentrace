@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import tree_sitter
 import tree_sitter_go
+import tree_sitter_java
 import tree_sitter_python
 import tree_sitter_typescript
 
 from opentrace_agent.sources.code.import_analyzer import (
     analyze_go_imports,
+    analyze_java_imports,
     analyze_python_imports,
     analyze_typescript_imports,
     build_go_dir_index,
@@ -43,6 +45,12 @@ def _parse_go(source: bytes) -> tree_sitter.Node:
 
 def _parse_typescript(source: bytes) -> tree_sitter.Node:
     lang = tree_sitter.Language(tree_sitter_typescript.language_typescript())
+    parser = tree_sitter.Parser(lang)
+    return parser.parse(source).root_node
+
+
+def _parse_java(source: bytes) -> tree_sitter.Node:
+    lang = tree_sitter.Language(tree_sitter_java.language())
     parser = tree_sitter.Parser(lang)
     return parser.parse(source).root_node
 
@@ -376,3 +384,86 @@ class TestTypeScriptImports:
         known = {"src/index.ts"}
         result = analyze_typescript_imports(_parse_typescript(source), "src/index.ts", known)
         assert result.internal == {}
+
+
+class TestJavaImports:
+    def test_simple_import(self):
+        source = b"""\
+package com.example;
+
+import com.example.service.UserService;
+
+public class App {}
+"""
+        known = {"com/example/service/UserService.java", "com/example/App.java"}
+        result = analyze_java_imports(_parse_java(source), "com/example/App.java", known)
+        assert result.internal["UserService"] == "com/example/service/UserService.java"
+        assert result.external == {}
+
+    def test_import_resolves_with_src_prefix(self):
+        source = b"""\
+package com.example;
+
+import com.example.service.UserService;
+
+public class App {}
+"""
+        known = {"src/main/java/com/example/service/UserService.java", "src/main/java/com/example/App.java"}
+        result = analyze_java_imports(_parse_java(source), "src/main/java/com/example/App.java", known)
+        assert result.internal["UserService"] == "src/main/java/com/example/service/UserService.java"
+
+    def test_external_import(self):
+        source = b"""\
+package com.example;
+
+import org.springframework.web.bind.annotation.RestController;
+
+public class App {}
+"""
+        known = {"com/example/App.java"}
+        result = analyze_java_imports(_parse_java(source), "com/example/App.java", known)
+        assert result.internal == {}
+        assert "org.springframework.web" in result.external
+
+    def test_static_import(self):
+        source = b"""\
+package com.example;
+
+import static com.example.utils.Helpers.validate;
+
+public class App {}
+"""
+        known = {"com/example/utils/Helpers.java", "com/example/App.java"}
+        result = analyze_java_imports(_parse_java(source), "com/example/App.java", known)
+        assert result.internal["validate"] == "com/example/utils/Helpers.java"
+
+    def test_multiple_imports(self):
+        source = b"""\
+package com.example;
+
+import com.example.model.User;
+import com.example.service.UserService;
+import java.util.List;
+
+public class App {}
+"""
+        known = {
+            "com/example/App.java",
+            "com/example/model/User.java",
+            "com/example/service/UserService.java",
+        }
+        result = analyze_java_imports(_parse_java(source), "com/example/App.java", known)
+        assert result.internal["User"] == "com/example/model/User.java"
+        assert result.internal["UserService"] == "com/example/service/UserService.java"
+        assert "java.util.List" in result.external
+
+    def test_no_imports(self):
+        source = b"""\
+package com.example;
+
+public class App {}
+"""
+        known = {"com/example/App.java"}
+        result = analyze_java_imports(_parse_java(source), "com/example/App.java", known)
+        assert result.internal == {}
+        assert result.external == {}

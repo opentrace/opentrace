@@ -593,6 +593,134 @@ def _parse_ts_reexport(
             break
 
 
+def analyze_java_imports(
+    root_node: tree_sitter.Node,
+    file_path: str,
+    known_files: set[str],
+) -> ImportResult:
+    """Extract Java imports and map type aliases to repo file IDs.
+
+    Handles:
+      - ``import com.example.service.UserService`` → alias "UserService"
+      - ``import com.example.service.*`` → wildcard (maps package dir)
+      - ``import static com.example.Utils.helper`` → alias "helper"
+
+    Java uses fully-qualified class names in imports. The convention is one
+    public class per file, with the file path mirroring the package path
+    (e.g., ``com/example/service/UserService.java``). We try to resolve
+    the import to a known file using that convention.
+
+    Args:
+        root_node: Tree-sitter root node of the parsed Java file.
+        file_path: The repo-relative path of this file.
+        known_files: Set of all repo file IDs (paths) for local-import detection.
+
+    Returns:
+        ImportResult with internal (alias → file_id) and external (name → pkg ID).
+    """
+    internal: dict[str, str] = {}
+    external: dict[str, str] = {}
+
+    for child in root_node.children:
+        if child.type == "import_declaration":
+            _parse_java_import(child, known_files, internal, external)
+
+    return ImportResult(internal=internal, external=external)
+
+
+def _parse_java_import(
+    node: tree_sitter.Node,
+    known_files: set[str],
+    result: dict[str, str],
+    external: dict[str, str],
+) -> None:
+    """Parse a single Java import declaration."""
+    is_static = any(c.type == "static" for c in node.children)
+
+    # The import path is a scoped_identifier or identifier child
+    path_node = None
+    is_wildcard = False
+    for child in node.children:
+        if child.type == "scoped_identifier" or child.type == "identifier":
+            path_node = child
+        elif child.type == "asterisk":
+            is_wildcard = True
+
+    if path_node is None:
+        return
+
+    import_path = path_node.text.decode()
+
+    if is_wildcard:
+        # import com.example.service.* → try to find files under that package
+        dir_path = import_path.replace(".", "/")
+        # Try to find any known file under this directory (for the IMPORTS edge)
+        for known in known_files:
+            if known.startswith(dir_path + "/") or ("/" + dir_path + "/") in known:
+                # Map the package name as an alias to the first match
+                alias = import_path.rsplit(".", 1)[-1] if "." in import_path else import_path
+                result.setdefault(alias, known)
+                break
+        return
+
+    if is_static:
+        # import static com.example.Utils.helper → alias "helper"
+        # The last segment is a method/field name; the penultimate is the class.
+        parts = import_path.split(".")
+        if len(parts) >= 2:
+            method_name = parts[-1]
+            class_path = "/".join(parts[:-1]) + ".java"
+            resolved = _resolve_java_path(class_path, known_files)
+            if resolved:
+                result[method_name] = resolved
+            else:
+                group_id = ".".join(parts[:3]) if len(parts) >= 3 else import_path
+                external[group_id] = package_id("maven", group_id)
+        return
+
+    # Regular import: import com.example.service.UserService → alias "UserService"
+    parts = import_path.split(".")
+    alias = parts[-1]
+    file_path_candidate = "/".join(parts) + ".java"
+    resolved = _resolve_java_path(file_path_candidate, known_files)
+    if resolved:
+        result[alias] = resolved
+    else:
+        # External dependency — use the group ID (first 2-3 segments)
+        group_id = ".".join(parts[:3]) if len(parts) >= 3 else import_path
+        external[group_id] = package_id("maven", group_id)
+
+
+def _resolve_java_path(candidate: str, known_files: set[str]) -> str | None:
+    """Resolve a Java file path against known files.
+
+    Java source trees may be rooted under ``src/main/java/`` or similar
+    prefixes. Try the raw candidate first, then probe every trailing
+    path-component suffix so ``com/example/Foo.java`` matches
+    ``src/main/java/com/example/Foo.java``.
+    """
+    if candidate in known_files:
+        return candidate
+    # Try trailing suffixes: the repo file may have a src/main/java/ prefix
+    idx = 0
+    while True:
+        pos = candidate.find("/", idx)
+        if pos == -1:
+            break
+        suffix = candidate[pos + 1 :]
+        # Check if any known file ends with this suffix
+        for known in known_files:
+            if known.endswith("/" + suffix) or known == suffix:
+                return known
+        idx = pos + 1
+    # Last resort: match just the filename
+    filename = candidate.rsplit("/", 1)[-1]
+    for known in known_files:
+        if known.endswith("/" + filename):
+            return known
+    return None
+
+
 # --- path utilities ---
 
 

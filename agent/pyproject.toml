@@ -23,6 +23,7 @@ dependencies = [
     "tree-sitter-python",
     "tree-sitter-typescript",
     "tree-sitter-go",
+    "tree-sitter-java",
     "click>=8.0",
     "mcp>=1.0",
     "real-ladybug>=0.13",
