@@ -49,6 +49,7 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
         ".eggs",
         "egg-info",
         ".claude",
+        ".opentrace",
     }
 )
 
@@ -109,6 +110,64 @@ EXTENSION_LANGUAGE_MAP: dict[str, str] = {
     ".sql": "sql",
 }
 
+# File extensions surfaced as docs when ``walk_docs=True``. These are the
+# formats markitdown knows how to convert to markdown — used by the doc-ingestion
+# pass to feed bodies to the LLM. Kept in lockstep with
+# ``wiki/ingest/normalize.py``'s passthrough set: an extension here that
+# normalize can neither pass through nor convert is walked and then fails.
+# ``vault ingest`` extends this set with ``.json`` — see
+# ``cli/vault_cmd.py::_ingest_extensions``.
+DOC_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".pptx",
+        ".ppt",
+        ".xlsx",
+        ".xls",
+        ".csv",
+        ".epub",
+        ".html",
+        ".htm",
+        ".rst",
+        # Plain-text passthrough (no markitdown conversion). ``.md`` is
+        # intentionally included even though it's also in INCLUDED_EXTENSIONS;
+        # walk_docs surfaces it as a doc entry too so doc ingestion can
+        # operate on doc-style markdown without losing the existing File node.
+        ".md",
+        ".markdown",
+        ".txt",
+        # Image/audio/video — markitdown handles OCR + transcription.
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".mp3",
+        ".wav",
+        ".m4a",
+        ".mp4",
+        ".mov",
+        ".webm",
+        ".mkv",
+    }
+)
+
+
+@dataclass
+class DocFileEntry:
+    """A doc file discovered when ``walk_docs=True``.
+
+    Separate from :class:`FileEntry` because docs don't have a stable
+    ``file_id`` at scan time — the KnowledgeDoc id is derived from the
+    markitdown'd body content, computed in the doc-ingestion pass.
+    """
+
+    abs_path: str
+    path: str  # repo-relative
+    extension: str
+
 
 @dataclass
 class WalkResult:
@@ -117,6 +176,7 @@ class WalkResult:
     nodes: list[GraphNode] = field(default_factory=list)
     relationships: list[GraphRelationship] = field(default_factory=list)
     file_entries: list[FileEntry] = field(default_factory=list)
+    doc_file_entries: list[DocFileEntry] = field(default_factory=list)
     path_to_file_id: dict[str, str] = field(default_factory=dict)
     known_paths: set[str] = field(default_factory=set)
     manifest_files: list[tuple[str, str]] = field(default_factory=list)
@@ -132,6 +192,7 @@ class DirectoryWalker:
         repo_name: str,
         url: Optional[str] = None,
         default_branch: Optional[str] = None,
+        walk_docs: bool = False,
     ) -> WalkResult:
         """Walk *root_path* and return flat graph nodes/relationships.
 
@@ -141,6 +202,11 @@ class DirectoryWalker:
             repo_name: Human-readable repository name.
             url: Repository URL.
             default_branch: Branch that was cloned.
+            walk_docs: When True, also surface non-code doc files
+                (PDF/DOCX/MD/TXT/RST/HTML/...) into ``WalkResult.doc_file_entries``
+                so the wiki doc-ingestion pass can route them through
+                markitdown + the LLM. Off by default to keep the cheap
+                ``opentraceai index`` path unchanged.
 
         Returns:
             A ``WalkResult`` with flat lists of nodes, relationships,
@@ -162,7 +228,7 @@ class DirectoryWalker:
         dir_count = 0
 
         for dirpath_str, dirnames, filenames in os.walk(root_path):
-            # Filter excluded directories in-place so os.walk skips them
+            # Mutating dirnames is how os.walk skips a subtree without recursing into it.
             dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS and not d.endswith(".egg-info")]
             dirnames.sort()
 
@@ -203,6 +269,17 @@ class DirectoryWalker:
             # Process files
             for filename in sorted(filenames):
                 ext = _get_extension(filename)
+
+                # Doc-file surfacing — independent of the code path. Files
+                # only-in-DOC_EXTENSIONS (e.g. .pdf) get a DocFileEntry but
+                # NOT a File node. Files in both sets (e.g. .md) get a File
+                # node *and* a DocFileEntry, so the doc-ingestion pass
+                # can produce a Source mirror alongside the structural File.
+                if walk_docs and ext in DOC_EXTENSIONS:
+                    rel_doc = str(rel_dir / filename) if rel_dir_str else filename
+                    abs_doc = str(dirpath / filename)
+                    result.doc_file_entries.append(DocFileEntry(abs_path=abs_doc, path=rel_doc, extension=ext))
+
                 if ext not in INCLUDED_EXTENSIONS:
                     continue
 

@@ -11,6 +11,9 @@ proto/       — Protobuf definitions
 plugins/     — Editor / AI integrations
   claude-code/ — Claude Code plugin (MCP server config)
   opencode/    — OpenCode plugin (native TS plugin, Bun runtime)
+tests/       — Shared cross-validation fixtures (Python vs TS extractors)
+benchmark/   — Makefile-driven accuracy + SWE-bench harness
+docs/        — Public MkDocs Material site
 ```
 
 ## Building & Running
@@ -66,4 +69,9 @@ npm run dev
 
 ## Graph Node Types
 
-Service, Repo, Repository, Class, Module, Function, File, Directory, Cluster, Namespace, Deployment, InstrumentedService, Span, Log, Metric, Endpoint, Database, DBTable
+Authoritative set is `VALID_NODE_TYPES` in `agent/src/opentrace_agent/store/constants.py`:
+
+Class, Cluster, Community, Database, DBTable, Dependency, Deployment, Directory,
+Endpoint, File, Function, InstrumentedService, KnowledgeDoc,
+KnowledgeVault, Log, Metric, Module, Namespace, Package, PullRequest, Repo,
+Repository, Service, Span, Variable

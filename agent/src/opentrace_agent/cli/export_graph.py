@@ -51,7 +51,10 @@ def _build_export_graph(store):  # type: ignore[no-untyped-def]
     try:
         import networkx as nx
     except ImportError as exc:
-        raise click.ClickException("networkx not installed. Run: uv pip install 'opentraceai[graph]'") from exc
+        raise click.ClickException(
+            "networkx not installed. It is a core dependency — reinstall opentraceai, "
+            "or `uv pip install networkx` into the active environment."
+        ) from exc
 
     from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
 

@@ -12,25 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only graph-analysis primitives.
+"""Agent-facing graph-retrieval primitives (OT-1732).
 
 Each function takes a :class:`opentrace_agent.store.GraphStore` and returns
-plain dicts/lists ready to be JSON-serialised for a CLI or API response.
-Read-only by construction — nothing in this package writes to the store —
-and following the store/CLAUDE.md convention of parameterised values with
-hardcoded labels.
-
-Two modules today:
-
-* ``communities`` — structure *within* the detected community partition:
-  degree-ranked hub nodes and the edges that span two communities.
-* ``cross_domain`` — structure *across* node-type domains, e.g. an edge that
-  joins the code domain to another, and communities whose membership spans
-  more than one.
-
-Both depend on a community partition existing, which ``opentraceai cluster``
-writes. Without it, ``god_nodes`` still works (pure degree ranking) while the
-bridge and spanning-community helpers return empty.
+a dict ready to be JSON-serialised for an MCP/REST response. Functions are
+read-only by construction and follow the store/CLAUDE.md convention of
+parameterised values + hardcoded labels.
 """
 
 from opentrace_agent.retrieval.communities import (
@@ -38,15 +25,30 @@ from opentrace_agent.retrieval.communities import (
     god_nodes,
     list_communities,
 )
+from opentrace_agent.retrieval.counts import count_by
 from opentrace_agent.retrieval.cross_domain import (
     cross_domain_bridges,
     find_communities_spanning_domains,
 )
+from opentrace_agent.retrieval.existence import find_orphans
+from opentrace_agent.retrieval.grep import grep
+from opentrace_agent.retrieval.overview import overview
+from opentrace_agent.retrieval.paths import find_path, find_via_relationship_to_type
+from opentrace_agent.retrieval.provenance import provenance
+from opentrace_agent.retrieval.search import search
 
 __all__ = [
+    "count_by",
     "cross_community_bridges",
     "cross_domain_bridges",
     "find_communities_spanning_domains",
+    "find_orphans",
+    "find_path",
+    "find_via_relationship_to_type",
     "god_nodes",
+    "grep",
     "list_communities",
+    "overview",
+    "provenance",
+    "search",
 ]

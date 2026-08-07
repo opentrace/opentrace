@@ -1,0 +1,678 @@
+# Copyright 2026 OpenTrace Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Write a vault's compile result into the graph store (OT-1732 Phase 4).
+
+The disk-write path in :mod:`opentrace_agent.wiki.ingest.persist` is the
+source of truth for the vault's filesystem state. This module mirrors the
+*same* state into the graph as :class:`Vault` and :class:`KnowledgeDoc`
+nodes connected by ``CONTAINS``, ``LINKS_TO`` (KnowledgeDoc → KnowledgeDoc
+author links), and ``MIRRORS`` (KnowledgeDoc → File twin) relationships.
+
+Graph writes run *after* disk writes succeed, and any failure here is
+caught and logged so the on-disk vault stays valid even if the graph
+mirror falls behind. A ``backfill`` command (``opentraceai wiki backfill``)
+exists to re-sync from disk when needed.
+"""
+
+from __future__ import annotations
+
+import logging
+import mimetypes
+import re
+from typing import Any
+
+from opentrace_agent.store import GraphStore
+from opentrace_agent.wiki.ingest.sources import AcquiredSource
+from opentrace_agent.wiki.vault import VaultMetadata
+
+logger = logging.getLogger(__name__)
+
+
+def _sniff_content_type(filename: str) -> str:
+    """Guess a MIME type from a filename. Returns "" when unknown."""
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or ""
+
+
+# ---------------------------------------------------------------------------
+# Node / edge type constants — kept in sync with proto/opentrace/v1/code_graph.proto
+# ---------------------------------------------------------------------------
+
+NODE_TYPE_KNOWLEDGE_VAULT = "KnowledgeVault"
+NODE_TYPE_KNOWLEDGE_DOC = "KnowledgeDoc"
+
+REL_TYPE_CONTAINS = "CONTAINS"
+REL_TYPE_LINKS_TO = "LINKS_TO"
+REL_TYPE_MIRRORS = "MIRRORS"
+REL_TYPE_DOCUMENTS = "DOCUMENTS"
+
+# Code-tree types written by the DirectoryWalker; used here when a repo-walked
+# doc needs a File twin the code walk didn't create (see _ensure_file_twin).
+NODE_TYPE_FILE = "File"
+NODE_TYPE_DIRECTORY = "Directory"
+REL_TYPE_DEFINES = "DEFINES"
+
+# ---------------------------------------------------------------------------
+# ID conventions
+# ---------------------------------------------------------------------------
+
+
+def vault_node_id(vault_name: str) -> str:
+    return f"vault::{vault_name}"
+
+
+def corpus_doc_node_id(sha256: str) -> str:
+    return f"corpus::{sha256}"
+
+
+def stamp_doc_paths(
+    store: GraphStore,
+    named_blobs: list[tuple[str, bytes]],
+    *,
+    status_override: str | None = None,
+) -> int:
+    """Stamp root-relative ``path`` (+ ``paths`` for duplicate content, +
+    ``status``) onto the KnowledgeDoc for each blob.
+
+    Pure property stamping — no File nodes, no MIRRORS edges — so it serves
+    both repo walks (via :func:`link_corpus_doc_mirrors`) and bare-folder
+    ingests (``vault ingest``), where the walked root plays the repo-root
+    role. *status_override* replaces the path-derived ``classify_doc_status``
+    heuristic; without that threading, post-compile stamping would silently
+    undo an explicit ``--status``. Blobs that never became a KnowledgeDoc
+    (content-gated) are skipped silently.
+
+    Returns the number of docs whose properties changed.
+    """
+    import hashlib
+    from collections import defaultdict
+
+    from opentrace_agent.wiki.ingest.sources import classify_doc_status
+
+    # Content-addressed identity means N paths with identical bytes collapse to
+    # ONE KnowledgeDoc. Stamping `path` per blob made the LAST writer win, so a
+    # node could end up carrying an archived path while its `status` came from
+    # the live one — the two disagreed, and a trace reader (me) mis-read which
+    # document the agent had opened. Group by sha first, then stamp once.
+    by_sha: dict[str, list[str]] = defaultdict(list)
+    for rel_path, data in named_blobs:
+        by_sha[hashlib.sha256(data).hexdigest()].append(rel_path)
+
+    stamped = 0
+    for sha, paths in by_sha.items():
+        cid = corpus_doc_node_id(sha)
+        corpus_node = store.get_node(cid)
+        if corpus_node is None:
+            continue  # content-gated out of the vault
+        # Primary path = the most *current* copy, so `path` and `status` agree.
+        # An archived duplicate must not make the live document look superseded.
+        ranked = sorted(
+            paths,
+            key=lambda p: (
+                classify_doc_status(p) != "authoritative",
+                classify_doc_status(p) == "design_history_archived",
+                len(p),
+            ),
+        )
+        primary = ranked[0]
+        props = dict(corpus_node.get("properties") or {})
+        changed = False
+        if props.get("path") != primary:
+            props["path"] = primary
+            changed = True
+        status = status_override or classify_doc_status(primary)
+        if props.get("status") != status:
+            props["status"] = status
+            changed = True
+        # Record every path this content lives at, so "which file is this?" is
+        # answerable and a duplicate is visible rather than silently erased.
+        if len(paths) > 1 and props.get("paths") != sorted(paths):
+            props["paths"] = sorted(paths)
+            changed = True
+        if changed:
+            store.add_node(
+                id=cid,
+                node_type=NODE_TYPE_KNOWLEDGE_DOC,
+                name=corpus_node.get("name") or primary,
+                properties=props,
+            )
+            stamped += 1
+    return stamped
+
+
+def link_corpus_doc_mirrors(
+    store: GraphStore,
+    repo_id: str,
+    named_blobs: list[tuple[str, bytes]],
+) -> int:
+    """Link KnowledgeDocs to the File nodes for the same repo-walked documents.
+
+    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` for every doc
+    the wiki pass ingested from a repo walk. For each, the KnowledgeDoc id is the
+    sha256 of the raw bytes (same scheme as :func:`corpus_doc_node_id` /
+    ``autoprune.compute_walked_shas``) and the File id is
+    ``<repo_id>/<rel_path>``. A ``KnowledgeDoc -MIRRORS-> File`` edge is merged
+    (idempotent), and :func:`stamp_doc_paths` stamps the repo-relative ``path``
+    onto the KnowledgeDoc so the twins are mutually navigable. When the code
+    walk didn't create the File node (extensions outside INCLUDED_EXTENSIONS —
+    .rst/.txt/.html/PDFs), it is created here (see :func:`_ensure_file_twin`)
+    so every repo-walked KnowledgeDoc has a File twin. Blobs that never became
+    a KnowledgeDoc (content-gated) are skipped silently.
+
+    Returns the number of MIRRORS edges written.
+    """
+    import hashlib
+    from collections import defaultdict
+
+    by_sha: dict[str, list[str]] = defaultdict(list)
+    for rel_path, data in named_blobs:
+        by_sha[hashlib.sha256(data).hexdigest()].append(rel_path)
+
+    edges = 0
+    for sha, paths in by_sha.items():
+        cid = corpus_doc_node_id(sha)
+        if store.get_node(cid) is None:
+            continue  # content-gated out of the vault
+        for rel_path in paths:
+            fid = f"{repo_id}/{rel_path}"
+            if store.get_node(fid) is None:
+                _ensure_file_twin(store, repo_id, rel_path)
+            store.merge_relationship(
+                id=f"{cid}->MIRRORS->{fid}",
+                rel_type=REL_TYPE_MIRRORS,
+                source_id=cid,
+                target_id=fid,
+            )
+            edges += 1
+    stamp_doc_paths(store, named_blobs)
+    return edges
+
+
+def link_doc_to_doc_links(
+    store: GraphStore,
+    named_blobs: list[tuple[str, bytes]],
+) -> int:
+    """Write ``KnowledgeDoc -LINKS_TO-> KnowledgeDoc`` for authors' own links.
+
+    *named_blobs* is ``[(repo_relative_path, raw_bytes), ...]`` — the same
+    list :func:`link_corpus_doc_mirrors` consumes, so every repo-walked doc
+    of this run is in scope. For each doc we parse its body's relative links
+    (see :func:`parse_doc_links`), resolve them against the linking doc's own
+    directory, and merge an edge when the target resolves to another
+    KnowledgeDoc in the same walk.
+
+    This is the doc-side counterpart of the code graph's import edges: it
+    records structure the *author* declared, never anything a model inferred.
+    Link resolution is the filter — a link to a code file or an image finds no
+    KnowledgeDoc and is silently skipped, so no extension allowlist is needed.
+
+    Bodies are read from the corpus (post-markitdown markdown, so an .html
+    doc's anchors are already markdown links); when the corpus body is
+    unavailable we fall back to decoding the raw bytes. Targets that escape
+    the repo root are dropped.
+
+    Returns the number of LINKS_TO edges written.
+    """
+    import hashlib
+    import posixpath
+
+    # Resolve every walked doc to its node, keeping a path→id index for
+    # lookup. Two paths with identical content share one sha (hence one
+    # node); both keys point at it.
+    by_path: dict[str, str] = {}
+    docs: list[tuple[str, str, dict[str, Any]]] = []
+    for rel_path, data in named_blobs:
+        sha = hashlib.sha256(data).hexdigest()
+        cid = corpus_doc_node_id(sha)
+        node = store.get_node(cid)
+        if node is None:
+            continue  # content-gated out of the vault
+        by_path[rel_path] = cid
+        docs.append((rel_path, cid, {"props": node.get("properties") or {}, "raw": data}))
+
+    edges = 0
+    seen_pairs: set[tuple[str, str]] = set()
+    for rel_path, cid, extra in docs:
+        body = _read_corpus_body(store, (extra["props"] or {}).get("corpus_path"))
+        if not body:
+            try:
+                body = extra["raw"].decode("utf-8", errors="ignore")
+            except (AttributeError, UnicodeError):
+                continue
+        if not body:
+            continue
+        base_dir = posixpath.dirname(rel_path)
+        for target in parse_doc_links(body):
+            if target.startswith("/"):
+                # Repo-root-relative (``/docs/guide.md``).
+                resolved = posixpath.normpath(target.lstrip("/"))
+            else:
+                resolved = posixpath.normpath(posixpath.join(base_dir, target))
+            if resolved.startswith(".."):
+                continue  # escapes the repo root
+            tgt = by_path.get(resolved)
+            if tgt is None or tgt == cid:
+                continue
+            pair = (cid, tgt)
+            if pair in seen_pairs:
+                continue  # two spellings of the same target
+            seen_pairs.add(pair)
+            store.merge_relationship(
+                id=f"{cid}->LINKS_TO->{tgt}",
+                rel_type=REL_TYPE_LINKS_TO,
+                source_id=cid,
+                target_id=tgt,
+            )
+            edges += 1
+    return edges
+
+
+def _ensure_file_twin(store: GraphStore, repo_id: str, rel_path: str) -> str:
+    """Create the File node (and any missing ancestor Directory nodes) for a
+    repo-walked doc the code walk didn't cover.
+
+    Mirrors the DirectoryWalker's node shape exactly: ids are
+    ``<repo_id>/<rel_path>``, each node hangs off its parent via ``DEFINES``,
+    and File/Directory nodes carry a repo-relative ``path`` property. The
+    walker already creates Directory nodes for every non-excluded dir, so the
+    ancestor loop is a no-op in practice — it exists so a doc under a dir the
+    code walk never persisted still gets a well-formed chain.
+    """
+    parts = rel_path.split("/")
+    parent_id = repo_id
+    for depth in range(1, len(parts)):
+        rel_dir = "/".join(parts[:depth])
+        dir_id = f"{repo_id}/{rel_dir}"
+        if store.get_node(dir_id) is None:
+            store.add_node(
+                id=dir_id,
+                node_type=NODE_TYPE_DIRECTORY,
+                name=parts[depth - 1],
+                properties={"path": rel_dir},
+            )
+            store.merge_relationship(
+                id=f"{parent_id}->DEFINES->{dir_id}",
+                rel_type=REL_TYPE_DEFINES,
+                source_id=parent_id,
+                target_id=dir_id,
+            )
+        parent_id = dir_id
+
+    file_id = f"{repo_id}/{rel_path}"
+    filename = parts[-1]
+    _, dot, ext = filename.rpartition(".")
+    props: dict[str, Any] = {"path": rel_path}
+    if dot and ext:
+        props["extension"] = f".{ext.lower()}"
+    store.add_node(id=file_id, node_type=NODE_TYPE_FILE, name=filename, properties=props)
+    store.merge_relationship(
+        id=f"{parent_id}->DEFINES->{file_id}",
+        rel_type=REL_TYPE_DEFINES,
+        source_id=parent_id,
+        target_id=file_id,
+    )
+    return file_id
+
+
+def link_vault_to_repo(store: GraphStore, repo_id: str, vault_name: str) -> bool:
+    """Link a repo-spawned vault to its Repository node.
+
+    Merges ``Repository -DOCUMENTS-> Vault`` (idempotent). Called only from the
+    ``index --wiki`` path where the wiki compile runs alongside a repo walk —
+    vaults compiled from uploads or URLs and attached globals never reach this,
+    so they never claim to document a repo they didn't come from. Returns True
+    when the edge was written (both nodes present).
+
+    The repo→vault provenance itself lives in ``.vault.json``'s
+    ``spawned_from``, which is what ``_resolve_index_vault_name`` reads to keep
+    re-indexing idempotent. This used to mirror it onto the vault node as well;
+    nothing ever read that copy back, so it was dropped rather than kept as a
+    second version of a fact with one owner.
+    """
+    vid = vault_node_id(vault_name)
+    if store.get_node(vid) is None or store.get_node(repo_id) is None:
+        return False
+    store.merge_relationship(
+        id=f"{repo_id}->DOCUMENTS->{vid}",
+        rel_type=REL_TYPE_DOCUMENTS,
+        source_id=repo_id,
+        target_id=vid,
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Doc-link parser
+# ---------------------------------------------------------------------------
+
+# Inline markdown link: [text](target "optional title") — angle-bracket form
+# ``[t](<a b.md>)`` included. Image links (``![alt](x.png)``) match too; they
+# resolve to no KnowledgeDoc, so they fall out at lookup time.
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*<([^>]+)>|\[[^\]]*\]\(\s*([^)\s]+)")
+# Reference-style definition: ``[label]: path/to/doc.md "title"``.
+_MD_REF_DEF_RE = re.compile(r"^[ \t]{0,3}\[[^\]]+\]:[ \t]*<?([^\s>]+)>?", re.MULTILINE)
+# HTML anchor — covers a raw .html doc read before markitdown normalization.
+_HTML_HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+# Anything with a URI scheme (http:, mailto:, tel:) or protocol-relative //.
+_EXTERNAL_TARGET_RE = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.\-]*:|//)")
+
+
+def parse_doc_links(body: str) -> list[str]:
+    """Extract in-repo relative link targets an author wrote in a document.
+
+    Covers markdown inline links, reference-style definitions, and raw HTML
+    anchors. External targets (``http:``, ``mailto:``, protocol-relative
+    ``//``) and pure fragments (``#section``) are dropped; fragments and
+    query strings are stripped from the rest, and ``%20`` escapes are
+    decoded. Returns targets in document order, deduplicated.
+
+    These are the doc-side analogue of an ``import`` statement — the
+    author's own declaration that one document depends on another. Purely
+    mechanical: no LLM, no inference.
+    """
+    from urllib.parse import unquote
+
+    seen: set[str] = set()
+    out: list[str] = []
+    candidates: list[str] = []
+    for m in _MD_LINK_RE.finditer(body):
+        candidates.append(m.group(1) or m.group(2) or "")
+    candidates.extend(m.group(1) for m in _MD_REF_DEF_RE.finditer(body))
+    candidates.extend(m.group(1) for m in _HTML_HREF_RE.finditer(body))
+
+    for raw in candidates:
+        target = (raw or "").strip()
+        if not target or target.startswith("#"):
+            continue
+        if _EXTERNAL_TARGET_RE.match(target):
+            continue
+        # Drop fragment + query — ``guide.md#setup`` is a link to guide.md.
+        target = target.split("#", 1)[0].split("?", 1)[0]
+        target = unquote(target).strip()
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        out.append(target)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Graph writer
+# ---------------------------------------------------------------------------
+
+
+def delete_vault_from_graph(store: GraphStore, vault_name: str) -> dict[str, int]:
+    """Remove a vault's Vault node, plus any KnowledgeDoc nodes
+    that no other vault still references via ``CONTAINS``. Symmetric
+    counterpart of :func:`write_vault_to_graph`.
+
+    KnowledgeDocs are shared across vaults by sha256 identity — deleting a
+    vault must NOT delete a KnowledgeDoc that another vault still uses. We
+    resolve this by inspecting the incoming ``CONTAINS`` edges on each: if
+    the only remaining edge originates from the vault being deleted (or none
+    does), the KnowledgeDoc is orphaned and can go too.
+
+    Returns
+    -------
+    dict
+        ``{"nodes_deleted": N}`` for telemetry / tests.
+    """
+    deleted = 0
+    vault_id = vault_node_id(vault_name)
+
+    # 1. Collect Source IDs reachable from this vault BEFORE we delete anything.
+    sources_in_vault: list[str] = []
+    try:
+        contained = store.traverse(
+            vault_id,
+            direction="outgoing",
+            max_depth=1,
+            relationship_type=REL_TYPE_CONTAINS,
+        )
+    except ValueError:
+        contained = []  # vault node already gone
+    for r in contained:
+        if r["node"]["type"] == NODE_TYPE_KNOWLEDGE_DOC:
+            sources_in_vault.append(r["node"]["id"])
+
+    # 2. Delete the Vault node itself.
+    if store.delete_node(vault_id):
+        deleted += 1
+
+    # 3. Delete shared KnowledgeDocs only when no other vault still references
+    #    them. We re-check after deleting the Vault above so the just-
+    #    deleted vault's CONTAINS edges are gone from the count.
+    #
+    #    This check and the delete below are not atomic, and LadybugDB gives us
+    #    no transaction to make them so (see ../../store/CLAUDE.md). A compile
+    #    that adds a CONTAINS edge from another vault to `sid` in the window
+    #    between the traverse and the delete loses the doc node. Serializing
+    #    vault writes is what closes this — `ingest/pipeline._flock` does that
+    #    per vault, but two *different* vaults sharing a doc by sha take
+    #    different locks and can still interleave. Don't read the traverse as
+    #    a guarantee; it is a best-effort refcount.
+    for sid in sources_in_vault:
+        try:
+            inbound = store.traverse(
+                sid,
+                direction="incoming",
+                max_depth=1,
+                relationship_type=REL_TYPE_CONTAINS,
+            )
+        except ValueError:
+            inbound = []
+        # If any other Vault still CONTAINS this source, leave it alone.
+        still_referenced = any(r["node"]["type"] == NODE_TYPE_KNOWLEDGE_VAULT for r in inbound)
+        if still_referenced:
+            continue
+        if store.delete_node(sid):
+            deleted += 1
+
+    logger.debug(
+        "vault graph delete: removed %d nodes (vault=%s, sources_considered=%d)",
+        deleted,
+        vault_name,
+        len(sources_in_vault),
+    )
+    return {"nodes_deleted": deleted}
+
+
+def write_vault_to_graph(
+    store: GraphStore,
+    meta: VaultMetadata,
+    acquired: list[AcquiredSource] | None = None,
+    normalized: list[Any] | None = None,
+    scope: str = "global",
+) -> dict[str, int]:
+    """Mirror *meta* into the graph as a fresh consistent slice.
+
+    Writes every document in ``meta.sources`` (not just the ones ingested in
+    this compile run) so the graph reflects the post-compile vault state in
+    full. Edges are upserted via :meth:`GraphStore.merge_relationship` where
+    available; otherwise fresh edges are added (LadybugDB has no
+    transaction support, so duplicate-edge tolerance is left to query time).
+
+    Parameters
+    ----------
+    store
+        GraphStore handle; must be writeable.
+    meta
+        Loaded vault metadata (post-compile).
+    acquired
+        Sources acquired *this run*. Optional — the canonical source list
+        comes from ``meta.sources``. Provided when the caller already has
+        the AcquiredSource objects with content_type.
+    normalized
+        Post-normalization sources for this run, carrying ``corpus_path`` and
+        the extraction-stamped navigation label. Attach / promote / demote
+        pass lightweight stubs with only the fields they know.
+
+    Returns
+    -------
+    dict
+        ``{"nodes_written": N, "rels_written": M}`` for telemetry / tests.
+    """
+    nodes_written = 0
+    rels_written = 0
+
+    vault_id = vault_node_id(meta.name)
+
+    # 1. Vault node. ``vault`` property is denormalised onto every
+    #    vault-domain node so vault_scope filters in the retrieval layer
+    #    can match by simple property equality.
+    #    ``scope`` records whether this vault lives at the project-local
+    #    or the user-global root.
+    #    ``mirror_compiled_at`` stamps when *this* graph's mirror was
+    #    written; ``vault list`` compares it against disk's
+    #    ``last_compiled_at`` to flag stale mirrors when a global vault
+    #    has been re-compiled from elsewhere.
+    from datetime import datetime, timezone
+
+    mirror_iso = datetime.now(timezone.utc).isoformat()
+    vault_props: dict[str, Any] = {
+        "vault": meta.name,
+        "last_compiled_at": meta.last_compiled_at or "",
+        "summary": "",
+        "scope": scope,
+        "mirror_compiled_at": mirror_iso,
+    }
+    store.add_node(
+        id=vault_id,
+        node_type=NODE_TYPE_KNOWLEDGE_VAULT,
+        name=meta.name,
+        properties=vault_props,
+    )
+    nodes_written += 1
+
+    # 2. KnowledgeDoc nodes — one per ingested document. Use the AcquiredSource
+    #    metadata when present, otherwise fall back to .vault.json's
+    #    IngestedSource (sha256 + original_name + ingested_at only).
+    by_sha_acquired: dict[str, AcquiredSource] = {s.sha256: s for s in (acquired or [])}
+    by_sha_normalized: dict[str, Any] = {n.sha256: n for n in (normalized or [])}
+    for sha, ingested in meta.sources.items():
+        sid = corpus_doc_node_id(sha)
+        acq = by_sha_acquired.get(sha)
+        norm = by_sha_normalized.get(sha)
+        # KnowledgeDocs are shared across vaults by sha256 identity — vault
+        # membership is expressed via the Vault -CONTAINS-> Source edge
+        # (one edge per vault), NOT via a property on the Source itself. A
+        # `vault` property would be wrong: the merge-on-write would overwrite
+        # the previous tag whenever a second vault re-ingests the same file.
+        props: dict[str, Any] = {
+            "sha256": sha,
+            "filename": ingested.original_name,
+            "acquired_at": ingested.ingested_at,
+            # A corpus document is content-addressed, so its bytes never change
+            # in place — an edited document is a NEW node under a new sha. Its
+            # ingest time IS therefore its last-updated time. This is the only
+            # producer of `last_updated`, which `retrieval.overview`'s
+            # `recently_updated` and `search`'s `recency` both read; without it
+            # they returned an empty list and a null on every single call.
+            "last_updated": ingested.ingested_at,
+        }
+        if acq is not None:
+            props["content_type"] = _sniff_content_type(ingested.original_name)
+        # ``norm`` is a NormalizedSource on a fresh compile, but attach /
+        # promote / demote / re-mirror pass lightweight stubs that carry only
+        # the fields they know (sha256 + corpus_path). Read every optional
+        # field via getattr so a stub without ``title``/``markdown``/etc.
+        # doesn't crash the mirror — the missing labels fall back to the
+        # ``.vault.json`` IngestedSource below.
+        norm_corpus_path = getattr(norm, "corpus_path", "") if norm is not None else ""
+        if norm_corpus_path:
+            # Body persisted on disk this run — point the node at it so
+            # downstream consumers (``load_source``, ``grep``) can stream it
+            # back.
+            props["corpus_path"] = norm_corpus_path
+        # Navigation label: prefer this run's extraction (NormalizedSource),
+        # fall back to the label persisted in .vault.json (covers ``vault
+        # attach`` of a vault compiled elsewhere). Stored under BOTH keys:
+        # ``one_line_summary`` is what ``_neighbour_summary`` prefers, and
+        # ``summary`` feeds
+        # build_search_text so the label is FTS-findable.
+        title = getattr(norm, "title", "") or getattr(ingested, "title", "")
+        one_liner = getattr(norm, "one_line_summary", "") or getattr(ingested, "one_line_summary", "")
+        if title:
+            props["title"] = title
+        if one_liner:
+            props["one_line_summary"] = one_liner
+            props["summary"] = one_liner
+        # Epistemic status: this run's classification, else .vault.json's.
+        status = getattr(norm, "status", "") or getattr(ingested, "status", "")
+        if status:
+            props["status"] = status
+        # ``add_node`` overwrites the full property blob, and this loop runs
+        # over ALL of meta.sources on every mirror — sources not (re)ingested
+        # this run have no AcquiredSource/NormalizedSource, so carry their
+        # previously-written values forward instead of wiping them.
+        existing_src_props = (store.get_node(sid) or {}).get("properties") or {}
+        for k in (
+            "content_type",
+            "corpus_path",
+            "title",
+            "one_line_summary",
+            "summary",
+            "path",
+            "status",
+        ):
+            if k not in props and k in existing_src_props:
+                props[k] = existing_src_props[k]
+        store.add_node(
+            id=sid,
+            node_type=NODE_TYPE_KNOWLEDGE_DOC,
+            name=ingested.original_name,
+            properties=props,
+        )
+        nodes_written += 1
+        # Vault CONTAINS KnowledgeDoc.
+        store.merge_relationship(
+            id=f"{vault_id}->CONTAINS->{sid}",
+            rel_type=REL_TYPE_CONTAINS,
+            source_id=vault_id,
+            target_id=sid,
+        )
+        rels_written += 1
+
+    # Doc→doc ``LINKS_TO`` is NOT written here — it needs root-relative paths
+    # this function doesn't have. ``link_doc_to_doc_links`` runs as a separate
+    # post-compile step alongside MIRRORS; see the callers in cli/.
+
+    logger.debug(
+        "vault graph write complete: %d nodes, %d rels (vault=%s)",
+        nodes_written,
+        rels_written,
+        meta.name,
+    )
+    return {"nodes_written": nodes_written, "rels_written": rels_written}
+
+
+def _read_corpus_body(store: GraphStore, corpus_rel: str | None) -> str | None:
+    """Read a source's corpus markdown given its DB-relative ``corpus_path``.
+
+    Returns ``None`` when the path is unset, escapes the DB directory, or
+    the file is unreadable — callers treat a missing body as "nothing to read
+    for this source", never an error.
+    """
+    from pathlib import Path
+
+    if not corpus_rel or ".." in corpus_rel or corpus_rel.startswith("/"):
+        return None
+    db_path = getattr(store, "db_path", None)
+    if not db_path:
+        return None
+    try:
+        return (Path(str(db_path)).parent / corpus_rel).read_text(encoding="utf-8")
+    except OSError:
+        return None

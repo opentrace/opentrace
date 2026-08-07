@@ -44,6 +44,23 @@ import type {
  *  lower = more tree-like. */
 const RELATIONAL_LINK_WEIGHT = 0.05;
 
+/** Which endpoint is the CHILD of a tree-forming edge. Everything points
+ *  parent → child except MIRRORS, which is stored doc → file while the File
+ *  (already rooted in the code tree) is the anchor the doc hangs off. */
+function childEnd(label: string, source: string, target: string): string {
+  return label === 'MIRRORS' ? source : target;
+}
+
+/** Orient a tree-forming edge parent → child for the worker's forest builder,
+ *  which reads `source` as the parent. Only MIRRORS is stored child-first. */
+function orientParentFirst(
+  link: GraphLink,
+  source: string,
+  target: string,
+): readonly [string, string] {
+  return link.label === 'MIRRORS' ? [target, source] : [source, target];
+}
+
 /** A layout-worker link: endpoint ids + link-force weight. */
 export interface LayoutLink {
   source: string;
@@ -127,6 +144,11 @@ export class LayoutLinkCollector {
     allLinks: GraphLink[],
     nodeIdSet: Set<string>,
     isStructural: (link: GraphLink) => boolean,
+    orient: (
+      link: GraphLink,
+      source: string,
+      target: string,
+    ) => readonly [string, string] = (_l, s, t) => [s, t],
   ): LayoutLink[] {
     const suffix = this.tracker.suffixStart(allLinks);
 
@@ -139,10 +161,10 @@ export class LayoutLinkCollector {
       const pending = this.pendingExcluded;
       this.pendingExcluded = [];
       for (const link of pending) {
-        this.consider(link, nodeIdSet, isStructural, out);
+        this.consider(link, nodeIdSet, isStructural, orient, out);
       }
       for (let i = suffix; i < allLinks.length; i++) {
-        this.consider(allLinks[i], nodeIdSet, isStructural, out);
+        this.consider(allLinks[i], nodeIdSet, isStructural, orient, out);
       }
       return out;
     }
@@ -163,9 +185,10 @@ export class LayoutLinkCollector {
       // imports, …) are included at a weak weight so call/import neighbours
       // drift closer — shortening those long cross-graph edges into logical
       // branches — without collapsing the structure into a hairball.
+      const [from, to] = orient(link, source, target);
       layoutLinks.push({
-        source,
-        target,
+        source: from,
+        target: to,
         w: isStructural(link) ? 1 : RELATIONAL_LINK_WEIGHT,
       });
     }
@@ -179,6 +202,11 @@ export class LayoutLinkCollector {
     link: GraphLink,
     nodeIdSet: Set<string>,
     isStructural: (link: GraphLink) => boolean,
+    orient: (
+      link: GraphLink,
+      source: string,
+      target: string,
+    ) => readonly [string, string],
     out: LayoutLink[],
   ): void {
     const source = endpointId(link.source);
@@ -188,12 +216,16 @@ export class LayoutLinkCollector {
       this.pendingExcluded.push(link);
       return;
     }
-    const key = `${source}|${target}`;
+    // Key on the ORIENTED pair so the multiset diff matches what the full
+    // scan records — keying raw endpoints would make a MIRRORS edge look
+    // unsent on every collect and re-post it forever.
+    const [from, to] = orient(link, source, target);
+    const key = `${from}|${to}`;
     this.sent.set(key, (this.sent.get(key) ?? 0) + 1);
     this.sentTotal++;
     out.push({
-      source,
-      target,
+      source: from,
+      target: to,
       w: isStructural(link) ? 1 : RELATIONAL_LINK_WEIGHT,
     });
   }
@@ -416,6 +448,49 @@ export function useForceLayout3d(
   }, []);
 
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
+  // layoutEdgeType is a priority-ORDERED list of tree-forming edge types
+  // (index 0 = strongest claim on a node). Each node gets exactly ONE
+  // full-strength "parent" spring — its highest-priority tree edge — and
+  // every other tree-type edge touching it is demoted to the weak
+  // relational weight. Without the one-parent rule, multi-parent nodes turn
+  // the backbone into a mesh and mega-hubs into dense stars: a Vault
+  // CONTAINS 100+ docs, but the docs' MIRRORS twins would scatter them
+  // across the code tree where their files actually live.
+  const parentPriority = useMemo(() => {
+    const list = Array.isArray(layoutConfig.layoutEdgeType)
+      ? layoutConfig.layoutEdgeType
+      : [layoutConfig.layoutEdgeType];
+    return new Map(list.map((t, i) => [t, i] as const));
+  }, [layoutConfig.layoutEdgeType]);
+
+  // Pick each node's ONE parent edge: the highest-priority tree-type edge
+  // where the node is the child end (first seen wins a tie, matching the
+  // worker's first-parent-wins forest). Returned as the set of winning link
+  // objects so it can back a per-link `isStructural` predicate — the shape
+  // LayoutLinkCollector consumes.
+  const chooseParentLinks = useCallback(
+    (nodeIdSet: Set<string>, linkArray: GraphLink[]) => {
+      const chosen = new Map<string, GraphLink>();
+      const chosenPrio = new Map<string, number>();
+      for (const link of linkArray) {
+        const prio = parentPriority.get(link.label);
+        if (prio === undefined) continue;
+        const source = endpointId(link.source);
+        const target = endpointId(link.target);
+        if (source === target) continue;
+        if (!nodeIdSet.has(source) || !nodeIdSet.has(target)) continue;
+        const child = childEnd(link.label, source, target);
+        const cur = chosenPrio.get(child);
+        if (cur === undefined || prio < cur) {
+          chosenPrio.set(child, prio);
+          chosen.set(child, link);
+        }
+      }
+      return new Set(chosen.values());
+    },
+    [parentPriority],
+  );
+
   // Classifier + multiset diff of links already sent to the live worker
   // (init + add-nodes). Diffing against this is what catches resolve-stage
   // edges that arrive after both endpoints. Reset on full rebuild.
@@ -434,11 +509,6 @@ export function useForceLayout3d(
   const lastPostedCommunitiesRef = useRef<Record<string, number> | null>(null);
 
   useEffect(() => {
-    // Structural edges (the DEFINES containment tree) drive the layout at
-    // full strength; relational edges pull weakly (see LayoutLinkCollector).
-    const isStructural = (link: GraphLink) =>
-      flatMode || link.label === layoutConfig.layoutEdgeType;
-
     const prevIds = prevNodeIdsRef.current;
     const prevSize = prevIds.size;
     const suffixStart = nodesTrackerRef.current!.suffixStart(allNodes);
@@ -479,6 +549,18 @@ export function useForceLayout3d(
         }
       }
     }
+    // Structural edges drive the layout at full strength; relational edges
+    // pull weakly (see LayoutLinkCollector). "Structural" is the one-parent
+    // rule, not a label test: a node's highest-priority tree edge wins, every
+    // other tree edge touching it is demoted. That is a GLOBAL decision, so
+    // unlike a per-label predicate it needs a pass over all links — skipped
+    // entirely in flat mode, where every edge is structural by definition.
+    const chosenParents = flatMode
+      ? null
+      : chooseParentLinks(nodeIdSet, allLinks);
+    const isStructural = (link: GraphLink) =>
+      flatMode || chosenParents!.has(link);
+
     const isIncremental =
       allPrevPresent && nodeIdSet.size > prevSize && workerRef.current !== null;
     const isSameNodes = allPrevPresent && nodeIdSet.size === prevSize;
@@ -493,6 +575,7 @@ export function useForceLayout3d(
         allLinks,
         nodeIdSet,
         isStructural,
+        orientParentFirst,
       );
       if (lateLinks.length > 0) {
         const assignmentsChanged =
@@ -544,6 +627,7 @@ export function useForceLayout3d(
         allLinks,
         nodeIdSet,
         isStructural,
+        orientParentFirst,
       );
       for (const id of newNodeIds) nodeOrderRef.current.push(id);
 
@@ -636,6 +720,7 @@ export function useForceLayout3d(
       allLinks,
       nodeIdSet,
       isStructural,
+      orientParentFirst,
     );
 
     const worker = new Worker(
@@ -699,8 +784,11 @@ export function useForceLayout3d(
     communityData,
     layoutConfig,
     applyPositionBuffer,
-    // flatMode derives from layoutConfig (already a dep), so dropping the old
-    // buildLayoutLinks callback from this list loses no re-run triggers.
+    // flatMode derives from layoutConfig (already a dep), so listing it adds no
+    // re-run trigger. Same reasoning covers the omitted `chooseParentLinks`:
+    // it is a useCallback over `parentPriority`, which derives from
+    // layoutConfig.layoutEdgeType — so any change that would give it new
+    // behaviour already re-runs this effect through `layoutConfig`.
     flatMode,
   ]);
 

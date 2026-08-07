@@ -141,7 +141,10 @@ describe("server() — assembly", () => {
     expect(hooks.tool).toBeDefined()
     expect(Object.keys(hooks.tool!).sort()).toEqual([
       "opentrace_find_usages",
+      "opentrace_graph_analyze",
+      "opentrace_graph_build",
       "opentrace_graph_explore",
+      "opentrace_graph_query",
       "opentrace_graph_stats",
       "opentrace_impact_analysis",
       "opentrace_repo_index",

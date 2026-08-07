@@ -3,7 +3,7 @@
 from typing import Final, Literal
 
 NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
-    "CREATE NODE TABLE IF NOT EXISTS Repository(id STRING PRIMARY KEY, name STRING, ref STRING, sourceUri STRING, provider STRING, defaultBranch STRING, summary STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Repository(id STRING PRIMARY KEY, name STRING, ref STRING, sourceUri STRING, provider STRING, defaultBranch STRING, summary STRING, localPath STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Directory(id STRING PRIMARY KEY, name STRING, path STRING, summary STRING)",
     "CREATE NODE TABLE IF NOT EXISTS File(id STRING PRIMARY KEY, name STRING, path STRING, extension STRING, language STRING, sourceUri STRING, lines INT32, summary STRING)",
     "CREATE NODE TABLE IF NOT EXISTS Class(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, signature STRING, docs STRING, kind STRING, superclasses STRING[], interfaces STRING[], summary STRING)",
@@ -11,6 +11,9 @@ NODE_SCHEMA_STATEMENTS: Final[list[str]] = [
     "CREATE NODE TABLE IF NOT EXISTS Dependency(id STRING PRIMARY KEY, name STRING, version STRING, registry STRING)",
     "CREATE NODE TABLE IF NOT EXISTS PullRequest(id STRING PRIMARY KEY, name STRING, number INT32, title STRING, state STRING, author STRING, url STRING, createdAt STRING, baseBranch STRING, headBranch STRING, additions INT32, deletions INT32, filesChanged INT32)",
     "CREATE NODE TABLE IF NOT EXISTS Variable(id STRING PRIMARY KEY, name STRING, language STRING, startLine INT32, endLine INT32, kind STRING, exported BOOL, typeAnnotation STRING, docs STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS KnowledgeVault(id STRING PRIMARY KEY, name STRING, lastCompiledAt STRING, summary STRING, scope STRING, mirrorCompiledAt STRING, vault STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS KnowledgeDoc(id STRING PRIMARY KEY, name STRING, sha256 STRING, filename STRING, contentType STRING, acquiredAt STRING, corpusPath STRING, title STRING, oneLineSummary STRING, summary STRING, path STRING, status STRING)",
+    "CREATE NODE TABLE IF NOT EXISTS Community(id STRING PRIMARY KEY, name STRING, communityId INT32, cohesion DOUBLE, members INT32, isGod BOOL)",
     "CREATE NODE TABLE IF NOT EXISTS IndexMetadata(id STRING PRIMARY KEY, name STRING, indexedAt STRING, durationSeconds DOUBLE, repoId STRING, repoPath STRING, commitSha STRING, commitMessage STRING, branch STRING, sourceUri STRING, opentraceaiVersion STRING, nodesCreated INT32, relationshipsCreated INT32, filesProcessed INT32, classesExtracted INT32, functionsExtracted INT32)",
 ]
 
@@ -22,9 +25,12 @@ NODE_TYPE_FUNCTION: Final[str] = "Function"
 NODE_TYPE_DEPENDENCY: Final[str] = "Dependency"
 NODE_TYPE_PULL_REQUEST: Final[str] = "PullRequest"
 NODE_TYPE_VARIABLE: Final[str] = "Variable"
+NODE_TYPE_KNOWLEDGE_VAULT: Final[str] = "KnowledgeVault"
+NODE_TYPE_KNOWLEDGE_DOC: Final[str] = "KnowledgeDoc"
+NODE_TYPE_COMMUNITY: Final[str] = "Community"
 NODE_TYPE_INDEX_METADATA: Final[str] = "IndexMetadata"
 
-NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["IndexMetadata"]
+NodeType = Literal["Repository"] | Literal["Directory"] | Literal["File"] | Literal["Class"] | Literal["Function"] | Literal["Dependency"] | Literal["PullRequest"] | Literal["Variable"] | Literal["KnowledgeVault"] | Literal["KnowledgeDoc"] | Literal["Community"] | Literal["IndexMetadata"]
 
 NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_REPOSITORY,
@@ -35,6 +41,9 @@ NODE_TYPES: Final[list[NodeType]] = [
     NODE_TYPE_DEPENDENCY,
     NODE_TYPE_PULL_REQUEST,
     NODE_TYPE_VARIABLE,
+    NODE_TYPE_KNOWLEDGE_VAULT,
+    NODE_TYPE_KNOWLEDGE_DOC,
+    NODE_TYPE_COMMUNITY,
     NODE_TYPE_INDEX_METADATA,
 ]
 
@@ -47,6 +56,7 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("provider", "STRING"),
         ("defaultBranch", "STRING"),
         ("summary", "STRING"),
+        ("localPath", "STRING"),
     ],
     "Directory": [
         ("id", "STRING"),
@@ -119,6 +129,37 @@ NODE_COLUMNS: Final[dict[NodeType, list[tuple[str, str]]]] = {
         ("typeAnnotation", "STRING"),
         ("docs", "STRING"),
     ],
+    "KnowledgeVault": [
+        ("id", "STRING"),
+        ("name", "STRING"),
+        ("lastCompiledAt", "STRING"),
+        ("summary", "STRING"),
+        ("scope", "STRING"),
+        ("mirrorCompiledAt", "STRING"),
+        ("vault", "STRING"),
+    ],
+    "KnowledgeDoc": [
+        ("id", "STRING"),
+        ("name", "STRING"),
+        ("sha256", "STRING"),
+        ("filename", "STRING"),
+        ("contentType", "STRING"),
+        ("acquiredAt", "STRING"),
+        ("corpusPath", "STRING"),
+        ("title", "STRING"),
+        ("oneLineSummary", "STRING"),
+        ("summary", "STRING"),
+        ("path", "STRING"),
+        ("status", "STRING"),
+    ],
+    "Community": [
+        ("id", "STRING"),
+        ("name", "STRING"),
+        ("communityId", "INT32"),
+        ("cohesion", "DOUBLE"),
+        ("members", "INT32"),
+        ("isGod", "BOOL"),
+    ],
     "IndexMetadata": [
         ("id", "STRING"),
         ("name", "STRING"),
@@ -148,6 +189,7 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "provider",
         "defaultBranch",
         "summary",
+        "localPath",
     ],
     "Directory": [
         "id",
@@ -220,6 +262,37 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
         "typeAnnotation",
         "docs",
     ],
+    "KnowledgeVault": [
+        "id",
+        "name",
+        "lastCompiledAt",
+        "summary",
+        "scope",
+        "mirrorCompiledAt",
+        "vault",
+    ],
+    "KnowledgeDoc": [
+        "id",
+        "name",
+        "sha256",
+        "filename",
+        "contentType",
+        "acquiredAt",
+        "corpusPath",
+        "title",
+        "oneLineSummary",
+        "summary",
+        "path",
+        "status",
+    ],
+    "Community": [
+        "id",
+        "name",
+        "communityId",
+        "cohesion",
+        "members",
+        "isGod",
+    ],
     "IndexMetadata": [
         "id",
         "name",
@@ -241,55 +314,139 @@ NODE_COLUMN_NAMES: Final[dict[NodeType, list[str]]] = {
 }
 
 
-def rel_schema_defines(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for Defines relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS DEFINES(FROM {from_node} TO {to_node}, id STRING)"
+# A (from_node, to_node) pair for a relationship table.
+#
+# Ladybug requires every pair a rel label spans to be declared in the
+# initial CREATE REL TABLE statement; subsequent CREATE REL TABLE IF
+# NOT EXISTS calls for the same label are silent no-ops. Pass every
+# pair the label needs in a single rel_schema_* call.
+RelPair = tuple[str, str]
 
 
-def rel_schema_imports(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for Imports relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS IMPORTS(FROM {from_node} TO {to_node}, id STRING, alias STRING)"
+def _join_rel_pairs(pairs: list[RelPair]) -> str:
+    return ", ".join(f"FROM {p[0]} TO {p[1]}" for p in pairs)
 
 
-def rel_schema_calls(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for Calls relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS CALLS(FROM {from_node} TO {to_node}, id STRING, confidence FLOAT, args STRING[])"
+def rel_schema_member_of_community(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for MemberOfCommunity relationships.
+
+    Pass every (from, to) pair the MEMBER_OF_COMMUNITY label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS MEMBER_OF_COMMUNITY({_join_rel_pairs(pairs)}, id STRING)"
 
 
-def rel_schema_depends_on(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for DependsOn relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS DEPENDS_ON(FROM {from_node} TO {to_node}, id STRING)"
+def rel_schema_defines(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Defines relationships.
+
+    Pass every (from, to) pair the DEFINES label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS DEFINES({_join_rel_pairs(pairs)}, id STRING)"
 
 
-def rel_schema_derived_from(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for DerivedFrom relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS DERIVED_FROM(FROM {from_node} TO {to_node}, id STRING, transform STRING)"
+def rel_schema_imports(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Imports relationships.
+
+    Pass every (from, to) pair the IMPORTS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS IMPORTS({_join_rel_pairs(pairs)}, id STRING, alias STRING)"
 
 
-def rel_schema_targets_repo(from_node: str, to_node: str) -> str:
-    """Return the CREATE REL TABLE DDL for TargetsRepo relationships."""
-    return f"CREATE REL TABLE IF NOT EXISTS TARGETS_REPO(FROM {from_node} TO {to_node}, id STRING)"
+def rel_schema_calls(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Calls relationships.
+
+    Pass every (from, to) pair the CALLS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS CALLS({_join_rel_pairs(pairs)}, id STRING, confidence FLOAT, args STRING[])"
 
 
+def rel_schema_depends_on(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for DependsOn relationships.
+
+    Pass every (from, to) pair the DEPENDS_ON label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS DEPENDS_ON({_join_rel_pairs(pairs)}, id STRING)"
+
+
+def rel_schema_derived_from(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for DerivedFrom relationships.
+
+    Pass every (from, to) pair the DERIVED_FROM label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS DERIVED_FROM({_join_rel_pairs(pairs)}, id STRING, transform STRING)"
+
+
+def rel_schema_links_to(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for LinksTo relationships.
+
+    Pass every (from, to) pair the LINKS_TO label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS LINKS_TO({_join_rel_pairs(pairs)}, id STRING)"
+
+
+def rel_schema_mirrors(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Mirrors relationships.
+
+    Pass every (from, to) pair the MIRRORS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS MIRRORS({_join_rel_pairs(pairs)}, id STRING)"
+
+
+def rel_schema_documents(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for Documents relationships.
+
+    Pass every (from, to) pair the DOCUMENTS label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS DOCUMENTS({_join_rel_pairs(pairs)}, id STRING)"
+
+
+def rel_schema_targets_repo(pairs: list[RelPair]) -> str:
+    """Return the CREATE REL TABLE DDL for TargetsRepo relationships.
+
+    Pass every (from, to) pair the TARGETS_REPO label needs in a single call;
+    all pairs must be declared in the initial CREATE REL TABLE statement.
+    """
+    return f"CREATE REL TABLE IF NOT EXISTS TARGETS_REPO({_join_rel_pairs(pairs)}, id STRING)"
+
+
+REL_TYPE_MEMBER_OF_COMMUNITY: Final[str] = "MEMBER_OF_COMMUNITY"
 REL_TYPE_DEFINES: Final[str] = "DEFINES"
 REL_TYPE_IMPORTS: Final[str] = "IMPORTS"
 REL_TYPE_CALLS: Final[str] = "CALLS"
 REL_TYPE_DEPENDS_ON: Final[str] = "DEPENDS_ON"
 REL_TYPE_DERIVED_FROM: Final[str] = "DERIVED_FROM"
+REL_TYPE_LINKS_TO: Final[str] = "LINKS_TO"
+REL_TYPE_MIRRORS: Final[str] = "MIRRORS"
+REL_TYPE_DOCUMENTS: Final[str] = "DOCUMENTS"
 REL_TYPE_TARGETS_REPO: Final[str] = "TARGETS_REPO"
 
-RelType = Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["TARGETS_REPO"]
+RelType = Literal["MEMBER_OF_COMMUNITY"] | Literal["DEFINES"] | Literal["IMPORTS"] | Literal["CALLS"] | Literal["DEPENDS_ON"] | Literal["DERIVED_FROM"] | Literal["LINKS_TO"] | Literal["MIRRORS"] | Literal["DOCUMENTS"] | Literal["TARGETS_REPO"]
 
 REL_TYPES: Final[list[RelType]] = [
+    REL_TYPE_MEMBER_OF_COMMUNITY,
     REL_TYPE_DEFINES,
     REL_TYPE_IMPORTS,
     REL_TYPE_CALLS,
     REL_TYPE_DEPENDS_ON,
     REL_TYPE_DERIVED_FROM,
+    REL_TYPE_LINKS_TO,
+    REL_TYPE_MIRRORS,
+    REL_TYPE_DOCUMENTS,
     REL_TYPE_TARGETS_REPO,
 ]
 
 REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
+    "MEMBER_OF_COMMUNITY": [
+        ("id", "STRING"),
+    ],
     "DEFINES": [
         ("id", "STRING"),
     ],
@@ -309,12 +466,24 @@ REL_COLUMNS: Final[dict[RelType, list[tuple[str, str]]]] = {
         ("id", "STRING"),
         ("transform", "STRING"),
     ],
+    "LINKS_TO": [
+        ("id", "STRING"),
+    ],
+    "MIRRORS": [
+        ("id", "STRING"),
+    ],
+    "DOCUMENTS": [
+        ("id", "STRING"),
+    ],
     "TARGETS_REPO": [
         ("id", "STRING"),
     ],
 }
 
 REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
+    "MEMBER_OF_COMMUNITY": [
+        "id",
+    ],
     "DEFINES": [
         "id",
     ],
@@ -334,6 +503,15 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
         "id",
         "transform",
     ],
+    "LINKS_TO": [
+        "id",
+    ],
+    "MIRRORS": [
+        "id",
+    ],
+    "DOCUMENTS": [
+        "id",
+    ],
     "TARGETS_REPO": [
         "id",
     ],
@@ -341,22 +519,28 @@ REL_COLUMN_NAMES: Final[dict[RelType, list[str]]] = {
 
 
 _COLUMN_TO_PROTO: Final[dict[NodeType | RelType, dict[str, str]]] = {
-    "Repository": {"sourceUri": "source_uri", "defaultBranch": "default_branch"},
+    "Repository": {"sourceUri": "source_uri", "defaultBranch": "default_branch", "localPath": "local_path"},
     "File": {"sourceUri": "source_uri"},
     "Class": {"startLine": "start_line", "endLine": "end_line"},
     "Function": {"startLine": "start_line", "endLine": "end_line"},
     "PullRequest": {"createdAt": "created_at", "baseBranch": "base_branch", "headBranch": "head_branch", "filesChanged": "files_changed"},
     "Variable": {"startLine": "start_line", "endLine": "end_line", "typeAnnotation": "type_annotation"},
+    "KnowledgeVault": {"lastCompiledAt": "last_compiled_at", "mirrorCompiledAt": "mirror_compiled_at"},
+    "KnowledgeDoc": {"contentType": "content_type", "acquiredAt": "acquired_at", "corpusPath": "corpus_path", "oneLineSummary": "one_line_summary"},
+    "Community": {"communityId": "community_id", "isGod": "is_god"},
     "IndexMetadata": {"indexedAt": "indexed_at", "durationSeconds": "duration_seconds", "repoId": "repo_id", "repoPath": "repo_path", "commitSha": "commit_sha", "commitMessage": "commit_message", "sourceUri": "source_uri", "opentraceaiVersion": "opentraceai_version", "nodesCreated": "nodes_created", "relationshipsCreated": "relationships_created", "filesProcessed": "files_processed", "classesExtracted": "classes_extracted", "functionsExtracted": "functions_extracted"},
 }
 
 _PROTO_TO_COLUMN: Final[dict[NodeType | RelType, dict[str, str]]] = {
-    "Repository": {"source_uri": "sourceUri", "default_branch": "defaultBranch"},
+    "Repository": {"source_uri": "sourceUri", "default_branch": "defaultBranch", "local_path": "localPath"},
     "File": {"source_uri": "sourceUri"},
     "Class": {"start_line": "startLine", "end_line": "endLine"},
     "Function": {"start_line": "startLine", "end_line": "endLine"},
     "PullRequest": {"created_at": "createdAt", "base_branch": "baseBranch", "head_branch": "headBranch", "files_changed": "filesChanged"},
     "Variable": {"start_line": "startLine", "end_line": "endLine", "type_annotation": "typeAnnotation"},
+    "KnowledgeVault": {"last_compiled_at": "lastCompiledAt", "mirror_compiled_at": "mirrorCompiledAt"},
+    "KnowledgeDoc": {"content_type": "contentType", "acquired_at": "acquiredAt", "corpus_path": "corpusPath", "one_line_summary": "oneLineSummary"},
+    "Community": {"community_id": "communityId", "is_god": "isGod"},
     "IndexMetadata": {"indexed_at": "indexedAt", "duration_seconds": "durationSeconds", "repo_id": "repoId", "repo_path": "repoPath", "commit_sha": "commitSha", "commit_message": "commitMessage", "source_uri": "sourceUri", "opentraceai_version": "opentraceaiVersion", "nodes_created": "nodesCreated", "relationships_created": "relationshipsCreated", "files_processed": "filesProcessed", "classes_extracted": "classesExtracted", "functions_extracted": "functionsExtracted"},
 }
 

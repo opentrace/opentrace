@@ -36,12 +36,20 @@ import type { GraphData, GraphStats } from '@opentrace/components/utils';
 import type { Embedder } from '../runner/browser/enricher/embedder/types';
 import { createLbugEngine, type LbugEngine } from './lbugEngine';
 import type {
+  CountByResult,
+  FindOrphansResult,
+  FindPathResult,
+  FindViaResult,
   GraphStore,
+  GrepResult,
   ImportBatchRequest,
   ImportBatchResponse,
   IndexMetadata,
   NodeResult,
   NodeSourceResponse,
+  OverviewResult,
+  ProvenanceResult,
+  SearchResult,
   SourceFile,
   TraverseResult,
 } from './types';
@@ -318,6 +326,91 @@ export class WorkerGraphStore implements GraphStore {
     { nodeId: string; filePath: string; line: number; text: string }[]
   > {
     return this.call('grepSource', [pattern, options]);
+  }
+
+  // ─── Retrieval primitives ────────────────────────────────────────────
+  // Straight proxies to the worker's LadybugStore, which owns the real
+  // implementations. They exist here because `GraphStore` declares them
+  // REQUIRED and chat/tools.ts calls them unguarded — a store that reached
+  // those call sites without them would throw at runtime, not degrade.
+
+  search(
+    query: string,
+    options?: { limit?: number; nodeTypes?: string[]; vaultScope?: string },
+  ): Promise<SearchResult> {
+    return this.call<SearchResult>('search', [query, options]);
+  }
+
+  overview(options?: {
+    topN?: number;
+    vaultScope?: string;
+  }): Promise<OverviewResult> {
+    return this.call<OverviewResult>('overview', [options]);
+  }
+
+  findPath(
+    startId: string,
+    endId: string,
+    maxHops?: number,
+    edgeTypes?: string[],
+  ): Promise<FindPathResult> {
+    return this.call<FindPathResult>('findPath', [
+      startId,
+      endId,
+      maxHops,
+      edgeTypes,
+    ]);
+  }
+
+  findOrphans(
+    nodeType: string,
+    edgeType: string,
+    direction?: 'incoming' | 'outgoing' | 'both',
+    limit?: number,
+  ): Promise<FindOrphansResult> {
+    return this.call<FindOrphansResult>('findOrphans', [
+      nodeType,
+      edgeType,
+      direction,
+      limit,
+    ]);
+  }
+
+  findViaRelationshipToType(
+    startType: string,
+    edgeType: string,
+    targetType: string,
+    limit?: number,
+  ): Promise<FindViaResult> {
+    return this.call<FindViaResult>('findViaRelationshipToType', [
+      startType,
+      edgeType,
+      targetType,
+      limit,
+    ]);
+  }
+
+  countBy(
+    nodeType: string,
+    options?: { parentId?: string; parentEdge?: string; maxHops?: number },
+  ): Promise<CountByResult> {
+    return this.call<CountByResult>('countBy', [nodeType, options]);
+  }
+
+  provenance(nodeId: string): Promise<ProvenanceResult> {
+    return this.call<ProvenanceResult>('provenance', [nodeId]);
+  }
+
+  grep(
+    pattern: string,
+    scopeId: string,
+    options?: {
+      fileFilter?: string;
+      caseSensitive?: boolean;
+      maxResults?: number;
+    },
+  ): Promise<GrepResult> {
+    return this.call<GrepResult>('grep', [pattern, scopeId, options]);
   }
 
   async dispose(): Promise<void> {

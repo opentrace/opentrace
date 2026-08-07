@@ -43,6 +43,26 @@ export default function GraphLegend({
     return () => document.removeEventListener('mousedown', handler);
   }, [showOverflow]);
 
+  // Publish the legend's live height as a CSS variable so bottom-anchored
+  // overlays (e.g. the compile progress panel) can sit a constant distance
+  // above it instead of guessing a fixed offset — the legend wraps to
+  // multiple lines when there are many node/edge types, and a fixed offset
+  // gets overlapped once it does.
+  useEffect(() => {
+    const el = popoverRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const update = () =>
+      root.style.setProperty('--ot-legend-height', `${el.offsetHeight}px`);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--ot-legend-height');
+    };
+  }, []);
+
   const visibleItems = items.slice(0, maxVisible);
   const overflowItems = items.slice(maxVisible);
 

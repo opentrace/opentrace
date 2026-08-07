@@ -72,6 +72,10 @@ class PipelineEvent:
     relationships: list[GraphRelationship] | None = None
     result: PipelineResult | None = None
     errors: list[str] | None = None
+    # Promote a STAGE_PROGRESS event so it prints without --verbose. Reserved
+    # for milestones the user actually wants to see live (LLM cost estimate,
+    # per-file extraction progress) — not bulk per-file tree-sitter parses.
+    important: bool = False
 
 
 @dataclass
@@ -81,6 +85,9 @@ class PipelineInput:
     repo_id: str | None = None
     ref: str | None = None
     provider: str | None = None
+    # The graph DB path. Optional because scanning/processing/resolving don't
+    # strictly need it; carried for parity with the doc-ingestion path.
+    db_path: str | None = None
 
 
 @dataclass
@@ -134,6 +141,7 @@ class ScanResult:
     repo_url: str | None = None
     ref: str | None = None
     provider: str | None = None
+    db_path: str | None = None
 
 
 @dataclass

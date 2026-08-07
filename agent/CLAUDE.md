@@ -6,13 +6,19 @@ Python package `opentrace_agent` — the indexing and serving CLI (`opentraceai`
 
 ```
 src/opentrace_agent/
-  cli/         — Click commands: index, serve, mcp, augment, bench, auth
+  cli/         — Click commands: index, serve, mcp, vault, augment, auth, …
   sources/     — Source discovery + per-language symbol extraction (tree-sitter)
+                 plus markdown/ doc plumbing (fetch, markitdown, corpus store)
   pipeline/    — Four-stage pipeline (scan → process → resolve → save) as LangGraph
+  retrieval/   — Read-only agent-facing query primitives (search, overview,
+                 paths, counts, provenance, grep, communities)
+  wiki/        — Doc-ingestion pipeline + vault metadata (`index --wiki`,
+                 `vault ingest`)
   store/       — LadybugDB persistence (Cypher queries, schema)
   summarizer/  — Pluggable code summarization (Flan-T5)
   benchmarks/  — SWE-bench harness and accuracy benchmark CLI
-  gen/         — Generated protobuf code (do not edit; regenerate via `make py` in proto/)
+                 (`opentraceai-bench`)
+  gen/         — Generated graph schema (do not edit; regenerate via `make graph` in proto/)
 tests/         — Mirrors src layout; fixture-based extractor + pipeline tests
 ```
 
@@ -20,7 +26,7 @@ tests/         — Mirrors src layout; fixture-based extractor + pipeline tests
 
 - **Package manager:** `uv` (lock at `uv.lock`, sync with `uv sync`)
 - **Build backend:** `hatchling`
-- **CLI entrypoint:** `opentraceai = opentrace_agent.cli.main:cli` in `pyproject.toml`
+- **CLI entrypoint:** `opentraceai = opentrace_agent.cli.main:app` in `pyproject.toml` (`opentrace` is an alias; `opentraceai-bench` is separate)
 - **Tests:** `uv run pytest`; async tests use `pytest-anyio` with `@pytest.mark.anyio`
 - **Format/lint:** invoke via `make fmt` / `make lint` from repo root
 

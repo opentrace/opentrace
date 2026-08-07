@@ -14,23 +14,15 @@
 
 """Retrieval helpers that surface cross-domain structure in the graph.
 
-After Phase 5 the graph contains three coexisting domains:
+Node types are partitioned into three domains:
 
 * **code** — `Repository` / `Directory` / `File` / `Class` / `Function` /
   `Variable`
-* **entity** — `Idea` / `Paper` / `Person` / `Event`. Empty on any graph this
-  repo builds today: the LLM-extracted entity layer was removed on
-  2026-08-04 (see the wiki CLAUDE.md). The domain is kept so pre-removal
-  graphs still classify correctly. `Service` and `Module` were deliberately
-  dropped from it — the extractor reused those two existing type names, but
-  they are code/runtime types written by other producers, so leaving them
-  here would classify a runtime `Service` node as an entity on every new
-  graph.
-* **doc** — `KnowledgeVault` / `KnowledgeDoc`. Called "page" until
-  2026-08-04, when `KnowledgeConcept` went with the concept-page layer and
-  left the vault and its documents. Renamed rather than kept: nothing
-  consumed the old key, and a domain named for a node type that no longer
-  exists reads as though pages were still being produced.
+* **entity** — `Idea` / `Paper` / `Person` / `Event`. `Service` and `Module`
+  must stay out of this set: they are code/runtime types written by other
+  producers, so listing them here would classify live runtime and code nodes
+  as entities.
+* **doc** — `KnowledgeVault` / `KnowledgeDoc`
 
 This module surfaces the bridges across those domains — the "AuthMiddleware
 appears in 5 code files plus 2 design docs" view that's hard to ask via

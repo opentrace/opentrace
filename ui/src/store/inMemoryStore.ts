@@ -23,12 +23,20 @@
 
 import type { GraphData, GraphStats } from '@opentrace/components/utils';
 import type {
+  CountByResult,
+  FindOrphansResult,
+  FindPathResult,
+  FindViaResult,
   GraphStore,
+  GrepResult,
   ImportBatchRequest,
   ImportBatchResponse,
   IndexMetadata,
   NodeResult,
   NodeSourceResponse,
+  OverviewResult,
+  ProvenanceResult,
+  SearchResult,
   SourceFile,
   TraverseResult,
 } from './types';
@@ -433,5 +441,47 @@ export class InMemoryGraphStore implements GraphStore {
       performance.now() - t0,
     );
     return results;
+  }
+
+  // --- OT-1732 retrieval primitives ---
+  //
+  // The legacy in-memory store is kept for tests of the basic CRUD surface
+  // and is being replaced by LadybugStore for any real workload. None of the
+  // OT-1732 retrieval helpers (FTS, BFS, ripgrep, provenance) have a
+  // sensible in-memory implementation — they all reach into Cypher/disk —
+  // so the methods below satisfy the interface but throw if invoked.
+
+  async findPath(): Promise<FindPathResult> {
+    throw new Error('findPath is not supported by the in-memory store');
+  }
+
+  async findOrphans(): Promise<FindOrphansResult> {
+    throw new Error('findOrphans is not supported by the in-memory store');
+  }
+
+  async findViaRelationshipToType(): Promise<FindViaResult> {
+    throw new Error(
+      'findViaRelationshipToType is not supported by the in-memory store',
+    );
+  }
+
+  async countBy(): Promise<CountByResult> {
+    throw new Error('countBy is not supported by the in-memory store');
+  }
+
+  async overview(): Promise<OverviewResult> {
+    throw new Error('overview is not supported by the in-memory store');
+  }
+
+  async search(): Promise<SearchResult> {
+    throw new Error('search is not supported by the in-memory store');
+  }
+
+  async provenance(): Promise<ProvenanceResult> {
+    throw new Error('provenance is not supported by the in-memory store');
+  }
+
+  async grep(): Promise<GrepResult> {
+    throw new Error('grep is not supported by the in-memory store');
   }
 }

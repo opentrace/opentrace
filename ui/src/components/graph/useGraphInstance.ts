@@ -225,11 +225,17 @@ export function useGraphInstance({
 
     // ── Prepare worker data ─────────────────────────────────────────────
     const nodeIds = allNodes.map((n) => n.id);
+    const layoutEdgeTypes = new Set(
+      Array.isArray(layoutConfig.layoutEdgeType)
+        ? layoutConfig.layoutEdgeType
+        : [layoutConfig.layoutEdgeType],
+    );
     const simLinks: { source: string; target: string }[] = [];
     for (const link of allLinks) {
       // In flat mode, all edges drive the force layout.
-      // In structured mode, only layoutEdgeType edges (e.g. DEFINES) are used.
-      if (!flatMode && link.label !== layoutConfig.layoutEdgeType) continue;
+      // In structured mode, only layoutEdgeType edges drive it (e.g.
+      // DEFINES for code, CONTAINS for wiki vaults).
+      if (!flatMode && !layoutEdgeTypes.has(link.label)) continue;
       const source = endpointId(link.source);
       const target = endpointId(link.target);
       if (nodeIdSet.has(source) && nodeIdSet.has(target)) {

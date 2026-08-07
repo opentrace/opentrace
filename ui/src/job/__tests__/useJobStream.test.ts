@@ -20,11 +20,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useJobStream } from '../useJobStream';
 import { EventChannel } from '../eventChannel';
 import type { JobService, JobStream } from '../types';
-import {
-  JobEventKind,
-  JobPhase,
-  type JobEvent,
-} from '../../gen/opentrace/v1/agent_service';
+import { JobEventKind, JobPhase, type JobEvent } from '../../gen/agent_service';
 
 function makeEvent(overrides: Partial<JobEvent>): JobEvent {
   return {

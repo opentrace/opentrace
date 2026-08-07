@@ -30,10 +30,14 @@ VALID_NODE_TYPES = {
     # Legacy aliases (accepted on input, not emitted)
     "Repo",
     "Package",
+    # ``Module`` is a code-graph concept (the import graph's consumer/target,
+    # per code_graph.proto) and is read by ``cli/impact.py``'s blast-radius
+    # walk, so it stays. Note this set is declarative: it is referenced
+    # nowhere outside this module, so it neither validates writes nor filters
+    # reads, and a graph containing a type absent from it stays fully
+    # readable.
+    "Module",
     # Runtime / observability types (not in code_graph.proto)
-    # Written by `opentraceai cluster` — an analysis artefact, not part of the
-    # indexed code model, so it lives here rather than in the proto.
-    "Community",
     "Service",
     "Cluster",
     "Namespace",
@@ -46,10 +50,3 @@ VALID_NODE_TYPES = {
     "Database",
     "DBTable",
 }
-
-# Community detection (`opentraceai cluster` / `analyze`). Kept here rather than
-# generated from the proto: a community is derived at analysis time from an
-# already-indexed graph, not something an indexer emits, so it belongs with the
-# other runtime types above instead of in the code-graph schema.
-NODE_TYPE_COMMUNITY = "Community"
-REL_TYPE_MEMBER_OF_COMMUNITY = "MEMBER_OF_COMMUNITY"
