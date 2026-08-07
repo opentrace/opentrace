@@ -48,7 +48,7 @@ It does NOT share code. Changes to extraction logic must be made in both places 
 
 To add a generic language: extend the config table in `parser/extractors/generic.ts`. Needs a `tree-sitter-<lang>.wasm` in `/public/wasm/` — build with `npx tree-sitter build --wasm`.
 
-**Exception:** YAML's grammar has a C++ external scanner incompatible with WASM. It was attempted and removed.
+**Exception:** YAML's grammar has a C++ external scanner incompatible with WASM, so it cannot be added here (it works in the Python tree-sitter build).
 
 ## Pipeline Phases
 

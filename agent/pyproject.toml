@@ -19,7 +19,9 @@ classifiers = [
 ]
 dependencies = [
     "gitpython>=3.1",
-    "tree-sitter>=0.24",
+    # Cap below 0.26: core 0.26.0 segfaults on node access with the grammar
+    # wheels below (built for <=0.25). Lift only after grammars are 0.26-ready.
+    "tree-sitter>=0.24,<0.26",
     "tree-sitter-python",
     "tree-sitter-typescript",
     "tree-sitter-go",
@@ -31,6 +33,20 @@ dependencies = [
     "pyarrow>=15.0",
     "pyyaml>=6.0",
     "cryptography>=42.0",
+    "anthropic>=0.40",
+    "google-genai>=1.0",
+    "openai>=1.0",
+    # Doc ingestion + graph analysis. markitdown[all] converts PDF/DOCX/PPTX/
+    # XLSX/HTML/EPUB to markdown and bundles youtube-transcript-api for URL
+    # ingestion. networkx powers community detection (`cluster`) and the
+    # graph exporters.
+    #
+    # Audio/video transcription is NOT supported: no audio extension is in
+    # DOC_EXTENSIONS, so audio is never walked. `faster-whisper` and `yt-dlp`
+    # were declared here for it and imported nowhere — don't re-add them
+    # without an ingestion path that actually reaches them.
+    "networkx>=3.0",
+    "markitdown[all]>=0.1.5",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +56,12 @@ summarization = [
 ]
 swe-bench = [
     "anthropic>=0.40",
+]
+# Leiden community detection — graspologic doesn't support Python 3.13 yet,
+# so it has to stay opt-in. `cluster` falls back to Louvain (in networkx)
+# when graspologic isn't installed.
+graph-leiden = [
+    "graspologic; python_version < '3.13'",
 ]
 
 [project.urls]
@@ -53,7 +75,7 @@ opentraceai = "opentrace_agent.cli.main:app"
 opentraceai-bench = "opentrace_agent.cli.bench:app"
 
 [dependency-groups]
-dev = ["pytest", "pytest-anyio", "ruff", "grpcio-tools"]
+dev = ["pytest", "pytest-anyio", "ruff"]
 
 [build-system]
 requires = ["hatchling"]

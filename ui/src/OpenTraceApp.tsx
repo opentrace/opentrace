@@ -21,6 +21,7 @@ import {
   disposeLadybugStore,
 } from './store';
 import type { GraphStore } from './store';
+import { setVaultApiBase } from './wiki/client';
 import { ServerGraphStore } from './store/serverStore';
 import { JobServiceProvider } from './job';
 import App from './App';
@@ -53,8 +54,14 @@ function detectInitialMode(): StoreMode {
 
 function createStoreForMode(mode: StoreMode): GraphStore {
   if (mode.startsWith('server:')) {
-    return new ServerGraphStore(mode.slice('server:'.length));
+    const url = mode.slice('server:'.length);
+    // Store mode is the single source of truth for the server URL. Publish it
+    // to the vault client too, which otherwise re-derives a base from
+    // `?server=` and misses a runtime connect entirely.
+    setVaultApiBase(url);
+    return new ServerGraphStore(url);
   }
+  setVaultApiBase(null);
   return createLadybugStore();
 }
 
@@ -100,6 +107,7 @@ export function OpenTraceApp({
           buildTime={buildTime}
           initialRepoUrl={repoUrl}
           onConnectServer={handleConnectServer}
+          isServerMode={mode.startsWith('server:')}
         />
       </JobServiceProvider>
     </StoreProvider>

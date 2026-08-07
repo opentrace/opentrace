@@ -22,6 +22,7 @@ import type { GraphViewerHandle } from './appComponents/GraphViewer';
 import ChatPanel from './appComponents/ChatPanel';
 import SettingsDrawer from './appComponents/SettingsDrawer';
 import HelpDrawer from './appComponents/HelpDrawer';
+import { VaultManager } from './appComponents/wiki/VaultManager';
 import SidePanel, { type SidePanelTab } from './appComponents/SidePanel';
 import { loadAnimationSettings } from './config/animation';
 import { normalizeRepoUrl, detectProvider } from '@opentrace/components';
@@ -30,6 +31,8 @@ import { useStore } from './store';
 import { ServerGraphStore } from './store/serverStore';
 import { GraphDataProvider, useGraph } from './providers/GraphDataProvider';
 import { GraphInteractionProvider } from './providers/GraphInteractionProvider';
+import { CompileJobProvider } from './providers/CompileJobProvider';
+import CompileProgressPanel from './appComponents/CompileProgressPanel';
 import './App.css';
 
 interface AppProps {
@@ -38,13 +41,18 @@ interface AppProps {
   initialRepoUrl?: string;
   /** Called when the user connects to a remote server via the AddRepo modal. */
   onConnectServer?: (serverUrl: string) => void;
+  /** True when the graph store is talking to a backend `opentraceai serve`.
+   * Gates features that require the backend (e.g. vault compile + browse). */
+  isServerMode?: boolean;
 }
 
 function App(props: AppProps = {}) {
   return (
     <GraphDataProvider>
       <GraphInteractionProvider>
-        <AppInner {...props} />
+        <CompileJobProvider>
+          <AppInner {...props} />
+        </CompileJobProvider>
       </GraphInteractionProvider>
     </GraphDataProvider>
   );
@@ -55,6 +63,7 @@ function AppInner({
   buildTime,
   initialRepoUrl,
   onConnectServer,
+  isServerMode = false,
 }: AppProps) {
   const { store } = useStore();
   const { loadGraph, startLiveStream, pushLiveBatch, endLiveStream } =
@@ -128,6 +137,7 @@ function AppInner({
     loadAnimationSettings,
   );
   const [showAddRepo, setShowAddRepo] = useState(false);
+  const [showVaults, setShowVaults] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState('');
   // `true` only when the user explicitly expands the compact LiveIndexingPanel
   // into the full-screen IndexingProgress modal. Defaults `false`: a new job
@@ -366,6 +376,9 @@ function AppInner({
             isMobile ? handleToggleGraphFullscreen : undefined
           }
           onMobilePanelTabChange={setMobilePanelTab}
+          isServerMode={isServerMode}
+          showVaults={showVaults}
+          onToggleVaults={() => setShowVaults((v) => !v)}
         />
 
         <SidePanel
@@ -444,6 +457,21 @@ function AppInner({
           }}
           onLimitsChanged={() => loadGraph()}
           onAnimationSettingsChanged={setAnimationSettings}
+        />
+      )}
+
+      {isServerMode && showVaults && (
+        <VaultManager onClose={() => setShowVaults(false)} />
+      )}
+
+      {isServerMode && (
+        <CompileProgressPanel
+          raised={
+            !jobExpanded &&
+            (jobState.status === 'running' ||
+              jobState.status === 'persisted' ||
+              jobState.status === 'enriching')
+          }
         />
       )}
 

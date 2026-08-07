@@ -60,7 +60,6 @@ import ExportModal from './ExportModal';
 import {
   EmptyStateHeader,
   GraphErrorState,
-  GraphInitialEmpty,
   GraphLoadingState,
   GraphSearchEmpty,
 } from './GraphEmptyStates';
@@ -174,6 +173,16 @@ export interface GraphViewerProps {
   onToggleGraphFullscreen?: () => void;
   /** Mobile: open SidePanel on a given tab (state lives in App). */
   onMobilePanelTabChange?: (tab: SidePanelTab) => void;
+  /** True when the graph store is backed by `opentrace serve` (server mode).
+   *  Server mode is read-only (`importBatch` is a no-op), so the Add Repo
+   *  auto-popup is suppressed — the user reaches the empty-canvas state
+   *  with all other chrome (vault browser, chat, settings) accessible
+   *  instead of being trapped in a modal that can't write. */
+  isServerMode?: boolean;
+  /** Server mode only: whether the vault browser is open. */
+  showVaults?: boolean;
+  /** Server mode only: toggle the vault browser. */
+  onToggleVaults?: () => void;
 }
 
 const GraphViewer = memo(
@@ -207,6 +216,9 @@ const GraphViewer = memo(
         graphFullscreen,
         onToggleGraphFullscreen,
         onMobilePanelTabChange,
+        isServerMode = false,
+        showVaults = false,
+        onToggleVaults,
       } = props;
 
       const { store } = useStore();
@@ -786,6 +798,10 @@ const GraphViewer = memo(
 
       // Auto-open the Add Repo modal when the graph is empty and idle
       useEffect(() => {
+        // Server mode is read-only; auto-opening Add Repo would trap the
+        // user in a modal that can't actually populate the graph. Let them
+        // reach the empty canvas + chrome instead (vaults, chat, settings).
+        if (isServerMode) return;
         if (
           v.isEmpty &&
           !v.isSearchEmpty &&
@@ -794,9 +810,23 @@ const GraphViewer = memo(
         ) {
           onAddRepoOpen();
         }
-      }, [v.isEmpty, v.isSearchEmpty, loading, jobState.status, onAddRepoOpen]);
+      }, [
+        isServerMode,
+        v.isEmpty,
+        v.isSearchEmpty,
+        loading,
+        jobState.status,
+        onAddRepoOpen,
+      ]);
 
-      const persistentActions = useMemo(() => <GitHubStarButton />, []);
+      const persistentActions = useMemo(
+        () => (
+          <>
+            <GitHubStarButton />
+          </>
+        ),
+        [],
+      );
 
       // --- Early returns for loading/error/empty states ---
 
@@ -831,26 +861,10 @@ const GraphViewer = memo(
         );
       }
 
-      if (v.isEmpty && !showFullModal && !jobActive) {
-        return (
-          <GraphInitialEmpty
-            showAddRepo={showAddRepo}
-            showFullModal={showFullModal}
-            onAddRepoOpen={onAddRepoOpen}
-            onAddRepoClose={onAddRepoClose}
-            onJobSubmit={onJobSubmit}
-            onValidateRepo={validateRepo}
-            indexingProgress={
-              <IndexingProgress
-                {...toIndexingProps(jobState, activeRepoUrl)}
-                stages={INDEXING_STAGES}
-                onClose={onJobClose}
-                onMinimize={onJobMinimize}
-              />
-            }
-          />
-        );
-      }
+      // Note: empty graphs no longer take over the screen. The main viewport
+      // below renders normally (toolbar, side panel, chat/vault buttons) and
+      // an inline "No data" overlay is drawn into the empty canvas area —
+      // see the `.empty-state-overlay--inline` block below.
 
       // --- Main graph viewport ---
 
@@ -899,6 +913,9 @@ const GraphViewer = memo(
                 jobState={jobState}
                 jobExpanded={jobExpanded}
                 onAddRepoOpen={onAddRepoOpen}
+                isServerMode={isServerMode}
+                showVaults={showVaults}
+                onToggleVaults={onToggleVaults}
                 hasGraphData={graphData.nodes.length > 0}
                 canExport={!!store.exportDatabase}
                 exporting={exporting}
@@ -1026,6 +1043,28 @@ const GraphViewer = memo(
           )}
 
           <GraphLegend items={v.legendItems} linkItems={v.legendLinkItems} />
+
+          {v.isEmpty && !showAddRepo && !showFullModal && (
+            <div className="empty-state-overlay empty-state-overlay--inline">
+              <div className="empty-state-content">
+                <p>No data in the graph yet.</p>
+                {isServerMode ? (
+                  <p style={{ opacity: 0.7, fontSize: '0.9em' }}>
+                    Run <code>opentraceai index &lt;path&gt;</code> from the CLI
+                    to populate this graph.
+                  </p>
+                ) : (
+                  <button
+                    className="empty-state-add-btn"
+                    onClick={onAddRepoOpen}
+                    type="button"
+                  >
+                    + Add Repository
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {refreshError && (
             <div className="refresh-error-banner" role="alert">

@@ -52,6 +52,14 @@ const FALLBACK_KNOWN: Record<string, string> = {
   // and Dependency nodes silently hash into the palette instead — and the
   // legend (same function) would disagree with a theme that sets the var.
   Dependency: '#3d97d4',
+  // KnowledgeDoc/KnowledgeVault would otherwise hash into the palette like any
+  // unnamed type — on themes with a narrow hue spread (e.g. 'clean', whose
+  // unnamed-type slots are a teal/orange/gold ladder) two of those slots can
+  // land on near-identical teals, making the two most common vault node types
+  // visually indistinguishable. Pinned distinct colors, same rationale as
+  // Dependency above.
+  KnowledgeVault: '#f97316',
+  KnowledgeDoc: '#ec4899',
 };
 
 function djb2(str: string): number {

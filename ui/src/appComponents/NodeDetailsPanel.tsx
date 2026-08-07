@@ -31,8 +31,15 @@ import {
 } from './providerIcons';
 import './NodeDetailsPanel.css';
 
-/** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
+/** Node types whose source/body can be fetched and displayed. KnowledgeDoc is a
+ *  raw source document whose markitdown body renders as markdown. */
+const SOURCE_TYPES = new Set([
+  'File',
+  'Function',
+  'Class',
+  'PullRequest',
+  'KnowledgeDoc',
+]);
 
 /** Map file extensions → Prism language identifiers. */
 const EXT_TO_LANG: Record<string, string> = {
@@ -300,7 +307,11 @@ export default function NodeDetailsPanel({
       {SOURCE_TYPES.has(node.type) && (
         <div className="source-section">
           <h4>
-            {node.type === 'PullRequest' ? 'Description' : 'Source'}
+            {node.type === 'PullRequest'
+              ? 'Description'
+              : node.type === 'KnowledgeDoc'
+                ? 'Document'
+                : 'Source'}
             {nodeSource && node.type !== 'PullRequest' && (
               <span className="source-path">{nodeSource.path}</span>
             )}
@@ -398,8 +409,14 @@ export default function NodeDetailsPanel({
                 );
               }
 
-              // Markdown files: tabbed Rendered / Raw view
-              if (ext === '.md' || ext === '.mdx') {
+              // Markdown files (and KnowledgeDoc bodies, which are always
+              // markitdown-normalised markdown regardless of the original
+              // file's extension): tabbed Rendered / Raw view.
+              if (
+                ext === '.md' ||
+                ext === '.mdx' ||
+                node.type === 'KnowledgeDoc'
+              ) {
                 return (
                   <div className="preview-viewer">
                     <div className="preview-tab-bar">

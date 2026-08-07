@@ -993,6 +993,14 @@ export default function ChatPanel({
     setHasFoundNodes(false);
     setHighlightEnabled(true);
     setShowHistory(false);
+    setShowSettings(false);
+    setInput('');
+    setPendingAttachments([]);
+    setAttachError(null);
+    scrollRef.current?.scrollTo({ top: 0 });
+    // Defer focus until after React commits the state resets above — focusing
+    // inside the same tick can be swallowed by the re-render.
+    requestAnimationFrame(() => textareaRef.current?.focus());
     onChatHighlight?.(new Set(), []);
   };
 

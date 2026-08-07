@@ -361,7 +361,17 @@ function stopStreaming(): void {
  * (the spread default would otherwise be a pure-force hairball). Single-member
  * communities are skipped. `getStrength` is read each tick so the slider
  * applies live.
+ *
+ * The pull has a size-aware DEAD ZONE: no pull inside a core radius that
+ * grows with √(member count), linear only on the excess beyond it. A pure
+ * linear-to-centroid (harmonic) pull has an equilibrium radius independent
+ * of link lengths, so one oversized community — e.g. a wiki vault whose
+ * pages/docs/entities form a single dense Louvain module of 100+ members —
+ * gets crushed into a tight ball no matter how the springs are tuned. The
+ * dead zone lets big communities occupy area proportional to their member
+ * count while small ones still condense into crisp petals.
  */
+const COMMUNITY_CORE_SPACING = 16; // core radius = this × √(members)
 function makeCommunityForce(
   s: Simulation<SimNode, SimLink>,
   nodes: SimNode[],
@@ -393,6 +403,10 @@ function makeCommunityForce(
     const di = commIdx[i];
     if (di >= 0) count[di]++;
   }
+  const coreRadius = new Float64Array(numComm);
+  for (let di = 0; di < numComm; di++) {
+    coreRadius[di] = COMMUNITY_CORE_SPACING * Math.sqrt(count[di]);
+  }
   const sumX = new Float64Array(numComm);
   const sumY = new Float64Array(numComm);
   const sumZ = new Float64Array(numComm);
@@ -418,13 +432,17 @@ function makeCommunityForce(
       const cnt = count[di];
       if (cnt < 2) continue;
       const node = nodes[i];
-      const targetX = sumX[di] / cnt;
-      const targetY = sumY[di] / cnt;
-      node.vx = (node.vx ?? 0) + (targetX - (node.x ?? 0)) * strength * alpha;
-      node.vy = (node.vy ?? 0) + (targetY - (node.y ?? 0)) * strength * alpha;
+      const dx = sumX[di] / cnt - (node.x ?? 0);
+      const dy = sumY[di] / cnt - (node.y ?? 0);
+      const dz = is3D ? sumZ[di] / cnt - (node.z ?? 0) : 0;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const excess = dist - coreRadius[di];
+      if (excess <= 0) continue; // inside the core — springs/charge rule here
+      const f = (strength * alpha * excess) / dist;
+      node.vx = (node.vx ?? 0) + dx * f;
+      node.vy = (node.vy ?? 0) + dy * f;
       if (is3D) {
-        const targetZ = sumZ[di] / cnt;
-        node.vz = (node.vz ?? 0) + (targetZ - (node.z ?? 0)) * strength * alpha;
+        node.vz = (node.vz ?? 0) + dz * f;
       }
     }
   };

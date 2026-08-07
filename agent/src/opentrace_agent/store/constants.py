@@ -30,6 +30,13 @@ VALID_NODE_TYPES = {
     # Legacy aliases (accepted on input, not emitted)
     "Repo",
     "Package",
+    # ``Module`` is a code-graph concept (the import graph's consumer/target,
+    # per code_graph.proto) and is read by ``cli/impact.py``'s blast-radius
+    # walk, so it stays. Note this set is declarative: it is referenced
+    # nowhere outside this module, so it neither validates writes nor filters
+    # reads, and a graph containing a type absent from it stays fully
+    # readable.
+    "Module",
     # Runtime / observability types (not in code_graph.proto)
     "Service",
     "Cluster",

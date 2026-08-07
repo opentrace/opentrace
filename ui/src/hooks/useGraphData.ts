@@ -20,10 +20,7 @@ import type {
   GraphLink,
   GraphStats,
 } from '@opentrace/components/utils';
-import type {
-  IndexedNode,
-  IndexedRelationship,
-} from '../gen/opentrace/v1/agent_service';
+import type { IndexedNode, IndexedRelationship } from '../gen/agent_service';
 import { useStore } from '../store';
 
 // ─── Live-build streaming ──────────────────────────────────────────────────

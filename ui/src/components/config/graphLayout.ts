@@ -210,8 +210,23 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
   louvainResolution: LOUVAIN_RESOLUTION,
   edgeProgramThreshold: 50000,
   // Graph structure
-  layoutEdgeType: 'DEFINES',
-  structuralTypes: ['Repository', 'Directory', 'Dependency'],
+  // Priority-ORDERED list of tree-forming edge types: each node anchors to
+  // ONE full-strength parent spring — its highest-priority tree edge — and
+  // surplus tree edges demote to the weak relational weight (see
+  // useForceLayout3d). The order encodes where a node with several homes
+  // should live:
+  //   DEFINES   — code containment (Repository → Directory → File → symbol)
+  //   MIRRORS   — a KnowledgeDoc anchors AT its File twin, draping the corpus
+  //               over the part of the repo it documents, instead of
+  //               orbiting the vault
+  //   DOCUMENTS — a repo-spawned Vault hangs off its Repository
+  //   CONTAINS  — vault membership; the fallback anchor for non-repo docs
+  //               (uploads, URLs, attached globals)
+  // LINKS_TO is deliberately NOT a tree type — it is a many-to-many mesh, and
+  // as full-strength springs those edges weld the docs into one clump. It stays
+  // a semantic cross-link (analogous to CALLS), not hierarchy.
+  layoutEdgeType: ['DEFINES', 'MIRRORS', 'DOCUMENTS', 'CONTAINS'],
+  structuralTypes: ['Repository', 'Directory', 'Dependency', 'KnowledgeVault'],
   // Color functions — OpenTrace palettes
   getNodeColor,
   getLinkColor,

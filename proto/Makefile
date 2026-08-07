@@ -30,9 +30,9 @@ TS_PROTO_PLUGIN := ../ui/node_modules/.bin/protoc-gen-ts_proto
 GO_OUT     := ../api
 GO_MODULE  := github.com/opentrace/opentrace/api
 
-.PHONY: all ts py go graph clean
+.PHONY: all ts go graph clean
 
-all: ts py go graph
+all: ts go graph
 
 ts:
 	@mkdir -p $(TS_OUT)
@@ -45,23 +45,10 @@ ts:
 		--ts_proto_opt=outputServices=false \
 		--ts_proto_opt=esModuleInterop=true \
 		$(PROTO_FILES)
-
-py:
-	@mkdir -p $(PY_OUT)
-	uv run --project ../agent python -m grpc_tools.protoc \
-		--proto_path=. \
-		--python_out=$(PY_OUT) \
-		--pyi_out=$(PY_OUT) \
-		--grpc_python_out=$(PY_OUT) \
-		$(PROTO_FILES)
-	@# Fix cross-file proto imports: generated code uses the proto package path
-	@# (opentrace.v1) but the files live under opentrace_agent.gen.opentrace.v1.
-	@find $(PY_OUT) -name '*.py' -exec \
-		sed -i 's/from opentrace\.v1 import/from opentrace_agent.gen.opentrace.v1 import/g' {} +
-	@find $(PY_OUT) -name '*.pyi' -exec \
-		sed -i 's/from opentrace\.v1 import/from opentrace_agent.gen.opentrace.v1 import/g' {} +
-	@touch $(PY_OUT)/opentrace/__init__.py
-	@touch $(PY_OUT)/opentrace/v1/__init__.py
+	@# Flatten: protoc emits to <out>/opentrace/v1/ following the proto package
+	@# path. We want the files at <out>/ — same convention as the rest of the
+	@# UI gen surface (no per-version subfolder).
+	@if [ -d $(TS_OUT)/opentrace/v1 ]; then mv $(TS_OUT)/opentrace/v1/*.ts $(TS_OUT)/ && rm -rf $(TS_OUT)/opentrace; fi
 
 go:
 	@mkdir -p $(GO_OUT)/pkg/gen/otv1
@@ -80,12 +67,20 @@ graph:
 		--ladybug_out=$(GRAPH_OUT) \
 		--ladybug_opt=lang=ts \
 		$(GRAPH_PROTO)
+	@# protoc-gen-ladybug mirrors the proto package path under the output dir.
+	@# The codebase imports from the gen root, so copy it up.
+	@cp $(GRAPH_OUT)/opentrace/v1/schema.gen.ts $(GRAPH_OUT)/schema.gen.ts
 	@mkdir -p $(PY_OUT)
 	protoc \
 		--proto_path=. \
 		--ladybug_out=$(PY_OUT) \
 		--ladybug_opt=lang=py \
 		$(GRAPH_PROTO)
+	@# Flatten: protoc-gen-ladybug emits to <out>/opentrace/v1/ following the
+	@# proto package path. Move the schema files up to <out>/ to match the
+	@# rest of the gen surface (the codebase imports from the gen root).
+	@if [ -d $(GRAPH_OUT)/opentrace/v1 ]; then mv $(GRAPH_OUT)/opentrace/v1/*.ts $(GRAPH_OUT)/ && rm -rf $(GRAPH_OUT)/opentrace; fi
+	@if [ -d $(PY_OUT)/opentrace/v1 ]; then mv $(PY_OUT)/opentrace/v1/*.py $(PY_OUT)/ && rm -rf $(PY_OUT)/opentrace; fi
 
 clean:
 	rm -rf $(TS_OUT) $(PY_OUT)

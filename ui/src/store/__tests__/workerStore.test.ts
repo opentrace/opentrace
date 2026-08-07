@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { SourceFile } from '../types';
 
@@ -192,5 +193,40 @@ describe('WorkerGraphStore storeSource chunk pump', () => {
     // flush ran only after every source chunk posted.
     expect(order[order.length - 1]).toBe('flush');
     expect(order.filter((m) => m === 'storeSource')).toHaveLength(7);
+  });
+});
+
+describe('WorkerGraphStore ↔ storeWorker dispatch allowlist', () => {
+  // The worker's `switch (method)` is an allowlist with a throwing default, so
+  // a proxy method with no matching case fails at runtime with "unknown store
+  // method" no matter how well-typed the caller is. TypeScript checks that
+  // WorkerGraphStore satisfies GraphStore; nothing checks that the far side of
+  // the postMessage boundary can service what the near side forwards. The eight
+  // retrieval methods added to the GraphStore contract shipped with no
+  // WorkerGraphStore implementation at all — tsc caught that half. Adding the
+  // proxies without their cases would have compiled just as cleanly, and this
+  // is the only thing standing between that and a runtime throw.
+  const read = (file: string) =>
+    readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+
+  const names = (src: string, re: RegExp) => {
+    const out = new Set<string>();
+    for (const m of src.matchAll(re)) out.add(m[1]);
+    return out;
+  };
+
+  it('dispatches every method the proxy forwards, and no orphans', () => {
+    const proxied = names(
+      read('workerStore.ts'),
+      /this\.call(?:<[^>]*>)?\(\s*'([A-Za-z0-9_]+)'/g,
+    );
+    const dispatched = names(
+      read('storeWorker.ts'),
+      /case\s+'([A-Za-z0-9_]+)':/g,
+    );
+
+    expect(proxied.size).toBeGreaterThan(20); // the regex still matches something
+    expect([...proxied].filter((m) => !dispatched.has(m))).toEqual([]);
+    expect([...dispatched].filter((m) => !proxied.has(m))).toEqual([]);
   });
 });

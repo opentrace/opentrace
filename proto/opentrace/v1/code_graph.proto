@@ -41,6 +41,9 @@ message RepositoryNode {
   string provider       = 5;
   string default_branch = 6 [(ladybug.column) = "defaultBranch"];
   string summary        = 7;
+  // Filesystem path when the repo was indexed from a local directory.
+  // Empty for cloned remote repos (clone is not retained after indexing).
+  string local_path     = 8 [(ladybug.column) = "localPath"];
 }
 
 // DirectoryNode represents a directory in a repository.
@@ -129,6 +132,77 @@ message VariableNode {
   string docs            = 9;
 }
 
+// KnowledgeVaultNode represents a knowledge vault — a named collection of
+// indexed documents produced by the wiki ingest pipeline. One per vault directory.
+message KnowledgeVaultNode {
+  string id                  = 1;          // vault name (validated, no separators)
+  string name                = 2;          // display name (same as id today)
+  string last_compiled_at    = 3 [(ladybug.column) = "lastCompiledAt"];   // ISO-8601 UTC
+  string summary             = 4;
+  // "local" (vault lives in <project>/.opentrace/vaults/) or "global"
+  // (vault lives in ~/.opentrace/vaults/ or $OT_VAULT_ROOT). Local vaults
+  // are visible only to the project they were compiled in; global vaults
+  // can be attached to any graph via ``opentraceai vault attach``.
+  string scope               = 5;
+  // ISO-8601 UTC timestamp of the most recent ``write_vault_to_graph``
+  // call into THIS graph store. Compared against the disk vault's
+  // ``last_compiled_at`` to surface stale mirrors in ``vault list``.
+  string mirror_compiled_at  = 6 [(ladybug.column) = "mirrorCompiledAt"];
+  // Denormalised vault name. Same reason as KnowledgeDoc.status: without a
+  // column the browser store drops it, and vault-scoped reads key off it.
+  string vault               = 7;
+}
+
+// There is deliberately no node type for synthesized document content.
+// Restating a source strips its hedges, tense, and attribution, so a
+// synthesized page can assert something its own sources do not. Verbatim
+// corpus bodies plus an exhaustive `grep` answer the same questions without
+// the restatement.
+
+// KnowledgeDocNode represents a document ingested into the wiki corpus.
+// Identity is the sha256 of the RAW bytes; the normalized markdown body is
+// persisted to `.opentrace/corpus/<sha>.md` (referenced by corpus_path) so it's readable
+// via load_source and available for re-extraction and grep. Carries the
+// navigation label (title + one_line_summary; the `summary` copy feeds FTS).
+message KnowledgeDocNode {
+  string id               = 1;       // `corpus::<sha256>`
+  string name             = 2;       // original filename
+  string sha256           = 3;
+  string filename         = 4;
+  string content_type     = 5 [(ladybug.column) = "contentType"];   // e.g. "application/pdf"
+  string acquired_at      = 6 [(ladybug.column) = "acquiredAt"];    // ISO-8601 UTC
+  string corpus_path      = 7 [(ladybug.column) = "corpusPath"];    // relative to .opentrace/
+  string title            = 8;       // display title (derived from filename)
+  string one_line_summary = 9 [(ladybug.column) = "oneLineSummary"];
+  string summary          = 10;      // copy of the one-liner; feeds search_text FTS
+  string path             = 11;      // repo-relative path when repo-walked (see MirrorsRel)
+  // Epistemic label: "authoritative" | "design_history" |
+  // "design_history_archived". Load-bearing — it is what lets a reader tell a
+  // proposal from shipped behaviour, so it must travel with the body. It needs
+  // a column here because the browser store projects writes strictly through
+  // the generated column list, so a property without one is silently dropped.
+  string status           = 12;
+}
+
+// CommunityNode represents a cluster of related nodes detected by Leiden/Louvain.
+// Written by `opentraceai cluster`. The `members` count is stored for fast
+// summary rendering without traversing membership edges.
+message CommunityNode {
+  string id          = 1;
+  string name        = 2;   // human-readable label, e.g. "Attention Mechanism"
+  int32  community_id = 3 [(ladybug.column) = "communityId"];
+  double cohesion    = 4;   // 0.0–1.0, intra-community edge density
+  int32  members     = 5;   // node count in this community
+  bool   is_god      = 6 [(ladybug.column) = "isGod"];   // true if this is a top-centrality community
+}
+
+// MemberOfCommunityRel links a graph node to its CommunityNode.
+message MemberOfCommunityRel {
+  string id        = 1;
+  string source_id = 2;   // member node
+  string target_id = 3;   // CommunityNode
+}
+
 // IndexMetadataNode stores a single record of index provenance per database.
 // Written by the CLI after each `opentraceai index` run.
 message IndexMetadataNode {
@@ -198,6 +272,42 @@ message DerivedFromRel {
   string source_id = 2;
   string target_id = 3;
   string transform = 4;  // "identity", "call", "attribute"
+}
+
+// LinksToRel represents an author-written cross-reference between two
+// KnowledgeDoc nodes. Created by parsing each document's own relative
+// markdown links, reference-style definitions, and HTML anchors at ingest
+// time — the doc-side analogue of an import edge. Purely mechanical: no LLM,
+// no inference.
+message LinksToRel {
+  string id        = 1;
+  string source_id = 2;
+  string target_id = 3;
+}
+
+// MirrorsRel links a KnowledgeDoc to the File node for the same on-disk
+// document, for every doc discovered by a repo walk. When the code walk
+// didn't create the File node (extensions like .rst/.txt/.html/PDFs), it
+// is created at link time so the twin always exists. Bridges the wiki
+// corpus layer and the code tree so either twin reaches the other in one
+// hop. Docs not from a repo walk (uploads, URLs, attached global vaults)
+// have no edge.
+message MirrorsRel {
+  string id        = 1;
+  string source_id = 2;   // KnowledgeDoc (corpus::<sha>)
+  string target_id = 3;   // File (<repo>/<rel_path>)
+}
+
+// DocumentsRel links a Repository to a KnowledgeVault that was spawned from it —
+// written only by ``index --wiki`` runs where the wiki compile executes
+// alongside a repo walk. Attached global vaults and vaults compiled from
+// dropped files/URLs never get this edge: they don't document the repo,
+// they merely live alongside it. Joins the wiki layer to the code tree at
+// the root, so "what documents this repo?" is a one-hop traversal.
+message DocumentsRel {
+  string id        = 1;
+  string source_id = 2;   // Repository
+  string target_id = 3;   // KnowledgeVault (vault::<name>)
 }
 
 // TargetsRepoRel links a PullRequest to its target Repository.

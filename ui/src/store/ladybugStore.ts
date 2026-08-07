@@ -56,11 +56,27 @@ async function getParquetWasm(): Promise<
 // the engine's worker is spawned from main and is never a nested worker.
 import type { LbugEngine } from './lbugEngine';
 import type {
+  CountByResult,
+  FindOrphansResult,
+  FindPathResult,
+  FindPathStep,
+  FindViaResult,
   ImportBatchRequest,
+  GrepResult,
+  OverviewConcept,
+  OverviewRecent,
+  OverviewResult,
+  ProvenanceChainEntry,
+  ProvenanceCode,
+  ProvenanceResult,
+  ProvenanceWiki,
+  SearchHit,
+  SearchResult,
   ImportBatchResponse,
   IndexMetadata,
   NodeResult,
   NodeSourceResponse,
+  TraverseOptions,
   TraverseResult,
   GraphStore,
   SourceFile,
@@ -327,6 +343,31 @@ function abortError(message: string): DOMException {
 /** Escape a string for use inside a Cypher single-quoted literal. */
 function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/** Build a snippet anchored on the first query token found in *body*.
+ *  Mirrors the Python ``_snippet`` helper in ``retrieval/search.py``. */
+function buildSnippet(body: string, query: string, maxLen: number): string {
+  if (!body) return '';
+  if (!query) return body.slice(0, maxLen);
+  const lowered = body.toLowerCase();
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  let anchor = -1;
+  for (const tok of tokens) {
+    const idx = lowered.indexOf(tok);
+    if (idx >= 0) {
+      anchor = idx;
+      break;
+    }
+  }
+  if (anchor < 0) return body.slice(0, maxLen);
+  const half = Math.floor(maxLen / 2);
+  const start = Math.max(0, anchor - half);
+  const end = Math.min(body.length, start + maxLen);
+  let snippet = body.slice(start, end);
+  if (start > 0) snippet = '...' + snippet;
+  if (end < body.length) snippet = snippet + '...';
+  return snippet;
 }
 
 function parseProps(raw: unknown): Record<string, unknown> | undefined {
@@ -3155,15 +3196,18 @@ export class LadybugGraphStore implements GraphStore {
     // negatives: matching rows past the first `limit` unfiltered rows were
     // never seen (e.g. listNodes('Function', 50, {language:'go'}) returned []
     // on a mixed-language repo). Only STRING columns declared for this node
-    // type are pushable (case-insensitive equality, matching the old JS
-    // predicate); anything else falls back to a paged JS scan below.
+    // type are pushable (case-insensitive equality); anything else falls back
+    // to a paged JS scan below. A value containing `*` is a wildcard pattern,
+    // never an equality — pushing it as `lower(n.k) = 'a*'` would match the
+    // literal string "a*" and silently return nothing, so those stay residual
+    // and are matched as anchored regexes in `matchesResidual`.
     const columnTypes = new Map(
       NODE_COLUMNS[type as NodeType].map((c) => [c.name, c.type]),
     );
     const pushed: string[] = [];
     const residual: [string, string][] = [];
     for (const [k, v] of Object.entries(filters ?? {})) {
-      if (columnTypes.get(k) === 'STRING') {
+      if (columnTypes.get(k) === 'STRING' && !v.includes('*')) {
         pushed.push(`lower(n.${k}) = '${esc(v.toLowerCase())}'`);
       } else {
         residual.push([k, v]);
@@ -3183,9 +3227,18 @@ export class LadybugGraphStore implements GraphStore {
     const matchesResidual = (n: NodeResult): boolean => {
       if (residual.length === 0) return true;
       if (!n.properties) return false;
-      return residual.every(
-        ([k, v]) => String(n.properties![k]).toLowerCase() === v.toLowerCase(),
-      );
+      return residual.every(([k, v]) => {
+        const propLower = String(n.properties![k]).toLowerCase();
+        const valLower = v.toLowerCase();
+        if (valLower.includes('*')) {
+          // Wildcard match: anchored, * → .*
+          const escaped = valLower.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp('^' + escaped.replace(/\*/g, '.*') + '$').test(
+            propLower,
+          );
+        }
+        return propLower === valLower;
+      });
     };
 
     let results: NodeResult[];
@@ -3316,6 +3369,7 @@ export class LadybugGraphStore implements GraphStore {
     direction?: 'outgoing' | 'incoming' | 'both',
     maxDepth?: number,
     relType?: string,
+    options?: TraverseOptions,
   ): Promise<TraverseResult[]> {
     const t0 = performance.now();
     const dir = direction ?? 'outgoing';
@@ -3325,18 +3379,39 @@ export class LadybugGraphStore implements GraphStore {
     let frontier = new Set<string>([nodeId]);
     const depthTimings: string[] = [];
 
+    // Edge-type set takes precedence over single relType when provided.
+    const relSet =
+      options?.relTypes && options.relTypes.length > 0
+        ? new Set(options.relTypes)
+        : null;
+    // Pass a single rel type to the batched fetch only when no set is given;
+    // otherwise the fetch returns all and we filter in-loop.
+    const fetchRelType = relSet ? undefined : relType;
+    const vaultScope = options?.vaultScope;
+    const confidenceThreshold = options?.confidenceThreshold;
+
     for (let d = 1; d <= depth && frontier.size > 0; d++) {
       const td0 = performance.now();
       const neighbors = await this.batchedNeighborsFull(
         frontier,
         visited,
         dir,
-        relType,
+        fetchRelType,
       );
 
       const nextFrontier = new Set<string>();
 
       for (const nb of neighbors) {
+        if (relSet && !relSet.has(nb.relType)) continue;
+        if (vaultScope) {
+          const props = parseProps(nb.neighborProps) ?? {};
+          if (props.vault !== vaultScope) continue;
+        }
+        if (confidenceThreshold !== undefined && confidenceThreshold > 0) {
+          const relProps = parseProps(nb.relProps) ?? {};
+          const conf = Number(relProps.confidence);
+          if (Number.isFinite(conf) && conf < confidenceThreshold) continue;
+        }
         if (visited.has(nb.neighborId)) continue;
         visited.add(nb.neighborId);
         nextFrontier.add(nb.neighborId);
@@ -3384,5 +3459,480 @@ export class LadybugGraphStore implements GraphStore {
       performance.now() - t0,
     );
     return results;
+  }
+
+  // -------------------------------------------------------------------
+  // OT-1732 retrieval primitives — composed against existing methods so
+  // the Python and browser implementations behave identically.
+  // -------------------------------------------------------------------
+
+  // Composed against public methods (traverse / listNodes / getNode) so the
+  // implementation is independent of LadybugStore's typed-per-type schema vs
+  // the agent-side generic Node table.
+
+  async findPath(
+    startId: string,
+    endId: string,
+    maxHops: number = 5,
+    edgeTypes?: string[],
+  ): Promise<FindPathResult> {
+    const cap = Math.max(1, Math.min(maxHops, 10));
+    const edgeFilter =
+      edgeTypes && edgeTypes.length > 0 ? new Set(edgeTypes) : null;
+
+    const start = await this.getNode(startId);
+    if (!start) {
+      return {
+        path: null,
+        length: null,
+        error: `start node not found: ${startId}`,
+      };
+    }
+    if (!(await this.getNode(endId))) {
+      return {
+        path: null,
+        length: null,
+        error: `end node not found: ${endId}`,
+      };
+    }
+    if (startId === endId) {
+      return {
+        path: [{ node: start, relationship: null, depth: 0 }],
+        length: 0,
+      };
+    }
+
+    // One traverse() call yields all outgoing-reachable nodes within cap hops,
+    // each tagged with its inbound relationship and depth. Walk the result
+    // forward by depth and record the first relationship that lands on each
+    // node — that's the BFS shortest-path tree.
+    const singleEdge =
+      edgeFilter && edgeFilter.size === 1
+        ? edgeFilter.values().next().value
+        : undefined;
+    const reachable = await this.traverse(startId, 'outgoing', cap, singleEdge);
+
+    interface ParentLink {
+      predId: string;
+      rel: FindPathStep['relationship'];
+    }
+    const parent = new Map<string, ParentLink>();
+    // Sort by depth so we record predecessor on first encounter.
+    reachable.sort((a, b) => a.depth - b.depth);
+    for (const r of reachable) {
+      if (edgeFilter && !edgeFilter.has(r.relationship.type)) continue;
+      if (parent.has(r.node.id)) continue; // first-seen wins (= shortest)
+      parent.set(r.node.id, {
+        predId: r.relationship.source_id,
+        rel: r.relationship,
+      });
+    }
+
+    if (!parent.has(endId)) return { path: null, length: null };
+
+    // Reconstruct chain by walking parent pointers backward.
+    const chainIds: { id: string; rel: FindPathStep['relationship'] | null }[] =
+      [{ id: endId, rel: null }];
+    let cursor = endId;
+    while (cursor !== startId) {
+      const link = parent.get(cursor);
+      if (!link) {
+        return { path: null, length: null }; // defensive — shouldn't happen
+      }
+      chainIds[chainIds.length - 1] = { id: cursor, rel: link.rel };
+      chainIds.push({ id: link.predId, rel: null });
+      cursor = link.predId;
+    }
+    chainIds.reverse();
+
+    const steps: FindPathStep[] = [];
+    for (let i = 0; i < chainIds.length; i++) {
+      const node = await this.getNode(chainIds[i].id);
+      if (!node) break;
+      steps.push({ node, relationship: chainIds[i].rel, depth: i });
+    }
+    return { path: steps, length: steps.length - 1 };
+  }
+
+  async findOrphans(
+    nodeType: string,
+    edgeType: string,
+    direction: 'incoming' | 'outgoing' | 'both' = 'incoming',
+    limit: number = 1000,
+  ): Promise<FindOrphansResult> {
+    const cap = Math.max(1, Math.min(limit, 10000));
+    if (!['incoming', 'outgoing', 'both'].includes(direction)) {
+      throw new Error(`invalid direction: ${direction}`);
+    }
+
+    const candidates = await this.listNodes(nodeType, 100000);
+    if (candidates.length === 0) {
+      return { orphans: [], count: 0 };
+    }
+
+    // Per-candidate traversal — slower than a server-side bulk query but
+    // architecture-portable across LadybugStore's typed-per-type schema.
+    const orphans: { id: string; type: string; name: string }[] = [];
+    for (const c of candidates) {
+      const dirs: ('incoming' | 'outgoing')[] =
+        direction === 'both' ? ['incoming', 'outgoing'] : [direction];
+      let hasEdge = false;
+      for (const dir of dirs) {
+        const neighbours = await this.traverse(c.id, dir, 1, edgeType);
+        if (neighbours.length > 0) {
+          hasEdge = true;
+          break;
+        }
+      }
+      if (!hasEdge) {
+        orphans.push({ id: c.id, type: nodeType, name: c.name });
+        if (orphans.length >= cap) break;
+      }
+    }
+    return { orphans, count: orphans.length };
+  }
+
+  async findViaRelationshipToType(
+    startType: string,
+    edgeType: string,
+    targetType: string,
+    limit: number = 100,
+  ): Promise<FindViaResult> {
+    const cap = Math.max(1, Math.min(limit, 1000));
+
+    const sources = await this.listNodes(startType, 100000);
+    const pairs: { start: NodeResult; target: NodeResult }[] = [];
+
+    for (const a of sources) {
+      const outgoing = await this.traverse(a.id, 'outgoing', 1, edgeType);
+      for (const r of outgoing) {
+        if (r.node.type !== targetType) continue;
+        pairs.push({ start: a, target: r.node });
+        if (pairs.length >= cap) {
+          return { pairs, count: pairs.length };
+        }
+      }
+    }
+    return { pairs, count: pairs.length };
+  }
+
+  async countBy(
+    nodeType: string,
+    options?: { parentId?: string; parentEdge?: string; maxHops?: number },
+  ): Promise<CountByResult> {
+    const parentId = options?.parentId;
+    if (!parentId) {
+      const all = await this.listNodes(nodeType, 1_000_000);
+      return { count: all.length, node_type: nodeType, scope: 'global' };
+    }
+
+    if (!(await this.getNode(parentId))) {
+      return {
+        count: 0,
+        node_type: nodeType,
+        scope: `descendants_of:${parentId}`,
+        error: `parent node not found: ${parentId}`,
+      };
+    }
+
+    const parentEdge = options?.parentEdge ?? 'CONTAINS';
+    const maxHops = Math.max(1, Math.min(options?.maxHops ?? 3, 5));
+    const descendants = await this.traverse(
+      parentId,
+      'outgoing',
+      maxHops,
+      parentEdge,
+    );
+    const matching = descendants.filter((r) => r.node.type === nodeType).length;
+    return {
+      count: matching,
+      node_type: nodeType,
+      scope: `descendants_of:${parentId}`,
+    };
+  }
+
+  // Browser-mode can't spawn ripgrep — surface a structured error so the
+  // chat agent can fall back to ``grepSource`` (browser-side source-cache)
+  // or ``search_graph``.
+  async grep(
+    pattern: string,
+    scopeId: string,
+    _options?: {
+      fileFilter?: string;
+      caseSensitive?: boolean;
+      maxResults?: number;
+    },
+  ): Promise<GrepResult> {
+    void pattern;
+    void _options;
+    return {
+      matches: [],
+      count: 0,
+      scope: scopeId,
+      mode: 'error',
+      error:
+        'grep is not available in browser-mode (requires on-disk content + ripgrep). ' +
+        'Use grepSource (browser source cache) or search_graph instead.',
+    };
+  }
+
+  async provenance(nodeId: string): Promise<ProvenanceResult> {
+    const node = await this.getNode(nodeId);
+    if (!node) {
+      return {
+        node_id: nodeId,
+        node_type: null,
+        kind: 'unknown',
+        code: null,
+        wiki: null,
+        error: `node not found: ${nodeId}`,
+      };
+    }
+    const props = (node.properties ?? {}) as Record<string, unknown>;
+    const wikiTypes = new Set(['KnowledgeVault', 'KnowledgeDoc']);
+    const codeTypes = new Set([
+      'Repository',
+      'Directory',
+      'File',
+      'Class',
+      'Function',
+      'Variable',
+    ]);
+
+    if (wikiTypes.has(node.type)) {
+      return {
+        node_id: nodeId,
+        node_type: node.type,
+        kind: 'wiki',
+        code: null,
+        wiki: await this._wikiProvenance(nodeId, node.type, props),
+      };
+    }
+    if (codeTypes.has(node.type)) {
+      return {
+        node_id: nodeId,
+        node_type: node.type,
+        kind: 'code',
+        code: await this._codeProvenance(nodeId, props),
+        wiki: null,
+      };
+    }
+    return {
+      node_id: nodeId,
+      node_type: node.type,
+      kind: 'unknown',
+      code: null,
+      wiki: null,
+    };
+  }
+
+  private async _wikiProvenance(
+    nodeId: string,
+    nodeType: string,
+    props: Record<string, unknown>,
+  ): Promise<ProvenanceWiki> {
+    const chain: ProvenanceChainEntry[] = [];
+    const tryNumber = (v: unknown): number | null => {
+      if (v == null) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const asString = (v: unknown): string | null =>
+      typeof v === 'string' && v ? v : null;
+
+    // A document IS its own provenance, so the chain is one entry (empty for
+    // a KnowledgeVault, which has no body). Mirrors the Python
+    // ``retrieval/provenance.py``.
+    if (nodeType === 'KnowledgeDoc') {
+      chain.push({
+        kind: 'knowledge_doc',
+        id: nodeId,
+        sha256: asString(props.sha256),
+        filename: asString(props.filename),
+        acquired_at: asString(props.acquired_at),
+      });
+    }
+
+    return {
+      agent: asString(props.agent),
+      model: asString(props.model),
+      session: asString(props.session),
+      confidence: tryNumber(props.confidence),
+      vault: asString(props.vault),
+      chain,
+    };
+  }
+
+  private async _codeProvenance(
+    nodeId: string,
+    props: Record<string, unknown>,
+  ): Promise<ProvenanceCode> {
+    const asString = (v: unknown): string | null =>
+      typeof v === 'string' && v ? v : null;
+    const filePath = asString(props.path);
+    const start = Number(props.start_line ?? props.startLine);
+    const end = Number(props.end_line ?? props.endLine);
+    const lineRange: [number, number] | null =
+      Number.isFinite(start) && Number.isFinite(end) ? [start, end] : null;
+
+    // Repo id is the first two `/`-separated segments of the node id
+    // (mirrors the Python `_infer_repo_id`).
+    const head = nodeId.split('::', 1)[0];
+    const parts = head.split('/');
+    const repoId =
+      parts.length >= 2 ? parts.slice(0, 2).join('/') : (parts[0] ?? null);
+
+    let commitSha: string | null = null;
+    let indexerVersion: string | null = null;
+    let indexedAt: string | null = null;
+    if (repoId) {
+      const metaNode = await this.getNode(`_meta:index:${repoId}`);
+      if (metaNode) {
+        const mp = (metaNode.properties ?? {}) as Record<string, unknown>;
+        commitSha = asString(mp.commitSha) ?? asString(mp.commit_sha) ?? null;
+        indexerVersion =
+          asString(mp.opentraceaiVersion) ??
+          asString(mp.opentraceai_version) ??
+          null;
+        indexedAt = asString(mp.indexedAt) ?? asString(mp.indexed_at) ?? null;
+      }
+    }
+
+    return {
+      commit_sha: commitSha,
+      indexer_version: indexerVersion,
+      indexed_at: indexedAt,
+      repo_id: repoId,
+      file_path: filePath,
+      line_range: lineRange,
+    };
+  }
+
+  async search(
+    query: string,
+    options?: { limit?: number; nodeTypes?: string[]; vaultScope?: string },
+  ): Promise<SearchResult> {
+    const limit = Math.max(1, Math.min(options?.limit ?? 25, 200));
+    const nodes = await this.searchNodes(query, limit, options?.nodeTypes);
+
+    const hits: SearchHit[] = nodes.map((n) => {
+      const props = (n.properties ?? {}) as Record<string, unknown>;
+      const summaryRaw =
+        (typeof props.one_line_summary === 'string'
+          ? props.one_line_summary
+          : undefined) ??
+        (typeof props.summary === 'string' ? props.summary : '') ??
+        '';
+      // Snippet: anchor on the first query token if present, otherwise prefix.
+      const body = [n.name, summaryRaw].filter(Boolean).join(' ').trim();
+      const snippet = buildSnippet(body, query, 200);
+
+      const vault = typeof props.vault === 'string' ? props.vault : null;
+      const recency =
+        typeof props.last_updated === 'string' ? props.last_updated : null;
+      let confidence: number | null = null;
+      if (props.confidence != null) {
+        const c = Number(props.confidence);
+        confidence = Number.isFinite(c) ? c : null;
+      }
+
+      return {
+        id: n.id,
+        type: n.type,
+        name: n.name,
+        snippet,
+        score: null, // browser searchNodes doesn't return raw FTS scores today
+        vault,
+        recency,
+        confidence,
+      };
+    });
+
+    const scoped = options?.vaultScope
+      ? hits.filter((h) => h.vault === options.vaultScope)
+      : hits;
+    return { hits: scoped, count: scoped.length, query };
+  }
+
+  async overview(options?: {
+    topN?: number;
+    vaultScope?: string;
+  }): Promise<OverviewResult> {
+    const topN = Math.max(1, Math.min(options?.topN ?? 5, 20));
+
+    const stats = await this.fetchStats();
+    const counts: Record<string, number> = stats.nodes_by_type ?? {};
+
+    // Top concepts: scan top N representative nodes per type, score by
+    // outgoing+incoming degree (1-hop both-direction traversal). This is
+    // O(types × N × neighbours) but bounded since topN is small.
+    const concepts: OverviewConcept[] = [];
+    const typeNames = Object.keys(counts).filter(
+      (t) => t !== 'IndexMetadata' && counts[t] > 0,
+    );
+    // Sample up to (topN * 3) candidates from the largest types to over-fetch
+    // before sorting by degree.
+    typeNames.sort((a, b) => counts[b] - counts[a]);
+    const sampleBudget = topN * 3;
+    let remaining = sampleBudget;
+    const candidates: NodeResult[] = [];
+    for (const t of typeNames) {
+      if (remaining <= 0) break;
+      const slice = await this.listNodes(t, Math.min(remaining, 10));
+      candidates.push(...slice);
+      remaining -= slice.length;
+    }
+    const scored: { node: NodeResult; degree: number }[] = [];
+    for (const c of candidates) {
+      const neighbours = await this.traverse(c.id, 'both', 1);
+      scored.push({ node: c, degree: neighbours.length });
+    }
+    scored.sort((a, b) => b.degree - a.degree);
+    for (const s of scored.slice(0, topN)) {
+      const props = (s.node.properties ?? {}) as Record<string, unknown>;
+      const summaryRaw =
+        (props.one_line_summary as string | undefined) ??
+        (props.summary as string | undefined) ??
+        '';
+      const summary =
+        summaryRaw.length > 120 ? summaryRaw.slice(0, 117) + '...' : summaryRaw;
+      concepts.push({
+        id: s.node.id,
+        type: s.node.type,
+        name: s.node.name,
+        degree: s.degree,
+        summary,
+      });
+    }
+
+    // Recently-updated: pick from any node type carrying last_updated.
+    // Since browser-side props vary by typed table, we only inspect node
+    // types that are likely to carry this field — KnowledgeDoc today.
+    const recentBucket: OverviewRecent[] = [];
+    const docNodes = await this.listNodes('KnowledgeDoc', 200).catch(() => []);
+    for (const p of docNodes) {
+      const props = (p.properties ?? {}) as Record<string, unknown>;
+      const last = props.last_updated;
+      if (typeof last !== 'string') continue;
+      recentBucket.push({
+        id: p.id,
+        type: p.type,
+        name: p.name,
+        last_updated: last,
+        one_line_summary:
+          typeof props.one_line_summary === 'string'
+            ? props.one_line_summary
+            : '',
+      });
+    }
+    recentBucket.sort((a, b) => b.last_updated.localeCompare(a.last_updated));
+    const recently_updated = recentBucket.slice(0, topN);
+
+    return {
+      counts_by_type: counts,
+      top_concepts: concepts,
+      recently_updated,
+      vault_scope: options?.vaultScope ?? null,
+    };
   }
 }

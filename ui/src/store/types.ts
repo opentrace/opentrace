@@ -173,6 +173,7 @@ export interface GraphStore {
     direction?: 'outgoing' | 'incoming' | 'both',
     maxDepth?: number,
     relType?: string,
+    options?: TraverseOptions,
   ): Promise<TraverseResult[]>;
 
   /** Search stored source files for exact text patterns (regex). */
@@ -186,4 +187,204 @@ export interface GraphStore {
   ): Promise<
     { nodeId: string; filePath: string; line: number; text: string }[]
   >;
+
+  // --- OT-1732 retrieval primitives ---
+
+  /** Find the shortest path between two nodes via outgoing edges. */
+  findPath(
+    startId: string,
+    endId: string,
+    maxHops?: number,
+    edgeTypes?: string[],
+  ): Promise<FindPathResult>;
+
+  /** Find nodes of a type with no edges of edgeType in the given direction. */
+  findOrphans(
+    nodeType: string,
+    edgeType: string,
+    direction?: 'incoming' | 'outgoing' | 'both',
+    limit?: number,
+  ): Promise<FindOrphansResult>;
+
+  /** Find all (A, B) pairs where A→[edgeType]→B. */
+  findViaRelationshipToType(
+    startType: string,
+    edgeType: string,
+    targetType: string,
+    limit?: number,
+  ): Promise<FindViaResult>;
+
+  /** Count nodes of a type, optionally scoped to descendants of a parent. */
+  countBy(
+    nodeType: string,
+    options?: {
+      parentId?: string;
+      parentEdge?: string;
+      maxHops?: number;
+    },
+  ): Promise<CountByResult>;
+
+  /** Compact orientation of the indexed graph for agent session start. */
+  overview(options?: {
+    topN?: number;
+    vaultScope?: string;
+  }): Promise<OverviewResult>;
+
+  /** Ranked FTS search returning {id, type, name, snippet, score, vault?, recency?, confidence?}. */
+  search(
+    query: string,
+    options?: { limit?: number; nodeTypes?: string[]; vaultScope?: string },
+  ): Promise<SearchResult>;
+
+  /** Return the provenance chain for a node (code metadata or wiki citation chain). */
+  provenance(nodeId: string): Promise<ProvenanceResult>;
+
+  /** Regex grep over the on-disk content reachable from a Repository or Vault scope. */
+  grep(
+    pattern: string,
+    scopeId: string,
+    options?: {
+      fileFilter?: string;
+      caseSensitive?: boolean;
+      maxResults?: number;
+    },
+  ): Promise<GrepResult>;
+}
+
+/** OT-1732 Phase 3 traversal extensions. All optional; when set, override the
+ *  legacy single-`relType` behaviour. */
+export interface TraverseOptions {
+  /** Allowlist of relationship types — supersedes single relType when set. */
+  relTypes?: string[];
+  /** Restrict to nodes belonging to this vault, by name. Membership follows
+   *  CONTAINS edges, so it reaches the vault's documents. */
+  vaultScope?: string;
+  /** Skip relationships whose `confidence` is below this threshold. Only CALLS
+   *  edges carry one; edges without it are kept. */
+  confidenceThreshold?: number;
+}
+
+export interface FindPathStep {
+  node: NodeResult;
+  relationship: TraverseRelationship | null;
+  depth: number;
+}
+
+export interface FindPathResult {
+  path: FindPathStep[] | null;
+  length: number | null;
+  error?: string;
+}
+
+export interface FindOrphansResult {
+  orphans: { id: string; type: string; name: string }[];
+  count: number;
+}
+
+export interface FindViaResult {
+  pairs: { start: NodeResult; target: NodeResult }[];
+  count: number;
+}
+
+export interface CountByResult {
+  count: number;
+  node_type: string;
+  scope: string;
+  error?: string;
+}
+
+export interface OverviewConcept {
+  id: string;
+  type: string;
+  name: string;
+  degree: number;
+  summary: string;
+}
+
+export interface OverviewRecent {
+  id: string;
+  type: string;
+  name: string;
+  last_updated: string;
+  one_line_summary: string;
+}
+
+export interface OverviewResult {
+  counts_by_type: Record<string, number>;
+  top_concepts: OverviewConcept[];
+  recently_updated: OverviewRecent[];
+  vault_scope: string | null;
+}
+
+export interface SearchHit {
+  id: string;
+  type: string;
+  name: string;
+  snippet: string;
+  score: number | null;
+  vault: string | null;
+  recency: string | null;
+  confidence: number | null;
+}
+
+export interface SearchResult {
+  hits: SearchHit[];
+  count: number;
+  query: string;
+}
+
+export interface ProvenanceCode {
+  commit_sha: string | null;
+  indexer_version: string | null;
+  indexed_at: string | null;
+  repo_id: string | null;
+  file_path: string | null;
+  line_range: [number, number] | null;
+}
+
+export interface ProvenanceChainDoc {
+  kind: 'knowledge_doc';
+  id: string;
+  sha256: string | null;
+  filename: string | null;
+  acquired_at: string | null;
+}
+
+/** A wiki chain is a single ``knowledge_doc`` entry: the document IS its own
+ *  provenance. Nothing restates a document, so there is nothing to trace back
+ *  through and the chain is never multi-hop. */
+export type ProvenanceChainEntry = ProvenanceChainDoc;
+
+export interface ProvenanceWiki {
+  agent: string | null;
+  model: string | null;
+  session: string | null;
+  confidence: number | null;
+  vault: string | null;
+  chain: ProvenanceChainEntry[];
+}
+
+export interface ProvenanceResult {
+  node_id: string;
+  node_type: string | null;
+  kind: 'code' | 'wiki' | 'unknown';
+  code: ProvenanceCode | null;
+  wiki: ProvenanceWiki | null;
+  error?: string;
+}
+
+export interface GrepMatch {
+  node_id: string | null;
+  file_path: string;
+  line_number: number;
+  line_text: string;
+  structural_context: Record<string, unknown>;
+}
+
+export interface GrepResult {
+  matches: GrepMatch[];
+  count: number;
+  scope: string;
+  mode: 'ripgrep' | 'error';
+  error?: string;
 }

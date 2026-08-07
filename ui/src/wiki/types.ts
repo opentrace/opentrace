@@ -1,0 +1,51 @@
+/*
+ * Copyright 2026 OpenTrace Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+export type VaultScope = 'local' | 'global';
+
+export interface VaultEntry {
+  name: string;
+  scope: VaultScope;
+  /** For ``view=project``: always true (local vaults are project-resident
+   *  and globals only appear here once attached). For ``view=global``:
+   *  true when the global vault is mirrored into the current project. */
+  attached: boolean;
+}
+
+/** Mirrors `WikiPhase` in `agent/src/opentrace_agent/wiki/ingest/types.py`.
+ *  Keep the two in lockstep: this union previously listed `planning` and
+ *  `executing` (which no stage emits) while omitting `extracting` (which every
+ *  compile emits), so the one phase a caller actually sees was untyped. */
+export type WikiPhase =
+  | 'acquiring'
+  | 'normalizing'
+  | 'extracting'
+  | 'persisting';
+
+export interface WikiCompileEvent {
+  kind: 'stage_start' | 'stage_progress' | 'stage_stop' | 'done' | 'error';
+  phase: WikiPhase;
+  message: string;
+  current?: number;
+  total?: number;
+  file_name?: string | null;
+  detail?: Record<string, unknown> | null;
+  errors?: string[] | null;
+  /** The vault the server actually compiled into. Differs from the requested
+   *  name when a new-vault compile was auto-suffixed to avoid a collision
+   *  (e.g. `flask` → `flask-1`). */
+  vault_name?: string;
+}

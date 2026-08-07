@@ -54,6 +54,34 @@ Consumers (CLI, UI via `serve.py`) iterate the generator to drive progress UI. E
 
 Use `collect_pipeline()` for tests (drains the generator, returns final `PipelineResult`). Use `run_pipeline()` for fire-and-forget. Use `core_pipeline()` when you need the raw event stream.
 
+## Autoprune
+
+`autoprune.py` is not a pipeline stage — it runs after `index --wiki` / `vault
+ingest` to delete graph state for docs that disappeared from disk between runs.
+It does exactly one thing: sweep orphan `KnowledgeDoc` nodes and their corpus
+bodies. `AutopruneReport` has two fields to match — `documents_deleted` and
+`corpus_files_deleted`.
+
+**Scope is always a vault, and `vault_name` is required.** Membership is
+resolved by walking the vault's `CONTAINS` edges, because a `KnowledgeDoc`
+carries no `vault` property of its own — it is content-addressed by sha and one
+document can belong to several vaults. Don't add a property-filter fallback:
+there is nothing to filter on, so it would match nothing and turn the prune
+into a silent no-op. Callers must pass the same resolved vault name the compile
+used, or the prune walks a vault the compile never wrote to.
+
+**There is no staleness concept in the wiki layer.** A document is stored
+verbatim and nothing restates it, so it cannot go stale relative to a source.
+Don't introduce a `stale_since` stamp here.
+
+**The corpus-body delete is a security boundary.** `corpus_path` is graph data
+— written from whatever was ingested — and it feeds `unlink()`. `_safe_corpus_target`
+rejects `..` segments, absolute paths, and anything resolving outside the DB
+directory, mirroring `graph_writer._read_corpus_body`'s guard. Don't reduce it
+to a bare `db_dir / rel` join. The path is DB-relative and already carries its
+`corpus/` segment, so don't reintroduce a `corpus/` intermediate either — that
+doubles the segment and the sweep silently deletes nothing.
+
 ## Pitfalls
 
 - **Cancellation is cooperative.** Stages check `ctx.cancelled` between units; an in-progress tree-sitter parse cannot be interrupted. Don't expect sub-second cancel latency on large files.

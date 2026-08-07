@@ -177,6 +177,30 @@
   z-index: 1000;
 }
 
+/* Inline variant for the main viewport: sits over the empty graph canvas
+   without covering the toolbar / side panel / chat / vault buttons.
+   The SidePanel is position:absolute over the .graph-viewport at the left
+   (width matches the --side-panel-width var below, kept in sync with
+   SidePanel.css). The chat panel is a flex sibling so right:0 already
+   clears it. */
+.empty-state-overlay--inline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--side-panel-width, 220px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.empty-state-overlay--inline .empty-state-content {
+  pointer-events: auto;
+}
+
 .empty-state-content {
   display: flex;
   flex-direction: column;
@@ -710,6 +734,34 @@
 .github-star-btn:hover {
   background: color-mix(in oklch, var(--contrast) 85%, black);
   border-color: color-mix(in oklch, var(--contrast) 85%, black);
+}
+
+/* Vaults Button — same shape as the star button, fits the toolbar theme */
+.vaults-btn {
+  pointer-events: auto;
+  background: color-mix(in oklch, var(--card) 80%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
+  color: var(--muted-foreground);
+  width: 36px;
+  height: 36px;
+  border-radius: calc(var(--radius) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.vaults-btn:hover {
+  background: color-mix(in oklch, var(--primary) 10%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 30%, transparent);
+  color: var(--primary);
+}
+
+.vaults-btn-active {
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  border-color: color-mix(in oklch, var(--primary) 50%, transparent);
+  color: var(--primary);
 }
 
 /* Chat Panel */

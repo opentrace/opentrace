@@ -52,6 +52,26 @@ class TestBuildSearchText:
         assert "A module" in text
         assert "src/x.py" in text
 
+    def test_includes_one_line_summary(self):
+        # KnowledgeDocs store their navigation label under one_line_summary.
+        text = build_search_text("Auth", "KnowledgeDoc", {"one_line_summary": "how staff sign in"})
+        assert "how staff sign in" in text
+
+    def test_includes_description(self):
+        # Some legacy node types store their gloss under description — index
+        # it so those nodes stay findable by content, not just by name.
+        text = build_search_text("Engram", "Service", {"description": "persistent memory system"})
+        assert "persistent memory system" in text
+
+    def test_includes_all_gloss_keys_together(self):
+        text = build_search_text(
+            "n",
+            "KnowledgeDoc",
+            {"summary": "a", "one_line_summary": "b", "description": "c", "path": "p"},
+        )
+        for token in ("a", "b", "c", "p"):
+            assert token in text.split()
+
     def test_ignores_other_properties(self):
         text = build_search_text("y", "File", {"language": "python"})
         assert "python" not in text
@@ -79,6 +99,22 @@ class TestMatchesFilters:
 
     def test_empty_filters(self):
         assert matches_filters({"any": "val"}, {})
+
+    def test_wildcard_substring(self):
+        assert matches_filters({"name": "userService"}, {"name": "*Service"})
+        assert matches_filters({"name": "userService"}, {"name": "user*"})
+        assert matches_filters({"name": "userService"}, {"name": "*erSer*"})
+
+    def test_wildcard_no_match(self):
+        assert not matches_filters({"name": "userService"}, {"name": "*foo*"})
+
+    def test_wildcard_anchors(self):
+        # 'user*' is anchored — does not match a string starting with something else
+        assert not matches_filters({"name": "MyUserService"}, {"name": "user*"})
+
+    def test_wildcard_only_when_star_present(self):
+        # No `*` → exact match still applies; `Service` does NOT match `userService`.
+        assert not matches_filters({"name": "userService"}, {"name": "Service"})
 
 
 class TestMarshalProps:
@@ -846,3 +882,184 @@ class TestGraphStoreContextManager:
         # After __exit__, re-opening should still see the data
         with GraphStore(db_path) as s2:
             assert s2.get_node("cm-1") is not None
+
+
+class TestKnowledgeGraph:
+    """Community, hyperedge, and semantic-edge round-trips."""
+
+    def test_save_community_roundtrip(self, store):
+        store.save_community("c1", "Auth Subsystem", 1, 0.82, 14, is_god=True)
+        node = store.get_node("c1")
+        assert node["type"] == "Community"
+        assert node["name"] == "Auth Subsystem"
+        assert node["properties"]["community_id"] == 1
+        assert node["properties"]["cohesion"] == 0.82
+        assert node["properties"]["members"] == 14
+        assert node["properties"]["is_god"] is True
+
+    def test_membership_query(self, store):
+        store.add_node("fn1", "Function", "login")
+        store.save_community("c1", "Auth", 1, 0.7, 5)
+        store.save_membership("m1", "fn1", "c1")
+        community = store.get_node_community("fn1")
+        assert community is not None
+        assert community["id"] == "c1"
+        assert community["name"] == "Auth"
+        assert community["community_id"] == 1
+
+    def test_get_node_community_returns_none_for_unassigned(self, store):
+        store.add_node("orphan", "Function", "orphan")
+        assert store.get_node_community("orphan") is None
+
+    def test_list_communities_ordered_by_community_id(self, store):
+        store.save_community("c2", "Beta", 2, 0.6, 3)
+        store.save_community("c1", "Alpha", 1, 0.7, 5)
+        store.save_community("c3", "Gamma", 3, 0.5, 8)
+        names = [c["name"] for c in store.list_communities()]
+        assert names == ["Alpha", "Beta", "Gamma"]
+
+    def test_list_god_nodes_sorted_by_degree(self, store):
+        _seed(store)
+        gods = store.list_god_nodes(limit=5)
+        # svc-api has the most edges (3 outgoing)
+        assert gods[0]["id"] == "svc-api"
+        assert gods[0]["degree"] >= 3
+
+    def test_list_god_nodes_excludes_types(self, store):
+        _seed(store)
+        gods = store.list_god_nodes(limit=10, exclude_types=("Service",))
+        assert all(g["type"] != "Service" for g in gods)
+
+    def test_cross_community_bridges(self, store):
+        # Two communities, one bridge edge
+        store.save_community("ca", "A", 1, 0.7, 2)
+        store.save_community("cb", "B", 2, 0.7, 2)
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
+        store.save_membership("m1", "n1", "ca")
+        store.save_membership("m2", "n2", "cb")
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        bridges = store.list_cross_community_bridges()
+        assert len(bridges) == 1
+        b = bridges[0]
+        assert b["source_id"] == "n1"
+        assert b["target_id"] == "n2"
+        assert b["source_community_id"] != b["target_community_id"]
+        assert b["relation"] == "CALLS"
+
+    def test_cross_community_bridges_excludes_same_community(self, store):
+        store.save_community("ca", "A", 1, 0.7, 3)
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
+        store.save_membership("m1", "n1", "ca")
+        store.save_membership("m2", "n2", "ca")
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        assert store.list_cross_community_bridges() == []
+
+
+class TestFtsSearchOrdering:
+    """``_fts_search`` must return best-first — every caller truncates the list."""
+
+    def test_results_sorted_by_score_descending(self, store):
+        # Several nodes matching "isolation" to differing degrees: an exact-name
+        # match, a gloss match, and weak incidental matches.
+        store.add_node("e1", "Idea", "Cross-Origin Isolation", {"description": "isolation of origins"})
+        store.add_node(
+            "d1",
+            "KnowledgeDoc",
+            "browser-requirements.md",
+            {"summary": "Cross-origin isolation requirements for the browser build", "path": "docs/browser.md"},
+        )
+        store.add_node("n1", "Function", "isolate", {"summary": "unrelated isolation helper"})
+        store.add_node("n2", "Function", "spawn", {"summary": "mentions isolation once in passing"})
+        store.add_node("n3", "Class", "Sandbox", {"summary": "isolation boundary for plugins"})
+
+        results = store._fts_search("cross-origin isolation", 10)
+        scores = [score for _, score in results]
+        assert scores == sorted(scores, reverse=True), f"not best-first: {results}"
+
+    def test_sorts_rows_the_connection_returns_out_of_order(self, store):
+        """The real regression: ``top :=`` picks the top-N but doesn't order them.
+
+        A small fixture can't reproduce the DB's internal row order (it happens
+        to come back sorted), so this drives ``_fts_search`` with a connection
+        whose rows are deliberately unsorted — the shape observed on a real
+        25-doc index, where a KnowledgeDoc scoring 4.308 arrived last behind
+        hits scoring 1.4 and was cut off by every caller's limit.
+        """
+
+        # A small custom class, not MagicMock — MagicMock can't intercept
+        # __getattr__ on the result object (see agent/CLAUDE.md).
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = list(rows)
+
+            def has_next(self):
+                return bool(self._rows)
+
+            def get_next(self):
+                return self._rows.pop(0)
+
+        class FakeConn:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def execute(self, *_args, **_kwargs):
+                return FakeResult(self._rows)
+
+        unsorted_rows = [
+            ["svc-opentrace", 4.605],
+            ["idea-cross-origin", 3.864],
+            ["idea-sab", 4.462],
+            ["svc-uv", 1.498],
+            ["doc-browser-reqs", 4.308],  # arrived last on the real index
+        ]
+        real_conn = store._conn
+        store._conn = FakeConn(unsorted_rows)
+        try:
+            results = store._fts_search("cross-origin isolation", 10)
+        finally:
+            store._conn = real_conn  # so the fixture's close() still works
+        scores = [score for _, score in results]
+        assert scores == sorted(scores, reverse=True), f"not best-first: {results}"
+        # And the consequence that actually bit: the doc survives a limit of 3.
+        assert "doc-browser-reqs" in [nid for nid, _ in results[:3]]
+
+
+class TestVaultMembership:
+    """Vault scoping resolves through ``CONTAINS`` edges, never a per-node
+    property: a KnowledgeDoc is content-addressed by sha and can belong to
+    several vaults, so it carries no ``vault`` key. ``traverse`` used to filter
+    on that key and therefore excluded every document.
+    """
+
+    @staticmethod
+    def _seed(store):
+        store.add_node("vault::kb", "KnowledgeVault", "kb", {"vault": "kb"})
+        store.add_node("vault::other", "KnowledgeVault", "other", {"vault": "other"})
+        for sid in ("a", "b"):
+            store.add_node(f"corpus::{sid}", "KnowledgeDoc", f"{sid}.md", {"sha256": sid})
+        store.add_relationship("c-a", "CONTAINS", "vault::kb", "corpus::a")
+        store.add_relationship("c-b", "CONTAINS", "vault::other", "corpus::b")
+        store.add_relationship("l-ab", "LINKS_TO", "corpus::a", "corpus::b")
+
+    def test_member_ids_include_vault_and_its_docs(self, store):
+        self._seed(store)
+        assert store.vault_member_ids("kb") == {"vault::kb", "corpus::a"}
+
+    def test_member_ids_unknown_vault_is_empty(self, store):
+        self._seed(store)
+        assert store.vault_member_ids("ghost") == set()
+
+    def test_traverse_scope_keeps_in_vault_neighbours(self, store):
+        self._seed(store)
+        rows = store.traverse("vault::kb", direction="outgoing", max_depth=1, vault_scope="kb")
+        assert [r["node"]["id"] for r in rows] == ["corpus::a"]
+
+    def test_traverse_scope_drops_out_of_vault_neighbours(self, store):
+        """``corpus::a`` LINKS_TO ``corpus::b``, which lives in another vault."""
+        self._seed(store)
+        rows = store.traverse("corpus::a", direction="outgoing", max_depth=1, vault_scope="kb")
+        assert [r["node"]["id"] for r in rows] == []
+        unscoped = store.traverse("corpus::a", direction="outgoing", max_depth=1)
+        assert "corpus::b" in [r["node"]["id"] for r in unscoped]

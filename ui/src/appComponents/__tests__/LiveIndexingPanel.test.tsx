@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, screen } from '@testing-library/react';
 import React from 'react';
-import { JobPhase } from '../../gen/opentrace/v1/agent_service';
+import { JobPhase } from '../../gen/agent_service';
 import type { JobState } from '../../job';
 import LiveIndexingPanel from '../LiveIndexingPanel';
 

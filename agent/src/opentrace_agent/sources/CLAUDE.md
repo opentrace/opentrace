@@ -1,6 +1,19 @@
 # Sources
 
-Source discovery and language-specific symbol extraction. A **Source** is a category (e.g. `code`); a **Loader** is a provider implementation under that source. Today only `code/` is populated.
+Source discovery and language-specific symbol extraction. A **Source** is a category (e.g. `code`); a **Loader** is a provider implementation under that source.
+
+`code/` holds the tree-sitter symbol extractors documented below. `markdown/` is
+**doc plumbing only** (`fetchers.py`, `source_io.py`): URL/file fetching and the
+on-disk corpus store. It runs no LLM of its own — the single LLM call over a
+document lives in `wiki/ingest/doc_extraction.py` and asks for a one-line
+summary, and markdown conversion lives in `wiki/ingest/normalize.py`.
+
+`_llm_common.py` is the provider registry (backends, models, pricing,
+autodetect) shared by that call. **There is deliberately no second LLM client
+layer here.** One existed — a `clients.py` with `complete()`-style clients
+alongside a `loader.py` that duplicated markitdown conversion — and both rotted
+into zero-caller code while the real paths lived elsewhere. Route new LLM work
+through `wiki/llm.py` and this registry.
 
 ## Layout
 

@@ -49,16 +49,22 @@ nav:
       - Claude Code Plugin: getting-started/install-plugin.md
       - OpenCode Plugin: getting-started/install-opencode.md
       - Configuration: getting-started/configuration.md
+      - Indexing: getting-started/indexing.md
+      - Wiki & Vaults: getting-started/wiki.md
       - Troubleshooting: getting-started/troubleshooting.md
   - Architecture:
       - Overview: architecture/overview.md
+      - Ontology: architecture/ontology.md
   - Development:
       - Setup: development/setup.md
       - Contributing: development/contributing.md
   - Reference:
-      - Browser Requirements: reference/browser-requirements.md
+      - CLI Flags: reference/cli-flags.md
+      - Vault Commands: reference/vault-commands.md
+      - Graph Tools: reference/graph-tools.md
+      - Wiki Providers: reference/wiki-providers.md
       - Chat Providers: reference/chat-providers.md
+      - Browser Requirements: reference/browser-requirements.md
       - Claude Code Plugin: reference/claude-code-plugin.md
       - OpenCode Plugin: reference/opencode-plugin.md
-      - Graph Tools: reference/graph-tools.md
       - Supported Languages: reference/languages.md

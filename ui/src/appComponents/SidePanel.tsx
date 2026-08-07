@@ -43,8 +43,16 @@ import './SidePanel.css';
 
 export type SidePanelTab = 'filters' | 'discover' | 'history' | 'details';
 
-/** Node types whose source code can be fetched and displayed. */
-const SOURCE_TYPES = new Set(['File', 'Function', 'Class', 'PullRequest']);
+/** Node types whose source/body can be fetched and displayed. KnowledgeDoc is a
+ *  raw source document — its markitdown body is served from the corpus
+ *  snapshot, read the same way as a code File. */
+const SOURCE_TYPES = new Set([
+  'File',
+  'Function',
+  'Class',
+  'PullRequest',
+  'KnowledgeDoc',
+]);
 
 interface SidePanelProps {
   /** Mobile: externally controlled active tab */

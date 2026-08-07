@@ -20,7 +20,6 @@ all: build
 proto:
 	$(MAKE) -C proto ts
 	$(MAKE) -C proto graph
-	$(MAKE) -C proto py
 
 ## Install dependencies for all components
 install:

@@ -15,13 +15,13 @@
  */
 
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { JobEventKind, JobPhase } from '../gen/opentrace/v1/agent_service';
+import { JobEventKind, JobPhase } from '../gen/agent_service';
 import type {
   JobResult,
   ProgressDetail,
   IndexedNode,
   IndexedRelationship,
-} from '../gen/opentrace/v1/agent_service';
+} from '../gen/agent_service';
 import type { JobMessage, JobService, JobStream } from './types';
 import { isOomJobError } from './browserJobService';
 

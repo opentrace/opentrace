@@ -107,6 +107,28 @@ You have these tools — use them directly (no delegation):
 
 PullRequest node IDs follow the pattern: \`owner/repo/pr/NUMBER\`.
 
+### Vault (Knowledge) Tools
+
+The user can ingest documents (PDFs, design docs, meeting notes, etc.) into
+"vaults". A vault is an INDEX, not a rewrite: each document keeps its own
+verbatim body, plus a title, a one-line summary, and an epistemic \`status\`
+(\`authoritative\` = current docs, \`design_history\` = a proposal or spec —
+intent, not shipped behaviour).
+
+- **list_vaults** — Discover what vaults exist. Use this first.
+
+Reading a vault's content uses the graph tools above, because a document IS a
+graph node (\`KnowledgeDoc\`):
+
+- **search_graph** / **list_nodes("KnowledgeDoc")** — find or enumerate documents by title, summary, and path. \`list_nodes\` is what establishes that something is absent; ranked search cannot.
+- **load_source** — read one document's body VERBATIM, with its \`status\`.
+- **grep** — sweep EVERY document's body in one call (pass the vault name as \`scopeId\`). This is the exhaustiveness tool: use it for "what do all the docs say about X" and "is X mentioned anywhere".
+- **traverse_graph** on \`LINKS_TO\` — follow the cross-references the documents' own authors wrote.
+
+Nothing here paraphrases a document, so quote the text you read and name the
+document. A claim resting only on a \`design_history\` document is intent, not
+shipped behaviour — say so.
+
 ## Efficiency
 
 - **Start with search_graph** — it searches names, properties, AND file content, and returns 1-hop connections for top results. One search often gives you enough to answer.
