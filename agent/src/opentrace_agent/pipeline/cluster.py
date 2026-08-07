@@ -258,10 +258,23 @@ def _community_label(members: list[dict[str, Any]]) -> str:
 
 
 def run_clustering(store) -> ClusterReport:  # type: ignore[no-untyped-def]
-    """End-to-end: read graph → detect communities → write back.
+    """End-to-end: read graph → detect communities → stamp the partition back.
 
-    Idempotent: clears existing Community nodes + memberships before writing.
+    The partition is written as a ``community`` property on each member, not as
+    Community nodes and membership edges: it is derived from the graph, so it is
+    metadata about nodes rather than graph data in its own right. The label,
+    cohesion and god flag summarised in the returned report are recomputed on
+    read by ``retrieval.communities`` from the same partition, so nothing has to
+    be kept in sync with the members.
+
+    Idempotent: ``assign_communities`` rewrites every node's assignment.
     """
+    # Clear before reading, not just before writing. A database written by the
+    # old node-based model still holds Community nodes, and those are ordinary
+    # nodes to the reader — partitioning would take clustering's own previous
+    # output as input and report an inflated node count for the run.
+    store.clear_communities()
+
     g = build_graph_from_store(store)
     n_nodes = g.number_of_nodes()
     n_edges = g.number_of_edges()
@@ -270,37 +283,12 @@ def run_clustering(store) -> ClusterReport:  # type: ignore[no-untyped-def]
 
     communities = detect_communities(g)
 
-    store.clear_communities()
-
-    # Quick name lookup by id for label generation.
-    node_lookup: dict[str, dict[str, Any]] = {n: g.nodes[n] for n in g.nodes}
+    store.assign_communities({nid: c.id for c in communities for nid in c.members})
 
     god_count = 0
     largest = 0
     cohesion_sum = 0.0
     for c in communities:
-        members_info = [
-            {"id": nid, "type": node_lookup[nid].get("type", ""), "name": node_lookup[nid].get("name", "")}
-            for nid in c.members
-            if nid in node_lookup
-        ]
-        # Most-connected members first — the label is derived from the top two.
-        members_info.sort(key=lambda m: g.degree(m["id"]), reverse=True)
-        community_id_str = f"_comm:{c.id}"
-        store.save_community(
-            id=community_id_str,
-            name=_community_label(members_info),
-            community_id=c.id,
-            cohesion=c.cohesion,
-            members=len(c.members),
-            is_god=c.is_god,
-        )
-        for nid in c.members:
-            store.save_membership(
-                id=f"_mem:{c.id}:{nid}",
-                node_id=nid,
-                community_id=community_id_str,
-            )
         if c.is_god:
             god_count += 1
         largest = max(largest, len(c.members))

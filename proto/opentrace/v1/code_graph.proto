@@ -184,24 +184,18 @@ message KnowledgeDocNode {
   string status           = 12;
 }
 
-// CommunityNode represents a cluster of related nodes detected by Leiden/Louvain.
-// Written by `opentraceai cluster`. The `members` count is stored for fast
-// summary rendering without traversing membership edges.
-message CommunityNode {
-  string id          = 1;
-  string name        = 2;   // human-readable label, e.g. "Attention Mechanism"
-  int32  community_id = 3 [(ladybug.column) = "communityId"];
-  double cohesion    = 4;   // 0.0–1.0, intra-community edge density
-  int32  members     = 5;   // node count in this community
-  bool   is_god      = 6 [(ladybug.column) = "isGod"];   // true if this is a top-centrality community
-}
-
-// MemberOfCommunityRel links a graph node to its CommunityNode.
-message MemberOfCommunityRel {
-  string id        = 1;
-  string source_id = 2;   // member node
-  string target_id = 3;   // CommunityNode
-}
+// Community detection deliberately declares NO node or relationship type here.
+// `opentraceai cluster` derives communities from an already-indexed graph, so
+// its output is metadata about nodes rather than nodes in their own right: each
+// member carries its community id in the `community` property, and the
+// per-community summary (label, cohesion, god flag) is recomputed on read.
+//
+// A CommunityNode + MemberOfCommunityRel pair lived here briefly and was removed
+// before any release shipped them. Storing derived data as graph data meant every
+// consumer had to remember to exclude it: `stats` counted communities as indexed
+// content, the viewer rendered them as ordinary nodes, and the degree ranking
+// scored a community as a top hub because it has one edge per member. Don't
+// reintroduce them — an attribute cannot be miscounted as a node.
 
 // IndexMetadataNode stores a single record of index provenance per database.
 // Written by the CLI after each `opentraceai index` run.

@@ -887,36 +887,50 @@ class TestGraphStoreContextManager:
 class TestKnowledgeGraph:
     """Community, hyperedge, and semantic-edge round-trips."""
 
-    def test_save_community_roundtrip(self, store):
-        store.save_community("c1", "Auth Subsystem", 1, 0.82, 14, is_god=True)
-        node = store.get_node("c1")
-        assert node["type"] == "Community"
-        assert node["name"] == "Auth Subsystem"
-        assert node["properties"]["community_id"] == 1
-        assert node["properties"]["cohesion"] == 0.82
-        assert node["properties"]["members"] == 14
-        assert node["properties"]["is_god"] is True
-
-    def test_membership_query(self, store):
+    def test_assign_communities_roundtrip(self, store):
         store.add_node("fn1", "Function", "login")
-        store.save_community("c1", "Auth", 1, 0.7, 5)
-        store.save_membership("m1", "fn1", "c1")
-        community = store.get_node_community("fn1")
-        assert community is not None
-        assert community["id"] == "c1"
-        assert community["name"] == "Auth"
-        assert community["community_id"] == 1
+        store.add_node("fn2", "Function", "logout")
+        assert store.assign_communities({"fn1": 1, "fn2": 2}) == 2
+        assert store.get_node_community("fn1") == 1
+        assert store.get_node_community("fn2") == 2
+
+    def test_assignment_preserves_existing_properties(self, store):
+        """The partition is merged into properties, not written over them."""
+        store.add_node("fn1", "Function", "login", properties={"path": "auth.py"})
+        store.assign_communities({"fn1": 7})
+        props = store.get_node("fn1")["properties"]
+        assert props["community"] == 7
+        assert props["path"] == "auth.py"
+
+    def test_assign_communities_is_idempotent(self, store):
+        """Re-assigning rewrites, so a node cannot end up in two communities."""
+        store.add_node("fn1", "Function", "login")
+        store.assign_communities({"fn1": 1})
+        store.assign_communities({"fn1": 2})
+        assert store.get_node_community("fn1") == 2
+
+    def test_reassignment_clears_nodes_dropped_from_the_partition(self, store):
+        """A node absent from the new partition must not keep its old id."""
+        store.add_node("fn1", "Function", "login")
+        store.add_node("fn2", "Function", "logout")
+        store.assign_communities({"fn1": 1, "fn2": 1})
+        store.assign_communities({"fn1": 1})
+        assert store.get_node_community("fn1") == 1
+        assert store.get_node_community("fn2") is None
+
+    def test_assign_communities_ignores_unknown_nodes(self, store):
+        assert store.assign_communities({"nope": 1}) == 0
 
     def test_get_node_community_returns_none_for_unassigned(self, store):
         store.add_node("orphan", "Function", "orphan")
         assert store.get_node_community("orphan") is None
 
-    def test_list_communities_ordered_by_community_id(self, store):
-        store.save_community("c2", "Beta", 2, 0.6, 3)
-        store.save_community("c1", "Alpha", 1, 0.7, 5)
-        store.save_community("c3", "Gamma", 3, 0.5, 8)
-        names = [c["name"] for c in store.list_communities()]
-        assert names == ["Alpha", "Beta", "Gamma"]
+    def test_clustering_adds_no_nodes(self, store):
+        """Assignment is metadata: the node census must not move."""
+        store.add_node("fn1", "Function", "login")
+        before = store.get_stats()["total_nodes"]
+        store.assign_communities({"fn1": 1})
+        assert store.get_stats()["total_nodes"] == before
 
     def test_list_god_nodes_sorted_by_degree(self, store):
         _seed(store)
@@ -932,12 +946,9 @@ class TestKnowledgeGraph:
 
     def test_cross_community_bridges(self, store):
         # Two communities, one bridge edge
-        store.save_community("ca", "A", 1, 0.7, 2)
-        store.save_community("cb", "B", 2, 0.7, 2)
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
-        store.save_membership("m1", "n1", "ca")
-        store.save_membership("m2", "n2", "cb")
+        store.assign_communities({"n1": 1, "n2": 2})
         store.add_relationship("r1", "CALLS", "n1", "n2")
         bridges = store.list_cross_community_bridges()
         assert len(bridges) == 1
@@ -947,12 +958,24 @@ class TestKnowledgeGraph:
         assert b["source_community_id"] != b["target_community_id"]
         assert b["relation"] == "CALLS"
 
-    def test_cross_community_bridges_excludes_same_community(self, store):
-        store.save_community("ca", "A", 1, 0.7, 3)
+    def test_intra_community_edge_is_not_a_bridge(self, store):
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
-        store.save_membership("m1", "n1", "ca")
-        store.save_membership("m2", "n2", "ca")
+        store.assign_communities({"n1": 1, "n2": 1})
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        assert store.list_cross_community_bridges() == []
+
+    def test_unassigned_endpoint_is_not_a_bridge(self, store):
+        """An unassigned node is not evidence of a community boundary."""
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
+        store.assign_communities({"n1": 1})
+        store.add_relationship("r1", "CALLS", "n1", "n2")
+        assert store.list_cross_community_bridges() == []
+
+    def test_cross_community_bridges_on_unclustered_graph(self, store):
+        store.add_node("n1", "Function", "n1")
+        store.add_node("n2", "Function", "n2")
         store.add_relationship("r1", "CALLS", "n1", "n2")
         assert store.list_cross_community_bridges() == []
 

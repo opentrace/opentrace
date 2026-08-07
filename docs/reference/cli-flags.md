@@ -141,7 +141,7 @@ opentraceai cluster [--db PATH] [--json]
 | `--db PATH` | Graph DB |
 | `--json` | Output a structured summary instead of human-readable text |
 
-Idempotent — clears existing Community nodes + memberships before writing fresh ones. Uses Leiden when `graspologic` is available, Louvain otherwise.
+Stamps each member's `community` property; adds no nodes or edges. Idempotent — every assignment is rewritten on each run. Uses Leiden when `graspologic` is available, Louvain otherwise.
 
 ## `opentraceai analyze`
 

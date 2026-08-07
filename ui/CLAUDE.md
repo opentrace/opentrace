@@ -72,6 +72,25 @@ Heavy computation runs off the main thread:
 
 Workers use transferable objects (Float64Array) for zero-copy position handoff. **Copy the buffer before React state updates** — ownership transfers on `postMessage`.
 
+### Two things are called "communities" — this is the viewer's own
+
+`communityWorker` / `useCommunities` compute a Louvain partition **in the
+browser, over whatever nodes are currently loaded**, for node colour and layout
+grouping. It is view state: never persisted, recomputed (debounced) whenever the
+node set changes, and scoped to what is on screen rather than to the whole graph.
+
+The agent has a separate, unrelated partition: `opentraceai cluster` runs Leiden
+over the *entire indexed graph* and stores the result as a `community` property
+on each node, feeding `analyze`, the exporters, and the MCP tools. See
+`agent/src/opentrace_agent/store/CLAUDE.md`.
+
+Nothing connects the two. The viewer does **not** read the stored property, so
+its colours and the groupings `analyze` reports can disagree about the same
+graph. Both are the same shape (node id → integer group id) and node
+`properties` already reach the viewer, so preferring the stored partition when
+present — with this worker as the fallback for browser-indexed and
+not-yet-clustered graphs — is a small change if that divergence ever matters.
+
 ## Key Interfaces
 
 - `GraphStore` (`store/types.ts`) — the data-access contract. Add methods here, implement in both `serverStore.ts` and `ladybugStore.ts`, or make them optional with `?`.

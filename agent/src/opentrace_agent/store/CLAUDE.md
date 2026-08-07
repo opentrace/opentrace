@@ -41,6 +41,35 @@ The schema is **enumerated**, not free-form. Allowed node types live in
 - Rel types: `CONTAINS` (Vault → KnowledgeDoc), `LINKS_TO` (doc→doc author links, parsed mechanically from relative markdown links), `MIRRORS` (KnowledgeDoc → File twin), `DOCUMENTS` (Repository → repo-spawned Vault)
 - `Repository.local_path` — set on local-directory indexes; null on cloned-remote (lets `retrieval/grep.py` shell out to ripgrep)
 
+### Communities are a node property, not a node type
+
+`opentraceai cluster` writes its partition as the `community` integer on each
+member (`assign_communities` / `clear_communities` / `node_communities`). There
+is deliberately no `Community` node type and no `MEMBER_OF_COMMUNITY` edge.
+
+The pair existed briefly and was removed before any release. Because derived
+data sat in the same tables as indexed data, every consumer had to remember to
+exclude it, and the ones that forgot were silently wrong: `stats` counted
+communities as indexed content (a 34-node graph reported 39 nodes / 75 edges
+after clustering), the viewer rendered them as ordinary nodes, and
+`list_god_nodes` ranked a community as a top hub because it has one edge per
+member. Keeping the partition in a property makes the whole class unrepresentable
+— an attribute cannot be counted as a node or walked as an edge.
+
+The per-community summary (label, member count, cohesion, god flag) is derived
+in `retrieval/communities.py::_summarize`, not stored, so no second copy can
+drift from the members it describes. If you add a consumer, read it from there
+rather than persisting a summary alongside the nodes.
+
+**The UI has an unrelated thing with the same name.** `ui/src/components/graph/
+useCommunities.ts` runs its own Louvain in a Web Worker over whatever nodes the
+viewer currently has loaded, purely for colour and layout. It is ephemeral view
+state and does not read the property described here, so the viewer's grouping
+and what `analyze` reports can disagree about the same graph. Neither can
+substitute for the other: a Web Worker can't serve the CLI, exporters, or MCP,
+and browser-indexed graphs never run `cluster` so they have no stored partition.
+Don't "unify" them by deleting either one — see `ui/CLAUDE.md`.
+
 ### `VALID_NODE_TYPES` is declarative only
 
 The set in `constants.py` is the proto-generated `NODE_TYPES` splat (minus

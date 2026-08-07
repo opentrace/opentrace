@@ -25,7 +25,7 @@ Recognised forms:
    (default `.`).
 
 2. **Cluster.** Run `opentraceai cluster` to detect communities (Leiden with
-   Louvain fallback) and write Community nodes + memberships back to the DB.
+   Louvain fallback) and stamp each node's `community` property back onto the DB.
 
 3. **Analyze.** Run `opentraceai analyze --json` to get god nodes,
    cross-community bridges, and suggested questions.

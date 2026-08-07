@@ -112,8 +112,11 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 
 The last three need `opentraceai cluster` to have been run — they return an
 empty list on an unclustered graph rather than erroring, so an empty result
-means "not clustered yet" at least as often as it means "none exist". Check
-`get_stats` for `Community` nodes before reading anything into it.
+means "not clustered yet" at least as often as it means "none exist". You
+cannot tell the two apart from `get_stats`: a community is a `community`
+property on the nodes it partitions, not a node type, so clustering leaves the
+type census unchanged. Call `get_communities` — an empty list there is the
+"not clustered yet" signal.
 `find_cross_cutting_communities` additionally needs both domains present: on a
 code-only graph (no vault ingested) nothing can span two domains, so it is
 always empty there.

@@ -6,9 +6,10 @@ description: |
 allowed-tools: Bash
 ---
 
-Runs `opentraceai cluster`. Idempotent — clears existing Community nodes +
-memberships before writing fresh ones. Leiden via graspologic with a
-deterministic Louvain fallback on Python ≥3.13.
+Runs `opentraceai cluster`. Stamps each node's `community` property, so it adds
+no nodes or edges and the graph's counts are unchanged. Idempotent — every
+assignment is rewritten on each run. Leiden via graspologic with a deterministic
+Louvain fallback on Python ≥3.13.
 
 ## Arguments
 $ARGUMENTS

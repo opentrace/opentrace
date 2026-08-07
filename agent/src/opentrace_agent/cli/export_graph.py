@@ -43,10 +43,11 @@ def export_graph_app() -> None:
 
 
 def _build_export_graph(store):  # type: ignore[no-untyped-def]
-    """Build a networkx DiGraph for export.
+    """Build a networkx DiGraph for export. Excludes IndexMetadata.
 
-    Includes Community nodes (consumers want to see them) but
-    excludes IndexMetadata. Membership and participation edges are kept.
+    Community ids ride as a node attribute so Gephi/yEd can colour by
+    community — the partition is metadata about nodes, so there is no
+    community node to render and no membership edge to draw.
     """
     try:
         import networkx as nx
@@ -56,18 +57,21 @@ def _build_export_graph(store):  # type: ignore[no-untyped-def]
             "or `uv pip install networkx` into the active environment."
         ) from exc
 
-    from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
+    from opentrace_agent.store.graph_store import GraphStore as _Store
 
-    # Reuse the analysis iterator but include cluster outputs.
-    nodes, edges = store.iter_analysis_graph(
-        exclude_types=(NODE_TYPE_INDEX_METADATA,),
-        exclude_rel_types=(),
-    )
+    nodes, edges = store.iter_analysis_graph()
     g = nx.DiGraph()
     for n in nodes:
         # GraphML only accepts primitive attributes — strip None and collapse
-        # missing fields to empty strings.
-        g.add_node(n["id"], type=n["type"] or "", name=n["name"] or "")
+        # missing fields to empty strings. An unassigned node gets -1 rather
+        # than a missing key: GraphML keys are declared per-attribute, so an
+        # absent value reads as community 0 in some importers.
+        g.add_node(
+            n["id"],
+            type=n["type"] or "",
+            name=n["name"] or "",
+            community=int(n.get(_Store.COMMUNITY_PROPERTY, -1)),
+        )
     for src, tgt in edges:
         if g.has_node(src) and g.has_node(tgt):
             g.add_edge(src, tgt)
@@ -92,9 +96,10 @@ def _build_export_graph(store):  # type: ignore[no-untyped-def]
 def graphml_cmd(db_path: str | None, output: str) -> None:
     """Export the stored graph as GraphML (Gephi, yEd, Cytoscape).
 
-    Includes Community nodes so downstream tools can render
-    the cluster structure alongside the source graph. IndexMetadata is
-    excluded (it's a per-repo provenance record, not part of the graph).
+    Each node carries a ``community`` attribute (-1 when unassigned) so those
+    tools can colour by cluster without the partition existing as nodes of its
+    own. IndexMetadata is excluded (it's a per-repo provenance record, not part
+    of the graph).
     """
     import networkx as nx
 
@@ -182,19 +187,25 @@ def _project_graph(store):  # type: ignore[no-untyped-def]
 
     - ``nodes_by_id``: id → ``{id, type, name}`` for non-internal source nodes.
     - ``edges``: list of ``(source_id, target_id, relation)`` between source nodes.
-    - ``communities``: list of Community dicts as stored.
-    - ``memberships``: community_string_id → list of node_ids.
+    - ``communities``: list of derived community summary dicts.
+    - ``memberships``: community_id → list of node_ids.
+
+    Membership rides along on the nodes ``iter_analysis_graph`` already
+    returned, so grouping is a pass over them rather than a lookup per node.
     """
+    from opentrace_agent.retrieval.communities import list_communities
+    from opentrace_agent.store.graph_store import GraphStore as _Store
+
     nodes, edges = store.iter_analysis_graph()
     nodes_by_id = {n["id"]: n for n in nodes}
 
-    communities = store.list_communities()
-    memberships: dict[str, list[str]] = {c["id"]: [] for c in communities}
-    for node_id in nodes_by_id:
-        community = store.get_node_community(node_id)
+    communities = list_communities(store)
+    memberships: dict[int, list[str]] = {c["id"]: [] for c in communities}
+    for node_id, node in nodes_by_id.items():
+        community = node.get(_Store.COMMUNITY_PROPERTY)
         if community is None:
             continue
-        memberships.setdefault(community["id"], []).append(node_id)
+        memberships.setdefault(int(community), []).append(node_id)
 
     # We want (s, t, relation) but iter_analysis_graph only returns (s, t).
     # Pull the relation type by re-querying — cheap because we only iterate
@@ -363,7 +374,11 @@ def report_cmd(db_path: str | None, output: str) -> None:
     from pathlib import Path
 
     from opentrace_agent.cli.main import _resolve_db
-    from opentrace_agent.retrieval import cross_domain_bridges, find_communities_spanning_domains
+    from opentrace_agent.retrieval import (
+        cross_community_bridges,
+        cross_domain_bridges,
+        find_communities_spanning_domains,
+    )
     from opentrace_agent.store import GraphStore
 
     list_cap = 25  # longest member/edge list any single page renders
@@ -377,7 +392,9 @@ def report_cmd(db_path: str | None, output: str) -> None:
         nodes_by_id, edges, communities, memberships = _project_graph(store)
         god_nodes = store.list_god_nodes(limit=20)
         metadata = store.get_metadata()
-        community_bridges = store.list_cross_community_bridges(limit=list_cap)
+        # Retrieval-layer helper, not the raw store call: community labels are
+        # derived, so only this wrapper joins them onto the bridge rows.
+        community_bridges = cross_community_bridges(store, limit=list_cap)
         domain_bridges = cross_domain_bridges(store, limit=list_cap)
         cross_cutting = find_communities_spanning_domains(store, min_domains=2, limit=list_cap)
 

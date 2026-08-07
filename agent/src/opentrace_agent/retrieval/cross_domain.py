@@ -108,32 +108,43 @@ def find_communities_spanning_domains(
     min_domains: int = 2,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Return Community nodes whose members come from ≥ *min_domains* domains.
+    """Return communities whose members come from ≥ *min_domains* domains.
 
     Useful for "topics that bridge code and docs" surfacing. Returns
     ``{community_id, name, domains, member_counts, total_members}`` per row,
     sorted by total domain count descending then by total_members.
+
+    Membership is a property on each node, so this is one scan and a group-by
+    rather than a traversal per community.
     """
-    communities = store.list_communities()
-    if not communities:
+    from opentrace_agent.retrieval.communities import _summarize
+    from opentrace_agent.store.graph_store import GraphStore as _Store
+
+    nodes, _edges = store.iter_analysis_graph()
+    key = _Store.COMMUNITY_PROPERTY
+
+    domains_by_community: dict[int, dict[str, int]] = {}
+    for node in nodes:
+        community = node.get(key)
+        if community is None:
+            continue
+        dom = _domain_of(node.get("type") or "")
+        if not dom:
+            continue
+        counts = domains_by_community.setdefault(int(community), {})
+        counts[dom] = counts.get(dom, 0) + 1
+    if not domains_by_community:
         return []
 
+    _, labels = _summarize(store)
+
     out: list[dict[str, Any]] = []
-    for c in communities:
-        # Walk MEMBER_OF_COMMUNITY edges into the Community to get its
-        # members. Direction: members → community → so traverse incoming.
-        incoming = store.traverse(c["id"], direction="incoming", max_depth=1, relationship_type="MEMBER_OF_COMMUNITY")
-        domain_counts: dict[str, int] = {}
-        for r in incoming:
-            ntype = r.get("node", {}).get("type") or ""
-            dom = _domain_of(ntype)
-            if dom:
-                domain_counts[dom] = domain_counts.get(dom, 0) + 1
+    for community_id, domain_counts in sorted(domains_by_community.items()):
         if len(domain_counts) >= min_domains:
             out.append(
                 {
-                    "community_id": c["id"],
-                    "name": c.get("name") or c["id"],
+                    "community_id": community_id,
+                    "name": labels.get(community_id, str(community_id)),
                     "domains": sorted(domain_counts.keys()),
                     "member_counts": domain_counts,
                     "total_members": sum(domain_counts.values()),
