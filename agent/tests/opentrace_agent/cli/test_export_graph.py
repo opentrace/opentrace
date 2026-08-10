@@ -23,7 +23,11 @@ pytest.importorskip("real_ladybug")
 
 from click.testing import CliRunner  # noqa: E402
 
-from opentrace_agent.cli.export_graph import _build_export_graph, export_graph_app  # noqa: E402
+from opentrace_agent.cli.export_graph import (  # noqa: E402
+    _build_export_graph,
+    _node_filename,
+    export_graph_app,
+)
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 
@@ -114,3 +118,34 @@ class TestGraphmlCmd:
         )
         assert result.exit_code == 0, result.output
         assert out.exists()
+
+
+class TestNodeFilenameCollisions:
+    """A vault must never lose a note to a filename clash.
+
+    Two nodes can share a display name *and* the last 8 characters of their
+    slugified id, so the id suffix is not itself a unique disambiguator. Every
+    candidate is checked against the used-set, because an unchecked one
+    silently overwrites a note already written under that name.
+    """
+
+    def test_distinct_names_keep_their_slug(self):
+        used: set[str] = set()
+        assert _node_filename({"id": "a", "name": "alpha", "type": "Function"}, used) == "alpha.md"
+        assert _node_filename({"id": "b", "name": "beta", "type": "Function"}, used) == "beta.md"
+
+    def test_same_name_disambiguated_by_id(self):
+        used: set[str] = set()
+        first = _node_filename({"id": "pkg/one/dup", "name": "dup", "type": "Function"}, used)
+        second = _node_filename({"id": "pkg/two/dup", "name": "dup", "type": "Function"}, used)
+        assert first != second
+
+    def test_three_way_collision_yields_three_files(self):
+        """Ids sharing their last 8 slugified chars collided before the counter."""
+        used: set[str] = set()
+        names = [
+            _node_filename({"id": f"repo{i}/same/dup", "name": "dup", "type": "Function"}, used)
+            for i in range(3)
+        ]
+        assert len(set(names)) == 3, f"expected 3 distinct filenames, got {names}"
+        assert len(used) == 3

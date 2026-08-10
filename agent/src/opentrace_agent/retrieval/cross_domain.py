@@ -70,7 +70,11 @@ def cross_domain_bridges(
     type_by_id: dict[str, str] = {n["id"]: n["type"] for n in nodes}
     name_by_id: dict[str, str] = {n["id"]: n.get("name") or n["id"] for n in nodes}
 
-    rels = store.list_relationships_for_nodes(set(type_by_id))
+    # Unbounded: the default 10k cap would truncate the edge universe *before*
+    # the cross-domain filter runs, so the bridges returned would be whichever
+    # happened to fall in the first 10k rows rather than the most significant.
+    # The caller's own `limit` is applied after ranking, below.
+    rels = store.list_relationships_for_nodes(set(type_by_id), limit=None)
     bridges: list[dict[str, Any]] = []
     for r in rels:
         src_id = r.get("source_id")

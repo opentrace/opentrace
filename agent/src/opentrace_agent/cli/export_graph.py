@@ -25,6 +25,12 @@ Three formats:
 
 Each subcommand reads from the store and writes to an output path. No LLM
 calls at export time — exporters are pure functions of the stored graph.
+
+**Keep module-level imports to stdlib and click.** ``main.py`` imports this
+module eagerly to register the command group (a Click group has to exist
+before the CLI dispatches), so anything imported at module scope here is paid
+by every ``opentraceai`` invocation, including ``--help``. networkx and the
+store are therefore imported inside the command bodies, not here.
 """
 
 from __future__ import annotations
@@ -221,15 +227,27 @@ def _project_graph(store):  # type: ignore[no-untyped-def]
 
 
 def _node_filename(node: dict, used: set[str]) -> str:
-    """Deterministic, collision-free filename for one node."""
+    """Deterministic, collision-free filename for one node.
+
+    The id suffix disambiguates the common case, but it is not itself unique:
+    two ids sharing their last 8 slugified characters collide again. Every
+    candidate is therefore checked against *used* and a counter appended until
+    one is free — an unchecked second candidate would silently overwrite an
+    already-written note and drop it from the vault.
+    """
     base = _slugify(_display_name(node) or node["id"])
     candidate = f"{base}.md"
     if candidate not in used:
         used.add(candidate)
         return candidate
-    # Collision: disambiguate with a short id suffix.
+
+    # Collision: disambiguate with a short id suffix, then with a counter.
     suffix = _slugify(node["id"])[-8:]
     candidate = f"{base}--{suffix}.md"
+    counter = 2
+    while candidate in used:
+        candidate = f"{base}--{suffix}-{counter}.md"
+        counter += 1
     used.add(candidate)
     return candidate
 

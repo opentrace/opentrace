@@ -130,6 +130,14 @@ def _cohesion(graph, members: list[Any]) -> float:
 def _subdivide(graph, members: list[Any], member_cap: int) -> list[list[Any]]:
     """Partition one community's induced subgraph into smaller ones.
 
+    Tries Leiden on the subgraph first and only falls back to Louvain, exactly
+    as the top-level pass does. So the "Louvain fallback" is a hybrid whenever
+    graspologic is installed but the top-level Leiden call returned nothing:
+    Louvain partitions the whole graph, then Leiden re-partitions the oversized
+    and sparse communities. Both paths therefore converge on the same
+    subdivision behaviour, which is why only the top-level algorithm is
+    reported.
+
     A community the algorithm can't break apart comes back unchanged as a
     single-element list, so callers can splice the result in unconditionally.
     """
