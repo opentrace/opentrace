@@ -143,9 +143,6 @@ class TestNodeFilenameCollisions:
     def test_three_way_collision_yields_three_files(self):
         """Ids sharing their last 8 slugified chars collided before the counter."""
         used: set[str] = set()
-        names = [
-            _node_filename({"id": f"repo{i}/same/dup", "name": "dup", "type": "Function"}, used)
-            for i in range(3)
-        ]
+        names = [_node_filename({"id": f"repo{i}/same/dup", "name": "dup", "type": "Function"}, used) for i in range(3)]
         assert len(set(names)) == 3, f"expected 3 distinct filenames, got {names}"
         assert len(used) == 3
