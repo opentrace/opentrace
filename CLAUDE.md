@@ -71,7 +71,7 @@ npm run dev
 
 Authoritative set is `VALID_NODE_TYPES` in `agent/src/opentrace_agent/store/constants.py`:
 
-Class, Cluster, Community, Database, DBTable, Dependency, Deployment, Directory,
+Class, Cluster, Database, DBTable, Dependency, Deployment, Directory,
 Endpoint, File, Function, InstrumentedService, KnowledgeDoc,
 KnowledgeVault, Log, Metric, Module, Namespace, Package, PullRequest, Repo,
 Repository, Service, Span, Variable

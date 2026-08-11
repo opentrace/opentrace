@@ -130,7 +130,7 @@ Errors with a list of visible vaults if `NAME` doesn't exist locally or globally
 
 ## `opentraceai cluster`
 
-Run community detection over the graph.
+Partition the graph into clusters.
 
 ```
 opentraceai cluster [--db PATH] [--json]
@@ -141,11 +141,11 @@ opentraceai cluster [--db PATH] [--json]
 | `--db PATH` | Graph DB |
 | `--json` | Output a structured summary instead of human-readable text |
 
-Stamps each member's `community` property; adds no nodes or edges. Idempotent — every assignment is rewritten on each run. Uses Leiden when `graspologic` is available, Louvain otherwise.
+Stamps each member's `cluster` property; adds no nodes or edges. Idempotent — every assignment is rewritten on each run. Uses Leiden when `graspologic` is available, Louvain otherwise.
 
 ## `opentraceai analyze`
 
-Surface god nodes, bridges, cross-domain bridges, and cross-cutting communities.
+Surface god nodes, bridges, cross-domain bridges, and cross-cutting clusters.
 
 ```
 opentraceai analyze [--db PATH] [--gods N] [--bridges N] [--json]
@@ -155,10 +155,10 @@ opentraceai analyze [--db PATH] [--gods N] [--bridges N] [--json]
 |---|---|
 | `--db PATH` | Graph DB |
 | `--gods N` | Top-N god nodes to surface (default 10) |
-| `--bridges N` | Top-N cross-community bridges to surface (default 10) |
-| `--json` | Output structured JSON with `gods`, `bridges`, `cross_domain_bridges`, `cross_cutting_communities`, `questions` |
+| `--bridges N` | Top-N cross-cluster bridges to surface (default 10) |
+| `--json` | Output structured JSON with `gods`, `bridges`, `cross_domain_bridges`, `cross_cutting_clusters`, `questions` |
 
-Run `cluster` first — bridges + cross-cutting communities depend on community membership.
+Run `cluster` first — bridges + cross-cutting clusters depend on cluster membership.
 
 ## `opentraceai export-graph`
 
@@ -173,8 +173,8 @@ opentraceai export-graph report   -o DIR [--db PATH]
 | Format | Output |
 |---|---|
 | `graphml` | Single `.graphml` file (Gephi, yEd, Cytoscape) |
-| `obsidian` | Markdown vault — one `.md` per node, folders by community, `[[wikilinks]]` for edges |
-| `report` | Folder of linked markdown pages — an `index.md` dashboard (provenance + Mermaid community map), per-community and per-god-node pages, and a `bridges.md` of community- and domain-crossing edges |
+| `obsidian` | Markdown vault — one `.md` per node, folders by cluster, `[[wikilinks]]` for edges |
+| `report` | Folder of linked markdown pages — an `index.md` dashboard (provenance + Mermaid cluster map), per-cluster and per-god-node pages, and a `bridges.md` of cluster- and domain-crossing edges |
 
 ## `opentraceai serve` / `opentraceai mcp`
 

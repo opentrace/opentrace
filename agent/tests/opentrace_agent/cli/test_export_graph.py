@@ -37,13 +37,13 @@ def _seed(db_path: str) -> None:
         s.add_node("f2", "Function", "beta")
         s.add_relationship("r1", "CALLS", "f1", "f2")
         # Cluster output: a partition stamped onto the members themselves.
-        s.assign_communities({"f1": 1, "f2": 1})
+        s.assign_clusters({"f1": 1, "f2": 1})
         # Metadata that should be excluded.
         s.save_metadata({"repoId": "test", "indexedAt": "2026-05-14"})
 
 
 class TestBuildExportGraph:
-    def test_carries_community_attr_and_excludes_metadata(self, tmp_path):
+    def test_carries_cluster_attr_and_excludes_metadata(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         with GraphStore(db) as store:
@@ -52,18 +52,18 @@ class TestBuildExportGraph:
         # IndexMetadata id starts with `_meta:index:`
         assert not any(str(n).startswith("_meta:index:") for n in g.nodes)
         # The partition is an attribute, so Gephi can colour by it without
-        # a community node or a membership edge existing to render.
-        assert g.nodes["f1"]["community"] == 1
-        assert g.nodes["f2"]["community"] == 1
+        # a cluster node or a membership edge existing to render.
+        assert g.nodes["f1"]["cluster"] == 1
+        assert g.nodes["f2"]["cluster"] == 1
         assert g.number_of_nodes() == 2
 
-    def test_unassigned_node_gets_sentinel_community(self, tmp_path):
+    def test_unassigned_node_gets_sentinel_cluster(self, tmp_path):
         db = str(tmp_path / "db")
         with GraphStore(db) as s:
             s.add_node("lonely", "Function", "lonely")
         with GraphStore(db) as store:
             g = _build_export_graph(store)
-        assert g.nodes["lonely"]["community"] == -1
+        assert g.nodes["lonely"]["cluster"] == -1
 
     def test_node_attrs_are_primitive_strings(self, tmp_path):
         db = str(tmp_path / "db")
@@ -94,9 +94,9 @@ class TestGraphmlCmd:
         # Node IDs should appear in the export.
         assert "f1" in text
         assert "f2" in text
-        # The community rides as a node attribute — GraphML declares a key for
-        # it — so Gephi can colour by community with no community node present.
-        assert 'attr.name="community"' in text
+        # The cluster rides as a node attribute — GraphML declares a key for
+        # it — so Gephi can colour by cluster with no cluster node present.
+        assert 'attr.name="cluster"' in text
 
     def test_requires_existing_db(self, tmp_path):
         out = tmp_path / "out.graphml"

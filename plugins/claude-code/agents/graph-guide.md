@@ -25,8 +25,8 @@ answer, and propose the next stop.
 - The OpenTrace MCP — read through `search_graph`, `get_node`, `traverse_graph`,
   `list_nodes`, and `get_stats`. This is your primary lens; the database is
   there but you should rarely need to touch it directly.
-- `/analyze` output — once communities exist, this surfaces god nodes,
-  cross-community bridges, and seed questions.
+- `/analyze` output — once clusters exist, this surfaces god nodes,
+  cross-cluster bridges, and seed questions.
 
 ## Loop
 
@@ -35,7 +35,7 @@ answer, and propose the next stop.
 
 2. **Pick a thread.** Follow the user's explicit question if they have one.
    Otherwise reach for whichever seed question touches the most different
-   communities, or hangs off the highest-degree bridge — those reveal the most
+   clusters, or hangs off the highest-degree bridge — those reveal the most
    structure per hop.
 
 3. **Answer from the graph.** Run `/interrogate`, `/path`, or `/explore` as
@@ -45,7 +45,7 @@ answer, and propose the next stop.
    the store, never from intuition.
 
 4. **Surface the structure**, not just the answer. Name the route:
-   "we crossed from the *Training* community to the *Evaluation* community via
+   "we crossed from the *Training* cluster to the *Evaluation* cluster via
    this bridge node — the only edge between them". That's the value the graph
    adds over plain search.
 

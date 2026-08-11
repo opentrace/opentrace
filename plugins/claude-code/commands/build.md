@@ -24,13 +24,13 @@ Recognised forms:
    `opentraceai fetch-and-index <url>`. Otherwise run `opentraceai index <path>`
    (default `.`).
 
-2. **Cluster.** Run `opentraceai cluster` to detect communities (Leiden with
-   Louvain fallback) and stamp each node's `community` property back onto the DB.
+2. **Cluster.** Run `opentraceai cluster` to detect clusters (Leiden with
+   Louvain fallback) and stamp each node's `cluster` property back onto the DB.
 
 3. **Analyze.** Run `opentraceai analyze --json` to get god nodes,
-   cross-community bridges, and suggested questions.
+   cross-cluster bridges, and suggested questions.
 
-4. **Report.** Show the top god nodes (degree-sorted) and any cross-community
+4. **Report.** Show the top god nodes (degree-sorted) and any cross-cluster
    bridges found. Offer the most interesting suggested question for follow-up.
 
 ## Optional follow-ups

@@ -20,15 +20,15 @@ read-only by construction and follow the store/CLAUDE.md convention of
 parameterised values + hardcoded labels.
 """
 
-from opentrace_agent.retrieval.communities import (
-    cross_community_bridges,
+from opentrace_agent.retrieval.clusters import (
+    cross_cluster_bridges,
     god_nodes,
-    list_communities,
+    list_clusters,
 )
 from opentrace_agent.retrieval.counts import count_by
 from opentrace_agent.retrieval.cross_domain import (
     cross_domain_bridges,
-    find_communities_spanning_domains,
+    find_clusters_spanning_domains,
 )
 from opentrace_agent.retrieval.existence import find_orphans
 from opentrace_agent.retrieval.grep import grep
@@ -39,15 +39,15 @@ from opentrace_agent.retrieval.search import search
 
 __all__ = [
     "count_by",
-    "cross_community_bridges",
+    "cross_cluster_bridges",
     "cross_domain_bridges",
-    "find_communities_spanning_domains",
+    "find_clusters_spanning_domains",
     "find_orphans",
     "find_path",
     "find_via_relationship_to_type",
     "god_nodes",
     "grep",
-    "list_communities",
+    "list_clusters",
     "overview",
     "provenance",
     "search",

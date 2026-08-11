@@ -1,7 +1,7 @@
 ---
 name: export-report
 description: |
-  Export a folder of linked markdown pages — an index dashboard (provenance header, Mermaid community map), per-community and per-god-node pages, and a bridges page.
+  Export a folder of linked markdown pages — an index dashboard (provenance header, Mermaid cluster map), per-cluster and per-god-node pages, and a bridges page.
   Use when: "/export-report", "generate docs from the graph".
 allowed-tools: Bash
 ---
@@ -9,8 +9,8 @@ allowed-tools: Bash
 Runs `opentraceai export-graph report -o <dir>`. Deterministic projection over
 the stored graph — no LLM calls at export time.
 
-Run `/cluster` first: community and god-node pages are projected from stored
-`Community` nodes, so without them the export is only `index.md` and
+Run `/cluster` first: cluster and god-node pages are projected from the stored
+cluster assignments, so without them the export is only `index.md` and
 `bridges.md`.
 
 ## Arguments

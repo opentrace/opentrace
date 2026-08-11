@@ -107,48 +107,48 @@ def cross_domain_bridges(
     return bridges[:limit]
 
 
-def find_communities_spanning_domains(
+def find_clusters_spanning_domains(
     store: GraphStore,
     min_domains: int = 2,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Return communities whose members come from ≥ *min_domains* domains.
+    """Return clusters whose members come from ≥ *min_domains* domains.
 
     Useful for "topics that bridge code and docs" surfacing. Returns
-    ``{community_id, name, domains, member_counts, total_members}`` per row,
+    ``{cluster_id, name, domains, member_counts, total_members}`` per row,
     sorted by total domain count descending then by total_members.
 
     Membership is a property on each node, so this is one scan and a group-by
-    rather than a traversal per community.
+    rather than a traversal per cluster.
     """
-    from opentrace_agent.retrieval.communities import _summarize
+    from opentrace_agent.retrieval.clusters import _summarize
     from opentrace_agent.store.graph_store import GraphStore as _Store
 
     nodes, _edges = store.iter_analysis_graph()
-    key = _Store.COMMUNITY_PROPERTY
+    key = _Store.CLUSTER_PROPERTY
 
-    domains_by_community: dict[int, dict[str, int]] = {}
+    domains_by_cluster: dict[int, dict[str, int]] = {}
     for node in nodes:
-        community = node.get(key)
-        if community is None:
+        cluster = node.get(key)
+        if cluster is None:
             continue
         dom = _domain_of(node.get("type") or "")
         if not dom:
             continue
-        counts = domains_by_community.setdefault(int(community), {})
+        counts = domains_by_cluster.setdefault(int(cluster), {})
         counts[dom] = counts.get(dom, 0) + 1
-    if not domains_by_community:
+    if not domains_by_cluster:
         return []
 
     _, labels = _summarize(store)
 
     out: list[dict[str, Any]] = []
-    for community_id, domain_counts in sorted(domains_by_community.items()):
+    for cluster_id, domain_counts in sorted(domains_by_cluster.items()):
         if len(domain_counts) >= min_domains:
             out.append(
                 {
-                    "community_id": community_id,
-                    "name": labels.get(community_id, str(community_id)),
+                    "cluster_id": cluster_id,
+                    "name": labels.get(cluster_id, str(cluster_id)),
                     "domains": sorted(domain_counts.keys()),
                     "member_counts": domain_counts,
                     "total_members": sum(domain_counts.values()),

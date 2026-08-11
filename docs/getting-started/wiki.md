@@ -193,7 +193,7 @@ Then surface cross-cutting structure:
 
 ```bash
 opentraceai cluster
-opentraceai analyze            # god nodes + bridges + cross-domain bridges + cross-cutting communities
+opentraceai analyze            # god nodes + bridges + cross-domain bridges + cross-cutting clusters
 ```
 
 ## Where vaults live on disk

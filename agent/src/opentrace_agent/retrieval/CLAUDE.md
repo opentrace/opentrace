@@ -15,8 +15,8 @@ existence.py   — find_orphans (two-query set difference)
 counts.py      — count_by (global or descendants-of-parent)
 provenance.py  — Trust chain for code (commit_sha + line range) and wiki (the doc's own identity)
 grep.py        — Regex match via ripgrep over a Repository or Vault scope
-communities.py — list_communities, god_nodes, cross_community_bridges
-cross_domain.py — cross_domain_bridges, find_communities_spanning_domains
+clusters.py    — list_clusters, god_nodes, cross_cluster_bridges
+cross_domain.py — cross_domain_bridges, find_clusters_spanning_domains
 ```
 
 ## Convention

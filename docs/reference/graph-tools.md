@@ -14,11 +14,11 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
 | `provenance` | Trust chain — code (commit_sha + line range) or wiki (the document's own identity + its `MIRRORS` File twin) | "Where did this come from?" |
 | `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus — every member doc's normalized body, hits joined to doc id/title/status | "Find this exact string in source" / "prove no document mentions X" / "what does every doc say about X" |
-| `list_communities` | Detected communities with cohesion + member counts, derived from the stored partition | After running `cluster` |
+| `list_clusters` | Detected clusters with cohesion + member counts, derived from the stored partition | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
-| `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
+| `cross_cluster_bridges` | Edges spanning different clusters | "Where do two clusters touch?" |
 | `cross_domain_bridges` | Edges spanning code / doc domains | "What connects code and docs?" |
-| `find_communities_spanning_domains` | Communities whose members span ≥N domains | Cross-cutting topics |
+| `find_clusters_spanning_domains` | Clusters whose members span ≥N domains | Cross-cutting topics |
 
 **"Which documents discuss X" is a `grep` sweep** — exhaustive, verbatim, and pre-labelled with each doc's title and status.
 
@@ -45,10 +45,10 @@ count_by                                # counts, optionally scoped to a parent
 overview                                # session-start orientation
 provenance                              # trust chain for a node
 grep                                    # ripgrep over Repository / Vault scope
-get_communities                         # listed clusters
+get_clusters                            # listed clusters
 get_god_nodes                           # centrality hubs
-get_bridges                             # cross-community edges
-find_cross_cutting_communities          # communities spanning ≥N domains
+get_bridges                             # cross-cluster edges
+find_cross_cutting_clusters             # clusters spanning ≥N domains
 load_source                             # a node's underlying content — code from the
                                         #  repo checkout, KnowledgeDoc bodies verbatim
                                         #  from the corpus (with title/path/status)
@@ -107,9 +107,9 @@ from opentrace_agent.retrieval import (
     provenance,
     grep,
     god_nodes,
-    cross_community_bridges,
+    cross_cluster_bridges,
     cross_domain_bridges,
-    find_communities_spanning_domains,
+    find_clusters_spanning_domains,
 )
 
 with GraphStore(".opentrace/index.db") as store:

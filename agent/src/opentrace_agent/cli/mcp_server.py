@@ -28,7 +28,7 @@ from opentrace_agent.retrieval import (
     count_by as _count_by,
 )
 from opentrace_agent.retrieval import (
-    find_communities_spanning_domains as _find_communities_spanning_domains,
+    find_clusters_spanning_domains as _find_clusters_spanning_domains,
 )
 from opentrace_agent.retrieval import (
     find_orphans as _find_orphans,
@@ -51,14 +51,14 @@ from opentrace_agent.retrieval import (
 from opentrace_agent.retrieval import (
     search as _search,
 )
-from opentrace_agent.retrieval.communities import (
-    cross_community_bridges as _cross_community_bridges,
+from opentrace_agent.retrieval.clusters import (
+    cross_cluster_bridges as _cross_cluster_bridges,
 )
-from opentrace_agent.retrieval.communities import (
+from opentrace_agent.retrieval.clusters import (
     god_nodes as _god_nodes,
 )
-from opentrace_agent.retrieval.communities import (
-    list_communities as _list_communities,
+from opentrace_agent.retrieval.clusters import (
+    list_clusters as _list_clusters,
 )
 from opentrace_agent.store import GraphStore
 
@@ -1170,18 +1170,18 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _error_response("overview", e)
 
     @server.tool()
-    def get_communities(limit: int = 100) -> str:
-        """List detected communities (Leiden/Louvain clusters) with cohesion and member counts.
+    def get_clusters(limit: int = 100) -> str:
+        """List detected clusters (Leiden/Louvain partition) with cohesion and member counts.
 
-        Run ``opentraceai cluster`` first to populate community membership.
+        Run ``opentraceai cluster`` first to populate cluster membership.
         """
         if not store:
             return NO_INDEX_MSG
         try:
-            rows = _list_communities(store)[: min(limit, 1000)]
+            rows = _list_clusters(store)[: min(limit, 1000)]
             return _json_response(rows)
         except Exception as e:
-            return _error_response("get_communities", e)
+            return _error_response("get_clusters", e)
 
     @server.tool()
     def get_god_nodes(limit: int = 20) -> str:
@@ -1198,17 +1198,17 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
 
     @server.tool()
     def get_bridges(limit: int = 50) -> str:
-        """List edges whose endpoints belong to different communities.
+        """List edges whose endpoints belong to different clusters.
 
-        Cross-community edges are the bridges that hold otherwise distinct
+        Cross-cluster edges are the bridges that hold otherwise distinct
         regions of the graph together — useful for orienting on which
         components are coupling concerns that look unrelated by name.
-        Run ``opentraceai cluster`` first; empty until communities exist.
+        Run ``opentraceai cluster`` first; empty until clusters exist.
         """
         if not store:
             return NO_INDEX_MSG
         try:
-            return _json_response(_cross_community_bridges(store, limit=min(limit, 500)))
+            return _json_response(_cross_cluster_bridges(store, limit=min(limit, 500)))
         except Exception as e:
             return _error_response("get_bridges", e)
 
@@ -1302,22 +1302,22 @@ def create_mcp_server(store: GraphStore | None) -> FastMCP:
             return _error_response("load_source", e)
 
     @server.tool()
-    def find_cross_cutting_communities(min_domains: int = 2, limit: int = 50) -> str:
-        """List Communities whose members span ≥``min_domains`` domains
+    def find_cross_cutting_clusters(min_domains: int = 2, limit: int = 50) -> str:
+        """List clusters whose members span ≥``min_domains`` domains
         (code / doc — the legacy runtime-node domain is only populated on
         graphs built by other producers).
 
         Requires ``opentraceai cluster`` to have been run first; returns an
-        empty list when no Community nodes exist.
+        empty list when no cluster assignments exist.
         """
         if not store:
             return NO_INDEX_MSG
         try:
             cap = min(limit, 500)
-            result = _find_communities_spanning_domains(store, min_domains=min_domains, limit=cap)
+            result = _find_clusters_spanning_domains(store, min_domains=min_domains, limit=cap)
             return _json_response(result)
         except Exception as e:
-            return _error_response("find_cross_cutting_communities", e)
+            return _error_response("find_cross_cutting_clusters", e)
 
     # Only advertise the documentation types when this index has them: on a
     # code-only graph the doc copy makes an agent chase a layer that isn't there.

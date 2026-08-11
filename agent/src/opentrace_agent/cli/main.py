@@ -3024,11 +3024,11 @@ def _configure_logging(verbose: bool) -> None:
 )
 @click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
 def cluster(db_path: str | None, output_json: bool) -> None:
-    """Run community detection over the stored graph.
+    """Partition the stored graph into clusters.
 
     Reads non-internal nodes + edges, runs Leiden (falls back to Louvain),
-    re-splits oversized or low-cohesion communities, and stamps each member's
-    ``community`` property. The partition is metadata about nodes, not nodes of
+    re-splits oversized or low-cohesion clusters, and stamps each member's
+    ``cluster`` property. The partition is metadata about nodes, not nodes of
     its own, so it adds nothing to the node or edge count. Idempotent —
     re-running rewrites every assignment.
     """
@@ -3052,14 +3052,14 @@ def cluster(db_path: str | None, output_json: bool) -> None:
     "bridge_limit",
     default=10,
     show_default=True,
-    help="Top-N cap for cross-community bridges, cross-domain bridges, and cross-cutting communities.",
+    help="Top-N cap for cross-cluster bridges, cross-domain bridges, and cross-cutting clusters.",
 )
 @click.option("--json", "output_json", is_flag=True, help="Output structured JSON.")
 def analyze(db_path: str | None, god_limit: int, bridge_limit: int, output_json: bool) -> None:
-    """Surface god nodes, cross-community bridges, and suggested questions.
+    """Surface god nodes, cross-cluster bridges, and suggested questions.
 
-    Run ``opentraceai cluster`` first — bridges depend on community
-    membership. Without communities, only god nodes are reported.
+    Run ``opentraceai cluster`` first — bridges depend on cluster
+    membership. Without clusters, only god nodes are reported.
     """
     from opentrace_agent.cli.analyze_cmd import run_analyze_cli
 

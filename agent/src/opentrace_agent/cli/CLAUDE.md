@@ -35,9 +35,9 @@ vault_cmd.py     — vault ingest / list / show / attach / detach / promote /
                    both use). Files skipped by type are REPORTED in the
                    summary, never silent ("14 docs" over a 15-file folder must
                    not read as full coverage)
-analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting communities
-                   (all Community-based; needs `opentraceai cluster` first)
-cluster_cmd.py   — community detection (Leiden → Louvain fallback)
+analyze_cmd.py   — god nodes, bridges, cross-domain bridges, cross-cutting clusters
+                   (all cluster-based; needs `opentraceai cluster` first)
+cluster_cmd.py   — graph clustering (Leiden → Louvain fallback)
 export_graph.py  — graphml / obsidian / report exporters (deterministic, no LLM)
 serve.py         — Starlette HTTP server; REST API consumed by the UI
 mcp_server.py    — MCP (Model Context Protocol) server for agent clients
@@ -80,7 +80,7 @@ REST endpoints (full list in `docs/reference/graph-tools.md`):
 `/api/retrieval/{search,overview,find_path,find_orphans,find_via_relationship_to_type,count_by,provenance,grep}`,
 plus `/api/source/*` and the vault routes:
 
-Community analysis (god nodes, bridges, cross-cutting communities, suggested
+Cluster analysis (god nodes, bridges, cross-cutting clusters, suggested
 questions) is deliberately NOT on REST — it is reachable via `opentraceai
 analyze`, the MCP tools, and the report exporter. Routes for it existed briefly
 to back a `KnowledgeHighlightsPanel` that was never built, and were removed
@@ -92,7 +92,7 @@ rather than shipped unconsumed.
 - `POST /api/vaults/{vault}/promote` / `POST /api/vaults/{vault}/demote` — move a vault between scopes on disk and re-mirror its graph `KnowledgeVault` row with the new scope. Promote (local → `~/.opentrace/vaults/`) also seeds the global corpus so the vault is attachable elsewhere; demote (global → `<project>/.opentrace/vaults/`) copies the corpus into the project. REST-only counterparts of `vault promote` / `vault demote`; 400 if already in the target scope, 409 if a vault of that name already exists in the target scope. Optional `?scope=` disambiguates a local/global name collision.
 - `DELETE /api/vaults/{vault}?scope=...` — delete from disk (and graph) for the given scope.
 
-MCP tools mirror the same primitives plus `find_cross_cutting_communities`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
+MCP tools mirror the same primitives plus `find_cross_cutting_clusters`. Tool list lives in `plugins/claude-code/CLAUDE.md`.
 
 "Which documents discuss X" is answered by `grep` (exhaustive, verbatim, pre-labelled). There is no doc→topic edge to traverse.
 

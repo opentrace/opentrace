@@ -2,17 +2,17 @@
 name: graph
 description: |
   Run the full OpenTrace knowledge-graph pipeline over a folder or repo — index,
-  community detection, highlight surfacing, and the markdown / graphml / Obsidian
+  clustering, highlight surfacing, and the markdown / graphml / Obsidian
   exporters. Use this skill when the user wants more than the bare structural
-  index: when they ask for communities, highlights, or a navigable artifact to
+  index: when they ask for clusters, highlights, or a navigable artifact to
   hand to another tool.
 
   Triggers on:
   - "build the knowledge graph", "make a graph of this folder", "graph this"
   - "what is this codebase about", "give me a map of this project", "what's connected
     to what"
-  - "find the communities", "cluster the graph", "what are the architectural hubs?"
-  - any time a user mentions community detection, god nodes, or bridges
+  - "find the clusters", "cluster the graph", "what are the architectural hubs?"
+  - any time a user mentions clustering, god nodes, or bridges
   - when `.opentrace/index.db` is already present in the working directory,
     an indexed graph exists — prefer answering from it over re-deriving
     answers from raw files
@@ -34,7 +34,7 @@ Match the user's intent to one of the commands below. When in doubt, default to
 |---|---|
 | Build the graph from scratch on a folder or GitHub URL | `/build [path or url]` |
 | Index only (no clustering / analysis) | `/index [path]` |
-| Re-run community detection | `/cluster` |
+| Re-run clustering | `/cluster` |
 | Surface god nodes, bridges, suggested questions | `/analyze` |
 | Quick exploration of a named component | `/explore <name>` |
 | Read-only Q&A over the graph | `/interrogate "<question>"` |

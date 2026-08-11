@@ -1015,16 +1015,22 @@ class GraphStore:
             "nodes_by_type": nodes_by_type,
         }
 
-    # -- communities (node metadata, not graph data) ---------------------
+    # -- clusters (node metadata, not graph data) -------------------------
     #
-    # A community is derived from an already-indexed graph, so it is stored as
-    # the ``community`` property on each member rather than as a node with
+    # A cluster is derived from an already-indexed graph, so it is stored as
+    # the ``cluster`` property on each member rather than as a node with
     # membership edges. Nothing here needs to be excluded from a traversal, a
     # degree count, or a node census, because none of it is a node or an edge.
-    # The per-community summary (label, cohesion, god flag) is recomputed from
-    # the partition by ``retrieval.communities`` rather than persisted.
+    # The per-cluster summary (label, cohesion, god flag) is recomputed from
+    # the partition by ``retrieval.clusters`` rather than persisted.
+    #
+    # Distinct from the ``Cluster`` *node type* in constants.py, which is a
+    # runtime/observability concept (a k8s cluster) with no producer today.
 
-    COMMUNITY_PROPERTY = "community"
+    CLUSTER_PROPERTY = "cluster"
+    # The property was briefly named ``community``; swept on clear so a
+    # pre-rename DB carries no ghost key after a re-cluster.
+    _LEGACY_CLUSTER_PROPERTY = "community"
 
     def iter_analysis_graph(
         self,
@@ -1033,7 +1039,7 @@ class GraphStore:
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         """Return (nodes, edges) for analytical workloads (clustering, exports).
 
-        Each node carries its ``community`` id when one has been assigned, so
+        Each node carries its ``cluster`` id when one has been assigned, so
         callers get the partition without a second query per node.
         """
         node_result = self._conn.execute(
@@ -1045,9 +1051,9 @@ class GraphStore:
             r = node_result.get_next()
             props = _parse_props(r[3]) or {}
             node: dict[str, Any] = {"id": str(r[0]), "type": str(r[1]), "name": str(r[2])}
-            community = props.get(self.COMMUNITY_PROPERTY)
-            if community is not None:
-                node[self.COMMUNITY_PROPERTY] = community
+            cluster = props.get(self.CLUSTER_PROPERTY)
+            if cluster is not None:
+                node[self.CLUSTER_PROPERTY] = cluster
             nodes.append(node)
 
         edge_result = self._conn.execute(
@@ -1060,34 +1066,37 @@ class GraphStore:
             edges.append((str(r[0]), str(r[1])))
         return nodes, edges
 
-    def assign_communities(self, assignments: dict[str, int]) -> int:
-        """Stamp ``community`` onto each node in *assignments*; clear the rest.
+    def assign_clusters(self, assignments: dict[str, int]) -> int:
+        """Stamp ``cluster`` onto each node in *assignments*; clear the rest.
 
-        Idempotent by construction: every node's community property is
+        Idempotent by construction: every node's cluster property is
         rewritten from the given partition, so a re-cluster cannot leave a
         stale assignment behind the way orphaned Community nodes could.
         Returns the number of nodes stamped.
         """
-        self.clear_communities()
+        self.clear_clusters()
         stamped = 0
-        for node_id, community_id in assignments.items():
-            if self._merge_node_property(node_id, self.COMMUNITY_PROPERTY, community_id):
+        for node_id, cluster_id in assignments.items():
+            if self._merge_node_property(node_id, self.CLUSTER_PROPERTY, cluster_id):
                 stamped += 1
         return stamped
 
-    def clear_communities(self) -> None:
-        """Drop the ``community`` property from every node that carries one."""
+    def clear_clusters(self) -> None:
+        """Drop the ``cluster`` property (and its legacy spelling) everywhere."""
+        keys = (self.CLUSTER_PROPERTY, self._LEGACY_CLUSTER_PROPERTY)
         result = self._conn.execute(
             "MATCH (n:Node) RETURN n.id, n.properties",
         )
-        stale: list[str] = []
+        stale: list[tuple[str, tuple[str, ...]]] = []
         while result.has_next():
             r = result.get_next()
             props = _parse_props(r[1]) or {}
-            if self.COMMUNITY_PROPERTY in props:
-                stale.append(str(r[0]))
-        for node_id in stale:
-            self._merge_node_property(node_id, self.COMMUNITY_PROPERTY, None)
+            present = tuple(k for k in keys if k in props)
+            if present:
+                stale.append((str(r[0]), present))
+        for node_id, present in stale:
+            for key in present:
+                self._merge_node_property(node_id, key, None)
         self._drop_legacy_community_nodes()
 
     # Communities were briefly stored as nodes + MEMBER_OF_COMMUNITY edges (see
@@ -1112,7 +1121,7 @@ class GraphStore:
         except Exception:
             # Best-effort: a graph with no legacy rows is the normal case, and
             # failing to sweep must not block a re-cluster.
-            logger.warning("clear_communities: legacy Community sweep failed", exc_info=True)
+            logger.warning("clear_clusters: legacy Community sweep failed", exc_info=True)
         else:
             # The in-memory id mirrors can't be filtered in place after a
             # delete; invalidate so the next bulk import reloads them.
@@ -1168,8 +1177,8 @@ class GraphStore:
             ids.add(str(rows.get_next()[0]))
         return ids
 
-    def node_communities(self) -> dict[str, int]:
-        """Return ``{node_id: community_id}`` for every assigned node.
+    def node_clusters(self) -> dict[str, int]:
+        """Return ``{node_id: cluster_id}`` for every assigned node.
 
         One scan, so callers building a partition-wide view don't issue a
         query per node.
@@ -1179,18 +1188,18 @@ class GraphStore:
         while result.has_next():
             r = result.get_next()
             props = _parse_props(r[1]) or {}
-            community = props.get(self.COMMUNITY_PROPERTY)
-            if community is not None:
-                out[str(r[0])] = int(community)
+            cluster = props.get(self.CLUSTER_PROPERTY)
+            if cluster is not None:
+                out[str(r[0])] = int(cluster)
         return out
 
-    def get_node_community(self, node_id: str) -> int | None:
-        """Return the community id a node belongs to, or None if unassigned."""
+    def get_node_cluster(self, node_id: str) -> int | None:
+        """Return the cluster id a node belongs to, or None if unassigned."""
         node = self.get_node(node_id)
         if node is None:
             return None
-        community = (node.get("properties") or {}).get(self.COMMUNITY_PROPERTY)
-        return None if community is None else int(community)
+        cluster = (node.get("properties") or {}).get(self.CLUSTER_PROPERTY)
+        return None if cluster is None else int(cluster)
 
     def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
         """Return top-degree non-synthetic nodes.
@@ -1198,7 +1207,7 @@ class GraphStore:
         Degree = inbound + outbound RELATES count. Excludes the index-metadata
         type by default; pass extra types in ``exclude_types`` to filter further.
 
-        Community membership needs no exclusion here: it is a node property, so
+        Cluster membership needs no exclusion here: it is a node property, so
         it contributes neither a node to rank nor an edge to count.
         """
         exclude = (NODE_TYPE_INDEX_METADATA, *exclude_types)
@@ -1223,17 +1232,17 @@ class GraphStore:
             )
         return rows
 
-    def list_cross_community_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return edges whose endpoints carry different ``community`` ids.
+    def list_cross_cluster_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return edges whose endpoints carry different ``cluster`` ids.
 
         Edges where either endpoint is unassigned are skipped — an unassigned
-        node is not evidence of a boundary. Community *labels* are not attached
-        here: they are derived from the partition, so ``retrieval.communities``
+        node is not evidence of a boundary. Cluster *labels* are not attached
+        here: they are derived from the partition, so ``retrieval.clusters``
         joins them on. Useful for surfacing cross-cluster couplings — places
         where two architecturally distinct regions touch.
         """
-        communities = self.node_communities()
-        if not communities:
+        clusters = self.node_clusters()
+        if not clusters:
             return []
 
         result = self._conn.execute(
@@ -1242,20 +1251,20 @@ class GraphStore:
         rows: list[dict[str, Any]] = []
         while result.has_next():
             r = result.get_next()
-            source_community = communities.get(str(r[0]))
-            target_community = communities.get(str(r[2]))
-            if source_community is None or target_community is None:
+            source_cluster = clusters.get(str(r[0]))
+            target_cluster = clusters.get(str(r[2]))
+            if source_cluster is None or target_cluster is None:
                 continue
-            if source_community == target_community:
+            if source_cluster == target_cluster:
                 continue
             rows.append(
                 {
                     "source_id": str(r[0]),
                     "source_name": str(r[1]),
-                    "source_community_id": source_community,
+                    "source_cluster_id": source_cluster,
                     "target_id": str(r[2]),
                     "target_name": str(r[3]),
-                    "target_community_id": target_community,
+                    "target_cluster_id": target_cluster,
                     "relation": str(r[4]),
                 }
             )
