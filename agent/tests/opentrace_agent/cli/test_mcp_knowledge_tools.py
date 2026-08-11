@@ -54,10 +54,7 @@ def store(tmp_path):
     s.add_relationship("ea", "CALLS", "a0", "a1")
     s.add_relationship("eb", "CALLS", "b0", "b1")
     s.add_relationship("ebridge", "CALLS", "a0", "b0")
-    s.save_community("ca", "A cluster", 1, 0.7, 2, is_god=True)
-    s.save_community("cb", "B cluster", 2, 0.7, 2)
-    for nid, cid in (("a0", "ca"), ("a1", "ca"), ("b0", "cb"), ("b1", "cb")):
-        s.save_membership(f"m-{nid}", nid, cid)
+    s.assign_communities({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
     yield s
     s.close()
 
@@ -65,8 +62,10 @@ def store(tmp_path):
 class TestGetCommunities:
     def test_returns_both(self, store):
         rows = _call(store, "get_communities")
-        names = sorted(r["name"] for r in rows)
-        assert names == ["A cluster", "B cluster"]
+        # Labels are derived from each community's members, not stored.
+        assert sorted(r["id"] for r in rows) == [1, 2]
+        assert sorted(r["name"] for r in rows) == ["a0, a1", "b0, b1"]
+        assert all(r["members"] == 2 for r in rows)
 
     def test_no_index_message(self):
         rows = _call(None, "get_communities")

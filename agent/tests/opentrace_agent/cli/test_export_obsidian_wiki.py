@@ -27,6 +27,19 @@ from opentrace_agent.cli.export_graph import _slugify, export_graph_app  # noqa:
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 
+def _community_names(db_path: str) -> dict[int, str]:
+    """Map community id → its derived label and exported slug.
+
+    Labels are derived from each community's top members rather than stored, so
+    the tests resolve them from the store instead of hardcoding a name the
+    fixture no longer sets.
+    """
+    from opentrace_agent.retrieval.communities import list_communities
+
+    with GraphStore(db_path) as s:
+        return {c["id"]: c["name"] for c in list_communities(s)}
+
+
 def _seed(db_path: str) -> None:
     """Two communities of two nodes each, with a bridge edge."""
     with GraphStore(db_path) as s:
@@ -36,12 +49,7 @@ def _seed(db_path: str) -> None:
         s.add_relationship("ea", "CALLS", "a0", "a1")
         s.add_relationship("eb", "CALLS", "b0", "b1")
         s.add_relationship("ebridge", "CALLS", "a0", "b0")
-        s.save_community("ca", "Alpha cluster", 1, 0.8, 2, is_god=True)
-        s.save_community("cb", "Beta cluster", 2, 0.8, 2, is_god=False)
-        s.save_membership("ma0", "a0", "ca")
-        s.save_membership("ma1", "a1", "ca")
-        s.save_membership("mb0", "b0", "cb")
-        s.save_membership("mb1", "b1", "cb")
+        s.assign_communities({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
 
 
 class TestSlugify:
@@ -73,9 +81,10 @@ class TestObsidianExport:
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        # Each community's slug becomes a folder.
-        assert (out / "alpha-cluster").is_dir()
-        assert (out / "beta-cluster").is_dir()
+        # Each community's derived label slugifies into a folder.
+        names = _community_names(db)
+        assert (out / _slugify(names[1])).is_dir()
+        assert (out / _slugify(names[2])).is_dir()
 
     def test_wikilinks_in_node_files(self, tmp_path):
         db = str(tmp_path / "db")
@@ -83,7 +92,7 @@ class TestObsidianExport:
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        a0 = out / "alpha-cluster" / "alpha-0.md"
+        a0 = out / _slugify(_community_names(db)[1]) / "alpha-0.md"
         text = a0.read_text()
         # a0 has outgoing edges to a1 + bridge to b0 → wikilinks for both.
         assert "[[alpha-1]]" in text
@@ -95,7 +104,7 @@ class TestObsidianExport:
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        a0 = out / "alpha-cluster" / "alpha-0.md"
+        a0 = out / _slugify(_community_names(db)[1]) / "alpha-0.md"
         text = a0.read_text()
         assert text.startswith("---\n")
         assert 'id: "a0"' in text
@@ -122,8 +131,9 @@ class TestWikiExport:
         result = runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         assert result.exit_code == 0, result.output
         assert (out / "index.md").exists()
-        assert (out / "communities" / "alpha-cluster.md").exists()
-        assert (out / "communities" / "beta-cluster.md").exists()
+        names = _community_names(db)
+        assert (out / "communities" / f"{_slugify(names[1])}.md").exists()
+        assert (out / "communities" / f"{_slugify(names[2])}.md").exists()
         assert (out / "gods").is_dir()
 
     def test_index_links_to_communities(self, tmp_path):
@@ -133,8 +143,9 @@ class TestWikiExport:
         runner = CliRunner()
         runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         index = (out / "index.md").read_text()
-        assert "communities/alpha-cluster.md" in index
-        assert "communities/beta-cluster.md" in index
+        names = _community_names(db)
+        assert f"communities/{_slugify(names[1])}.md" in index
+        assert f"communities/{_slugify(names[2])}.md" in index
         assert "## God Nodes" in index
 
     def test_community_article_lists_members(self, tmp_path):
@@ -143,7 +154,7 @@ class TestWikiExport:
         out = tmp_path / "wiki"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
-        alpha = (out / "communities" / "alpha-cluster.md").read_text()
+        alpha = (out / "communities" / f"{_slugify(_community_names(db)[1])}.md").read_text()
         assert "alpha-0" in alpha
         assert "alpha-1" in alpha
         # Cross-community connections should surface the bridge edge.
@@ -205,7 +216,7 @@ class TestReportDashboard:
         CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         index = (out / "index.md").read_text()
         assert "```mermaid" in index
-        assert 'c1["Alpha cluster (2)"]' in index
+        assert f'c1["{_community_names(db)[1]} (2)"]' in index
         # One bridge edge between the two communities.
         assert "c1 ---|1| c2" in index
 
@@ -223,7 +234,8 @@ class TestReportDashboard:
         _seed_rich(db)
         out = tmp_path / "wiki"
         CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
-        alpha = (out / "communities" / "alpha-cluster.md").read_text()
+        names = _community_names(db)
+        alpha = (out / "communities" / f"{_slugify(names[1])}.md").read_text()
         assert "## Connections to other communities" in alpha
-        assert "[Beta cluster](beta-cluster.md): 1 edge" in alpha
+        assert f"[{names[2]}]({_slugify(names[2])}.md): 1 edge" in alpha
         assert "alpha-0 → beta-0 (CALLS)" in alpha

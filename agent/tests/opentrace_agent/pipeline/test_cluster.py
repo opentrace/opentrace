@@ -28,6 +28,7 @@ from opentrace_agent.pipeline.cluster import (  # noqa: E402
     detect_communities,
     run_clustering,
 )
+from opentrace_agent.retrieval.communities import list_communities  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -137,10 +138,8 @@ def _seed_two_clusters(store: GraphStore) -> None:
 class TestStoreRoundTrip:
     def test_build_graph_from_store_excludes_internal(self, store):
         _seed_two_clusters(store)
-        # Pollute with internal types — they must NOT appear in the analytical graph.
-        store.save_community("c-stale", "stale", 0, 0.0, 1)
+        store.save_metadata({"repoId": "r", "indexedAt": "2026-01-01T00:00:00Z"})
         g = build_graph_from_store(store)
-        assert all(not n.startswith("c-stale") for n in g.nodes)
         assert g.number_of_nodes() == 8
 
     def test_run_clustering_writes_communities(self, store):
@@ -148,7 +147,7 @@ class TestStoreRoundTrip:
         report = run_clustering(store)
         assert report.nodes == 8
         assert report.communities >= 2
-        communities = store.list_communities()
+        communities = list_communities(store)
         assert len(communities) == report.communities
         # Verify membership: each non-internal node has a community.
         for prefix in ("a", "b"):
@@ -156,22 +155,45 @@ class TestStoreRoundTrip:
                 c = store.get_node_community(f"{prefix}{i}")
                 assert c is not None, f"missing community for {prefix}{i}"
 
+    def test_clustering_adds_no_nodes_or_edges(self, store):
+        """The partition is metadata, so it must not grow the graph.
+
+        This is the property the Community-node model could not hold: it added
+        a node per community and an edge per member, which inflated every
+        census and degree count taken afterwards.
+        """
+        _seed_two_clusters(store)
+        before = store.get_stats()
+        run_clustering(store)
+        after = store.get_stats()
+        assert after["total_nodes"] == before["total_nodes"]
+        assert after["total_edges"] == before["total_edges"]
+        assert "Community" not in after["nodes_by_type"]
+
     def test_clustering_is_idempotent(self, store):
         _seed_two_clusters(store)
         first = run_clustering(store)
         second = run_clustering(store)
-        # Should not accumulate Community nodes across runs.
+        # Re-running must not accumulate communities or stale assignments.
         assert first.communities == second.communities
-        communities = store.list_communities()
+        communities = list_communities(store)
         assert len(communities) == second.communities
 
-    def test_clear_communities_removes_memberships(self, store):
+    def test_clear_communities_removes_assignments(self, store):
         _seed_two_clusters(store)
         run_clustering(store)
-        assert store.list_communities()
+        assert list_communities(store)
         store.clear_communities()
-        assert store.list_communities() == []
+        assert list_communities(store) == []
         assert store.get_node_community("a0") is None
+
+    def test_clear_communities_preserves_the_nodes(self, store):
+        """Clearing drops the property, never the member it was stamped on."""
+        _seed_two_clusters(store)
+        run_clustering(store)
+        store.clear_communities()
+        assert store.get_stats()["total_nodes"] == 8
+        assert store.get_node("a0") is not None
 
     def test_disjoint_clusters_assigned_distinct_communities(self, store):
         # Two cliques with NO bridge edge between them.
@@ -188,12 +210,36 @@ class TestStoreRoundTrip:
         ca = store.get_node_community("a0")
         cb = store.get_node_community("b0")
         assert ca is not None and cb is not None
-        assert ca["id"] != cb["id"]
+        assert ca != cb
 
     def test_empty_graph_returns_zeroes(self, store):
         report = run_clustering(store)
         assert report.nodes == 0
         assert report.communities == 0
+
+    def test_legacy_community_nodes_are_swept_before_partitioning(self, store):
+        """A DB from the old node-based model must not cluster its own output.
+
+        Communities were briefly stored as nodes plus MEMBER_OF_COMMUNITY
+        edges. To a reader those are ordinary nodes, so without a sweep the
+        partition would take clustering's previous output as input — and the
+        run would report a node count inflated by it.
+        """
+        _seed_two_clusters(store)
+        store.add_node("_comm:0", "Community", "legacy", {"community_id": 0, "members": 8})
+        for prefix in ("a", "b"):
+            for i in range(4):
+                store.add_relationship(f"_mem:{prefix}{i}", "MEMBER_OF_COMMUNITY", f"{prefix}{i}", "_comm:0")
+        assert store.get_stats()["total_nodes"] == 9
+
+        report = run_clustering(store)
+
+        # The run partitions the 8 real nodes, not the 9 it found on disk.
+        assert report.nodes == 8
+        stats = store.get_stats()
+        assert stats["total_nodes"] == 8
+        assert "Community" not in stats["nodes_by_type"]
+        assert store.get_node("_comm:0") is None
 
 
 # ---------------------------------------------------------------------------

@@ -99,3 +99,29 @@ class TestAnalyzeCmd:
         payload = json.loads(capsys.readouterr().out)
         assert payload["gods"], "expected at least one god node"
         assert payload["bridges"] == []
+
+    def test_clustering_does_not_alter_god_ranking(self, tmp_path, capsys):
+        """Clustering output must not feed back into the god-node ranking.
+
+        Storing the partition as node metadata rather than as Community nodes
+        and membership edges is what makes this hold: there is no synthetic
+        node to rank and no membership edge to inflate a degree, so no
+        consumer has to remember to exclude anything.
+
+        Compared as an id -> degree mapping, not list-wise: the seed graph
+        has six nodes tied at the same degree and ``ORDER BY degree`` leaves
+        ties in storage order.
+        """
+        db = str(tmp_path / "db")
+        _seed(db)
+
+        run_analyze_cli(db, output_json=True)
+        before = json.loads(capsys.readouterr().out)["gods"]
+
+        run_cluster_cli(db, output_json=False)
+        capsys.readouterr()  # discard cluster output
+        run_analyze_cli(db, output_json=True)
+        after = json.loads(capsys.readouterr().out)["gods"]
+
+        assert not any(g["type"] == "Community" for g in after)
+        assert {g["id"]: g["degree"] for g in after} == {g["id"]: g["degree"] for g in before}

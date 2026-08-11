@@ -6,7 +6,8 @@ description: |
 allowed-tools: Bash
 ---
 
-Runs `opentraceai export-graph graphml -o <output>`. Includes Community nodes
+Runs `opentraceai export-graph graphml -o <output>`. Carries each node's
+community id as a GraphML attribute (so Gephi can colour by it)
 so downstream tools can render cluster structure alongside the source graph.
 
 ## Arguments

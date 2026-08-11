@@ -23,7 +23,11 @@ pytest.importorskip("real_ladybug")
 
 from click.testing import CliRunner  # noqa: E402
 
-from opentrace_agent.cli.export_graph import _build_export_graph, export_graph_app  # noqa: E402
+from opentrace_agent.cli.export_graph import (  # noqa: E402
+    _build_export_graph,
+    _node_filename,
+    export_graph_app,
+)
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 
@@ -32,26 +36,34 @@ def _seed(db_path: str) -> None:
         s.add_node("f1", "Function", "alpha")
         s.add_node("f2", "Function", "beta")
         s.add_relationship("r1", "CALLS", "f1", "f2")
-        # Cluster outputs that should be included in the export.
-        s.save_community("c1", "Auth", 1, 0.8, 2, is_god=True)
-        s.save_membership("m1", "f1", "c1")
-        s.save_membership("m2", "f2", "c1")
+        # Cluster output: a partition stamped onto the members themselves.
+        s.assign_communities({"f1": 1, "f2": 1})
         # Metadata that should be excluded.
         s.save_metadata({"repoId": "test", "indexedAt": "2026-05-14"})
 
 
 class TestBuildExportGraph:
-    def test_includes_community_and_excludes_metadata(self, tmp_path):
+    def test_carries_community_attr_and_excludes_metadata(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         with GraphStore(db) as store:
             g = _build_export_graph(store)
         assert "f1" in g.nodes
-        assert "c1" in g.nodes
         # IndexMetadata id starts with `_meta:index:`
         assert not any(str(n).startswith("_meta:index:") for n in g.nodes)
-        # Membership edges should be included so consumers can render clusters.
-        assert g.has_edge("f1", "c1") or g.has_edge("c1", "f1")
+        # The partition is an attribute, so Gephi can colour by it without
+        # a community node or a membership edge existing to render.
+        assert g.nodes["f1"]["community"] == 1
+        assert g.nodes["f2"]["community"] == 1
+        assert g.number_of_nodes() == 2
+
+    def test_unassigned_node_gets_sentinel_community(self, tmp_path):
+        db = str(tmp_path / "db")
+        with GraphStore(db) as s:
+            s.add_node("lonely", "Function", "lonely")
+        with GraphStore(db) as store:
+            g = _build_export_graph(store)
+        assert g.nodes["lonely"]["community"] == -1
 
     def test_node_attrs_are_primitive_strings(self, tmp_path):
         db = str(tmp_path / "db")
@@ -81,7 +93,10 @@ class TestGraphmlCmd:
         assert "graphml" in text
         # Node IDs should appear in the export.
         assert "f1" in text
-        assert "c1" in text
+        assert "f2" in text
+        # The community rides as a node attribute — GraphML declares a key for
+        # it — so Gephi can colour by community with no community node present.
+        assert 'attr.name="community"' in text
 
     def test_requires_existing_db(self, tmp_path):
         out = tmp_path / "out.graphml"
@@ -103,3 +118,31 @@ class TestGraphmlCmd:
         )
         assert result.exit_code == 0, result.output
         assert out.exists()
+
+
+class TestNodeFilenameCollisions:
+    """A vault must never lose a note to a filename clash.
+
+    Two nodes can share a display name *and* the last 8 characters of their
+    slugified id, so the id suffix is not itself a unique disambiguator. Every
+    candidate is checked against the used-set, because an unchecked one
+    silently overwrites a note already written under that name.
+    """
+
+    def test_distinct_names_keep_their_slug(self):
+        used: set[str] = set()
+        assert _node_filename({"id": "a", "name": "alpha", "type": "Function"}, used) == "alpha.md"
+        assert _node_filename({"id": "b", "name": "beta", "type": "Function"}, used) == "beta.md"
+
+    def test_same_name_disambiguated_by_id(self):
+        used: set[str] = set()
+        first = _node_filename({"id": "pkg/one/dup", "name": "dup", "type": "Function"}, used)
+        second = _node_filename({"id": "pkg/two/dup", "name": "dup", "type": "Function"}, used)
+        assert first != second
+
+    def test_three_way_collision_yields_three_files(self):
+        """Ids sharing their last 8 slugified chars collided before the counter."""
+        used: set[str] = set()
+        names = [_node_filename({"id": f"repo{i}/same/dup", "name": "dup", "type": "Function"}, used) for i in range(3)]
+        assert len(set(names)) == 3, f"expected 3 distinct filenames, got {names}"
+        assert len(used) == 3

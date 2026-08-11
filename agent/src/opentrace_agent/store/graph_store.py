@@ -26,11 +26,7 @@ from typing import Any
 
 import real_ladybug as ladybug
 
-from opentrace_agent.gen.schema_gen import (
-    NODE_TYPE_COMMUNITY,
-    NODE_TYPE_INDEX_METADATA,
-    REL_TYPE_MEMBER_OF_COMMUNITY,
-)
+from opentrace_agent.gen.schema_gen import NODE_TYPE_INDEX_METADATA
 
 logger = logging.getLogger(__name__)
 
@@ -1019,68 +1015,44 @@ class GraphStore:
             "nodes_by_type": nodes_by_type,
         }
 
-    # -- knowledge graph (communities) ----------------------------------
+    # -- communities (node metadata, not graph data) ---------------------
+    #
+    # A community is derived from an already-indexed graph, so it is stored as
+    # the ``community`` property on each member rather than as a node with
+    # membership edges. Nothing here needs to be excluded from a traversal, a
+    # degree count, or a node census, because none of it is a node or an edge.
+    # The per-community summary (label, cohesion, god flag) is recomputed from
+    # the partition by ``retrieval.communities`` rather than persisted.
 
-    def save_community(
-        self,
-        id: str,
-        name: str,
-        community_id: int,
-        cohesion: float,
-        members: int,
-        is_god: bool = False,
-    ) -> None:
-        """Upsert a Community node detected by Leiden/Louvain."""
-        self.add_node(
-            id=id,
-            node_type=NODE_TYPE_COMMUNITY,
-            name=name,
-            properties={
-                "community_id": community_id,
-                "cohesion": cohesion,
-                "members": members,
-                "is_god": is_god,
-            },
-        )
-
-    def save_membership(self, id: str, node_id: str, community_id: str) -> None:
-        """Link a node to its Community via MEMBER_OF_COMMUNITY."""
-        self.merge_relationship(
-            id=id,
-            rel_type=REL_TYPE_MEMBER_OF_COMMUNITY,
-            source_id=node_id,
-            target_id=community_id,
-        )
+    COMMUNITY_PROPERTY = "community"
 
     def iter_analysis_graph(
         self,
         *,
-        exclude_types: tuple[str, ...] = (
-            NODE_TYPE_COMMUNITY,
-            NODE_TYPE_INDEX_METADATA,
-        ),
-        exclude_rel_types: tuple[str, ...] = (REL_TYPE_MEMBER_OF_COMMUNITY,),
+        exclude_types: tuple[str, ...] = (NODE_TYPE_INDEX_METADATA,),
     ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         """Return (nodes, edges) for analytical workloads (clustering, exports).
 
-        Excludes Community/IndexMetadata nodes and the membership
-        relationships that link them, so clustering operates on the underlying
-        graph and doesn't ingest its own previous output.
+        Each node carries its ``community`` id when one has been assigned, so
+        callers get the partition without a second query per node.
         """
         node_result = self._conn.execute(
-            "MATCH (n:Node) WHERE NOT n.type IN $excl RETURN n.id, n.type, n.name",
+            "MATCH (n:Node) WHERE NOT n.type IN $excl RETURN n.id, n.type, n.name, n.properties",
             parameters={"excl": list(exclude_types)},
         )
         nodes: list[dict[str, Any]] = []
         while node_result.has_next():
             r = node_result.get_next()
-            nodes.append({"id": str(r[0]), "type": str(r[1]), "name": str(r[2])})
+            props = _parse_props(r[3]) or {}
+            node: dict[str, Any] = {"id": str(r[0]), "type": str(r[1]), "name": str(r[2])}
+            community = props.get(self.COMMUNITY_PROPERTY)
+            if community is not None:
+                node[self.COMMUNITY_PROPERTY] = community
+            nodes.append(node)
 
         edge_result = self._conn.execute(
-            "MATCH (a:Node)-[r:RELATES]->(b:Node) "
-            "WHERE NOT a.type IN $excl AND NOT b.type IN $excl AND NOT r.type IN $excl_rel "
-            "RETURN a.id, b.id",
-            parameters={"excl": list(exclude_types), "excl_rel": list(exclude_rel_types)},
+            "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE NOT a.type IN $excl AND NOT b.type IN $excl RETURN a.id, b.id",
+            parameters={"excl": list(exclude_types)},
         )
         edges: list[tuple[str, str]] = []
         while edge_result.has_next():
@@ -1088,25 +1060,88 @@ class GraphStore:
             edges.append((str(r[0]), str(r[1])))
         return nodes, edges
 
-    def clear_communities(self) -> None:
-        """Remove all Community nodes and their membership edges.
+    def assign_communities(self, assignments: dict[str, int]) -> int:
+        """Stamp ``community`` onto each node in *assignments*; clear the rest.
 
-        Used by ``opentraceai cluster`` to make re-clustering idempotent.
+        Idempotent by construction: every node's community property is
+        rewritten from the given partition, so a re-cluster cannot leave a
+        stale assignment behind the way orphaned Community nodes could.
+        Returns the number of nodes stamped.
         """
+        self.clear_communities()
+        stamped = 0
+        for node_id, community_id in assignments.items():
+            if self._merge_node_property(node_id, self.COMMUNITY_PROPERTY, community_id):
+                stamped += 1
+        return stamped
+
+    def clear_communities(self) -> None:
+        """Drop the ``community`` property from every node that carries one."""
+        result = self._conn.execute(
+            "MATCH (n:Node) RETURN n.id, n.properties",
+        )
+        stale: list[str] = []
+        while result.has_next():
+            r = result.get_next()
+            props = _parse_props(r[1]) or {}
+            if self.COMMUNITY_PROPERTY in props:
+                stale.append(str(r[0]))
+        for node_id in stale:
+            self._merge_node_property(node_id, self.COMMUNITY_PROPERTY, None)
+        self._drop_legacy_community_nodes()
+
+    # Communities were briefly stored as nodes + MEMBER_OF_COMMUNITY edges (see
+    # the note in code_graph.proto). A database written by that code still holds
+    # them, and they are worse than inert: clustering would read them back as
+    # ordinary nodes and partition its own previous output. There is no
+    # migration system, so the sweep rides along with the clear that already
+    # runs before every assignment.
+    _LEGACY_COMMUNITY_TYPE = "Community"
+    _LEGACY_MEMBERSHIP_REL = "MEMBER_OF_COMMUNITY"
+
+    def _drop_legacy_community_nodes(self) -> None:
         try:
             self._conn.execute(
                 "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE r.type = $rt DELETE r",
-                parameters={"rt": REL_TYPE_MEMBER_OF_COMMUNITY},
+                parameters={"rt": self._LEGACY_MEMBERSHIP_REL},
             )
-        except Exception:
-            logger.warning("clear_communities: failed to delete memberships", exc_info=True)
-        try:
             self._conn.execute(
                 "MATCH (n:Node) WHERE n.type = $t DETACH DELETE n",
-                parameters={"t": NODE_TYPE_COMMUNITY},
+                parameters={"t": self._LEGACY_COMMUNITY_TYPE},
             )
         except Exception:
-            logger.warning("clear_communities: failed to delete communities", exc_info=True)
+            # Best-effort: a graph with no legacy rows is the normal case, and
+            # failing to sweep must not block a re-cluster.
+            logger.warning("clear_communities: legacy Community sweep failed", exc_info=True)
+        else:
+            # The in-memory id mirrors can't be filtered in place after a
+            # delete; invalidate so the next bulk import reloads them.
+            self._node_ids = None
+            self._rel_ids = None
+
+    def _merge_node_property(self, node_id: str, key: str, value: Any) -> bool:
+        """Set (or remove, when *value* is None) one property on one node.
+
+        Properties are marshalled as a single JSON column, so a partial update
+        is read-modify-write rather than a field assignment. Returns False when
+        the node does not exist.
+        """
+        result = self._conn.execute(
+            "MATCH (n:Node) WHERE n.id = $id RETURN n.properties",
+            parameters={"id": node_id},
+        )
+        if not result.has_next():
+            return False
+        props = _parse_props(result.get_next()[0]) or {}
+        if value is None:
+            props.pop(key, None)
+        else:
+            props[key] = value
+        self._conn.execute(
+            "MATCH (n:Node) WHERE n.id = $id SET n.properties = $props",
+            parameters={"id": node_id, "props": _marshal_props(props)},
+        )
+        return True
 
     def vault_member_ids(self, vault_name: str) -> set[str]:
         """Node ids belonging to *vault_name*: the vault node plus its members.
@@ -1133,43 +1168,38 @@ class GraphStore:
             ids.add(str(rows.get_next()[0]))
         return ids
 
-    def list_communities(self) -> list[dict[str, Any]]:
-        """Return all Community nodes, ordered by community_id."""
-        result = self._conn.execute(
-            "MATCH (n:Node) WHERE n.type = $t RETURN n.id, n.name, n.properties",
-            parameters={"t": NODE_TYPE_COMMUNITY},
-        )
-        rows: list[dict[str, Any]] = []
+    def node_communities(self) -> dict[str, int]:
+        """Return ``{node_id: community_id}`` for every assigned node.
+
+        One scan, so callers building a partition-wide view don't issue a
+        query per node.
+        """
+        result = self._conn.execute("MATCH (n:Node) RETURN n.id, n.properties")
+        out: dict[str, int] = {}
         while result.has_next():
             r = result.get_next()
-            props = _parse_props(r[2]) or {}
-            rows.append({"id": str(r[0]), "name": str(r[1]), **props})
-        rows.sort(key=lambda x: x.get("community_id", 0))
-        return rows
+            props = _parse_props(r[1]) or {}
+            community = props.get(self.COMMUNITY_PROPERTY)
+            if community is not None:
+                out[str(r[0])] = int(community)
+        return out
 
-    def get_node_community(self, node_id: str) -> dict[str, Any] | None:
-        """Return the Community a node belongs to, or None if unassigned."""
-        result = self._conn.execute(
-            "MATCH (n:Node {id: $id})-[r:RELATES]->(c:Node) "
-            "WHERE r.type = $rt AND c.type = $ct "
-            "RETURN c.id, c.name, c.properties LIMIT 1",
-            parameters={
-                "id": node_id,
-                "rt": REL_TYPE_MEMBER_OF_COMMUNITY,
-                "ct": NODE_TYPE_COMMUNITY,
-            },
-        )
-        if not result.has_next():
+    def get_node_community(self, node_id: str) -> int | None:
+        """Return the community id a node belongs to, or None if unassigned."""
+        node = self.get_node(node_id)
+        if node is None:
             return None
-        r = result.get_next()
-        props = _parse_props(r[2]) or {}
-        return {"id": str(r[0]), "name": str(r[1]), **props}
+        community = (node.get("properties") or {}).get(self.COMMUNITY_PROPERTY)
+        return None if community is None else int(community)
 
     def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
         """Return top-degree non-synthetic nodes.
 
         Degree = inbound + outbound RELATES count. Excludes the index-metadata
         type by default; pass extra types in ``exclude_types`` to filter further.
+
+        Community membership needs no exclusion here: it is a node property, so
+        it contributes neither a node to rank nor an edge to count.
         """
         exclude = (NODE_TYPE_INDEX_METADATA, *exclude_types)
         result = self._conn.execute(
@@ -1194,43 +1224,43 @@ class GraphStore:
         return rows
 
     def list_cross_community_bridges(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return edges whose endpoints belong to different communities.
+        """Return edges whose endpoints carry different ``community`` ids.
 
-        Only returns edges where both endpoints have community membership; nodes
-        with no community are silently skipped. Useful for surfacing cross-cluster
-        couplings — places where two architecturally distinct regions touch.
+        Edges where either endpoint is unassigned are skipped — an unassigned
+        node is not evidence of a boundary. Community *labels* are not attached
+        here: they are derived from the partition, so ``retrieval.communities``
+        joins them on. Useful for surfacing cross-cluster couplings — places
+        where two architecturally distinct regions touch.
         """
+        communities = self.node_communities()
+        if not communities:
+            return []
+
         result = self._conn.execute(
-            "MATCH (a:Node)-[r:RELATES]->(b:Node), "
-            "(a)-[ma:RELATES]->(ca:Node), (b)-[mb:RELATES]->(cb:Node) "
-            "WHERE r.type <> $member_rel "
-            "AND ma.type = $member_rel AND mb.type = $member_rel "
-            "AND ca.type = $com AND cb.type = $com "
-            "AND ca.id <> cb.id "
-            "RETURN a.id, a.name, ca.id, ca.name, "
-            "b.id, b.name, cb.id, cb.name, r.type LIMIT $lim",
-            parameters={
-                "member_rel": REL_TYPE_MEMBER_OF_COMMUNITY,
-                "com": NODE_TYPE_COMMUNITY,
-                "lim": limit,
-            },
+            "MATCH (a:Node)-[r:RELATES]->(b:Node) RETURN a.id, a.name, b.id, b.name, r.type",
         )
         rows: list[dict[str, Any]] = []
         while result.has_next():
             r = result.get_next()
+            source_community = communities.get(str(r[0]))
+            target_community = communities.get(str(r[2]))
+            if source_community is None or target_community is None:
+                continue
+            if source_community == target_community:
+                continue
             rows.append(
                 {
                     "source_id": str(r[0]),
                     "source_name": str(r[1]),
-                    "source_community_id": str(r[2]),
-                    "source_community_name": str(r[3]),
-                    "target_id": str(r[4]),
-                    "target_name": str(r[5]),
-                    "target_community_id": str(r[6]),
-                    "target_community_name": str(r[7]),
-                    "relation": str(r[8]),
+                    "source_community_id": source_community,
+                    "target_id": str(r[2]),
+                    "target_name": str(r[3]),
+                    "target_community_id": target_community,
+                    "relation": str(r[4]),
                 }
             )
+            if len(rows) >= limit:
+                break
         return rows
 
     # -- metadata --------------------------------------------------------

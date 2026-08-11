@@ -3027,9 +3027,10 @@ def cluster(db_path: str | None, output_json: bool) -> None:
     """Run community detection over the stored graph.
 
     Reads non-internal nodes + edges, runs Leiden (falls back to Louvain),
-    re-splits oversized or low-cohesion communities, and writes ``Community``
-    nodes + ``MEMBER_OF_COMMUNITY`` edges. Idempotent — re-running clears
-    prior Community state before writing.
+    re-splits oversized or low-cohesion communities, and stamps each member's
+    ``community`` property. The partition is metadata about nodes, not nodes of
+    its own, so it adds nothing to the node or edge count. Idempotent —
+    re-running rewrites every assignment.
     """
     from opentrace_agent.cli.cluster_cmd import run_cluster_cli
 

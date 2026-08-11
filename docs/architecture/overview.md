@@ -149,7 +149,7 @@ A typical full-stack run (`index ./repo myvault --wiki`):
                documents_deleted and corpus_files_deleted.
 ```
 
-`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and write Community nodes (cluster) or just print analysis (analyze).
+`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and either stamp each node's `community` property (cluster) or just print analysis (analyze). Neither adds nodes or edges.
 
 ## Storage layout
 

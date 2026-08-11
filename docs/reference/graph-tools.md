@@ -14,7 +14,7 @@ The OpenTrace knowledge graph is queryable through three transports: MCP (Model 
 | `count_by` | Global or descendants-of-parent counts | "How many Functions in this Service?" |
 | `provenance` | Trust chain — code (commit_sha + line range) or wiki (the document's own identity + its `MIRRORS` File twin) | "Where did this come from?" |
 | `grep` | Regex match via ripgrep over a Repository, or a Vault's full document corpus — every member doc's normalized body, hits joined to doc id/title/status | "Find this exact string in source" / "prove no document mentions X" / "what does every doc say about X" |
-| `list_communities` | Detected Community nodes with cohesion + member counts | After running `cluster` |
+| `list_communities` | Detected communities with cohesion + member counts, derived from the stored partition | After running `cluster` |
 | `god_nodes` | Top-degree nodes (centrality hubs) | "What's connected to everything?" |
 | `cross_community_bridges` | Edges spanning different communities | "Where do two clusters touch?" |
 | `cross_domain_bridges` | Edges spanning code / doc domains | "What connects code and docs?" |
@@ -151,7 +151,6 @@ From `index --wiki` / `vault ingest` — the indexed documents themselves, bodie
 
 | Type | What it is |
 |---|---|
-| `Community` | Cluster detected by `opentraceai cluster` |
 | `IndexMetadata` | Per-repo provenance record (commit sha, index version) |
 
 ## Edge types
@@ -167,7 +166,6 @@ From `index --wiki` / `vault ingest` — the indexed documents themselves, bodie
 | `LINKS_TO` | KnowledgeDoc → KnowledgeDoc | A relative link the doc's author wrote to another doc — parsed mechanically (no LLM) from markdown links, reference definitions, and HTML anchors, resolved against the linking doc's directory. The doc-side analogue of `IMPORTS`. External URLs, bare fragments, and out-of-repo targets are dropped |
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree, stamped during `index --wiki` on a directory for every repo-walked doc (the KnowledgeDoc also gets a repo-relative `path`; the File node is created at link time if the code walk skipped its extension). Docs not from a repo walk (URLs, uploads) have no edge |
 | `DOCUMENTS` | Repository → Vault | The vault spawned from this repo — written only by `index --wiki` runs over a repo walk. Attached globals and dropped-file vaults never get it |
-| `MEMBER_OF_COMMUNITY` | any non-internal node → Community | Cluster membership |
 
 ## Vault-scoped retrieval
 
