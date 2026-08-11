@@ -209,6 +209,9 @@ class GraphStore:
         # instead; it reloads on the next bulk import.
         self._node_ids: set[str] | None = None
         self._rel_ids: set[str] | None = None
+        # One-shot latch for the pre-rename cluster-property warning; see
+        # _warn_if_only_legacy_clusters.
+        self._warned_legacy_clusters = False
         self._load_extensions()
         if not read_only:
             self._ensure_schema()
@@ -1032,6 +1035,30 @@ class GraphStore:
     # pre-rename DB carries no ghost key after a re-cluster.
     _LEGACY_CLUSTER_PROPERTY = "community"
 
+    def _warn_if_only_legacy_clusters(self, *, saw_legacy: bool, saw_current: bool) -> None:
+        """Warn once when a graph is partitioned under the pre-rename key.
+
+        Nothing reads ``community`` any more, so such a graph does not error —
+        it reads as *un-partitioned*, and every cluster consumer (summaries,
+        bridges, cross-domain, all three exporters) quietly returns nothing.
+        An empty result is indistinguishable from "never clustered", so say
+        which one it is rather than letting the data appear to vanish.
+
+        Deliberately a warning and not a read fallback: honouring the old key
+        would keep it alive in every read path and leave two spellings of the
+        same property in circulation indefinitely. Re-clustering is cheap and
+        ``clear_clusters`` sweeps the old key, so one run ends the ambiguity.
+        """
+        if saw_current or not saw_legacy or self._warned_legacy_clusters:
+            return
+        self._warned_legacy_clusters = True
+        logger.warning(
+            "Graph carries the pre-rename `%s` property but no `%s` property, so it reads as "
+            "un-clustered and every cluster query will return empty. Re-run `opentraceai cluster`.",
+            self._LEGACY_CLUSTER_PROPERTY,
+            self.CLUSTER_PROPERTY,
+        )
+
     def iter_analysis_graph(
         self,
         *,
@@ -1047,6 +1074,8 @@ class GraphStore:
             parameters={"excl": list(exclude_types)},
         )
         nodes: list[dict[str, Any]] = []
+        saw_legacy = False
+        saw_current = False
         while node_result.has_next():
             r = node_result.get_next()
             props = _parse_props(r[3]) or {}
@@ -1054,7 +1083,11 @@ class GraphStore:
             cluster = props.get(self.CLUSTER_PROPERTY)
             if cluster is not None:
                 node[self.CLUSTER_PROPERTY] = cluster
+                saw_current = True
+            elif self._LEGACY_CLUSTER_PROPERTY in props:
+                saw_legacy = True
             nodes.append(node)
+        self._warn_if_only_legacy_clusters(saw_legacy=saw_legacy, saw_current=saw_current)
 
         edge_result = self._conn.execute(
             "MATCH (a:Node)-[r:RELATES]->(b:Node) WHERE NOT a.type IN $excl AND NOT b.type IN $excl RETURN a.id, b.id",
@@ -1185,12 +1218,16 @@ class GraphStore:
         """
         result = self._conn.execute("MATCH (n:Node) RETURN n.id, n.properties")
         out: dict[str, int] = {}
+        saw_legacy = False
         while result.has_next():
             r = result.get_next()
             props = _parse_props(r[1]) or {}
             cluster = props.get(self.CLUSTER_PROPERTY)
             if cluster is not None:
                 out[str(r[0])] = int(cluster)
+            elif self._LEGACY_CLUSTER_PROPERTY in props:
+                saw_legacy = True
+        self._warn_if_only_legacy_clusters(saw_legacy=saw_legacy, saw_current=bool(out))
         return out
 
     def get_node_cluster(self, node_id: str) -> int | None:
@@ -1198,7 +1235,15 @@ class GraphStore:
         node = self.get_node(node_id)
         if node is None:
             return None
-        cluster = (node.get("properties") or {}).get(self.CLUSTER_PROPERTY)
+        props = node.get("properties") or {}
+        cluster = props.get(self.CLUSTER_PROPERTY)
+        # Single node, so "unassigned" is the common case and can't imply a
+        # legacy graph — but this node carrying the old key and not the new
+        # one is conclusive on its own.
+        self._warn_if_only_legacy_clusters(
+            saw_legacy=self._LEGACY_CLUSTER_PROPERTY in props,
+            saw_current=cluster is not None,
+        )
         return None if cluster is None else int(cluster)
 
     def list_god_nodes(self, limit: int = 20, exclude_types: tuple[str, ...] = ()) -> list[dict[str, Any]]:
