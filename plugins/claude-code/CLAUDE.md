@@ -62,11 +62,11 @@ Knowledge-graph pipeline (all native — no external indexer dependency):
 |---|---|
 | `/build [path or url]` | Full pipeline — `opentraceai index` → `cluster` → `analyze` |
 | `/path A B` | Shortest path between two graph nodes, walked hop-by-hop |
-| `/cluster` | Re-run community detection (Leiden / Louvain) on the existing graph |
-| `/analyze` | God nodes, cross-community bridges, starter questions |
+| `/cluster` | Re-run clustering (Leiden / Louvain) on the existing graph |
+| `/analyze` | God nodes, cross-cluster bridges, starter questions |
 | `/export-obsidian` | Obsidian vault (one file per node, wikilinks for edges) |
 | `/export-graphml` | GraphML for Gephi / yEd / Cytoscape |
-| `/export-report` | Folder of linked markdown pages (`index.md`, communities, god nodes, bridges) |
+| `/export-report` | Folder of linked markdown pages (`index.md`, clusters, god nodes, bridges) |
 
 Cross-corpus merge is folded into `opentraceai import`. MCP serving is the
 existing `opentraceai mcp` — no separate `/mcp-server`.
@@ -106,18 +106,18 @@ All agents/skills use these tools from the `opentrace-oss` MCP server:
 | `grep` | Regex sweep over a repo checkout or a vault's whole document corpus — the exhaustive counterpart to ranked `search_graph`. Use it for "which documents discuss X"; there is no doc→topic edge to traverse |
 | `provenance` | Trust chain — a `KnowledgeDoc`'s own identity (sha256, filename, path, ingest time, + MIRRORS File twin when present); code → commit + line range |
 | `get_god_nodes` | Top-degree hubs — "what's connected to everything?". Degree-based, so it works on any indexed graph |
-| `get_communities` | Detected clusters with cohesion + member counts |
-| `get_bridges` | Edges spanning two different communities — where clusters touch |
-| `find_cross_cutting_communities` | Communities whose members span ≥`min_domains` domains (code / doc) |
+| `get_clusters` | Detected clusters with cohesion + member counts |
+| `get_bridges` | Edges spanning two different clusters — where clusters touch |
+| `find_cross_cutting_clusters` | Clusters whose members span ≥`min_domains` domains (code / doc) |
 
 The last three need `opentraceai cluster` to have been run — they return an
 empty list on an unclustered graph rather than erroring, so an empty result
 means "not clustered yet" at least as often as it means "none exist". You
-cannot tell the two apart from `get_stats`: a community is a `community`
+cannot tell the two apart from `get_stats`: a cluster is a `cluster`
 property on the nodes it partitions, not a node type, so clustering leaves the
-type census unchanged. Call `get_communities` — an empty list there is the
+type census unchanged. Call `get_clusters` — an empty list there is the
 "not clustered yet" signal.
-`find_cross_cutting_communities` additionally needs both domains present: on a
+`find_cross_cutting_clusters` additionally needs both domains present: on a
 code-only graph (no vault ingested) nothing can span two domains, so it is
 always empty there.
 

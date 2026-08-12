@@ -49,7 +49,7 @@ class TestClusterCmd:
         run_cluster_cli(db, output_json=False)
         out = capsys.readouterr().out
         assert "Clustered 8 nodes" in out
-        assert "communities" in out
+        assert "clusters" in out
 
     def test_json_output(self, tmp_path, capsys):
         db = str(tmp_path / "db")
@@ -57,7 +57,7 @@ class TestClusterCmd:
         run_cluster_cli(db, output_json=True)
         payload = json.loads(capsys.readouterr().out)
         assert payload["nodes"] == 8
-        assert payload["communities"] >= 2
+        assert payload["clusters"] >= 2
 
     def test_empty_db_friendly_message(self, tmp_path, capsys):
         db = str(tmp_path / "db")
@@ -76,7 +76,7 @@ class TestAnalyzeCmd:
         run_analyze_cli(db, output_json=False)
         out = capsys.readouterr().out
         assert "God nodes" in out
-        assert "Cross-community bridges" in out
+        assert "Cross-cluster bridges" in out
         assert "Suggested questions" in out
 
     def test_json_includes_questions(self, tmp_path, capsys):
@@ -91,7 +91,7 @@ class TestAnalyzeCmd:
         assert "questions" in payload
         assert isinstance(payload["questions"], list)
 
-    def test_no_communities_means_no_bridges(self, tmp_path, capsys):
+    def test_no_clusters_means_no_bridges(self, tmp_path, capsys):
         # Pre-cluster state: god nodes are still reported, bridges are empty.
         db = str(tmp_path / "db")
         _seed(db)

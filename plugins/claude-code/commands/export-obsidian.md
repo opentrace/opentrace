@@ -1,7 +1,7 @@
 ---
 name: export-obsidian
 description: |
-  Export an Obsidian-compatible vault — one .md per node, folder per community.
+  Export an Obsidian-compatible vault — one .md per node, folder per cluster.
   Use when: "/export-obsidian", "open this graph in Obsidian".
 allowed-tools: Bash
 ---

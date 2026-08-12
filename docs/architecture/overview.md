@@ -23,7 +23,7 @@ OpenTrace builds a single knowledge graph that holds two layers of information a
 │  │  Pipeline      │  │   Retrieval primitives     │  │
 │  │  scan→process→ │  │   search / overview /      │  │
 │  │   extract→     │  │   find_path / provenance / │  │
-│  │   resolve→save │  │   communities / grep /     │  │
+│  │   resolve→save │  │   clusters / grep /        │  │
 │  │  + autoprune   │  │   cross_domain_bridges     │  │
 │  └────────────────┘  └────────────────────────────┘  │
 │                                                      │
@@ -68,9 +68,9 @@ doc domain      — KnowledgeVault / KnowledgeDoc
 
 `opentraceai analyze` surfaces:
 
-- **Cross-community bridges** — edges spanning detected communities
+- **Cross-cluster bridges** — edges spanning detected clusters
 - **Cross-domain bridges** — edges spanning code ↔ doc (the original "AuthMiddleware appears in 5 code files plus 2 design docs" view)
-- **Cross-cutting communities** — communities whose members span ≥2 domains
+- **Cross-cutting clusters** — clusters whose members span ≥2 domains
 
 `MIRRORS` is the code ↔ doc bridge — a `KnowledgeDoc` and its `File` twin reach each other in one hop.
 
@@ -96,7 +96,7 @@ Python package + CLI (`opentraceai`). Managed with [uv](https://docs.astral.sh/u
 |---|---|
 | `index` | Build/refresh the graph from code, docs, or both. See [Indexing](../getting-started/indexing.md) |
 | `vault` | Ingest a bare doc folder, and manage compiled vaults — ingest, list, show, attach, detach, promote, demote |
-| `cluster` / `analyze` | Community detection + cross-cutting analysis |
+| `cluster` / `analyze` | Graph clustering + cross-cutting analysis |
 | `export-graph` | Deterministic projections — graphml, obsidian, report |
 | `impact` | Blast radius for a changed file |
 | `serve` | REST API for the UI |
@@ -149,7 +149,7 @@ A typical full-stack run (`index ./repo myvault --wiki`):
                documents_deleted and corpus_files_deleted.
 ```
 
-`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and either stamp each node's `community` property (cluster) or just print analysis (analyze). Neither adds nodes or edges.
+`opentraceai cluster` and `opentraceai analyze` are separate steps that read the assembled graph and either stamp each node's `cluster` property (cluster) or just print analysis (analyze). Neither adds nodes or edges.
 
 ## Storage layout
 

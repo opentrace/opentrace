@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -885,51 +886,97 @@ class TestGraphStoreContextManager:
 
 
 class TestKnowledgeGraph:
-    """Community, hyperedge, and semantic-edge round-trips."""
+    """Cluster, hyperedge, and semantic-edge round-trips."""
 
-    def test_assign_communities_roundtrip(self, store):
+    def test_assign_clusters_roundtrip(self, store):
         store.add_node("fn1", "Function", "login")
         store.add_node("fn2", "Function", "logout")
-        assert store.assign_communities({"fn1": 1, "fn2": 2}) == 2
-        assert store.get_node_community("fn1") == 1
-        assert store.get_node_community("fn2") == 2
+        assert store.assign_clusters({"fn1": 1, "fn2": 2}) == 2
+        assert store.get_node_cluster("fn1") == 1
+        assert store.get_node_cluster("fn2") == 2
 
     def test_assignment_preserves_existing_properties(self, store):
         """The partition is merged into properties, not written over them."""
         store.add_node("fn1", "Function", "login", properties={"path": "auth.py"})
-        store.assign_communities({"fn1": 7})
+        store.assign_clusters({"fn1": 7})
         props = store.get_node("fn1")["properties"]
-        assert props["community"] == 7
+        assert props["cluster"] == 7
         assert props["path"] == "auth.py"
 
-    def test_assign_communities_is_idempotent(self, store):
-        """Re-assigning rewrites, so a node cannot end up in two communities."""
+    def test_assign_clusters_is_idempotent(self, store):
+        """Re-assigning rewrites, so a node cannot end up in two clusters."""
         store.add_node("fn1", "Function", "login")
-        store.assign_communities({"fn1": 1})
-        store.assign_communities({"fn1": 2})
-        assert store.get_node_community("fn1") == 2
+        store.assign_clusters({"fn1": 1})
+        store.assign_clusters({"fn1": 2})
+        assert store.get_node_cluster("fn1") == 2
 
     def test_reassignment_clears_nodes_dropped_from_the_partition(self, store):
         """A node absent from the new partition must not keep its old id."""
         store.add_node("fn1", "Function", "login")
         store.add_node("fn2", "Function", "logout")
-        store.assign_communities({"fn1": 1, "fn2": 1})
-        store.assign_communities({"fn1": 1})
-        assert store.get_node_community("fn1") == 1
-        assert store.get_node_community("fn2") is None
+        store.assign_clusters({"fn1": 1, "fn2": 1})
+        store.assign_clusters({"fn1": 1})
+        assert store.get_node_cluster("fn1") == 1
+        assert store.get_node_cluster("fn2") is None
 
-    def test_assign_communities_ignores_unknown_nodes(self, store):
-        assert store.assign_communities({"nope": 1}) == 0
+    def test_assign_clusters_ignores_unknown_nodes(self, store):
+        assert store.assign_clusters({"nope": 1}) == 0
 
-    def test_get_node_community_returns_none_for_unassigned(self, store):
+    def test_assign_clusters_drops_legacy_community_key(self, store):
+        """A DB stamped by the pre-rename code carries ``community`` on its
+        nodes; re-clustering must not leave that ghost key in the properties
+        dump alongside the new ``cluster`` key."""
+        store.add_node("fn1", "Function", "login", properties={"community": 3, "path": "auth.py"})
+        store.assign_clusters({"fn1": 1})
+        props = store.get_node("fn1")["properties"]
+        assert props["cluster"] == 1
+        assert "community" not in props
+        assert props["path"] == "auth.py"
+
+    def test_get_node_cluster_returns_none_for_unassigned(self, store):
         store.add_node("orphan", "Function", "orphan")
-        assert store.get_node_community("orphan") is None
+        assert store.get_node_cluster("orphan") is None
+
+    def test_legacy_only_partition_warns_instead_of_reading_as_empty(self, store, caplog):
+        """A pre-rename DB reads as un-clustered rather than erroring, so every
+        cluster consumer returns empty. That is indistinguishable from "never
+        clustered" — the warning is the only thing that tells them apart."""
+        store.add_node("fn1", "Function", "login", properties={"community": 3})
+        store.add_node("fn2", "Function", "logout", properties={"community": 3})
+
+        with caplog.at_level(logging.WARNING):
+            nodes, _ = store.iter_analysis_graph()
+
+        assert all("cluster" not in n for n in nodes), "the old key must not be read as a partition"
+        assert "Re-run `opentraceai cluster`" in caplog.text
+
+        # Latched: a single export calls into these paths repeatedly, and the
+        # advice does not get truer by repetition.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            store.iter_analysis_graph()
+            store.node_clusters()
+            store.get_node_cluster("fn1")
+        assert caplog.text == ""
+
+    def test_no_legacy_warning_on_a_normal_graph(self, store, caplog):
+        """Unassigned nodes are the norm before a first cluster run — warning
+        on those would make the message noise and train people to ignore it."""
+        store.add_node("fn1", "Function", "login")
+        store.add_node("fn2", "Function", "logout")
+        with caplog.at_level(logging.WARNING):
+            store.iter_analysis_graph()
+            store.node_clusters()
+            store.get_node_cluster("fn1")
+            store.assign_clusters({"fn1": 1})
+            store.iter_analysis_graph()
+        assert "opentraceai cluster" not in caplog.text
 
     def test_clustering_adds_no_nodes(self, store):
         """Assignment is metadata: the node census must not move."""
         store.add_node("fn1", "Function", "login")
         before = store.get_stats()["total_nodes"]
-        store.assign_communities({"fn1": 1})
+        store.assign_clusters({"fn1": 1})
         assert store.get_stats()["total_nodes"] == before
 
     def test_list_god_nodes_sorted_by_degree(self, store):
@@ -944,40 +991,40 @@ class TestKnowledgeGraph:
         gods = store.list_god_nodes(limit=10, exclude_types=("Service",))
         assert all(g["type"] != "Service" for g in gods)
 
-    def test_cross_community_bridges(self, store):
-        # Two communities, one bridge edge
+    def test_cross_cluster_bridges(self, store):
+        # Two clusters, one bridge edge
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
-        store.assign_communities({"n1": 1, "n2": 2})
+        store.assign_clusters({"n1": 1, "n2": 2})
         store.add_relationship("r1", "CALLS", "n1", "n2")
-        bridges = store.list_cross_community_bridges()
+        bridges = store.list_cross_cluster_bridges()
         assert len(bridges) == 1
         b = bridges[0]
         assert b["source_id"] == "n1"
         assert b["target_id"] == "n2"
-        assert b["source_community_id"] != b["target_community_id"]
+        assert b["source_cluster_id"] != b["target_cluster_id"]
         assert b["relation"] == "CALLS"
 
-    def test_intra_community_edge_is_not_a_bridge(self, store):
+    def test_intra_cluster_edge_is_not_a_bridge(self, store):
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
-        store.assign_communities({"n1": 1, "n2": 1})
+        store.assign_clusters({"n1": 1, "n2": 1})
         store.add_relationship("r1", "CALLS", "n1", "n2")
-        assert store.list_cross_community_bridges() == []
+        assert store.list_cross_cluster_bridges() == []
 
     def test_unassigned_endpoint_is_not_a_bridge(self, store):
-        """An unassigned node is not evidence of a community boundary."""
+        """An unassigned node is not evidence of a cluster boundary."""
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
-        store.assign_communities({"n1": 1})
+        store.assign_clusters({"n1": 1})
         store.add_relationship("r1", "CALLS", "n1", "n2")
-        assert store.list_cross_community_bridges() == []
+        assert store.list_cross_cluster_bridges() == []
 
-    def test_cross_community_bridges_on_unclustered_graph(self, store):
+    def test_cross_cluster_bridges_on_unclustered_graph(self, store):
         store.add_node("n1", "Function", "n1")
         store.add_node("n2", "Function", "n2")
         store.add_relationship("r1", "CALLS", "n1", "n2")
-        assert store.list_cross_community_bridges() == []
+        assert store.list_cross_cluster_bridges() == []
 
 
 class TestFtsSearchOrdering:

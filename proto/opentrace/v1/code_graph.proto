@@ -184,17 +184,17 @@ message KnowledgeDocNode {
   string status           = 12;
 }
 
-// Community detection deliberately declares NO node or relationship type here.
-// `opentraceai cluster` derives communities from an already-indexed graph, so
+// Clustering deliberately declares NO node or relationship type here.
+// `opentraceai cluster` derives clusters from an already-indexed graph, so
 // its output is metadata about nodes rather than nodes in their own right: each
-// member carries its community id in the `community` property, and the
-// per-community summary (label, cohesion, god flag) is recomputed on read.
+// member carries its cluster id in the `cluster` property, and the
+// per-cluster summary (label, cohesion, god flag) is recomputed on read.
 //
 // A CommunityNode + MemberOfCommunityRel pair lived here briefly and was removed
 // before any release shipped them. Storing derived data as graph data meant every
-// consumer had to remember to exclude it: `stats` counted communities as indexed
+// consumer had to remember to exclude it: `stats` counted clusters as indexed
 // content, the viewer rendered them as ordinary nodes, and the degree ranking
-// scored a community as a top hub because it has one edge per member. Don't
+// scored a cluster as a top hub because it has one edge per member. Don't
 // reintroduce them — an attribute cannot be miscounted as a node.
 
 // IndexMetadataNode stores a single record of index provenance per database.

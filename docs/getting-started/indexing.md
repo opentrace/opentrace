@@ -154,6 +154,6 @@ opentraceai index ./repo
 ## What's next
 
 - **Bring your vault into another graph** → [Wiki & Vaults](wiki.md)
-- **Surface gods / bridges / cross-cutting communities** → run `opentraceai cluster` then `opentraceai analyze`
+- **Surface gods / bridges / cross-cutting clusters** → run `opentraceai cluster` then `opentraceai analyze`
 - **Query the graph programmatically** → [Graph Tools](../reference/graph-tools.md)
 - **Configure providers** → [Wiki Providers](../reference/wiki-providers.md)

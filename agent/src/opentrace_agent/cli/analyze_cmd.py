@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``opentraceai analyze`` — report the graph's hotspots: god nodes, cross-community bridges, starter questions.
+"""``opentraceai analyze`` — report the graph's hotspots: god nodes, cross-cluster bridges, starter questions.
 
 Reads from the store via :meth:`GraphStore.list_god_nodes` and
-:meth:`GraphStore.list_cross_community_bridges`. The "questions" tab is a
+:meth:`GraphStore.list_cross_cluster_bridges`. The "questions" tab is a
 placeholder until the LLM extraction stage is wired up — it returns
 template starter questions seeded by the top god nodes.
 """
@@ -31,7 +31,7 @@ import click
 def _suggested_questions(gods: list[dict[str, Any]], bridges: list[dict[str, Any]]) -> list[str]:
     """Deterministic placeholder until LLM extraction is wired up.
 
-    Seeds prompts off the top god nodes and the most prominent cross-community
+    Seeds prompts off the top god nodes and the most prominent cross-cluster
     bridges. Stable across runs of the same graph, so the CLI is reproducible
     in tests and snapshots.
     """
@@ -40,8 +40,8 @@ def _suggested_questions(gods: list[dict[str, Any]], bridges: list[dict[str, Any
         out.append(f"What depends on {g['name']}?")
     for b in bridges[:3]:
         out.append(
-            f"What links {b['source_name']} (in {b['source_community_name']}) "
-            f"with {b['target_name']} (in {b['target_community_name']})?"
+            f"What links {b['source_name']} (in {b['source_cluster_name']}) "
+            f"with {b['target_name']} (in {b['target_cluster_name']})?"
         )
     return out
 
@@ -54,19 +54,19 @@ def run_analyze_cli(
     output_json: bool = False,
 ) -> None:
     from opentrace_agent.retrieval import (
-        cross_community_bridges,
+        cross_cluster_bridges,
         cross_domain_bridges,
-        find_communities_spanning_domains,
+        find_clusters_spanning_domains,
         god_nodes,
     )
     from opentrace_agent.store import GraphStore
 
     with GraphStore(db_path) as store:
         gods = god_nodes(store, limit=god_limit)
-        bridges = cross_community_bridges(store, limit=bridge_limit)
+        bridges = cross_cluster_bridges(store, limit=bridge_limit)
         # Phase 7: cross-domain (code/doc) connectivity.
         domain_bridges = cross_domain_bridges(store, limit=bridge_limit)
-        cross_cutting = find_communities_spanning_domains(store, min_domains=2, limit=bridge_limit)
+        cross_cutting = find_clusters_spanning_domains(store, min_domains=2, limit=bridge_limit)
 
     questions = _suggested_questions(gods, bridges)
 
@@ -77,7 +77,7 @@ def run_analyze_cli(
                     "gods": gods,
                     "bridges": bridges,
                     "cross_domain_bridges": domain_bridges,
-                    "cross_cutting_communities": cross_cutting,
+                    "cross_cutting_clusters": cross_cutting,
                     "questions": questions,
                 },
                 indent=2,
@@ -92,14 +92,14 @@ def run_analyze_cli(
         click.echo(f"  {g['degree']:>4}  {g['type']:<14}  {g['name']}")
 
     click.echo("")
-    click.echo(f"Cross-community bridges ({len(bridges)}):")
+    click.echo(f"Cross-cluster bridges ({len(bridges)}):")
     if not bridges:
-        click.echo("  (none — run `opentraceai cluster` to assign communities)")
+        click.echo("  (none — run `opentraceai cluster` to assign clusters)")
     for b in bridges:
         click.echo(
-            f"  {b['source_name']} [{b['source_community_name']}] "
+            f"  {b['source_name']} [{b['source_cluster_name']}] "
             f"--{b['relation']}--> "
-            f"{b['target_name']} [{b['target_community_name']}]"
+            f"{b['target_name']} [{b['target_cluster_name']}]"
         )
 
     click.echo("")
@@ -115,7 +115,7 @@ def run_analyze_cli(
 
     if cross_cutting:
         click.echo("")
-        click.echo(f"Cross-cutting communities (span ≥2 domains) ({len(cross_cutting)}):")
+        click.echo(f"Cross-cutting clusters (span ≥2 domains) ({len(cross_cutting)}):")
         for c in cross_cutting:
             domain_str = "+".join(c["domains"])
             click.echo(f"  {c['name']} — {domain_str} ({c['total_members']} members: {c['member_counts']})")

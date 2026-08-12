@@ -18,7 +18,7 @@ import { tool } from "@opencode-ai/plugin"
 import type { GraphClient } from "../graph-client.js"
 
 /**
- * Index a folder and run community detection over the result. Wraps
+ * Index a folder and run clustering over the result. Wraps
  * `opentraceai index` followed by `opentraceai cluster`.
  *
  * Both run on the INDEX timeout, not the default 10s command budget — see
@@ -26,7 +26,7 @@ import type { GraphClient } from "../graph-client.js"
  */
 export function createGraphBuildTool(client: GraphClient) {
   return tool({
-    description: `Index a folder into the OpenTrace knowledge graph and run community detection on the result, so analyze/report tooling has cluster data to work with. Use when the user says things like "index this repo", "build the graph", or "map this codebase".`,
+    description: `Index a folder into the OpenTrace knowledge graph and run clustering on the result, so analyze/report tooling has cluster data to work with. Use when the user says things like "index this repo", "build the graph", or "map this codebase".`,
     args: {
       path: tool.schema.string().optional().describe("Folder to index. Default '.'."),
     },

@@ -13,7 +13,7 @@ The graph organises into two domains:
 
 Doc ingestion is corpus-only: it indexes the documents (labels, epistemic status, doc↔doc links, `File` twins) and keeps their bodies verbatim. A `KnowledgeDoc` carries a title, a one-line summary, and an epistemic `status`; its normalized body sits verbatim in the corpus, readable with `load_source`, enumerable with `list_nodes`, and sweepable with `grep`.
 
-The one auxiliary type, `IndexMetadata`, sits outside the domains and comes from index bookkeeping. Community detection adds no type: it writes a `community` property onto the nodes it partitions.
+The one auxiliary type, `IndexMetadata`, sits outside the domains and comes from index bookkeeping. Clustering adds no type: it writes a `cluster` property onto the nodes it partitions.
 
 ## Node reference
 
@@ -147,16 +147,20 @@ Excluded from default cluster + analysis walks (it's bookkeeping, not data).
 | `MIRRORS` | KnowledgeDoc → File | The ingested doc's twin in the code tree. Emitted during `index --wiki` on a directory for every repo-walked doc; the KnowledgeDoc gets a repo-relative `path` property stamped. When the code walk didn't create the File node (extensions like `.rst`/`.txt`/`.html`/PDFs), it is created at link time so the twin always exists. Docs not from a repo walk (uploads, URLs, attached global vaults) have no edge. Bridges the corpus layer and the code tree — either twin reaches the other in one hop, and provenance chains include the mirrored File id |
 | `DOCUMENTS` | Repository → KnowledgeVault | The vault spawned from this repo. Written only by `index --wiki` runs where the wiki compile executes alongside a repo walk (the vault also gets a `spawned_from` stamp). Attached globals and vaults compiled from dropped files/URLs never get the edge — they live alongside a repo without documenting it. Joins the wiki layer to the code tree at the root |
 
-## Communities are a property, not a type
+## Clusters are a property, not a type
 
-`opentraceai cluster` stamps a `community` integer onto every node it
-partitions. There is no `Community` node and no membership edge, so clustering
+`opentraceai cluster` stamps a `cluster` integer onto every node it
+partitions. There is no cluster node and no membership edge, so clustering
 leaves the node and edge counts untouched and nothing downstream has to exclude
 its output from a census, a degree count, or a traversal.
 
-The per-community summary — label, member count, cohesion, god flag — is
-recomputed from the partition by `retrieval.communities` rather than stored, so
+The per-cluster summary — label, member count, cohesion, god flag — is
+recomputed from the partition by `retrieval.clusters` rather than stored, so
 there is no second copy to drift from the members it describes.
+
+(The UI viewer has an unrelated, ephemeral feature also called "communities" —
+its own on-screen Louvain grouping for colour and layout. It never touches the
+graph. See `ui/CLAUDE.md`.)
 
 ## Confidence on `CALLS`
 

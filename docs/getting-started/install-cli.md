@@ -54,7 +54,7 @@ Install the `opentraceai` command-line tool to index repositories and run an MCP
 
 ## Optional extras
 
-A plain install already includes everything doc ingestion and community
+A plain install already includes everything doc ingestion and cluster
 detection need — `markitdown[all]` for PDF/DOCX/PPTX/XLSX/HTML/EPUB conversion,
 `networkx` for clustering and the graph exporters, and the provider SDKs. There
 is no `graph` extra to add.
@@ -99,7 +99,7 @@ opentrace index /path/to/repo --wiki                   # also ingest docs into a
 opentrace index /path/docs foo --wiki                  # index docs into a vault named foo
 opentrace vault ingest /path/docs                      # docs-only: no repo required
 opentrace vault list                                   # vaults visible from current project
-opentrace cluster && opentrace analyze                 # community detection + cross-cutting analysis
+opentrace cluster && opentrace analyze                 # graph clustering + cross-cutting analysis
 opentrace mcp                                          # start an MCP server over stdio
 opentrace --help                                       # see all commands
 ```

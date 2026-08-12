@@ -803,7 +803,7 @@ export class GraphClient {
   }
 
   /**
-   * Run community detection. Uses the INDEX timeout, not the default one:
+   * Run clustering. Uses the INDEX timeout, not the default one:
    * Leiden/Louvain over a large graph runs for minutes, and the default
    * `run()` budget is 10s — a build tool that shells out through `run()` gets
    * its subprocess killed and returns partial stderr on any real repo.

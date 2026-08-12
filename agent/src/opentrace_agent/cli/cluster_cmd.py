@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``opentraceai cluster`` — run community detection over the stored graph.
+"""``opentraceai cluster`` — partition the stored graph into clusters.
 
-Wraps :func:`opentrace_agent.pipeline.cluster.run_clustering`. Idempotent: clears
-existing Community nodes + memberships before writing fresh ones, so re-running
+Wraps :func:`opentrace_agent.pipeline.cluster.run_clustering`. Idempotent:
+clears existing cluster assignments before stamping fresh ones, so re-running
 on the same DB produces the same shape (deterministic seed).
 """
 
@@ -50,8 +50,8 @@ def run_cluster_cli(db_path: str, output_json: bool = False) -> None:
 
     click.echo(
         f"Clustered {report.nodes} nodes / {report.edges} edges "
-        f"into {report.communities} communities "
-        f"({report.god_communities} flagged as god, "
-        f"largest = {report.largest_community} nodes, "
+        f"into {report.clusters} clusters "
+        f"({report.god_clusters} flagged as god, "
+        f"largest = {report.largest_cluster} nodes, "
         f"mean cohesion = {report.mean_cohesion:.2f})."
     )

@@ -11,7 +11,7 @@ src/opentrace_agent/
                  plus markdown/ doc plumbing (fetch, markitdown, corpus store)
   pipeline/    — Four-stage pipeline (scan → process → resolve → save) as LangGraph
   retrieval/   — Read-only agent-facing query primitives (search, overview,
-                 paths, counts, provenance, grep, communities)
+                 paths, counts, provenance, grep, clusters)
   wiki/        — Doc-ingestion pipeline + vault metadata (`index --wiki`,
                  `vault ingest`)
   store/       — LadybugDB persistence (Cypher queries, schema)

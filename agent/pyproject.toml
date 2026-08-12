@@ -38,7 +38,7 @@ dependencies = [
     "openai>=1.0",
     # Doc ingestion + graph analysis. markitdown[all] converts PDF/DOCX/PPTX/
     # XLSX/HTML/EPUB to markdown and bundles youtube-transcript-api for URL
-    # ingestion. networkx powers community detection (`cluster`) and the
+    # ingestion. networkx powers clustering (`cluster`) and the
     # graph exporters.
     #
     # Audio/video transcription is NOT supported: no audio extension is in

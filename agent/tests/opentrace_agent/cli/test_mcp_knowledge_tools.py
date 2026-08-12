@@ -14,7 +14,7 @@
 
 """Tests for the new MCP knowledge-graph tools.
 
-Exercises ``get_communities``, ``get_god_nodes``, ``get_bridges``, and
+Exercises ``get_clusters``, ``get_god_nodes``, ``get_bridges``, and
 ``find_path`` against a hand-built GraphStore. Mirrors the pattern in
 ``tests/opentrace_agent/graph/test_mcp_integration.py``.
 """
@@ -47,39 +47,39 @@ def _call_raw(store: GraphStore | None, tool_name: str, **kwargs) -> str:
 @pytest.fixture()
 def store(tmp_path):
     s = GraphStore(str(tmp_path / "db"))
-    # Two communities of two nodes each, with a bridge.
+    # Two clusters of two nodes each, with a bridge.
     for i in range(2):
         s.add_node(f"a{i}", "Function", f"a{i}")
         s.add_node(f"b{i}", "Function", f"b{i}")
     s.add_relationship("ea", "CALLS", "a0", "a1")
     s.add_relationship("eb", "CALLS", "b0", "b1")
     s.add_relationship("ebridge", "CALLS", "a0", "b0")
-    s.assign_communities({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
+    s.assign_clusters({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
     yield s
     s.close()
 
 
-class TestGetCommunities:
+class TestGetClusters:
     def test_returns_both(self, store):
-        rows = _call(store, "get_communities")
-        # Labels are derived from each community's members, not stored.
+        rows = _call(store, "get_clusters")
+        # Labels are derived from each cluster's members, not stored.
         assert sorted(r["id"] for r in rows) == [1, 2]
         assert sorted(r["name"] for r in rows) == ["a0, a1", "b0, b1"]
         assert all(r["members"] == 2 for r in rows)
 
     def test_no_index_message(self):
-        rows = _call(None, "get_communities")
+        rows = _call(None, "get_clusters")
         assert rows.get("status") == "ok"
         assert "No index" in rows["message"]
 
     def test_limit_applied(self, store):
-        rows = _call(store, "get_communities", limit=1)
+        rows = _call(store, "get_clusters", limit=1)
         assert len(rows) == 1
 
 
 class TestGetGodNodes:
     def test_top_by_degree(self, store):
-        # a0 and b0 both have degree 2 (each touches one intra-community
+        # a0 and b0 both have degree 2 (each touches one intra-cluster
         # edge and the bridge). The top result should be one of them.
         rows = _call(store, "get_god_nodes", limit=2)
         top_ids = {r["id"] for r in rows}
@@ -92,15 +92,15 @@ class TestGetGodNodes:
 
 
 class TestGetBridges:
-    def test_returns_cross_community_edges(self, store):
+    def test_returns_cross_cluster_edges(self, store):
         rows = _call(store, "get_bridges")
-        # The bridge edge connects a0 ↔ b0; should appear with distinct community IDs.
+        # The bridge edge connects a0 ↔ b0; should appear with distinct cluster IDs.
         bridge = next(
             (r for r in rows if {r["source_id"], r["target_id"]} == {"a0", "b0"}),
             None,
         )
         assert bridge is not None
-        assert bridge["source_community_id"] != bridge["target_community_id"]
+        assert bridge["source_cluster_id"] != bridge["target_cluster_id"]
 
     def test_no_index_message(self):
         rows = _call(None, "get_bridges")
@@ -148,7 +148,7 @@ class TestToolsRegistered:
     def test_tools_present(self, store):
         server = create_mcp_server(store)
         names = set(server._tool_manager._tools.keys())
-        for expected in ("get_communities", "get_god_nodes", "get_bridges", "find_path", "load_source"):
+        for expected in ("get_clusters", "get_god_nodes", "get_bridges", "find_path", "load_source"):
             assert expected in names
 
 

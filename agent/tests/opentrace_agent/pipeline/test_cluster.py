@@ -22,13 +22,13 @@ nx = pytest.importorskip("networkx")
 ladybug = pytest.importorskip("real_ladybug")
 
 from opentrace_agent.pipeline.cluster import (  # noqa: E402
-    Community,
+    Cluster,
     _cohesion,
     build_graph_from_store,
-    detect_communities,
+    detect_clusters,
     run_clustering,
 )
-from opentrace_agent.retrieval.communities import list_communities  # noqa: E402
+from opentrace_agent.retrieval.clusters import list_clusters  # noqa: E402
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -36,9 +36,9 @@ from opentrace_agent.store import GraphStore  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-class TestDetectCommunities:
+class TestDetectClusters:
     def test_empty_graph(self):
-        assert detect_communities(nx.Graph()) == []
+        assert detect_clusters(nx.Graph()) == []
 
     def test_two_disjoint_cliques_split_into_two(self):
         g = nx.Graph()
@@ -50,22 +50,22 @@ class TestDetectCommunities:
         for i in range(5):
             for j in range(i + 1, 5):
                 g.add_edge(f"b{i}", f"b{j}")
-        communities = detect_communities(g)
-        # Expect two communities, each grouping its clique members.
-        assert len(communities) == 2
-        sizes = sorted(len(c.members) for c in communities)
+        clusters = detect_clusters(g)
+        # Expect two clusters, each grouping its clique members.
+        assert len(clusters) == 2
+        sizes = sorted(len(c.members) for c in clusters)
         assert sizes == [5, 5]
-        for c in communities:
-            # Members of each community must share the same prefix.
+        for c in clusters:
+            # Members of each cluster must share the same prefix.
             prefixes = {m[0] for m in c.members}
             assert len(prefixes) == 1
 
     def test_single_clique_has_high_cohesion(self):
         g = nx.complete_graph(6)
-        communities = detect_communities(g)
-        # Single complete graph → one community, cohesion 1.0
-        assert len(communities) == 1
-        assert communities[0].cohesion == pytest.approx(1.0)
+        clusters = detect_clusters(g)
+        # Single complete graph → one cluster, cohesion 1.0
+        assert len(clusters) == 1
+        assert clusters[0].cohesion == pytest.approx(1.0)
 
     def test_god_flag_marks_largest(self):
         g = nx.Graph()
@@ -76,18 +76,18 @@ class TestDetectCommunities:
         for i in range(3):
             for j in range(i + 1, 3):
                 g.add_edge(f"small{i}", f"small{j}")
-        communities = detect_communities(g)
-        gods = [c for c in communities if c.is_god]
-        assert gods, "expected at least one god community"
+        clusters = detect_clusters(g)
+        gods = [c for c in clusters if c.is_god]
+        assert gods, "expected at least one god cluster"
         assert all(len(g.members) >= 3 for g in gods)
 
-    def test_disconnected_singletons_become_own_communities(self):
+    def test_disconnected_singletons_become_own_clusters(self):
         g = nx.Graph()
         for i in range(5):
             g.add_node(f"iso{i}")
-        communities = detect_communities(g)
-        # Each isolated node is its own community.
-        assert sum(len(c.members) for c in communities) == 5
+        clusters = detect_clusters(g)
+        # Each isolated node is its own cluster.
+        assert sum(len(c.members) for c in clusters) == 5
 
 
 class TestCohesion:
@@ -142,24 +142,24 @@ class TestStoreRoundTrip:
         g = build_graph_from_store(store)
         assert g.number_of_nodes() == 8
 
-    def test_run_clustering_writes_communities(self, store):
+    def test_run_clustering_writes_clusters(self, store):
         _seed_two_clusters(store)
         report = run_clustering(store)
         assert report.nodes == 8
-        assert report.communities >= 2
-        communities = list_communities(store)
-        assert len(communities) == report.communities
-        # Verify membership: each non-internal node has a community.
+        assert report.clusters >= 2
+        clusters = list_clusters(store)
+        assert len(clusters) == report.clusters
+        # Verify membership: each non-internal node has a cluster.
         for prefix in ("a", "b"):
             for i in range(4):
-                c = store.get_node_community(f"{prefix}{i}")
-                assert c is not None, f"missing community for {prefix}{i}"
+                c = store.get_node_cluster(f"{prefix}{i}")
+                assert c is not None, f"missing cluster for {prefix}{i}"
 
     def test_clustering_adds_no_nodes_or_edges(self, store):
         """The partition is metadata, so it must not grow the graph.
 
         This is the property the Community-node model could not hold: it added
-        a node per community and an edge per member, which inflated every
+        a node per cluster and an edge per member, which inflated every
         census and degree count taken afterwards.
         """
         _seed_two_clusters(store)
@@ -174,28 +174,28 @@ class TestStoreRoundTrip:
         _seed_two_clusters(store)
         first = run_clustering(store)
         second = run_clustering(store)
-        # Re-running must not accumulate communities or stale assignments.
-        assert first.communities == second.communities
-        communities = list_communities(store)
-        assert len(communities) == second.communities
+        # Re-running must not accumulate clusters or stale assignments.
+        assert first.clusters == second.clusters
+        clusters = list_clusters(store)
+        assert len(clusters) == second.clusters
 
-    def test_clear_communities_removes_assignments(self, store):
+    def test_clear_clusters_removes_assignments(self, store):
         _seed_two_clusters(store)
         run_clustering(store)
-        assert list_communities(store)
-        store.clear_communities()
-        assert list_communities(store) == []
-        assert store.get_node_community("a0") is None
+        assert list_clusters(store)
+        store.clear_clusters()
+        assert list_clusters(store) == []
+        assert store.get_node_cluster("a0") is None
 
-    def test_clear_communities_preserves_the_nodes(self, store):
+    def test_clear_clusters_preserves_the_nodes(self, store):
         """Clearing drops the property, never the member it was stamped on."""
         _seed_two_clusters(store)
         run_clustering(store)
-        store.clear_communities()
+        store.clear_clusters()
         assert store.get_stats()["total_nodes"] == 8
         assert store.get_node("a0") is not None
 
-    def test_disjoint_clusters_assigned_distinct_communities(self, store):
+    def test_disjoint_components_assigned_distinct_clusters(self, store):
         # Two cliques with NO bridge edge between them.
         for i in range(4):
             store.add_node(f"a{i}", "Function", f"a{i}")
@@ -207,15 +207,15 @@ class TestStoreRoundTrip:
                     store.add_relationship(f"r{rel_id}", "CALLS", f"{prefix}{i}", f"{prefix}{j}")
                     rel_id += 1
         run_clustering(store)
-        ca = store.get_node_community("a0")
-        cb = store.get_node_community("b0")
+        ca = store.get_node_cluster("a0")
+        cb = store.get_node_cluster("b0")
         assert ca is not None and cb is not None
         assert ca != cb
 
     def test_empty_graph_returns_zeroes(self, store):
         report = run_clustering(store)
         assert report.nodes == 0
-        assert report.communities == 0
+        assert report.clusters == 0
 
     def test_legacy_community_nodes_are_swept_before_partitioning(self, store):
         """A DB from the old node-based model must not cluster its own output.
@@ -243,11 +243,11 @@ class TestStoreRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Smoke: Community dataclass invariants
+# Smoke: Cluster dataclass invariants
 # ---------------------------------------------------------------------------
 
 
-def test_community_is_immutable():
-    c = Community(id=0, members=("a", "b"), cohesion=0.5, is_god=True)
+def test_cluster_is_immutable():
+    c = Cluster(id=0, members=("a", "b"), cohesion=0.5, is_god=True)
     with pytest.raises(Exception):
         c.id = 1  # type: ignore[misc]

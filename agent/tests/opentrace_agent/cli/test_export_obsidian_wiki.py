@@ -27,21 +27,21 @@ from opentrace_agent.cli.export_graph import _slugify, export_graph_app  # noqa:
 from opentrace_agent.store import GraphStore  # noqa: E402
 
 
-def _community_names(db_path: str) -> dict[int, str]:
-    """Map community id → its derived label and exported slug.
+def _cluster_names(db_path: str) -> dict[int, str]:
+    """Map cluster id → its derived label and exported slug.
 
-    Labels are derived from each community's top members rather than stored, so
+    Labels are derived from each cluster's top members rather than stored, so
     the tests resolve them from the store instead of hardcoding a name the
     fixture no longer sets.
     """
-    from opentrace_agent.retrieval.communities import list_communities
+    from opentrace_agent.retrieval.clusters import list_clusters
 
     with GraphStore(db_path) as s:
-        return {c["id"]: c["name"] for c in list_communities(s)}
+        return {c["id"]: c["name"] for c in list_clusters(s)}
 
 
 def _seed(db_path: str) -> None:
-    """Two communities of two nodes each, with a bridge edge."""
+    """Two clusters of two nodes each, with a bridge edge."""
     with GraphStore(db_path) as s:
         for i in range(2):
             s.add_node(f"a{i}", "Function", f"alpha-{i}")
@@ -49,7 +49,7 @@ def _seed(db_path: str) -> None:
         s.add_relationship("ea", "CALLS", "a0", "a1")
         s.add_relationship("eb", "CALLS", "b0", "b1")
         s.add_relationship("ebridge", "CALLS", "a0", "b0")
-        s.assign_communities({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
+        s.assign_clusters({"a0": 1, "a1": 1, "b0": 2, "b1": 2})
 
 
 class TestSlugify:
@@ -72,17 +72,17 @@ class TestObsidianExport:
         result = runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
         assert result.exit_code == 0, result.output
         md_files = list(out.rglob("*.md"))
-        # 4 source nodes → 4 .md files. Communities live in folder names, not separate files.
+        # 4 source nodes → 4 .md files. Clusters live in folder names, not separate files.
         assert len(md_files) == 4
 
-    def test_community_folder_structure(self, tmp_path):
+    def test_cluster_folder_structure(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        # Each community's derived label slugifies into a folder.
-        names = _community_names(db)
+        # Each cluster's derived label slugifies into a folder.
+        names = _cluster_names(db)
         assert (out / _slugify(names[1])).is_dir()
         assert (out / _slugify(names[2])).is_dir()
 
@@ -92,7 +92,7 @@ class TestObsidianExport:
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        a0 = out / _slugify(_community_names(db)[1]) / "alpha-0.md"
+        a0 = out / _slugify(_cluster_names(db)[1]) / "alpha-0.md"
         text = a0.read_text()
         # a0 has outgoing edges to a1 + bridge to b0 → wikilinks for both.
         assert "[[alpha-1]]" in text
@@ -104,14 +104,14 @@ class TestObsidianExport:
         out = tmp_path / "vault"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["obsidian", "--db", db, "--output", str(out)])
-        a0 = out / _slugify(_community_names(db)[1]) / "alpha-0.md"
+        a0 = out / _slugify(_cluster_names(db)[1]) / "alpha-0.md"
         text = a0.read_text()
         assert text.startswith("---\n")
         assert 'id: "a0"' in text
         assert "type: Function" in text
 
     def test_uncategorised_nodes_get_their_own_folder(self, tmp_path):
-        """A node without a community membership lands in _uncategorised/."""
+        """A node without a cluster membership lands in _uncategorised/."""
         db = str(tmp_path / "db")
         with GraphStore(db) as s:
             s.add_node("orphan", "Function", "orphan")
@@ -123,7 +123,7 @@ class TestObsidianExport:
 
 
 class TestWikiExport:
-    def test_writes_index_and_community_files(self, tmp_path):
+    def test_writes_index_and_cluster_files(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         out = tmp_path / "wiki"
@@ -131,33 +131,33 @@ class TestWikiExport:
         result = runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         assert result.exit_code == 0, result.output
         assert (out / "index.md").exists()
-        names = _community_names(db)
-        assert (out / "communities" / f"{_slugify(names[1])}.md").exists()
-        assert (out / "communities" / f"{_slugify(names[2])}.md").exists()
+        names = _cluster_names(db)
+        assert (out / "clusters" / f"{_slugify(names[1])}.md").exists()
+        assert (out / "clusters" / f"{_slugify(names[2])}.md").exists()
         assert (out / "gods").is_dir()
 
-    def test_index_links_to_communities(self, tmp_path):
+    def test_index_links_to_clusters(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         out = tmp_path / "wiki"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         index = (out / "index.md").read_text()
-        names = _community_names(db)
-        assert f"communities/{_slugify(names[1])}.md" in index
-        assert f"communities/{_slugify(names[2])}.md" in index
+        names = _cluster_names(db)
+        assert f"clusters/{_slugify(names[1])}.md" in index
+        assert f"clusters/{_slugify(names[2])}.md" in index
         assert "## God Nodes" in index
 
-    def test_community_article_lists_members(self, tmp_path):
+    def test_cluster_article_lists_members(self, tmp_path):
         db = str(tmp_path / "db")
         _seed(db)
         out = tmp_path / "wiki"
         runner = CliRunner()
         runner.invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
-        alpha = (out / "communities" / f"{_slugify(_community_names(db)[1])}.md").read_text()
+        alpha = (out / "clusters" / f"{_slugify(_cluster_names(db)[1])}.md").read_text()
         assert "alpha-0" in alpha
         assert "alpha-1" in alpha
-        # Cross-community connections should surface the bridge edge.
+        # Cross-cluster connections should surface the bridge edge.
         assert "beta-0" in alpha
 
     def test_god_article_shows_degree(self, tmp_path):
@@ -185,7 +185,7 @@ class TestWikiExport:
 
 
 def _seed_rich(db_path: str) -> None:
-    """The base two-community seed plus index metadata."""
+    """The base two-cluster seed plus index metadata."""
     _seed(db_path)
     with GraphStore(db_path) as s:
         s.save_metadata(
@@ -209,33 +209,33 @@ class TestReportDashboard:
         assert "Indexed from `demo` @ abcdef12 (main)" in index
         assert "opentraceai 1.2.3" in index
 
-    def test_index_renders_mermaid_community_map(self, tmp_path):
+    def test_index_renders_mermaid_cluster_map(self, tmp_path):
         db = str(tmp_path / "db")
         _seed_rich(db)
         out = tmp_path / "wiki"
         CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         index = (out / "index.md").read_text()
         assert "```mermaid" in index
-        assert f'c1["{_community_names(db)[1]} (2)"]' in index
-        # One bridge edge between the two communities.
+        assert f'c1["{_cluster_names(db)[1]} (2)"]' in index
+        # One bridge edge between the two clusters.
         assert "c1 ---|1| c2" in index
 
-    def test_bridges_page_lists_cross_community_edges(self, tmp_path):
+    def test_bridges_page_lists_cross_cluster_edges(self, tmp_path):
         db = str(tmp_path / "db")
         _seed_rich(db)
         out = tmp_path / "wiki"
         CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
         bridges = (out / "bridges.md").read_text()
-        assert "## Cross-community" in bridges
+        assert "## Cross-cluster" in bridges
         assert "alpha-0" in bridges and "beta-0" in bridges
 
-    def test_community_page_groups_connections_by_target(self, tmp_path):
+    def test_cluster_page_groups_connections_by_target(self, tmp_path):
         db = str(tmp_path / "db")
         _seed_rich(db)
         out = tmp_path / "wiki"
         CliRunner().invoke(export_graph_app, ["report", "--db", db, "--output", str(out)])
-        names = _community_names(db)
-        alpha = (out / "communities" / f"{_slugify(names[1])}.md").read_text()
-        assert "## Connections to other communities" in alpha
+        names = _cluster_names(db)
+        alpha = (out / "clusters" / f"{_slugify(names[1])}.md").read_text()
+        assert "## Connections to other clusters" in alpha
         assert f"[{names[2]}]({_slugify(names[2])}.md): 1 edge" in alpha
         assert "alpha-0 → beta-0 (CALLS)" in alpha
