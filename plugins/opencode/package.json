@@ -17,9 +17,10 @@
     "provenance": true
   },
   "scripts": {
-    "build": "bun build ./src/index.ts --outfile ./dist/index.js --target bun --format esm --external @opencode-ai/plugin",
+    "build": "bun build ./src/index.ts --outfile ./dist/index.js --target node --format esm --external @opencode-ai/plugin && ./scripts/check-dist-portable.sh",
     "lint": "tsc --noEmit",
     "test": "bun test",
+    "check:dist-portable": "./scripts/check-dist-portable.sh",
     "clean": "rm -rf node_modules dist"
   },
   "repository": {
