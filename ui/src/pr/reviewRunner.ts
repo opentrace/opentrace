@@ -28,6 +28,7 @@ import { makePRTools } from '../chat/prTools';
 import type { GraphStore } from '../store/types';
 import type { PRClient } from './client';
 import type { PRDetail } from './types';
+import { enforceInspectionCoverage } from './reviewParse';
 
 const STEP_LABELS: Record<string, string> = {
   search_graph: 'Searching graph',
@@ -46,12 +47,12 @@ const CODE_REVIEWER_PROMPT = `You are a code review agent. Your job is to review
 ## Workflow
 
 1. **Identify scope**: Use get_pull_request to find the PR and its changed files.
-2. **Inspect changes**: Use get_pr_file_change on each changed file to get the diff, original (base), and/or new file content. Use version "all" for thorough review, or "diff" for a quick scan.
+2. **Inspect changes**: Use get_pr_file_change on EVERY changed file. Start with version "diff" to see what changed, then version "new" (with startLine/endLine around the changed regions) to read the changed code in full context. If a result carries a *_truncated flag, call again with the reported next_start_line — never review from a partial payload.
 3. **Understand context**: Use traverse_graph (incoming + outgoing) to understand how changed code fits into the broader architecture — what calls it, what it depends on.
 4. **Inspect related code**: Use get_node and load_source on related (unchanged) components to check for consistency and convention adherence.
 5. **Synthesize review**: Produce a structured code review.
 
-IMPORTANT: When reviewing PR file changes, always use get_pr_file_change — it gives you the diff, the original file, and the new file with changes applied. Only use load_source for unchanged files that you need for context.
+IMPORTANT: When reviewing PR file changes, always use get_pr_file_change — it gives you the diff, the original file, and the new file with changes applied. Only use load_source for unchanged files that you need for context. Graph data and load_source reflect the indexed snapshot, which may predate this PR — when they disagree with get_pr_file_change output, trust get_pr_file_change. Only make claims about code you have actually read in this session.
 
 ## Review Categories
 
@@ -105,8 +106,8 @@ After your prose review, you MUST end your response with a fenced code block tag
 \`\`\`
 
 Rules for the structured block:
-- "verdict": Use APPROVE if the code is good, REQUEST_CHANGES if there are must-fix issues, COMMENT for informational review
-- "comments": Include one entry per actionable finding. Use the exact file path and line number from the source code. Omit path/line if the comment is general.
+- "verdict": Use APPROVE only if the code is good AND you inspected every changed file; REQUEST_CHANGES if there are must-fix issues; COMMENT for informational review
+- "comments": Include one entry per actionable finding. "line" must be a line number in the NEW version of the file (right side of the diff) — take it from the line-numbered new_content or the diff hunks, never estimate it. Omit path/line if the comment is general.
 - "summary": A concise paragraph suitable as the PR review body on GitHub
 - Always include this block, even if there are no issues (empty comments array, APPROVE verdict)`;
 
@@ -160,6 +161,7 @@ export async function runPRReview(
     `Analyze all changed files for bugs, security issues, performance problems, and code quality.`;
 
   const allMessages: BaseMessage[] = [];
+  const inspectedFiles = new Set<string>();
 
   const stream = await agent.stream(
     { messages: [new HumanMessage(query)] },
@@ -177,11 +179,23 @@ export async function runPRReview(
         allMessages.push(msg);
 
         if (nodeName === 'agent') {
-          const toolCalls = (msg as { tool_calls?: Array<{ name: string }> })
-            .tool_calls;
+          const toolCalls = (
+            msg as {
+              tool_calls?: Array<{
+                name: string;
+                args?: Record<string, unknown>;
+              }>;
+            }
+          ).tool_calls;
           if (toolCalls?.length) {
             for (const tc of toolCalls) {
               callbacks.onProgress(STEP_LABELS[tc.name] ?? tc.name);
+              if (
+                tc.name === 'get_pr_file_change' &&
+                typeof tc.args?.filePath === 'string'
+              ) {
+                inspectedFiles.add(tc.args.filePath);
+              }
             }
           }
         }
@@ -189,9 +203,16 @@ export async function runPRReview(
     }
   }
 
-  return extractFinalResponse(
+  const response = extractFinalResponse(
     allMessages as Array<{
       content: string | Array<{ type: string; text?: string }>;
     }>,
   );
+
+  // An APPROVE is only credible if the agent actually looked at every
+  // changed file — downgrade to COMMENT when it skipped some.
+  const uninspected = pr.files
+    .map((f) => f.path)
+    .filter((p) => !inspectedFiles.has(p));
+  return enforceInspectionCoverage(response, uninspected);
 }

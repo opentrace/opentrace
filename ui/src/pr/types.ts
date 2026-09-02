@@ -26,6 +26,13 @@ export interface PRSummary {
   updated_at: string;
   base_branch: string;
   head_branch: string;
+  /** Immutable commit SHAs; prefer these over branch names when fetching
+   *  file content — branches move and fork branches don't exist in the
+   *  base repo. */
+  base_sha?: string;
+  head_sha?: string;
+  /** Head repo full name (owner/repo) when the PR comes from a fork. */
+  head_repo?: string;
   draft?: boolean;
 }
 

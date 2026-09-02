@@ -76,6 +76,51 @@ describe('indexPRIntoGraph', () => {
     expect(prNode.name).toBe('#42: Test PR');
   });
 
+  it('stores base/head SHAs and fork repo when present', async () => {
+    const store = createMockStore({
+      importBatch: vi.fn().mockResolvedValue({
+        nodes_created: 0,
+        relationships_created: 0,
+      }),
+    });
+    await indexPRIntoGraph(
+      store,
+      makePR({
+        base_sha: 'abc123',
+        head_sha: 'def456',
+        head_repo: 'fork/repo',
+      }),
+      meta,
+    );
+
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    const prNode = batch.nodes.find(
+      (n: { type: string }) => n.type === 'PullRequest',
+    );
+    expect(prNode.properties.baseSha).toBe('abc123');
+    expect(prNode.properties.headSha).toBe('def456');
+    expect(prNode.properties.headRepo).toBe('fork/repo');
+  });
+
+  it('omits SHA properties when the client did not provide them', async () => {
+    const store = createMockStore({
+      importBatch: vi.fn().mockResolvedValue({
+        nodes_created: 0,
+        relationships_created: 0,
+      }),
+    });
+    await indexPRIntoGraph(store, makePR(), meta);
+
+    const batch = (store.importBatch as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    const prNode = batch.nodes.find(
+      (n: { type: string }) => n.type === 'PullRequest',
+    );
+    expect('baseSha' in prNode.properties).toBe(false);
+    expect('headRepo' in prNode.properties).toBe(false);
+  });
+
   it('creates TARGETS_REPO edge to Repo node', async () => {
     const store = createMockStore({
       importBatch: vi.fn().mockResolvedValue({
@@ -134,8 +179,8 @@ describe('indexPRIntoGraph', () => {
     });
   });
 
-  it('truncates patch at MAX_PATCH_CHARS (5000)', async () => {
-    const longPatch = 'x'.repeat(6000);
+  it('truncates patch at MAX_PATCH_CHARS (50000)', async () => {
+    const longPatch = 'x'.repeat(60_000);
     const pr = makePR({
       files: [
         {

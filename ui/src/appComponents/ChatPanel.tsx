@@ -70,6 +70,20 @@ import { useConversation } from '../chat/useConversation';
 import PRListPanel from './PRListPanel';
 import './ChatPanel.css';
 
+/**
+ * Resolve the model to select for a provider. A stored choice can predate
+ * a model-list update (e.g. a retired Claude 4.x ID) — fall back to the
+ * provider default rather than pinning the dropdown to an option that no
+ * longer exists. Local models are free-text, so any stored value is valid.
+ */
+function resolveModelChoice(pid: string): string {
+  const stored = loadModelChoice(pid);
+  const isKnown =
+    pid === 'local' ||
+    (stored != null && PROVIDERS[pid].models.some((m) => m.id === stored));
+  return isKnown && stored != null ? stored : PROVIDERS[pid].defaultModel;
+}
+
 function TokenUsageFooter({ usage }: { usage: TokenUsage }) {
   return (
     <div className="token-usage">
@@ -136,10 +150,9 @@ export default function ChatPanel({
   }, [panelWidth, onWidthChange]);
 
   const [providerId, setProviderId] = useState(loadProviderChoice);
-  const [modelId, setModelId] = useState(() => {
-    const pid = loadProviderChoice();
-    return loadModelChoice(pid) ?? PROVIDERS[pid].defaultModel;
-  });
+  const [modelId, setModelId] = useState(() =>
+    resolveModelChoice(loadProviderChoice()),
+  );
   const [apiKey, setApiKey] = useState(() => loadApiKey(loadProviderChoice()));
   // Live value of the auto-detect key field (cloud mode). Held separately
   // from `apiKey` so we can detect the provider as the user types without
@@ -309,8 +322,7 @@ export default function ChatPanel({
     const key = loadApiKey(id);
     setApiKey(key);
     setKeyDraft(key);
-    const savedModel = loadModelChoice(id);
-    setModelId(savedModel ?? PROVIDERS[id].defaultModel);
+    setModelId(resolveModelChoice(id));
     if (id === 'local') setLocalUrl(loadLocalUrl());
     setShowSettings(true);
   };
@@ -336,8 +348,7 @@ export default function ChatPanel({
     if (detected && detected !== providerId) {
       setProviderId(detected);
       saveProviderChoice(detected);
-      const savedModel = loadModelChoice(detected);
-      setModelId(savedModel ?? PROVIDERS[detected].defaultModel);
+      setModelId(resolveModelChoice(detected));
     }
   };
 
@@ -347,8 +358,7 @@ export default function ChatPanel({
   const pickProviderKeepKey = (id: string) => {
     setProviderId(id);
     saveProviderChoice(id);
-    const savedModel = loadModelChoice(id);
-    setModelId(savedModel ?? PROVIDERS[id].defaultModel);
+    setModelId(resolveModelChoice(id));
   };
 
   // Provider inferred from the current draft key (null while empty or

@@ -169,8 +169,15 @@ export class PRClient {
     }
   }
 
-  /** Fetch a file's content at a given git ref (branch, tag, or SHA). */
-  async getFileContent(path: string, ref: string): Promise<string | null> {
+  /** Fetch a file's content at a given git ref (branch, tag, or SHA).
+   *  `repoOverride` ("owner/repo") targets a different repository — used
+   *  for fork PRs whose head commits live outside the base repo. Only
+   *  honored for GitHub. */
+  async getFileContent(
+    path: string,
+    ref: string,
+    repoOverride?: string,
+  ): Promise<string | null> {
     switch (this.meta.provider) {
       case 'gitlab':
         return fetchGitLabFileContent(
@@ -196,14 +203,14 @@ export class PRClient {
           ref,
           this.token,
         );
-      default:
-        return fetchGitHubFileContent(
-          this.meta.owner,
-          this.meta.repo,
-          path,
-          ref,
-          this.token,
-        );
+      default: {
+        let owner = this.meta.owner;
+        let repo = this.meta.repo;
+        if (repoOverride?.includes('/')) {
+          [owner, repo] = repoOverride.split('/', 2) as [string, string];
+        }
+        return fetchGitHubFileContent(owner, repo, path, ref, this.token);
+      }
     }
   }
 
