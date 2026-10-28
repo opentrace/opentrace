@@ -16,8 +16,11 @@ jobs:
         run: |
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-preview-cleanup \
-            -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}' \
-            -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}' \
-            -f 'client_payload[trigger_run_id]=${{ github.run_id }}'
+            -f "client_payload[branch]=$PR_HEAD_REF" \
+            -f "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[trigger_run_id]=$TRIGGER_RUN_ID"
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRIGGER_RUN_ID: ${{ github.run_id }}

@@ -37,20 +37,24 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - id: version
         working-directory: ui
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "tag=latest" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ]; then
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
             BASE_VERSION=$(node -p "require('./package.json').version")
             echo "version=${BASE_VERSION}-rc.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
             echo "tag=next" >> "$GITHUB_OUTPUT"
           else
             BASE_VERSION=$(node -p "require('./package.json').version")
-            echo "version=${BASE_VERSION}-pr.${{ github.event.pull_request.number }}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "version=${BASE_VERSION}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
             echo "tag=preview" >> "$GITHUB_OUTPUT"
           fi
 
@@ -74,9 +78,12 @@ jobs:
 
       - name: Set version
         working-directory: ui
+        env:
+          PKG_VERSION: ${{ needs.version.outputs.version }}
+          PKG_TAG: ${{ needs.version.outputs.tag }}
         run: |
-          npm version "${{ needs.version.outputs.version }}" --no-git-tag-version --allow-same-version
-          echo "Publishing @opentrace/opentrace@${{ needs.version.outputs.version }} with tag ${{ needs.version.outputs.tag }}"
+          npm version "$PKG_VERSION" --no-git-tag-version --allow-same-version
+          echo "Publishing @opentrace/opentrace@$PKG_VERSION with tag $PKG_TAG"
 
       - name: Install dependencies
         working-directory: ui
@@ -88,7 +95,9 @@ jobs:
 
       - name: Publish to npm
         working-directory: ui
-        run: NODE_AUTH_TOKEN="" npm publish --tag "${{ needs.version.outputs.tag }}"
+        env:
+          PKG_TAG: ${{ needs.version.outputs.tag }}
+        run: NODE_AUTH_TOKEN="" npm publish --tag "$PKG_TAG"
 
   comment:
     name: Comment on PR

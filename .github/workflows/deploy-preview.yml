@@ -14,12 +14,16 @@ jobs:
         run: |
           gh api repos/opentrace/opentrace-deployment/dispatches \
             -f event_type=submodule-preview \
-            -f 'client_payload[branch]=${{ github.event.pull_request.head.ref }}' \
-            -f 'client_payload[clone_url]=${{ github.event.pull_request.head.repo.clone_url }}' \
-            -f 'client_payload[pr_number]=${{ github.event.pull_request.number }}' \
-            -f 'client_payload[trigger_run_id]=${{ github.run_id }}'
+            -f "client_payload[branch]=$PR_HEAD_REF" \
+            -f "client_payload[clone_url]=$PR_CLONE_URL" \
+            -f "client_payload[pr_number]=$PR_NUMBER" \
+            -f "client_payload[trigger_run_id]=$TRIGGER_RUN_ID"
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_CLONE_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRIGGER_RUN_ID: ${{ github.run_id }}
 
       - name: Watch triggered run until completion
         run: |
@@ -27,7 +31,7 @@ jobs:
           for i in $(seq 1 30); do
             RUN_ID=$(gh run list -R opentrace/opentrace-deployment -e repository_dispatch \
               -L 5 --json databaseId,displayTitle \
-              -q '.[] | select(.displayTitle | contains("${{ github.run_id }}")) | .databaseId' \
+              -q '.[] | select(.displayTitle | contains(env.TRIGGER_RUN_ID)) | .databaseId' \
               | head -1)
             if [ -n "$RUN_ID" ]; then
               echo "Watching opentrace-deployment run $RUN_ID"
@@ -40,4 +44,4 @@ jobs:
           exit 1
         env:
           GH_TOKEN: ${{ secrets.PAT_GITHUB_TOKEN }}
-
+          TRIGGER_RUN_ID: ${{ github.run_id }}
